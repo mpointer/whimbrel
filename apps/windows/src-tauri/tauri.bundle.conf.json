@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "externalBin": ["binaries/whimbrel-mcp-server"],
+    "resources": {
+      "bundle-resources/connectors": "connectors",
+      "bundle-resources/node": "node"
+    }
+  }
+}

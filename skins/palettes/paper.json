@@ -1,0 +1,39 @@
+{
+  "id": "paper",
+  "name": "Paper",
+  "author": "Whimbrel",
+  "light": {
+    "backgroundPage": "#FFFFFF",
+    "backgroundCard": "#F8F9FA",
+    "border": "#9FA6AE",
+    "textPrimary": "#1F2223",
+    "textSecondary": "#54595D",
+    "accentPrimary": "#2F62C4",
+    "accentSecondary": "#5B3F8C",
+    "accentHighlight": "#8A5A00",
+    "error": "#B32424",
+    "warning": "#7A5200",
+    "success": "#0F6B4F",
+    "link": "#0A47A8",
+    "selection": "#EAF3FF",
+    "highlight": "#FEF6C8",
+    "textOnAccent": "#FFFFFF"
+  },
+  "dark": {
+    "backgroundPage": "#101418",
+    "backgroundCard": "#1B2026",
+    "border": "#56606B",
+    "textPrimary": "#EAECF0",
+    "textSecondary": "#A7B0BA",
+    "accentPrimary": "#7AA5EE",
+    "accentSecondary": "#B7A0E6",
+    "accentHighlight": "#E0B84C",
+    "error": "#FF8F80",
+    "warning": "#E8B04B",
+    "success": "#6FCFA8",
+    "link": "#8DB8FF",
+    "selection": "#25344D",
+    "highlight": "#4A3F10",
+    "textOnAccent": "#101418"
+  }
+}

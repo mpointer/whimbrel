@@ -1,0 +1,151 @@
+name: Release integrity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same PR (or to main) cancels the run it supersedes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run check-version.sh against the repo's own state
+        run: scripts/check-version.sh
+      - name: Run check-version.sh's own test suite
+        run: scripts/test-check-version.sh
+
+  # Each connector's dist/ is committed and is what the app bundles; release-publish.sh
+  # never compiles src/, so a src change without a rebuilt dist/ ships nothing (0.9.11's
+  # Gmail 404 fix did exactly that).
+  connector-dist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        connector: [gmail, google-calendar, outlook365]
+    defaults:
+      run:
+        working-directory: mcp-servers/${{ matrix.connector }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - run: npm ci
+      - run: npm run build
+      - name: dist/ must match src/
+        run: git diff --exit-code -- dist || { echo "::error::dist/ is stale -- run 'npm run build' in mcp-servers/${{ matrix.connector }} and commit it"; exit 1; }
+
+  # A pure version-bump commit (apps/macos/scripts/release-prepare.sh) only ever
+  # touches these 5 files -- no source changed, so the swift-tests macOS runner
+  # below is redundant with the CI run the fix itself already had.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      version_only: ${{ steps.filter.outputs.version_only }}
+      run_macos: ${{ steps.filter.outputs.run_macos }}
+    steps:
+      # ref pinned to the real commit (not actions/checkout@v4's pull_request default,
+      # GitHub's ephemeral refs/pull/N/merge preview ref -- observed transiently
+      # returning "Repository not found" under concurrent access) and full history, so
+      # the diff below has both endpoints regardless of push/pull_request event.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      # Plain git diff, not dorny/paths-filter: its predicate-quantifier: every checks
+      # "does every PATTERN match some changed file" (AND across patterns) -- not "is
+      # every CHANGED FILE covered by some pattern" (the whitelist/exhaustiveness check
+      # this actually needs. There's no paths-filter mode for the latter. Confirmed
+      # broken in practice: PR #72, a genuine version-bump-only diff of exactly these 5
+      # files, evaluated version_only=false.
+      - id: filter
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          head="${{ github.event.pull_request.head.sha || github.sha }}"
+          changed="$(git diff --name-only "$base" "$head")" || changed=""
+          allowed='^(VERSION|apps/macos/project\.yml|apps/macos/Whimbrel\.xcodeproj/project\.pbxproj|core/Cargo\.toml|core/Cargo\.lock)$'
+          if [ -n "$changed" ] && ! grep -vqE "$allowed" <<<"$changed"; then
+            version_only=true
+          else
+            version_only=false
+          fi
+          echo "version_only=$version_only" >> "$GITHUB_OUTPUT"
+          # swift-tests builds the Mac app, which links core/ and bundles the
+          # connectors, so it runs only when one of those (or these workflows)
+          # changed. An empty or failed diff runs it.
+          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE '^(apps/macos/|core/|mcp-servers/|\.github/workflows/)' <<<"$changed"; }; then
+            echo "run_macos=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_macos=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # macOS runners bill at 10x a Linux minute, and xcodebuild has no Linux
+  # equivalent. This is the only check that the Mac app compiles, so it runs on
+  # PRs as well as on main, but only when the diff can affect the app (see
+  # run_macos above). The Rust cache covers the core/ build its prebuild
+  # script runs.
+  #
+  # Deliberately NOT moved to the self-hosted runner (whimbrel-mbp-runner):
+  # this job's test host is Whimbrel.app under its real bundle id
+  # (com.mpointer.kestrel), so on a dev's own Mac it shares that Mac's real
+  # UserDefaults/Application Support with the actual installed app. The M3.0
+  # Task 9 migration shim clears legacy connected-account keys on every
+  # host-app launch, so every CI run here would wipe the real connected
+  # Google/Microsoft account settings. Needs isolation (a separate macOS
+  # user account, or a distinct CI bundle id) before this can self-host.
+  swift-tests:
+    needs: changes
+    if: needs.changes.outputs.run_macos == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: Re-download sherpa-onnx libraries the cache left out
+        # sherpa-onnx-sys's build script downloads its static libraries into
+        # core/target/sherpa-onnx-prebuilt and reuses that folder whenever its lib directory
+        # exists, without checking the files. A restored cache can bring the folder back
+        # without the libraries, while the cached build-script output still points there. Anything that
+        # recompiles sherpa-onnx-sys (a Cargo.lock change) then fails with "could not find
+        # native static library sherpa-onnx-c-api". When the libraries are missing, drop the
+        # build script's cached output so it runs again and downloads them.
+        shell: bash
+        run: |
+          if ! ls core/target/sherpa-onnx-prebuilt/*/lib/*sherpa-onnx-c-api.* >/dev/null 2>&1; then
+            echo "No usable sherpa-onnx libraries in core/target; forcing the build script to download them"
+            rm -rf core/target/sherpa-onnx-prebuilt core/target/*/build/sherpa-onnx-sys-* core/target/*/.fingerprint/sherpa-onnx-sys-*
+          fi
+      - name: Install Google Calendar connector dependencies
+        working-directory: mcp-servers/google-calendar
+        run: npm ci --omit=dev
+      - name: Install Gmail connector dependencies
+        working-directory: mcp-servers/gmail
+        run: npm ci --omit=dev
+      - name: Install Outlook 365 connector dependencies
+        working-directory: mcp-servers/outlook365
+        run: npm ci --omit=dev
+      - name: Ensure embedding-model resource directory exists (empty is fine — tests don't need real weights)
+        run: mkdir -p core/memory/models
+      - name: Run UpdateCheckerTests and the meeting detector tests (no signing credentials required)
+        working-directory: apps/macos
+        run: xcodebuild test -project Whimbrel.xcodeproj -scheme Whimbrel -destination 'platform=macOS' -only-testing:WhimbrelTests/UpdateCheckerTests -only-testing:WhimbrelTests/MeetingEndDetectorTests -only-testing:WhimbrelTests/MeetingHeuristicDetectorTests -only-testing:WhimbrelTests/StreamHealthTests -only-testing:WhimbrelTests/AccessQueueWaitProbeTests -only-testing:WhimbrelTests/ReplyPrioritySettingsTests -only-testing:WhimbrelTests/KeychainAccessTests -only-testing:WhimbrelTests/ThemeLoaderTests -only-testing:WhimbrelTests/ThemeStoreTests -only-testing:WhimbrelTests/ColorTokenUsageTests -only-testing:WhimbrelTests/ThemeBundleTests -only-testing:WhimbrelTests/SkinLoaderTests -only-testing:WhimbrelTests/SkinStoreTests -only-testing:WhimbrelTests/SkinGalleryTests -only-testing:WhimbrelTests/SkinDesignSystemTests -only-testing:WhimbrelTests/TodayLogicTests -only-testing:WhimbrelTests/TodayChromeTests -only-testing:WhimbrelTests/ArchetypeTerminalTests -only-testing:WhimbrelTests/ArchetypeGlassTests -only-testing:WhimbrelTests/ArchetypeFieldTests -only-testing:WhimbrelTests/ArchetypeAlmanacTests -only-testing:WhimbrelTests/ArchetypeReferenceTests -only-testing:WhimbrelTests/SkinImageryTests -only-testing:WhimbrelTests/SkinMatrixTests -only-testing:WhimbrelTests/TodayRowsTests -only-testing:WhimbrelTests/ActiveMeetingViewTests -only-testing:WhimbrelTests/ProfileSettingsTests -only-testing:WhimbrelTests/ProfileSuggestionsModelTests -only-testing:WhimbrelTests/RoutineHostTests -only-testing:WhimbrelTests/RoutineSyncFieldsTests -only-testing:WhimbrelTests/MeetingTitleCheckSettingsTests -only-testing:WhimbrelTests/MeetingPrepSettingsTests -only-testing:WhimbrelTests/MeetingPrepDecodeTests -only-testing:WhimbrelTests/MeetingPageLogicTests -only-testing:WhimbrelTests/LiveTranscriptLogicTests -only-testing:WhimbrelTests/LiveAudioReaderTests -only-testing:WhimbrelTests/LiveTranscriptSettingsTests -only-testing:WhimbrelTests/UserSkinStoreTests -only-testing:WhimbrelTests/PaletteRepairTests -only-testing:WhimbrelTests/SkinChatSessionTests -only-testing:WhimbrelTests/SkinChatViewTests -only-testing:WhimbrelTests/SkinImageryPlacementTests -only-testing:WhimbrelTests/SkinPackageTests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""

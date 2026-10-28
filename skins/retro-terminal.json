@@ -1,0 +1,25 @@
+{
+  "id": "retro-terminal",
+  "name": "Retro Terminal",
+  "author": "Whimbrel",
+  "palettes": ["phosphor", "amber"],
+  "typography": { "display": "SF Mono/bold", "body": "SF Mono/regular", "numerals": "SF Mono/regular", "label": "SF Mono/semibold", "caps": "upper" },
+  "shape": { "radius": 0, "border": "solid", "borderWidth": 1, "density": "compact" },
+  "icons": { "today": "terminal", "meetings": "person.2", "routines": "bolt", "settings": "gearshape", "ask": "return", "person": "person", "time": "clock", "prep": "doc.text", "recap": "text.alignleft" },
+  "decoration": { "headerBand": "none", "dividers": "dotted", "texture": "none", "imagery": [] },
+  "voice": {
+    "greetingMorning": "good morning, {name}",
+    "greetingAfternoon": "good afternoon, {name}",
+    "greetingEvening": "good evening, {name}",
+    "upNextHeader": "Next",
+    "upcomingHeader": "Schedule",
+    "earlierHeader": "History",
+    "recapHeader": "Recap",
+    "emptyDay": "no meetings scheduled",
+    "emptyEarlier": "nothing logged yet",
+    "askPlaceholder": "ask about your meetings",
+    "tagline": "Your day, one prompt away."
+  },
+  "today": { "archetype": "terminal", "options": {} },
+  "motion": "subtle"
+}

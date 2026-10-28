@@ -1,0 +1,22 @@
+{
+  "name": "whimbrel-website",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "npm run build && vitest run",
+    "typecheck": "tsc --noEmit",
+    "dev": "npm run build && wrangler dev",
+    "db:migrate:local": "wrangler d1 migrations apply kestrel-leads --local",
+    "db:migrate": "wrangler d1 migrations apply kestrel-leads --remote",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.23.0",
+    "@cloudflare/workers-types": "^5.20260729.1",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.124.0"
+  }
+}

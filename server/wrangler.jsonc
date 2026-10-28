@@ -1,0 +1,28 @@
+{
+  "name": "kestrel-sync-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  // The sign-in allowlist, the Turso organization and group, and the Google OAuth
+  // client ids are deployment-specific and are not in this file. Set them on the
+  // Worker (dashboard, or `wrangler secret put`), see docs/self-hosting.md.
+  // keep_vars stops `wrangler deploy` from deleting them because they are absent here.
+  "keep_vars": true,
+  // The hosted relay answers on its custom domain as well as on its workers.dev
+  // hostname; apps built before the rename pin the latter, so both stay live.
+  // A self-hosted relay deletes this block or puts its own domain here (the zone
+  // must be on the same Cloudflare account).
+  // Wrangler turns the workers.dev route OFF by default once routes exist. Every
+  // shipped build still uses the workers.dev hostname, so it must stay on.
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "sync.whimbrelapp.com", "custom_domain": true }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "ENROLLMENT_HANDOFF",
+      // The hosted deployment's namespace. A self-hosted relay replaces this id with
+      // its own: `wrangler kv namespace create ENROLLMENT_HANDOFF`.
+      "id": "833f172d702b4fa4973162dd08659e4f"
+    }
+  ]
+}

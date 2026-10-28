@@ -1,0 +1,8 @@
+// Always-present base config referenced by project.yml's configFiles. The bundle id
+// default lives here (not in project.yml) so Secrets.xcconfig can override it.
+// "#include?" is optional: a fresh checkout without Secrets.xcconfig still builds,
+// with GOOGLE_IOS_CLIENT_ID empty (SyncConfig then throws at runtime).
+PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel.mobile
+// The deployed sync Worker (not a secret). "/$()/" because xcconfig treats "//" as a comment.
+SYNC_WORKER_BASE_URL = https:/$()/sync.whimbrelapp.com
+#include? "Secrets.xcconfig"

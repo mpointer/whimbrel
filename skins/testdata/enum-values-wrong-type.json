@@ -1,0 +1,81 @@
+{
+  "input": {
+    "id": "case",
+    "name": "Case",
+    "palettes": [
+      "default"
+    ],
+    "typography": {
+      "caps": 3
+    },
+    "shape": {
+      "border": [
+        "solid"
+      ],
+      "density": "roomy"
+    },
+    "motion": "wild"
+  },
+  "expected": {
+    "id": "case",
+    "name": "Case",
+    "author": "",
+    "palettes": [
+      "default"
+    ],
+    "typography": {
+      "display": "New York/semibold",
+      "body": "SF Pro/regular",
+      "numerals": "SF Pro/regular",
+      "label": "SF Pro/regular",
+      "caps": "upper"
+    },
+    "shape": {
+      "radius": 12,
+      "border": "solid",
+      "borderWidth": 1,
+      "density": "regular"
+    },
+    "icons": {
+      "today": "sun.max",
+      "meetings": "person.2",
+      "routines": "bolt",
+      "settings": "gearshape",
+      "ask": "arrow.up.circle.fill",
+      "person": "person",
+      "time": "clock",
+      "prep": "doc.text",
+      "recap": "text.alignleft"
+    },
+    "decoration": {
+      "headerBand": "none",
+      "dividers": "none",
+      "texture": "none",
+      "imagery": []
+    },
+    "voice": {
+      "greetingMorning": "Good morning, {name}",
+      "greetingAfternoon": "Good afternoon, {name}",
+      "greetingEvening": "Good evening, {name}",
+      "upNextHeader": "Up next",
+      "upcomingHeader": "Today",
+      "earlierHeader": "Earlier",
+      "recapHeader": "Daily recap",
+      "emptyDay": "No meetings yet",
+      "emptyEarlier": "Nothing yet today",
+      "askPlaceholder": "Ask Whimbrel about your meetings",
+      "tagline": "Your meetings, remembered."
+    },
+    "today": {
+      "archetype": "standard",
+      "options": {}
+    },
+    "motion": "none"
+  },
+  "repairs": [
+    "caps is not a known value, using upper",
+    "border is not a known value, using solid",
+    "density is not a known value, using regular",
+    "motion is not a known value, using none"
+  ]
+}

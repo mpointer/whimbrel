@@ -1,0 +1,136 @@
+<!--
+{
+  "title": "Pricing: Free and Open Source",
+  "description": "Whimbrel is free and open source: every feature, your own models, unlimited sync on your own relay. Planned paid plans cover servers we run for you.",
+  "schema": ["software"],
+  "priority": 0.8,
+  "crumbs": [{ "name": "Pricing", "path": "/pricing/" }],
+  "faq": [
+    { "q": "Is Whimbrel really free?", "a": "Yes. Every feature in the app is free and open source under the Apache 2.0 license: meeting capture, transcription, screen memory, search, chat, routines, connectors, the MCP server, and end-to-end encrypted sync. Nothing in the app is held back for a paid plan." },
+    { "q": "Do I need an AI API key?", "a": "You choose. Run models on your computer with Ollama for free, or bring your own Anthropic, OpenAI, or Google Gemini key and pay that provider directly. Whimbrel never resells AI usage: there is no hosted model, no token bundle, and no markup on your model bill, on any plan." },
+    { "q": "What does sync cost?", "a": "Nothing. Sync is end-to-end encrypted. On a relay you run yourself, it's unlimited. On the relay we host, a free account syncs one computer and one phone. Planned Cloud plans add unlimited devices on our relay." },
+    { "q": "What will the paid plans include?", "a": "Only things that need a server somebody runs, or a person on the other end: our hosted relay for any number of devices, with backups, push notifications to your phone, and, planned, routines that keep running while your laptop is closed. Team plans add shared meeting memory and one bill. Details and prices aren't final, and nothing is for sale yet." },
+    { "q": "Can I buy a plan today?", "a": "Not yet. Paid plans will only go on sale once billing exists and the plans are settled. Until then everything is free, and you won't be asked for a card." },
+    { "q": "Can my company get support or run its own servers?", "a": "Yes. The sync relay and update feed are open source and documented for self-hosting. If you want a person responsible for your deployment, <a href=\"mailto:{{site.salesEmail}}?subject=Whimbrel%20support\">talk to us</a> about a support contract." }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Pricing</p>
+    <h1>Free and open source. Pay only for servers we run for you.</h1>
+    <p class="lede">Whimbrel does its work on your computer with the AI models you choose, so the whole app is free. Planned paid plans cover what genuinely needs a server or a person: hosted sync with backups, push to your phone, and team features.</p>
+  </div>
+</section>
+
+<div class="container">
+  <div class="early-access-banner" role="note">
+    <strong>Nothing is for sale yet.</strong>
+    <span>Every feature is free today. Cloud and Team are planned; their features and prices will be announced when billing exists.</span>
+  </div>
+</div>
+
+<section class="pricing-section">
+  <div class="container">
+    <div class="pricing-grid">
+      <article class="card plan plan-featured">
+        <h2>Free</h2>
+        <p class="plan-for">Everything in the app, for everyone.</p>
+        <p class="price"><span class="amount">$0</span></p>
+        <p class="price-note">Open source, Apache 2.0</p>
+        <a class="btn btn-primary btn-block" href="/download/#register">Download free</a>
+        <ul class="plan-features">
+          <li>Unlimited meetings and history</li>
+          <li>Bot-free meeting notes, on-device transcription</li>
+          <li>Screen memory, search, chat with citations</li>
+          <li>Routines on your devices</li>
+          <li>Gmail, Google Calendar, Outlook 365</li>
+          <li>Local MCP server for your other AI tools</li>
+          <li>Local models (Ollama) or your own AI key</li>
+          <li>End-to-end encrypted sync: unlimited on your own relay, one computer and one phone on ours</li>
+        </ul>
+      </article>
+
+      <article class="card plan">
+        <p class="plan-badge">Planned</p>
+        <h2>Cloud</h2>
+        <p class="plan-for">For one person who wants us to run the server.</p>
+        <p class="price"><span class="amount amount-sm">Not yet priced</span></p>
+        <p class="price-note">Your models and keys, as on Free</p>
+        <a class="btn btn-ghost btn-block" href="/download/#register">Start free now</a>
+        <ul class="plan-features">
+          <li><strong>Everything in Free, plus:</strong></li>
+          <li>Our hosted relay for any number of devices</li>
+          <li>Daily backups and restore</li>
+          <li>Push notifications to your phone</li>
+          <li>Routines that keep running while your laptop is closed (under design)</li>
+        </ul>
+      </article>
+
+      <article class="card plan">
+        <p class="plan-badge">Planned</p>
+        <h2>Team</h2>
+        <p class="plan-for">For small teams that share meeting memory.</p>
+        <p class="price"><span class="amount amount-sm">Not yet priced</span></p>
+        <p class="price-note">Per seat, after Cloud</p>
+        <a class="btn btn-ghost btn-block" href="mailto:{{site.salesEmail}}?subject=Whimbrel%20for%20teams">Tell us about your team</a>
+        <ul class="plan-features">
+          <li><strong>Everything in Cloud, plus:</strong></li>
+          <li>Shared meeting memory, with consent from whoever captured each item</li>
+          <li>Routines that hand work to a teammate</li>
+          <li>One organization AI key for every seat</li>
+          <li>Admin basics and one bill</li>
+        </ul>
+      </article>
+
+      <article class="card plan">
+        <h2>Support</h2>
+        <p class="plan-for">For companies that run Whimbrel themselves.</p>
+        <p class="price"><span class="amount amount-sm">Contract</span></p>
+        <p class="price-note">Self-hosted relay, a person responsible</p>
+        <a class="btn btn-ghost btn-block" href="mailto:{{site.salesEmail}}?subject=Whimbrel%20support">Talk to us</a>
+        <ul class="plan-features">
+          <li>Help deploying the open-source relay and update feed in your own Cloudflare account</li>
+          <li>Onboarding for your team</li>
+          <li>Your company's own AI keys, or local-only models</li>
+          <li>Work data stays on employee devices and your own infrastructure</li>
+        </ul>
+      </article>
+    </div>
+    <p class="fine muted table-note center">Whimbrel never resells AI usage: no hosted model, no token bundles, no markup on your model bill. <a href="/open-source/">How the open-source model works</a>.</p>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="narrow">
+    <div class="section-head center">
+      <h2>How Whimbrel compares on price</h2>
+      <p class="lede">The plans people pay for in this category start at $14 to $17 a month, with the AI model bundled in. Whimbrel's app is free; you pay your model provider directly, or nothing with local models.</p>
+    </div>
+    <div class="table-wrap">
+      <table class="compare">
+        <caption class="sr-only">Free and entry paid plans for Whimbrel, Granola, and Littlebird</caption>
+        <thead><tr><th scope="col">Product</th><th scope="col">Free plan</th><th scope="col">Entry paid plan</th><th scope="col">Open source</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Whimbrel</th><td class="yes">Every feature, unlimited history</td><td>None needed; Cloud planned</td><td class="yes">Yes, Apache 2.0</td></tr>
+          <tr><th scope="row">Granola</th><td>30-day meeting history</td><td>Business, $14 per user/month</td><td class="no">No</td></tr>
+          <tr><th scope="row">Littlebird</th><td>Daily usage credits</td><td>Plus, $17/month billed annually</td><td class="no">No</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine muted table-note">Competitor prices from their public pricing pages, October 16, 2026. See the <a href="/compare/">full comparison</a>.</p>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="narrow">
+    <div class="section-head center">
+      <h2>Pricing questions</h2>
+    </div>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

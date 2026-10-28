@@ -1,0 +1,13 @@
+{
+  "name": "whimbrel-windows",
+  "version": "0.9.35",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Whimbrel for Windows: Tauri CLI entry point. The UI lives in ui/, the Rust shell in src-tauri/.",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

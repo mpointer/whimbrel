@@ -1,0 +1,6 @@
+node_modules/
+ui/dist/
+src-tauri/gen/schemas/
+# Build-time sync configuration: the Worker URL and the Google OAuth client
+# (plan Decision 6). Never committed; Secrets.toml.example documents the keys.
+src-tauri/Secrets.toml

@@ -1,0 +1,27 @@
+{
+  "name": "Whimbrel",
+  "url": "https://whimbrelapp.com",
+  "renameNote": "<p class=\"callout\">Kestrel is now called Whimbrel. Until the first Whimbrel release ships, the installer and the app still say Kestrel. It's the same app, and it updates itself to the new name.</p>",
+  "tagline": "The private AI assistant that remembers your work",
+  "description": "Whimbrel is a desktop AI assistant for Mac and Windows that records meetings without a bot, remembers what you worked on, and turns it into briefings, answers, and follow-ups.",
+  "ogImage": "/assets/og-image.png",
+  "sameAs": [],
+  "pricingNote": "Free and open source (Apache 2.0).",
+  "turnstileSiteKey": "",
+  "requirements": {
+    "mac": "macOS 14 Sonoma or later, Apple silicon (M1 or newer)",
+    "windows": "Windows 11, 64-bit (x64)"
+  },
+  "demoVideo": {
+    "title": "Whimbrel product tour",
+    "description": "A 48-second walkthrough of Whimbrel: a meeting captured without a bot, live notes, a cited answer from your own work history, and a meeting-prep routine.",
+    "mp4": "/media/whimbrel-tour.mp4",
+    "webm": "/media/whimbrel-tour.webm",
+    "poster": "/media/whimbrel-tour-poster.jpg",
+    "uploadDate": "2026-10-16",
+    "duration": "PT48S"
+  },
+  "contactEmail": "mike@futuremeanswered.com",
+  "salesEmail": "mike@futuremeanswered.com",
+  "indexNowKey": "13aef73a3f9e00f1e88b3a1c86092a5e"
+}

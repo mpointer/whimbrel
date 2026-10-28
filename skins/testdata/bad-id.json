@@ -1,0 +1,11 @@
+{
+  "input": {
+    "id": "Game Day",
+    "name": "Bad id",
+    "palettes": [
+      "default"
+    ]
+  },
+  "expected": null,
+  "repairs": []
+}

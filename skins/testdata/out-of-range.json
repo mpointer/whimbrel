@@ -1,0 +1,73 @@
+{
+  "input": {
+    "id": "out-of-range",
+    "name": "Out of range",
+    "palettes": [
+      "default"
+    ],
+    "shape": {
+      "radius": 99,
+      "borderWidth": -3
+    }
+  },
+  "expected": {
+    "id": "out-of-range",
+    "name": "Out of range",
+    "author": "",
+    "palettes": [
+      "default"
+    ],
+    "typography": {
+      "display": "New York/semibold",
+      "body": "SF Pro/regular",
+      "numerals": "SF Pro/regular",
+      "label": "SF Pro/regular",
+      "caps": "upper"
+    },
+    "shape": {
+      "radius": 24,
+      "border": "solid",
+      "borderWidth": 0,
+      "density": "regular"
+    },
+    "icons": {
+      "today": "sun.max",
+      "meetings": "person.2",
+      "routines": "bolt",
+      "settings": "gearshape",
+      "ask": "arrow.up.circle.fill",
+      "person": "person",
+      "time": "clock",
+      "prep": "doc.text",
+      "recap": "text.alignleft"
+    },
+    "decoration": {
+      "headerBand": "none",
+      "dividers": "none",
+      "texture": "none",
+      "imagery": []
+    },
+    "voice": {
+      "greetingMorning": "Good morning, {name}",
+      "greetingAfternoon": "Good afternoon, {name}",
+      "greetingEvening": "Good evening, {name}",
+      "upNextHeader": "Up next",
+      "upcomingHeader": "Today",
+      "earlierHeader": "Earlier",
+      "recapHeader": "Daily recap",
+      "emptyDay": "No meetings yet",
+      "emptyEarlier": "Nothing yet today",
+      "askPlaceholder": "Ask Whimbrel about your meetings",
+      "tagline": "Your meetings, remembered."
+    },
+    "today": {
+      "archetype": "standard",
+      "options": {}
+    },
+    "motion": "none"
+  },
+  "repairs": [
+    "radius 99.0 is outside 0.0...24.0, clamped to 24.0",
+    "borderWidth -3.0 is outside 0.0...4.0, clamped to 0.0"
+  ]
+}

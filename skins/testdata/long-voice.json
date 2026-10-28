@@ -1,0 +1,74 @@
+{
+  "input": {
+    "id": "long-voice",
+    "name": "Long voice",
+    "palettes": [
+      "default"
+    ],
+    "voice": {
+      "upNextHeader": "This header is far too long to fit",
+      "greetingMorning": "Hello, {name}",
+      "tagline": ""
+    }
+  },
+  "expected": {
+    "id": "long-voice",
+    "name": "Long voice",
+    "author": "",
+    "palettes": [
+      "default"
+    ],
+    "typography": {
+      "display": "New York/semibold",
+      "body": "SF Pro/regular",
+      "numerals": "SF Pro/regular",
+      "label": "SF Pro/regular",
+      "caps": "upper"
+    },
+    "shape": {
+      "radius": 12,
+      "border": "solid",
+      "borderWidth": 1,
+      "density": "regular"
+    },
+    "icons": {
+      "today": "sun.max",
+      "meetings": "person.2",
+      "routines": "bolt",
+      "settings": "gearshape",
+      "ask": "arrow.up.circle.fill",
+      "person": "person",
+      "time": "clock",
+      "prep": "doc.text",
+      "recap": "text.alignleft"
+    },
+    "decoration": {
+      "headerBand": "none",
+      "dividers": "none",
+      "texture": "none",
+      "imagery": []
+    },
+    "voice": {
+      "greetingMorning": "Hello, {name}",
+      "greetingAfternoon": "Good afternoon, {name}",
+      "greetingEvening": "Good evening, {name}",
+      "upNextHeader": "Up next",
+      "upcomingHeader": "Today",
+      "earlierHeader": "Earlier",
+      "recapHeader": "Daily recap",
+      "emptyDay": "No meetings yet",
+      "emptyEarlier": "Nothing yet today",
+      "askPlaceholder": "Ask Whimbrel about your meetings",
+      "tagline": "Your meetings, remembered."
+    },
+    "today": {
+      "archetype": "standard",
+      "options": {}
+    },
+    "motion": "none"
+  },
+  "repairs": [
+    "voice upNextHeader is empty, not text or over 24 characters, using the Whimbrel wording",
+    "voice tagline is empty, not text or over 60 characters, using the Whimbrel wording"
+  ]
+}

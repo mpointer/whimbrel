@@ -1,0 +1,280 @@
+{
+  "archetypes": [
+    "standard",
+    "terminal",
+    "glass",
+    "field",
+    "almanac",
+    "reference"
+  ],
+  "decoration": {
+    "dividers": [
+      "none",
+      "hairline",
+      "chalk",
+      "double",
+      "dotted"
+    ],
+    "headerBand": [
+      "none",
+      "rule",
+      "block",
+      "stripes-diagonal"
+    ],
+    "imageryPlacement": [
+      "header",
+      "background",
+      "badge"
+    ],
+    "texture": [
+      "none",
+      "paper",
+      "grain",
+      "grid"
+    ]
+  },
+  "fonts": {
+    "families": [
+      "SF Pro",
+      "SF Pro Rounded",
+      "SF Mono",
+      "New York",
+      "Georgia",
+      "Courier New",
+      "Menlo",
+      "Helvetica Neue",
+      "Avenir Next"
+    ],
+    "format": "\"Family\", \"Family/weight\" or \"Family/weight/italic\"",
+    "weights": [
+      "black",
+      "bold",
+      "heavy",
+      "light",
+      "medium",
+      "regular",
+      "semibold",
+      "thin",
+      "ultraLight"
+    ]
+  },
+  "icons": {
+    "roles": [
+      "today",
+      "meetings",
+      "routines",
+      "settings",
+      "ask",
+      "person",
+      "time",
+      "prep",
+      "recap"
+    ],
+    "rule": "a name must be one of these; any role may use any listed name",
+    "values": {
+      "ask": [
+        "arrow.up.circle.fill",
+        "arrow.up",
+        "pencil",
+        "magnifyingglass",
+        "return",
+        "paperplane",
+        "text.bubble",
+        "questionmark.circle",
+        "keyboard",
+        "square.and.pencil",
+        "chevron.right"
+      ],
+      "meetings": [
+        "person.2",
+        "person.3",
+        "video",
+        "phone",
+        "bubble.left",
+        "mic",
+        "headphones",
+        "link"
+      ],
+      "person": [
+        "person",
+        "person.crop.circle",
+        "person.badge.plus",
+        "envelope",
+        "briefcase",
+        "face.smiling",
+        "tag",
+        "graduationcap"
+      ],
+      "prep": [
+        "doc.text",
+        "doc",
+        "list.bullet",
+        "list.bullet.rectangle",
+        "checklist",
+        "folder",
+        "paperclip",
+        "pin"
+      ],
+      "recap": [
+        "text.alignleft",
+        "text.alignright",
+        "text.aligncenter",
+        "list.number",
+        "bubble.left.and.bubble.right",
+        "chart.bar",
+        "checkmark.circle"
+      ],
+      "routines": [
+        "bolt",
+        "repeat",
+        "arrow.triangle.2.circlepath",
+        "clock.arrow.circlepath",
+        "play",
+        "pause",
+        "arrow.right"
+      ],
+      "settings": [
+        "gearshape",
+        "slider.horizontal.3",
+        "wrench",
+        "lock",
+        "paintbrush",
+        "paintpalette",
+        "info.circle",
+        "power"
+      ],
+      "time": [
+        "clock",
+        "stopwatch",
+        "calendar.day",
+        "calendar.week",
+        "history",
+        "calendar.badge.clock",
+        "clock.circle",
+        "gauge",
+        "arrow.clockwise"
+      ],
+      "today": [
+        "sun.max",
+        "book.closed",
+        "book",
+        "sportscourt",
+        "sparkles",
+        "terminal",
+        "calendar",
+        "house",
+        "moon",
+        "star",
+        "globe",
+        "heart"
+      ]
+    }
+  },
+  "manifest": {
+    "imagery": "only images already in the current manifest; new images are added by the user approving them",
+    "shape": "{\"id\",\"name\",\"palettes\":[palette ids],\"typography\":{\"display\",\"body\",\"numerals\",\"label\",\"caps\"},\"shape\":{\"radius\",\"border\",\"borderWidth\",\"density\"},\"icons\":{role: SF Symbol name},\"decoration\":{\"headerBand\",\"dividers\",\"texture\",\"imagery\":[{\"asset\",\"placement\",\"textFree\"}]},\"voice\":{key: text},\"today\":{\"archetype\",\"options\":{}},\"motion\"}"
+  },
+  "motion": [
+    "none",
+    "subtle"
+  ],
+  "palette": {
+    "colour": "#rrggbb only",
+    "contrast": {
+      "minimum": 4.5,
+      "pairs": [
+        "textPrimary on backgroundPage",
+        "textPrimary on backgroundCard",
+        "textSecondary on backgroundPage",
+        "textSecondary on backgroundCard",
+        "textPrimary on selection",
+        "textPrimary on highlight",
+        "textOnAccent on accentPrimary"
+      ]
+    },
+    "shape": "{\"id\",\"name\",\"light\":{token:\"#rrggbb\"},\"dark\":{token:\"#rrggbb\"}}; light, dark or both",
+    "tokens": [
+      "backgroundPage",
+      "backgroundCard",
+      "border",
+      "textPrimary",
+      "textSecondary",
+      "accentPrimary",
+      "accentSecondary",
+      "accentHighlight",
+      "error",
+      "warning",
+      "success",
+      "link",
+      "selection",
+      "highlight",
+      "textOnAccent"
+    ]
+  },
+  "shape": {
+    "border": [
+      "none",
+      "solid",
+      "dashed",
+      "double"
+    ],
+    "borderWidth": {
+      "max": 4,
+      "min": 0
+    },
+    "density": [
+      "compact",
+      "regular",
+      "airy"
+    ],
+    "radius": {
+      "max": 24,
+      "min": 0
+    }
+  },
+  "typography": {
+    "caps": [
+      "none",
+      "upper",
+      "small"
+    ]
+  },
+  "voice": {
+    "keys": {
+      "askPlaceholder": {
+        "limit": 40
+      },
+      "earlierHeader": {
+        "limit": 24
+      },
+      "emptyDay": {
+        "limit": 80
+      },
+      "emptyEarlier": {
+        "limit": 80
+      },
+      "greetingAfternoon": {
+        "limit": 48
+      },
+      "greetingEvening": {
+        "limit": 48
+      },
+      "greetingMorning": {
+        "limit": 48
+      },
+      "recapHeader": {
+        "limit": 24
+      },
+      "tagline": {
+        "limit": 60
+      },
+      "upNextHeader": {
+        "limit": 24
+      },
+      "upcomingHeader": {
+        "limit": 24
+      }
+    },
+    "name": "greetings may use the literal {name}; the limit counts it as 30 characters"
+  }
+}

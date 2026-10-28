@@ -1,0 +1,24 @@
+[package]
+name = "llm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono = "0.4"
+memory = { path = "../memory" }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+base64 = "0.22"
+# Streaming inference (core/llm/src/streaming.rs, docs/adr/0002) — additive alongside
+# the existing blocking ureq-based LlmClient, which stays exactly as-is.
+async-stream = "0.3"
+async-trait = "0.1"
+bytes = "1"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-native-roots"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }

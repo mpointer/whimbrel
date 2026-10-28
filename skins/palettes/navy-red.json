@@ -1,0 +1,39 @@
+{
+  "id": "navy-red",
+  "name": "Navy and red",
+  "author": "Whimbrel",
+  "light": {
+    "backgroundPage": "#F3F5FA",
+    "backgroundCard": "#FFFFFF",
+    "border": "#AEB9D0",
+    "textPrimary": "#0B1B3A",
+    "textSecondary": "#42526E",
+    "accentPrimary": "#C8102E",
+    "accentSecondary": "#1F3A6E",
+    "accentHighlight": "#D99A00",
+    "error": "#B3261E",
+    "warning": "#8A5A00",
+    "success": "#2E7D32",
+    "link": "#1F4E9E",
+    "selection": "#DDE4F1",
+    "highlight": "#F8E6A8",
+    "textOnAccent": "#FFFFFF"
+  },
+  "dark": {
+    "backgroundPage": "#08122A",
+    "backgroundCard": "#11203F",
+    "border": "#3C5282",
+    "textPrimary": "#F2F5FB",
+    "textSecondary": "#B1BED6",
+    "accentPrimary": "#F0475D",
+    "accentSecondary": "#7F9AD6",
+    "accentHighlight": "#F2C14E",
+    "error": "#FF8A8A",
+    "warning": "#F2B84B",
+    "success": "#6FCF86",
+    "link": "#8FB3F0",
+    "selection": "#1C2E54",
+    "highlight": "#4A3B14",
+    "textOnAccent": "#10131C"
+  }
+}

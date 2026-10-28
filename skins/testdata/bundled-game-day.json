@@ -1,0 +1,123 @@
+{
+  "input": {
+    "id": "game-day",
+    "name": "Game Day",
+    "author": "Whimbrel",
+    "palettes": [
+      "navy-red",
+      "black-gold",
+      "green-white",
+      "purple-gold",
+      "orange-blue"
+    ],
+    "typography": {
+      "display": "Avenir Next/heavy",
+      "body": "Avenir Next/regular",
+      "numerals": "Helvetica Neue/bold",
+      "label": "Avenir Next/semibold",
+      "caps": "upper"
+    },
+    "shape": {
+      "radius": 10,
+      "border": "solid",
+      "borderWidth": 2,
+      "density": "regular"
+    },
+    "icons": {
+      "today": "sportscourt",
+      "meetings": "person.2",
+      "routines": "bolt",
+      "settings": "gearshape",
+      "ask": "arrow.up",
+      "person": "person",
+      "time": "stopwatch",
+      "prep": "doc.text",
+      "recap": "text.alignleft"
+    },
+    "decoration": {
+      "headerBand": "stripes-diagonal",
+      "dividers": "chalk",
+      "texture": "none",
+      "imagery": []
+    },
+    "voice": {
+      "greetingMorning": "Game day, {name}.",
+      "greetingAfternoon": "Second half, {name}.",
+      "greetingEvening": "Full time, {name}.",
+      "upNextHeader": "Next up",
+      "upcomingHeader": "Fixtures",
+      "earlierHeader": "Results",
+      "recapHeader": "Match report",
+      "emptyDay": "Rest day",
+      "emptyEarlier": "No results yet",
+      "askPlaceholder": "Ask the coach…",
+      "tagline": "Every day is a match."
+    },
+    "today": {
+      "archetype": "field",
+      "options": {}
+    },
+    "motion": "none"
+  },
+  "expected": {
+    "id": "game-day",
+    "name": "Game Day",
+    "author": "Whimbrel",
+    "palettes": [
+      "navy-red",
+      "black-gold",
+      "green-white",
+      "purple-gold",
+      "orange-blue"
+    ],
+    "typography": {
+      "display": "Avenir Next/heavy",
+      "body": "Avenir Next/regular",
+      "numerals": "Helvetica Neue/bold",
+      "label": "Avenir Next/semibold",
+      "caps": "upper"
+    },
+    "shape": {
+      "radius": 10,
+      "border": "solid",
+      "borderWidth": 2,
+      "density": "regular"
+    },
+    "icons": {
+      "today": "sportscourt",
+      "meetings": "person.2",
+      "routines": "bolt",
+      "settings": "gearshape",
+      "ask": "arrow.up",
+      "person": "person",
+      "time": "stopwatch",
+      "prep": "doc.text",
+      "recap": "text.alignleft"
+    },
+    "decoration": {
+      "headerBand": "stripes-diagonal",
+      "dividers": "chalk",
+      "texture": "none",
+      "imagery": []
+    },
+    "voice": {
+      "greetingMorning": "Game day, {name}.",
+      "greetingAfternoon": "Second half, {name}.",
+      "greetingEvening": "Full time, {name}.",
+      "upNextHeader": "Next up",
+      "upcomingHeader": "Fixtures",
+      "earlierHeader": "Results",
+      "recapHeader": "Match report",
+      "emptyDay": "Rest day",
+      "emptyEarlier": "No results yet",
+      "askPlaceholder": "Ask the coach…",
+      "tagline": "Every day is a match."
+    },
+    "today": {
+      "archetype": "field",
+      "options": {}
+    },
+    "motion": "none"
+  },
+  "repairs": []
+}

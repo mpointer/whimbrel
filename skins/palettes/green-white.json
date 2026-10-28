@@ -1,0 +1,39 @@
+{
+  "id": "green-white",
+  "name": "Green and white",
+  "author": "Whimbrel",
+  "light": {
+    "backgroundPage": "#F2F7F3",
+    "backgroundCard": "#FFFFFF",
+    "border": "#A9C4B0",
+    "textPrimary": "#0C2A17",
+    "textSecondary": "#40594A",
+    "accentPrimary": "#1B6B3A",
+    "accentSecondary": "#2F4F3A",
+    "accentHighlight": "#C99A06",
+    "error": "#B3261E",
+    "warning": "#8A5A00",
+    "success": "#1B6B3A",
+    "link": "#1F4E9E",
+    "selection": "#DCEADF",
+    "highlight": "#F6EBB0",
+    "textOnAccent": "#FFFFFF"
+  },
+  "dark": {
+    "backgroundPage": "#08150D",
+    "backgroundCard": "#102319",
+    "border": "#2F5A40",
+    "textPrimary": "#F3F9F4",
+    "textSecondary": "#B3CCB9",
+    "accentPrimary": "#4CC47B",
+    "accentSecondary": "#9FD8B2",
+    "accentHighlight": "#F2C14E",
+    "error": "#FF8A8A",
+    "warning": "#F2B84B",
+    "success": "#6FCF86",
+    "link": "#8FB3F0",
+    "selection": "#1A3526",
+    "highlight": "#4A3B14",
+    "textOnAccent": "#06150B"
+  }
+}

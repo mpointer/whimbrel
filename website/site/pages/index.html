@@ -1,0 +1,195 @@
+<!--
+{
+  "title": "Whimbrel – AI Meeting Notes & Work Memory for Mac and Windows",
+  "description": "Whimbrel records meetings without a bot, remembers what you worked on, and answers questions about it. Private desktop AI for Mac and Windows. Free to try.",
+  "schema": ["organization", "website", "software", "video"],
+  "priority": 1.0,
+  "faq": [
+    { "q": "Is Whimbrel the app that used to be called Kestrel?", "a": "Yes. Kestrel was renamed Whimbrel in October 2026. Installed copies update themselves to the new name, and your meetings, notes, settings and sync stay exactly as they are." },
+    { "q": "Does a bot join my meetings?", "a": "No. Whimbrel records system audio and your microphone directly on your computer, so nothing joins the call and other participants see no extra attendee. It works with Zoom, Microsoft Teams, Google Meet, Slack huddles, and in-person conversations." },
+    { "q": "Where is my data stored?", "a": "On your own computer, in a local database. If you turn on sync between your devices, the data is end-to-end encrypted before it leaves the machine, so the sync service only ever stores ciphertext. See the <a href=\"/privacy/\">privacy page</a> for what the website itself collects." },
+    { "q": "Which AI models does Whimbrel use?", "a": "Your choice. Run models fully on your machine with Ollama, or bring your own API key for Anthropic, OpenAI, or Google Gemini. Routing lets you keep sensitive work on a local model while using a hosted model for everything else." },
+    { "q": "Does Whimbrel take screenshots of my screen?", "a": "No. Screen memory reads the text of the window you are working in through the operating system's accessibility interfaces, which is lighter and more private than storing images. You can exclude any app from capture." },
+    { "q": "Is Whimbrel free?", "a": "Yes, and open source under the Apache 2.0 license. Every feature in the app is free, with local models or your own AI key. Planned paid plans only cover servers we run for you, such as hosted sync for any number of devices; see <a href=\"/pricing/\">pricing</a> and <a href=\"/open-source/\">open source</a>." },
+    { "q": "Which computers are supported?", "a": "Macs with Apple silicon (M1 or newer) running macOS 14 Sonoma or later, and 64-bit PCs running Windows 11. Intel Macs are not supported." },
+    { "q": "Is it legal to record my meetings?", "a": "Recording-consent laws differ by country and state, and some require every participant to agree. Whimbrel shows when it is recording, but you are responsible for telling participants and getting consent where the law requires it." }
+  ]
+}
+-->
+<section class="hero">
+  <div class="container hero-grid">
+    <div>
+      <p class="eyebrow">Desktop AI assistant for Mac &amp; Windows</p>
+      <h1>The AI assistant that <em>remembers your work.</em></h1>
+      <p class="lede">Whimbrel records your meetings without a bot, keeps a private, searchable memory of what you worked on, and turns it into briefings, answers, and follow-ups.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="/download/?platform=mac#register" data-platform-link="mac">Download for Mac</a>
+        <a class="btn btn-ghost btn-lg" href="/download/?platform=windows#register" data-platform-link="windows">Download for Windows</a>
+      </div>
+      <ul class="hero-meta">
+        <li>Free and open source</li>
+        <li>No meeting bot</li>
+        <li>Runs local models</li>
+      </ul>
+    </div>
+    {{> app-mock}}
+  </div>
+</section>
+
+<div class="container">
+  <div class="pillars">
+    <div><strong>Bot-free capture</strong><span>Zoom, Teams, Meet, Slack huddles, and in-person.</span></div>
+    <div><strong>Text, not screenshots</strong><span>A memory of your work that stays light and searchable.</span></div>
+    <div><strong>Local first</strong><span>Your data lives on your machine. Sync is end-to-end encrypted.</span></div>
+    <div><strong>Any model</strong><span>Ollama on-device, or your own Anthropic, OpenAI, or Gemini key.</span></div>
+  </div>
+</div>
+
+<section id="features">
+  <div class="container">
+    <div class="section-head">
+      <p class="eyebrow">Features</p>
+      <h2>One assistant that sees the whole picture of your work.</h2>
+      <p class="lede">Meeting tools only hear your calls. Search tools only see your files. Whimbrel captures both, and everything it does downstream gets better because of it.</p>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
+        <h3>Meeting notes without a bot</h3>
+        <p>Recording starts from your calendar or when Whimbrel hears a call begin. You get a transcript with speakers, notes blended with your own, and decisions and action items when the meeting ends.</p>
+        <a class="more" href="/features/meeting-notes/">How meeting capture works →</a>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M7 9h6M7 12h10"/></svg></div>
+        <h3>Screen memory, as text</h3>
+        <p>Whimbrel reads the text of the window you are working in and builds a timeline of everything you saw and wrote. Find that number, that thread, that doc, without remembering where it was.</p>
+        <a class="more" href="/features/screen-memory/">How screen memory works →</a>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/><path d="M8.5 10.5h7M8.5 13.5h4"/></svg></div>
+        <h3>Ask your work history</h3>
+        <p>"What did we decide about pricing with Acme?" Chat answers from your own meetings, screen history, and email, and cites the moment each answer came from.</p>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <h3>Routines that brief you</h3>
+        <p>Scheduled routines prepare you before each meeting, recap your day at the end of it, protect focus time on your calendar, and summarize your week.</p>
+        <a class="more" href="/features/routines/">See routines →</a>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H6a3 3 0 0 0 0 6h3M15 7h3a3 3 0 0 1 0 6h-3M8 10h8"/><path d="M12 17v4"/></svg></div>
+        <h3>Connected to your tools</h3>
+        <p>Gmail, Google Calendar, and Outlook 365 connect in a click. Whimbrel is built on the Model Context Protocol (MCP), and other AI tools can query your Whimbrel memory through its local MCP server.</p>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="13" height="10" rx="1.5"/><rect x="17" y="8" width="5" height="11" rx="1"/><path d="M6 19h6"/></svg></div>
+        <h3>One timeline, every device</h3>
+        <p>Use Whimbrel on your work laptop and your desktop, Mac or Windows. Each device adds to one end-to-end encrypted timeline, labelled with where it happened.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt" id="how-it-works">
+  <div class="container">
+    <div class="section-head center">
+      <p class="eyebrow">How it works</p>
+      <h2>Install it once. Then just work.</h2>
+    </div>
+    <ol class="steps">
+      <li><h3>Install and grant access</h3><p>A guided setup walks you through each permission Whimbrel needs, such as microphone and screen text, and explains why.</p></li>
+      <li><h3>Work the way you do now</h3><p>Whimbrel captures meetings and screen text in the background. Pause it from the menu bar or tray whenever you like.</p></li>
+      <li><h3>Ask, brief, follow up</h3><p>Search your history, ask questions with citations, and let routines draft the recap and the follow-up email.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section id="demo">
+  <div class="container">
+    <div class="section-head center">
+      <p class="eyebrow">Product tour</p>
+      <h2>See Whimbrel in under a minute.</h2>
+    </div>
+    <div class="narrow video-wrap">
+      {{> demo-video}}
+    </div>
+  </div>
+</section>
+
+<section class="ink" id="privacy">
+  <div class="container split">
+    <div>
+      <p class="eyebrow">Privacy by architecture</p>
+      <h2>Your memory belongs on your machine.</h2>
+      <p>An assistant that remembers everything has to be one you can trust with everything. Whimbrel is built so that trust does not depend on a promise.</p>
+    </div>
+    <ul class="checklist">
+      <li><strong>Stored locally</strong>Meetings, transcripts, and screen history live in a database on your own computer.</li>
+      <li><strong>End-to-end encrypted sync</strong>Device keys never leave your devices. The sync service stores only ciphertext.</li>
+      <li><strong>You choose where AI runs</strong>Keep everything on-device with Ollama, or route chosen work to the hosted model you pick.</li>
+      <li><strong>Exclusions and retention</strong>Exclude apps from capture and set how long history is kept.</li>
+      <li><strong>Open source</strong>Apache 2.0, with no telemetry. <a href="/open-source/">Read how it works</a>, or run your own sync relay.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="platforms">
+  <div class="container">
+    <div class="section-head center">
+      <p class="eyebrow">Download</p>
+      <h2>Available for Mac and Windows.</h2>
+    </div>
+    <div class="platforms">
+      <article class="card platform">
+        <h3>Whimbrel for Mac</h3>
+        <span class="version" data-version="mac"></span>
+        <dl>
+          <dt>Requires</dt><dd>{{site.requirements.mac}}</dd>
+          <dt>Install</dt><dd>Signed and notarized by Apple</dd>
+          <dt>Updates</dt><dd>Automatic, in the background</dd>
+        </dl>
+        <a class="btn btn-primary" href="/download/?platform=mac#register">Download for Mac</a>
+        <a class="btn btn-ghost" href="/download/mac/">Details</a>
+      </article>
+      <article class="card platform">
+        <h3>Whimbrel for Windows <span class="tag">Early access</span></h3>
+        <span class="version" data-version="windows"></span>
+        <dl>
+          <dt>Requires</dt><dd>{{site.requirements.windows}}</dd>
+          <dt>Install</dt><dd>Per-user installer, no admin rights needed</dd>
+          <dt>Updates</dt><dd>Automatic, signature-verified</dd>
+        </dl>
+        <a class="btn btn-primary" href="/download/?platform=windows#register">Download for Windows</a>
+        <a class="btn btn-ghost" href="/download/windows/">Details</a>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt" id="register">
+  <div class="container register-grid">
+    <div>
+      <p class="eyebrow">Get early access</p>
+      <h2>Register to download Whimbrel.</h2>
+      <p class="lede">Tell us a little about yourself and your download starts right away. Early-access users get a direct line to the team building it.</p>
+      <ul class="trust-list">
+        <li>Free and open source</li>
+        <li>No credit card</li>
+        <li>We never sell or share your details</li>
+      </ul>
+    </div>
+    {{> register-form}}
+  </div>
+</section>
+
+<section id="faq">
+  <div class="narrow">
+    <div class="section-head center">
+      <p class="eyebrow">FAQ</p>
+      <h2>Questions, answered.</h2>
+    </div>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>

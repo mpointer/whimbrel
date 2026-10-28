@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Whimbrel</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Whimbrel records microphone audio during meetings you choose to capture, entirely on this Mac.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Whimbrel reads events with a conferencing link or other attendees so it can prompt you to record a meeting shortly before it starts.</string>
+	<key>GoogleOAuthClientID</key>
+	<string>$(GOOGLE_OAUTH_CLIENT_ID)</string>
+	<key>GoogleOAuthClientSecret</key>
+	<string>$(GOOGLE_OAUTH_CLIENT_SECRET)</string>
+	<key>MicrosoftOAuthClientID</key>
+	<string>$(MICROSOFT_OAUTH_CLIENT_ID)</string>
+	<key>SyncWorkerBaseURL</key>
+	<string>$(SYNC_WORKER_BASE_URL)</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.mpointer.kestrel.skin</string>
+			<key>UTTypeDescription</key>
+			<string>Whimbrel Skin</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.zip-archive</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>whimbrelskin</string>
+					<string>kestrelskin</string><!-- exported before the rename -->
+				</array>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>

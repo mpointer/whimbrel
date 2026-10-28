@@ -1,0 +1,39 @@
+{
+  "id": "parchment",
+  "name": "Parchment",
+  "author": "Whimbrel",
+  "light": {
+    "backgroundPage": "#F3E9D2",
+    "backgroundCard": "#FAF3E3",
+    "border": "#8B6B3E",
+    "textPrimary": "#2B1E10",
+    "textSecondary": "#5C4630",
+    "accentPrimary": "#7A2E1D",
+    "accentSecondary": "#3F5B45",
+    "accentHighlight": "#9A6B00",
+    "error": "#A12B1F",
+    "warning": "#7A5200",
+    "success": "#2F6B3A",
+    "link": "#22507A",
+    "selection": "#E6D6B0",
+    "highlight": "#F2DC8E",
+    "textOnAccent": "#FAF3E3"
+  },
+  "dark": {
+    "backgroundPage": "#1E1710",
+    "backgroundCard": "#2A2118",
+    "border": "#8A7048",
+    "textPrimary": "#F0E4CB",
+    "textSecondary": "#C9B48F",
+    "accentPrimary": "#E0A27E",
+    "accentSecondary": "#9DBB9F",
+    "accentHighlight": "#E0B84C",
+    "error": "#FF8F80",
+    "warning": "#E8B04B",
+    "success": "#8CC99A",
+    "link": "#8DB8E0",
+    "selection": "#3A2E20",
+    "highlight": "#5A4818",
+    "textOnAccent": "#1E1710"
+  }
+}

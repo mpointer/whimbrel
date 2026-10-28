@@ -1,0 +1,53 @@
+[package]
+name = "ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "whimbrel_core"
+# Static-only, deliberately no "cdylib": apps/macos links this as a static archive,
+# fully embedded into the one Swift binary at link time — no runtime dylib loading,
+# so no Hardened Runtime Library Validation / code-signing Team ID mismatch to worry
+# about. A cdylib alongside the staticlib previously caused exactly that crash: `ld`
+# prefers a .dylib over a .a with the same name when both exist in the search path, so
+# -lwhimbrel_core was silently linking dynamically against an unsigned/wrongly-signed
+# Rust-built dylib instead of statically as intended.
+crate-type = ["staticlib", "lib"]
+
+[features]
+# On by default (Mac/Windows). Mobile targets build with --no-default-features:
+# sherpa-onnx-sys has no prebuilt ONNX Runtime for iOS/Android.
+default = ["diarize"]
+diarize = ["dep:diarize"]
+
+[dependencies]
+# Typed orchestration layer this crate is a C-ABI adapter over (M3.0,
+# docs/superpowers/plans/2026-09-07-core-api-split.md).
+api = { path = "../api" }
+ingest = { path = "../ingest" }
+memory = { path = "../memory" }
+# transcribe pulls in whisper-rs-sys, which needs CMake to build whisper.cpp — now a
+# real build prerequisite for apps/macos (which builds this crate automatically via a
+# prebuild script phase), justified by FR-MTG-4 actually being wired up below.
+transcribe = { path = "../transcribe" }
+# diarize pulls in sherpa-onnx-sys, which downloads a prebuilt ONNX Runtime static
+# library archive at build time (no CMake, unlike whisper-rs-sys above) — see
+# core/diarize/README.md for the model files this needs at runtime.
+diarize = { path = "../diarize", optional = true }
+llm = { path = "../llm" }
+agent = { path = "../agent" }
+mcp-host = { path = "../mcp-host" }
+routines = { path = "../routines" }
+sync = { path = "../sync" }
+sync-engine = { path = "../sync-engine" }
+serde = "1"
+serde_json = "1"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"
+# Same version as core/memory; tests read usage_log rows by route.
+rusqlite = "0.32"
+chrono = "0.4"

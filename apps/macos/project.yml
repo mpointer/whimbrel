@@ -1,0 +1,236 @@
+name: Whimbrel
+options:
+  bundleIdPrefix: com.mpointer
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: GP8PFLM3Q3
+    ENABLE_HARDENED_RUNTIME: YES
+    ENABLE_APP_SANDBOX: NO
+    COMBINE_HIDPI_IMAGES: YES
+    # arm64-only: core/ffi's Rust static lib is only built for the host arch (Cargo's
+    # default, no cross-compilation set up), which is fine for Debug (Xcode only builds
+    # the active arch there) but breaks Release/Archive, which otherwise defaults to a
+    # universal arm64+x86_64 binary and fails to link the x86_64 slice against an
+    # arm64-only .a. Personal/small-group use on Apple Silicon Macs — no need for Intel
+    # support, so this is simpler than teaching the build script to cross-compile and
+    # lipo two Rust builds together.
+    ARCHS: arm64
+targets:
+  Whimbrel:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Whimbrel
+      - path: ../../mcp-servers/google-calendar/dist
+        type: folder
+        buildPhase: resources
+      - path: ../../mcp-servers/google-calendar/node_modules
+        type: folder
+        buildPhase: resources
+      # Shared theme files (themes/*.json); ThemeStore.bundledThemesDirectory reads them.
+      - path: ../../themes
+        type: folder
+        buildPhase: resources
+      # Skins (skins/*.json) and their palettes (skins/palettes/*.json); SkinStore.bundledSkinsDirectory
+      # reads them. skins/invalid/ comes along but is harmless: SkinLoader.loadDirectory is not recursive.
+      - path: ../../skins
+        type: folder
+        buildPhase: resources
+      # Gmail connector (Task 8): a plain `type: folder` + `buildPhase:
+      # resources` entry (like Calendar's two entries just above) would land
+      # at Contents/Resources/dist and Contents/Resources/node_modules --
+      # XcodeGen folder-reference resources are always named after the
+      # source folder's own basename, not its full relative path -- which
+      # collides with Calendar's identically-named dist/node_modules at that
+      # same destination and would silently overwrite one or the other.
+      # Confirmed against XcodeGen's own ProjectSpec.md (Target Source ->
+      # buildPhase -> copyFiles): a source can instead be routed through an
+      # explicit Xcode "Copy Files" build phase with `destination: resources`
+      # and a `subpath`, which controls the destination directory
+      # independent of the source folder's basename -- still copied as a
+      # single folder reference (type: folder), just via a distinct build
+      # phase from the default Copy Bundle Resources one Calendar's entries
+      # use. NOTE (verified empirically via a real `xcodegen generate` +
+      # `xcodebuild` build, then inspecting the built .app): a Copy Files
+      # phase nests the folder one level deeper under its own source
+      # basename, so a `subpath: gmail` entry lands at
+      # Contents/Resources/gmail/<source basename>/.
+      #
+      # BOTH entries deliberately share the SAME subpath (`gmail`). Because
+      # their source basenames differ (dist vs node_modules), they land as
+      # siblings -- Contents/Resources/gmail/dist/index.js and
+      # Contents/Resources/gmail/node_modules/ -- which is what puts Gmail's
+      # own dependencies on Node's module resolution path. Giving them
+      # distinct subpaths (the earlier gmail-dist/gmail-node_modules) left
+      # Gmail's bundled node_modules unreachable: resolution from
+      # gmail-dist/dist/index.js walks up through gmail-dist/dist/node_modules
+      # and gmail-dist/node_modules (neither exists) and then falls through to
+      # Contents/Resources/node_modules -- CALENDAR's copy. That worked only
+      # by coincidence, because both connectors currently pin identical
+      # @modelcontextprotocol/sdk and zod versions, and would break silently
+      # the moment they diverge or the Calendar connector is removed/renamed.
+      # Both connectors' dist/node_modules remain separate, non-colliding
+      # directories with distinct content (Calendar's index.js has
+      # create_event, Gmail's has send_email, different SHA1 hashes).
+      - path: ../../mcp-servers/gmail/dist
+        type: folder
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: gmail
+      - path: ../../mcp-servers/gmail/node_modules
+        type: folder
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: gmail
+      # Outlook 365 connector: same subpath-grouping mechanism as Gmail's two entries
+      # just above (see McpNodeLocator.gmailConnectorScriptPath()'s doc comment for the
+      # full empirically-verified explanation of why both entries must share one
+      # subpath). Lands at Contents/Resources/outlook365/dist/index.js and
+      # Contents/Resources/outlook365/node_modules/, as siblings.
+      - path: ../../mcp-servers/outlook365/dist
+        type: folder
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: outlook365
+      - path: ../../mcp-servers/outlook365/node_modules
+        type: folder
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: outlook365
+      - path: ../../core/memory/models
+        type: folder
+        buildPhase: resources
+      # The real, compiled whimbrel-mcp-server binary (Task 4, core/mcp-server/src/bin/
+      # whimbrel-mcp-server.rs), bundled the same way the Google Calendar connector's
+      # dist/node_modules are bundled above: an XcodeGen resource entry copied into
+      # Contents/Resources by Xcode's own Copy Bundle Resources phase (see
+      # apps/macos/README.md's "Its compiled dist/ and its node_modules/ are bundled
+      # into the .app as XcodeGen folder-reference resources" paragraph — same
+      # mechanism, just `type: file` instead of `type: folder` since this is a single
+      # binary rather than a directory). Built by the "Build Rust core" prebuildScript
+      # below before this Copy Bundle Resources phase runs, so the file exists on disk
+      # by the time Xcode copies it.
+      - path: ../../core/target/release/whimbrel-mcp-server
+        type: file
+        buildPhase: resources
+      # Relaunch helper (Task 4, .superpowers/sdd/2026-08-06-auto-update-downloads):
+      # single plain-file resource, same `type: file` + `buildPhase: resources`
+      # convention as whimbrel-mcp-server just above -- lands at
+      # Contents/Resources/RelaunchHelper.sh, looked up via
+      # `Bundle.main.path(forResource:ofType:)` by TimelineView's restart action.
+      - path: Whimbrel/Support/RelaunchHelper.sh
+        type: file
+        buildPhase: resources
+    prebuildScripts:
+      - name: Build Rust core (core/ffi, core/mcp-server)
+        script: |
+          set -e
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cd "$SRCROOT/../../core"
+          # The project links and bundles from core/target/release. When cargo is configured to
+          # build elsewhere (a global build.target-dir), link core/target to that directory so
+          # those paths still resolve. A real core/target directory keeps being used as-is, so
+          # the binaries linked are always the ones just built.
+          CARGO_DIR=$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
+          if [ -d target ] && [ ! -L target ]; then
+            export CARGO_TARGET_DIR="$PWD/target"
+          elif [ -n "$CARGO_DIR" ] && [ "$CARGO_DIR" != "$PWD/target" ]; then
+            ln -sfn "$CARGO_DIR" target
+          fi
+          cargo build --release -p ffi
+          cargo build --release -p mcp-server --bin whimbrel-mcp-server
+        basedOnDependencyAnalysis: false
+    postbuildScripts:
+      # `cargo build` leaves `whimbrel-mcp-server` ad-hoc signed (confirmed empirically:
+      # `codesign -dv` on the just-built binary shows `flags=0x20002(adhoc,linker-signed)`).
+      # Xcode's Copy Bundle Resources phase (above) treats it as a plain sealed resource,
+      # not nested code, so the app's own CodeSign phase hashes it as-is without
+      # re-signing it — and `xcodebuild -exportArchive`'s Developer ID re-sign pass
+      # (confirmed empirically against a real archive+export) does re-sign it with the
+      # real Developer ID identity and a secure timestamp, but does NOT add the Hardened
+      # Runtime flag it wasn't already carrying. Apple's notarization service scans every
+      # Mach-O in the bundle individually, and requires Hardened Runtime on each one, so
+      # an adhoc-or-runtime-less nested executable is a real, easy-to-miss notarization
+      # rejection cause distinct from the outer app's own signature (which `apps/macos/
+      # scripts/release-publish.sh` already gets right via `ENABLE_HARDENED_RUNTIME: YES` above).
+      # Only runs for Release (what `release-publish.sh` actually archives/notarizes) — skipped
+      # for Debug so routine local builds don't pay for a network round-trip to Apple's
+      # timestamp server on every run.
+      - name: Sign bundled whimbrel-mcp-server binary (Hardened Runtime + timestamp)
+        script: |
+          set -e
+          if [ "$CONFIGURATION" != "Release" ]; then
+            echo "Skipping (Debug build, ad-hoc signature from cargo build is fine locally)."
+            exit 0
+          fi
+          if [ "$CODE_SIGNING_ALLOWED" != "YES" ] || [ -z "$EXPANDED_CODE_SIGN_IDENTITY" ]; then
+            echo "warning: CODE_SIGNING_ALLOWED=$CODE_SIGNING_ALLOWED / no signing identity resolved -- skipping whimbrel-mcp-server re-sign."
+            exit 0
+          fi
+          BIN="$CODESIGNING_FOLDER_PATH/Contents/Resources/whimbrel-mcp-server"
+          if [ ! -f "$BIN" ]; then
+            echo "warning: $BIN not found -- nothing to sign."
+            exit 0
+          fi
+          codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$BIN"
+        basedOnDependencyAnalysis: false
+    configFiles:
+      Debug: Base.xcconfig
+      Release: Base.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mpointer.kestrel
+        PRODUCT_NAME: Whimbrel
+        CODE_SIGN_ENTITLEMENTS: Whimbrel/Whimbrel.entitlements
+        SWIFT_OBJC_BRIDGING_HEADER: Whimbrel/Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/../../core/ffi/include
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../core/target/release
+        # -lc++: core/ffi now links core/transcribe (whisper.cpp/ggml, C++), which needs
+        # the C++ runtime explicitly — nothing else in this otherwise Swift/C project
+        # pulls it in automatically. whimbrel_core is the shared Rust core's internal
+        # library name (core/ffi) — unrelated to the app's own product name.
+        OTHER_LDFLAGS: -lwhimbrel_core -lc++
+        INFOPLIST_FILE: Whimbrel/Info.plist
+        MARKETING_VERSION: "0.9.35"
+        CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  WhimbrelTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: WhimbrelTests
+    dependencies:
+      - target: Whimbrel
+    settings:
+      base:
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Whimbrel.app/Contents/MacOS/Whimbrel"
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_OBJC_BRIDGING_HEADER: WhimbrelTests/WhimbrelTests-Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/../../core/ffi/include
+schemes:
+  Whimbrel:
+    build:
+      targets:
+        Whimbrel: all
+        WhimbrelTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - WhimbrelTests
+    archive:
+      config: Release

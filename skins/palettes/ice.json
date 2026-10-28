@@ -1,0 +1,22 @@
+{
+  "id": "ice",
+  "name": "Ice",
+  "author": "Whimbrel",
+  "dark": {
+    "backgroundPage": "#07131C",
+    "backgroundCard": "#0F2432",
+    "border": "#3A7694",
+    "textPrimary": "#EAF8FF",
+    "textSecondary": "#AED0E0",
+    "accentPrimary": "#5CC8FF",
+    "accentSecondary": "#9BE3FF",
+    "accentHighlight": "#C7B8FF",
+    "error": "#FF8A8A",
+    "warning": "#FFD27A",
+    "success": "#6EE7C0",
+    "link": "#8FD3FF",
+    "selection": "#173A52",
+    "highlight": "#1F4C6B",
+    "textOnAccent": "#04202E"
+  }
+}

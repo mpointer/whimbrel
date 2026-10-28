@@ -1,0 +1,2 @@
+{"intent": "refine", "reply": "I darkened the gold a little.", "skin": {"id": "user-gold"}}
+{"intent": "decline", "reply": "This second object must be ignored."}

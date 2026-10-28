@@ -1,0 +1,11 @@
+{
+  "retryable_cases": [
+    { "status": 429, "expected_retryable": true },
+    { "status": 503, "expected_retryable": true },
+    { "status": 500, "expected_retryable": true },
+    { "status": 599, "expected_retryable": true },
+    { "status": 400, "expected_retryable": false },
+    { "status": 404, "expected_retryable": false },
+    { "status": 200, "expected_retryable": false }
+  ]
+}

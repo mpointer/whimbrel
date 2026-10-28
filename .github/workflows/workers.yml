@@ -1,0 +1,34 @@
+# The two Cloudflare Workers (server/: sync relay, server-updates/: update feed): typecheck
+# and tests on a hosted runner. Needs no secrets, so it runs on forks.
+name: workers
+
+on:
+  pull_request:
+    paths: ["server/**", "server-updates/**", ".github/workflows/workers.yml"]
+  push:
+    branches: [main]
+    paths: ["server/**", "server-updates/**", ".github/workflows/workers.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: [server, server-updates]
+    defaults:
+      run:
+        working-directory: ${{ matrix.worker }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # npm 10 crashes resolving vitest's optional peers; npm 11 doesn't (same as website.yml).
+      - run: npx --yes npm@11 ci
+      - run: npm run typecheck --if-present
+      - run: npm test

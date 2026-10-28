@@ -1,0 +1,396 @@
+name: Rust tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same PR (or to main) cancels the run it supersedes. On main
+# this means a burst of merges tests only the newest commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # A pure version-bump commit (apps/macos/scripts/release-prepare.sh) only ever
+  # touches these 5 files -- no source changed, so the expensive macOS/Windows/
+  # Android jobs below are redundant with the CI run the fix itself already had.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      version_only: ${{ steps.filter.outputs.version_only }}
+      run_core: ${{ steps.filter.outputs.run_core }}
+      run_windows_app: ${{ steps.filter.outputs.run_windows_app }}
+      run_ios: ${{ steps.filter.outputs.run_ios }}
+    steps:
+      # ref pinned to the real commit (not actions/checkout@v4's pull_request default,
+      # GitHub's ephemeral refs/pull/N/merge preview ref -- observed transiently
+      # returning "Repository not found" under concurrent access) and full history, so
+      # the diff below has both endpoints regardless of push/pull_request event.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      # Plain git diff, not dorny/paths-filter: its predicate-quantifier: every checks
+      # "does every PATTERN match some changed file" (AND across patterns) -- not "is
+      # every CHANGED FILE covered by some pattern" (the whitelist/exhaustiveness check
+      # this actually needs. There's no paths-filter mode for the latter. Confirmed
+      # broken in practice: PR #72, a genuine version-bump-only diff of exactly these 5
+      # files, evaluated version_only=false.
+      - id: filter
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          head="${{ github.event.pull_request.head.sha || github.sha }}"
+          changed="$(git diff --name-only "$base" "$head")" || changed=""
+          allowed='^(VERSION|apps/macos/project\.yml|apps/macos/Whimbrel\.xcodeproj/project\.pbxproj|core/Cargo\.toml|core/Cargo\.lock)$'
+          if [ -n "$changed" ] && ! grep -vqE "$allowed" <<<"$changed"; then
+            version_only=true
+          else
+            version_only=false
+          fi
+          echo "version_only=$version_only" >> "$GITHUB_OUTPUT"
+          # Every job below tests core/, so a diff that doesn't touch core/ (or these
+          # workflows) skips them: docs, apps/macos, apps/windows, scripts. An empty
+          # or failed diff (a new branch, a force push) runs everything.
+          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE '^(core/|\.github/workflows/)' <<<"$changed"; }; then
+            echo "run_core=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_core=false" >> "$GITHUB_OUTPUT"
+          fi
+          # The Windows app (apps/windows) path-depends on core/, so either one runs it.
+          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE '^(apps/windows/|core/|\.github/workflows/)' <<<"$changed"; }; then
+            echo "run_windows_app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_windows_app=false" >> "$GITHUB_OUTPUT"
+          fi
+          # The iOS app (apps/mobile/ios) builds core/ffi and references the Mac app's shared
+          # Support/ sources and themes/, so any of those runs the ios job.
+          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE '^(apps/mobile/ios/|apps/macos/Whimbrel/Support/|themes/|core/|\.github/workflows/)' <<<"$changed"; }; then
+            echo "run_ios=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_ios=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Pure-Rust unit tests on Linux (1x billing) on every push that touches core/.
+  #
+  # sync-engine is excluded from test execution for the same reason the
+  # windows job already excludes it (see the comment there): rustc's default
+  # linker on this target (rust-lld) hits the identical rusqlite-bundled /
+  # libsql-ffi duplicate sqlite3-symbol conflict that MSVC's link.exe hits on
+  # Windows. Confirmed by running this job before adding the exclusion --
+  # macOS's ld64 tolerates the duplicate symbols; lld and link.exe don't.
+  test-linux:
+    needs: changes
+    if: needs.changes.outputs.run_core == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # mcp-host's and ffi's tests spawn tests/fixtures/echo-server.mjs under node;
+      # its dependencies are installed here rather than vendored in the repo.
+      - name: Install the MCP echo-server test fixture
+        working-directory: core/mcp-host/tests/fixtures
+        run: npm ci
+      - name: Re-download sherpa-onnx libraries the cache left out
+        # sherpa-onnx-sys's build script downloads its static libraries into
+        # core/target/sherpa-onnx-prebuilt and reuses that folder whenever its lib directory
+        # exists, without checking the files. A restored cache can bring the folder back
+        # without the libraries, while the cached build-script output still points there. Anything that
+        # recompiles sherpa-onnx-sys (a Cargo.lock change) then fails with "could not find
+        # native static library sherpa-onnx-c-api". When the libraries are missing, drop the
+        # build script's cached output so it runs again and downloads them.
+        shell: bash
+        run: |
+          if ! ls core/target/sherpa-onnx-prebuilt/*/lib/*sherpa-onnx-c-api.* >/dev/null 2>&1; then
+            echo "No usable sherpa-onnx libraries in core/target; forcing the build script to download them"
+            rm -rf core/target/sherpa-onnx-prebuilt core/target/*/build/sherpa-onnx-sys-* core/target/*/.fingerprint/sherpa-onnx-sys-*
+          fi
+      - name: Run cargo test
+        working-directory: core
+        run: cargo test --workspace --exclude sync-engine
+      - name: Build sync-engine (compile-only, see exclusion note above)
+        working-directory: core
+        run: cargo build -p sync-engine
+
+  # Self-hosted jobs run only in the upstream repository and never for a pull request
+  # from a fork: a fork's own CI has no such runner, and a public repository must not
+  # execute untrusted PR code on the maintainer's machines.
+  # Runs on a self-hosted macOS runner (whimbrel-mbp-runner) -- GitHub-hosted
+  # macOS runners bill at 10x a Linux minute, and test-linux already runs
+  # these unit tests on every PR. This job runs only after merge, on the push
+  # to main, where it adds macOS linking and the real-model integration
+  # tests. Cargo-only (no xcodebuild/app bundle involved), so self-hosting
+  # here has none of swift-tests's UserDefaults/Application Support
+  # collision with the real installed app -- see release-integrity.yml.
+  test:
+    needs: changes
+    if: needs.changes.outputs.run_core == 'true' && github.event_name == 'push' && github.repository == 'mpointer/kestrel'
+    runs-on: [self-hosted, macOS]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # Self-hosted runners use their preinstalled, isolated toolchain (CARGO_HOME and
+      # RUSTUP_HOME in the runner's .env) rather than a toolchain action.
+      - name: Rust toolchain (preinstalled on this runner)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+      # cache-bin: false. With the default (true), the save step on main prunes
+      # CARGO_HOME/bin to cargo-installed binaries, which deletes rustup and leaves
+      # every proxy dangling. A self-hosted runner keeps CARGO_HOME between runs.
+      # save-if: false. These jobs only restore. Saving on main took about 6 minutes
+      # to compress and upload core/target (928 MB on Windows), so they keep
+      # restoring the last cache main saved and cargo rebuilds whatever changed.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: false
+          cache-bin: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      # mcp-host's and ffi's tests spawn tests/fixtures/echo-server.mjs under node;
+      # its dependencies are installed here rather than vendored in the repo.
+      - name: Install the MCP echo-server test fixture
+        working-directory: core/mcp-host/tests/fixtures
+        run: npm ci
+      - name: Re-download sherpa-onnx libraries the cache left out
+        # sherpa-onnx-sys's build script downloads its static libraries into
+        # core/target/sherpa-onnx-prebuilt and reuses that folder whenever its lib directory
+        # exists, without checking the files. A restored cache can bring the folder back
+        # without the libraries, while the cached build-script output still points there. Anything that
+        # recompiles sherpa-onnx-sys (a Cargo.lock change) then fails with "could not find
+        # native static library sherpa-onnx-c-api". When the libraries are missing, drop the
+        # build script's cached output so it runs again and downloads them.
+        shell: bash
+        run: |
+          if ! ls core/target/sherpa-onnx-prebuilt/*/lib/*sherpa-onnx-c-api.* >/dev/null 2>&1; then
+            echo "No usable sherpa-onnx libraries in core/target; forcing the build script to download them"
+            rm -rf core/target/sherpa-onnx-prebuilt core/target/*/build/sherpa-onnx-sys-* core/target/*/.fingerprint/sherpa-onnx-sys-*
+          fi
+      - name: Run cargo test
+        working-directory: core
+        run: cargo test --workspace
+      - name: Download pinned embedding model (real-model integration only)
+        working-directory: core/memory
+        run: |
+          mkdir -p models
+          for f in config.json tokenizer.json model.safetensors; do
+            curl -fL --retry 3 -o "models/$f" "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/$f"
+          done
+      - name: Run real-model integration tests
+        working-directory: core
+        run: cargo test -p memory -- --ignored
+
+  # Runs on PRs that touch core/ as well as on main: MSVC link failures (LNK2005,
+  # see below) only show up here. It runs on the author's Windows PC (a self-hosted
+  # runner labelled kestrel-windows, C:\ar, started at sign-in) instead of
+  # windows-latest, which bills at 2x a Linux minute. The PC provides Rust (MSVC)
+  # and VS Build Tools with CMake and Clang; the runner's .env sets PATH (rustup,
+  # cmake, cargo), LIBCLANG_PATH and core.fsmonitor=false (see
+  # apps/windows/scripts/install-actions-runner.ps1). While the PC is off or asleep
+  # this job waits.
+  windows:
+    needs: changes
+    if: needs.changes.outputs.run_core == 'true' && github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, Windows, X64, kestrel-windows]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      # Self-hosted runners use their preinstalled, isolated toolchain (CARGO_HOME and
+      # RUSTUP_HOME in the runner's .env) rather than a toolchain action.
+      - name: Rust toolchain (preinstalled on this runner)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+      # cache-bin: false. With the default (true), the save step on main prunes
+      # CARGO_HOME/bin to cargo-installed binaries, which deletes rustup and leaves
+      # every proxy dangling. A self-hosted runner keeps CARGO_HOME between runs.
+      # save-if: false. These jobs only restore. Saving on main took about 6 minutes
+      # to compress and upload core/target (928 MB on Windows), so they keep
+      # restoring the last cache main saved and cargo rebuilds whatever changed.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: false
+          cache-bin: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      # mcp-host's and ffi's tests spawn tests/fixtures/echo-server.mjs under node;
+      # its dependencies are installed here rather than vendored in the repo.
+      - name: Install the MCP echo-server test fixture
+        working-directory: core/mcp-host/tests/fixtures
+        run: npm ci
+      - name: Re-download sherpa-onnx libraries the cache left out
+        # See the same step in test-linux: when the downloaded sherpa-onnx libraries are
+        # missing, drop the build script's cached output so it runs again and downloads them.
+        shell: powershell
+        run: |
+          $libs = Get-ChildItem -Path core/target/sherpa-onnx-prebuilt -Recurse -Filter '*sherpa-onnx-c-api*' -ErrorAction SilentlyContinue
+          if (-not $libs) {
+            Write-Host "No usable sherpa-onnx libraries in core/target; forcing the build script to download them"
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue core/target/sherpa-onnx-prebuilt
+            Get-ChildItem -Path core/target/*/build, core/target/*/.fingerprint -Directory -Filter 'sherpa-onnx-sys-*' -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+          }
+      - name: Test pure-Rust crates
+        working-directory: core
+        run: cargo test --workspace --exclude transcribe --exclude diarize --exclude ffi --exclude sync-engine
+      - name: Build native-dependent crates (compile-only, no test)
+        working-directory: core
+        run: cargo build -p transcribe -p diarize -p ffi
+      # sync-engine is build-only here (no test execution): rusqlite-bundled and
+      # libsql's core-feature bundled sqlite3 both define the same sqlite3 C symbols,
+      # which MSVC's link.exe rejects as duplicate symbols (LNK2005), so its test
+      # binary can't link on Windows.
+      - name: Build sync-engine (compile-only)
+        working-directory: core
+        run: cargo build -p sync-engine
+
+  # The Tauri shell and its React UI (apps/windows). Nothing else in CI builds them.
+  # Runs on the same self-hosted PC as `windows`. The UI builds first because the
+  # Tauri crate embeds ui/dist at compile time. CARGO_TARGET_DIR is short and outside
+  # the checkout: whisper.cpp's MSBuild step fails past 260 characters, and a
+  # persistent target on this runner keeps rebuilds incremental without rust-cache.
+  # Build from src-tauri/ so its .cargo/config.toml (+crt-static) applies.
+  windows-app:
+    needs: changes
+    if: needs.changes.outputs.run_windows_app == 'true' && github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, Windows, X64, kestrel-windows]
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: C:\ar\t-win
+    steps:
+      - uses: actions/checkout@v4
+      # Self-hosted runners use their preinstalled, isolated toolchain (CARGO_HOME and
+      # RUSTUP_HOME in the runner's .env) rather than a toolchain action.
+      - name: Rust toolchain (preinstalled on this runner)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: UI install
+        working-directory: apps/windows/ui
+        run: npm ci
+      - name: UI tests
+        working-directory: apps/windows/ui
+        run: npm test
+      - name: Generated TS types are current
+        working-directory: apps/windows/ui
+        run: npm run check:types
+      - name: UI build (tsc + vite, produces ui/dist)
+        working-directory: apps/windows/ui
+        run: npm run build
+      - name: Tauri shell unit tests
+        working-directory: apps/windows/src-tauri
+        run: cargo test --lib
+      # Today under every shipped skin, palette and appearance, and the worst-case skin, in the Edge already on
+      # the runner: nothing may overrun, overlap or fall under 4.5:1. The skins come from the shell, as the app gets them.
+      - name: Skin no-overrun matrix (Edge)
+        working-directory: apps/windows/ui
+        run: |
+          npm run matrix:skins
+          npx playwright test
+      # The release job runs this before it packages the installer, and a release is the wrong
+      # first place to find it broken.
+      - name: MCP server program builds and stages for the installer
+        shell: powershell
+        run: ./apps/windows/scripts/prepare-sidecar.ps1 -ForBundle
+      - name: Node and the connectors stage for the installer (pinned hash)
+        shell: powershell
+        run: ./apps/windows/scripts/prepare-bundle-resources.ps1
+      - name: No libsql core feature in the graph
+        working-directory: apps/windows/src-tauri
+        shell: powershell
+        run: ..\scripts\check-no-libsql-core.ps1
+
+  android:
+    needs: changes
+    if: needs.changes.outputs.run_core == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Add Android target
+        run: rustup target add aarch64-linux-android
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version "4.1.2"
+      - name: Cross-compile workspace for Android (build/check only — no test execution is possible on this host)
+        working-directory: core
+        # RUSTFLAGS enables the fp16 target feature: gemm-f16 (pulled in by candle-core,
+        # a dependency of the memory crate's local embedding model) emits `fullfp16` NEON
+        # inline asm that the baseline aarch64-linux-android codegen target rejects
+        # ("instruction requires: fullfp16") without it. Note this makes the resulting
+        # binaries require an ARMv8.2-A+ (FEAT_FP16) device at runtime.
+        #
+        # diarize is excluded: sherpa-onnx-sys v1.13.4's build.rs has no prebuilt ONNX
+        # Runtime archive for os=android arch=aarch64 ("Unsupported target for
+        # sherpa-onnx prebuilt libs"). ffi is built too, but with its default `diarize`
+        # feature off (--no-default-features), so it does not pull in diarize.
+        # transcribe (whisper-rs-sys via CMake) cross-compiles cleanly and is NOT excluded.
+        env:
+          RUSTFLAGS: -C target-feature=+fp16
+        run: |
+          cargo ndk -t arm64-v8a build --workspace --exclude diarize --exclude ffi
+          cargo ndk -t arm64-v8a build -p ffi --no-default-features
+
+  ios:
+    needs: changes
+    if: needs.changes.outputs.run_ios == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Add iOS targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      # Builds ffi for iOS device and simulator, then packs the xcframework the app links.
+      # The script sets RUSTFLAGS=+fp16 and --no-default-features (no `diarize`:
+      # sherpa-onnx-sys has no prebuilt ONNX Runtime for iOS; fp16 for the same
+      # candle/gemm-f16 `fullfp16` NEON asm reason as the android job). Release, as shipped:
+      # the dev profile's huge libsql parser stack frames overflow the app's store thread.
+      - name: Build ffi xcframework (device + simulator)
+        run: ./apps/mobile/ios/scripts/build-ffi-xcframework.sh
+      # Uses the committed Whimbrel.xcodeproj (regenerate with xcodegen after project.yml
+      # changes). No signing on CI.
+      - name: Build iOS app for the simulator
+        run: |
+          xcodebuild build -project apps/mobile/ios/Whimbrel.xcodeproj -scheme Whimbrel \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
+      # Unit tests (WhimbrelTests: the enrollment model, with a fake backend and the
+      # in-memory Keychain, so no signing is needed). Simulator names change with each
+      # runner image, so pick an iPhone on the newest iOS runtime >= 17 instead of
+      # hardcoding one; the script exits non-zero (failing the step) if there is none.
+      - name: Test iOS app on a simulator
+        run: |
+          udid="$(xcrun simctl list devices available -j | python3 apps/mobile/ios/scripts/pick-simulator.py)"
+          xcodebuild test -project apps/mobile/ios/Whimbrel.xcodeproj -scheme Whimbrel \
+            -destination "id=$udid" CODE_SIGNING_ALLOWED=NO

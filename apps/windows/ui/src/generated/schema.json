@@ -1,0 +1,3292 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "ActionItemView": {
+      "properties": {
+        "completed": {
+          "type": "boolean"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "source": {
+          "description": "\"generated\" (from the summary) or \"user\".",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "completed",
+        "source"
+      ],
+      "type": "object"
+    },
+    "ActionView": {
+      "description": "What a pending action would do, in the user's terms.",
+      "oneOf": [
+        {
+          "properties": {
+            "endUnixMs": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "createCalendarEvent",
+              "type": "string"
+            },
+            "startUnixMs": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "startUnixMs",
+            "endUnixMs"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "sendEmail",
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "to",
+            "subject",
+            "body"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AiSettings": {
+      "properties": {
+        "keys": {
+          "items": {
+            "$ref": "#/definitions/ProviderKey"
+          },
+          "type": "array"
+        },
+        "prompts": {
+          "items": {
+            "$ref": "#/definitions/PromptText"
+          },
+          "type": "array"
+        },
+        "routing": {
+          "$ref": "#/definitions/RoutingSettings"
+        },
+        "spend": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SpendView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summaryInstructions": {
+          "description": "Extra instructions for every summary (`summary.customPromptInstructions`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "routing",
+        "keys",
+        "summaryInstructions",
+        "prompts"
+      ],
+      "type": "object"
+    },
+    "AlertView": {
+      "description": "What the alert window shows.",
+      "properties": {
+        "autoStart": {
+          "description": "Whether the countdown runs (Settings → Meetings → start recording automatically).",
+          "type": "boolean"
+        },
+        "countdownSeconds": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "meeting": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DetectedMeeting"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "autoStart",
+        "countdownSeconds"
+      ],
+      "type": "object"
+    },
+    "AppStatus": {
+      "description": "What Settings → About shows.",
+      "properties": {
+        "dataDir": {
+          "type": "string"
+        },
+        "deviceId": {
+          "description": "This device's sync id (base64 public key), if the identity loaded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "embeddingModelLoaded": {
+          "type": "boolean"
+        },
+        "startupErrors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "storeOpen": {
+          "type": "boolean"
+        },
+        "storeQueueWait": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/QueueWaitStats"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "dataDir",
+        "storeOpen",
+        "embeddingModelLoaded",
+        "startupErrors"
+      ],
+      "type": "object"
+    },
+    "ApprovalView": {
+      "properties": {
+        "account": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "accounts": {
+          "description": "The accounts this could be done with, and the one used unless the user picks another.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ActionView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`None` when the draft could not be read; it can still be rejected."
+        },
+        "blocked": {
+          "description": "Why Approve cannot work yet (no account connected), or `None`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ranAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "routineName": {
+          "type": "string"
+        },
+        "runId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "summary": {
+          "description": "The routine's own one-line description of the draft.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "runId",
+        "routineName",
+        "ranAtUnixMs",
+        "summary",
+        "accounts"
+      ],
+      "type": "object"
+    },
+    "ApproveResult": {
+      "properties": {
+        "approvals": {
+          "description": "The list as it is now.",
+          "items": {
+            "$ref": "#/definitions/ApprovalView"
+          },
+          "type": "array"
+        },
+        "message": {
+          "description": "What to tell the user: why it is still waiting, or that someone else already handled it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "approvals"
+      ],
+      "type": "object"
+    },
+    "BriefRecap": {
+      "description": "Today's Daily Brief as the recap: the routine's own summary, from this PC or a synced device\n(docs/superpowers/plans/2026-10-17-today-recap-daily-brief-windows.md).",
+      "properties": {
+        "from": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DeviceTag"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The device that ran it, when that is not this PC."
+        },
+        "ranAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "ranAtUnixMs"
+      ],
+      "type": "object"
+    },
+    "CalendarAccounts": {
+      "properties": {
+        "blocked": {
+          "description": "Why calendar syncing can't run right now (no Node, connector not staged, sync not\nconfigured), or `None` when it can.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "emails": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "lastSyncedUnixMs": {
+          "description": "When the last round finished, and why it failed if it did.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "nextMeeting": {
+          "description": "The next one's title and start, for the card's line.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nextStartUnixMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "syncError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "upcoming": {
+          "description": "Meetings still to come that a prompt could fire for.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "emails",
+        "upcoming"
+      ],
+      "type": "object"
+    },
+    "CaptureDetail": {
+      "properties": {
+        "app": {
+          "type": "string"
+        },
+        "device": {
+          "$ref": "#/definitions/DeviceTag"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "snippet": {
+          "type": "string"
+        },
+        "source": {
+          "description": "`uia`, `ocr` (Windows) or `ax` (Mac); `None` for rows older than the field.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "tsUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "tsUnixMs",
+        "app",
+        "title",
+        "snippet",
+        "device",
+        "text"
+      ],
+      "type": "object"
+    },
+    "CaptureRow": {
+      "properties": {
+        "app": {
+          "type": "string"
+        },
+        "device": {
+          "$ref": "#/definitions/DeviceTag"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "snippet": {
+          "type": "string"
+        },
+        "source": {
+          "description": "`uia`, `ocr` (Windows) or `ax` (Mac); `None` for rows older than the field.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "tsUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "tsUnixMs",
+        "app",
+        "title",
+        "snippet",
+        "device"
+      ],
+      "type": "object"
+    },
+    "CaptureSettings": {
+      "properties": {
+        "excluded": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ocr": {
+          "$ref": "#/definitions/OcrLanguages"
+        },
+        "runningApps": {
+          "items": {
+            "$ref": "#/definitions/RunningApp"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "excluded",
+        "runningApps",
+        "ocr"
+      ],
+      "type": "object"
+    },
+    "CaptureStatus": {
+      "description": "What Settings shows about capture.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "excluded": {
+          "description": "Reads skipped because the window is excluded.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lastApp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastStoredAtMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ocrRuns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "paused": {
+          "description": "Why capture is paused right now, if it is.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "running": {
+          "description": "False if the service could not start (see `last_error`).",
+          "type": "boolean"
+        },
+        "stored": {
+          "description": "Reads that produced new stored items.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unchanged": {
+          "description": "Reads skipped as near-identical to the window's last stored text.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "enabled",
+        "running",
+        "stored",
+        "unchanged",
+        "excluded",
+        "ocrRuns"
+      ],
+      "type": "object"
+    },
+    "ChatEvent": {
+      "description": "What the UI hears about one question, over a Tauri `Channel`.",
+      "oneOf": [
+        {
+          "description": "The question is being answered. `run_id` is set while it streams (Stop cancels\nit); `None` on the blocking path, where the UI shows a spinner.",
+          "properties": {
+            "context": {
+              "items": {
+                "$ref": "#/definitions/ContextEntry"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "started",
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "runId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "provider",
+            "model",
+            "context"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "delta",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "progress",
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "label"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The stream failed before any output; the blocking path is answering instead.",
+          "properties": {
+            "kind": {
+              "const": "fell_back",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "answer": {
+              "type": "string"
+            },
+            "citations": {
+              "items": {
+                "$ref": "#/definitions/ContextItemRef"
+              },
+              "type": "array"
+            },
+            "conversationId": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "completed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "answer",
+            "citations"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Stopped: the question goes back into the composer.",
+          "properties": {
+            "kind": {
+              "const": "cancelled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`partial`: some of the answer had streamed before it failed.",
+          "properties": {
+            "error": {
+              "$ref": "#/definitions/CommandError"
+            },
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            },
+            "partial": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "error",
+            "partial"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A new conversation got its generated title.",
+          "properties": {
+            "conversationId": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "titled",
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "conversationId",
+            "title"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ChatSpend": {
+      "description": "The Ask composer's \"X¢ / cap¢ today\". Spend is the anonymous identity's, which is\nwhat the user cap gates.",
+      "properties": {
+        "capCents": {
+          "description": "`None`: no cap (the setting is 0).",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "userCents": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "userCents"
+      ],
+      "type": "object"
+    },
+    "CommandError": {
+      "oneOf": [
+        {
+          "description": "A daily spend cap rejected the call.",
+          "properties": {
+            "cap_cents": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "spend_cap",
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/definitions/SpendScope"
+            },
+            "spent_cents": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "scope",
+            "spent_cents",
+            "cap_cents"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every provider in the chain failed for a reason other than the cap.",
+          "properties": {
+            "kind": {
+              "const": "provider_failure",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The store actor failed: it could not open, it stopped, or a job panicked.",
+          "properties": {
+            "kind": {
+              "const": "store",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Credential Manager refused a read or write.",
+          "properties": {
+            "kind": {
+              "const": "secrets",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A network call (Worker, sync database, provider model list) failed.",
+          "properties": {
+            "kind": {
+              "const": "network",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A required setting or build-time secret is missing.",
+          "properties": {
+            "kind": {
+              "const": "not_configured",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The UI sent something the shell can't act on.",
+          "properties": {
+            "kind": {
+              "const": "invalid_input",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ContextEntry": {
+      "description": "One item the answer may cite. The UI matches a citation to it by `item`. A saved\nexchange stores the entries it cited in this shape.",
+      "properties": {
+        "item": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ContextItemRef"
+            },
+            {
+              "description": "`{kind, id}`, exactly as a citation (`llm::ContextItemRef`) serializes."
+            }
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LibraryTarget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where clicking the citation goes; `None` for routine runs and threads, which have\nno Library view yet."
+        },
+        "tsUnixMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "item",
+        "label"
+      ],
+      "type": "object"
+    },
+    "ContextItemRef": {
+      "description": "A citation pointing back to one retrieved context item, tagged with which table\n(`capture_item` or `transcript_segment`) the id belongs to — see [`ContextItem`]'s\ndoc comment for why a bare `i64` isn't safe here. `PartialOrd`/`Ord` (variant\ndeclaration order, then field order) give `assemble_context` a deterministic tiebreak\nfor score ties, independent of `HashMap` iteration order in `rrf_fuse`.",
+      "oneOf": [
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "capture",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "transcript",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "routine_run",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "episode",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "thread",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "snapshot",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ConversationRow": {
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "starred": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updatedAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "starred",
+        "updatedAtUnixMs"
+      ],
+      "type": "object"
+    },
+    "ConversationView": {
+      "description": "A saved conversation.",
+      "properties": {
+        "exchanges": {
+          "items": {
+            "$ref": "#/definitions/ExchangeView"
+          },
+          "type": "array"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "starred": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "starred",
+        "exchanges"
+      ],
+      "type": "object"
+    },
+    "DetectedMeeting": {
+      "description": "A meeting Whimbrel is offering to record: a call it noticed, or a calendar event whose\nlead window has opened (M3.3 Task 7).",
+      "properties": {
+        "appId": {
+          "type": "string"
+        },
+        "attendees": {
+          "description": "A calendar meeting's invitees, which become the expected speaker count.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "`detected-<app>-<epoch seconds>` from core's debounce, or the calendar event's id.",
+          "type": "string"
+        },
+        "promptedUnixMs": {
+          "description": "When the alert appeared, for its countdown.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "rootPid": {
+          "description": "The process tree to record, or 0 for a calendar meeting with no app in sight.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "source": {
+          "description": "\"detected\" or \"calendar\": which trigger the meeting row gets.",
+          "type": "string"
+        },
+        "startUnixMs": {
+          "description": "A calendar meeting's own start, so the row spans the event, not the moment Accept\nwas pressed.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "\"Zoom\", \"Google Meet\", or the event's title.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "appId",
+        "rootPid",
+        "promptedUnixMs",
+        "source",
+        "attendees"
+      ],
+      "type": "object"
+    },
+    "DeviceCount": {
+      "properties": {
+        "captures": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "device": {
+          "$ref": "#/definitions/DeviceTag"
+        },
+        "lastTsUnixMs": {
+          "description": "The newest capture today; `None` when the device captured nothing today.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "device",
+        "captures"
+      ],
+      "type": "object"
+    },
+    "DeviceTag": {
+      "properties": {
+        "deviceId": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "thisDevice": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "deviceId",
+        "label",
+        "thisDevice"
+      ],
+      "type": "object"
+    },
+    "DeviceView": {
+      "properties": {
+        "comparisonCode": {
+          "description": "Short code both devices show while approving (`None` for an unparseable key).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enrolledAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "id": {
+          "description": "The Worker's device id (what approve / revoke take).",
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "publicKey": {
+          "description": "The device's public key, which is its `device_id` on timeline rows.",
+          "type": "string"
+        },
+        "status": {
+          "description": "`pending`, `approved` or `revoked`.",
+          "type": "string"
+        },
+        "thisDevice": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "publicKey",
+        "status",
+        "thisDevice",
+        "enrolledAtUnixMs"
+      ],
+      "type": "object"
+    },
+    "DownloadView": {
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        },
+        "done": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fraction": {
+          "format": "double",
+          "type": "number"
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "jobId",
+        "fraction",
+        "status",
+        "done",
+        "cancelled"
+      ],
+      "type": "object"
+    },
+    "EpisodeRow": {
+      "properties": {
+        "app": {
+          "type": "string"
+        },
+        "appHidden": {
+          "description": "Its app is in this PC's hidden-apps list.",
+          "type": "boolean"
+        },
+        "device": {
+          "$ref": "#/definitions/DeviceTag"
+        },
+        "endTsUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "hidden": {
+          "description": "Hidden on its own (synced across devices by episode identity).",
+          "type": "boolean"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "itemCount": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "status": {
+          "description": "The core's summary state, e.g. `pending` or `summarize_failed`.",
+          "type": "string"
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tsUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "tsUnixMs",
+        "endTsUnixMs",
+        "app",
+        "itemCount",
+        "status",
+        "hidden",
+        "appHidden",
+        "device"
+      ],
+      "type": "object"
+    },
+    "ExchangeView": {
+      "properties": {
+        "answer": {
+          "type": "string"
+        },
+        "citations": {
+          "description": "The entries the answer cited, as saved. Empty for exchanges saved before\ncitations were stored.",
+          "items": {
+            "$ref": "#/definitions/ContextEntry"
+          },
+          "type": "array"
+        },
+        "createdAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "model": {
+          "description": "The model that answered; `None` for exchanges saved before it was stored.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "answer",
+        "createdAtUnixMs",
+        "citations"
+      ],
+      "type": "object"
+    },
+    "Fact": {
+      "description": "One learned fact: a single line, with the meeting it was suggested from when it came from a\nsuggestion.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sourceMeetingId": {
+          "default": null,
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "type": "object"
+    },
+    "GeneralSettings": {
+      "properties": {
+        "autostart": {
+          "description": "Windows starts Whimbrel at sign-in (the `Run` entry exists).",
+          "type": "boolean"
+        },
+        "autostartAvailable": {
+          "description": "False in debug builds, where the toggle is read-only.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "autostart",
+        "autostartAvailable"
+      ],
+      "type": "object"
+    },
+    "GmailAccount": {
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "lastReadUnixMs": {
+          "description": "When Whimbrel last read this account's mail, and why the last round failed if it did.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "needsReconnect": {
+          "description": "The stored grant can no longer send: its tokens are gone, or Google did not grant the\npermission to send. Connecting the same address again fixes it.",
+          "type": "boolean"
+        },
+        "readError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "email",
+        "needsReconnect"
+      ],
+      "type": "object"
+    },
+    "GmailAccounts": {
+      "properties": {
+        "accounts": {
+          "items": {
+            "$ref": "#/definitions/GmailAccount"
+          },
+          "type": "array"
+        },
+        "blocked": {
+          "description": "Why Gmail can't be connected right now (no Google client, no Node, connector not staged), or `None`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "accounts"
+      ],
+      "type": "object"
+    },
+    "HostOption": {
+      "properties": {
+        "id": {
+          "description": "The device's public key: what the choice is stored as.",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
+    "HostView": {
+      "description": "The \"Routines run on\" picker.",
+      "properties": {
+        "caption": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "options": {
+          "description": "The approved devices to choose from, this PC first.",
+          "items": {
+            "$ref": "#/definitions/HostOption"
+          },
+          "type": "array"
+        },
+        "primaryDeviceId": {
+          "description": "What is stored; empty means any device. A choice that is no longer an approved device is kept\nhere (it means \"any device\" to the gate) but not shown as selected.",
+          "type": "string"
+        },
+        "selected": {
+          "description": "What the picker shows as selected: the stored choice if it is still an option, else empty.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "primaryDeviceId",
+        "selected",
+        "options"
+      ],
+      "type": "object"
+    },
+    "LibraryRow": {
+      "oneOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CaptureRow"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "capture",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MeetingRow"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "meeting",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/EpisodeRow"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "episode",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TranscriptRow"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "transcript",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      ]
+    },
+    "LibrarySettings": {
+      "properties": {
+        "hiddenEpisodeApps": {
+          "description": "Apps whose episodes the Episodes list hides, on this PC only.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "showScreenCaptures": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "showScreenCaptures",
+        "hiddenEpisodeApps"
+      ],
+      "type": "object"
+    },
+    "LibraryTarget": {
+      "description": "A Library detail view a citation can open (the UI's `Selection`).",
+      "oneOf": [
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "capture",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "meeting",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "episode",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "McpClientView": {
+      "properties": {
+        "createdUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "revokedUnixMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "scopes",
+        "createdUnixMs"
+      ],
+      "type": "object"
+    },
+    "McpNewClient": {
+      "description": "Returned once, when a client is made. The token is not recoverable afterwards.",
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "token"
+      ],
+      "type": "object"
+    },
+    "McpServerView": {
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "enabled": {
+          "description": "The user's switch. It can be on while the server is not running (it failed).",
+          "type": "boolean"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "`stopped`, `running` or `failed`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "status",
+        "address"
+      ],
+      "type": "object"
+    },
+    "MeetingDetail": {
+      "properties": {
+        "actionItems": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "attendees": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "device": {
+          "$ref": "#/definitions/DeviceTag"
+        },
+        "endUnixMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "hasSummary": {
+          "type": "boolean"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "openQuestions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "status": {
+          "type": "string"
+        },
+        "summaryTldr": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "trigger": {
+          "description": "How it started: \"calendar\", \"detected\" or \"manual\".",
+          "type": "string"
+        },
+        "tsUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "tsUnixMs",
+        "title",
+        "status",
+        "trigger",
+        "hasSummary",
+        "device",
+        "attendees",
+        "decisions",
+        "actionItems",
+        "openQuestions"
+      ],
+      "type": "object"
+    },
+    "MeetingModelsStatus": {
+      "description": "Which meeting models are on disk.",
+      "properties": {
+        "dir": {
+          "type": "string"
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "missing": {
+          "description": "Display names of the models still missing.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "installed",
+        "missing",
+        "dir"
+      ],
+      "type": "object"
+    },
+    "MeetingRecordingView": {
+      "description": "What the UI and the tray show about meeting recording.",
+      "properties": {
+        "degraded": {
+          "description": "Why this recording may be missing audio, while it runs.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PipelineFailure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The last meeting whose transcript or summary failed."
+        },
+        "meetingId": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "processing": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Processing"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The meeting being transcribed or summarized right now, if any (M3.3 Task 4)."
+        },
+        "startedUnixMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/definitions/RecordingState"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
+    "MeetingRow": {
+      "properties": {
+        "device": {
+          "$ref": "#/definitions/DeviceTag"
+        },
+        "endUnixMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "hasSummary": {
+          "type": "boolean"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "trigger": {
+          "description": "How it started: \"calendar\", \"detected\" or \"manual\".",
+          "type": "string"
+        },
+        "tsUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "tsUnixMs",
+        "title",
+        "status",
+        "trigger",
+        "hasSummary",
+        "device"
+      ],
+      "type": "object"
+    },
+    "MeetingSettings": {
+      "description": "Settings → Meetings: how calls are detected and started.",
+      "properties": {
+        "autoStart": {
+          "description": "Start recording when the alert's countdown ends, instead of waiting. Off by default.",
+          "type": "boolean"
+        },
+        "heuristicDetection": {
+          "description": "Watch for calls at all (FR-MTG-2). On by default.",
+          "type": "boolean"
+        },
+        "leadMinutes": {
+          "description": "Minutes before a calendar meeting the alert appears, 1–10 (FR-MTG-1).",
+          "format": "double",
+          "type": "number"
+        },
+        "prepLeadMinutes": {
+          "description": "Minutes before a calendar meeting its Meeting Prep brief is made, 5-120. Kept on this PC.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "heuristicDetection",
+        "autoStart",
+        "leadMinutes",
+        "prepLeadMinutes"
+      ],
+      "type": "object"
+    },
+    "ModelStatus": {
+      "properties": {
+        "dir": {
+          "type": "string"
+        },
+        "installed": {
+          "description": "All three files are on disk.",
+          "type": "boolean"
+        },
+        "loaded": {
+          "description": "The running store has the model loaded (false until a restart after install).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "installed",
+        "loaded",
+        "dir"
+      ],
+      "type": "object"
+    },
+    "NextMeetingView": {
+      "description": "The next meeting Today shows, with its brief when one exists.",
+      "properties": {
+        "brief": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PrepBriefView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "startUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventId",
+        "title",
+        "startUnixMs"
+      ],
+      "type": "object"
+    },
+    "OcrLanguages": {
+      "properties": {
+        "available": {
+          "description": "Languages Windows can OCR (installed language packs with OCR).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "covered": {
+          "description": "Whether the most preferred language has an OCR pack.",
+          "type": "boolean"
+        },
+        "profile": {
+          "description": "The user's preferred languages, most preferred first.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "available",
+        "profile",
+        "covered"
+      ],
+      "type": "object"
+    },
+    "PipelineFailure": {
+      "description": "A meeting whose pipeline failed, kept until another one runs.",
+      "properties": {
+        "meetingId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "meetingId",
+        "message"
+      ],
+      "type": "object"
+    },
+    "PrepAttendee": {
+      "properties": {
+        "note": {
+          "type": "string"
+        },
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "who": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "who",
+        "note",
+        "sources"
+      ],
+      "type": "object"
+    },
+    "PrepBriefView": {
+      "description": "A prepared brief, flattened for the card. Claims keep the ids of the sources they rest on.",
+      "properties": {
+        "attendees": {
+          "items": {
+            "$ref": "#/definitions/PrepAttendee"
+          },
+          "type": "array"
+        },
+        "generatedAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "openItems": {
+          "items": {
+            "$ref": "#/definitions/PrepClaim"
+          },
+          "type": "array"
+        },
+        "openQuestions": {
+          "items": {
+            "$ref": "#/definitions/PrepClaim"
+          },
+          "type": "array"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/definitions/PrepSourceView"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "summarySources": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "generatedAtUnixMs",
+        "summary",
+        "summarySources",
+        "attendees",
+        "openItems",
+        "openQuestions",
+        "sources"
+      ],
+      "type": "object"
+    },
+    "PrepClaim": {
+      "description": "An open item or question and the ids of the sources it rests on.",
+      "properties": {
+        "sources": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "sources"
+      ],
+      "type": "object"
+    },
+    "PrepSourceView": {
+      "description": "A source the brief cites: the id the claims name (\"M1\", \"E2\") and what it was.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "meetingId": {
+          "description": "The meeting on **this** PC the source is, when it provably is one (see `local_meeting`); the\nchip opens it. Absent for an email, and for a meeting this PC cannot vouch for.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "type": "object"
+    },
+    "Processing": {
+      "description": "What the pipeline is doing, for the Meetings tab.",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "meetingId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "stage": {
+          "$ref": "#/definitions/Stage"
+        }
+      },
+      "required": [
+        "meetingId",
+        "stage",
+        "label"
+      ],
+      "type": "object"
+    },
+    "ProfileFields": {
+      "properties": {
+        "about": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "organization": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "role",
+        "organization",
+        "about"
+      ],
+      "type": "object"
+    },
+    "ProfileSwitches": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "suggestEnabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled",
+        "suggestEnabled"
+      ],
+      "type": "object"
+    },
+    "ProfileView": {
+      "description": "Everything the pane shows.",
+      "properties": {
+        "about": {
+          "type": "string"
+        },
+        "composedChars": {
+          "description": "The block's length before the cap, for the counter. Above `maxChars`, the rest is not sent.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "enabled": {
+          "description": "\"Use my profile in summaries and answers\".",
+          "type": "boolean"
+        },
+        "facts": {
+          "items": {
+            "$ref": "#/definitions/Fact"
+          },
+          "type": "array"
+        },
+        "maxChars": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxFactChars": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxFacts": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "organization": {
+          "type": "string"
+        },
+        "preview": {
+          "description": "\"What Whimbrel sees\": exactly the block sent with a prompt. Empty when the switch is off.",
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "suggestEnabled": {
+          "description": "\"Suggest additions from my meetings\".",
+          "type": "boolean"
+        },
+        "suggestionsActive": {
+          "description": "Whether the daily job would run now: the suggest switch is on and something is written.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "role",
+        "organization",
+        "about",
+        "facts",
+        "enabled",
+        "suggestEnabled",
+        "suggestionsActive",
+        "preview",
+        "composedChars",
+        "maxChars",
+        "maxFacts",
+        "maxFactChars"
+      ],
+      "type": "object"
+    },
+    "PromptSurface": {
+      "description": "The LLM call sites that carry their own free-text instructions — the Mac's\n`PromptSurface` (`PromptLibrarySettings.swift`). Stored under `prompts.<raw value>`,\nthe Mac's settings-sync field key; empty means \"no extra instructions\".",
+      "enum": [
+        "ask",
+        "meetingSummary",
+        "dailyDigest",
+        "weeklyDigest",
+        "episodeSummary",
+        "threadSummary"
+      ],
+      "type": "string"
+    },
+    "PromptText": {
+      "properties": {
+        "surface": {
+          "$ref": "#/definitions/PromptSurface"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "surface",
+        "text"
+      ],
+      "type": "object"
+    },
+    "Provider": {
+      "enum": [
+        "ollama",
+        "anthropic",
+        "openai",
+        "google"
+      ],
+      "type": "string"
+    },
+    "ProviderKey": {
+      "properties": {
+        "masked": {
+          "description": "The key with all but its last four characters hidden; `None` when unset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "$ref": "#/definitions/Provider"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "QueueWaitStats": {
+      "description": "How long jobs waited for the store, over the last 4,096 jobs.",
+      "properties": {
+        "jobs": {
+          "description": "Jobs run since launch.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxMs": {
+          "format": "double",
+          "type": "number"
+        },
+        "p50Ms": {
+          "format": "double",
+          "type": "number"
+        },
+        "p95Ms": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "jobs",
+        "p50Ms",
+        "p95Ms",
+        "maxMs"
+      ],
+      "type": "object"
+    },
+    "RecordingState": {
+      "enum": [
+        "idle",
+        "starting",
+        "recording"
+      ],
+      "type": "string"
+    },
+    "RetentionPreview": {
+      "description": "What a sweep would remove right now, for the first-run notice. The shell's own shape\nso it can cross to TypeScript; the numbers are core's.",
+      "properties": {
+        "captures": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "conversations": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "meetings": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "orphanBytes": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "orphans": {
+          "description": "Recordings no meeting claims any more, and what they take up.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "captures",
+        "meetings",
+        "conversations",
+        "orphans",
+        "orphanBytes"
+      ],
+      "type": "object"
+    },
+    "RetentionRun": {
+      "description": "What one sweep removed, for the Settings card.",
+      "properties": {
+        "capturesDeleted": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "conversationsDeleted": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "finishedUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "meetingsDeleted": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "orphansDeleted": {
+          "description": "Recordings on disk that no meeting claimed any more.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "capturesDeleted",
+        "meetingsDeleted",
+        "conversationsDeleted",
+        "orphansDeleted",
+        "finishedUnixMs"
+      ],
+      "type": "object"
+    },
+    "RetentionSettings": {
+      "description": "Settings → Retention. `None` days means \"keep forever\", which is how core reads a\nmissing window too.",
+      "properties": {
+        "captureDays": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "conversationDays": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "meetingDays": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RetentionView": {
+      "description": "The windows, what the last sweep removed, and whether the first-run notice is behind\nus — until it is, the schedule counts but never deletes.",
+      "properties": {
+        "acknowledged": {
+          "type": "boolean"
+        },
+        "lastRun": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RetentionRun"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "settings": {
+          "$ref": "#/definitions/RetentionSettings"
+        }
+      },
+      "required": [
+        "settings",
+        "acknowledged"
+      ],
+      "type": "object"
+    },
+    "RoutineKind": {
+      "description": "The built-in routines, as the UI names them.",
+      "enum": [
+        "dailyBrief",
+        "focusTime",
+        "eodRecap",
+        "weeklyDigest",
+        "replyPriorities",
+        "meetingPrep"
+      ],
+      "type": "string"
+    },
+    "RoutineView": {
+      "properties": {
+        "autoApprove": {
+          "description": "Whether a write routine acts without a click. Off unless the user turned it on.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/definitions/RoutineKind"
+        },
+        "lastRun": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RunView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "schedule": {
+          "description": "`HH:MM`, local time. Unused by Meeting Prep, which is event-driven.",
+          "type": "string"
+        },
+        "unavailable": {
+          "description": "Why this routine cannot run on this PC yet; the tab shows it and will not let it be switched on.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "writes": {
+          "description": "Whether this routine ends in something that needs approving (an event, an email).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "schedule",
+        "enabled",
+        "writes",
+        "autoApprove"
+      ],
+      "type": "object"
+    },
+    "RoutingSettings": {
+      "description": "Provider choice, default models and governance, as the Settings UI edits them.",
+      "properties": {
+        "anthropicModel": {
+          "type": "string"
+        },
+        "globalDailyCapCents": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "googleModel": {
+          "type": "string"
+        },
+        "localOnly": {
+          "description": "FR-CHAT-5 local-only mode: Ollama only, whatever else is configured.",
+          "type": "boolean"
+        },
+        "ollamaModel": {
+          "type": "string"
+        },
+        "openaiModel": {
+          "type": "string"
+        },
+        "preferredProvider": {
+          "$ref": "#/definitions/Provider"
+        },
+        "userDailyCapCents": {
+          "description": "`None` = the built-in default cap; `Some(0)` = no cap (Mac semantics).",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "preferredProvider",
+        "ollamaModel",
+        "anthropicModel",
+        "openaiModel",
+        "googleModel",
+        "localOnly"
+      ],
+      "type": "object"
+    },
+    "RunOutcome": {
+      "oneOf": [
+        {
+          "enum": [
+            "success",
+            "failed",
+            "rejected"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "pending",
+          "description": "Waiting for an approval, or being sent right now.",
+          "type": "string"
+        }
+      ]
+    },
+    "RunView": {
+      "description": "One run, for the history and for a routine's \"last ran\" line.",
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "originDeviceId": {
+          "description": "The device that made this run, set only when it was **another** device's (the run synced\nhere); `None` for a run this PC made.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "originLabel": {
+          "description": "That device as a person reads it, for \"from <device>\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "$ref": "#/definitions/RunOutcome"
+        },
+        "ranAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "routineId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "routineName": {
+          "type": "string"
+        },
+        "summary": {
+          "description": "What the routine reported: the brief itself, or why it failed.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "routineId",
+        "routineName",
+        "ranAtUnixMs",
+        "outcome",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "RunningApp": {
+      "properties": {
+        "appId": {
+          "description": "The §4.3 identity capture stores (normalized); what an exclusion matches.",
+          "type": "string"
+        },
+        "exe": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "appId",
+        "exe",
+        "title"
+      ],
+      "type": "object"
+    },
+    "ScheduleEvent": {
+      "properties": {
+        "attendees": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "endUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "recordedMeetingId": {
+          "description": "The local meeting recorded for this event, when there is one (recording now or done).",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "startUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventId",
+        "title",
+        "startUnixMs",
+        "endUnixMs",
+        "attendees"
+      ],
+      "type": "object"
+    },
+    "ScheduleView": {
+      "properties": {
+        "earlierToday": {
+          "description": "Meetings that started today and are not one of the events above, newest first.",
+          "items": {
+            "$ref": "#/definitions/MeetingRow"
+          },
+          "type": "array"
+        },
+        "events": {
+          "description": "Today's events that are not over yet, soonest first.",
+          "items": {
+            "$ref": "#/definitions/ScheduleEvent"
+          },
+          "type": "array"
+        },
+        "recording": {
+          "description": "A meeting is recording now, so no row offers Start.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "events",
+        "earlierToday",
+        "recording"
+      ],
+      "type": "object"
+    },
+    "SpendScope": {
+      "enum": [
+        "user",
+        "global"
+      ],
+      "type": "string"
+    },
+    "SpendView": {
+      "properties": {
+        "globalCents": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "userCents": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "userCents",
+        "globalCents"
+      ],
+      "type": "object"
+    },
+    "Stage": {
+      "enum": [
+        "transcribing",
+        "summarizing",
+        "identifying_speakers"
+      ],
+      "type": "string"
+    },
+    "StarterPromptView": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "query"
+      ],
+      "type": "object"
+    },
+    "SuggestionView": {
+      "description": "A fact the daily job proposed, waiting for Add or Dismiss.",
+      "properties": {
+        "createdAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "sourceMeetingId": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sourceMeetingTitle": {
+          "description": "The meeting it came from, when that meeting still exists.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text",
+        "createdAtUnixMs"
+      ],
+      "type": "object"
+    },
+    "SyncState": {
+      "enum": [
+        "notConfigured",
+        "notSignedIn",
+        "signingIn",
+        "waitingForApproval",
+        "waitingForGroupKey",
+        "ready",
+        "error"
+      ],
+      "type": "string"
+    },
+    "SyncView": {
+      "description": "What Settings → Sync shows. Never carries the Turso token or database URL.",
+      "properties": {
+        "contentError": {
+          "description": "The last content-sync failure, cleared by the next success.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contentLastSyncedMs": {
+          "description": "When content last synced successfully (Task 6), if it has this session.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "deviceId": {
+          "type": "string"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/definitions/SyncState"
+        }
+      },
+      "required": [
+        "state",
+        "deviceId"
+      ],
+      "type": "object"
+    },
+    "ThreadRow": {
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "lastActivityTsUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "lastMessageFrom": {
+          "type": "string"
+        },
+        "status": {
+          "description": "`waiting_on_me` or `waiting_on_them`.",
+          "type": "string"
+        },
+        "subject": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "lastActivityTsUnixMs",
+        "lastMessageFrom",
+        "status"
+      ],
+      "type": "object"
+    },
+    "TodayOverview": {
+      "properties": {
+        "briefRecap": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BriefRecap"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Today's Daily Brief, when one has run on any device. It is shown in place of the recap."
+        },
+        "day": {
+          "type": "string"
+        },
+        "devices": {
+          "items": {
+            "$ref": "#/definitions/DeviceCount"
+          },
+          "type": "array"
+        },
+        "latestMeeting": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MeetingRow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "openLoops": {
+          "items": {
+            "$ref": "#/definitions/ThreadRow"
+          },
+          "type": "array"
+        },
+        "recap": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TodayRecap"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Today's cached recap; `None` until one is generated."
+        }
+      },
+      "required": [
+        "day",
+        "openLoops",
+        "devices"
+      ],
+      "type": "object"
+    },
+    "TodayRecap": {
+      "properties": {
+        "cached": {
+          "description": "Served from the cache, so no model was called this time.",
+          "type": "boolean"
+        },
+        "day": {
+          "description": "The local calendar day, `YYYY-MM-DD`: the digest cache's key.",
+          "type": "string"
+        },
+        "emptyDay": {
+          "description": "Nothing to summarize yet today: no model was called and nothing was cached.",
+          "type": "boolean"
+        },
+        "openLoops": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "day",
+        "summary",
+        "openLoops",
+        "cached",
+        "emptyDay"
+      ],
+      "type": "object"
+    },
+    "TranscriptRow": {
+      "description": "A transcript search hit. Transcript segments carry no device of their own.",
+      "properties": {
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "meetingId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "meetingTitle": {
+          "type": "string"
+        },
+        "snippet": {
+          "type": "string"
+        },
+        "speaker": {
+          "type": "string"
+        },
+        "startCs": {
+          "description": "Offset from the meeting start, in centiseconds.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "meetingId",
+        "meetingTitle",
+        "startCs",
+        "speaker",
+        "snippet"
+      ],
+      "type": "object"
+    },
+    "TranscriptTurn": {
+      "description": "A meeting's transcript for display: turns from the file when it's on this device,\nelse from the stored segments.",
+      "properties": {
+        "speaker": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "speaker",
+        "timestamp",
+        "text"
+      ],
+      "type": "object"
+    },
+    "TranscriptView": {
+      "properties": {
+        "more": {
+          "description": "More segments remain beyond this page.",
+          "type": "boolean"
+        },
+        "source": {
+          "description": "\"file\" or \"segments\" — the segments are what a synced meeting has.",
+          "type": "string"
+        },
+        "turns": {
+          "items": {
+            "$ref": "#/definitions/TranscriptTurn"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "turns",
+        "source",
+        "more"
+      ],
+      "type": "object"
+    },
+    "TrayStatus": {
+      "description": "The popup's view of the tray state.",
+      "properties": {
+        "captureEnabled": {
+          "type": "boolean"
+        },
+        "line": {
+          "description": "\"Capturing · Synced 2:05 PM\", also the tray tooltip.",
+          "type": "string"
+        },
+        "recordingStartedUnixMs": {
+          "description": "When the recording meeting started, if one is recording.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "line",
+        "captureEnabled"
+      ],
+      "type": "object"
+    },
+    "WorkspacePhase": {
+      "description": "The workspace's phase, matching core's `WorkspaceState`.",
+      "enum": [
+        "before",
+        "during",
+        "after",
+        "cancelled"
+      ],
+      "type": "string"
+    },
+    "WorkspaceView": {
+      "description": "One meeting's workspace: what to show, and which parts the user has edited.",
+      "properties": {
+        "actionItems": {
+          "items": {
+            "$ref": "#/definitions/ActionItemView"
+          },
+          "type": "array"
+        },
+        "attendees": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "conferenceLink": {
+          "description": "The meeting app or conference link, when the row has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decisions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "decisionsAreEdited": {
+          "type": "boolean"
+        },
+        "elapsedSeconds": {
+          "description": "Seconds recorded so far, while this process is the one recording.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "hasTranscript": {
+          "type": "boolean"
+        },
+        "openQuestions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "openQuestionsAreEdited": {
+          "type": "boolean"
+        },
+        "personalNotes": {
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/definitions/WorkspacePhase"
+        },
+        "processingStage": {
+          "description": "\"Transcribing…\" and friends, while the pipeline is on this meeting.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "readOnly": {
+          "description": "A meeting recorded on another device: its audio isn't here, so it can't be\nre-summarized, and Forget would only remove this device's copy.",
+          "type": "boolean"
+        },
+        "row": {
+          "$ref": "#/definitions/MeetingRow"
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summaryIsEdited": {
+          "type": "boolean"
+        },
+        "trigger": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase",
+        "row",
+        "attendees",
+        "trigger",
+        "summaryIsEdited",
+        "decisions",
+        "decisionsAreEdited",
+        "openQuestions",
+        "openQuestionsAreEdited",
+        "personalNotes",
+        "actionItems",
+        "hasTranscript",
+        "readOnly"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Generated from apps/windows/src-tauri's command DTOs. Do not edit; run `cargo run --bin gen-schema`.",
+  "title": "WhimbrelDtos",
+  "type": "object"
+}

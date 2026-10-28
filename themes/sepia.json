@@ -1,0 +1,39 @@
+{
+  "id": "sepia",
+  "name": "Sepia",
+  "author": "Whimbrel",
+  "light": {
+    "backgroundPage": "#F4ECD8",
+    "backgroundCard": "#FBF6E9",
+    "border": "#DCCDAA",
+    "textPrimary": "#3B2F1E",
+    "textSecondary": "#6B5A3E",
+    "accentPrimary": "#8C4A1F",
+    "accentSecondary": "#6B6F52",
+    "accentHighlight": "#C99A2E",
+    "error": "#A8281C",
+    "warning": "#8C5A00",
+    "success": "#4B7A3A",
+    "link": "#6B4A8C",
+    "selection": "#E8DCBB",
+    "highlight": "#F1E0B0",
+    "textOnAccent": "#FFF8EA"
+  },
+  "dark": {
+    "backgroundPage": "#231B12",
+    "backgroundCard": "#2C2318",
+    "border": "#45382A",
+    "textPrimary": "#E8DCC2",
+    "textSecondary": "#B5A689",
+    "accentPrimary": "#D08A4E",
+    "accentSecondary": "#9AA07C",
+    "accentHighlight": "#E0B24A",
+    "error": "#F08A7A",
+    "warning": "#E0A04A",
+    "success": "#8CC47A",
+    "link": "#B79AD6",
+    "selection": "#3A2E20",
+    "highlight": "#4A3C1C",
+    "textOnAccent": "#1E140A"
+  }
+}

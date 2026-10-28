@@ -1,0 +1,21 @@
+name: Name check
+
+# The product is Whimbrel; a fixed set of identifiers keeps the old name because
+# they key user data or deployed resources (see scripts/rename-whimbrel.py KEEP).
+# This fails if a kept identifier was renamed or a product-name string crept
+# back into a user-facing file.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  name-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/rename-whimbrel.py --check

@@ -1,0 +1,39 @@
+{
+  "id": "black-gold",
+  "name": "Black and gold",
+  "author": "Whimbrel",
+  "light": {
+    "backgroundPage": "#F6F4EE",
+    "backgroundCard": "#FFFFFF",
+    "border": "#C9C2AE",
+    "textPrimary": "#15130E",
+    "textSecondary": "#4D473A",
+    "accentPrimary": "#8A6700",
+    "accentSecondary": "#2A2A2A",
+    "accentHighlight": "#B8860B",
+    "error": "#B3261E",
+    "warning": "#8A5A00",
+    "success": "#2E7D32",
+    "link": "#1F4E9E",
+    "selection": "#E7E2D3",
+    "highlight": "#F6E7B0",
+    "textOnAccent": "#FFFFFF"
+  },
+  "dark": {
+    "backgroundPage": "#0B0B0B",
+    "backgroundCard": "#171717",
+    "border": "#4A4330",
+    "textPrimary": "#F5F1E6",
+    "textSecondary": "#BDB6A3",
+    "accentPrimary": "#F2B90F",
+    "accentSecondary": "#D6C690",
+    "accentHighlight": "#FFD966",
+    "error": "#FF8A8A",
+    "warning": "#F2B84B",
+    "success": "#6FCF86",
+    "link": "#8FB3F0",
+    "selection": "#262626",
+    "highlight": "#4A3B14",
+    "textOnAccent": "#0B0B0B"
+  }
+}

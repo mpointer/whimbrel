@@ -1,0 +1,3 @@
+```json
+{"intent": "new", "reply": "Here is a stadium skin.", "notes": [{"step": "palette", "text": "Picked navy and gold"}], "skin": {"id": "user-stadium", "name": "Stadium"}, "palettes": [], "imageQueries": ["stadium at night"], "imagePrompts": []}
+```

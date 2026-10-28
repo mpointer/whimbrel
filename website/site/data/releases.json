@@ -1,0 +1,1766 @@
+[
+  {
+    "tag": "v0.9.24",
+    "date": "2026-10-20",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.24",
+    "entries": [
+      {
+        "title": "website: marketing site, competitor comparison, and pricing proposal",
+        "url": "https://github.com/mpointer/kestrel/pull/291",
+        "number": 291
+      },
+      {
+        "title": "docs: mobile app design, benchmarked against Littlebird and Granola",
+        "url": "https://github.com/mpointer/kestrel/pull/301",
+        "number": 301
+      },
+      {
+        "title": "windows: Meeting Prep source chips on Today",
+        "url": "https://github.com/mpointer/kestrel/pull/299",
+        "number": 299
+      },
+      {
+        "title": "fix: a synced Meeting Prep brief no longer cites another device's meeting row id",
+        "url": "https://github.com/mpointer/kestrel/pull/300",
+        "number": 300
+      },
+      {
+        "title": "ci: ffi builds without diarize; Android and iOS CI builds of ffi (M4.0 tasks 1-2) + M4.0 plan",
+        "url": "https://github.com/mpointer/kestrel/pull/303",
+        "number": 303
+      },
+      {
+        "title": "server: accept the iOS Google client ID as a second token audience (M4.0 task 3)",
+        "url": "https://github.com/mpointer/kestrel/pull/304",
+        "number": 304
+      },
+      {
+        "title": "sync: comparison code on the pending-device approve prompt (M4.0 task 4)",
+        "url": "https://github.com/mpointer/kestrel/pull/305",
+        "number": 305
+      },
+      {
+        "title": "sync-engine: pull-only content sync with a capture-item time window (M4.0 task 5)",
+        "url": "https://github.com/mpointer/kestrel/pull/307",
+        "number": 307
+      },
+      {
+        "title": "windows: Today recap shows the synced Daily Brief",
+        "url": "https://github.com/mpointer/kestrel/pull/302",
+        "number": 302
+      },
+      {
+        "title": "docs: Windows release evidence for v0.9.23 and the M3.5 close-out plan",
+        "url": "https://github.com/mpointer/kestrel/pull/306",
+        "number": 306
+      },
+      {
+        "title": "mobile: iOS app skeleton (M4.0 task 6a)",
+        "url": "https://github.com/mpointer/kestrel/pull/308",
+        "number": 308
+      },
+      {
+        "title": "mobile: iPhone enrollment with Google sign-in and comparison code (M4.0 task 6b)",
+        "url": "https://github.com/mpointer/kestrel/pull/309",
+        "number": 309
+      },
+      {
+        "title": "mobile: iPhone pull-only sync and synced meeting count (M4.0 task 6c)",
+        "url": "https://github.com/mpointer/kestrel/pull/310",
+        "number": 310
+      },
+      {
+        "title": "M4.0 deferred minors: server, sync-engine, comparison-code copy",
+        "url": "https://github.com/mpointer/kestrel/pull/311",
+        "number": 311
+      },
+      {
+        "title": "M4.0 deferred minors: iPhone app",
+        "url": "https://github.com/mpointer/kestrel/pull/312",
+        "number": 312
+      },
+      {
+        "title": "server: refuse an iOS-client token as an account's first device",
+        "url": "https://github.com/mpointer/kestrel/pull/313",
+        "number": 313
+      },
+      {
+        "title": "ios: phone can't strand the account; revoked phone wipes itself",
+        "url": "https://github.com/mpointer/kestrel/pull/314",
+        "number": 314
+      },
+      {
+        "title": "server: set the iOS OAuth client id",
+        "url": "https://github.com/mpointer/kestrel/pull/315",
+        "number": 315
+      },
+      {
+        "title": "ios: name the phone after approval; CI builds the release core",
+        "url": "https://github.com/mpointer/kestrel/pull/316",
+        "number": 316
+      },
+      {
+        "title": "ios: name the phone while pending too",
+        "url": "https://github.com/mpointer/kestrel/pull/318",
+        "number": 318
+      },
+      {
+        "title": "worker: let a pending device set its own name",
+        "url": "https://github.com/mpointer/kestrel/pull/317",
+        "number": 317
+      },
+      {
+        "title": "Mac Today refresh: greeting, Ask composer, schedule card, type scale",
+        "url": "https://github.com/mpointer/kestrel/pull/319",
+        "number": 319
+      },
+      {
+        "title": "Today refresh follow-up: deferred review minors",
+        "url": "https://github.com/mpointer/kestrel/pull/320",
+        "number": 320
+      },
+      {
+        "title": "Group short copies of one calendar event (duplicate meeting rows)",
+        "url": "https://github.com/mpointer/kestrel/pull/321",
+        "number": 321
+      },
+      {
+        "title": "Today: Set up an AI provider state for the Ask composer",
+        "url": "https://github.com/mpointer/kestrel/pull/322",
+        "number": 322
+      },
+      {
+        "title": "docs: M4.1 phone Read design (Today first)",
+        "url": "https://github.com/mpointer/kestrel/pull/323",
+        "number": 323
+      },
+      {
+        "title": "Fix: Clean Up Meetings Without Audio deleted synced meetings from other devices",
+        "url": "https://github.com/mpointer/kestrel/pull/324",
+        "number": 324
+      },
+      {
+        "title": "M4.1: iPhone Today, Meetings and Routines (read-only)",
+        "url": "https://github.com/mpointer/kestrel/pull/325",
+        "number": 325
+      },
+      {
+        "title": "ci: record the Windows installer's size and SHA-256 in the release run",
+        "url": "https://github.com/mpointer/kestrel/pull/326",
+        "number": 326
+      },
+      {
+        "title": "windows: Today refresh 1/4, type scale, flat cards and one reading width",
+        "url": "https://github.com/mpointer/kestrel/pull/329",
+        "number": 329
+      },
+      {
+        "title": "docs: skins design and Release 1 plan",
+        "url": "https://github.com/mpointer/kestrel/pull/327",
+        "number": 327
+      },
+      {
+        "title": "mac: skins Release 1 (built-in gallery)",
+        "url": "https://github.com/mpointer/kestrel/pull/328",
+        "number": 328
+      },
+      {
+        "title": "windows: Today refresh 2/4, greeting and date",
+        "url": "https://github.com/mpointer/kestrel/pull/330",
+        "number": 330
+      },
+      {
+        "title": "windows: Today refresh 3/4, Ask composer",
+        "url": "https://github.com/mpointer/kestrel/pull/332",
+        "number": 332
+      },
+      {
+        "title": "release: 0.9.24",
+        "url": "https://github.com/mpointer/kestrel/pull/333",
+        "number": 333
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.23",
+    "date": "2026-10-17",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.23",
+    "entries": [
+      {
+        "title": "fix: Meetings list shows a spinner until its first fetch returns",
+        "url": "https://github.com/mpointer/kestrel/pull/295",
+        "number": 295
+      },
+      {
+        "title": "fix: log why content sync fails, and back off after repeated failures",
+        "url": "https://github.com/mpointer/kestrel/pull/296",
+        "number": 296
+      },
+      {
+        "title": "fix: sync no longer scans the whole remote sync_row table every round",
+        "url": "https://github.com/mpointer/kestrel/pull/297",
+        "number": 297
+      },
+      {
+        "title": "release: prepare 0.9.23",
+        "url": "https://github.com/mpointer/kestrel/pull/298",
+        "number": 298
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.22",
+    "date": "2026-10-16",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.22",
+    "entries": [
+      {
+        "title": "release: re-runnable Mac publish; docs/RELEASING.md",
+        "url": "https://github.com/mpointer/kestrel/pull/283",
+        "number": 283
+      },
+      {
+        "title": "docs: plan for Meeting Prep on Windows",
+        "url": "https://github.com/mpointer/kestrel/pull/284",
+        "number": 284
+      },
+      {
+        "title": "windows: Meeting Prep, following the primary device",
+        "url": "https://github.com/mpointer/kestrel/pull/285",
+        "number": 285
+      },
+      {
+        "title": "docs: M3.4 Task 4 design (Gmail ingestion on Windows)",
+        "url": "https://github.com/mpointer/kestrel/pull/286",
+        "number": 286
+      },
+      {
+        "title": "windows: read Gmail mail (M3.4 Task 4)",
+        "url": "https://github.com/mpointer/kestrel/pull/287",
+        "number": 287
+      },
+      {
+        "title": "docs: MCP server sidecar on Windows, design note (M3.4 Task 5)",
+        "url": "https://github.com/mpointer/kestrel/pull/288",
+        "number": 288
+      },
+      {
+        "title": "windows: MCP server sidecar (M3.4 Task 5)",
+        "url": "https://github.com/mpointer/kestrel/pull/290",
+        "number": 290
+      },
+      {
+        "title": "windows: the updater keeps checking after it has downloaded one",
+        "url": "https://github.com/mpointer/kestrel/pull/292",
+        "number": 292
+      },
+      {
+        "title": "windows: Node and the connectors ship in the installer (M3.4 Task 6)",
+        "url": "https://github.com/mpointer/kestrel/pull/293",
+        "number": 293
+      },
+      {
+        "title": "release: prepare 0.9.22",
+        "url": "https://github.com/mpointer/kestrel/pull/294",
+        "number": 294
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.21",
+    "date": "2026-10-14",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.21",
+    "entries": [
+      {
+        "title": "windows: daily profile suggestions follow the primary device",
+        "url": "https://github.com/mpointer/kestrel/pull/281",
+        "number": 281
+      },
+      {
+        "title": "release: prepare 0.9.21",
+        "url": "https://github.com/mpointer/kestrel/pull/282",
+        "number": 282
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.20",
+    "date": "2026-10-13",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.20",
+    "entries": [
+      {
+        "title": "Meeting Prep and profile suggestions follow the primary; Today's recap reads the synced brief (Mac + core)",
+        "url": "https://github.com/mpointer/kestrel/pull/279",
+        "number": 279
+      },
+      {
+        "title": "release: prepare 0.9.20",
+        "url": "https://github.com/mpointer/kestrel/pull/280",
+        "number": 280
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.19",
+    "date": "2026-10-13",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.19",
+    "entries": [
+      {
+        "title": "windows: transcribe a meeting while it records (M3.3 gate gap)",
+        "url": "https://github.com/mpointer/kestrel/pull/251",
+        "number": 251
+      },
+      {
+        "title": "docs: M3.4 Task 4 (Gmail ingestion) on hold, with what the Mac stores",
+        "url": "https://github.com/mpointer/kestrel/pull/277",
+        "number": 277
+      },
+      {
+        "title": "release: prepare 0.9.19",
+        "url": "https://github.com/mpointer/kestrel/pull/278",
+        "number": 278
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.18",
+    "date": "2026-10-12",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.18",
+    "entries": [
+      {
+        "title": "windows: M3.4 Task 2 — approvals inbox, auto-approve, and the Calendar write action",
+        "url": "https://github.com/mpointer/kestrel/pull/269",
+        "number": 269
+      },
+      {
+        "title": "build(deps): bump the npm_and_yarn group across 6 directories with 5 updates",
+        "url": "https://github.com/mpointer/kestrel/pull/268",
+        "number": 268
+      },
+      {
+        "title": "windows: M3.4 Task 3 — connect Gmail and send the approved recap",
+        "url": "https://github.com/mpointer/kestrel/pull/272",
+        "number": 272
+      },
+      {
+        "title": "windows: let dev builds live on a bigger drive (KESTREL_TARGET_DIR)",
+        "url": "https://github.com/mpointer/kestrel/pull/273",
+        "number": 273
+      },
+      {
+        "title": "Routines safety net: a secondary covers a missed day (Mac + core)",
+        "url": "https://github.com/mpointer/kestrel/pull/274",
+        "number": 274
+      },
+      {
+        "title": "windows: choose which device runs routines, and show where a run came from",
+        "url": "https://github.com/mpointer/kestrel/pull/275",
+        "number": 275
+      },
+      {
+        "title": "release: prepare 0.9.18",
+        "url": "https://github.com/mpointer/kestrel/pull/276",
+        "number": 276
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.17",
+    "date": "2026-10-08",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.17",
+    "entries": [
+      {
+        "title": "redact: AWS keys glued to preceding word characters",
+        "url": "https://github.com/mpointer/kestrel/pull/265",
+        "number": 265
+      },
+      {
+        "title": "build(deps): bump the cargo group across 2 directories with 1 update",
+        "url": "https://github.com/mpointer/kestrel/pull/243",
+        "number": 243
+      },
+      {
+        "title": "build(deps): bump the npm_and_yarn group across 2 directories with 2 updates",
+        "url": "https://github.com/mpointer/kestrel/pull/266",
+        "number": 266
+      },
+      {
+        "title": "windows: M3.4 Task 1 — routines run on a schedule, and the Automations tab",
+        "url": "https://github.com/mpointer/kestrel/pull/267",
+        "number": 267
+      },
+      {
+        "title": "Routines: one device runs them, every device sees the results (Mac + core)",
+        "url": "https://github.com/mpointer/kestrel/pull/270",
+        "number": 270
+      },
+      {
+        "title": "release: prepare 0.9.17",
+        "url": "https://github.com/mpointer/kestrel/pull/271",
+        "number": 271
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.16",
+    "date": "2026-10-07",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.16",
+    "entries": [
+      {
+        "title": "windows: Profile Task 2 — commands and the gated daily suggestion job",
+        "url": "https://github.com/mpointer/kestrel/pull/262",
+        "number": 262
+      },
+      {
+        "title": "windows: Profile Task 3 — the Settings pane (stacked on Task 2)",
+        "url": "https://github.com/mpointer/kestrel/pull/263",
+        "number": 263
+      },
+      {
+        "title": "release: prepare 0.9.16",
+        "url": "https://github.com/mpointer/kestrel/pull/264",
+        "number": 264
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.15",
+    "date": "2026-10-07",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.15",
+    "entries": [
+      {
+        "title": "Meeting Prep: cited briefs before upcoming meetings",
+        "url": "https://github.com/mpointer/kestrel/pull/244",
+        "number": 244
+      },
+      {
+        "title": "Meeting page refresh: day-grouped list, reading page and meeting Ask",
+        "url": "https://github.com/mpointer/kestrel/pull/248",
+        "number": 248
+      },
+      {
+        "title": "Calendar meeting title check with TypeSafe (rework of #209)",
+        "url": "https://github.com/mpointer/kestrel/pull/249",
+        "number": 249
+      },
+      {
+        "title": "Tests never touch the real Keychain",
+        "url": "https://github.com/mpointer/kestrel/pull/253",
+        "number": 253
+      },
+      {
+        "title": "Live transcription during meetings (Mac) and in-call Ask",
+        "url": "https://github.com/mpointer/kestrel/pull/252",
+        "number": 252
+      },
+      {
+        "title": "Themes: shared theme files, token model, Appearance and Theme settings (Mac)",
+        "url": "https://github.com/mpointer/kestrel/pull/254",
+        "number": 254
+      },
+      {
+        "title": "Today rework: agenda and catch-up (Mac)",
+        "url": "https://github.com/mpointer/kestrel/pull/255",
+        "number": 255
+      },
+      {
+        "title": "Personal Profile: fields, facts and daily suggestions (Mac + core)",
+        "url": "https://github.com/mpointer/kestrel/pull/256",
+        "number": 256
+      },
+      {
+        "title": "windows: themes Task 1 — new tokens, stray colors fixed, color guard",
+        "url": "https://github.com/mpointer/kestrel/pull/257",
+        "number": 257
+      },
+      {
+        "title": "windows: themes Task 2 — port the loader and run the shared corpus",
+        "url": "https://github.com/mpointer/kestrel/pull/258",
+        "number": 258
+      },
+      {
+        "title": "windows: themes Task 3 — apply, remember and pick a theme (stacked on #258)",
+        "url": "https://github.com/mpointer/kestrel/pull/259",
+        "number": 259
+      },
+      {
+        "title": "windows: Profile Task 1 — the model, the composer, and sending it with every prompt",
+        "url": "https://github.com/mpointer/kestrel/pull/260",
+        "number": 260
+      },
+      {
+        "title": "release: prepare 0.9.15",
+        "url": "https://github.com/mpointer/kestrel/pull/261",
+        "number": 261
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.14",
+    "date": "2026-10-06",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.14",
+    "entries": [
+      {
+        "title": "docs: reply priorities design",
+        "url": "https://github.com/mpointer/kestrel/pull/234",
+        "number": 234
+      },
+      {
+        "title": "docs: reply priorities implementation plan",
+        "url": "https://github.com/mpointer/kestrel/pull/235",
+        "number": 235
+      },
+      {
+        "title": "Reply priorities: rank waiting email with TypeSafe (opt-in, Mac first)",
+        "url": "https://github.com/mpointer/kestrel/pull/236",
+        "number": 236
+      },
+      {
+        "title": "redact: catch keys glued to preceding word characters",
+        "url": "https://github.com/mpointer/kestrel/pull/237",
+        "number": 237
+      },
+      {
+        "title": "windows: only auto-record a calendar event when this PC is in the call",
+        "url": "https://github.com/mpointer/kestrel/pull/238",
+        "number": 238
+      },
+      {
+        "title": "windows: don't re-transcribe silent recordings at every launch",
+        "url": "https://github.com/mpointer/kestrel/pull/239",
+        "number": 239
+      },
+      {
+        "title": "docs: meeting prep design",
+        "url": "https://github.com/mpointer/kestrel/pull/240",
+        "number": 240
+      },
+      {
+        "title": "docs: meeting prep implementation plan",
+        "url": "https://github.com/mpointer/kestrel/pull/241",
+        "number": 241
+      },
+      {
+        "title": "release: prepare 0.9.14",
+        "url": "https://github.com/mpointer/kestrel/pull/242",
+        "number": 242
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.13",
+    "date": "2026-10-05",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.13",
+    "entries": [
+      {
+        "title": "calendar: re-adding a connected Google account replaces its tokens",
+        "url": "https://github.com/mpointer/kestrel/pull/231",
+        "number": 231
+      },
+      {
+        "title": "summaries: stop burning retries when Ollama or its model is missing",
+        "url": "https://github.com/mpointer/kestrel/pull/232",
+        "number": 232
+      },
+      {
+        "title": "release: prepare 0.9.13",
+        "url": "https://github.com/mpointer/kestrel/pull/233",
+        "number": 233
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.12",
+    "date": "2026-10-05",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.12",
+    "entries": [
+      {
+        "title": "gmail: rebuild committed dist so the 404 skip ships",
+        "url": "https://github.com/mpointer/kestrel/pull/228",
+        "number": 228
+      },
+      {
+        "title": "ci: fail when a connector's dist/ is stale",
+        "url": "https://github.com/mpointer/kestrel/pull/229",
+        "number": 229
+      },
+      {
+        "title": "release: prepare 0.9.12",
+        "url": "https://github.com/mpointer/kestrel/pull/230",
+        "number": 230
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.11",
+    "date": "2026-10-03",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.11",
+    "entries": [
+      {
+        "title": "release-publish: check the notary profile before building",
+        "url": "https://github.com/mpointer/kestrel/pull/225",
+        "number": 225
+      },
+      {
+        "title": "gmail: skip a message that 404s during sync",
+        "url": "https://github.com/mpointer/kestrel/pull/226",
+        "number": 226
+      },
+      {
+        "title": "release: prepare 0.9.11",
+        "url": "https://github.com/mpointer/kestrel/pull/227",
+        "number": 227
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.10",
+    "date": "2026-10-01",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.10",
+    "entries": [
+      {
+        "title": "gmail: treat bulk and automated mail as fyi, not waiting_on_me",
+        "url": "https://github.com/mpointer/kestrel/pull/223",
+        "number": 223
+      },
+      {
+        "title": "release: prepare 0.9.10",
+        "url": "https://github.com/mpointer/kestrel/pull/224",
+        "number": 224
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.9",
+    "date": "2026-10-01",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.9",
+    "entries": [
+      {
+        "title": "release-windows: pinned wrangler, and publish an existing tag by input",
+        "url": "https://github.com/mpointer/kestrel/pull/220",
+        "number": 220
+      },
+      {
+        "title": "connectors: surface tool errors and flag Google accounts that need reconnecting",
+        "url": "https://github.com/mpointer/kestrel/pull/221",
+        "number": 221
+      },
+      {
+        "title": "release: prepare 0.9.9",
+        "url": "https://github.com/mpointer/kestrel/pull/222",
+        "number": 222
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.8",
+    "date": "2026-10-01",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.8",
+    "entries": [
+      {
+        "title": "windows: NSIS installer and in-app auto-update (M3.5, part 1)",
+        "url": "https://github.com/mpointer/kestrel/pull/217",
+        "number": 217
+      },
+      {
+        "title": "windows: publish the installer and latest.json on release tags (M3.5, part 2)",
+        "url": "https://github.com/mpointer/kestrel/pull/218",
+        "number": 218
+      },
+      {
+        "title": "release: prepare 0.9.8",
+        "url": "https://github.com/mpointer/kestrel/pull/219",
+        "number": 219
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.7",
+    "date": "2026-10-01",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.7",
+    "entries": [
+      {
+        "title": "episodes: don't send empty or one-glance episodes to the model",
+        "url": "https://github.com/mpointer/kestrel/pull/213",
+        "number": 213
+      },
+      {
+        "title": "memory: redact stored secrets in episodes, revive a stuck sweep",
+        "url": "https://github.com/mpointer/kestrel/pull/215",
+        "number": 215
+      },
+      {
+        "title": "release: prepare 0.9.7",
+        "url": "https://github.com/mpointer/kestrel/pull/216",
+        "number": 216
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.6",
+    "date": "2026-10-01",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.6",
+    "entries": [
+      {
+        "title": "capture: redact credentials before they're stored, synced or sent",
+        "url": "https://github.com/mpointer/kestrel/pull/211",
+        "number": 211
+      },
+      {
+        "title": "ask: pack the question's matches before recent episodes and threads",
+        "url": "https://github.com/mpointer/kestrel/pull/212",
+        "number": 212
+      },
+      {
+        "title": "release: prepare 0.9.6",
+        "url": "https://github.com/mpointer/kestrel/pull/214",
+        "number": 214
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.5",
+    "date": "2026-09-30",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.5",
+    "entries": [
+      {
+        "title": "summaries: give manual and detected meetings a real title",
+        "url": "https://github.com/mpointer/kestrel/pull/206",
+        "number": 206
+      },
+      {
+        "title": "meetings: show one entry for a call recorded on several Macs",
+        "url": "https://github.com/mpointer/kestrel/pull/208",
+        "number": 208
+      },
+      {
+        "title": "windows: don't re-prompt a calendar event after a relaunch",
+        "url": "https://github.com/mpointer/kestrel/pull/207",
+        "number": 207
+      },
+      {
+        "title": "release: prepare 0.9.5",
+        "url": "https://github.com/mpointer/kestrel/pull/210",
+        "number": 210
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.4",
+    "date": "2026-09-30",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.4",
+    "entries": [
+      {
+        "title": "macos: only auto-record a calendar event when this Mac is in the call",
+        "url": "https://github.com/mpointer/kestrel/pull/203",
+        "number": 203
+      },
+      {
+        "title": "memory: recreate items_vec_au in one write transaction",
+        "url": "https://github.com/mpointer/kestrel/pull/205",
+        "number": 205
+      },
+      {
+        "title": "release: prepare 0.9.4",
+        "url": "https://github.com/mpointer/kestrel/pull/204",
+        "number": 204
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.3",
+    "date": "2026-09-24",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.3",
+    "entries": [
+      {
+        "title": "macos: no re-recording after relaunch; Meeting options visible in Meetings",
+        "url": "https://github.com/mpointer/kestrel/pull/200",
+        "number": 200
+      },
+      {
+        "title": "release: prepare 0.9.3",
+        "url": "https://github.com/mpointer/kestrel/pull/201",
+        "number": 201
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.2",
+    "date": "2026-09-24",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.2",
+    "entries": [
+      {
+        "title": "macos: \"Transcribe again\" and honest no-transcript messages",
+        "url": "https://github.com/mpointer/kestrel/pull/198",
+        "number": 198
+      },
+      {
+        "title": "release: prepare 0.9.2",
+        "url": "https://github.com/mpointer/kestrel/pull/199",
+        "number": 199
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.1",
+    "date": "2026-09-24",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.1",
+    "entries": [
+      {
+        "title": "macos: run LLM calls on a slow-lane store so Ollama can't block the UI",
+        "url": "https://github.com/mpointer/kestrel/pull/196",
+        "number": 196
+      },
+      {
+        "title": "release: prepare 0.9.1",
+        "url": "https://github.com/mpointer/kestrel/pull/197",
+        "number": 197
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.0",
+    "date": "2026-09-23",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.0",
+    "entries": [
+      {
+        "title": "mcp-server: take the database path from the app (#180 B2)",
+        "url": "https://github.com/mpointer/kestrel/pull/192",
+        "number": 192
+      },
+      {
+        "title": "settings: rename littlebird.* keys, copying old values forward (#180 B3)",
+        "url": "https://github.com/mpointer/kestrel/pull/193",
+        "number": 193
+      },
+      {
+        "title": "macos: move the data folder out of Littlebird's folder (#180 B1)",
+        "url": "https://github.com/mpointer/kestrel/pull/194",
+        "number": 194
+      },
+      {
+        "title": "transcribe: match bleed-through by span overlap and word containment",
+        "url": "https://github.com/mpointer/kestrel/pull/189",
+        "number": 189
+      },
+      {
+        "title": "Rename the last non-data Littlebird identifiers to Kestrel",
+        "url": "https://github.com/mpointer/kestrel/pull/190",
+        "number": 190
+      },
+      {
+        "title": "Design: littlebird → kestrel data migration",
+        "url": "https://github.com/mpointer/kestrel/pull/191",
+        "number": 191
+      },
+      {
+        "title": "release: prepare 0.9.0",
+        "url": "https://github.com/mpointer/kestrel/pull/195",
+        "number": 195
+      }
+    ]
+  },
+  {
+    "tag": "v0.8.0",
+    "date": "2026-09-19",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.8.0",
+    "entries": [
+      {
+        "title": "core: store every chunk of a long capture (dedupe once per record)",
+        "url": "https://github.com/mpointer/kestrel/pull/116",
+        "number": 116
+      },
+      {
+        "title": "core: bound content-sync push passes so a backlog drains (and pull runs)",
+        "url": "https://github.com/mpointer/kestrel/pull/120",
+        "number": 120
+      },
+      {
+        "title": "Prompt audit: MCP tool contracts, Claude pricing, Anthropic stop_reason",
+        "url": "https://github.com/mpointer/kestrel/pull/91",
+        "number": 91
+      },
+      {
+        "title": "build(deps): bump the npm_and_yarn group across 3 directories with 1 update",
+        "url": "https://github.com/mpointer/kestrel/pull/92",
+        "number": 92
+      },
+      {
+        "title": "windows: M3.1 capture spike (UIA, OCR, audio, NFR-PRF-1)",
+        "url": "https://github.com/mpointer/kestrel/pull/111",
+        "number": 111
+      },
+      {
+        "title": "docs: M3.2 Windows shell skeleton implementation plan",
+        "url": "https://github.com/mpointer/kestrel/pull/112",
+        "number": 112
+      },
+      {
+        "title": "llm: match the episode-summary test to the \"brief\" wording",
+        "url": "https://github.com/mpointer/kestrel/pull/125",
+        "number": 125
+      },
+      {
+        "title": "windows: M3.2 Task 1 - Tauri skeleton, tray, close-to-tray, link gate",
+        "url": "https://github.com/mpointer/kestrel/pull/113",
+        "number": 113
+      },
+      {
+        "title": "windows: M3.2 Task 2 - store actor, device identity, secrets, settings, TS types",
+        "url": "https://github.com/mpointer/kestrel/pull/114",
+        "number": 114
+      },
+      {
+        "title": "windows: M3.2 Task 3 - ambient capture service",
+        "url": "https://github.com/mpointer/kestrel/pull/115",
+        "number": 115
+      },
+      {
+        "title": "windows: M3.2 Task 4 - Library with device attribution, background job loops",
+        "url": "https://github.com/mpointer/kestrel/pull/124",
+        "number": 124
+      },
+      {
+        "title": "windows: M3.2 Task 5 - sync enrollment and the Devices pane",
+        "url": "https://github.com/mpointer/kestrel/pull/118",
+        "number": 118
+      },
+      {
+        "title": "windows: M3.2 Task 6 - content sync coordinator (gate dry run: Windows half)",
+        "url": "https://github.com/mpointer/kestrel/pull/119",
+        "number": 119
+      },
+      {
+        "title": "windows: M3.2 Task 7 - Settings for providers, keys, capture and the search model",
+        "url": "https://github.com/mpointer/kestrel/pull/123",
+        "number": 123
+      },
+      {
+        "title": "core: time-limit content-sync pull passes so the store stays responsive",
+        "url": "https://github.com/mpointer/kestrel/pull/127",
+        "number": 127
+      },
+      {
+        "title": "core: a provider chain moves past a link's own failure, not just 429/5xx",
+        "url": "https://github.com/mpointer/kestrel/pull/126",
+        "number": 126
+      },
+      {
+        "title": "windows: M3.2 Task 8 - Ask with streaming, citations and saved conversations",
+        "url": "https://github.com/mpointer/kestrel/pull/128",
+        "number": 128
+      },
+      {
+        "title": "windows: M3.2 Task 9 - Today: recap, open loops, latest meeting, devices",
+        "url": "https://github.com/mpointer/kestrel/pull/131",
+        "number": 131
+      },
+      {
+        "title": "windows: a sign-in cancel can't be undone by a reply already in flight",
+        "url": "https://github.com/mpointer/kestrel/pull/135",
+        "number": 135
+      },
+      {
+        "title": "macos: never capture Kestrel's own windows",
+        "url": "https://github.com/mpointer/kestrel/pull/134",
+        "number": 134
+      },
+      {
+        "title": "docs: roadmap records M3.1 done and M3.2 Tasks 1-9 landed",
+        "url": "https://github.com/mpointer/kestrel/pull/133",
+        "number": 133
+      },
+      {
+        "title": "docs: Mac UI parity with the Windows shell",
+        "url": "https://github.com/mpointer/kestrel/pull/137",
+        "number": 137
+      },
+      {
+        "title": "windows: M3.2 Task 10 - tray states and popup, start at login, crash restart",
+        "url": "https://github.com/mpointer/kestrel/pull/136",
+        "number": 136
+      },
+      {
+        "title": "macos: remove development leftovers from the UI",
+        "url": "https://github.com/mpointer/kestrel/pull/139",
+        "number": 139
+      },
+      {
+        "title": "macos: call Library \"Library\" everywhere",
+        "url": "https://github.com/mpointer/kestrel/pull/140",
+        "number": 140
+      },
+      {
+        "title": "macos: status colors and radii come from the design system",
+        "url": "https://github.com/mpointer/kestrel/pull/141",
+        "number": 141
+      },
+      {
+        "title": "macos: Library and Today show loading, empty and error states",
+        "url": "https://github.com/mpointer/kestrel/pull/142",
+        "number": 142
+      },
+      {
+        "title": "macos: Library groups Recent under day headings",
+        "url": "https://github.com/mpointer/kestrel/pull/143",
+        "number": 143
+      },
+      {
+        "title": "macos: one device chip on Library rows and every detail view",
+        "url": "https://github.com/mpointer/kestrel/pull/144",
+        "number": 144
+      },
+      {
+        "title": "ci: gate macOS/Windows native runners to push-to-main, not every PR sync",
+        "url": "https://github.com/mpointer/kestrel/pull/138",
+        "number": 138
+      },
+      {
+        "title": "ci: cache Rust builds, skip jobs a diff can't affect, cancel superseded runs",
+        "url": "https://github.com/mpointer/kestrel/pull/145",
+        "number": 145
+      },
+      {
+        "title": "macos: split TimelineView and SettingsView into files by concern",
+        "url": "https://github.com/mpointer/kestrel/pull/147",
+        "number": 147
+      },
+      {
+        "title": "macos: Today's open loops, approvals and device activity are actionable",
+        "url": "https://github.com/mpointer/kestrel/pull/148",
+        "number": 148
+      },
+      {
+        "title": "macos: Ask keeps its conversation list, shows sources as chips and names the model",
+        "url": "https://github.com/mpointer/kestrel/pull/149",
+        "number": 149
+      },
+      {
+        "title": "ci: run the cargo test job on self-hosted runner",
+        "url": "https://github.com/mpointer/kestrel/pull/146",
+        "number": 146
+      },
+      {
+        "title": "windows: status, link and control-radius tokens matching the Mac",
+        "url": "https://github.com/mpointer/kestrel/pull/151",
+        "number": 151
+      },
+      {
+        "title": "macos: Settings becomes seven card-based sections that open on General",
+        "url": "https://github.com/mpointer/kestrel/pull/152",
+        "number": 152
+      },
+      {
+        "title": "macos: keyboard shortcuts for tabs, search and new conversation; VoiceOver labels",
+        "url": "https://github.com/mpointer/kestrel/pull/153",
+        "number": 153
+      },
+      {
+        "title": "ci: run the windows job on a self-hosted Windows runner",
+        "url": "https://github.com/mpointer/kestrel/pull/150",
+        "number": 150
+      },
+      {
+        "title": "windows: Today counts captures per device with the core query",
+        "url": "https://github.com/mpointer/kestrel/pull/154",
+        "number": 154
+      },
+      {
+        "title": "windows: captures and meetings show their date and time",
+        "url": "https://github.com/mpointer/kestrel/pull/157",
+        "number": 157
+      },
+      {
+        "title": "ci: the Windows runner's rustup can't self-update; document the rust-cache hazard",
+        "url": "https://github.com/mpointer/kestrel/pull/156",
+        "number": 156
+      },
+      {
+        "title": "ci: build and test the Windows app on the PC runner; stop rust-cache deleting rustup on self-hosted runners",
+        "url": "https://github.com/mpointer/kestrel/pull/155",
+        "number": 155
+      },
+      {
+        "title": "ci: stop rust-cache saving on the self-hosted runners",
+        "url": "https://github.com/mpointer/kestrel/pull/158",
+        "number": 158
+      },
+      {
+        "title": "macos: renew the sync token before it expires, not only at launch",
+        "url": "https://github.com/mpointer/kestrel/pull/159",
+        "number": 159
+      },
+      {
+        "title": "core: re-embed an item whose text changes after the reindex sweep passed it",
+        "url": "https://github.com/mpointer/kestrel/pull/160",
+        "number": 160
+      },
+      {
+        "title": "chat: saved conversations keep their citations and the model that answered",
+        "url": "https://github.com/mpointer/kestrel/pull/161",
+        "number": 161
+      },
+      {
+        "title": "core: stream Anthropic and OpenAI answers",
+        "url": "https://github.com/mpointer/kestrel/pull/162",
+        "number": 162
+      },
+      {
+        "title": "M3.3 plan + Task 1: core changes for Windows meetings",
+        "url": "https://github.com/mpointer/kestrel/pull/163",
+        "number": 163
+      },
+      {
+        "title": "build(deps): bump the npm_and_yarn group across 4 directories with 6 updates",
+        "url": "https://github.com/mpointer/kestrel/pull/132",
+        "number": 132
+      },
+      {
+        "title": "M3.3 Task 2: slow-lane store and meeting models download",
+        "url": "https://github.com/mpointer/kestrel/pull/164",
+        "number": 164
+      },
+      {
+        "title": "M3.3 Task 3: record a meeting by hand",
+        "url": "https://github.com/mpointer/kestrel/pull/165",
+        "number": 165
+      },
+      {
+        "title": "M3.3 Task 4: transcript, summary and speaker labels after a meeting",
+        "url": "https://github.com/mpointer/kestrel/pull/166",
+        "number": 166
+      },
+      {
+        "title": "core: drop whisper's non-speech markers from transcript segments",
+        "url": "https://github.com/mpointer/kestrel/pull/167",
+        "number": 167
+      },
+      {
+        "title": "M3.3 Task 5: the Meetings tab and its workspace",
+        "url": "https://github.com/mpointer/kestrel/pull/169",
+        "number": 169
+      },
+      {
+        "title": "macos: end meetings by core's end rules",
+        "url": "https://github.com/mpointer/kestrel/pull/170",
+        "number": 170
+      },
+      {
+        "title": "memory: the two-connection stress test fails fast instead of hanging CI",
+        "url": "https://github.com/mpointer/kestrel/pull/172",
+        "number": 172
+      },
+      {
+        "title": "macos: detect Teams and Zoom web meetings, not only Google Meet",
+        "url": "https://github.com/mpointer/kestrel/pull/173",
+        "number": 173
+      },
+      {
+        "title": "macos: end a detected meeting when its app stops using the mic (#84)",
+        "url": "https://github.com/mpointer/kestrel/pull/174",
+        "number": 174
+      },
+      {
+        "title": "macos: keep recording the mic through device changes and stalls",
+        "url": "https://github.com/mpointer/kestrel/pull/175",
+        "number": 175
+      },
+      {
+        "title": "M3.3 Task 6: detect calls, offer to record them, and end them",
+        "url": "https://github.com/mpointer/kestrel/pull/176",
+        "number": 176
+      },
+      {
+        "title": "macos: reopen system audio once after it stops mid-recording",
+        "url": "https://github.com/mpointer/kestrel/pull/177",
+        "number": 177
+      },
+      {
+        "title": "macos: log how long work waits on the shared store queue",
+        "url": "https://github.com/mpointer/kestrel/pull/178",
+        "number": 178
+      },
+      {
+        "title": "M3.3 Task 7: Google Calendar and the lead-time prompt",
+        "url": "https://github.com/mpointer/kestrel/pull/179",
+        "number": 179
+      },
+      {
+        "title": "macos: take a full Google Calendar baseline on each account's first sync",
+        "url": "https://github.com/mpointer/kestrel/pull/181",
+        "number": 181
+      },
+      {
+        "title": "macos: build the Rust core wherever cargo is configured to",
+        "url": "https://github.com/mpointer/kestrel/pull/182",
+        "number": 182
+      },
+      {
+        "title": "M3.3 Task 8: retention",
+        "url": "https://github.com/mpointer/kestrel/pull/183",
+        "number": 183
+      },
+      {
+        "title": "windows: ask before the first retention sweep",
+        "url": "https://github.com/mpointer/kestrel/pull/185",
+        "number": 185
+      },
+      {
+        "title": "M3.3 Task 9: gate evidence",
+        "url": "https://github.com/mpointer/kestrel/pull/184",
+        "number": 184
+      },
+      {
+        "title": "macos: put the cargo target-dir build step in project.yml",
+        "url": "https://github.com/mpointer/kestrel/pull/186",
+        "number": 186
+      },
+      {
+        "title": "release: prepare 0.8.0",
+        "url": "https://github.com/mpointer/kestrel/pull/187",
+        "number": 187
+      }
+    ]
+  },
+  {
+    "tag": "v0.7.6",
+    "date": "2026-09-10",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.7.6",
+    "entries": [
+      {
+        "title": "core: split ffi into api + ffi (M3.0 part 1, Tasks 0–9)",
+        "url": "https://github.com/mpointer/kestrel/pull/96",
+        "number": 96
+      },
+      {
+        "title": "docs: plan for the Swift-side consolidation (M3.0 part 2)",
+        "url": "https://github.com/mpointer/kestrel/pull/97",
+        "number": 97
+      },
+      {
+        "title": "transcribe: move transcript post-processing into core (M3.0 part 2, Task 1)",
+        "url": "https://github.com/mpointer/kestrel/pull/98",
+        "number": 98
+      },
+      {
+        "title": "api: move retention sweep, orphan scan and meeting-file cleanup into core (M3.0 part 2, Task 2)",
+        "url": "https://github.com/mpointer/kestrel/pull/99",
+        "number": 99
+      },
+      {
+        "title": "api: move model download into core (M3.0 part 2, Task 3)",
+        "url": "https://github.com/mpointer/kestrel/pull/100",
+        "number": 100
+      },
+      {
+        "title": "api: move update check, starter prompts, urgency and hosted model lists into core (M3.0 part 2, Tasks 4 and 5)",
+        "url": "https://github.com/mpointer/kestrel/pull/101",
+        "number": 101
+      },
+      {
+        "title": "api: derive the meeting workspace state in core (M3.0 part 2, Task 6)",
+        "url": "https://github.com/mpointer/kestrel/pull/102",
+        "number": 102
+      },
+      {
+        "title": "api: plan and settle routine write actions in core (M3.0 part 2, Task 7)",
+        "url": "https://github.com/mpointer/kestrel/pull/103",
+        "number": 103
+      },
+      {
+        "title": "api: run the Google Calendar and Gmail sync iterations in core (M3.0 part 2, Task 8)",
+        "url": "https://github.com/mpointer/kestrel/pull/104",
+        "number": 104
+      },
+      {
+        "title": "api: move the connected-account registry into core (M3.0 part 2, Task 9)",
+        "url": "https://github.com/mpointer/kestrel/pull/105",
+        "number": 105
+      },
+      {
+        "title": "api: move OAuth flows into core (M3.0 part 2, Task 10)",
+        "url": "https://github.com/mpointer/kestrel/pull/106",
+        "number": 106
+      },
+      {
+        "title": "api: move the sync Worker client and enrollment decisions into core (M3.0 part 2, Task 11)",
+        "url": "https://github.com/mpointer/kestrel/pull/107",
+        "number": 107
+      },
+      {
+        "title": "api: move settings-sync iteration rules into core (M3.0 part 2, Task 12)",
+        "url": "https://github.com/mpointer/kestrel/pull/108",
+        "number": 108
+      },
+      {
+        "title": "docs: record Swift-side consolidation (M3.0 part 2, Task 13)",
+        "url": "https://github.com/mpointer/kestrel/pull/110",
+        "number": 110
+      },
+      {
+        "title": "core: bring the sync/capture-ingest bug fixes to main (0.7.6 prep)",
+        "url": "https://github.com/mpointer/kestrel/pull/121",
+        "number": 121
+      },
+      {
+        "title": "release: prepare 0.7.6",
+        "url": "https://github.com/mpointer/kestrel/pull/122",
+        "number": 122
+      }
+    ]
+  },
+  {
+    "tag": "v0.7.5",
+    "date": "2026-09-07",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.7.5",
+    "entries": [
+      {
+        "title": "Sync hidden-episode state across devices",
+        "url": "https://github.com/mpointer/kestrel/pull/90",
+        "number": 90
+      },
+      {
+        "title": "Per-surface prompt library (#46)",
+        "url": "https://github.com/mpointer/kestrel/pull/93",
+        "number": 93
+      },
+      {
+        "title": "docs: Windows desktop client design (Phase 3)",
+        "url": "https://github.com/mpointer/kestrel/pull/94",
+        "number": 94
+      },
+      {
+        "title": "release: prepare 0.7.5",
+        "url": "https://github.com/mpointer/kestrel/pull/95",
+        "number": 95
+      }
+    ]
+  },
+  {
+    "tag": "v0.7.4",
+    "date": "2026-09-01",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.7.4",
+    "entries": [
+      {
+        "title": "Gemini streaming adapter (#83) and live outbox dispatcher (#82)",
+        "url": "https://github.com/mpointer/kestrel/pull/88",
+        "number": 88
+      },
+      {
+        "title": "release: prepare 0.7.4",
+        "url": "https://github.com/mpointer/kestrel/pull/89",
+        "number": 89
+      }
+    ]
+  },
+  {
+    "tag": "v0.7.3",
+    "date": "2026-08-28",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.7.3",
+    "entries": [
+      {
+        "title": "Fix silent Ask-provider substitution; release 0.7.3",
+        "url": "https://github.com/mpointer/kestrel/pull/87",
+        "number": 87
+      }
+    ]
+  },
+  {
+    "tag": "v0.7.2",
+    "date": "2026-08-28",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.7.2",
+    "entries": [
+      {
+        "title": "docs: add reliability, streaming, and macOS UX refactor package",
+        "url": "https://github.com/mpointer/kestrel/pull/79",
+        "number": 79
+      },
+      {
+        "title": "Fix #64, #65, #75, #74: calendar events, meeting titles, Markdown chat, streaming Ask",
+        "url": "https://github.com/mpointer/kestrel/pull/85",
+        "number": 85
+      },
+      {
+        "title": "release: prepare 0.7.2",
+        "url": "https://github.com/mpointer/kestrel/pull/86",
+        "number": 86
+      }
+    ]
+  },
+  {
+    "tag": "v0.7.1",
+    "date": "2026-08-28",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.7.1",
+    "entries": [
+      {
+        "title": "Reliability refactor slice 1: shadow-mode outbox + streaming/cancellable inference",
+        "url": "https://github.com/mpointer/kestrel/pull/80",
+        "number": 80
+      },
+      {
+        "title": "release: prepare 0.7.1",
+        "url": "https://github.com/mpointer/kestrel/pull/81",
+        "number": 81
+      }
+    ]
+  },
+  {
+    "tag": "v0.7.0",
+    "date": "2026-08-27",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.7.0",
+    "entries": [
+      {
+        "title": "fix: date-scope chat retrieval when the query names today/yesterday",
+        "url": "https://github.com/mpointer/kestrel/pull/73",
+        "number": 73
+      },
+      {
+        "title": "fix: run screen-text ingestion on a real periodic schedule",
+        "url": "https://github.com/mpointer/kestrel/pull/76",
+        "number": 76
+      },
+      {
+        "title": "feat: add Google (Gemini) as a fourth LLM provider",
+        "url": "https://github.com/mpointer/kestrel/pull/77",
+        "number": 77
+      },
+      {
+        "title": "release: prepare 0.7.0",
+        "url": "https://github.com/mpointer/kestrel/pull/78",
+        "number": 78
+      }
+    ]
+  },
+  {
+    "tag": "v0.6.0",
+    "date": "2026-08-27",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.6.0",
+    "entries": [
+      {
+        "title": "ci: skip expensive test jobs on pure version-bump commits",
+        "url": "https://github.com/mpointer/kestrel/pull/69",
+        "number": 69
+      },
+      {
+        "title": "fix: make EOD recap emails detailed instead of one-line summaries",
+        "url": "https://github.com/mpointer/kestrel/pull/70",
+        "number": 70
+      },
+      {
+        "title": "feat: add a WeeklyDigest routine (weekly reflection)",
+        "url": "https://github.com/mpointer/kestrel/pull/71",
+        "number": 71
+      },
+      {
+        "title": "release: prepare 0.6.0",
+        "url": "https://github.com/mpointer/kestrel/pull/72",
+        "number": 72
+      }
+    ]
+  },
+  {
+    "tag": "v0.5.5",
+    "date": "2026-08-26",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.5.5",
+    "entries": [
+      {
+        "title": "fix: defer hover-row state updates to break AppKit layout reentrancy",
+        "url": "https://github.com/mpointer/kestrel/pull/67",
+        "number": 67
+      },
+      {
+        "title": "release: prepare 0.5.5",
+        "url": "https://github.com/mpointer/kestrel/pull/68",
+        "number": 68
+      }
+    ]
+  },
+  {
+    "tag": "v0.5.4",
+    "date": "2026-08-26",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.5.4",
+    "entries": [
+      {
+        "title": "fix: decouple sync pull cursor from unresolved dependencies",
+        "url": "https://github.com/mpointer/kestrel/pull/53",
+        "number": 53
+      },
+      {
+        "title": "fix: stop EOD/Daily Brief digests from pulling in other days' content",
+        "url": "https://github.com/mpointer/kestrel/pull/55",
+        "number": 55
+      },
+      {
+        "title": "fix: run episode segmentation independent of AC power + idle",
+        "url": "https://github.com/mpointer/kestrel/pull/56",
+        "number": 56
+      },
+      {
+        "title": "fix: surface silent approval failures and stop duplicate drafts",
+        "url": "https://github.com/mpointer/kestrel/pull/54",
+        "number": 54
+      },
+      {
+        "title": "fix: Today page fills the window instead of a narrow centered column",
+        "url": "https://github.com/mpointer/kestrel/pull/57",
+        "number": 57
+      },
+      {
+        "title": "fix: always exclude lock-screen/screensaver chrome from capture",
+        "url": "https://github.com/mpointer/kestrel/pull/58",
+        "number": 58
+      },
+      {
+        "title": "fix: reap orphaned kestrel-mcp-server before starting a new one",
+        "url": "https://github.com/mpointer/kestrel/pull/60",
+        "number": 60
+      },
+      {
+        "title": "fix: hover-reveal the per-line reorder/delete controls on meeting summary rows",
+        "url": "https://github.com/mpointer/kestrel/pull/62",
+        "number": 62
+      },
+      {
+        "title": "release: prepare 0.5.4",
+        "url": "https://github.com/mpointer/kestrel/pull/63",
+        "number": 63
+      }
+    ]
+  },
+  {
+    "tag": "v0.5.3",
+    "date": "2026-08-22",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.5.3",
+    "entries": [
+      {
+        "title": "fix: show update-ready banner regardless of active tab",
+        "url": "https://github.com/mpointer/kestrel/pull/43",
+        "number": 43
+      },
+      {
+        "title": "fix: bound content-sync pull to a fixed batch per pass",
+        "url": "https://github.com/mpointer/kestrel/pull/44",
+        "number": 44
+      },
+      {
+        "title": "release: prepare 0.5.3",
+        "url": "https://github.com/mpointer/kestrel/pull/45",
+        "number": 45
+      }
+    ]
+  },
+  {
+    "tag": "v0.5.2",
+    "date": "2026-08-22",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.5.2",
+    "entries": [
+      {
+        "title": "fix: Settings window nesting and self-test ingest batch size",
+        "url": "https://github.com/mpointer/kestrel/pull/41",
+        "number": 41
+      },
+      {
+        "title": "release: prepare 0.5.2",
+        "url": "https://github.com/mpointer/kestrel/pull/42",
+        "number": 42
+      }
+    ]
+  },
+  {
+    "tag": "v0.5.1",
+    "date": "2026-08-22",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.5.1",
+    "entries": [
+      {
+        "title": "Fix: whole-app freeze from unbounded sync call + per-visit self-test re-trigger",
+        "url": "https://github.com/mpointer/kestrel/pull/39",
+        "number": 39
+      },
+      {
+        "title": "release: prepare 0.5.1",
+        "url": "https://github.com/mpointer/kestrel/pull/40",
+        "number": 40
+      }
+    ]
+  },
+  {
+    "tag": "v0.5.0",
+    "date": "2026-08-21",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.5.0",
+    "entries": [
+      {
+        "title": "build(deps): bump the npm_and_yarn group across 2 directories with 1 update",
+        "url": "https://github.com/mpointer/kestrel/pull/30",
+        "number": 30
+      },
+      {
+        "title": "fix: scope Keychain service strings to the running bundle identifier",
+        "url": "https://github.com/mpointer/kestrel/pull/35",
+        "number": 35
+      },
+      {
+        "title": "feat: add transcript/summary reading font size preference",
+        "url": "https://github.com/mpointer/kestrel/pull/36",
+        "number": 36
+      },
+      {
+        "title": "Meeting & episode lifecycle restoration",
+        "url": "https://github.com/mpointer/kestrel/pull/37",
+        "number": 37
+      },
+      {
+        "title": "release: prepare 0.5.0",
+        "url": "https://github.com/mpointer/kestrel/pull/38",
+        "number": 38
+      }
+    ]
+  },
+  {
+    "tag": "v0.4.0",
+    "date": "2026-08-19",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.4.0",
+    "entries": [
+      {
+        "title": "build(deps): bump the npm_and_yarn group across 1 directory with 2 updates",
+        "url": "https://github.com/mpointer/kestrel/pull/26",
+        "number": 26
+      },
+      {
+        "title": "release: prepare v0.3.12",
+        "url": "https://github.com/mpointer/kestrel/pull/29",
+        "number": 29
+      },
+      {
+        "title": "docs: add SECURITY.md",
+        "url": "https://github.com/mpointer/kestrel/pull/31",
+        "number": 31
+      },
+      {
+        "title": "Meeting workspace redesign (v0.4.0): Before/During/After Granola-inspired UI",
+        "url": "https://github.com/mpointer/kestrel/pull/32",
+        "number": 32
+      }
+    ]
+  },
+  {
+    "tag": "v0.3.12",
+    "date": "2026-08-19",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.3.12",
+    "entries": [
+      {
+        "title": "Requirements proposal: Littlebird-style ambient desktop assistant (macOS first)",
+        "url": "https://github.com/mpointer/kestrel/pull/1",
+        "number": 1
+      },
+      {
+        "title": "M1.1: macOS capture spike — audio + screen-text + TCC onboarding",
+        "url": "https://github.com/mpointer/kestrel/pull/2",
+        "number": 2
+      },
+      {
+        "title": "M1.2 groundwork: memory pipeline (SQLite store + ingest)",
+        "url": "https://github.com/mpointer/kestrel/pull/8",
+        "number": 8
+      },
+      {
+        "title": "M1.4 groundwork: LLM router with a real local Ollama client",
+        "url": "https://github.com/mpointer/kestrel/pull/4",
+        "number": 4
+      },
+      {
+        "title": "M1.3 groundwork: real whisper.cpp transcription",
+        "url": "https://github.com/mpointer/kestrel/pull/5",
+        "number": 5
+      },
+      {
+        "title": "M1.4: retrieval-grounded chat UI (FFI + SwiftUI)",
+        "url": "https://github.com/mpointer/kestrel/pull/6",
+        "number": 6
+      },
+      {
+        "title": "M1.3: note blending / meeting summary (FR-MTG-5)",
+        "url": "https://github.com/mpointer/kestrel/pull/7",
+        "number": 7
+      },
+      {
+        "title": "fix(core/ffi): stop building a cdylib alongside the staticlib (crash fix)",
+        "url": "https://github.com/mpointer/kestrel/pull/11",
+        "number": 11
+      },
+      {
+        "title": "M1.5: verify WAL crash recovery for real (NFR-REL-1)",
+        "url": "https://github.com/mpointer/kestrel/pull/9",
+        "number": 9
+      },
+      {
+        "title": "M1.2/M1.4: end-of-day digest (FR-MEM-3)",
+        "url": "https://github.com/mpointer/kestrel/pull/10",
+        "number": 10
+      },
+      {
+        "title": "fix(apps/macos): register a discarding .screen output for SCStream",
+        "url": "https://github.com/mpointer/kestrel/pull/12",
+        "number": 12
+      },
+      {
+        "title": "core+apps/macos: multi-turn chat history (FR-CHAT-1)",
+        "url": "https://github.com/mpointer/kestrel/pull/13",
+        "number": 13
+      },
+      {
+        "title": "core+apps/macos: wire whisper.cpp transcription into the app (FR-MTG-4)",
+        "url": "https://github.com/mpointer/kestrel/pull/15",
+        "number": 15
+      },
+      {
+        "title": "core+apps/macos: calendar-triggered meeting detection (FR-MTG-1)",
+        "url": "https://github.com/mpointer/kestrel/pull/16",
+        "number": 16
+      },
+      {
+        "title": "core+apps/macos: M1.5 hardening — retention, auto-restart, perf tooling",
+        "url": "https://github.com/mpointer/kestrel/pull/17",
+        "number": 17
+      },
+      {
+        "title": "apps/macos: restructure into a real Settings window + FR-CAP-4 exclusions",
+        "url": "https://github.com/mpointer/kestrel/pull/19",
+        "number": 19
+      },
+      {
+        "title": "apps/macos: rename app from LBCaptureSpike to Kestrel",
+        "url": "https://github.com/mpointer/kestrel/pull/20",
+        "number": 20
+      },
+      {
+        "title": "docs: Phase 2 sync relay + web viewer design",
+        "url": "https://github.com/mpointer/kestrel/pull/18",
+        "number": 18
+      },
+      {
+        "title": "apps/macos: restrict to arm64 to fix Archive/Release builds",
+        "url": "https://github.com/mpointer/kestrel/pull/21",
+        "number": 21
+      },
+      {
+        "title": "FR-MTG-2: audio/app heuristic meeting detection",
+        "url": "https://github.com/mpointer/kestrel/pull/22",
+        "number": 22
+      },
+      {
+        "title": "docs: add FR-UI visual-design backlog, sync FR-MTG-2 status",
+        "url": "https://github.com/mpointer/kestrel/pull/23",
+        "number": 23
+      },
+      {
+        "title": "Finish Google Calendar MCP connector: OAuth, Settings UI, bundling, CI",
+        "url": "https://github.com/mpointer/kestrel/pull/24",
+        "number": 24
+      },
+      {
+        "title": "assemble_context Slice 3: migrate daily brief / EOD recap onto unified retrieval",
+        "url": "https://github.com/mpointer/kestrel/pull/27",
+        "number": 27
+      }
+    ]
+  }
+]

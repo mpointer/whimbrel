@@ -1,0 +1,38 @@
+.DS_Store
+*.log
+target/
+# The Mac build links core/target to cargo's configured target-dir (a symlink, which
+# `target/` doesn't match).
+core/target
+build/
+DerivedData/
+node_modules/
+.env
+# Real OAuth client id/secret + Worker URL — copy apps/macos/Secrets.xcconfig.example
+# to apps/macos/Secrets.xcconfig and fill in real values; never commit the real file.
+apps/macos/Secrets.xcconfig
+# Same for the iOS app (apps/mobile/ios/Secrets.xcconfig.example).
+apps/mobile/ios/Secrets.xcconfig
+*.xcuserstate
+xcuserdata/
+core/transcribe/models/
+core/diarize/models/
+core/memory/models/
+.superpowers/
+server-updates/.wrangler/
+RESUME.md
+.claude/
+
+# The MCP server program staged for the installer by apps/windows/scripts/prepare-sidecar.ps1 -ForBundle
+apps/windows/src-tauri/binaries/
+# Node and the connectors staged for the installer by apps/windows/scripts/prepare-bundle-resources.ps1
+apps/windows/src-tauri/bundle-resources/
+
+# Marketing site build output and local wrangler state
+website/dist/
+website/.wrangler/
+
+# Browser matrix (apps/windows/ui/e2e)
+apps/windows/ui/e2e/.generated/
+apps/windows/ui/test-results/
+apps/windows/ui/playwright-report/

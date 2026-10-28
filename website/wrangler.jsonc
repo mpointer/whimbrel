@@ -1,0 +1,62 @@
+{
+  "name": "kestrel-website",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-15",
+  // Send fetch() to the public internet. Without this, Cloudflare refuses (error 1042) the
+  // Worker's request to kestrel-updates-worker on the same account's workers.dev subdomain,
+  // so /api/releases and the download redirect find no release.
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  // The marketing pages are static files built by scripts/build.mjs into dist/. The
+  // Worker sees every request first so it can send other hostnames to the canonical one
+  // (src/app.ts canonicalRedirect); it handles /api/* and passes everything else to the
+  // asset store unchanged.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  // Lead + download records (D1). Apply schema changes with `npm run db:migrate`.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kestrel-leads",
+      "database_id": "8125ca8f-b9cf-4035-b39c-113dd75288e8",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // The product's domain. Deploying attaches the hostnames below to this Worker as Custom
+  // Domains; the zone must be on this Cloudflare account with no other DNS records for
+  // those names, and the API token needs Workers Routes: Edit on the zone.
+  // Keep the old workers.dev address serving (listing routes turns it off by default):
+  // REDIRECT_HOSTS forwards it to whimbrelapp.com, so links in old emails keep working.
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "whimbrelapp.com", "custom_domain": true },
+    // REDIRECT_HOSTS sends www to the apex.
+    { "pattern": "www.whimbrelapp.com", "custom_domain": true }
+  ],
+  "vars": {
+    // The updates Worker that already serves the notarized Mac zip and the Windows
+    // installer to the apps' own auto-updaters (server-updates/).
+    "UPDATES_URL": "https://updates.whimbrelapp.com",
+    // The same Worker's custom domain (rename design, decision 2); manifests may name either.
+    "UPDATES_HOSTS": "kestrel-updates-worker.mpointer.workers.dev",
+    "CANONICAL_HOST": "whimbrelapp.com",
+    // The old address and www 301 (308 for posts) to whimbrelapp.com, path and query kept.
+    "REDIRECT_HOSTS": "www.whimbrelapp.com,kestrel-website.mpointer.workers.dev",
+    // Email via Resend. Sent only when the RESEND_API_KEY secret is set. The sender must be
+    // on a domain verified in Resend. New registrations get a welcome email with personal
+    // download links; LEAD_ALERT_EMAIL gets one email per registration.
+    "EMAIL_FROM": "Whimbrel <whimbrel@futuremeanswered.com>",
+    "EMAIL_REPLY_TO": "mike@futuremeanswered.com",
+    "LEAD_ALERT_EMAIL": "mike@futuremeanswered.com"
+    // Optional secrets (set with `npx wrangler secret put <NAME>`):
+    //   RESEND_API_KEY   — a Resend API key with sending access; turns email on.
+    //   TURNSTILE_SECRET — when set, /api/register requires a valid Cloudflare
+    //                      Turnstile token. Put the matching site key in site/config.json.
+    //   LEAD_WEBHOOK_URL — when set, each new or updated lead is POSTed here as JSON
+    //                      (Zapier/Make/HubSpot/Slack incoming webhook, etc.).
+  }
+}

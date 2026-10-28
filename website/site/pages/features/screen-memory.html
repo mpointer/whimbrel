@@ -1,0 +1,51 @@
+<!--
+{
+  "title": "Screen Memory: Search Everything You've Worked On",
+  "description": "Whimbrel builds a private, searchable timeline of the text you see and write on screen, without screenshots, so you can find anything and ask about it.",
+  "schema": ["software"],
+  "priority": 0.8,
+  "ogType": "article",
+  "crumbs": [{ "name": "Features", "path": "/#features" }, { "name": "Screen memory", "path": "/features/screen-memory/" }],
+  "faq": [
+    { "q": "Does Whimbrel record my screen?", "a": "No video and no screenshots. Whimbrel reads the text of the active window through the operating system's accessibility interfaces, the same ones screen readers use, and stores that text locally. When an app exposes no text, it can fall back to on-device text recognition." },
+    { "q": "Can I stop it from capturing certain apps?", "a": "Yes. Exclude any app, such as a password manager or a personal messenger, and Whimbrel never captures it. You can also pause capture at any time." },
+    { "q": "How long is history kept?", "a": "You set the retention period in Settings. Older history is deleted automatically, and you can delete any item or time range yourself." }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Screen memory</p>
+    <h1>Find anything you've seen on screen.</h1>
+    <p class="lede">Whimbrel keeps a private, searchable timeline of your work, as text, so "where did I see that?" takes seconds instead of twenty minutes.</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary btn-lg" href="/download/#register">Get Whimbrel free</a>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container split">
+    <div>
+      <h2>Why text beats screenshots.</h2>
+      <p>Screenshot-based memory tools store gigabytes of images and run text recognition over them. Whimbrel reads the text directly, so your history is a fraction of the size, faster to search, and easier to keep private.</p>
+    </div>
+    <ul class="checklist">
+      <li><strong>Timeline of your day</strong>See what you worked on, app by app, hour by hour.</li>
+      <li><strong>Keyword and meaning search</strong>Search for the exact phrase, or describe what you're looking for.</li>
+      <li><strong>Ask, with sources</strong>Chat answers questions from your history and links to where each answer came from.</li>
+      <li><strong>Back where you left off</strong>After an interruption, see exactly what you had open and what you were doing.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Screen memory FAQ</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

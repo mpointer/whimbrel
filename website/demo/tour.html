@@ -1,0 +1,177 @@
+<!doctype html>
+<!-- Source of the product-tour video (site/media/whimbrel-tour.*). Not deployed: run
+     scripts/render-demo-video.mjs to re-record it after editing. The UI shown follows the
+     app's own wireframes in docs/refactor-package/reference/. -->
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>Whimbrel tour</title>
+<link rel="stylesheet" href="../site/assets/site.css">
+<style>
+  html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; }
+  body { background: radial-gradient(1200px 600px at 70% -10%, #F6E8D0, var(--bg) 60%); font-size: 15px; }
+  .stage { position: absolute; inset: 0; }
+  .scene { position: absolute; inset: 0; opacity: 0; transition: opacity .6s ease; display: grid; place-items: center; }
+  .scene.on { opacity: 1; }
+  .caption { position: absolute; left: 50%; bottom: 36px; translate: -50% 0; background: var(--ink); color: #fff; padding: 12px 22px; border-radius: 999px; font: 600 19px var(--sans); white-space: nowrap; box-shadow: var(--shadow); }
+  .caption b { color: #E8B968; margin-right: 10px; }
+  .win { width: 1040px; height: 560px; margin-bottom: 70px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow), 0 50px 90px -40px rgba(168,80,46,.4); overflow: hidden; display: grid; grid-template-rows: auto 1fr; }
+  .bar { display: flex; align-items: center; gap: 14px; padding: 12px 16px; background: var(--bg-alt); border-bottom: 1px solid var(--border); }
+  .grid { display: grid; grid-template-columns: 200px 1fr 1fr; min-height: 0; }
+  .side { border-right: 1px solid var(--border); padding: 18px 14px; background: #FBF8F1; }
+  .side p { margin: 0 0 10px; }
+  .pane { padding: 22px 24px; min-height: 0; overflow: hidden; }
+  .pane + .pane { border-left: 1px solid var(--border); background: #FCFAF5; }
+  .label { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-2); font-weight: 700; margin: 0 0 12px; }
+  h2.t { font: 600 30px var(--serif); margin: 0 0 6px; }
+  .reveal > * { opacity: 0; transform: translateY(8px); transition: opacity .45s, transform .45s; }
+  .reveal > .in { opacity: 1; transform: none; }
+  .next { border: 1px solid var(--border); border-radius: 14px; padding: 18px; margin-top: 14px; }
+  .toast { position: absolute; top: 74px; right: 140px; background: var(--ink); color: #fff; border-radius: 12px; padding: 14px 18px; font-weight: 600; box-shadow: var(--shadow); opacity: 0; transform: translateY(-10px); transition: all .5s; }
+  .toast.in { opacity: 1; transform: none; }
+  .toast small { display: block; color: #B7AB9A; font-weight: 400; }
+  .line { margin: 0 0 14px; } .line small { display: block; font-size: 11px; color: var(--text-2); letter-spacing: .06em; text-transform: uppercase; }
+  .line.you { color: var(--slate); }
+  ul.n { padding-left: 18px; margin: 0 0 14px; } ul.n li { margin-bottom: 8px; }
+  .bubble-q { margin-left: auto; width: fit-content; background: var(--accent); color: #fff; border-radius: 16px 16px 4px 16px; padding: 12px 16px; font-size: 17px; }
+  .answer { margin-top: 18px; background: var(--bg-alt); border: 1px solid var(--border); border-radius: 16px 16px 16px 4px; padding: 18px 20px; font-size: 16.5px; min-height: 150px; }
+  .cites { display: flex; gap: 8px; margin-top: 14px; }
+  .cite { font-size: 13px; border: 1px solid var(--border); background: var(--card); border-radius: 999px; padding: 4px 12px; color: var(--link); }
+  .brief li { display: flex; gap: 12px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--border); list-style: none; font-size: 16px; }
+  .brief li span { font: 600 12px var(--mono); color: var(--accent); min-width: 64px; }
+  .brief ul { padding: 0; margin: 0; }
+  .end { text-align: center; }
+  .end img { width: 120px; margin: 0 auto 18px; border-radius: 26px; box-shadow: var(--shadow); }
+  .end h1 { font-size: 64px; margin-bottom: 8px; }
+  .end p { font-size: 22px; color: var(--text-2); }
+  .cursor::after { content: "▍"; color: var(--accent); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- 1: a meeting starts -->
+  <div class="scene" id="s1">
+    <div class="win">
+      <div class="bar"><span class="dots"><i></i><i></i><i></i></span><span id="s1-pill" class="muted">Whimbrel · Today</span></div>
+      <div class="grid" style="grid-template-columns:200px 1fr">
+        <div class="side"><p class="side-brand">Whimbrel</p><p class="side-item active">▣ Today</p><p class="side-item">▤ Meetings</p><p class="side-item">⌕ Search</p></div>
+        <div class="pane">
+          <h2 class="t">A focused day, not a dashboard.</h2>
+          <p class="muted">Your next conversation and the work you need now.</p>
+          <div class="next">
+            <p class="label">Next meeting</p>
+            <h3 style="font-size:22px;margin:0 0 4px">Client discovery — Acme</h3>
+            <p class="muted" style="margin:0">Today, 10:00–10:30 · 4 attendees · Zoom</p>
+          </div>
+          <div class="next"><p class="label">Recent work</p><p style="margin:0">Weekly pipeline review · <span class="muted">Yesterday · Decisions and next steps</span></p></div>
+        </div>
+      </div>
+    </div>
+    <div class="toast" id="s1-toast">● Meeting audio detected — recording<small>Client discovery — Acme · no bot joined the call</small></div>
+    <div class="caption"><b>1</b>A meeting starts. Whimbrel records it, with no bot in the call.</div>
+  </div>
+
+  <!-- 2: live notes + transcript -->
+  <div class="scene" id="s2">
+    <div class="win">
+      <div class="bar"><span class="dots"><i></i><i></i><i></i></span><span class="rec-pill"><span class="rec-dot"></span>Recording · <span id="clock">18:42</span></span><span class="health">Mic ✓ · System audio ✓</span></div>
+      <div class="grid">
+        <div class="side"><p class="side-brand">Whimbrel</p><p class="side-item active">▤ In this meeting</p><p class="side-item">▣ Today</p><p class="side-label">Meeting</p><p class="side-meeting">Client discovery — Acme<br><small>Today · 10:00–10:30</small></p><p class="side-chip">Local only</p></div>
+        <div class="pane reveal" id="s2-notes">
+          <p class="label">Meeting notes</p>
+          <h3>What we heard</h3>
+          <ul class="n"><li>Customer targets a Q3 implementation window.</li></ul>
+          <ul class="n"><li>Pricing needs VP approval before the next review.</li></ul>
+          <ul class="n"><li>Follow up with a rollout plan and security questionnaire.</li></ul>
+          <h3>Open questions</h3>
+          <ul class="n"><li>Who owns final implementation sign-off?</li></ul>
+        </div>
+        <div class="pane reveal" id="s2-tx">
+          <p class="label">Live transcript · on-device</p>
+          <p class="line"><small>10:17 · Them</small>We want to confirm the rollout timeline before we commit.</p>
+          <p class="line you"><small>10:18 · You</small>I'll map the decision path.</p>
+          <p class="line"><small>10:19 · Them</small>That would let us move to a Q3 implementation discussion.</p>
+          <p class="line"><small>10:21 · Them</small>Pricing has to go through our VP before the next review.</p>
+          <p class="line you"><small>10:22 · You</small>Understood. I'll send a rollout plan this week.</p>
+        </div>
+      </div>
+    </div>
+    <div class="caption"><b>2</b>Transcribed on your computer. Notes write themselves.</div>
+  </div>
+
+  <!-- 3: ask your work history -->
+  <div class="scene" id="s3">
+    <div class="win" style="width:900px;height:auto;grid-template-rows:auto auto">
+      <div class="bar"><span class="dots"><i></i><i></i><i></i></span><span class="muted">Ask Whimbrel · All sources</span></div>
+      <div class="pane chat">
+        <div class="bubble-q" id="s3-q">What did Acme say about pricing, and what do I owe them?</div>
+        <div class="answer"><span id="s3-a" class="cursor"></span>
+          <div class="cites reveal" id="s3-cites"><span class="cite">Client discovery — Acme · 10:21</span><span class="cite">Client discovery — Acme · 10:22</span><span class="cite">Gmail · Re: Q3 rollout</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="caption"><b>3</b>Ask anything. Answers cite your meetings, email, and screen history.</div>
+  </div>
+
+  <!-- 4: routine -->
+  <div class="scene" id="s4">
+    <div class="win" style="width:760px;height:auto;grid-template-rows:auto auto">
+      <div class="bar"><span class="dots"><i></i><i></i><i></i></span><span class="muted">Routines · Meeting prep</span></div>
+      <div class="pane brief">
+        <p class="label">Before Tuesday's follow-up with Acme</p>
+        <ul class="reveal" id="s4-list">
+          <li><span>LAST TIME</span>Q3 implementation window; pricing needs VP approval.</li>
+          <li><span>YOU OWE</span>Rollout plan and security questionnaire (promised Thursday).</li>
+          <li><span>OPEN</span>Who owns final implementation sign-off?</li>
+          <li><span>FOCUS</span>Blocked 1:00–3:00 pm today to draft the rollout plan.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="caption"><b>4</b>Routines brief you before you ask.</div>
+  </div>
+
+  <!-- end card -->
+  <div class="scene end" id="s5">
+    <div>
+      <img src="../site/assets/icon-512.png" alt="">
+      <h1>Whimbrel</h1>
+      <p>The private AI assistant that remembers your work.</p>
+      <p style="font-size:18px">Free early access · Mac &amp; Windows</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Timeline in ms. window.tourDone flips true at the end so the renderer knows when to stop.
+  var answer = "Acme's pricing has to be approved by their VP before the next review (10:21). You promised a rollout plan this week (10:22), and their email asks for the security questionnaire too.";
+  function on(id) { document.querySelectorAll(".scene").forEach(function (s) { s.classList.toggle("on", s.id === id); }); }
+  function revealAll(id, start, gap) {
+    Array.prototype.forEach.call(document.getElementById(id).children, function (el, i) {
+      setTimeout(function () { el.classList.add("in"); }, start + i * gap);
+    });
+  }
+  var T = [
+    [0, function () { on("s1"); }],
+    [2600, function () { document.getElementById("s1-toast").classList.add("in"); }],
+    [8500, function () { on("s2"); revealAll("s2-tx", 300, 1300); revealAll("s2-notes", 900, 1200); }],
+    [19500, function () { on("s3"); }],
+    [20800, function () {
+      var el = document.getElementById("s3-a"), i = 0;
+      var timer = setInterval(function () {
+        i += 3; el.textContent = answer.slice(0, i);
+        if (i >= answer.length) { clearInterval(timer); el.classList.remove("cursor"); revealAll("s3-cites", 200, 350); }
+      }, 45);
+    }],
+    [32000, function () { on("s4"); revealAll("s4-list", 500, 1300); }],
+    [42500, function () { on("s5"); }],
+    [47500, function () { window.tourDone = true; }],
+  ];
+  var secs = 18 * 60 + 42;
+  setInterval(function () { secs++; var c = document.getElementById("clock"); if (c) c.textContent = Math.floor(secs / 60) + ":" + String(secs % 60).padStart(2, "0"); }, 1000);
+  window.startTour = function () { T.forEach(function (step) { setTimeout(step[1], step[0]); }); };
+  if (!/render/.test(location.search)) window.startTour();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "input": {
+    "name": "No id",
+    "palettes": [
+      "default"
+    ]
+  },
+  "expected": null,
+  "repairs": []
+}

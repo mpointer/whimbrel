@@ -1,0 +1,25 @@
+{
+  "id": "reference",
+  "name": "Reference",
+  "author": "Whimbrel",
+  "palettes": ["paper"],
+  "typography": { "display": "Georgia/regular", "body": "SF Pro/regular", "numerals": "SF Pro/regular", "label": "SF Pro/semibold", "caps": "none" },
+  "shape": { "radius": 2, "border": "solid", "borderWidth": 1, "density": "regular" },
+  "icons": { "today": "book", "meetings": "person.2", "routines": "bolt", "settings": "gearshape", "ask": "magnifyingglass", "person": "person", "time": "clock", "prep": "doc.text", "recap": "text.alignleft" },
+  "decoration": { "headerBand": "rule", "dividers": "hairline", "texture": "none", "imagery": [] },
+  "voice": {
+    "greetingMorning": "Good morning, {name}",
+    "greetingAfternoon": "Good afternoon, {name}",
+    "greetingEvening": "Good evening, {name}",
+    "upNextHeader": "Up next",
+    "upcomingHeader": "Schedule",
+    "earlierHeader": "Earlier",
+    "recapHeader": "Summary",
+    "emptyDay": "No entries for today",
+    "emptyEarlier": "No earlier entries",
+    "askPlaceholder": "Search your meetings",
+    "tagline": "Your days, cross-referenced."
+  },
+  "today": { "archetype": "reference", "options": {} },
+  "motion": "none"
+}
