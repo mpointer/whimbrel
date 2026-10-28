@@ -1,0 +1,39 @@
+{
+  "id": "high-contrast",
+  "name": "High contrast",
+  "author": "Whimbrel",
+  "light": {
+    "backgroundPage": "#FFFFFF",
+    "backgroundCard": "#FFFFFF",
+    "border": "#000000",
+    "textPrimary": "#000000",
+    "textSecondary": "#333333",
+    "accentPrimary": "#0A3D91",
+    "accentSecondary": "#444444",
+    "accentHighlight": "#FFD400",
+    "error": "#B00020",
+    "warning": "#7A4B00",
+    "success": "#0B6B2B",
+    "link": "#0000CC",
+    "selection": "#E0E0E0",
+    "highlight": "#FFF2A8",
+    "textOnAccent": "#FFFFFF"
+  },
+  "dark": {
+    "backgroundPage": "#000000",
+    "backgroundCard": "#0A0A0A",
+    "border": "#FFFFFF",
+    "textPrimary": "#FFFFFF",
+    "textSecondary": "#D0D0D0",
+    "accentPrimary": "#7FB0FF",
+    "accentSecondary": "#BBBBBB",
+    "accentHighlight": "#FFD400",
+    "error": "#FF7B7B",
+    "warning": "#FFB84D",
+    "success": "#6EE79A",
+    "link": "#9DBDFF",
+    "selection": "#2A2A2A",
+    "highlight": "#4D4400",
+    "textOnAccent": "#000000"
+  }
+}

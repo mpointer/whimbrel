@@ -1,0 +1,5 @@
+{
+  "id": "low-contrast", "name": "Low contrast", "author": "x",
+  "light": { "backgroundPage": "#FFFFFF", "backgroundCard": "#FFFFFF", "textPrimary": "#DDDDDD" },
+  "dark": { "backgroundPage": "#000000", "textPrimary": "#FFFFFF" }
+}

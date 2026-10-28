@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Source of site/assets/og-image.png. Re-render with scripts/render-og-image.mjs. -->
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../site/assets/site.css">
+<style>
+  html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; }
+  body { background: radial-gradient(900px 500px at 85% 0%, #F6E8D0, var(--bg) 65%); display: grid; grid-template-columns: 560px 1fr; align-items: center; padding: 0 0 0 72px; gap: 40px; }
+  .brand { font-size: 34px; margin-bottom: 30px; }
+  .brand img { width: 60px; height: 60px; border-radius: 14px; }
+  h1 { font-size: 60px; margin: 0 0 22px; }
+  h1 em { color: var(--accent); }
+  .sub { font-size: 23px; color: var(--text-2); margin: 0; }
+  .shot { width: 760px; transform: translateY(10px); }
+  .shot .app-window { font-size: 14px; }
+</style>
+</head>
+<body>
+  <div>
+    <div class="brand"><img src="../site/assets/icon-512.png" alt=""><span>Whimbrel</span></div>
+    <h1>The AI assistant that <em>remembers your work.</em></h1>
+    <p class="sub">Bot-free meeting notes · Screen memory<br>For Mac &amp; Windows</p>
+  </div>
+  <div class="shot">
+    <div class="app-window">
+      <div class="app-titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="rec-pill"><span class="rec-dot"></span>Recording · 18:42</span></div>
+      <div class="app-body" style="grid-template-columns:1fr 1fr">
+        <section class="app-notes"><p class="app-label">Meeting notes</p><h3>What we heard</h3><ul><li>Customer targets a Q3 implementation window.</li><li>Pricing needs VP approval before the next review.</li><li>Follow up with a rollout plan.</li></ul></section>
+        <section class="app-transcript"><p class="app-label">Live transcript</p><p><small>10:17 · Them</small>We want to confirm the rollout timeline before we commit.</p><p class="you"><small>10:18 · You</small>I'll map the decision path.</p></section>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

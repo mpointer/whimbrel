@@ -1,0 +1,65 @@
+<!--
+{
+  "title": "Open Source AI Meeting Notes and Work Memory",
+  "description": "Whimbrel is open source under Apache 2.0. Every feature is free, runs on your own computer with your own models, and you can host the sync relay yourself.",
+  "priority": 0.8,
+  "crumbs": [{ "name": "Open source", "path": "/open-source/" }],
+  "faq": [
+    { "q": "Where is the source code?", "a": "Whimbrel is licensed under Apache 2.0. The public repository opens with the first release under the Whimbrel name, and this page will link to it then." },
+    { "q": "Can I use Whimbrel without any of your servers?", "a": "Yes. Capture, transcription, memory, search, chat and routines all run on your computer, with local models or your own AI key. Sync between devices goes through a small relay you can run in your own Cloudflare account; the guide covers it step by step." },
+    { "q": "Does the app send telemetry?", "a": "No. The app has no analytics or telemetry. The only things our servers see are an update check (which version is current) and, if you use our hosted relay, your account and device list. Synced content is end-to-end encrypted, so the relay never sees it." },
+    { "q": "How do you make money?", "a": "From things that need a server we run or a person on the other end: a planned Cloud plan (our relay for any number of devices, backups, push to your phone), planned Team plans, and support contracts for companies that self-host. Never from reselling AI usage." },
+    { "q": "Is there an open-source alternative to Granola?", "a": "Whimbrel is one: it takes meeting notes without a bot like Granola, adds a searchable memory of your screen and routines, keeps your data on your computer, and is open source. See <a href=\"/compare/granola-alternative/\">Whimbrel vs Granola</a>." }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow">
+    <p class="eyebrow">Open source</p>
+    <h1>An AI assistant you can read, run, and keep.</h1>
+    <p class="lede">An assistant that remembers your work should be one you can inspect. Whimbrel is open source under the Apache 2.0 license, every feature is free, and nothing about it requires our servers.</p>
+  </div>
+</section>
+
+<section>
+  <div class="narrow prose">
+    <h2>What's open</h2>
+    <p>All of it: the Mac and Windows apps, the shared core that does capture, transcription, memory, search and chat, the routines and connectors, the MCP server, the sync relay, and the update feed. There is no "community edition" with features held back for a paid one.</p>
+    <p>The public repository opens with the first release under the Whimbrel name. This page will link to it then.</p>
+
+    <h2>Your models, your bill</h2>
+    <p>Run models on your own computer with Ollama, or bring a key for Anthropic, OpenAI, or Google Gemini and pay that provider directly. Whimbrel has no hosted model and never resells AI usage, on any plan. Teams will be able to hand one organization key to every seat; it's still the organization's own key.</p>
+
+    <h2>Run your own relay</h2>
+    <p>Sync between your devices is end-to-end encrypted, and it goes through a small relay: one Cloudflare Worker, plus a Turso database per account. You can use the relay we host, which syncs one computer and one phone for free, or run your own in your Cloudflare account, with no device limit. The free tiers of Cloudflare and Turso are enough for personal use. The self-hosting guide ships in the repository.</p>
+
+    <h2>What we'll charge for</h2>
+    <p>Only things that need a server somebody runs, or a person on the other end:</p>
+    <ul>
+      <li><strong>Cloud</strong> (planned): our relay for any number of devices, daily backups, push notifications to your phone, and routines that keep running while your laptop is closed.</li>
+      <li><strong>Team</strong> (planned): shared meeting memory with consent from whoever captured it, routines that hand work to a teammate, and one bill.</li>
+      <li><strong>Support</strong>: a person responsible for your self-hosted deployment.</li>
+    </ul>
+    <p>Nothing is for sale yet. See <a href="/pricing/">pricing</a> for what's planned.</p>
+
+    <h2>Our commitments</h2>
+    <ul>
+      <li>Anything that runs on your device stays in the free, open app.</li>
+      <li>We never resell or mark up AI usage.</li>
+      <li>The app ships no telemetry.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="section-alt" id="faq">
+  <div class="narrow">
+    <div class="section-head center">
+      <h2>Open-source questions</h2>
+    </div>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

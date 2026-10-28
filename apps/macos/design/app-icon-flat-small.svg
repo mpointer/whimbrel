@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Whimbrel icon for 16-48 px without the macOS grid margin (Windows .ico): head, neck and a heavier bill. -->
+  <defs>
+    <linearGradient id="rust" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c46a40" />
+      <stop offset="1" stop-color="#8c3d20" />
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".14" />
+      <stop offset=".55" stop-color="#fff" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+  <clipPath id="corners"><rect width="100" height="100" rx="22.5" /></clipPath>
+  <g clip-path="url(#corners)">
+    <rect width="100" height="100" fill="url(#rust)" />
+    <g fill="#f6efe2">
+      <path d="M52,44 C50,62 52,84 55,100 L100,100 L100,74 C88,68 80,60 77,49 Z" />
+      <circle cx="65" cy="40" r="15" />
+      <path d="M53,32.5 C38,34 22,46 10,78 C9.2,80.2 11.2,81.4 12.6,79.6 C25,58 38,48.5 54,46.5 Z" />
+      <circle cx="68" cy="36.5" r="3.2" fill="#8c3d20" />
+    </g>
+    <rect width="100" height="100" fill="url(#sheen)" />
+  </g>
+</svg>

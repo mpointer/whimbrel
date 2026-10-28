@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "ingest",
+    "api",
+    "memory",
+    "transcribe",
+    "diarize",
+    "llm",
+    "agent",
+    "mcp-host",
+    "mcp-server",
+    "routines",
+    "sync",
+    "sync-engine",
+    "skins",
+    "ffi",
+]
+
+[workspace.package]
+version = "0.9.35"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3

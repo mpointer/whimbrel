@@ -1,0 +1,115 @@
+{
+  "input": {
+    "id": "almanac",
+    "name": "Almanac",
+    "author": "Whimbrel",
+    "palettes": [
+      "parchment"
+    ],
+    "typography": {
+      "display": "Georgia/bold",
+      "body": "Georgia/regular",
+      "numerals": "Georgia/regular",
+      "label": "New York/semibold",
+      "caps": "small"
+    },
+    "shape": {
+      "radius": 2,
+      "border": "double",
+      "borderWidth": 1,
+      "density": "airy"
+    },
+    "icons": {
+      "today": "book.closed",
+      "meetings": "person.2",
+      "routines": "bolt",
+      "settings": "gearshape",
+      "ask": "pencil",
+      "person": "person",
+      "time": "clock",
+      "prep": "doc.text",
+      "recap": "text.alignleft"
+    },
+    "decoration": {
+      "headerBand": "rule",
+      "dividers": "double",
+      "texture": "none",
+      "imagery": []
+    },
+    "voice": {
+      "greetingMorning": "Good morrow, {name}",
+      "greetingAfternoon": "Good day to you, {name}",
+      "greetingEvening": "Good even, {name}",
+      "upNextHeader": "Next appointment",
+      "upcomingHeader": "The day's order",
+      "earlierHeader": "Entered earlier",
+      "recapHeader": "The day in review",
+      "emptyDay": "A quiet day is set down",
+      "emptyEarlier": "Nothing yet entered",
+      "askPlaceholder": "Put a question to the almanac",
+      "tagline": "Your days, set down in good order."
+    },
+    "today": {
+      "archetype": "almanac",
+      "options": {}
+    },
+    "motion": "none"
+  },
+  "expected": {
+    "id": "almanac",
+    "name": "Almanac",
+    "author": "Whimbrel",
+    "palettes": [
+      "parchment"
+    ],
+    "typography": {
+      "display": "Georgia/bold",
+      "body": "Georgia/regular",
+      "numerals": "Georgia/regular",
+      "label": "New York/semibold",
+      "caps": "small"
+    },
+    "shape": {
+      "radius": 2,
+      "border": "double",
+      "borderWidth": 1,
+      "density": "airy"
+    },
+    "icons": {
+      "today": "book.closed",
+      "meetings": "person.2",
+      "routines": "bolt",
+      "settings": "gearshape",
+      "ask": "pencil",
+      "person": "person",
+      "time": "clock",
+      "prep": "doc.text",
+      "recap": "text.alignleft"
+    },
+    "decoration": {
+      "headerBand": "rule",
+      "dividers": "double",
+      "texture": "none",
+      "imagery": []
+    },
+    "voice": {
+      "greetingMorning": "Good morrow, {name}",
+      "greetingAfternoon": "Good day to you, {name}",
+      "greetingEvening": "Good even, {name}",
+      "upNextHeader": "Next appointment",
+      "upcomingHeader": "The day's order",
+      "earlierHeader": "Entered earlier",
+      "recapHeader": "The day in review",
+      "emptyDay": "A quiet day is set down",
+      "emptyEarlier": "Nothing yet entered",
+      "askPlaceholder": "Put a question to the almanac",
+      "tagline": "Your days, set down in good order."
+    },
+    "today": {
+      "archetype": "almanac",
+      "options": {}
+    },
+    "motion": "none"
+  },
+  "repairs": []
+}

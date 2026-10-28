@@ -1,0 +1,57 @@
+<!--
+{
+  "title": "Bot-Free AI Meeting Notes for Zoom, Teams & Meet",
+  "description": "Whimbrel transcribes Zoom, Teams, Google Meet, and Slack huddles on your computer with no meeting bot, then writes notes, decisions, and action items.",
+  "schema": ["software"],
+  "priority": 0.8,
+  "ogType": "article",
+  "crumbs": [{ "name": "Features", "path": "/#features" }, { "name": "Meeting notes", "path": "/features/meeting-notes/" }],
+  "faq": [
+    { "q": "How can Whimbrel transcribe a call without joining it?", "a": "It records two audio streams on your own computer: your microphone, and the system audio your meeting app plays. Because nothing joins the call, it works in any meeting app and in person." },
+    { "q": "Is transcription done in the cloud?", "a": "No. Whimbrel transcribes on your computer with an on-device Whisper speech model, so meeting audio never has to leave your machine. Summaries use the model you choose: local through Ollama or a hosted provider with your own key." },
+    { "q": "Does it know who said what?", "a": "Yes. Whimbrel separates you from the other side of the call and labels distinct speakers in the transcript." },
+    { "q": "Will it record meetings I don't want recorded?", "a": "You decide. Recording can start from calendar events or from detecting meeting audio, and you can stop, pause, or skip any meeting. Always follow the recording-consent rules that apply to you." }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="container split">
+    <div>
+      <p class="eyebrow">Meeting notes</p>
+      <h1>AI meeting notes, without a bot in the call.</h1>
+      <p class="lede">Whimbrel listens on your own computer, so nobody gets an "AI notetaker has joined" message. You get the transcript, the notes, and the follow-ups.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="/download/#register">Get Whimbrel free</a>
+      </div>
+    </div>
+    {{> app-mock}}
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="section-head">
+      <h2>Every meeting, captured the same way.</h2>
+      <p class="lede">Zoom, Microsoft Teams, Google Meet, Slack huddles, a phone call on speaker, a conversation at your desk. If your computer can hear it, Whimbrel can take notes on it.</p>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature"><h3>Starts on its own</h3><p>Recording begins from your Google or Outlook calendar, or when Whimbrel detects meeting audio for a call that wasn't on the calendar.</p></article>
+      <article class="card feature"><h3>Transcribed on-device</h3><p>A Whisper speech model runs locally. Audio doesn't leave your computer to be transcribed.</p></article>
+      <article class="card feature"><h3>Your notes, improved</h3><p>Type quick notes during the call. Whimbrel blends them with the transcript into clean notes with decisions and action items.</p></article>
+      <article class="card feature"><h3>Prepared before you join</h3><p>Meeting prep pulls your last conversations and open questions with the same people into a brief before the meeting starts.</p></article>
+      <article class="card feature"><h3>Ask about any meeting</h3><p>"What did they say about the timeline?" Answers cite the exact moment in the transcript.</p></article>
+      <article class="card feature"><h3>Follow-ups drafted</h3><p>Whimbrel can draft the follow-up email in Gmail for you to review and send.</p></article>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Meeting notes FAQ</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

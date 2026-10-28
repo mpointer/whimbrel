@@ -1,0 +1,65 @@
+<!--
+{
+  "title": "Whimbrel for Windows – AI Meeting Notes on Windows 11",
+  "description": "Download Whimbrel for Windows 11: bot-free AI meeting notes, screen memory, and briefings in one app. No admin rights needed. Free early access.",
+  "schema": ["software-windows"],
+  "priority": 0.8,
+  "crumbs": [{ "name": "Download", "path": "/download/" }, { "name": "Windows", "path": "/download/windows/" }],
+  "faq": [
+    { "q": "Why does Windows show a SmartScreen warning?", "a": "During early access the installer is not yet signed with a Windows code-signing certificate, so Microsoft Defender SmartScreen may show \"Windows protected your PC\". Choose More info, then Run anyway. Updates delivered inside the app are signature-verified before they install." },
+    { "q": "Do I need administrator rights?", "a": "No. Whimbrel installs for your user account only, in your user profile, so a standard account can install and update it." },
+    { "q": "Does the Windows app have every Mac feature?", "a": "Not yet. Whimbrel for Windows is in early access and is reaching parity with the Mac app release by release. Both apps share the same core, and a Mac and a PC can share one timeline." }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="container split">
+    <div>
+      <p class="eyebrow">Windows 11 · Early access</p>
+      <h1>Whimbrel for Windows</h1>
+      <p class="lede">The same private memory and bot-free meeting capture as on Mac, on your Windows PC, sharing one timeline with your other devices.</p>
+      {{{site.renameNote}}}
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="/api/download/windows">Download for Windows</a>
+        <span class="version" data-version="windows"></span>
+      </div>
+      <p class="fine muted">First time here? You'll be asked to register before the download starts.</p>
+    </div>
+    {{> app-mock}}
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container split">
+    <div>
+      <h2>System requirements</h2>
+      <ul class="checklist">
+        <li><strong>Windows 11, 64-bit (x64)</strong>Windows on ARM is not supported yet.</li>
+        <li><strong>Microsoft Edge WebView2</strong>Already included with Windows 11.</li>
+        <li><strong>Disk space</strong>Room for the app, the on-device speech model, and your growing history.</li>
+        <li><strong>Optional: Ollama</strong>To run language models fully on your PC.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Install in two minutes</h2>
+      <ol class="install-steps">
+        <li>Run the downloaded <code>Whimbrel_x.y.z_x64-setup.exe</code>.</li>
+        <li>If SmartScreen appears, choose <strong>More info</strong> → <strong>Run anyway</strong> (see below why).</li>
+        <li>The installer finishes without needing administrator rights.</li>
+        <li>Whimbrel starts in the system tray. Open it to finish setup.</li>
+        <li>Connect your calendar so recordings start with your meetings.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Windows questions</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

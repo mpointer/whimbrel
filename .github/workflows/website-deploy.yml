@@ -1,0 +1,76 @@
+# Deploys the marketing site (website/) to Cloudflare: on every change to website/ on
+# main, on every published app release (so /changelog/ picks it up), and on demand.
+#
+# Needs repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. The token must
+# allow "Workers Scripts: Edit" and "D1: Edit" on the account (plus "Workers Routes: Edit"
+# on the zone once a custom domain is attached).
+name: website-deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["website/**", ".github/workflows/website-deploy.yml"]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      indexnow_all:
+        description: Submit every sitemap URL to IndexNow, not just changed ones
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Only the upstream repository holds the Cloudflare credentials; a fork's main
+    # would otherwise fail here on every push.
+    if: github.repository == 'mpointer/kestrel'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0 # sitemap lastmod comes from git history
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # npm 10 crashes resolving vitest's optional peers; npm 11 doesn't.
+      - run: npx --yes npm@11 ci
+      - name: Refresh the changelog from GitHub releases
+        run: node scripts/fetch-releases.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - run: npm run typecheck
+      - run: npm test # builds dist/ (with the SEO checks) and runs the Worker tests
+      - name: Save the live sitemap (for IndexNow)
+        run: |
+          base="$(node -p "require('./site/config.json').url.replace(/\/$/, '')")"
+          curl -fsS "$base/sitemap.xml" -o previous-sitemap.xml || echo "no live sitemap yet"
+      - name: Apply D1 migrations
+        run: npx wrangler d1 migrations apply kestrel-leads --remote
+      - name: Deploy
+        run: npx wrangler deploy
+      - name: Smoke test
+        run: |
+          base="$(node -p "require('./site/config.json').url.replace(/\/$/, '')")"
+          # A newly attached custom domain can take a few minutes to get its certificate.
+          retry="--retry 12 --retry-delay 15 --retry-all-errors"
+          curl -fsS $retry "$base/" -o /dev/null
+          curl -fsS $retry "$base/changelog/" -o /dev/null
+          curl -fsS $retry "$base/api/releases" | tee /dev/stderr | grep -q '"version"'
+      - name: Tell IndexNow what changed
+        # Bing, Yandex and the other IndexNow engines (not Google). Best effort.
+        continue-on-error: true
+        run: node scripts/indexnow.mjs ${{ inputs.indexnow_all && '--all' || 'previous-sitemap.xml' }} dist/sitemap.xml

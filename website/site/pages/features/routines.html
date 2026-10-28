@@ -1,0 +1,46 @@
+<!--
+{
+  "title": "AI Routines: Meeting Prep, Daily Recaps & Focus Time",
+  "description": "Whimbrel routines brief you before meetings, recap your day, protect focus time, and summarize your week, using Gmail, Google Calendar, and Outlook 365.",
+  "schema": ["software"],
+  "priority": 0.7,
+  "ogType": "article",
+  "crumbs": [{ "name": "Features", "path": "/#features" }, { "name": "Routines", "path": "/features/routines/" }],
+  "faq": [
+    { "q": "Which apps can Whimbrel connect to?", "a": "Gmail, Google Calendar, and Outlook 365 (calendar and mail) today. Connectors use the Model Context Protocol (MCP), so new ones can be added without changing the app." },
+    { "q": "Can routines send email or change my calendar on their own?", "a": "Only when you allow it. Actions that write, such as sending an email, are gated, and drafts wait for your review by default." },
+    { "q": "Can other AI tools use my Whimbrel memory?", "a": "Yes, if you enable it. Whimbrel runs a local MCP server with read-only tools, protected by access tokens you grant per tool, so assistants like Claude Desktop can search your meetings and history." }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Routines &amp; connectors</p>
+    <h1>An assistant that shows up before you ask.</h1>
+    <p class="lede">Routines run on a schedule, read what Whimbrel already knows about your work, and hand you the brief, the recap, or the draft.</p>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="feature-grid">
+      <article class="card feature"><h3>Meeting prep</h3><p>Before each meeting: who's attending, what you discussed last time, and what's still open.</p></article>
+      <article class="card feature"><h3>End-of-day recap</h3><p>What you worked on, what you decided, and what's waiting on you, written for you at the end of the day.</p></article>
+      <article class="card feature"><h3>Focus time</h3><p>Finds gaps in your calendar and blocks focus time so deep work doesn't get scheduled away.</p></article>
+      <article class="card feature"><h3>Weekly digest</h3><p>A summary of the week's meetings, decisions, and progress, ready for your status update.</p></article>
+      <article class="card feature"><h3>Your schedule, your rules</h3><p>Run any routine on the cadence you choose, and review results in the routines inbox when you're ready.</p></article>
+      <article class="card feature"><h3>Built on MCP</h3><p>Connectors for Gmail, Google Calendar, and Outlook 365, plus a local MCP server so your other AI tools can use your memory.</p></article>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Routines FAQ</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

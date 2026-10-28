@@ -1,0 +1,20 @@
+{
+  "name": "kestrel-updates-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-06",
+  // The hosted feed answers on its custom domain as well as on its workers.dev
+  // hostname; every build shipped before the rename polls the latter, so both
+  // stay live. A self-hosted feed deletes this block or puts its own domain here.
+  // Wrangler turns the workers.dev route OFF by default once routes exist. Every
+  // shipped build still uses the workers.dev hostname, so it must stay on.
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "updates.whimbrelapp.com", "custom_domain": true }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "UPDATES_BUCKET",
+      "bucket_name": "kestrel-updates"
+    }
+  ]
+}

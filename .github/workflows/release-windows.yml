@@ -1,0 +1,115 @@
+# Windows release leg (M3.5; docs/superpowers/plans/2026-10-01-m3.5-windows-updater.md).
+# A `vX.Y.Z` tag builds the NSIS installer on the self-hosted Windows runner, signs it
+# for tauri-plugin-updater, and publishes it plus `windows/latest.json` to the updates
+# bucket. The installer goes up first, so the manifest never points at a missing file.
+name: release-windows
+
+on:
+  push:
+    tags: ["v*"]
+  # Publish an existing tag with this branch's workflow (a tag's own copy of the workflow
+  # can't pick up a later fix): run from main with `tag: vX.Y.Z`.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and publish (vX.Y.Z)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Only the upstream repository has the runner, the signing key and the bucket.
+    if: github.repository == 'mpointer/kestrel'
+    runs-on: [self-hosted, Windows, X64, kestrel-windows]
+    timeout-minutes: 90
+    env:
+      CARGO_TARGET_DIR: C:\ar\t-win
+      UPDATES_URL: https://updates.whimbrelapp.com
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Release tag is vX.Y.Z
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') { throw "not a release tag: $env:RELEASE_TAG" }
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - name: Tag matches the app version
+        run: |
+          $v = (Get-Content apps/windows/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if ("v$v" -ne $env:RELEASE_TAG) { throw "tag $env:RELEASE_TAG does not match tauri.conf.json version $v" }
+          "VERSION=$v" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Secrets.toml (sync configuration, embedded at build time)
+        env:
+          SECRETS_TOML: ${{ secrets.WINDOWS_SECRETS_TOML }}
+        run: |
+          if (-not $env:SECRETS_TOML) { throw "WINDOWS_SECRETS_TOML is not set" }
+          Set-Content -NoNewline -Encoding utf8 apps/windows/src-tauri/Secrets.toml $env:SECRETS_TOML
+      - name: Install
+        run: |
+          npm ci --prefix apps/windows
+          npm ci --prefix apps/windows/ui
+      - name: Build the MCP server program (the installer carries it)
+        run: ./apps/windows/scripts/prepare-sidecar.ps1 -ForBundle
+      - name: Stage Node and the connectors (the installer carries them)
+        run: ./apps/windows/scripts/prepare-bundle-resources.ps1
+      - name: Build and sign the installer
+        working-directory: apps/windows
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          Set-Content -Encoding ascii updater-artifacts.json '{"bundle":{"createUpdaterArtifacts":true}}'
+          npm run tauri build -- --config updater-artifacts.json --config src-tauri/tauri.bundle.conf.json
+          if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
+      - name: Write latest.json
+        run: |
+          $name = "Whimbrel_$($env:VERSION)_x64-setup.exe"
+          $dir = "$env:CARGO_TARGET_DIR\release\bundle\nsis"
+          $manifest = @{
+            version  = $env:VERSION
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = (Get-Content "$dir\$name.sig" -Raw).Trim()
+                url       = "$env:UPDATES_URL/windows/$name"
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding ascii "$dir\latest.json"
+          # Recorded for the release evidence: the hash is of the file the next step uploads.
+          $installer = Get-Item "$dir\$name"
+          $sha256 = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLower()
+          Write-Host "installer $name size=$($installer.Length) bytes sha256=$sha256"
+          @("### Windows installer $env:VERSION", "", "| File | Size (bytes) | SHA-256 |", "|---|---|---|", "| $name | $($installer.Length) | $sha256 |") | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "INSTALLER_NAME=$name" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "BUNDLE_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      # wrangler alone, pinned to server-updates' lock: `npm ci` there also installs the
+      # Worker's test toolchain, whose peer ranges newer npm rejects.
+      - name: Publish installer, then latest.json
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4.124.0 r2 object put "kestrel-updates/windows/$env:INSTALLER_NAME" --file "$env:BUNDLE_DIR\$env:INSTALLER_NAME" --remote
+          if ($LASTEXITCODE -ne 0) { throw "installer upload failed" }
+          npx --yes wrangler@4.124.0 r2 object put "kestrel-updates/windows/latest.json" --file "$env:BUNDLE_DIR\latest.json" --content-type application/json --remote
+          if ($LASTEXITCODE -ne 0) { throw "latest.json upload failed" }
+      - name: Published manifest serves this version
+        run: |
+          $served = Invoke-RestMethod "$env:UPDATES_URL/windows/latest.json" -Headers @{ "User-Agent" = "whimbrel-release" }
+          if ($served.version -ne $env:VERSION) { throw "served latest.json is $($served.version), expected $env:VERSION" }
+      - name: Remove Secrets.toml
+        if: always()
+        run: Remove-Item -ErrorAction SilentlyContinue apps/windows/src-tauri/Secrets.toml

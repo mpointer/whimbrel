@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Whimbrel app icon: the bird in profile, cream on rust, on the macOS icon grid. Renders 64 px and up; app-icon-small.svg covers 16 and 32 px. -->
+  <defs>
+    <linearGradient id="rust" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c46a40" />
+      <stop offset="1" stop-color="#8c3d20" />
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".14" />
+      <stop offset=".55" stop-color="#fff" stop-opacity="0" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="1.2" stdDeviation="1.6" flood-color="#000" flood-opacity=".3" />
+    </filter>
+  </defs>
+  <g transform="translate(100 100) scale(8.24)" filter="url(#shadow)">
+  <clipPath id="corners"><rect width="100" height="100" rx="22.5" /></clipPath>
+  <g clip-path="url(#corners)">
+    <rect width="100" height="100" fill="url(#rust)" />
+    <g fill="#f6efe2" transform="translate(7.2 9) scale(.8)">
+      <path d="M38,58 C37.5,47 46,40 58,40 C70,40 80,44 90,50 L92,53 C84,56 78,60 70,64 C60,69 45,69 40,64.5 C38.6,62.8 38,60.5 38,58 Z" />
+      <path d="M36.3,30 C35,38 35.6,48 38.6,58 L53,42 C47.5,41 46.4,37 47.7,30 Z" />
+      <circle cx="41.5" cy="27" r="6.6" />
+      <path d="M36,24.2 C28,24.8 19.5,30.5 12.8,45.6 C12.4,46.6 13.2,47.3 13.8,46.5 C20.5,35.5 27.5,30.6 36.4,29.8 Z" />
+      <path d="M47,50 C55,44 70,44 84,49 L94,54.5 C82,55.5 70,57.5 60,58.4 C53,59 48,55.5 47,50 Z" stroke="#a5502b" stroke-width="1.5" />
+      <path d="M55.5,66 L54.5,77 L53.5,86.5 M51,87.2 L53.5,86.5 M63,65.5 L63.5,76.5 L62.5,86.5 M60,87.2 L62.5,86.5" fill="none" stroke="#f6efe2" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" />
+      <circle cx="42.6" cy="25.6" r="1.35" fill="#8c3d20" />
+    </g>
+    <rect width="100" height="100" fill="url(#sheen)" />
+  </g>
+  </g>
+</svg>

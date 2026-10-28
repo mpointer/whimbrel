@@ -1,0 +1,9 @@
+// Always-present base config referenced by project.yml's configFiles, so
+// the build never fails outright just because Secrets.xcconfig hasn't
+// been created yet on a fresh checkout. The "?" makes this include
+// optional — Xcode silently skips it if Secrets.xcconfig doesn't exist,
+// leaving GOOGLE_OAUTH_CLIENT_ID/GOOGLE_OAUTH_CLIENT_SECRET/
+// SYNC_WORKER_BASE_URL undefined. SyncConfig.swift then throws at
+// runtime for each missing value, and SyncState degrades gracefully —
+// see Secrets.xcconfig.example for what to fill in to enable sync.
+#include? "Secrets.xcconfig"

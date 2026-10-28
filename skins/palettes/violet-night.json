@@ -1,0 +1,22 @@
+{
+  "id": "violet-night",
+  "name": "Violet night",
+  "author": "Whimbrel",
+  "dark": {
+    "backgroundPage": "#0E0A1F",
+    "backgroundCard": "#1B1438",
+    "border": "#5A4A9E",
+    "textPrimary": "#F4F0FF",
+    "textSecondary": "#C4BAE6",
+    "accentPrimary": "#8B6CFF",
+    "accentSecondary": "#C4A8FF",
+    "accentHighlight": "#FF7AD9",
+    "error": "#FF7A8A",
+    "warning": "#FFC857",
+    "success": "#6EE7A8",
+    "link": "#A9C4FF",
+    "selection": "#2A2060",
+    "highlight": "#3A2D7A",
+    "textOnAccent": "#0E0A1F"
+  }
+}

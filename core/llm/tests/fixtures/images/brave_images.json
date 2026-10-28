@@ -1,0 +1,147 @@
+{
+ "type": "images",
+ "query": {
+  "original": "stadium at night",
+  "spellcheck_off": true
+ },
+ "results": [
+  {
+   "type": "image_result",
+   "title": "Stadium at night 1",
+   "url": "https://example1.com/page",
+   "source": "example1.com",
+   "thumbnail": {
+    "src": "https://imgs.search.brave.com/thumb1.jpg",
+    "width": 500,
+    "height": 300
+   },
+   "properties": {
+    "url": "https://example1.com/images/stadium1.jpg",
+    "placeholder": "https://imgs.search.brave.com/ph1.jpg",
+    "width": 1600,
+    "height": 900
+   },
+   "meta_url": {
+    "scheme": "https",
+    "netloc": "example1.com",
+    "hostname": "example1.com"
+   },
+   "confidence": "high"
+  },
+  {
+   "type": "image_result",
+   "title": "Stadium at night 2",
+   "url": "https://example2.com/page",
+   "source": "example2.com",
+   "thumbnail": {
+    "src": "https://imgs.search.brave.com/thumb2.jpg",
+    "width": 500,
+    "height": 300
+   },
+   "properties": {
+    "url": "https://example2.com/images/stadium2.jpg",
+    "placeholder": "https://imgs.search.brave.com/ph2.jpg",
+    "width": 1600,
+    "height": 900
+   },
+   "meta_url": {
+    "scheme": "https",
+    "netloc": "example2.com",
+    "hostname": "example2.com"
+   },
+   "confidence": "high"
+  },
+  {
+   "type": "image_result",
+   "title": "Stadium at night 3",
+   "url": "https://example3.com/page",
+   "source": "example3.com",
+   "thumbnail": {
+    "src": "https://imgs.search.brave.com/thumb3.jpg",
+    "width": 500,
+    "height": 300
+   },
+   "properties": {
+    "url": "https://example3.com/images/stadium3.jpg",
+    "placeholder": "https://imgs.search.brave.com/ph3.jpg",
+    "width": 1600,
+    "height": 900
+   },
+   "meta_url": {
+    "scheme": "https",
+    "netloc": "example3.com",
+    "hostname": "example3.com"
+   },
+   "confidence": "high"
+  },
+  {
+   "type": "image_result",
+   "title": "Stadium at night 4",
+   "url": "https://example4.com/page",
+   "source": "example4.com",
+   "thumbnail": {
+    "src": "https://imgs.search.brave.com/thumb4.jpg",
+    "width": 500,
+    "height": 300
+   },
+   "properties": {
+    "url": "https://example4.com/images/stadium4.jpg",
+    "placeholder": "https://imgs.search.brave.com/ph4.jpg",
+    "width": 1600,
+    "height": 900
+   },
+   "meta_url": {
+    "scheme": "https",
+    "netloc": "example4.com",
+    "hostname": "example4.com"
+   },
+   "confidence": "high"
+  },
+  {
+   "type": "image_result",
+   "title": "Stadium at night 5",
+   "url": "https://example5.com/page",
+   "source": "example5.com",
+   "thumbnail": {
+    "src": "https://imgs.search.brave.com/thumb5.jpg",
+    "width": 500,
+    "height": 300
+   },
+   "properties": {
+    "url": "https://example5.com/images/stadium5.jpg",
+    "placeholder": "https://imgs.search.brave.com/ph5.jpg",
+    "width": 1600,
+    "height": 900
+   },
+   "meta_url": {
+    "scheme": "https",
+    "netloc": "example5.com",
+    "hostname": "example5.com"
+   },
+   "confidence": "high"
+  },
+  {
+   "type": "image_result",
+   "title": "Stadium at night 6",
+   "url": "https://example6.com/page",
+   "source": "example6.com",
+   "thumbnail": {
+    "src": "https://imgs.search.brave.com/thumb6.jpg",
+    "width": 500,
+    "height": 300
+   },
+   "properties": {
+    "url": "https://example6.com/images/stadium6.jpg",
+    "placeholder": "https://imgs.search.brave.com/ph6.jpg",
+    "width": 1600,
+    "height": 900
+   },
+   "meta_url": {
+    "scheme": "https",
+    "netloc": "example6.com",
+    "hostname": "example6.com"
+   },
+   "confidence": "high"
+  }
+ ]
+}

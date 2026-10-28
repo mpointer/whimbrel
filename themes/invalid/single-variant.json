@@ -1,0 +1,4 @@
+{
+  "id": "single-variant", "name": "Single variant", "author": "x",
+  "dark": { "backgroundPage": "#101010", "backgroundCard": "#181818", "textPrimary": "#F0F0F0", "textSecondary": "#C8C8C8", "selection": "#2A2A2A", "highlight": "#3A3A20" }
+}

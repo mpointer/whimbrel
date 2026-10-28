@@ -1,0 +1,65 @@
+<!--
+{
+  "title": "Whimbrel for Mac – Bot-Free Meeting Notes on macOS",
+  "description": "Download Whimbrel for Mac: bot-free AI meeting notes, screen memory, and briefings for Apple silicon Macs on macOS 14+. Signed, notarized, and free.",
+  "schema": ["software-mac"],
+  "priority": 0.8,
+  "crumbs": [{ "name": "Download", "path": "/download/" }, { "name": "Mac", "path": "/download/mac/" }],
+  "faq": [
+    { "q": "Does Whimbrel run on Intel Macs?", "a": "No. Whimbrel requires a Mac with Apple silicon (M1 or newer). On-device transcription and local models are built and tested for Apple silicon only." },
+    { "q": "Which macOS permissions does Whimbrel need?", "a": "Microphone, screen and system audio recording (to capture the other side of a call), and Accessibility (to read window text for screen memory). Setup asks for each one separately, and you can revoke any of them in System Settings." },
+    { "q": "How do updates work?", "a": "Whimbrel checks for a new version daily, downloads and verifies it in the background, then shows a Restart Now banner. Your data is untouched by updates." }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="container split">
+    <div>
+      <p class="eyebrow">macOS · Apple silicon</p>
+      <h1>Whimbrel for Mac</h1>
+      <p class="lede">Bot-free meeting notes, a searchable memory of your work, and daily briefings, built natively for macOS with SwiftUI.</p>
+      {{{site.renameNote}}}
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="/api/download/mac">Download for Mac</a>
+        <span class="version" data-version="mac"></span>
+      </div>
+      <p class="fine muted">First time here? You'll be asked to register before the download starts.</p>
+    </div>
+    {{> app-mock}}
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container split">
+    <div>
+      <h2>System requirements</h2>
+      <ul class="checklist">
+        <li><strong>macOS 14 Sonoma or later</strong>Including macOS 15 Sequoia and newer.</li>
+        <li><strong>Apple silicon</strong>M1, M2, M3, M4 or newer. Intel Macs are not supported.</li>
+        <li><strong>Disk space</strong>Room for the app, the on-device speech model, and your growing history.</li>
+        <li><strong>Optional: Ollama</strong>To run language models fully on your Mac.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Install in two minutes</h2>
+      <ol class="install-steps">
+        <li>Open the downloaded <code>Whimbrel-x.y.z.zip</code>. macOS unzips it to <code>Whimbrel.app</code>.</li>
+        <li>Drag <code>Whimbrel.app</code> into your <strong>Applications</strong> folder.</li>
+        <li>Open Whimbrel. It's signed and notarized by Apple, so it opens without warnings.</li>
+        <li>Follow the setup to grant microphone, audio, and Accessibility access.</li>
+        <li>Connect your calendar so recordings start with your meetings.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Mac questions</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

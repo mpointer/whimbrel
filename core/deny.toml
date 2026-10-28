@@ -1,0 +1,80 @@
+# cargo-deny configuration for the core workspace.
+# Run: cargo deny check licenses sources
+# CI runs the same check whenever a Cargo manifest, Cargo.lock or this file changes.
+#
+# The crate graph must stay compatible with the project's Apache-2.0 license.
+# Add a license here only after checking it is permissive (file-level copyleft
+# such as MPL-2.0 would also be acceptable; GPL/AGPL/SSPL are not).
+
+[graph]
+all-features = false
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-linux-android",
+    "aarch64-apple-ios",
+]
+
+[licenses]
+confidence-threshold = 0.8
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+]
+
+[advisories]
+# Advisories are tracked by GitHub Dependabot on this repository; cargo-deny
+# only audits licenses and sources in CI so a new RUSTSEC entry cannot turn a
+# license check red. `cargo deny check advisories` is still useful locally;
+# the entries below are the ones triaged on 2026-10-22 that cannot be fixed by
+# a dependency update yet. Each names the blocker. Re-check them when the
+# blocking crate releases.
+version = 2
+ignore = [
+    # libsql 0.9 (and 0.10, and its main branch) is built on hyper 0.14 /
+    # hyper-rustls 0.25 / rustls 0.22 / rustls-webpki 0.102, none of which
+    # receive fixes any more. This is the TLS client to the Turso relay.
+    # Blocker: libsql moving to hyper 1 / rustls 0.23.
+    { id = "RUSTSEC-2026-0258", reason = "h2 0.3 via libsql; client-only use" },
+    { id = "RUSTSEC-2026-0346", reason = "rustls 0.22 via libsql; fixed in 0.23.46 for every other path" },
+    { id = "RUSTSEC-2026-0349", reason = "rustls 0.22 via libsql; fixed in 0.23.46 for every other path" },
+    { id = "RUSTSEC-2026-0049", reason = "rustls-webpki 0.102 via libsql; CRL handling, not used" },
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.102 via libsql" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.102 via libsql" },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.102 via libsql; CRL parsing, not used" },
+    { id = "RUSTSEC-2026-0382", reason = "rustls-webpki 0.102 via libsql; the 0.103 line is at a fixed version" },
+    # zip < 9 via candle-core (0.8 wants zip 1, 0.11 wants zip 8) and via
+    # tauri-plugin-updater (zip 4). Whimbrel never extracts an archive through
+    # either: candle's zip use is its npz loader (models load from
+    # safetensors), and the Windows updater installs an NSIS package.
+    { id = "RUSTSEC-2026-0367", reason = "zip extract via candle/tauri-plugin-updater; no archive extraction in this codebase" },
+    { id = "RUSTSEC-2026-0368", reason = "zip extract via candle/tauri-plugin-updater; no archive extraction in this codebase" },
+    { id = "RUSTSEC-2026-0369", reason = "zip extract via candle/tauri-plugin-updater; no archive extraction in this codebase" },
+    # Unmaintained, not vulnerable. Transitive through indicatif, tauri,
+    # libsql and the proc-macro ecosystem.
+    { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained proc macro, pulled by many crates" },
+    { id = "RUSTSEC-2025-0119", reason = "number_prefix via indicatif" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile via libsql" },
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []

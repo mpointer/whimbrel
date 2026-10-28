@@ -1,0 +1,39 @@
+{
+  "id": "purple-gold",
+  "name": "Purple and gold",
+  "author": "Whimbrel",
+  "light": {
+    "backgroundPage": "#F6F3FA",
+    "backgroundCard": "#FFFFFF",
+    "border": "#C2B5DA",
+    "textPrimary": "#1E1033",
+    "textSecondary": "#4E4166",
+    "accentPrimary": "#5B2BA8",
+    "accentSecondary": "#3A2A63",
+    "accentHighlight": "#B8860B",
+    "error": "#B3261E",
+    "warning": "#8A5A00",
+    "success": "#2E7D32",
+    "link": "#4B2E9E",
+    "selection": "#E4DCF1",
+    "highlight": "#F6E7B0",
+    "textOnAccent": "#FFFFFF"
+  },
+  "dark": {
+    "backgroundPage": "#120A22",
+    "backgroundCard": "#1D1236",
+    "border": "#4A3A7A",
+    "textPrimary": "#F6F2FC",
+    "textSecondary": "#C0B4DA",
+    "accentPrimary": "#A97BF0",
+    "accentSecondary": "#CDB8F5",
+    "accentHighlight": "#F2C14E",
+    "error": "#FF8A8A",
+    "warning": "#F2B84B",
+    "success": "#6FCF86",
+    "link": "#B9A3F5",
+    "selection": "#2B1D4D",
+    "highlight": "#4A3B14",
+    "textOnAccent": "#12081F"
+  }
+}

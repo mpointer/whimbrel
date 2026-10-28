@@ -1,0 +1,5 @@
+Sure! Greetings will keep the {name} slot. Here is my answer:
+
+{"intent": "clarify", "reply": "Which era did you have in mind?"}
+
+Let me know if that works.

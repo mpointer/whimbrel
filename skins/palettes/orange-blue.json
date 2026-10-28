@@ -1,0 +1,39 @@
+{
+  "id": "orange-blue",
+  "name": "Orange and blue",
+  "author": "Whimbrel",
+  "light": {
+    "backgroundPage": "#F3F6FB",
+    "backgroundCard": "#FFFFFF",
+    "border": "#B4C3DC",
+    "textPrimary": "#0D2342",
+    "textSecondary": "#445773",
+    "accentPrimary": "#B84A00",
+    "accentSecondary": "#0F4C9C",
+    "accentHighlight": "#C99A06",
+    "error": "#B3261E",
+    "warning": "#8A5A00",
+    "success": "#2E7D32",
+    "link": "#0F4C9C",
+    "selection": "#DCE6F5",
+    "highlight": "#FBE3B8",
+    "textOnAccent": "#FFFFFF"
+  },
+  "dark": {
+    "backgroundPage": "#08162B",
+    "backgroundCard": "#102440",
+    "border": "#35568A",
+    "textPrimary": "#F2F6FC",
+    "textSecondary": "#B3C4DE",
+    "accentPrimary": "#FF8A3D",
+    "accentSecondary": "#7FB0F0",
+    "accentHighlight": "#FFC266",
+    "error": "#FF8A8A",
+    "warning": "#F2B84B",
+    "success": "#6FCF86",
+    "link": "#8FB3F0",
+    "selection": "#1B3156",
+    "highlight": "#4A3B14",
+    "textOnAccent": "#14100B"
+  }
+}

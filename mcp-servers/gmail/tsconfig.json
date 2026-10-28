@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": ["src/**/*.ts"],
+  "//": "Tests are excluded from the emitted build because dist/ is copied verbatim into the shipping .app bundle, and test code has no business inside a signed application. Vitest discovers *.test.ts by its own glob, not through tsconfig, so `npm test` is unaffected. The Calendar connector reaches the same result by keeping its tests in test/ rather than src/.",
+  "exclude": ["src/**/*.test.ts"]
+}

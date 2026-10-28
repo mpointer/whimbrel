@@ -1,0 +1,33 @@
+# Third-party license audit for the Rust workspace (core/deny.toml). Fails when a
+# crate in the dependency graph carries a license outside the allow list or comes
+# from an unknown registry or git source. Needs no secrets, so it runs on forks.
+name: License audit
+
+on:
+  pull_request:
+    paths:
+      - "core/**/Cargo.toml"
+      - "core/Cargo.lock"
+      - "core/deny.toml"
+      - ".github/workflows/license-audit.yml"
+  push:
+    branches: [main]
+    paths:
+      - "core/**/Cargo.toml"
+      - "core/Cargo.lock"
+      - "core/deny.toml"
+      - ".github/workflows/license-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: core/Cargo.toml
+          command: check licenses sources

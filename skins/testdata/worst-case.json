@@ -1,0 +1,98 @@
+{
+  "input": {
+    "id": "user-worst-case",
+    "name": "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+    "author": "Worst Case",
+    "palettes": [
+      "default"
+    ],
+    "typography": {
+      "display": "Georgia/black",
+      "body": "Georgia/black",
+      "numerals": "Georgia/black",
+      "label": "Georgia/black",
+      "caps": "upper"
+    },
+    "shape": {
+      "radius": 24,
+      "border": "double",
+      "borderWidth": 4,
+      "density": "airy"
+    },
+    "voice": {
+      "greetingMorning": "MWMW MWMW MWMW M, {name}",
+      "greetingAfternoon": "MWMW MWMW MWMW M, {name}",
+      "greetingEvening": "MWMW MWMW MWMW M, {name}",
+      "upNextHeader": "MWMW MWMW MWMW MWMW MWMW",
+      "upcomingHeader": "MWMW MWMW MWMW MWMW MWMW",
+      "earlierHeader": "MWMW MWMW MWMW MWMW MWMW",
+      "recapHeader": "MWMW MWMW MWMW MWMW MWMW",
+      "emptyDay": "MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW ",
+      "emptyEarlier": "MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW ",
+      "askPlaceholder": "MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW ",
+      "tagline": "MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW "
+    },
+    "today": {
+      "archetype": "standard",
+      "options": {}
+    },
+    "motion": "subtle"
+  },
+  "expected": {
+    "id": "user-worst-case",
+    "name": "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW",
+    "author": "Worst Case",
+    "palettes": [
+      "default"
+    ],
+    "typography": {
+      "display": "Georgia/black",
+      "body": "Georgia/black",
+      "numerals": "Georgia/black",
+      "label": "Georgia/black",
+      "caps": "upper"
+    },
+    "shape": {
+      "radius": 24,
+      "border": "double",
+      "borderWidth": 4,
+      "density": "airy"
+    },
+    "icons": {
+      "today": "sun.max",
+      "meetings": "person.2",
+      "routines": "bolt",
+      "settings": "gearshape",
+      "ask": "arrow.up.circle.fill",
+      "person": "person",
+      "time": "clock",
+      "prep": "doc.text",
+      "recap": "text.alignleft"
+    },
+    "decoration": {
+      "headerBand": "none",
+      "dividers": "none",
+      "texture": "none",
+      "imagery": []
+    },
+    "voice": {
+      "greetingMorning": "MWMW MWMW MWMW M, {name}",
+      "greetingAfternoon": "MWMW MWMW MWMW M, {name}",
+      "greetingEvening": "MWMW MWMW MWMW M, {name}",
+      "upNextHeader": "MWMW MWMW MWMW MWMW MWMW",
+      "upcomingHeader": "MWMW MWMW MWMW MWMW MWMW",
+      "earlierHeader": "MWMW MWMW MWMW MWMW MWMW",
+      "recapHeader": "MWMW MWMW MWMW MWMW MWMW",
+      "emptyDay": "MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW ",
+      "emptyEarlier": "MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW ",
+      "askPlaceholder": "MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW ",
+      "tagline": "MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW MWMW "
+    },
+    "today": {
+      "archetype": "standard",
+      "options": {}
+    },
+    "motion": "subtle"
+  },
+  "repairs": []
+}

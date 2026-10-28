@@ -1,0 +1,22 @@
+{
+  "id": "amber",
+  "name": "Amber",
+  "author": "Whimbrel",
+  "dark": {
+    "backgroundPage": "#0D0800",
+    "backgroundCard": "#1A1100",
+    "border": "#8A5A00",
+    "textPrimary": "#FFB000",
+    "textSecondary": "#D98E1F",
+    "accentPrimary": "#FFB000",
+    "accentSecondary": "#FFD27A",
+    "accentHighlight": "#FFE08A",
+    "error": "#FF7A6B",
+    "warning": "#FFD166",
+    "success": "#8FE388",
+    "link": "#FFCF70",
+    "selection": "#3A2600",
+    "highlight": "#4D3300",
+    "textOnAccent": "#1A0F00"
+  }
+}

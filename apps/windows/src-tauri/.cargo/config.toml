@@ -1,0 +1,43 @@
+# Static MSVC C runtime for the whole Windows shell graph (M3.1 link-gate finding).
+#
+# sherpa-onnx-sys (core/diarize) links prebuilt ONNX Runtime + sherpa-onnx static libs
+# that exist for Windows only as `win-x64-static-MT-Release` (/MT, static CRT). Rust
+# and every cc/CMake-built C library in the graph default to /MD (dynamic CRT), and
+# MSVC refuses to mix the two in one image: LNK2038 `RuntimeLibrary` mismatch against
+# whisper-rs-sys's whisper.cpp, then LNK2005 on the std::_Lockit/_Locinfo family.
+# `+crt-static` moves Rust std and every `cc`-driven build (bundled SQLite, ring,
+# onig) to /MT; cmake-rs derives whisper.cpp's /MT from the same target feature.
+#
+# Cargo reads this file from the *current directory's* ancestry, not from
+# --manifest-path — build from apps/windows/src-tauri (as `tauri dev` does).
+# `TaskDialogIndirect` (comctl32) is delay-loaded because the crate's *test* binaries
+# have no application manifest. The app's manifest declares common-controls v6, where
+# that function lives; a plain test exe gets v5, and the loader fails the whole process
+# with STATUS_ENTRYPOINT_NOT_FOUND before a single test runs (seen in M3.3 Task 7, when
+# a new dependency made the linker keep the import). Delay-loading resolves it on first
+# call instead of at load, so the tests run and the app's dialogs still work.
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "link-arg=/DELAYLOAD:comctl32.dll",
+    "-C", "link-arg=delayimp.lib",
+]
+
+# whisper.cpp optimization (M3.1 finding). Under the Visual Studio generator, cmake-rs
+# replaces CMake's CMAKE_<LANG>_FLAGS_RELEASE with the `cc` crate's flags
+# ("-nologo -MT -Brepro -W0"), which carry no /O level — so MSVC compiled whisper.cpp
+# at its /Od default. And GGML_NATIVE on MSVC enables no SIMD (there is no
+# -march=native), leaving AVX2 off. Together: tiny.en ran at 1.3–1.45x real time on an
+# i9-13900H. whisper-rs-sys forwards every CMAKE_* / GGML_* env var as a CMake define,
+# and cmake-rs leaves an already-defined FLAGS_RELEASE alone. AVX2/FMA/F16C: every
+# Intel since Haswell (2013) and every AMD Zen. The Mac build (Makefile/Ninja
+# generator) never took this path. Changing these requires
+# `cargo clean -p whisper-rs-sys` (its build script does not watch them).
+[env]
+CMAKE_C_FLAGS_RELEASE = "/MT /O2 /Ob2 /DNDEBUG"
+CMAKE_CXX_FLAGS_RELEASE = "/MT /O2 /Ob2 /DNDEBUG /utf-8"
+GGML_NATIVE = "OFF"
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_FMA = "ON"
+GGML_F16C = "ON"

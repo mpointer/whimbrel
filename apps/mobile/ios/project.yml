@@ -1,0 +1,110 @@
+name: Whimbrel
+options:
+  deploymentTarget:
+    iOS: "17.0"
+# Listing Base.xcconfig here gives it a stable object ID (as a configFiles-only file
+# XcodeGen gives it a fresh TEMP_<uuid> on every run).
+fileGroups:
+  - Base.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: GP8PFLM3Q3
+    TARGETED_DEVICE_FAMILY: "1"
+    # build/WhimbrelCore.xcframework has no x86_64 simulator slice (Apple Silicon only),
+    # see scripts/build-ffi-xcframework.sh.
+    EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+targets:
+  Whimbrel:
+    type: application
+    platform: iOS
+    sources:
+      - path: Whimbrel
+      # Shared with the Mac app by reference, not copied. Platform bits are split with
+      # `#if os(macOS)` in place (ThemeStore.swift).
+      - path: ../../macos/Whimbrel/Support/Theme.swift
+        group: Shared
+      - path: ../../macos/Whimbrel/Support/ThemeDefaults.swift
+        group: Shared
+      - path: ../../macos/Whimbrel/Support/ThemeStore.swift
+        group: Shared
+      - path: ../../macos/Whimbrel/Support/KeychainAccess.swift
+        group: Shared
+      - path: ../../macos/Whimbrel/Support/SyncKeychain.swift
+        group: Shared
+      - path: ../../macos/Whimbrel/Support/SyncConfig.swift
+        group: Shared
+      - path: ../../macos/Whimbrel/Support/SyncClient.swift
+        group: Shared
+      - path: ../../macos/Whimbrel/Support/SyncCoreBridge.swift
+        group: Shared
+      - path: ../../macos/Whimbrel/Support/SyncTiming.swift
+        group: Shared
+      - path: ../../macos/Whimbrel/Support/ReadLogic.swift
+        group: Shared
+      # Shared theme files (themes/*.json); ThemeStore.bundledThemesDirectory reads them.
+      # group: keeps XcodeGen from synthesizing a group named after the clone directory.
+      - path: ../../../themes
+        type: folder
+        group: Shared
+        buildPhase: resources
+    dependencies:
+      # Built by scripts/build-ffi-xcframework.sh (gitignored output).
+      - framework: build/WhimbrelCore.xcframework
+        embed: false
+      # core/transcribe (whisper.cpp) is C++; nothing else in the app pulls in libc++.
+      - sdk: libc++.tbd
+      # whisper.cpp/ggml use Accelerate (vDSP, cblas).
+      - sdk: Accelerate.framework
+    configFiles:
+      Debug: Base.xcconfig
+      Release: Base.xcconfig
+    info:
+      path: Whimbrel/Info.plist
+      properties:
+        CFBundleDisplayName: Whimbrel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # From Secrets.xcconfig (gitignored). Same key the Mac uses, so the shared
+        # SyncConfig.googleOAuthClientId() reads the iOS client id unmodified.
+        GoogleOAuthClientID: $(GOOGLE_IOS_CLIENT_ID)
+        # Base.xcconfig default (the deployed Worker), overridable in Secrets.xcconfig.
+        SyncWorkerBaseURL: $(SYNC_WORKER_BASE_URL)
+    settings:
+      base:
+        PRODUCT_NAME: Whimbrel
+        SWIFT_OBJC_BRIDGING_HEADER: Whimbrel/Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/../../../core/ffi/include
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+  WhimbrelTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: WhimbrelTests
+    dependencies:
+      - target: Whimbrel
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Whimbrel.app/Whimbrel
+        PRODUCT_BUNDLE_IDENTIFIER: com.mpointer.kestrel.mobile.tests
+schemes:
+  Whimbrel:
+    build:
+      targets:
+        Whimbrel: all
+        WhimbrelTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - WhimbrelTests
+    archive:
+      config: Release

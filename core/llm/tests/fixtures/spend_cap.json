@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "name": "per_user_cap_exceeded",
+      "pre_spent_cents_by_user": { "u1": 500 },
+      "config": { "user_daily_cents": 200, "global_daily_cents": 0 },
+      "checking_user": "u1",
+      "expected_blocked": true,
+      "expected_scope": "user"
+    },
+    {
+      "name": "global_circuit_breaker_trips_regardless_of_identity",
+      "pre_spent_cents_by_user": { "someone-else": 6000 },
+      "config": { "user_daily_cents": null, "global_daily_cents": 5000 },
+      "checking_user": "u1",
+      "expected_blocked": true,
+      "expected_scope": "global"
+    },
+    {
+      "name": "explicit_zero_caps_disable_enforcement",
+      "pre_spent_cents_by_user": { "u1": 999999 },
+      "config": { "user_daily_cents": 0, "global_daily_cents": 0 },
+      "checking_user": "u1",
+      "expected_blocked": false,
+      "expected_scope": null
+    },
+    {
+      "name": "under_cap_is_allowed",
+      "pre_spent_cents_by_user": { "u1": 50 },
+      "config": { "user_daily_cents": 200, "global_daily_cents": 5000 },
+      "checking_user": "u1",
+      "expected_blocked": false,
+      "expected_scope": null
+    },
+    {
+      "name": "both_caps_tripped_reports_global_scope_first",
+      "pre_spent_cents_by_user": { "u1": 300, "someone-else": 5700 },
+      "config": { "user_daily_cents": 200, "global_daily_cents": 5000 },
+      "checking_user": "u1",
+      "expected_blocked": true,
+      "expected_scope": "global"
+    },
+    {
+      "name": "anonymous_identity_checks_anonymous_only_not_global",
+      "pre_spent_cents_by_user": { "u1": 5000 },
+      "config": { "user_daily_cents": 200, "global_daily_cents": 0 },
+      "checking_user": null,
+      "expected_blocked": false,
+      "expected_scope": null
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{page.title}}</title>
+  <meta name="description" content="{{page.description}}">
+  <meta name="robots" content="{{page.robots}}">
+  {{{raw.canonicalTag}}}
+  <meta name="theme-color" content="#F7F2E7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1C1712" media="(prefers-color-scheme: dark)">
+  <meta property="og:site_name" content="{{site.name}}">
+  <meta property="og:type" content="{{page.ogType}}">
+  <meta property="og:title" content="{{page.title}}">
+  <meta property="og:description" content="{{page.description}}">
+  <meta property="og:url" content="{{page.canonical}}">
+  <meta property="og:image" content="{{page.ogImage}}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{page.title}}">
+  <meta name="twitter:description" content="{{page.description}}">
+  <meta name="twitter:image" content="{{page.ogImage}}">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="stylesheet" href="/assets/site.css?v={{assets.css}}">
+  <script src="/assets/site.js?v={{assets.js}}" defer></script>
+  {{{raw.jsonLd}}}
+  <noscript><style>@media (max-width: 820px) { .nav-toggle { display: none; } .header-row { flex-wrap: wrap; } .primary-nav { display: flex; position: static; flex-direction: row; flex-wrap: wrap; gap: 4px 18px; padding: 0 0 12px; box-shadow: none; border: 0; } .primary-nav a:not(.btn) { padding: 0; border: 0; } .primary-nav .btn { margin: 0; } }</style></noscript>
+</head>
+<body class="{{page.bodyClass}}">
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="container header-row">
+      <a class="brand" href="/" aria-label="Whimbrel home">
+        <img src="/favicon.svg" alt="" width="32" height="32">
+        <span>Whimbrel</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav" aria-label="Menu"><span></span><span></span><span></span></button>
+      <nav class="primary-nav" id="primary-nav" aria-label="Primary">
+        <a href="/features/meeting-notes/">Meetings</a>
+        <a href="/features/screen-memory/">Memory</a>
+        <a href="/features/routines/">Routines</a>
+        <a href="/pricing/">Pricing</a>
+        <a href="/open-source/">Open source</a>
+        <a href="/privacy/">Privacy</a>
+        <a class="btn btn-primary btn-sm" href="/download/">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+{{{raw.content}}}
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-grid">
+      <div>
+        <a class="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28"><span>Whimbrel</span></a>
+        <p class="muted">{{site.tagline}}.</p>
+      </div>
+      <nav aria-label="Product">
+        <h2>Product</h2>
+        <a href="/features/meeting-notes/">Bot-free meeting notes</a>
+        <a href="/features/screen-memory/">Screen memory</a>
+        <a href="/features/routines/">Routines &amp; connectors</a>
+        <a href="/compare/">Whimbrel vs. Littlebird vs. Granola</a>
+        <a href="/compare/granola-alternative/">Whimbrel vs. Granola</a>
+      </nav>
+      <nav aria-label="Download">
+        <h2>Download</h2>
+        <a href="/download/mac/">Whimbrel for Mac</a>
+        <a href="/download/windows/">Whimbrel for Windows</a>
+        <a href="/download/">Get early access</a>
+        <a href="/pricing/">Pricing</a>
+        <a href="/changelog/">Changelog</a>
+      </nav>
+      <nav aria-label="Company">
+        <h2>Company</h2>
+        <a href="/open-source/">Open source</a>
+        <a href="/privacy/">Privacy policy</a>
+        <a href="/tos/">Terms of service</a>
+        <a href="/sitemap.xml">Sitemap</a>
+      </nav>
+    </div>
+    <div class="container legal muted">© {{year}} {{site.name}}. All rights reserved.</div>
+  </footer>
+</body>
+</html>

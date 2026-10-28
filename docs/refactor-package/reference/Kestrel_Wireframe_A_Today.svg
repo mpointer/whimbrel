@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <style>
+    .bg{fill:#FAFAF9}.side{fill:#F2F3F1}.card{fill:#FFFFFF;stroke:#E2E5E1;stroke-width:1}.line{stroke:#E2E5E1;stroke-width:1}.title{font-family:'DejaVu Sans',sans-serif;font-size:20px;font-weight:700;fill:#171817}.h1{font-family:'DejaVu Sans',sans-serif;font-size:28px;font-weight:700;fill:#171817}.body{font-family:'DejaVu Sans',sans-serif;font-size:14px;font-weight:400;fill:#3F4640}.muted{font-family:'DejaVu Sans',sans-serif;font-size:12px;font-weight:400;fill:#6A706B}.label{font-family:'DejaVu Sans',sans-serif;font-size:11px;font-weight:600;fill:#6A706B;letter-spacing:.8px}.nav{font-family:'DejaVu Sans',sans-serif;font-size:14px;font-weight:500;fill:#3F4640}.navActive{font-family:'DejaVu Sans',sans-serif;font-size:14px;font-weight:650;fill:#0F766E}.button{font-family:'DejaVu Sans',sans-serif;font-size:13px;font-weight:600;fill:#FFFFFF}.button2{font-family:'DejaVu Sans',sans-serif;font-size:13px;font-weight:600;fill:#3F4640}.call{font-family:'DejaVu Sans',sans-serif;font-size:12px;font-weight:700;fill:#FFFFFF}.note{font-family:'DejaVu Sans',sans-serif;font-size:12px;font-weight:500;fill:#0F766E}
+  </style>
+  <rect class="bg" width="1440" height="900" rx="16"/>
+  <rect x="0" y="0" width="250" height="900" class="side" rx="16"/>
+  <rect x="250" y="0" width="1190" height="62" fill="#FFFFFF"/>
+  <line x1="250" y1="62" x2="1440" y2="62" class="line"/>
+  <circle cx="30" cy="31" r="11" fill="#0F766E"/><path d="M25 31 L29 35 L36 26" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="50" y="36" class="title">Kestrel</text>
+  <text x="276" y="38" class="body">Today</text>
+  <rect x="1247" y="17" width="157" height="32" rx="9" fill="#0F766E"/><text x="1264" y="38" class="button">+ New meeting</text>
+  <rect x="36" y="82" width="178" height="36" rx="8" fill="#DDF3EE"/><text x="54" y="105" class="navActive">▣   Today</text>
+  <text x="54" y="146" class="nav">▤   Meetings</text><text x="54" y="186" class="nav">⌕   Search</text>
+  <text x="30" y="244" class="label">UP NEXT</text>
+  <rect x="30" y="260" width="190" height="108" rx="10" class="card"/>
+  <text x="46" y="286" class="title" style="font-size:14px">Client discovery — Acme</text>
+  <text x="46" y="310" class="muted">10:00–10:30 · 4 people</text>
+  <rect x="46" y="326" width="70" height="22" rx="11" fill="#EAF5F2"/><text x="58" y="341" class="note">Local only</text>
+  <text x="30" y="420" class="label">SPACES</text><text x="54" y="453" class="nav">▱   Sales</text><text x="54" y="489" class="nav">▱   Product</text><text x="54" y="525" class="nav">▱   Personal</text>
+  <line x1="30" y1="810" x2="220" y2="810" class="line"/>
+  <circle cx="42" cy="840" r="5" fill="#0F766E"/><text x="56" y="845" class="muted">All sources up to date</text>
+  <text x="290" y="122" class="h1">A focused day, not a dashboard.</text>
+  <text x="290" y="148" class="body">Your next conversation and the work you need now.</text>
+  <rect x="290" y="182" width="1114" height="164" rx="12" class="card"/>
+  <text x="318" y="215" class="label">NEXT MEETING</text><text x="318" y="251" class="h1" style="font-size:23px">Client discovery — Acme</text>
+  <text x="318" y="279" class="body">Today, 10:00–10:30 · 4 attendees · 2 related meetings</text>
+  <rect x="318" y="296" width="104" height="26" rx="13" fill="#EAF5F2"/><text x="331" y="314" class="note">Local only ▾</text>
+  <rect x="1172" y="230" width="198" height="42" rx="10" fill="#0F766E"/><text x="1195" y="256" class="button">Prepare for meeting</text>
+  <rect x="1172" y="282" width="198" height="38" rx="10" fill="#F2F3F1"/><text x="1215" y="306" class="button2">Open meeting</text>
+  <text x="290" y="398" class="title">Recent work</text><text x="290" y="423" class="muted">The things you may want to return to.</text>
+  <rect x="290" y="450" width="1114" height="74" rx="10" class="card"/><circle cx="322" cy="487" r="15" fill="#EAF5F2"/><text x="352" y="479" class="title" style="font-size:15px">Weekly pipeline review</text><text x="352" y="502" class="muted">Yesterday · Decisions and next steps · Sales</text><text x="1308" y="492" class="muted">›</text>
+  <rect x="290" y="536" width="1114" height="74" rx="10" class="card"/><circle cx="322" cy="573" r="15" fill="#F8ECD8"/><text x="352" y="565" class="title" style="font-size:15px">Product launch planning</text><text x="352" y="588" class="muted">Monday · 6 action items · Product</text><text x="1308" y="578" class="muted">›</text>
+  <rect x="290" y="622" width="1114" height="74" rx="10" class="card"/><circle cx="322" cy="659" r="15" fill="#E8EBFF"/><text x="352" y="651" class="title" style="font-size:15px">Partner follow-up</text><text x="352" y="674" class="muted">Aug 23 · Draft email prepared · Sales</text><text x="1308" y="664" class="muted">›</text>
+  <circle cx="216" cy="244" r="14" fill="#0F766E"/><text x="212" y="249" class="call">1</text><circle cx="1155" cy="215" r="14" fill="#0F766E"/><text x="1151" y="220" class="call">2</text><circle cx="1127" cy="302" r="14" fill="#0F766E"/><text x="1123" y="307" class="call">3</text><circle cx="1390" cy="741" r="14" fill="#0F766E"/><text x="1386" y="746" class="call">4</text><circle cx="220" cy="840" r="14" fill="#0F766E"/><text x="216" y="845" class="call">5</text>
+  <text x="290" y="764" class="label">WIREFRAME A · TODAY / READY-TO-CAPTURE · EXPANDED WIDTH 1440 PT</text>
+</svg>

@@ -1,0 +1,71 @@
+<!--
+{
+  "title": "Privacy Policy",
+  "description": "What the Whimbrel website collects, how the Whimbrel app keeps your work data on your own device, and how it uses the Google account data you connect.",
+  "priority": 0.3,
+  "crumbs": [{ "name": "Privacy policy", "path": "/privacy/" }]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow prose">
+    <h1>Privacy policy</h1>
+    <p class="muted">Last updated October 27, 2026</p>
+
+    <div class="callout"><p><strong>The short version:</strong> the Whimbrel app keeps your meetings and work history on your own computer. This website only collects what you type into the registration form and basic download records, uses them to give you the download and (if you ask) product updates, and never sells them.</p></div>
+
+    <h2>The Whimbrel app</h2>
+    <p>Meeting audio, transcripts, notes, and screen-text history are stored in a database on your computer. If you turn on sync, that data is end-to-end encrypted on your device before it is uploaded, and the keys stay on your devices. When you use a hosted AI provider with your own API key, the text needed to answer that request is sent to that provider under its terms; local models through Ollama send nothing off your computer.</p>
+
+    <h2>Google account data</h2>
+    <p>Whimbrel works with Google only when you connect a Google account in the app. You choose what to connect, and you can disconnect at any time.</p>
+    <h3>What the app accesses</h3>
+    <ul>
+      <li><strong>Sign-in</strong> (<code>openid</code>, <code>email</code>, <code>profile</code>): your Google account's email address, name and account identifier. They identify your account when you turn on sync and approve your own devices.</li>
+      <li><strong>Google Calendar</strong> (<code>calendar.readonly</code>, <code>calendar.events</code>): the events on your calendars, including titles, times, attendees and conferencing links. Whimbrel uses them to show your schedule, prepare you for upcoming meetings, and recognise which meeting it is recording. It creates or changes a calendar event only when you approve that action in the app.</li>
+      <li><strong>Gmail</strong> (<code>gmail.readonly</code>, <code>gmail.compose</code>): your email messages and threads. Whimbrel uses them to find conversations waiting on you, list open loops, and include them in the briefings and recaps you turn on. It sends an email, such as a recap or a request for a meeting recording, only after you approve that exact message in the app.</li>
+    </ul>
+    <h3>How it's used, stored and shared</h3>
+    <ul>
+      <li>Google data is processed and stored on your own computer, in the app's local database. It is not sent to us. We do not run a server that receives your Gmail or Calendar data.</li>
+      <li>If you turn on sync, data derived from it is end-to-end encrypted on your device before it is uploaded, and we cannot read it. To know which devices belong to you, the sync service keeps a few things it can read: your Google account's email address and identifier, and each device's name, platform, public key and enrollment dates. The synced items themselves stay encrypted; only technical details such as their type and timestamps are readable.</li>
+      <li>When you ask Whimbrel for a summary, answer or briefing and have chosen a hosted AI provider with your own API key, the text needed for that request, which can include parts of your email or calendar, is sent to that provider under its terms. Known secrets such as API keys and passwords are redacted first. In Local-only mode, or with a local model, nothing leaves your computer. Optional features that send data to another service, such as TypeSafe reply ranking, are off by default and say what they send before you turn them on.</li>
+      <li>We do not sell Google data, use it for advertising, or use it to train AI or machine-learning models. People never read it, except where you ask us for help and share it with us yourself, or where the law requires it.</li>
+    </ul>
+    <p>Whimbrel's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+    <h3>Removing access and data</h3>
+    <p>Disconnect a Google account in the app's Settings to stop all access. You can also remove Whimbrel at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Data the app already stored stays on your computer until you delete it in the app or remove the app's data folder. To delete your sync account and its encrypted data, email us at the address below.</p>
+
+    <h2>What this website collects</h2>
+    <ul>
+      <li><strong>Registration details you enter:</strong> name, email address, and optionally company, role, and team size, plus the platform you chose and whether you opted in to product emails.</li>
+      <li><strong>Where you came from:</strong> campaign tags in the link you followed (UTM parameters), the referring website, and the first page you landed on.</li>
+      <li><strong>Approximate location:</strong> the country your request came from, as reported by our hosting provider. We do not store your IP address.</li>
+      <li><strong>Downloads:</strong> which platform and version you downloaded, and when.</li>
+    </ul>
+
+    <h2>How we use it</h2>
+    <ul>
+      <li>To give you the download and remember that you've registered.</li>
+      <li>To email you your personal download links once, when you first register. This isn't marketing, and it's sent whether or not you opt in to product emails.</li>
+      <li>To understand which channels bring people to Whimbrel, in aggregate.</li>
+      <li>To send release notes and product updates, only if you opted in. Every email has an unsubscribe link.</li>
+      <li>To contact you about a problem with your download or account, if needed.</li>
+    </ul>
+
+    <h2>Cookies and local storage</h2>
+    <p>We set one cookie, <code>whimbrel_lead</code>, after you register. It holds a random identifier so the download links work without asking you again, and expires after a year. The site also keeps a note of your first visit's campaign tags in your browser's local storage. We use no advertising or cross-site tracking cookies.</p>
+
+    <h2>Who processes it</h2>
+    <p>The website and its database run on Cloudflare. Spam protection may use Cloudflare Turnstile. Emails, including the download-links email and an internal notice to us about each registration, are sent through Resend. We may copy registrations into our customer-relationship tools to follow up with you. We do not sell or rent your information.</p>
+
+    <h2>How long we keep it</h2>
+    <p>We keep registration records while early access is running and for up to two years after your last interaction, then delete them. You can ask us to delete them sooner at any time.</p>
+
+    <h2>Your rights</h2>
+    <p>You can ask to see, correct, export, or delete your information, and you can withdraw consent to emails at any time. Email <a href="mailto:{{site.contactEmail}}">{{site.contactEmail}}</a> and we'll respond within 30 days.</p>
+
+    <h2>Changes</h2>
+    <p>If we change this policy we'll update the date above, and email registered users about material changes.</p>
+  </div>
+</section>

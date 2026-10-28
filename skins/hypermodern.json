@@ -1,0 +1,25 @@
+{
+  "id": "hypermodern",
+  "name": "Hypermodern",
+  "author": "Whimbrel",
+  "palettes": ["violet-night", "ice"],
+  "typography": { "display": "SF Pro/thin", "body": "SF Pro/regular", "numerals": "SF Pro/light", "label": "SF Pro/medium", "caps": "none" },
+  "shape": { "radius": 24, "border": "solid", "borderWidth": 1, "density": "airy" },
+  "icons": { "today": "sparkles", "meetings": "person.2", "routines": "bolt", "settings": "gearshape", "ask": "arrow.up", "person": "person", "time": "clock", "prep": "doc.text", "recap": "text.alignleft" },
+  "decoration": { "headerBand": "none", "dividers": "none", "texture": "none", "imagery": [] },
+  "voice": {
+    "greetingMorning": "Good morning, {name}",
+    "greetingAfternoon": "Good afternoon, {name}",
+    "greetingEvening": "Good evening, {name}",
+    "upNextHeader": "Up next",
+    "upcomingHeader": "Later today",
+    "earlierHeader": "Earlier",
+    "recapHeader": "Recap",
+    "emptyDay": "A clear day",
+    "emptyEarlier": "Nothing logged yet",
+    "askPlaceholder": "Ask about your meetings",
+    "tagline": "Your day, in focus."
+  },
+  "today": { "archetype": "glass", "options": {} },
+  "motion": "none"
+}

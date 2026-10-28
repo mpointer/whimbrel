@@ -1,0 +1,74 @@
+{
+  "input": {
+    "id": "bad-font",
+    "name": "Bad font",
+    "palettes": [
+      "default"
+    ],
+    "typography": {
+      "display": "Comic Sans/bold",
+      "body": "SF Mono/light/italic",
+      "numerals": "SF Pro/wide"
+    }
+  },
+  "expected": {
+    "id": "bad-font",
+    "name": "Bad font",
+    "author": "",
+    "palettes": [
+      "default"
+    ],
+    "typography": {
+      "display": "New York/semibold",
+      "body": "SF Mono/light/italic",
+      "numerals": "SF Pro/regular",
+      "label": "SF Pro/regular",
+      "caps": "upper"
+    },
+    "shape": {
+      "radius": 12,
+      "border": "solid",
+      "borderWidth": 1,
+      "density": "regular"
+    },
+    "icons": {
+      "today": "sun.max",
+      "meetings": "person.2",
+      "routines": "bolt",
+      "settings": "gearshape",
+      "ask": "arrow.up.circle.fill",
+      "person": "person",
+      "time": "clock",
+      "prep": "doc.text",
+      "recap": "text.alignleft"
+    },
+    "decoration": {
+      "headerBand": "none",
+      "dividers": "none",
+      "texture": "none",
+      "imagery": []
+    },
+    "voice": {
+      "greetingMorning": "Good morning, {name}",
+      "greetingAfternoon": "Good afternoon, {name}",
+      "greetingEvening": "Good evening, {name}",
+      "upNextHeader": "Up next",
+      "upcomingHeader": "Today",
+      "earlierHeader": "Earlier",
+      "recapHeader": "Daily recap",
+      "emptyDay": "No meetings yet",
+      "emptyEarlier": "Nothing yet today",
+      "askPlaceholder": "Ask Whimbrel about your meetings",
+      "tagline": "Your meetings, remembered."
+    },
+    "today": {
+      "archetype": "standard",
+      "options": {}
+    },
+    "motion": "none"
+  },
+  "repairs": [
+    "display font is not allowed, using the Whimbrel font",
+    "numerals font is not allowed, using the Whimbrel font"
+  ]
+}

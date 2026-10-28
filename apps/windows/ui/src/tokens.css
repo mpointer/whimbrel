@@ -1,0 +1,94 @@
+/* Whimbrel design tokens — ported from apps/macos/Whimbrel/UI/DesignSystem.swift
+   (docs/12 §6: ported, not redesigned). Light/dark follows the system. */
+
+:root {
+  --color-background-page: #f7f2e7;
+  --color-background-card: #ffffff;
+  --color-border: #e4d9c2;
+  --color-text-primary: #241e19;
+  --color-text-secondary: #6b5f4f;
+  --color-accent-primary: #a8502e;
+  --color-accent-secondary: #55606e;
+  --color-accent-highlight: #d9a441;
+  /* Status and link colors (the Mac's whimbrelError/Warning/Success/Link). */
+  --color-error: #b3261e;
+  --color-warning: #9a5b00;
+  --color-success: #3b7a3b;
+  --color-link: #2e5a87;
+  /* Added with the themes work (themes/default.json): a selected row, a cited or active
+     line, and the text that sits on --color-accent-primary. */
+  --color-selection: #eae1cd;
+  --color-highlight: #f6e8d0;
+  --color-text-on-accent: #ffffff;
+
+  /* 4 pt spacing scale: xs … xxl */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-xxl: 32px;
+
+  /* Radius.control: inputs, editors, buttons and banners. Radius.card: cards. The skin sets --radius and
+     --radius-control (skin.ts); these are Whimbrel's, so the first paint is right before any script runs. */
+  --radius: 12px;
+  --radius-control: 8px;
+  --radius-card: var(--radius);
+  --radius-surface: 16px;
+
+  /* The skin's fonts (skin.ts FONT_MAP). These are Whimbrel's: New York for display, SF Pro for the rest. */
+  --font-body: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-numerals: var(--font-body);
+  --font-label: var(--font-body);
+  --font-display: Cambria, Georgia, serif;
+  --weight-display: 600;
+  --weight-body: 400;
+  --weight-numerals: 400;
+  --weight-label: 400;
+  --style-display: normal;
+  --style-body: normal;
+  --style-numerals: normal;
+  --style-label: normal;
+  /* Section labels: --caps is text-transform, --caps-variant is font-variant-caps. */
+  --caps: uppercase;
+  --caps-variant: normal;
+  /* The rest of the skin's shape; the layouts read these. density scales spacing (0.75, 1, 1.25). */
+  --border-style: solid;
+  --border-width: 1px;
+  --density: 1;
+  --motion: none;
+
+  /* Type scale (the Mac's, docs/superpowers/specs/2026-10-16-mac-today-refresh-design.md):
+     nothing meant to be read is below --text-caption; uppercase section labels use --text-label. */
+  --text-page-title: 28px;
+  --text-section: 15px;
+  --text-body: 14px;
+  --text-secondary: 12px;
+  --text-caption: 11px;
+  --text-label: 11px;
+  /* One reading width for Today and the meeting page. */
+  --content-width: 760px;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background-page: #1c1712;
+    --color-background-card: #262019;
+    --color-border: #3a322b;
+    --color-text-primary: #ede6d9;
+    --color-text-secondary: #b7ab9a;
+    --color-accent-primary: #c97b54;
+    --color-accent-secondary: #7c8794;
+    --color-accent-highlight: #e8b968;
+    --color-error: #f2877e;
+    --color-warning: #e0a04a;
+    --color-success: #7cc47c;
+    --color-link: #8fb4dc;
+    --color-selection: #312a24;
+    --color-highlight: #57462d;
+    /* Near-black, not white: white on #c97b54 is 3.26:1, below the 4.5:1 the themes guard requires. */
+    --color-text-on-accent: #1c1712;
+  }
+}

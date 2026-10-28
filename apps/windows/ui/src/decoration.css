@@ -1,0 +1,53 @@
+/* The skin's decoration around the shell (docs/superpowers/plans/2026-10-22-skins-windows-and-sync.md, Task 7):
+   the header band above every top-level screen, and the sidebar icons. The Today layouts' own decoration is in
+   today/archetypes.css. A skin with no band and no image (Whimbrel, High Contrast) changes nothing here. */
+
+.stage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage > .content {
+  min-height: 0;
+}
+
+.skin-header {
+  flex: none;
+}
+
+.skin-band {
+  display: none;
+}
+
+[data-header-band="rule"] .skin-band,
+[data-header-band="block"] .skin-band,
+[data-header-band="stripes-diagonal"] .skin-band {
+  display: block;
+}
+
+[data-header-band="rule"] .skin-band {
+  height: 2px;
+  background: var(--color-accent-primary);
+}
+
+[data-header-band="block"] .skin-band {
+  height: 12px;
+  background: var(--color-accent-primary);
+}
+
+[data-header-band="stripes-diagonal"] .skin-band {
+  height: 8px;
+  background: repeating-linear-gradient(135deg, var(--color-accent-primary) 0 3px, transparent 3px 10px);
+}
+
+.skin-icon {
+  display: inline-block;
+  width: 20px;
+  margin-right: var(--space-sm);
+  font-size: 16px;
+  line-height: 1;
+  text-align: center;
+  vertical-align: -2px;
+}

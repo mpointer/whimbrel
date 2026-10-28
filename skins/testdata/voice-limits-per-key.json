@@ -1,0 +1,83 @@
+{
+  "input": {
+    "id": "case",
+    "name": "Case",
+    "palettes": [
+      "default"
+    ],
+    "voice": {
+      "upcomingHeader": "uuuuuuuuuuuuuuuuuuuuuuuuu",
+      "earlierHeader": "eeeeeeeeeeeeeeeeeeeeeeee",
+      "recapHeader": "",
+      "emptyDay": "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "emptyEarlier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "askPlaceholder": "ppppppppppppppppppppppppppppppppppppppppp",
+      "tagline": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+      "upNextHeader": 42
+    }
+  },
+  "expected": {
+    "id": "case",
+    "name": "Case",
+    "author": "",
+    "palettes": [
+      "default"
+    ],
+    "typography": {
+      "display": "New York/semibold",
+      "body": "SF Pro/regular",
+      "numerals": "SF Pro/regular",
+      "label": "SF Pro/regular",
+      "caps": "upper"
+    },
+    "shape": {
+      "radius": 12,
+      "border": "solid",
+      "borderWidth": 1,
+      "density": "regular"
+    },
+    "icons": {
+      "today": "sun.max",
+      "meetings": "person.2",
+      "routines": "bolt",
+      "settings": "gearshape",
+      "ask": "arrow.up.circle.fill",
+      "person": "person",
+      "time": "clock",
+      "prep": "doc.text",
+      "recap": "text.alignleft"
+    },
+    "decoration": {
+      "headerBand": "none",
+      "dividers": "none",
+      "texture": "none",
+      "imagery": []
+    },
+    "voice": {
+      "greetingMorning": "Good morning, {name}",
+      "greetingAfternoon": "Good afternoon, {name}",
+      "greetingEvening": "Good evening, {name}",
+      "upNextHeader": "Up next",
+      "upcomingHeader": "Today",
+      "earlierHeader": "eeeeeeeeeeeeeeeeeeeeeeee",
+      "recapHeader": "Daily recap",
+      "emptyDay": "No meetings yet",
+      "emptyEarlier": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "askPlaceholder": "Ask Whimbrel about your meetings",
+      "tagline": "Your meetings, remembered."
+    },
+    "today": {
+      "archetype": "standard",
+      "options": {}
+    },
+    "motion": "none"
+  },
+  "repairs": [
+    "voice upNextHeader is empty, not text or over 24 characters, using the Whimbrel wording",
+    "voice upcomingHeader is empty, not text or over 24 characters, using the Whimbrel wording",
+    "voice recapHeader is empty, not text or over 24 characters, using the Whimbrel wording",
+    "voice emptyDay is empty, not text or over 80 characters, using the Whimbrel wording",
+    "voice askPlaceholder is empty, not text or over 40 characters, using the Whimbrel wording",
+    "voice tagline is empty, not text or over 60 characters, using the Whimbrel wording"
+  ]
+}

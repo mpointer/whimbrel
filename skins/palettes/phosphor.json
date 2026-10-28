@@ -1,0 +1,22 @@
+{
+  "id": "phosphor",
+  "name": "Phosphor green",
+  "author": "Whimbrel",
+  "dark": {
+    "backgroundPage": "#050A06",
+    "backgroundCard": "#0B150D",
+    "border": "#1F7A38",
+    "textPrimary": "#33FF66",
+    "textSecondary": "#2EC45A",
+    "accentPrimary": "#33FF66",
+    "accentSecondary": "#7CFFA0",
+    "accentHighlight": "#E8FF5A",
+    "error": "#FF6B6B",
+    "warning": "#FFC857",
+    "success": "#5CFF8A",
+    "link": "#6FF0C8",
+    "selection": "#12361A",
+    "highlight": "#1E4D27",
+    "textOnAccent": "#031A08"
+  }
+}

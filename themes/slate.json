@@ -1,0 +1,39 @@
+{
+  "id": "slate",
+  "name": "Slate",
+  "author": "Whimbrel",
+  "light": {
+    "backgroundPage": "#EEF1F4",
+    "backgroundCard": "#FFFFFF",
+    "border": "#D5DBE2",
+    "textPrimary": "#1B2430",
+    "textSecondary": "#566273",
+    "accentPrimary": "#2F6FA3",
+    "accentSecondary": "#6B7A8C",
+    "accentHighlight": "#E0A93B",
+    "error": "#B3261E",
+    "warning": "#8A5A00",
+    "success": "#2F7A4B",
+    "link": "#1F5C99",
+    "selection": "#DDE4EC",
+    "highlight": "#FBEFD0",
+    "textOnAccent": "#FFFFFF"
+  },
+  "dark": {
+    "backgroundPage": "#12171D",
+    "backgroundCard": "#1B222B",
+    "border": "#2D3743",
+    "textPrimary": "#E6EBF1",
+    "textSecondary": "#A3AEBC",
+    "accentPrimary": "#5FA0D8",
+    "accentSecondary": "#8B9AAC",
+    "accentHighlight": "#E8B968",
+    "error": "#F2877E",
+    "warning": "#E0A04A",
+    "success": "#7CC49A",
+    "link": "#8FB4DC",
+    "selection": "#26303B",
+    "highlight": "#3E3A26",
+    "textOnAccent": "#0B1520"
+  }
+}
