@@ -15,8 +15,16 @@ final class AppState: ObservableObject {
     /// `startManualMeeting()`, calendar/detected via `startCapture(for:)`) produce a real
     /// row here, independent of activity capture's own on/off state (FR-MTG-14).
     @Published private(set) var activeMeetingId: Int64?
-/// Start of the active meeting (the original start for a continued one); drives the menu bar elapsed time.
-@Published private(set) var activeMeetingStartedAt: Date?
+    /// Start of the active meeting (the original start for a continued one); drives the menu bar elapsed time.
+    @Published private(set) var activeMeetingStartedAt: Date? {
+        didSet { restartMenuBarElapsedTimer() }
+    }
+    /// The menu bar's recording label ("1:05"), nil when nothing records. Refreshed by a
+    /// plain 30 s timer, not a TimelineView: inside the MenuBarExtra label a TimelineView
+    /// rescheduled itself on every redraw (macOS 26), a main-thread loop that froze the
+    /// app and grew memory without bound for as long as a meeting recorded.
+    @Published private(set) var menuBarElapsed: String?
+    private var menuBarElapsedTimer: Timer?
     @Published private(set) var activeMeetingTitle: String?
     /// The active meeting continues an earlier one (a restart within the continue window;
     /// see `MeetingContinuation`). The recording header shows "Continued".
@@ -729,6 +737,29 @@ final class AppState: ObservableObject {
 
     /// Disk preflight (spec §4): below 5 GB free, refuse to start. Runs before any start
     /// state is set, so a refusal leaves nothing to undo.
+    /// Sets `menuBarElapsed` now and every 30 s while a meeting records; clears it when none does.
+    /// Publishes only when the text changes, so the menu bar redraws at most once a minute.
+    private func restartMenuBarElapsedTimer() {
+        menuBarElapsedTimer?.invalidate()
+        menuBarElapsedTimer = nil
+        guard activeMeetingStartedAt != nil else {
+            menuBarElapsed = nil
+            return
+        }
+        refreshMenuBarElapsed()
+        let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshMenuBarElapsed() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        menuBarElapsedTimer = timer
+    }
+
+    private func refreshMenuBarElapsed() {
+        guard let startedAt = activeMeetingStartedAt else { return }
+        let text = ElapsedLabel.text(Date().timeIntervalSince(startedAt))
+        if text != menuBarElapsed { menuBarElapsed = text }
+    }
+
     private func hasRoomToRecord() -> Bool {
         guard RecordingLimits.canStart(freeBytes: RecordingLimits.freeBytes()) else {
             postRecordingNotice("Whimbrel didn't start recording: less than 5 GB free on this Mac.")

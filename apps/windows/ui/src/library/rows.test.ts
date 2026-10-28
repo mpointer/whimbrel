@@ -105,6 +105,10 @@ describe("headline", () => {
     expect(
       headline({ kind: "transcript", id: 3, meetingId: 9, meetingTitle: "Standup", startCs: 6_150, speaker: "Me", snippet: "hi" }),
     ).toEqual({ title: "Standup", meta: "Me · 1:01" });
+    expect(headline({ kind: "snapshot", id: 5, meetingId: 9, meetingTitle: "Standup", snippet: "Roadmap" })).toEqual({
+      title: "Standup",
+      meta: "Slide",
+    });
   });
 });
 
@@ -117,11 +121,14 @@ describe("groupByDay", () => {
       capture(2, today - 1000),
       capture(3, yesterday),
       { kind: "transcript", id: 4, meetingId: 1, meetingTitle: "M", startCs: 0, speaker: "A", snippet: "" },
+      { kind: "snapshot", id: 5, meetingId: 1, meetingTitle: "M", snippet: "Roadmap" },
     ];
     expect(groupByDay(rows, now).map((g) => [g.day, g.rows.map(rowKey)])).toEqual([
       ["Today", ["capture-1", "capture-2"]],
       ["Yesterday", ["capture-3"]],
       ["Transcript matches", ["transcript-4"]],
+      ["Slide matches", ["snapshot-5"]],
     ]);
+    expect(rowWhen(rows[4], now)).toBeNull();
   });
 });

@@ -16,9 +16,9 @@ export function rowKey(row: LibraryRow): string {
   return `${row.kind}-${row.id}`;
 }
 
-/** When the row happened; transcript hits have no time of their own. */
+/** When the row happened; transcript and slide hits have no time of their own. */
 export function rowTs(row: LibraryRow): number | null {
-  return row.kind === "transcript" ? null : row.tsUnixMs;
+  return row.kind === "transcript" || row.kind === "snapshot" ? null : row.tsUnixMs;
 }
 
 function startOfDay(d: Date): number {
@@ -106,7 +106,7 @@ export function spanLabel(
   return `${range} (${durationLabel(end - start)})`;
 }
 
-/** When a Library row happened, dated; transcript hits have no time of their own. */
+/** When a Library row happened, dated; transcript and slide hits have no time of their own. */
 export function rowWhen(row: LibraryRow, now: Date = new Date(), locale?: string): string | null {
   switch (row.kind) {
     case "capture":
@@ -116,6 +116,7 @@ export function rowWhen(row: LibraryRow, now: Date = new Date(), locale?: string
     case "episode":
       return spanLabel(row.tsUnixMs, row.endTsUnixMs, { now, locale });
     case "transcript":
+    case "snapshot":
       return null;
   }
 }
@@ -147,6 +148,8 @@ export function headline(row: LibraryRow): Headline {
       };
     case "transcript":
       return { title: row.meetingTitle || "Meeting transcript", meta: `${row.speaker} · ${formatOffset(row.startCs)}` };
+    case "snapshot":
+      return { title: row.meetingTitle || "Meeting slide", meta: "Slide" };
   }
 }
 
@@ -155,13 +158,13 @@ export interface DayGroup {
   rows: LibraryRow[];
 }
 
-/** Consecutive rows grouped under a day heading, keeping their order. Transcript hits,
- *  which have no time, go under one "Transcript matches" heading. */
+/** Consecutive rows grouped under a day heading, keeping their order. Transcript and
+ *  slide hits, which have no time, go under "Transcript matches" and "Slide matches". */
 export function groupByDay(rows: LibraryRow[], now: Date = new Date()): DayGroup[] {
   const groups: DayGroup[] = [];
   for (const row of rows) {
     const ts = rowTs(row);
-    const day = ts === null ? "Transcript matches" : dayLabel(ts, now);
+    const day = ts !== null ? dayLabel(ts, now) : row.kind === "snapshot" ? "Slide matches" : "Transcript matches";
     const last = groups[groups.length - 1];
     if (last && last.day === day) last.rows.push(row);
     else groups.push({ day, rows: [row] });

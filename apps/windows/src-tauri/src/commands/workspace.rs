@@ -405,20 +405,17 @@ pub async fn meeting_forget(state: State<'_, AppState>, id: i64) -> Result<(), C
         return Err(CommandError::invalid_input("Stop the recording before forgetting this meeting."));
     }
     let recordings = state.paths.recordings.clone();
+    // Files only after the row is gone, the Mac's order: a failed delete must never
+    // leave a meeting pointing at files that aren't there.
     let deleted = state
         .store()?
-        .call(move |s| {
-            let meeting = s.get_meeting(id).map_err(|e| e.to_string())?;
-            let paths = meeting.map(|m| (m.audio_path, m.transcript_path));
-            // Files only after the row is gone, the Mac's order: a failed delete must
-            // never leave a meeting pointing at files that aren't there.
-            let removed = s.delete_meeting(id).map_err(|e| e.to_string())?;
-            Ok::<_, String>((removed, paths))
-        })
+        .call(move |s| s.delete_meeting_returning_files(id).map_err(|e| e.to_string()))
         .await?
         .map_err(CommandError::store)?;
-    if let (true, Some((audio, transcript))) = deleted {
-        api::retention::delete_meeting_files(audio.as_deref(), transcript.as_deref(), None, &recordings);
+    // Every part's audio and transcript, and the snapshot folder unless the meeting is
+    // kept (core leaves `snapshots_dir` unset then, and only removes a folder it marked).
+    if let Some(files) = deleted {
+        api::retention::delete_all_meeting_files(&files, &recordings);
     }
     Ok(())
 }

@@ -90,6 +90,17 @@ pub struct TranscriptRow {
     pub snippet: String,
 }
 
+/// A slide-text search hit: a snapshot saved during a meeting (local to this device).
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotRow {
+    /// The `items` row id, as Ask cites it.
+    pub id: i64,
+    pub meeting_id: i64,
+    pub meeting_title: String,
+    pub snippet: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LibraryRow {
@@ -97,16 +108,17 @@ pub enum LibraryRow {
     Meeting(MeetingRow),
     Episode(EpisodeRow),
     Transcript(TranscriptRow),
+    Snapshot(SnapshotRow),
 }
 
 impl LibraryRow {
-    /// The time the timeline sorts by (transcript hits have none and sort last).
+    /// The time the timeline sorts by (transcript and slide hits have none and sort last).
     pub fn ts(&self) -> i64 {
         match self {
             LibraryRow::Capture(r) => r.ts_unix_ms,
             LibraryRow::Meeting(r) => r.ts_unix_ms,
             LibraryRow::Episode(r) => r.ts_unix_ms,
-            LibraryRow::Transcript(_) => i64::MIN,
+            LibraryRow::Transcript(_) | LibraryRow::Snapshot(_) => i64::MIN,
         }
     }
 }
@@ -229,6 +241,10 @@ fn transcript_row(s: &memory::MeetingTranscriptSegment) -> TranscriptRow {
     }
 }
 
+fn snapshot_row(h: &memory::MeetingSnapshotHit) -> SnapshotRow {
+    SnapshotRow { id: h.id, meeting_id: h.meeting_id, meeting_title: h.meeting_title.clone(), snippet: snippet(&h.text) }
+}
+
 /// Newest first; a stable sort keeps each source's own order within a tie.
 pub fn newest_first(mut rows: Vec<LibraryRow>) -> Vec<LibraryRow> {
     rows.sort_by_key(|r| std::cmp::Reverse(r.ts()));
@@ -274,24 +290,26 @@ pub async fn episode_rows(
     Ok(visible_episodes(&episodes, &hidden, &hidden_apps, include_hidden, &labeler))
 }
 
-/// Captures first, then transcript hits (the Mac's order). Semantic search returns
+/// Captures first, then transcript hits (the Mac's order), then slide hits. Semantic search returns
 /// nothing until the embedding model is downloaded (Task 7).
 pub async fn search_rows(store: &StoreHandle, labeler: DeviceLabeler, query: String, semantic: bool) -> Result<Vec<LibraryRow>, CommandError> {
     if query.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let (captures, transcripts) = store
+    let (captures, transcripts, slides) = store
         .call(move |s| -> Result<_, String> {
             let q = query.trim();
             if semantic {
                 Ok((
                     s.search_semantic(q, SEARCH_LIMIT).map_err(|e| e.to_string())?,
                     s.search_transcript_semantic(q, SEARCH_LIMIT).map_err(|e| e.to_string())?,
+                    s.search_snapshot_semantic_with_meeting_ts(q, SEARCH_LIMIT).map_err(|e| e.to_string())?,
                 ))
             } else {
                 Ok((
                     s.search_keyword(q, SEARCH_LIMIT).map_err(|e| e.to_string())?,
                     s.search_transcript_keyword(q, SEARCH_LIMIT).map_err(|e| e.to_string())?,
+                    s.search_snapshot_keyword_with_meeting_ts(q, SEARCH_LIMIT).map_err(|e| e.to_string())?,
                 ))
             }
         })
@@ -301,6 +319,7 @@ pub async fn search_rows(store: &StoreHandle, labeler: DeviceLabeler, query: Str
         .iter()
         .map(|c| LibraryRow::Capture(capture_row(c, &labeler)))
         .chain(transcripts.iter().map(|t| LibraryRow::Transcript(transcript_row(t))))
+        .chain(slides.iter().map(|(h, _)| LibraryRow::Snapshot(snapshot_row(h))))
         .collect())
 }
 
@@ -463,6 +482,42 @@ mod tests {
         // Operators and quotes are the core's to sanitize; they must not error.
         assert!(search_rows(&store, labeler(), "\"note\" -from OR (".into(), false).await.is_ok());
         assert!(search_rows(&store, labeler(), "   ".into(), false).await.unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn slide_text_is_found_as_a_slide_of_its_meeting_not_as_a_capture() {
+        let store = seeded_store();
+        let meeting_id = store
+            .call_blocking(|s| {
+                let id = s
+                    .insert_meeting(&memory::NewMeeting {
+                        device_id: THIS_PC.into(),
+                        start_unix_ms: 5_000,
+                        end_unix_ms: Some(9_000),
+                        title: "Acme sync".into(),
+                        attendees: vec![],
+                        trigger: memory::MeetingTrigger::Manual,
+                        audio_path: None,
+                        status: memory::MeetingStatus::Completed,
+                    })
+                    .unwrap();
+                s.insert_meeting_snapshot(&memory::NewMeetingSnapshot {
+                    meeting_id: id,
+                    captured_unix_ms: 6_000,
+                    file_path: r"C:\snaps\10.00.00.png".into(),
+                    width: 1920,
+                    height: 1080,
+                    ocr_text: "Quarterly roadmap\nHire two engineers".into(),
+                })
+                .unwrap();
+                id
+            })
+            .unwrap();
+        let hits = search_rows(&store, labeler(), "roadmap".into(), false).await.unwrap();
+        assert!(
+            matches!(hits.as_slice(), [LibraryRow::Snapshot(r)] if r.meeting_id == meeting_id && r.meeting_title == "Acme sync" && r.snippet.contains("Quarterly roadmap")),
+            "{hits:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

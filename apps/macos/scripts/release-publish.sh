@@ -211,7 +211,9 @@ UPDATE_ZIP_NAME="Whimbrel-$VERSION.zip"
 echo "==> Creating GitHub Release $TAG..."
 # Re-runnable: a release created earlier (e.g. by hand) is kept.
 (cd ../.. && { gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes; })
-RELEASE_NOTES_URL="https://github.com/mpointer/kestrel/releases/tag/$TAG"
+# The public release (same tag, same notes) is created by scripts/publish-public.sh right
+# after this script (docs/RELEASING.md step 6); the manifest links there.
+RELEASE_NOTES_URL="https://github.com/mpointer/whimbrel/releases/tag/$TAG"
 
 echo "==> Uploading $UPDATE_ZIP_NAME to the updates bucket..."
 (cd ../../server-updates && npx wrangler r2 object put "kestrel-updates/$UPDATE_ZIP_NAME" --file "$OUTPUT_ZIP" --remote)

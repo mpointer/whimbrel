@@ -193,7 +193,9 @@ export function LibraryView({ askRequest, onAskHandled }: { askRequest?: AskRequ
                     <button
                       className="row-card"
                       onClick={() =>
-                        setSelected(row.kind === "transcript" ? { kind: "meeting", id: row.meetingId } : { kind: row.kind, id: row.id })
+                        setSelected(
+                          row.kind === "transcript" || row.kind === "snapshot" ? { kind: "meeting", id: row.meetingId } : { kind: row.kind, id: row.id },
+                        )
                       }
                     >
                       <span className="row-top">

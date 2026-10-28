@@ -37,6 +37,17 @@ All of it aggregates **across devices and app instances** — Macs and Windows P
 | [15 – Mobile App Design](docs/15-mobile-app-design.md) | Phone app vs. Littlebird's and Granola's: brief, ask, approve, record; phone as a sync peer, push, approvals, milestones |
 | [Self-hosting](docs/self-hosting.md) | Running the sync relay and the update feed under your own Cloudflare, Turso and Google accounts |
 
+The design plans and specs these documents refer to (`docs/superpowers/`) stay in the
+private development repository; a link into that folder points at an internal document.
+
+## Development and this repository
+
+Development happens in a private repository that runs the project's signing and
+self-hosted CI. This repository is published from it at each release
+(`scripts/publish-public.sh`): one commit per release with the whole tree except the
+design history, tagged with the version. Pull requests here are welcome and are applied
+in the private repository, then arrive with the next release.
+
 ## Repository layout
 
 ```

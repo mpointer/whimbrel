@@ -189,19 +189,35 @@ fn transcript_entry(t: &memory::MeetingTranscriptSegment) -> ContextEntry {
     }
 }
 
+fn snapshot_entry(h: &memory::MeetingSnapshotHit) -> ContextEntry {
+    ContextEntry {
+        item: ContextItemRef::Snapshot { id: h.id },
+        label: format!("Slide in meeting \"{}\"", h.meeting_title),
+        ts_unix_ms: None,
+        open: Some(LibraryTarget::Meeting { id: h.meeting_id }),
+    }
+}
+
 /// The candidates a citation can resolve against: the Mac's `fetchContextItems`
-/// (`TimelineView.swift`). Keyword captures and transcripts (5 each), or semantic when
-/// keyword finds nothing, plus 5 routine runs, 10 episodes and 10 threads. A display
-/// resolver only; retrieval for the answer itself is `api::ask`'s own. Errors read as
-/// empty: this never fails a question.
+/// (`TimelineView.swift`). Keyword captures, transcripts and slides (5 each), or semantic
+/// when keyword finds none of them, plus 5 routine runs, 10 episodes and 10 threads. A
+/// display resolver only; retrieval for the answer itself is `api::ask`'s own. Errors
+/// read as empty: this never fails a question.
 pub fn fetch_context(store: &memory::Store, query: &str) -> Vec<ContextEntry> {
     let mut captures = store.search_keyword(query, CONTEXT_LIMIT).unwrap_or_default();
     let mut transcripts = store.search_transcript_keyword(query, CONTEXT_LIMIT).unwrap_or_default();
-    if captures.is_empty() && transcripts.is_empty() {
+    let mut slides = store.search_snapshot_keyword_with_meeting_ts(query, CONTEXT_LIMIT).unwrap_or_default();
+    if captures.is_empty() && transcripts.is_empty() && slides.is_empty() {
         captures = store.search_semantic(query, CONTEXT_LIMIT).unwrap_or_default();
         transcripts = store.search_transcript_semantic(query, CONTEXT_LIMIT).unwrap_or_default();
+        slides = store.search_snapshot_semantic_with_meeting_ts(query, CONTEXT_LIMIT).unwrap_or_default();
     }
-    let mut out: Vec<ContextEntry> = captures.iter().map(capture_entry).chain(transcripts.iter().map(transcript_entry)).collect();
+    let mut out: Vec<ContextEntry> = captures
+        .iter()
+        .map(capture_entry)
+        .chain(transcripts.iter().map(transcript_entry))
+        .chain(slides.iter().map(|(h, _)| snapshot_entry(h)))
+        .collect();
     out.extend(store.recent_routine_runs_across_all(5).unwrap_or_default().into_iter().map(|r| ContextEntry {
         item: ContextItemRef::RoutineRun { id: r.id },
         label: r.routine_name,
@@ -455,6 +471,37 @@ mod tests {
         assert_eq!(capture.label, "Plan · notepad.exe");
         // No keyword hit and no embedding model: no captures, and no error.
         assert!(fetch_context(&store, "zebra").iter().all(|e| !matches!(e.item, ContextItemRef::Capture { .. })));
+    }
+
+    #[test]
+    fn context_resolves_a_slide_to_its_meeting() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let meeting = store
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "dev".into(),
+                start_unix_ms: 1_000,
+                end_unix_ms: Some(2_000),
+                title: "Acme sync".into(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Manual,
+                audio_path: None,
+                status: memory::MeetingStatus::Completed,
+            })
+            .unwrap();
+        store
+            .insert_meeting_snapshot(&memory::NewMeetingSnapshot {
+                meeting_id: meeting,
+                captured_unix_ms: 1_500,
+                file_path: r"C:\snaps\10.00.00.png".into(),
+                width: 1280,
+                height: 720,
+                ocr_text: "Falcon launch timeline".into(),
+            })
+            .unwrap();
+        let context = fetch_context(&store, "timeline");
+        let slide = context.iter().find(|e| matches!(e.item, ContextItemRef::Snapshot { .. })).expect("the slide hit");
+        assert_eq!(slide.open, Some(LibraryTarget::Meeting { id: meeting }));
+        assert_eq!(slide.label, "Slide in meeting \"Acme sync\"");
     }
 
     #[test]

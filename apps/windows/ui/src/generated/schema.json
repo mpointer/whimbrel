@@ -1565,6 +1565,25 @@
               "type": "object"
             }
           ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SnapshotRow"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "snapshot",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            }
+          ]
         }
       ]
     },
@@ -2802,6 +2821,33 @@
         "events",
         "earlierToday",
         "recording"
+      ],
+      "type": "object"
+    },
+    "SnapshotRow": {
+      "description": "A slide-text search hit: a snapshot saved during a meeting (local to this device).",
+      "properties": {
+        "id": {
+          "description": "The `items` row id, as Ask cites it.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "meetingId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "meetingTitle": {
+          "type": "string"
+        },
+        "snippet": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "meetingId",
+        "meetingTitle",
+        "snippet"
       ],
       "type": "object"
     },

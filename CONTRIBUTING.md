@@ -10,6 +10,10 @@ rules are few and they are about keeping the tree honest.
 - Check the README's platform table and `docs/05-roadmap.md` for what is built and
   what is planned. Pull requests that make a document claim more than the code
   does will be sent back.
+- The public repository is published from a private one at each release (see the
+  README). A pull request here is reviewed here, applied there, and lands with the
+  next release, so expect it to arrive as part of a release commit rather than as
+  its own merge.
 
 ## Building and testing
 

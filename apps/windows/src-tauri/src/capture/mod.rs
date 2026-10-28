@@ -9,6 +9,7 @@ pub mod app_id;
 pub mod audio;
 pub mod events;
 pub mod exclusions;
+pub mod frame;
 pub mod merge;
 pub mod ocr;
 pub mod policy;
