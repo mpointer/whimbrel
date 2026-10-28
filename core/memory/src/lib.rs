@@ -5782,11 +5782,12 @@ impl Store {
         // A split can leave another meeting's snapshot rows inside this directory until the
         // files are moved; never hand the folder back then (worst case: a leaked folder).
         // Literal prefix compare via substr, not LIKE, so `%`/`_` in a path are not wildcards.
+        // Either separator: Windows stores `\`-separated paths.
         let snapshots_dir = match snapshots_dir {
             Some(dir) => {
                 let shared: bool = self.conn.query_row(
                     "SELECT EXISTS (SELECT 1 FROM meeting_snapshot WHERE meeting_id != ?1 \
-                     AND substr(file_path, 1, length(?2) + 1) = ?2 || '/')",
+                     AND substr(file_path, 1, length(?2) + 1) IN (?2 || '/', ?2 || '\\'))",
                     params![id, dir],
                     |r| r.get(0),
                 )?;
@@ -19670,6 +19671,19 @@ mod tests {
         let rows: i64 = store.conn.query_row("SELECT COUNT(*) FROM meeting_snapshot", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 0);
         assert_eq!(snapshot_items(&store), 0);
+    }
+
+    #[test]
+    fn shared_snapshot_dir_is_kept_with_either_separator() {
+        for (dir, file) in [("/tmp/shared", "/tmp/shared/a.png"), ("C:\\data\\Snapshots\\1", "C:\\data\\Snapshots\\1\\a.png")] {
+            let store = Store::open_in_memory().unwrap();
+            let m = snap_meeting(&store, 1000);
+            let other = snap_meeting(&store, 1100);
+            store.set_meeting_snapshots_dir(m, dir).unwrap();
+            store.insert_meeting_snapshot(&NewMeetingSnapshot { file_path: file.into(), ..snap(other, 2000, "theirs") }).unwrap();
+            let files = store.delete_meeting_returning_files(m).unwrap().unwrap();
+            assert_eq!(files.snapshots_dir, None, "{dir} still holds another meeting's snapshot");
+        }
     }
 
     #[test]

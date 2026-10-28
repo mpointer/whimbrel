@@ -80,6 +80,14 @@ pub struct Pipeline {
     state: Mutex<(Option<Processing>, Option<PipelineFailure>)>,
 }
 
+/// The text of the meeting's saved slides, for the summary's "Slides shown" input: one
+/// block per snapshot in capture order, as the Mac joins them. Core caps the total. A
+/// store error gives no slides rather than no summary.
+pub fn slides_text(s: &memory::Store, meeting_id: i64) -> String {
+    let snapshots = s.list_meeting_snapshots(meeting_id).unwrap_or_default();
+    snapshots.iter().map(|snap| snap.ocr_text.trim()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n\n")
+}
+
 /// The transcript file for a recording, next to its WAVs (the Mac's naming).
 pub fn transcript_path(recordings: &Path, stamp: &str) -> PathBuf {
     recordings.join(format!("transcript-{stamp}.txt"))
@@ -293,7 +301,7 @@ impl Pipeline {
         let (transcript, notes) = (transcript.to_string(), notes.to_string());
         self.slow_store
             .call_blocking(move |s| {
-                api::summary::summarize_meeting(s, meeting_id, &notes, &transcript, "", &ollama_model, &config, &custom)
+                api::summary::summarize_meeting(s, meeting_id, &notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom)
                     .map(|_| ())
                     .map_err(|e| crate::error::CommandError::from(e).to_string())
             })
@@ -400,7 +408,7 @@ impl Pipeline {
         let summary = self
             .slow_store
             .call_blocking(move |s| {
-                api::summary::summarize_meeting(s, meeting_id, &summary_notes, &transcript, "", &ollama_model, &config, &custom)
+                api::summary::summarize_meeting(s, meeting_id, &summary_notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom)
                     .map_err(|e| crate::error::CommandError::from(e).to_string())
             })
             .map_err(|e| e.to_string())?;
@@ -597,6 +605,36 @@ mod tests {
             away_outcome: None,
             away_outcome_at_unix_ms: None,
         }
+    }
+
+    #[test]
+    fn the_summary_gets_each_slides_text_in_capture_order() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = store
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "this-pc".into(),
+                start_unix_ms: 0,
+                end_unix_ms: Some(1),
+                title: "M".into(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Manual,
+                audio_path: None,
+                status: MeetingStatus::Completed,
+            })
+            .unwrap();
+        assert_eq!(slides_text(&store, id), "", "no slides, no slide input");
+        for (at, text) in [(30, "Roadmap\nQ2"), (10, "Agenda"), (20, "  ")] {
+            let snap = memory::NewMeetingSnapshot {
+                meeting_id: id,
+                captured_unix_ms: at,
+                file_path: format!(r"C:\snaps\{at}.png"),
+                width: 1,
+                height: 1,
+                ocr_text: text.into(),
+            };
+            store.insert_meeting_snapshot(&snap).unwrap();
+        }
+        assert_eq!(slides_text(&store, id), "Agenda\n\nRoadmap\nQ2", "capture order, blank slides left out");
     }
 
     #[test]

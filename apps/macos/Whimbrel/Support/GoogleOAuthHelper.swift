@@ -114,10 +114,7 @@ final class GoogleOAuthHelper: NSObject {
             kSecAttrAccount as String: newAccount,
         ]
         guard let data = try? JSONEncoder().encode(stored) else { return false }
-        KeychainAccess.delete(query as CFDictionary)
-        var addQuery = query
-        addQuery[kSecValueData as String] = data
-        return KeychainAccess.add(addQuery as CFDictionary, nil) == errSecSuccess
+        return KeychainAccess.upsert(query, data: data) == errSecSuccess
     }
 
     /// Returns the stored Google ID token (what the sync Worker's `POST /v1/auth/google`
@@ -163,10 +160,7 @@ final class GoogleOAuthHelper: NSObject {
             kSecAttrService as String: Self.keychainService,
             kSecAttrAccount as String: keychainAccount,
         ]
-        KeychainAccess.delete(query as CFDictionary)
-        var addQuery = query
-        addQuery[kSecValueData as String] = data
-        let status = KeychainAccess.add(addQuery as CFDictionary, nil)
+        let status = KeychainAccess.upsert(query, data: data)
         guard status == errSecSuccess else {
             throw GoogleOAuthError.keychainWriteFailed(status)
         }

@@ -188,6 +188,9 @@ export type LibraryRow =
     })
   | (TranscriptRow & {
       kind: "transcript";
+    })
+  | (SnapshotRow & {
+      kind: "snapshot";
     });
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -863,6 +866,21 @@ export interface TranscriptRow {
    * Offset from the meeting start, in centiseconds.
    */
   startCs: number;
+}
+/**
+ * A slide-text search hit: a snapshot saved during a meeting (local to this device).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SnapshotRow".
+ */
+export interface SnapshotRow {
+  /**
+   * The `items` row id, as Ask cites it.
+   */
+  id: number;
+  meetingId: number;
+  meetingTitle: string;
+  snippet: string;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema

@@ -8,7 +8,7 @@ final class UpdateCheckerTests: XCTestCase {
 
     func testNewerManifestDecodesAllSevenFieldsThroughTheBridge() throws {
         let json = """
-        {"version": "0.3.12", "url": "https://example.com/Whimbrel-0.3.12.zip", "sha256": "abc123", "commit": "a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3", "tag": "v0.3.12", "published_at": "2026-08-18T14:32:00Z", "release_notes_url": "https://github.com/mpointer/kestrel/releases/tag/v0.3.12"}
+        {"version": "0.3.12", "url": "https://example.com/Whimbrel-0.3.12.zip", "sha256": "abc123", "commit": "a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3", "tag": "v0.3.12", "published_at": "2026-08-18T14:32:00Z", "release_notes_url": "https://github.com/mpointer/whimbrel/releases/tag/v0.3.12"}
         """.data(using: .utf8)!
         let check = try XCTUnwrap(CoreMemoryStore.checkUpdateManifest(json: json, currentVersion: "0.3.11"))
         XCTAssertTrue(check.newer)
@@ -17,7 +17,7 @@ final class UpdateCheckerTests: XCTestCase {
         XCTAssertEqual(check.manifest.commit, "a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3")
         XCTAssertEqual(check.manifest.tag, "v0.3.12")
         XCTAssertEqual(check.manifest.publishedAt, "2026-08-18T14:32:00Z")
-        XCTAssertEqual(check.manifest.releaseNotesURL, "https://github.com/mpointer/kestrel/releases/tag/v0.3.12")
+        XCTAssertEqual(check.manifest.releaseNotesURL, "https://github.com/mpointer/whimbrel/releases/tag/v0.3.12")
     }
 
     func testLegacyTwoFieldManifestDecodesWithNilNewFieldsAndEqualVersionIsNotNewer() throws {

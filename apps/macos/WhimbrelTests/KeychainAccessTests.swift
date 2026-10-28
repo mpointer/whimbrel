@@ -75,6 +75,23 @@ final class KeychainAccessTests: XCTestCase {
         XCTAssertEqual(KeychainAccess.delete(query("com.mpointer.kestrel.tests", account)), errSecSuccess)
     }
 
+    func testUpsertAddsThenUpdatesInPlaceWithoutDeleting() {
+        let account = "keychain-access-tests-\(UUID().uuidString)"
+        let item: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "com.mpointer.kestrel.tests",
+            kSecAttrAccount as String: account,
+        ]
+        XCTAssertEqual(KeychainAccess.upsert(item, data: Data("first".utf8)), errSecSuccess)
+        XCTAssertEqual(KeychainAccess.upsert(item, data: Data("second".utf8)), errSecSuccess)
+        var read = item
+        read[kSecReturnData as String] = true
+        var result: CFTypeRef?
+        XCTAssertEqual(KeychainAccess.copyMatching(read as CFDictionary, &result), errSecSuccess)
+        XCTAssertEqual(result as? Data, Data("second".utf8))
+        XCTAssertEqual(KeychainAccess.delete(query("com.mpointer.kestrel.tests", account)), errSecSuccess)
+    }
+
     /// Guards the funnel: no source file outside `KeychainAccess.swift` may call the SecItem
     /// API directly, or a test run could reach the real Keychain again.
     func testNoSourceFileOutsideTheFunnelCallsSecItemDirectly() throws {

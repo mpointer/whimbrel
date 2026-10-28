@@ -14,11 +14,10 @@ struct StatusIcon: View {
     var body: some View {
         HStack(spacing: 4) {
             icon
-            if let startedAt = state.activeMeetingStartedAt {
-                SwiftUI.TimelineView(.periodic(from: .now, by: 30)) { context in
-                    Text("● " + ElapsedLabel.text(context.date.timeIntervalSince(startedAt)))
-                        .monospacedDigit()
-                }
+            // Never a TimelineView here: see `AppState.menuBarElapsed`.
+            if let elapsed = state.menuBarElapsed {
+                Text("● " + elapsed)
+                    .monospacedDigit()
             }
         }
     }

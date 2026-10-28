@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repo = process.env.RELEASES_REPO ?? "mpointer/kestrel";
+const repo = process.env.RELEASES_REPO ?? "mpointer/whimbrel";
 const out = join(dirname(fileURLToPath(import.meta.url)), "..", "site", "data", "releases.json");
 
 const headers = { accept: "application/vnd.github+json", "user-agent": "whimbrel-website-build" };

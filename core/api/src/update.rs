@@ -131,13 +131,13 @@ mod tests {
 
     #[test]
     fn decodes_full_manifest_with_all_seven_fields() {
-        let m = parse_manifest(r#"{"version": "0.3.12", "url": "https://example.com/Whimbrel-0.3.12.zip", "sha256": "abc123", "commit": "a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3", "tag": "v0.3.12", "published_at": "2026-08-18T14:32:00Z", "release_notes_url": "https://github.com/mpointer/kestrel/releases/tag/v0.3.12"}"#).unwrap();
+        let m = parse_manifest(r#"{"version": "0.3.12", "url": "https://example.com/Whimbrel-0.3.12.zip", "sha256": "abc123", "commit": "a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3", "tag": "v0.3.12", "published_at": "2026-08-18T14:32:00Z", "release_notes_url": "https://github.com/mpointer/whimbrel/releases/tag/v0.3.12"}"#).unwrap();
         assert_eq!(m.version, "0.3.12");
         assert_eq!(m.sha256.as_deref(), Some("abc123"));
         assert_eq!(m.commit.as_deref(), Some("a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3"));
         assert_eq!(m.tag.as_deref(), Some("v0.3.12"));
         assert_eq!(m.published_at.as_deref(), Some("2026-08-18T14:32:00Z"));
-        assert_eq!(m.release_notes_url.as_deref(), Some("https://github.com/mpointer/kestrel/releases/tag/v0.3.12"));
+        assert_eq!(m.release_notes_url.as_deref(), Some("https://github.com/mpointer/whimbrel/releases/tag/v0.3.12"));
     }
 
     #[test]

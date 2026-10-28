@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import Security
 
 /// The only door to the Keychain's `SecItem` API. In the app it forwards to the real
@@ -40,8 +41,32 @@ enum KeychainAccess {
 
     @discardableResult
     static func delete(_ query: CFDictionary) -> OSStatus {
-        useMemory ? memory.delete(query) : SecItemDelete(query)
+        let status = useMemory ? memory.delete(query) : SecItemDelete(query)
+        if status != errSecSuccess, status != errSecItemNotFound {
+            log.error("Keychain delete refused: \(status, privacy: .public)")
+        }
+        return status
     }
+
+    /// Writes `data` into the item `query` names (class, service, account): updates it in
+    /// place, or adds it with `addAttributes` when there is none. Never delete-then-add: the
+    /// Keychain refuses the renamed app's delete of an item created before the rename, so the
+    /// add that followed failed with errSecDuplicateItem (-25299) and no token could be saved.
+    @discardableResult
+    static func upsert(_ query: [String: Any], data: Data, addAttributes: [String: Any] = [:]) -> OSStatus {
+        var status = update(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var attributes = query.merging(addAttributes) { $1 }
+            attributes[kSecValueData as String] = data
+            status = add(attributes as CFDictionary, nil)
+        }
+        if status != errSecSuccess {
+            log.error("Keychain write failed: \(status, privacy: .public)")
+        }
+        return status
+    }
+
+    private static let log = Logger(subsystem: "com.mpointer.kestrel", category: "keychain")
 }
 
 /// A process-local stand-in for the generic-password items Whimbrel uses, keyed by

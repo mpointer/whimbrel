@@ -10,5 +10,8 @@ A release has **two publish steps**, one per platform. Both must run, or that pl
 3. **Windows**: pushing the tag runs `.github/workflows/release-windows.yml`, which builds the signed installer and publishes it and `windows/latest.json` to the updates Worker. It fails the run if the served manifest is not this version.
 4. **Mac** (on the maintainer's Mac, unlocked, from a clean tree with HEAD at the tag): `cd apps/macos && ./scripts/release-publish.sh`. It builds, signs, notarizes, uploads `Whimbrel-X.zip` and `version.json` to the Worker, and creates the GitHub release if none exists. Takes about 20 minutes.
 5. **Verify**: `version.json` and `windows/latest.json` serve X on both `updates.whimbrelapp.com` and `kestrel-updates-worker.mpointer.workers.dev` (shipped builds poll the second until the rename lands in a release).
+6. **Public mirror**: from the same clean tree at the tag, `scripts/publish-public.sh vX`. It pushes the tree without `docs/superpowers/` to `mpointer/whimbrel` as one commit, tags it `vX`, and creates the public GitHub release with the private release's notes (private pull-request links stripped).
+
+The website's changelog reads the mirror's releases and the manifest's `release_notes_url` links to them (switched after the first publish, v0.9.35), so step 6 is not optional: skipping it leaves the changelog one release behind and the update dialog's link dead until it runs.
 
 The GitHub release page carries no installers; the Worker serves them.

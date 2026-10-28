@@ -60,15 +60,13 @@ enum SyncKeychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        KeychainAccess.delete(query as CFDictionary)
-        var addQuery = query
-        addQuery[kSecValueData as String] = data
+        var addAttributes: [String: Any] = [:]
         #if os(iOS)
         // The phone syncs in the background, after the first unlock, and these keys must
         // never leave the device (no iCloud Keychain, no backup restore elsewhere).
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        addAttributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         #endif
-        let status = KeychainAccess.add(addQuery as CFDictionary, nil)
+        let status = KeychainAccess.upsert(query, data: data, addAttributes: addAttributes)
         guard status == errSecSuccess else {
             throw SyncKeychainError.writeFailed(status)
         }
