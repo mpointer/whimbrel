@@ -190,7 +190,7 @@ impl AppState {
         controller.start();
         if let Some(store) = &self.store {
             let device_id = controller.identity().device_id.clone();
-            crate::syncing::content::start(controller.clone(), store.clone(), self.secrets.clone(), device_id);
+            crate::syncing::content::start(controller.clone(), store.clone(), self.secrets.clone(), device_id, self.paths.skins.clone());
         }
         self.sync = Some(controller);
     }

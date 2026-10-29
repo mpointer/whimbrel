@@ -247,7 +247,7 @@ pub fn image_generate_request(
             "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict".into(),
             serde_json::json!({"instances": [{"prompt": prompt}], "parameters": {"sampleCount": 1, "aspectRatio": "16:9"}}),
         )),
-        Provider::Ollama | Provider::Anthropic => None,
+        Provider::Ollama | Provider::Anthropic | Provider::OpenRouter => None,
     }
 }
 

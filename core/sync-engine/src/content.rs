@@ -25,6 +25,16 @@ pub(crate) const ROW_TYPE_ROUTINE_RUN: &str = "routine_run";
 pub(crate) const ROW_TYPE_MEETING_PREP: &str = "meeting_prep";
 pub(crate) const ROW_TYPE_PROFILE_SUGGESTION: &str = "profile_suggestion";
 pub(crate) const ROW_TYPE_ITEMS_CAPABILITY: &str = "items_capability";
+/// Skin sync (docs/superpowers/plans/2026-10-22-skins-windows-and-sync.md, Task 13): a user skin's
+/// version, its images in chunks, and the marker a device pushes once it applies them.
+pub(crate) const ROW_TYPE_SKIN: &str = memory::OUTBOX_ROW_TYPE_SKIN;
+pub(crate) const ROW_TYPE_SKIN_IMAGE_CHUNK: &str = memory::OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK;
+pub(crate) const ROW_TYPE_SKINS_CAPABILITY: &str = "skins_capability";
+
+/// The relay bytes of image chunks one pass moves from (or to) one peer, so a skin with large images
+/// spreads over several rounds instead of holding the store or overrunning `SYNC_TIMEOUT`. Counted on
+/// the sealed, base64-encoded row, which is what crosses the network.
+pub(crate) const MAX_SKIN_CHUNK_BYTES_PER_PASS: usize = 4 * 1024 * 1024;
 
 /// A `transcript_segment`'s wire payload carries its parent meeting's `local_seq`
 /// (docs/superpowers/plans/2026-07-30-sync-content-data-layer.md's FK-resolution
@@ -185,7 +195,20 @@ async fn push_items_capability_marker(
     group_key: &GroupKey,
     device_id: &str,
 ) -> Result<(), SyncEngineError> {
-    let aad = content_row_aad(device_id, 0, ROW_TYPE_ITEMS_CAPABILITY);
+    push_marker(conn, group_key, device_id, ROW_TYPE_ITEMS_CAPABILITY).await?;
+    // Every device that pushes applies skin rows (the phone only pulls, and skips them), so it says
+    // so the same way: a peer seeing this for the first time re-pushes every skin it has.
+    push_marker(conn, group_key, device_id, ROW_TYPE_SKINS_CAPABILITY).await
+}
+
+/// One capability marker at `local_seq` 0, idempotent (see `push_items_capability_marker`).
+async fn push_marker(
+    conn: &Connection,
+    group_key: &GroupKey,
+    device_id: &str,
+    marker: &str,
+) -> Result<(), SyncEngineError> {
+    let aad = content_row_aad(device_id, 0, marker);
     let ciphertext = sync::encrypt_payload(group_key, b"1", &aad);
     conn.execute(
         "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) \
@@ -193,7 +216,7 @@ async fn push_items_capability_marker(
          ON CONFLICT (device_id, local_seq, row_type) DO NOTHING",
         params![
             device_id,
-            ROW_TYPE_ITEMS_CAPABILITY,
+            marker,
             STANDARD.encode(&ciphertext).as_str(),
             now_unix_ms()
         ],
@@ -427,17 +450,22 @@ const MAX_ROWS_PER_PULL_PASS: i64 = 500;
 /// rounds. Per peer, so one peer's backlog can't starve another's pulls.
 const PULL_PEER_TIME_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// `skip_skins` leaves out skin rows at the query, so a puller that never applies them (the phone)
+/// never downloads their images.
 async fn fetch_rows_since(
     conn: &Connection,
     peer_device_id: &str,
     since_local_seq: i64,
     limit: i64,
+    skip_skins: bool,
 ) -> Result<Vec<RowEnvelope>, SyncEngineError> {
+    let sql = if skip_skins {
+        "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 AND row_type NOT IN ('skin', 'skin_image_chunk') ORDER BY local_seq ASC LIMIT ?3"
+    } else {
+        "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 ORDER BY local_seq ASC LIMIT ?3"
+    };
     let mut rows = conn
-        .query(
-            "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 ORDER BY local_seq ASC LIMIT ?3",
-            params![peer_device_id, since_local_seq, limit],
-        )
+        .query(sql, params![peer_device_id, since_local_seq, limit])
         .await
         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
     let mut envelopes = Vec::new();
@@ -603,6 +631,25 @@ fn apply_parent_row(
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             return Ok(());
         }
+        ROW_TYPE_SKIN => {
+            // Kept in the store, not the skins folder: `core/skins` writes it once its images are whole.
+            let Ok(payload) = serde_json::from_slice::<memory::skin_sync::SkinSyncPayload>(plaintext) else {
+                return Ok(());
+            };
+            store
+                .apply_synced_skin(peer_device_id, &payload)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_SKIN_IMAGE_CHUNK => {
+            let Ok(chunk) = serde_json::from_slice::<memory::skin_sync::SkinImageChunk>(plaintext) else {
+                return Ok(());
+            };
+            store
+                .apply_synced_skin_chunk(&chunk)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
         ROW_TYPE_PROFILE_SUGGESTION => {
             let Ok(suggestion) = serde_json::from_slice::<memory::profile::AppliedProfileSuggestion>(plaintext) else {
                 return Ok(());
@@ -655,6 +702,18 @@ pub struct PullOptions {
     pub capture_window_ms: Option<i64>,
 }
 
+/// [`pull_content_with_options`] for a pull-only peer (the phone, which has no skins): skin rows are
+/// left out at the query, so neither the skins nor their images are fetched or applied.
+pub(crate) async fn pull_content_without_skins(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    own_device_id: &str,
+    options: &PullOptions,
+) -> Result<(), SyncEngineError> {
+    pull_content_with_budget(conn, group_key, store, own_device_id, PULL_PEER_TIME_BUDGET, options, true).await
+}
+
 /// [`pull_content`] with [`PullOptions`] (the phone's capture window).
 pub async fn pull_content_with_options(
     conn: &Connection,
@@ -663,7 +722,7 @@ pub async fn pull_content_with_options(
     own_device_id: &str,
     options: &PullOptions,
 ) -> Result<(), SyncEngineError> {
-    pull_content_with_budget(conn, group_key, store, own_device_id, PULL_PEER_TIME_BUDGET, options).await
+    pull_content_with_budget(conn, group_key, store, own_device_id, PULL_PEER_TIME_BUDGET, options, false).await
 }
 
 /// [`pull_content`] with the per-peer time budget as a parameter. Each peer's pass
@@ -675,6 +734,7 @@ async fn pull_content_with_budget(
     own_device_id: &str,
     budget: std::time::Duration,
     options: &PullOptions,
+    skip_skins: bool,
 ) -> Result<(), SyncEngineError> {
     // Capture window (the phone's storage budget). Decided AFTER decrypting, on the
     // item's own `ts_unix_ms`: the remote row's `created_at_unix_ms` is push time, not
@@ -748,8 +808,29 @@ async fn pull_content_with_budget(
         let cursor = store
             .get_sync_cursor(&peer)
             .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-        let envelopes = fetch_rows_since(conn, &peer, cursor, MAX_ROWS_PER_PULL_PASS).await?;
+        let known_skin_peer = store
+            .is_skin_peer(&peer)
+            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+        if !skip_skins && !known_skin_peer {
+            let mut marker = conn
+                .query(PEER_MARKER_SQL, params![peer.as_str(), ROW_TYPE_SKINS_CAPABILITY])
+                .await
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            if marker
+                .next()
+                .await
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?
+                .is_some()
+            {
+                store
+                    .record_skin_peer(&peer)
+                    .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            }
+        }
+        let envelopes =
+            fetch_rows_since(conn, &peer, cursor, MAX_ROWS_PER_PULL_PASS, skip_skins).await?;
         let peer_started = std::time::Instant::now();
+        let mut chunk_bytes = 0usize;
         // The highest local_seq this pass handled (applied, skipped, or deferred to the
         // dependency pass): where the cursor goes, since the pass can stop early.
         let mut processed_through = cursor;
@@ -766,6 +847,13 @@ async fn pull_content_with_budget(
             // PULL_PEER_TIME_BUDGET: stop once it's spent, having handled at least one row.
             if processed_through > cursor && peer_started.elapsed() >= budget {
                 break;
+            }
+            if env.row_type == ROW_TYPE_SKIN_IMAGE_CHUNK {
+                // The image budget: the rest of a large image follows next round (the skin stays held).
+                if processed_through > cursor && chunk_bytes >= MAX_SKIN_CHUNK_BYTES_PER_PASS {
+                    break;
+                }
+                chunk_bytes += env.ciphertext_base64.len();
             }
             processed_through = env.local_seq;
             if env.row_type == ROW_TYPE_TRANSCRIPT_SEGMENT {
@@ -1030,7 +1118,7 @@ mod tests {
 
         // Excludes the items_capability sentinel, which push_content now always writes.
         let mut rows = conn
-            .query("SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND row_type != 'items_capability'", ())
+            .query("SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND local_seq != 0", ())
             .await
             .unwrap();
         let count: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
@@ -1041,7 +1129,7 @@ mod tests {
     async fn count_pushed(conn: &Connection, device_id: &str) -> (i64, i64) {
         let mut rows = conn
             .query(
-                "SELECT COUNT(*), COALESCE(MAX(local_seq), 0) FROM sync_row WHERE device_id = ?1 AND row_type != 'items_capability'",
+                "SELECT COUNT(*), COALESCE(MAX(local_seq), 0) FROM sync_row WHERE device_id = ?1 AND local_seq != 0",
                 params![device_id],
             )
             .await
@@ -1133,7 +1221,7 @@ mod tests {
             .unwrap();
 
         let mut rows = conn
-            .query("SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND row_type != 'items_capability'", ())
+            .query("SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND local_seq != 0", ())
             .await
             .unwrap();
         let count: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
@@ -1171,7 +1259,7 @@ mod tests {
 
         let mut rows = conn
             .query(
-                "SELECT COUNT(*) FROM sync_row WHERE row_type != 'items_capability'",
+                "SELECT COUNT(*) FROM sync_row WHERE local_seq != 0",
                 (),
             )
             .await
@@ -1294,7 +1382,7 @@ mod tests {
     async fn latest_pushed_row_type(conn: &Connection, device_id: &str) -> Option<String> {
         let mut rows = conn
             .query(
-                "SELECT row_type FROM sync_row WHERE device_id = ?1 AND row_type != 'items_capability' ORDER BY local_seq DESC LIMIT 1",
+                "SELECT row_type FROM sync_row WHERE device_id = ?1 AND local_seq != 0 ORDER BY local_seq DESC LIMIT 1",
                 params![device_id],
             )
             .await
@@ -1724,13 +1812,13 @@ mod tests {
         let found = |text: &str| store_b.search_keyword(text, 10).unwrap().len();
         let zero = std::time::Duration::ZERO;
 
-        pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default()).await.unwrap();
+        pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
         assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), 1, "the cursor stops at the last row handled");
         assert_eq!(store_b.get_sync_cursor("device-c").unwrap(), 1, "the other peer progresses in the same call");
         assert_eq!((found("alpha row 1"), found("alpha row 2")), (1, 0));
 
         for _ in 0..2 {
-            pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default()).await.unwrap();
+            pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
         }
         assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), 3);
         assert_eq!(store_b.get_sync_cursor("device-c").unwrap(), 2);
@@ -2796,5 +2884,295 @@ mod tests {
             assert!(applied(store, 4, ROW_TYPE_ITEMS));
             assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 4);
         }
+    }
+}
+
+/// Skin sync over a local relay database (docs/superpowers/plans/2026-10-22-skins-windows-and-sync.md,
+/// Task 13): rows go out through the outbox and come in through `pull_content`.
+#[cfg(test)]
+mod skin_tests {
+    use super::*;
+    use memory::skin_sync::{sha256_hex, SkinImageChunk, SkinSyncPayload, SKIN_CHUNK_BYTES};
+
+    async fn relay() -> (tempfile::TempDir, Connection, GroupKey) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let conn = db.connect().unwrap();
+        ensure_content_schema(&conn).await.unwrap();
+        (dir, conn, GroupKey::generate())
+    }
+
+    fn device(id: &str) -> Store {
+        let store = Store::open_in_memory().unwrap();
+        store.set_own_device_id(id);
+        store
+    }
+
+    fn skin(id: &str, at: i64, images: Vec<(String, String)>) -> SkinSyncPayload {
+        SkinSyncPayload {
+            skin_id: id.into(),
+            name: "Stadium".into(),
+            manifest: serde_json::json!({ "id": id, "name": "Stadium", "palettes": [format!("{id}-p1")] }),
+            palettes: vec![(format!("{id}-p1"), serde_json::json!({ "id": format!("{id}-p1"), "name": "Navy" }))],
+            images,
+            updated_at_unix_ms: at,
+            device_id: "device-a".into(),
+            deleted: false,
+        }
+    }
+
+    /// Saves a skin with one image on device A, as `core/skins` will: the chunks, then the row.
+    fn save_on_a(a: &Store, bytes: &[u8]) -> SkinSyncPayload {
+        let sha = sha256_hex(bytes);
+        a.enqueue_skin_chunks(&sha, bytes).unwrap();
+        let payload = skin("user-stadium-1", 100, vec![("lights.png".into(), sha)]);
+        a.enqueue_skin_row(&payload).unwrap();
+        payload
+    }
+
+    async fn rows_of(conn: &Connection, row_type: &str) -> i64 {
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM sync_row WHERE row_type = ?1", params![row_type])
+            .await
+            .unwrap();
+        rows.next().await.unwrap().unwrap().get(0).unwrap()
+    }
+
+    #[tokio::test]
+    async fn skin_row_roundtrips() {
+        let (_dir, conn, key) = relay().await;
+        let (a, b) = (device("device-a"), device("device-b"));
+        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES + 77).map(|i| (i % 253) as u8).collect();
+        let payload = save_on_a(&a, &bytes);
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        pull_content(&conn, &key, &b, "device-b").await.unwrap();
+        assert_eq!(b.synced_skins_ready().unwrap(), vec![payload.clone()]);
+        assert_eq!(b.synced_image(&payload.images[0].1).unwrap().as_deref(), Some(&bytes[..]));
+        // Pulled again: nothing new, and B writes nothing to the relay.
+        pull_content(&conn, &key, &b, "device-b").await.unwrap();
+        assert_eq!(b.synced_skins_ready().unwrap().len(), 1);
+        let mut rows = conn.query("SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-b'", ()).await.unwrap();
+        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn older_skin_loses_to_newer() {
+        let (_dir, conn, key) = relay().await;
+        let (a, b) = (device("device-a"), device("device-b"));
+        a.enqueue_skin_row(&skin("user-x-1", 200, vec![])).unwrap();
+        a.enqueue_skin_row(&skin("user-x-1", 100, vec![])).unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        pull_content(&conn, &key, &b, "device-b").await.unwrap();
+        let ready = b.synced_skins_ready().unwrap();
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].updated_at_unix_ms, 200);
+    }
+
+    #[tokio::test]
+    async fn image_sent_once_for_two_skins() {
+        let (_dir, conn, key) = relay().await;
+        let a = device("device-a");
+        let bytes = vec![9u8; 1000];
+        let sha = sha256_hex(&bytes);
+        for id in ["user-a-1", "user-b-1"] {
+            a.enqueue_skin_chunks(&sha, &bytes).unwrap();
+            a.enqueue_skin_row(&skin(id, 1, vec![("same.png".into(), sha.clone())])).unwrap();
+        }
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        assert_eq!(rows_of(&conn, ROW_TYPE_SKIN_IMAGE_CHUNK).await, 1);
+        assert_eq!(rows_of(&conn, ROW_TYPE_SKIN).await, 2);
+        let b = device("device-b");
+        pull_content(&conn, &key, &b, "device-b").await.unwrap();
+        assert_eq!(b.synced_skins_ready().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn partial_chunks_hold_skin() {
+        let (_dir, conn, key) = relay().await;
+        let a = device("device-a");
+        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES * 2 + 10).map(|i| (i % 241) as u8).collect();
+        let payload = save_on_a(&a, &bytes);
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        // The relay is missing the middle chunk (a pass cut short, say): the skin arrives but stays held.
+        conn.execute(
+            "DELETE FROM sync_row WHERE row_type = 'skin_image_chunk' AND local_seq = (SELECT MIN(local_seq) + 1 FROM sync_row WHERE row_type = 'skin_image_chunk')",
+            (),
+        )
+        .await
+        .unwrap();
+        let b = device("device-b");
+        pull_content(&conn, &key, &b, "device-b").await.unwrap();
+        assert!(b.synced_skins_ready().unwrap().is_empty());
+        assert_eq!(b.synced_image(&payload.images[0].1).unwrap(), None);
+        // The missing piece comes: the image is whole, so the skin is ready.
+        let middle = SkinImageChunk {
+            sha256: payload.images[0].1.clone(),
+            index: 1,
+            count: 3,
+            data: STANDARD.encode(&bytes[SKIN_CHUNK_BYTES..SKIN_CHUNK_BYTES * 2]),
+        };
+        b.apply_synced_skin_chunk(&middle).unwrap();
+        assert_eq!(b.synced_skins_ready().unwrap(), vec![payload]);
+    }
+
+    #[tokio::test]
+    async fn chunk_bytes_capped_per_pass() {
+        let (_dir, conn, key) = relay().await;
+        let a = device("device-a");
+        // 30 full chunks, about 10 MB on the relay: more than two passes' worth each way.
+        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES * 30).map(|i| (i * 7 % 256) as u8).collect();
+        let payload = save_on_a(&a, &bytes);
+        let t = crate::now_unix_ms() + 1;
+        let first = crate::outbox::dispatch_outbox_at(&conn, &key, &a, "device-a", t).await.unwrap();
+        let sent = rows_of(&conn, ROW_TYPE_SKIN_IMAGE_CHUNK).await;
+        assert!(sent > 0 && sent < 30, "{sent} chunks in one pass");
+        assert!(first.deferred > 0);
+        let mut at = t;
+        while rows_of(&conn, ROW_TYPE_SKIN_IMAGE_CHUNK).await < 30 {
+            at += 2;
+            crate::outbox::dispatch_outbox_at(&conn, &key, &a, "device-a", at).await.unwrap();
+            assert!(at - t < 40, "the chunks never all went");
+        }
+        assert_eq!(rows_of(&conn, ROW_TYPE_SKIN).await, 1);
+        // Pulling is capped the same way: the first pass stops partway, and the skin waits for the rest.
+        let b = device("device-b");
+        pull_content(&conn, &key, &b, "device-b").await.unwrap();
+        let after_one = b.get_sync_cursor("device-a").unwrap();
+        assert!(b.synced_skins_ready().unwrap().is_empty());
+        let mut passes = 1;
+        while b.synced_skins_ready().unwrap().is_empty() {
+            pull_content(&conn, &key, &b, "device-b").await.unwrap();
+            passes += 1;
+            assert!(passes < 10, "the image never completed");
+        }
+        assert!(passes >= 3, "{passes} passes");
+        assert!(after_one < b.get_sync_cursor("device-a").unwrap());
+        assert_eq!(b.synced_image(&payload.images[0].1).unwrap().map(|b| b.len()), Some(bytes.len()));
+    }
+
+    #[tokio::test]
+    async fn capability_marker_triggers_full_repush() {
+        let (_dir, conn, key) = relay().await;
+        let (a, b) = (device("device-a"), device("device-b"));
+        push_content(&conn, &key, &a, "device-a").await.unwrap();
+        pull_content(&conn, &key, &b, "device-b").await.unwrap();
+        assert!(b.take_skin_repush_request().unwrap(), "a newly seen peer asks for every skin");
+        pull_content(&conn, &key, &b, "device-b").await.unwrap();
+        assert!(!b.take_skin_repush_request().unwrap(), "once per peer");
+        // A peer with rows but no skin marker (a build from before skins synced) asks for nothing.
+        let (_dir2, conn2, key2) = relay().await;
+        let aad = content_row_aad("device-old", 0, ROW_TYPE_ITEMS_CAPABILITY);
+        let ciphertext = sync::encrypt_payload(&key2, b"1", &aad);
+        conn2
+            .execute(
+                "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) VALUES ('device-old', 0, ?1, ?2, 0)",
+                params![ROW_TYPE_ITEMS_CAPABILITY, STANDARD.encode(&ciphertext).as_str()],
+            )
+            .await
+            .unwrap();
+        let c = device("device-c");
+        pull_content(&conn2, &key2, &c, "device-c").await.unwrap();
+        assert!(!c.take_skin_repush_request().unwrap());
+    }
+
+    #[tokio::test]
+    async fn phone_pull_skips_skin_rows() {
+        let (_dir, conn, key) = relay().await;
+        let a = device("device-a");
+        push_content(&conn, &key, &a, "device-a").await.unwrap();
+        save_on_a(&a, &[1, 2, 3]);
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        let phone = device("phone");
+        crate::pull_only_with_connection(&conn, &key, &phone, "phone", &PullOptions::default())
+            .await
+            .unwrap();
+        assert!(phone.synced_skins_ready().unwrap().is_empty());
+        assert!(!phone.take_skin_repush_request().unwrap(), "the phone ignores the skin marker too");
+        // A full peer gets them from the same relay.
+        let b = device("device-b");
+        pull_content(&conn, &key, &b, "device-b").await.unwrap();
+        assert_eq!(b.synced_skins_ready().unwrap().len(), 1);
+    }
+
+    /// The peer updated after pulling past A's skin with a build that skipped skin rows: its cursor is
+    /// beyond the first copies. Its marker asks A to re-push, and A resends the chunks too.
+    #[tokio::test]
+    async fn a_repush_reaches_a_peer_that_skipped_the_first_copy() {
+        let (_dir, conn, key) = relay().await;
+        let (a, b) = (device("device-a"), device("device-b"));
+        let payload = save_on_a(&a, &[7, 7, 7]);
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        // B, on its old build, pulled past everything A had sent.
+        let mut rows = conn.query("SELECT MAX(local_seq) FROM sync_row WHERE device_id = 'device-a'", ()).await.unwrap();
+        let sent_through: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        b.set_sync_cursor("device-a", sent_through).unwrap();
+        // B updates: it pushes its marker, and A sees it.
+        push_content(&conn, &key, &b, "device-b").await.unwrap();
+        pull_content(&conn, &key, &a, "device-a").await.unwrap();
+        let sha = payload.images[0].1.clone();
+        assert!(!a.enqueue_skin_chunks(&sha, &[7, 7, 7]).unwrap(), "sent once already");
+        assert!(a.take_skin_repush_request().unwrap());
+        // A enqueues every skin again, as core/skins' enqueue_all will: the chunks, then the row.
+        assert!(a.enqueue_skin_chunks(&sha, &[7, 7, 7]).unwrap(), "resent for the repush");
+        a.enqueue_skin_row(&payload).unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        pull_content(&conn, &key, &b, "device-b").await.unwrap();
+        assert_eq!(b.synced_skins_ready().unwrap(), vec![payload]);
+    }
+
+    /// A large image waits behind its 4 MB budget, but rows enqueued after it still go in the same pass.
+    #[tokio::test]
+    async fn a_large_image_does_not_hold_up_later_rows() {
+        let (_dir, conn, key) = relay().await;
+        let a = device("device-a");
+        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES * 150).map(|i| (i * 13 % 256) as u8).collect();
+        save_on_a(&a, &bytes);
+        a.enqueue_skin_row(&skin("user-later-1", 5, vec![])).unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM sync_row WHERE row_type = 'skin' AND local_seq = (SELECT MAX(local_seq) FROM sync_row)", ())
+            .await
+            .unwrap();
+        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 1, "the later row went out");
+        assert!(rows_of(&conn, ROW_TYPE_SKIN_IMAGE_CHUNK).await < 150);
+    }
+
+    #[test]
+    fn the_skin_row_types_match_the_phone_query() {
+        let sql = "AND row_type NOT IN ('skin', 'skin_image_chunk')";
+        assert_eq!(sql, format!("AND row_type NOT IN ('{ROW_TYPE_SKIN}', '{ROW_TYPE_SKIN_IMAGE_CHUNK}')"));
+    }
+
+    /// A skin row this build can't read (a newer shape, or a corrupt one) is skipped, and the peer's
+    /// later rows still apply, as a build from before skins skips the `skin` rows it has no arm for.
+    #[tokio::test]
+    async fn old_build_ignores_skin_rows() {
+        let (_dir, conn, key) = relay().await;
+        let a = device("device-a");
+        for (seq, row_type, json) in [
+            (1_i64, ROW_TYPE_SKIN, r#"{"skinId":"from-a-newer-build"}"#),
+            (2, ROW_TYPE_SKIN_IMAGE_CHUNK, "not json"),
+            (3, "skin_v2", "{}"),
+        ] {
+            let aad = content_row_aad("device-a", seq, row_type);
+            let ciphertext = sync::encrypt_payload(&key, json.as_bytes(), &aad);
+            conn.execute(
+                "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) VALUES (?1, ?2, ?3, ?4, 0)",
+                params!["device-a", seq, row_type, STANDARD.encode(&ciphertext).as_str()],
+            )
+            .await
+            .unwrap();
+        }
+        // Use up A's sequence numbers 1 to 3, which the rows above already hold on the relay (these
+        // three are dropped there as duplicates), so its real rows land after them.
+        for _ in 0..3 {
+            a.enqueue_skin_row(&skin("user-filler-1", 1, vec![])).unwrap();
+        }
+        save_on_a(&a, &[4, 5, 6]);
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        let b = device("device-b");
+        pull_content(&conn, &key, &b, "device-b").await.unwrap();
+        let ready: Vec<String> = b.synced_skins_ready().unwrap().into_iter().map(|p| p.skin_id).collect();
+        assert!(ready.contains(&"user-stadium-1".to_string()), "{ready:?}");
     }
 }

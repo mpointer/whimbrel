@@ -25,8 +25,11 @@ export async function sendEmail(apiKey: string, email: Email, fetcher: typeof fe
         html: email.html,
       }),
     });
+    // Resend rejects a bad key before the request reaches the account's logs, so say why here.
+    if (!res.ok) console.error(`email: Resend refused the send: ${res.status} ${await res.text()}`);
     return res.ok;
-  } catch {
+  } catch (err) {
+    console.error(`email: send failed: ${err}`);
     return false;
   }
 }
@@ -55,7 +58,7 @@ export function welcomeEmail(origin: string, leadId: string, lead: LeadInput, fr
     "",
     "On Windows, SmartScreen may warn that the installer is unrecognized. Choose More info, then Run anyway.",
     "",
-    "Whimbrel is free and open source. If something doesn't work or you have an idea, just reply to this email.",
+    "Whimbrel is free and open source. If something doesn't work or you have an idea, just reply to this email or write to hello@whimbrelapp.com.",
     "",
     "Mike",
     "Whimbrel",
@@ -71,7 +74,7 @@ export function welcomeEmail(origin: string, leadId: string, lead: LeadInput, fr
 <p style="margin:24px 0">${button(lead.platform === "mac" ? links.mac : links.windows, `Download for ${primary}`, true)}
 &nbsp; ${button(lead.platform === "mac" ? links.windows : links.mac, `Download for ${primary === "Mac" ? "Windows" : "Mac"}`, false)}</p>
 <p style="font-size:14px;line-height:1.5;color:#6B5F4F">Mac: Apple silicon, macOS 14 or later. Windows: Windows 11, 64-bit, early access. On Windows, SmartScreen may warn that the installer is unrecognized; choose More info, then Run anyway.</p>
-<p style="font-size:16px;line-height:1.5">Whimbrel is free and open source. If something doesn't work or you have an idea, just reply to this email.</p>
+<p style="font-size:16px;line-height:1.5">Whimbrel is free and open source. If something doesn't work or you have an idea, just reply to this email or write to hello@whimbrelapp.com.</p>
 <p style="font-size:16px;line-height:1.5">Mike<br>Whimbrel</p>
 </div></body></html>`;
   return { from, to: lead.email, replyTo, subject: "Your Whimbrel download links", text, html };

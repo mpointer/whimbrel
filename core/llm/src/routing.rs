@@ -8,6 +8,9 @@ pub enum Provider {
     Anthropic,
     OpenAI,
     Google,
+    /// One key, any model on OpenRouter's catalogue, through their OpenAI-compatible
+    /// endpoint. Model ids are namespaced (`vendor/model`, `:free` for free ones).
+    OpenRouter,
 }
 
 impl Provider {
@@ -25,6 +28,71 @@ impl Provider {
             Provider::Anthropic => "anthropic",
             Provider::OpenAI => "openai",
             Provider::Google => "google",
+            Provider::OpenRouter => "openrouter",
+        }
+    }
+
+    /// The inverse of [`as_str`](Self::as_str); `None` for an unknown name.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "ollama" => Some(Provider::Ollama),
+            "anthropic" => Some(Provider::Anthropic),
+            "openai" => Some(Provider::OpenAI),
+            "google" => Some(Provider::Google),
+            "openrouter" => Some(Provider::OpenRouter),
+            _ => None,
+        }
+    }
+}
+
+/// Which feature is making an LLM call. Decides the chain tier (`tier`) and names the
+/// `usage_log.route` the call is logged under (`route`), so the two can never drift.
+/// Light tasks produce short, low-stakes output where the cheapest model is fine;
+/// everything the user reads is Standard. Routines are not a fixed tier: each routine
+/// row carries its own model preference (see `api::routing::RoutineModelPref`).
+/// Design: `docs/superpowers/specs/2026-10-29-cheap-first-routing-and-key-on-ramp-design.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TaskKind {
+    Chat,
+    MeetingSummary,
+    Digest,
+    MeetingPrep,
+    Routine,
+    ConversationTitle,
+    TopicName,
+    ProfileSuggest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    Standard,
+    Light,
+}
+
+impl TaskKind {
+    pub fn tier(self) -> Tier {
+        match self {
+            TaskKind::Chat
+            | TaskKind::MeetingSummary
+            | TaskKind::Digest
+            | TaskKind::MeetingPrep
+            | TaskKind::Routine => Tier::Standard,
+            TaskKind::ConversationTitle | TaskKind::TopicName | TaskKind::ProfileSuggest => Tier::Light,
+        }
+    }
+
+    /// The `usage_log.route` string every caller already logs; kept identical so the
+    /// spend sums and the usage screen see one history.
+    pub fn route(self) -> &'static str {
+        match self {
+            TaskKind::Chat => "ask",
+            TaskKind::MeetingSummary => "meeting_summary",
+            TaskKind::Digest => "digest",
+            TaskKind::MeetingPrep => "routine",
+            TaskKind::Routine => "routine",
+            TaskKind::ConversationTitle => "conversation_title",
+            TaskKind::TopicName => "topic_name",
+            TaskKind::ProfileSuggest => "profile_suggest",
         }
     }
 }
@@ -150,6 +218,24 @@ mod tests {
         );
         for status in [400, 413, 422] {
             assert!(!falls_through(&http(status)), "{status}");
+        }
+    }
+
+    #[test]
+    fn task_kinds_log_under_the_routes_callers_already_use() {
+        let cases = [
+            (TaskKind::Chat, "ask", Tier::Standard),
+            (TaskKind::MeetingSummary, "meeting_summary", Tier::Standard),
+            (TaskKind::Digest, "digest", Tier::Standard),
+            (TaskKind::MeetingPrep, "routine", Tier::Standard),
+            (TaskKind::Routine, "routine", Tier::Standard),
+            (TaskKind::ConversationTitle, "conversation_title", Tier::Light),
+            (TaskKind::TopicName, "topic_name", Tier::Light),
+            (TaskKind::ProfileSuggest, "profile_suggest", Tier::Light),
+        ];
+        for (kind, route, tier) in cases {
+            assert_eq!(kind.route(), route, "{kind:?}");
+            assert_eq!(kind.tier(), tier, "{kind:?}");
         }
     }
 

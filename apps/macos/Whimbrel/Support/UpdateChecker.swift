@@ -39,6 +39,15 @@ final class UpdateChecker: ObservableObject {
 
     @Published private(set) var downloadedUpdate: DownloadedUpdate?
 
+    /// The staged copy is gone from disk (the temp-dir cleaner reaped it): forget it, so
+    /// the next check downloads that version again instead of skipping it as staged.
+    func discardMissingStagedUpdate() {
+        guard let update = downloadedUpdate,
+              !FileManager.default.fileExists(atPath: update.appPath.path) else { return }
+        downloadedUpdate = nil
+        status = .idle
+    }
+
     private var periodicTask: Task<Void, Never>?
     private let manifestURL: URL
     private let currentVersion: String
@@ -47,8 +56,12 @@ final class UpdateChecker: ObservableObject {
 
     init(
         manifestURL: URL = URL(string: "https://updates.whimbrelapp.com/version.json")!,
-        currentVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        currentVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0",
+        fetchManifest: ManifestFetch? = nil,
+        downloader: Downloader? = nil
     ) {
+        self.fetchManifest = fetchManifest
+        self.downloader = downloader
         self.manifestURL = manifestURL
         self.currentVersion = currentVersion
     }
@@ -63,36 +76,89 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
+    /// Where the manual "Check for Updates" UI reads its state; background checks drive it too.
+    enum UpdateStatus: Equatable {
+        case idle, checking, upToDate(version: String), downloading(version: String), ready(version: String), failed
+    }
+
+    @Published private(set) var status: UpdateStatus = .idle
+
+    /// Test seams: nil means the real network fetch / download-unzip-verify.
+    typealias ManifestFetch = (URL) async -> Data?
+    typealias Downloader = (_ version: String, _ url: URL, _ sha256: String?) async -> DownloadedUpdate?
+    private let fetchManifest: ManifestFetch?
+    private let downloader: Downloader?
+
+    /// The check in progress, so a manual check during a background one (or two manual
+    /// ones) joins it instead of starting a second manifest fetch or download.
+    private var inFlight: Task<Void, Never>?
+
     func checkNow() async {
-        guard let (data, response) = try? await URLSession.shared.data(from: manifestURL),
-              let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
+        if let running = inFlight {
+            await running.value
+            return
+        }
+        let task = Task { await self.performCheck() }
+        inFlight = task
+        await task.value
+        inFlight = nil
+    }
+
+    private func performCheck() async {
+        status = .checking
+        let data: Data?
+        if let fetchManifest {
+            data = await fetchManifest(manifestURL)
+        } else if let (d, response) = try? await URLSession.shared.data(from: manifestURL),
+                  let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+            data = d
+        } else {
+            data = nil
+        }
+        guard let data,
               let check = CoreMemoryStore.checkUpdateManifest(json: data, currentVersion: currentVersion) else {
             log.log("checkNow: manifest fetch/decode failed, skipping this check")
+            status = .failed
             return
         }
         let manifest = check.manifest
 
         guard check.newer else {
             log.log("checkNow: remote \(manifest.version, privacy: .public) is not newer than local \(self.currentVersion, privacy: .public)")
+            status = .upToDate(version: currentVersion)
             return
         }
         guard Self.shouldDownload(remoteVersion: manifest.version, alreadyStagedVersion: downloadedUpdate?.version) else {
             log.log("checkNow: \(manifest.version, privacy: .public) already staged, skipping re-download")
+            status = .ready(version: manifest.version)
             return
         }
         guard let downloadURL = URL(string: manifest.url) else {
             log.log("checkNow: manifest url is not a valid URL: \(manifest.url, privacy: .public)")
+            status = .failed
             return
         }
 
-        await download(version: manifest.version, from: downloadURL, expectedSha256: manifest.sha256)
+        status = .downloading(version: manifest.version)
+        let staged: DownloadedUpdate?
+        if let downloader {
+            staged = await downloader(manifest.version, downloadURL, manifest.sha256)
+        } else {
+            staged = await download(version: manifest.version, from: downloadURL, expectedSha256: manifest.sha256)
+        }
+        if let staged {
+            downloadedUpdate = staged
+            status = .ready(version: staged.version)
+        } else {
+            status = .failed
+        }
     }
 
-    private func download(version: String, from url: URL, expectedSha256: String?) async {
+    private func download(version: String, from url: URL, expectedSha256: String?) async -> DownloadedUpdate? {
         guard let (tempZipURL, response) = try? await URLSession.shared.download(from: url),
               let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             log.log("download: failed to fetch \(url.absoluteString, privacy: .public)")
-            return
+            return nil
         }
 
         // ditto (unzipping a ~260MB bundle) and the spctl/codesign verification below are
@@ -141,10 +207,10 @@ final class UpdateChecker: ObservableObject {
             return appPath
         }.value
 
-        guard let appPath else { return }
+        guard let appPath else { return nil }
 
         log.log("download: staged \(version, privacy: .public) at \(appPath.path, privacy: .public)")
-        downloadedUpdate = DownloadedUpdate(version: version, appPath: appPath)
+        return DownloadedUpdate(version: version, appPath: appPath)
     }
 
     /// The updates bucket (server-updates/, published by release.sh) is a plain R2

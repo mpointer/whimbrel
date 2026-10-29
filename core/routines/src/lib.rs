@@ -473,6 +473,7 @@ mod tests {
             schedule_hhmm: schedule_hhmm.to_string(),
             enabled,
             auto_approve_write_actions: false,
+            model_pref: "default".to_string(),
             created_at_unix_ms: 0,
         }
     }
@@ -485,6 +486,7 @@ mod tests {
             schedule_hhmm: schedule_hhmm.to_string(),
             enabled,
             auto_approve_write_actions: false,
+            model_pref: "default".to_string(),
             created_at_unix_ms: 0,
         }
     }

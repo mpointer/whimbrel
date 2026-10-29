@@ -30,6 +30,7 @@ pub mod token;
 pub mod topics;
 
 mod sync_outbox;
+pub mod skin_sync;
 /// Outbox `row_type`/`connector` values. `row_type` must equal the `sync_row.row_type`
 /// the dispatcher writes, which is also `sync-engine::content`'s constant of the same
 /// name — the outbox `UNIQUE(device_id, local_seq, row_type)` mirrors that table's key.
@@ -37,6 +38,9 @@ pub const OUTBOX_ROW_TYPE_MEETING: &str = "meeting";
 pub const OUTBOX_ROW_TYPE_ROUTINE_RUN: &str = "routine_run";
 pub const OUTBOX_ROW_TYPE_MEETING_PREP: &str = "meeting_prep";
 pub const OUTBOX_ROW_TYPE_PROFILE_SUGGESTION: &str = "profile_suggestion";
+/// Skin sync (`skin_sync`): one row per version of a user skin, and its images in chunks.
+pub const OUTBOX_ROW_TYPE_SKIN: &str = "skin";
+pub const OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK: &str = "skin_image_chunk";
 /// Bounds applied to a routine run pulled from another device (see `apply_synced_routine_run`).
 const SYNCED_RUN_MAX_FUTURE_MS: i64 = 5 * 60 * 1000;
 const SYNCED_RUN_MAX_SUMMARY_CHARS: usize = 20_000;
@@ -887,6 +891,8 @@ pub struct Routine {
     pub schedule_hhmm: String,
     pub enabled: bool,
     pub auto_approve_write_actions: bool,
+    /// `default`, `cheapest`, or `<provider>/<model>`; see `set_routine_model_pref`.
+    pub model_pref: String,
     pub created_at_unix_ms: i64,
 }
 
@@ -1220,6 +1226,11 @@ impl Store {
 
     pub fn set_own_device_id(&self, device_id: &str) {
         *self.own_device_id.borrow_mut() = Some(device_id.to_string());
+    }
+
+    /// The device id `set_own_device_id` set, if any.
+    pub fn own_device_id(&self) -> Option<String> {
+        self.own_device_id.borrow().clone()
     }
 
     // Outbox lease/ack/release, exposed for `sync-engine`'s dispatcher (the free
@@ -1611,6 +1622,7 @@ impl Store {
                 schedule_hhmm TEXT NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 auto_approve_write_actions INTEGER NOT NULL DEFAULT 0,
+                model_pref TEXT NOT NULL DEFAULT 'default',
                 created_at_unix_ms INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS routine_run (
@@ -1681,6 +1693,7 @@ impl Store {
         Self::ensure_meeting_away_outcome_column(conn)?;
         Self::ensure_transcript_segment_local_seq_column(conn)?;
         Self::ensure_routine_auto_approve_column(conn)?;
+        Self::ensure_routine_model_pref_column(conn)?;
         Self::ensure_routine_run_pending_action_column(conn)?;
         Self::ensure_routine_run_sync_columns(conn)?;
         Self::ensure_embedding_schema_migrated(conn)?;
@@ -1690,6 +1703,7 @@ impl Store {
         prep::ensure_meeting_prep_table(conn)?;
         live::ensure_live_table(conn)?;
     profile::ensure_profile_suggestion_table(conn)?;
+        skin_sync::ensure_skin_sync_tables(conn)?;
         meeting_parts::ensure_meeting_part_schema(conn)?;
         Self::ensure_items_app_fields_columns(conn)?;
         Self::ensure_items_app_fields_backfilled(conn)?;
@@ -2200,6 +2214,22 @@ impl Store {
             .any(|c| c == "auto_approve_write_actions")
         {
             conn.execute("ALTER TABLE routine ADD COLUMN auto_approve_write_actions INTEGER NOT NULL DEFAULT 0", [])?;
+        }
+        Ok(())
+    }
+
+    /// Same as `ensure_routine_auto_approve_column`, for `routine.model_pref`: which
+    /// model chain a routine's runs use (`default`, `cheapest`, or `<provider>/<model>`;
+    /// `api::routing::RoutineModelPref` is the parser). Existing rows get `default`,
+    /// which is exactly the chain they ran on before the column existed.
+    fn ensure_routine_model_pref_column(conn: &Connection) -> rusqlite::Result<()> {
+        let existing_columns: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(routine)")?;
+            let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            names.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        if !existing_columns.iter().any(|c| c == "model_pref") {
+            conn.execute("ALTER TABLE routine ADD COLUMN model_pref TEXT NOT NULL DEFAULT 'default'", [])?;
         }
         Ok(())
     }
@@ -5648,6 +5678,30 @@ impl Store {
             .optional()
     }
 
+    /// The meeting and timestamp behind an `items` row of `kind` (`transcript` or
+    /// `snapshot`) — the id a citation carries. `Ok(None)` for a missing row.
+    pub fn get_meeting_item_ref(&self, item_id: i64, kind: &str) -> rusqlite::Result<Option<(i64, i64)>> {
+        self.conn
+            .query_row(
+                "SELECT thread_id, ts_unix_ms FROM items WHERE id = ?1 AND kind = ?2 AND thread_id IS NOT NULL",
+                params![item_id, kind],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+    }
+
+    /// One routine run by id, with its routine's name. `Ok(None)` for a missing run.
+    pub fn get_routine_run_with_name(&self, id: i64) -> rusqlite::Result<Option<RoutineRunWithName>> {
+        self.conn
+            .query_row(
+                "SELECT rr.id, rr.routine_id, r.name, rr.ran_at_unix_ms, rr.status, rr.output_summary, rr.output_json, rr.origin_device_id \
+                 FROM routine_run rr JOIN routine r ON r.id = rr.routine_id WHERE rr.id = ?1",
+                params![id],
+                Self::row_to_routine_run_with_name,
+            )
+            .optional()
+    }
+
     /// FR-MEM-4: hard-delete by time range (retention policy enforcement).
     pub fn delete_before(&self, cutoff_unix_ms: i64) -> rusqlite::Result<usize> {
         self.conn.execute(
@@ -7270,6 +7324,42 @@ impl Store {
     /// `sum_spend_cents(_, None)`, which sums across ALL identities (used for the
     /// app-wide circuit breaker) — this method is for the per-identity cap check when
     /// the identity in question genuinely IS "no identity," not "every identity."
+    /// Usage rows with `since_unix_ms <= ts < until_unix_ms`, newest first, at most
+    /// `limit`: the Model usage screen's list.
+    pub fn list_usage(&self, since_unix_ms: i64, until_unix_ms: i64, limit: usize) -> rusqlite::Result<Vec<UsageLogEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, user_id, provider, model, route, input_tokens, output_tokens, estimated_cost_cents, cache_hit, trace_id, ts_unix_ms \
+             FROM usage_log WHERE ts_unix_ms >= ?1 AND ts_unix_ms < ?2 ORDER BY ts_unix_ms DESC, id DESC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![since_unix_ms, until_unix_ms, limit as i64], |row| {
+            let cache_hit: i64 = row.get(8)?;
+            Ok(UsageLogEntry {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                provider: row.get(2)?,
+                model: row.get(3)?,
+                route: row.get(4)?,
+                input_tokens: row.get(5)?,
+                output_tokens: row.get(6)?,
+                estimated_cost_cents: row.get(7)?,
+                cache_hit: cache_hit != 0,
+                trace_id: row.get(9)?,
+                ts_unix_ms: row.get(10)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Spend at or after `since_unix_ms` summed per provider, as `(provider, cents)`
+    /// sorted by provider name: the "in the last 30 days you spent" line on each key row.
+    pub fn sum_spend_cents_by_provider(&self, since_unix_ms: i64) -> rusqlite::Result<Vec<(String, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT provider, COALESCE(SUM(estimated_cost_cents), 0) FROM usage_log WHERE ts_unix_ms >= ?1 GROUP BY provider ORDER BY provider",
+        )?;
+        let rows = stmt.query_map(params![since_unix_ms], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+
     pub fn sum_spend_cents_anonymous(&self, since_unix_ms: i64) -> rusqlite::Result<i64> {
         self.conn.query_row(
             "SELECT COALESCE(SUM(estimated_cost_cents), 0) FROM usage_log WHERE ts_unix_ms >= ?1 AND user_id IS NULL",
@@ -7541,11 +7631,35 @@ impl Store {
 
     pub fn list_routines(&self) -> rusqlite::Result<Vec<Routine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, template, schedule_hhmm, enabled, auto_approve_write_actions, created_at_unix_ms \
+            "SELECT id, name, template, schedule_hhmm, enabled, auto_approve_write_actions, created_at_unix_ms, model_pref \
              FROM routine ORDER BY created_at_unix_ms ASC",
         )?;
         let rows = stmt.query_map([], Self::row_to_routine)?;
         rows.collect()
+    }
+
+    /// Sets which model chain a routine's runs use. Accepts `default`, `cheapest`, or
+    /// `<provider>/<model>` with a known provider name; anything else is refused with
+    /// `InvalidParameterName`, so a shell bug can never store a value the runner would
+    /// silently read as `default`.
+    pub fn set_routine_model_pref(&self, id: i64, model_pref: &str) -> rusqlite::Result<()> {
+        let model_pref = model_pref.trim();
+        let valid = match model_pref {
+            "default" | "cheapest" => true,
+            _ => matches!(
+                model_pref.split_once('/'),
+                Some((provider, model))
+                    if matches!(provider, "ollama" | "anthropic" | "openai" | "google" | "openrouter") && !model.is_empty()
+            ),
+        };
+        if !valid {
+            return Err(rusqlite::Error::InvalidParameterName(format!("model_pref {model_pref:?}")));
+        }
+        self.conn.execute(
+            "UPDATE routine SET model_pref = ?1 WHERE id = ?2",
+            params![model_pref, id],
+        )?;
+        Ok(())
     }
 
     pub fn set_routine_enabled(&self, id: i64, enabled: bool) -> rusqlite::Result<()> {
@@ -7585,6 +7699,7 @@ impl Store {
             enabled: enabled_int != 0,
             auto_approve_write_actions: auto_approve_int != 0,
             created_at_unix_ms: row.get(6)?,
+            model_pref: row.get(7)?,
         })
     }
 
@@ -13907,6 +14022,48 @@ mod tests {
     }
 
     #[test]
+    fn routine_model_pref_defaults_round_trips_and_rejects_bad_values() {
+        let store = Store::open_in_memory().unwrap();
+        let id = store
+            .insert_routine(&NewRoutine { name: "Daily Brief".into(), template: RoutineTemplate::DailyBrief, schedule_hhmm: "08:30".into(), enabled: true })
+            .unwrap();
+        let pref = |store: &Store| store.list_routines().unwrap().into_iter().find(|r| r.id == id).unwrap().model_pref;
+        assert_eq!(pref(&store), "default");
+
+        for good in ["cheapest", "anthropic/claude-sonnet-5", "ollama/gemma4:12b", " default "] {
+            store.set_routine_model_pref(id, good).unwrap();
+            assert_eq!(pref(&store), good.trim());
+        }
+        for bad in ["", "cheap", "anthropic", "anthropic/", "venice/llama"] {
+            assert!(store.set_routine_model_pref(id, bad).is_err(), "{bad:?}");
+            assert_eq!(pref(&store), "default", "a refused value leaves the row alone");
+        }
+    }
+
+    #[test]
+    fn routine_model_pref_column_is_added_to_a_table_that_predates_it() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE routine (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                template TEXT NOT NULL,
+                schedule_hhmm TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                auto_approve_write_actions INTEGER NOT NULL DEFAULT 0,
+                created_at_unix_ms INTEGER NOT NULL
+            );
+            INSERT INTO routine (name, template, schedule_hhmm, enabled, created_at_unix_ms)
+            VALUES ('Daily Brief', 'daily_brief', '08:30', 1, 0);",
+        )
+        .unwrap();
+        Store::ensure_routine_model_pref_column(&conn).unwrap();
+        Store::ensure_routine_model_pref_column(&conn).unwrap();
+        let pref: String = conn.query_row("SELECT model_pref FROM routine", [], |r| r.get(0)).unwrap();
+        assert_eq!(pref, "default");
+    }
+
+    #[test]
     fn reply_priorities_template_round_trips_its_string_form() {
         assert_eq!(RoutineTemplate::ReplyPriorities.as_str(), "reply_priorities");
         assert_eq!(RoutineTemplate::from_str("reply_priorities"), Some(RoutineTemplate::ReplyPriorities));
@@ -19570,6 +19727,43 @@ mod tests {
             .unwrap();
         assert_eq!((kind.as_str(), local_seq, thread_id), ("snapshot", None, mid));
         assert!(store.search_items_keyword("Alice", 10).unwrap().contains(&items_id));
+    }
+
+    #[test]
+    fn get_meeting_item_ref_maps_snapshot_and_transcript_items_to_their_meeting() {
+        let store = Store::open_in_memory().unwrap();
+        let mid = snap_meeting(&store, 1000);
+        store.insert_meeting_snapshot(&snap(mid, 2000, "Org chart")).unwrap();
+        let hit = &store.search_snapshot_keyword_with_meeting_ts("Org", 10).unwrap()[0].0;
+        assert_eq!(store.get_meeting_item_ref(hit.id, "snapshot").unwrap(), Some((mid, 2000)));
+        // Wrong kind or unknown id is a clean miss.
+        assert_eq!(store.get_meeting_item_ref(hit.id, "transcript").unwrap(), None);
+        assert_eq!(store.get_meeting_item_ref(9999, "snapshot").unwrap(), None);
+    }
+
+    #[test]
+    fn get_routine_run_with_name_joins_the_routine() {
+        let store = Store::open_in_memory().unwrap();
+        let rid = store
+            .insert_routine(&NewRoutine {
+                name: "Morning digest".into(),
+                template: RoutineTemplate::DailyBrief,
+                schedule_hhmm: "08:00".into(),
+                enabled: true,
+            })
+            .unwrap();
+        let run = store
+            .insert_routine_run(&NewRoutineRun {
+                routine_id: rid,
+                ran_at_unix_ms: 5,
+                status: RunStatus::Success,
+                output_summary: "ok".into(),
+                output_json: "{}".into(),
+            })
+            .unwrap();
+        let got = store.get_routine_run_with_name(run).unwrap().unwrap();
+        assert_eq!((got.routine_name.as_str(), got.ran_at_unix_ms), ("Morning digest", 5));
+        assert!(store.get_routine_run_with_name(run + 1).unwrap().is_none());
     }
 
     #[test]

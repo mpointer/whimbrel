@@ -13,6 +13,22 @@ struct TestHostApp: App {
     var body: some Scene { Settings { EmptyView() } }
 }
 
+/// Whimbrel > Check for Updates…: runs the check, then opens Settings (General is its
+/// default pane) so the result is visible.
+struct UpdateCommands: Commands {
+    let appState: AppState
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                openSettings()
+                Task { await appState.updateChecker.checkNow() }
+            }
+        }
+    }
+}
+
 struct WhimbrelApp: App {
     @StateObject private var appState = AppState()
 
@@ -37,6 +53,7 @@ struct WhimbrelApp: App {
         }
         .windowResizability(.automatic)
         .commands {
+            UpdateCommands(appState: appState)
             CommandGroup(replacing: .newItem) {
                 Button("New Conversation") { appState.requestNewConversation() }
                     .keyboardShortcut("n")
@@ -44,6 +61,9 @@ struct WhimbrelApp: App {
             CommandGroup(after: .textEditing) {
                 Button("Search Library") { appState.requestLibrarySearch() }
                     .keyboardShortcut("f")
+            }
+            CommandGroup(after: .help) {
+                Button("Send Feedback…") { NSWorkspace.shared.open(Self.feedbackMailURL()) }
             }
             CommandMenu("Go") {
                 ForEach(Array(WhimbrelTab.allCases.enumerated()), id: \.element) { index, tab in
@@ -135,5 +155,24 @@ struct WhimbrelApp: App {
             ThemedRoot { SettingsView() }
                 .environmentObject(appState)
         }
+    }
+
+    /// Help > Send Feedback…: a new email to hello@whimbrelapp.com with the version, macOS
+    /// and Mac model filled in, so every report says what it ran on.
+    static func feedbackMailURL() -> URL {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let os = ProcessInfo.processInfo.operatingSystemVersionString
+        var size = 0
+        sysctlbyname("hw.model", nil, &size, nil, 0)
+        var model = [CChar](repeating: 0, count: max(size, 1))
+        sysctlbyname("hw.model", &model, &size, nil, 0)
+        var parts = URLComponents()
+        parts.scheme = "mailto"
+        parts.path = "hello@whimbrelapp.com"
+        parts.queryItems = [
+            URLQueryItem(name: "subject", value: "Whimbrel feedback (Mac \(version))"),
+            URLQueryItem(name: "body", value: "\n\n---\nWhimbrel \(version) · macOS \(os) · \(String(cString: model))"),
+        ]
+        return parts.url ?? URL(string: "mailto:hello@whimbrelapp.com")!
     }
 }

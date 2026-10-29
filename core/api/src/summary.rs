@@ -6,7 +6,7 @@
 use serde::{Serialize, Serializer};
 
 use crate::envelope::{ApiError, ApiResult};
-use crate::routing::{build_chain, RoutingConfig};
+use crate::routing::{build_chain_for, RoutingConfig};
 use crate::util::{log_usage_for, now_unix_ms};
 
 /// The two ways [`summarize_meeting_governed`] can fail, kept distinct so the chain loop
@@ -215,7 +215,7 @@ pub fn summarize_meeting(
         return Err(ApiError::SpendCap(cap_err));
     }
 
-    let chain = build_chain(ollama_model, routing);
+    let chain = build_chain_for(llm::TaskKind::MeetingSummary, ollama_model, routing);
     let mut result: Option<(llm::MeetingSummary, llm::Provider, String)> = None;
     let mut last_cap_error: Option<llm::SpendCapError> = None;
     for entry in &chain {

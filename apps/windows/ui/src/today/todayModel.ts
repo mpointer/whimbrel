@@ -87,6 +87,8 @@ export function greeting(name: string, now: Date): { kicker: string | null; titl
  */
 export function askAvailable(routing: RoutingSettings, keys: ProviderKey[]): boolean {
   if (routing.preferredProvider === "ollama") return true;
+  // OpenRouter also needs a picked model: without one, core adds no link for it.
+  if (routing.preferredProvider === "openrouter" && !routing.openrouterModel.trim()) return false;
   return !routing.localOnly && keys.some((k) => k.provider === routing.preferredProvider && !!k.masked);
 }
 
@@ -101,6 +103,8 @@ export function askModelLabel(routing: RoutingSettings): string {
       return routing.openaiModel;
     case "google":
       return routing.googleModel;
+    case "openrouter":
+      return routing.openrouterModel;
   }
 }
 

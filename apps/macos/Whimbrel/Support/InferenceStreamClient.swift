@@ -110,7 +110,7 @@ enum InferenceEvent: Decodable, Equatable {
 enum InferenceStreamClient {
     /// Providers the core has a streaming adapter for (docs/adr/0002; Gemini per #83).
     enum Provider: String {
-        case ollama, google, anthropic, openai
+        case ollama, google, anthropic, openai, openrouter
     }
 
     /// Starts a streaming run. Returns the new run's id, or nil on invalid input — which

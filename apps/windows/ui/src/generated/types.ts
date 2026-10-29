@@ -24,7 +24,7 @@ export type ActionView =
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "Provider".
  */
-export type Provider = "ollama" | "anthropic" | "openai" | "google";
+export type Provider = ("ollama" | "anthropic" | "openai" | "google") | "openrouter";
 /**
  * The LLM call sites that carry their own free-text instructions — the Mac's
  * `PromptSurface` (`PromptLibrarySettings.swift`). Stored under `prompts.<raw value>`,
@@ -174,6 +174,11 @@ export type CommandError =
 export type SpendScope = "user" | "global";
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "KeyCheckStatus".
+ */
+export type KeyCheckStatus = ("valid" | "other") | "refused" | "unreachable";
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "LibraryRow".
  */
 export type LibraryRow =
@@ -257,14 +262,20 @@ export interface ActionItemView {
  * via the `definition` "AiSettings".
  */
 export interface AiSettings {
+  /**
+   * The Brave Search key the skin maker finds images with, masked; `None` when unset.
+   */
+  imageSearchKey?: string | null;
   keys: ProviderKey[];
   prompts: PromptText[];
+  providers: ProviderInfoView[];
   routing: RoutingSettings;
   spend?: SpendView | null;
   /**
    * Extra instructions for every summary (`summary.customPromptInstructions`).
    */
   summaryInstructions: string;
+  usage?: UsageView | null;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -286,6 +297,37 @@ export interface PromptText {
   text: string;
 }
 /**
+ * One row of the key on-ramp table (core/api::providers): where to get a key, its data
+ * policy, what a key looks like, and the dated data-terms note where a free tier may
+ * use prompts.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ProviderInfoView".
+ */
+export interface ProviderInfoView {
+  /**
+   * The light-tier model; empty where the user picks it (OpenRouter) or there is none.
+   */
+  cheapModel: string;
+  dataTerms?: DataTermsView | null;
+  id: Provider;
+  keyPageUrl?: string | null;
+  keyPrefix?: string | null;
+  name: string;
+  policyUrl?: string | null;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "DataTermsView".
+ */
+export interface DataTermsView {
+  /**
+   * ISO date the policy page was last read.
+   */
+  checked: string;
+  text: string;
+}
+/**
  * Provider choice, default models and governance, as the Settings UI edits them.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -293,6 +335,11 @@ export interface PromptText {
  */
 export interface RoutingSettings {
   anthropicModel: string;
+  /**
+   * Light tasks (titles, topic names, profile suggestions) use the cheapest model the
+   * user has. On by default, matching core.
+   */
+  cheapFirst: boolean;
   globalDailyCapCents?: number | null;
   googleModel: string;
   /**
@@ -301,7 +348,17 @@ export interface RoutingSettings {
   localOnly: boolean;
   ollamaModel: string;
   openaiModel: string;
+  /**
+   * The OpenRouter pick, also the model light tasks use there. Empty means none yet:
+   * core then leaves OpenRouter out of every chain, because their catalogue changes
+   * weekly and there is no fallback model to substitute.
+   */
+  openrouterModel: string;
   preferredProvider: Provider;
+  /**
+   * Whether Ollama is a link in the chain at all; ignored in local-only mode. On by default.
+   */
+  useLocalModel: boolean;
   /**
    * `None` = the built-in default cap; `Some(0)` = no cap (Mac semantics).
    */
@@ -314,6 +371,26 @@ export interface RoutingSettings {
 export interface SpendView {
   globalCents: number;
   userCents: number;
+}
+/**
+ * Spend in cents for the Model usage section (core/api::usage::totals), UTC days.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "UsageView".
+ */
+export interface UsageView {
+  byProvider: ProviderSpendView[];
+  last30DaysCents: number;
+  monthToDateCents: number;
+  todayCents: number;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ProviderSpendView".
+ */
+export interface ProviderSpendView {
+  cents: number;
+  provider: string;
 }
 /**
  * What the alert window shows.
@@ -617,6 +694,23 @@ export interface ContextEntry {
   tsUnixMs?: number | null;
 }
 /**
+ * One message in a skin's chat, stored as `chat.json` in the skin's folder in the Mac's shape.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ChatLine".
+ */
+export interface ChatLine {
+  /**
+   * Seconds since 2001-01-01 UTC, as Swift's `JSONEncoder` writes a `Date`.
+   */
+  date: number;
+  /**
+   * `"user"` or `"whimbrel"`.
+   */
+  role: string;
+  text: string;
+}
+/**
  * The Ask composer's "X¢ / cap¢ today". Spend is the anonymous identity's, which is
  * what the user cap gates.
  *
@@ -834,6 +928,36 @@ export interface HostView {
   selected: string;
 }
 /**
+ * A found or made image waiting for approval (`llm::images::ImageCandidate`). A made one has a
+ * `generated:` url, and its bytes wait here until it is approved or rejected.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ImageCandidateView".
+ */
+export interface ImageCandidateView {
+  /**
+   * `"web"` or `"generated"`.
+   */
+  source: string;
+  thumbnailUrl: string;
+  title: string;
+  url: string;
+}
+/**
+ * What saving a key found out (core/api::hosted_models::validate_key).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "KeyCheckView".
+ */
+export interface KeyCheckView {
+  /**
+   * The one line the key row shows.
+   */
+  message: string;
+  models: string[];
+  status: KeyCheckStatus;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "MeetingRow".
  */
@@ -1036,6 +1160,19 @@ export interface MeetingSettings {
   prepLeadMinutes: number;
 }
 /**
+ * One entry of a routine's Model picker.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ModelOptionView".
+ */
+export interface ModelOptionView {
+  label: string;
+  /**
+   * The `model_pref` value this entry sets.
+   */
+  value: string;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "ModelStatus".
  */
@@ -1231,10 +1368,21 @@ export interface RoutineView {
    * Whether a write routine acts without a click. Off unless the user turned it on.
    */
   autoApprove: boolean;
+  /**
+   * Whether this routine's runs call a model through its own preference (daily brief,
+   * end-of-day recap, weekly digest). Reply Priorities calls none; Meeting Prep runs
+   * through the standard chain.
+   */
+  callsModel: boolean;
   enabled: boolean;
   id: number;
   kind: RoutineKind;
   lastRun?: RunView | null;
+  /**
+   * Which model chain the routine's runs use: `default`, `cheapest`, or `<provider>/<model>`
+   * (core `routine.model_pref`). Shown only where `calls_model` is true.
+   */
+  modelPref: string;
   name: string;
   /**
    * `HH:MM`, local time. Unused by Meeting Prep, which is event-driven.
@@ -1307,6 +1455,77 @@ export interface ScheduleView {
    * A meeting is recording now, so no row offers Start.
    */
   recording: boolean;
+}
+/**
+ * A chat line from an image action, and whether it was stored in the skin's chat.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SkinLine".
+ */
+export interface SkinLine {
+  stored: boolean;
+  text: string;
+}
+/**
+ * What the skin chat may use on this device. Chat follows Ask's rule on the preferred provider
+ * (`TodayComposer.askAvailable` on the Mac, so local-only mode blocks a hosted one); search and
+ * image generation are hosted, so local-only mode turns them off too. `provider` is the preferred
+ * provider, which the chat sends to (the page names it in its status line).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SkinSources".
+ */
+export interface SkinSources {
+  chat: boolean;
+  /**
+   * Making an image: needs an OpenAI or Google key.
+   */
+  generate: boolean;
+  provider: Provider;
+  /**
+   * A web image search: needs the image search key.
+   */
+  search: boolean;
+}
+/**
+ * What a turn did, for the page.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SkinTurnResult".
+ */
+export interface SkinTurnResult {
+  /**
+   * The skin whose chat the turn belongs to: the one saved, or the one asked about.
+   */
+  chatSkinId: string;
+  /**
+   * Images to make, likewise.
+   */
+  imagePrompts: string[];
+  /**
+   * Web searches to run for images, already limited to what this device may use and the request asked for.
+   */
+  imageQueries: string[];
+  /**
+   * `"new"`, `"refine"`, `"clarify"` or `"decline"`; `None` when the turn was stopped, so nothing changed.
+   */
+  intent?: string | null;
+  /**
+   * Whimbrel's chat lines for the turn, in order.
+   */
+  lines: string[];
+  /**
+   * The model's status lines, one per part of the skin.
+   */
+  notes: string[];
+  /**
+   * The skin saved, which the page switches to; `None` when nothing was saved.
+   */
+  savedSkinId?: string | null;
+  /**
+   * Whether the request and `lines` were stored in `chat_skin_id`'s chat.
+   */
+  stored: boolean;
 }
 /**
  * Settings → Meetings' snapshot rows. Local to this PC, never synced.
@@ -1513,6 +1732,25 @@ export interface TrayStatus {
    * When the recording meeting started, if one is recording.
    */
   recordingStartedUnixMs?: number | null;
+}
+/**
+ * One call as the Model usage list shows it (core/api::usage::UsageRow).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "UsageRowView".
+ */
+export interface UsageRowView {
+  estimatedCostCents: number;
+  inputTokens?: number | null;
+  /**
+   * A local call is not metered; the list says "local", never a zero.
+   */
+  local: boolean;
+  model: string;
+  outputTokens?: number | null;
+  provider: string;
+  task: string;
+  tsUnixMs: number;
 }
 /**
  * One meeting's workspace: what to show, and which parts the user has edited.

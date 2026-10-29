@@ -67,6 +67,33 @@ final class CoreMemoryStore {
         }
     }
 
+    /// CoreBridge.swift's `syncSettingsIteration`: one settings round trip, returning the
+    /// pulled delta (nil on any failure). Blocking network call; uses no store handle.
+    static func syncSettingsIteration(tursoURL: String, tursoToken: String, groupKeyBase64: String, localJSON: String) -> [String: PulledSettingsField]? {
+        guard let json = tursoURL.withCString({ url in
+            tursoToken.withCString { token in
+                groupKeyBase64.withCString { key in
+                    localJSON.withCString { local in whimbrel_sync_settings_iteration(url, token, key, local) }
+                }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        struct Iteration: Decodable { let pulled: [String: PulledSettingsField] }
+        return (try? JSONDecoder().decode(Iteration.self, from: Data(String(cString: json).utf8)))?.pulled
+    }
+
+    /// CoreBridge.swift's `syncSettingsApplyPlan` (pure): the pulled fields to apply.
+    static func syncSettingsApplyPlan(pulled: [String: PulledSettingsField], localTimestamps: [String: Int64], apiKeySyncEnabled: [String: Bool]) -> [PulledSettingsField]? {
+        let enc = JSONEncoder()
+        guard let p = (try? enc.encode(pulled)).flatMap({ String(data: $0, encoding: .utf8) }),
+              let t = (try? enc.encode(localTimestamps)).flatMap({ String(data: $0, encoding: .utf8) }),
+              let k = (try? enc.encode(apiKeySyncEnabled)).flatMap({ String(data: $0, encoding: .utf8) }) else { return nil }
+        guard let json = p.withCString({ pp in t.withCString { tt in k.withCString { kk in whimbrel_sync_settings_apply_plan(pp, tt, kk) } } }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        struct Plan: Decodable { let fields: [PulledSettingsField] }
+        return (try? JSONDecoder().decode(Plan.self, from: Data(String(cString: json).utf8)))?.fields
+    }
+
     /// How many entries the Mac's Meetings list shows for this store: the same call and
     /// limit as `MeetingsListView` (`recentMeetingsGrouped(limit: 200)`), so copies of one
     /// call count once. Nil on failure.
@@ -98,5 +125,83 @@ final class CoreMemoryStore {
         whimbrel_memory_complete_meeting(handle, id, startUnixMs + minutes * 60_000, nil)
     }
     #endif
+}
+
+/// The Ask calls (CoreBridge.swift's `prepareAsk`/`finalizeAsk`/`discardAsk`, minus the Mac
+/// types) and the citation cards for an answer.
+extension CoreMemoryStore: PhoneAskStore {
+    /// Same context limit as the Mac's Ask.
+    private static let askContextLimit = 5
+
+    func prepareAsk(query: String, historyJSON: String, routingJSON: String) -> PrepareResult {
+        guard let json = query.withCString({ q in
+            historyJSON.withCString { h in
+                routingJSON.withCString { r in whimbrel_llm_prepare_ask(handle, q, Self.askContextLimit, h, r) }
+            }
+        }) else { return .failed }
+        defer { whimbrel_core_free_string(json) }
+        struct Envelope: Decodable {
+            struct Data: Decodable {
+                let prepareId: String
+                let prompt: String
+                private enum CodingKeys: String, CodingKey { case prepareId = "prepare_id", prompt }
+            }
+            struct Failure: Decodable { let kind: String }
+            let ok: Bool
+            let data: Data?
+            let error: Failure?
+        }
+        guard let env = try? JSONDecoder().decode(Envelope.self, from: Data(String(cString: json).utf8)) else { return .failed }
+        if env.ok, let d = env.data { return .ok(prepareId: d.prepareId, prompt: d.prompt) }
+        return env.error?.kind == "spend_cap" ? .spendCap : .failed
+    }
+
+    /// Citations for a finished answer, as cards: nil only if the core call failed.
+    func finalizeAsk(prepareId: String, text: String, model: String, inputTokens: Int64, outputTokens: Int64) -> [CitationCard]? {
+        guard let json = prepareId.withCString({ p in
+            text.withCString { t in
+                model.withCString { m in whimbrel_llm_finalize_ask(handle, p, t, m, inputTokens, outputTokens) }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        struct Finalized: Decodable { let citations: [CitationRef] }
+        guard let refs = (try? JSONDecoder().decode(Finalized.self, from: Data(String(cString: json).utf8)))?.citations else { return nil }
+        return resolveCitations(refs)
+    }
+
+    func discardAsk(prepareId: String) {
+        prepareId.withCString { whimbrel_llm_discard_ask($0) }
+    }
+
+    func resolveCitations(_ refs: [CitationRef]) -> [CitationCard] {
+        guard !refs.isEmpty, let data = try? JSONEncoder().encode(refs), let refsJSON = String(data: data, encoding: .utf8),
+              let json = refsJSON.withCString({ whimbrel_citations_resolve(handle, $0) }) else { return [] }
+        defer { whimbrel_core_free_string(json) }
+        return (try? JSONDecoder().decode([CitationCard].self, from: Data(String(cString: json).utf8))) ?? []
+    }
+}
+/// A capture row as the phone shows it.
+struct PhoneCaptureItem: Decodable, Equatable {
+    let windowTitle: String
+    let appBundleId: String
+    let url: String?
+    let text: String
+
+    var title: String { windowTitle.isEmpty ? appBundleId : windowTitle }
+
+    private enum CodingKeys: String, CodingKey { case windowTitle = "window_title", appBundleId = "app_bundle_id", url, text }
+}
+
+/// Separate from `PhoneReadStore` so the screens' fakes needn't know about captures.
+protocol PhoneCaptureStore: AnyObject {
+    func captureItem(id: Int64) -> PhoneCaptureItem?
+}
+
+extension CoreMemoryStore: PhoneCaptureStore {
+    func captureItem(id: Int64) -> PhoneCaptureItem? {
+        guard let json = whimbrel_memory_get_capture_item(handle, id) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return try? JSONDecoder().decode(PhoneCaptureItem.self, from: Data(String(cString: json).utf8))
+    }
 }
 #endif

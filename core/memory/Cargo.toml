@@ -24,6 +24,8 @@ rand = "0.8"
 hex = "0.4"
 subtle = "2"
 sha2 = "0.10"
+# Skin image chunks on the wire (skin_sync.rs).
+base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-core = { version = "0.8", features = ["accelerate"] }

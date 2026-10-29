@@ -26,6 +26,20 @@ pub struct RoutingConfig {
     pub daily_digest_instructions: String,
     pub weekly_digest_instructions: String,
     pub profile: String,
+    /// Light tasks (titles, topic names, profile suggestions) use the cheapest model the
+    /// user has instead of the preferred one. Default on; off restores one chain for all.
+    pub cheap_first: bool,
+    /// Whether Ollama is a link at all. Off drops it from every chain except sensitive
+    /// mode, where local is the whole point. Default on, matching every existing install.
+    pub use_local_model: bool,
+    pub openrouter_key: Option<String>,
+    /// The user's OpenRouter model pick, also the light-tier model there. Empty means
+    /// none picked yet: OpenRouter is then left out of light chains, and out of the
+    /// standard chain too, since there is no fallback model to substitute.
+    pub openrouter_model: String,
+    /// Prices cached from OpenRouter's model list when the pick was made, keyed by model
+    /// id, cents per 1K input and output. Handed to `llm::set_price_overrides` on parse.
+    pub openrouter_prices: std::collections::HashMap<String, (f64, f64)>,
 }
 
 impl Default for RoutingConfig {
@@ -46,6 +60,11 @@ impl Default for RoutingConfig {
             daily_digest_instructions: String::new(),
             weekly_digest_instructions: String::new(),
             profile: String::new(),
+            cheap_first: true,
+            use_local_model: true,
+            openrouter_key: None,
+            openrouter_model: String::new(),
+            openrouter_prices: std::collections::HashMap::new(),
         }
     }
 }
@@ -68,6 +87,20 @@ impl RoutingConfig {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
             return default;
         };
+        let openrouter_prices: std::collections::HashMap<String, (f64, f64)> = v
+            .get("openrouter_prices")
+            .and_then(|x| x.as_object())
+            .map(|map| {
+                map.iter()
+                    .filter_map(|(model, price)| {
+                        let input = price.get("in")?.as_f64()?;
+                        let output = price.get("out")?.as_f64()?;
+                        Some((model.clone(), (input, output)))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        llm::set_price_overrides(openrouter_prices.clone());
         RoutingConfig {
             anthropic_key: v
                 .get("anthropic_key")
@@ -131,6 +164,25 @@ impl RoutingConfig {
                 .unwrap_or_default()
                 .trim()
                 .to_string(),
+            cheap_first: v
+                .get("cheap_first")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(default.cheap_first),
+            use_local_model: v
+                .get("use_local_model")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(default.use_local_model),
+            openrouter_key: v
+                .get("openrouter_key")
+                .and_then(|x| x.as_str())
+                .map(String::from),
+            openrouter_model: v
+                .get("openrouter_model")
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .map(String::from)
+                .unwrap_or_default(),
+            openrouter_prices,
         }
     }
 
@@ -156,18 +208,10 @@ impl RoutingConfig {
 /// (e.g. Anthropic picked but no Anthropic key saved) falls through to the default
 /// Ollama-first order instead of silently dropping a link.
 pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
-    let ollama_link = || llm::ChainLink {
-        provider: llm::Provider::Ollama,
-        model: ollama_model.to_string(),
-        client: Box::new(llm::OllamaClient::new(ollama_model)),
-    };
+    let ollama_link = || ollama_link(ollama_model);
     if routing.sensitive {
         return vec![ollama_link()];
     }
-
-    const FALLBACK_ANTHROPIC_MODEL: &str = "claude-haiku-4-5";
-    const FALLBACK_OPENAI_MODEL: &str = "gpt-4o-mini";
-    const FALLBACK_GOOGLE_MODEL: &str = "gemini-2.5-flash";
 
     let anthropic_model = if routing.preferred_provider == "anthropic" {
         routing.preferred_model.as_str()
@@ -185,24 +229,22 @@ pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Chai
         FALLBACK_GOOGLE_MODEL
     };
 
-    let mut ollama_slot = Some(ollama_link());
-    let mut anthropic_slot = routing.anthropic_key.clone().map(|key| llm::ChainLink {
-        provider: llm::Provider::Anthropic,
-        model: anthropic_model.to_string(),
-        client: Box::new(llm::AnthropicClient::new(key, anthropic_model)),
-    });
-    let mut openai_slot = routing.openai_key.clone().map(|key| llm::ChainLink {
-        provider: llm::Provider::OpenAI,
-        model: openai_model.to_string(),
-        client: Box::new(llm::OpenAIClient::new(key, openai_model)),
-    });
-    let mut google_slot = routing.google_key.clone().map(|key| llm::ChainLink {
-        provider: llm::Provider::Google,
-        model: google_model.to_string(),
-        client: Box::new(llm::GoogleClient::new(key, google_model)),
-    });
+    // OpenRouter has no hardcoded fallback model (their catalogue changes weekly), so
+    // its link exists only once the user has picked one; preferred or not, it is that
+    // model.
+    let openrouter_model = if routing.preferred_provider == "openrouter" && !routing.preferred_model.is_empty() {
+        routing.preferred_model.as_str()
+    } else {
+        routing.openrouter_model.as_str()
+    };
 
-    let mut chain = Vec::with_capacity(4);
+    let mut ollama_slot = routing.use_local_model.then(ollama_link);
+    let mut anthropic_slot = hosted_link(routing, llm::Provider::Anthropic, anthropic_model);
+    let mut openai_slot = hosted_link(routing, llm::Provider::OpenAI, openai_model);
+    let mut google_slot = hosted_link(routing, llm::Provider::Google, google_model);
+    let mut openrouter_slot = hosted_link(routing, llm::Provider::OpenRouter, openrouter_model);
+
+    let mut chain = Vec::with_capacity(5);
     match routing.preferred_provider.as_str() {
         "anthropic" => {
             if let Some(link) = anthropic_slot.take() {
@@ -216,6 +258,11 @@ pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Chai
         }
         "google" => {
             if let Some(link) = google_slot.take() {
+                chain.push(link);
+            }
+        }
+        "openrouter" => {
+            if let Some(link) = openrouter_slot.take() {
                 chain.push(link);
             }
         }
@@ -237,15 +284,344 @@ pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Chai
     if let Some(link) = google_slot.take() {
         chain.push(link);
     }
+    if let Some(link) = openrouter_slot.take() {
+        chain.push(link);
+    }
     chain
+}
+
+const FALLBACK_ANTHROPIC_MODEL: &str = "claude-haiku-4-5";
+const FALLBACK_OPENAI_MODEL: &str = "gpt-4o-mini";
+const FALLBACK_GOOGLE_MODEL: &str = "gemini-2.5-flash";
+
+/// The model each hosted provider's light link uses: the cheapest chat model in
+/// `llm::price_rank`'s table that the provider serves. If a provider's live model list
+/// no longer carries it, [`cheap_model_for`] falls back to the provider's fallback
+/// model, so a retired id never breaks light tasks.
+const CHEAP_ANTHROPIC_MODEL: &str = "claude-haiku-4-5";
+const CHEAP_OPENAI_MODEL: &str = "gpt-4o-mini";
+const CHEAP_GOOGLE_MODEL: &str = "gemini-2.0-flash";
+
+/// The hosted providers `build_chain` knows, in its default fallback order.
+const HOSTED_PROVIDERS: [llm::Provider; 4] =
+    [llm::Provider::Anthropic, llm::Provider::OpenAI, llm::Provider::Google, llm::Provider::OpenRouter];
+
+fn fallback_model(provider: llm::Provider) -> &'static str {
+    match provider {
+        llm::Provider::Anthropic => FALLBACK_ANTHROPIC_MODEL,
+        llm::Provider::OpenAI => FALLBACK_OPENAI_MODEL,
+        llm::Provider::Google => FALLBACK_GOOGLE_MODEL,
+        llm::Provider::Ollama | llm::Provider::OpenRouter => "",
+    }
+}
+
+/// The light-tier model for `provider`. `available` is the provider's live model list
+/// when the caller has one (the key screen fetches it on save); `None` trusts the
+/// constant. OpenRouter has no constant: its light model is the user's pick
+/// (`RoutingConfig::openrouter_model`), so this answers `""` for it.
+pub fn cheap_model_for(provider: llm::Provider, available: Option<&[String]>) -> &'static str {
+    let cheap = match provider {
+        llm::Provider::Anthropic => CHEAP_ANTHROPIC_MODEL,
+        llm::Provider::OpenAI => CHEAP_OPENAI_MODEL,
+        llm::Provider::Google => CHEAP_GOOGLE_MODEL,
+        llm::Provider::Ollama | llm::Provider::OpenRouter => return "",
+    };
+    match available {
+        Some(list) if !list.iter().any(|m| m == cheap) => fallback_model(provider),
+        _ => cheap,
+    }
+}
+
+/// The model `provider`'s light link runs: the cheap constant, or for OpenRouter the
+/// user's pick. Empty means no light link for that provider.
+fn light_model(routing: &RoutingConfig, provider: llm::Provider) -> &str {
+    match provider {
+        llm::Provider::OpenRouter => routing.openrouter_model.as_str(),
+        p => cheap_model_for(p, None),
+    }
+}
+
+fn ollama_link(ollama_model: &str) -> llm::ChainLink {
+    llm::ChainLink {
+        provider: llm::Provider::Ollama,
+        model: ollama_model.to_string(),
+        client: Box::new(llm::OllamaClient::new(ollama_model)),
+    }
+}
+
+/// A hosted link at `model`, or `None` when the user holds no key for `provider` or
+/// `model` is empty (OpenRouter before a pick).
+fn hosted_link(routing: &RoutingConfig, provider: llm::Provider, model: &str) -> Option<llm::ChainLink> {
+    if model.is_empty() {
+        return None;
+    }
+    let client: Box<dyn llm::LlmClient> = match provider {
+        llm::Provider::Anthropic => Box::new(llm::AnthropicClient::new(routing.anthropic_key.clone()?, model)),
+        llm::Provider::OpenAI => Box::new(llm::OpenAIClient::new(routing.openai_key.clone()?, model)),
+        llm::Provider::Google => Box::new(llm::GoogleClient::new(routing.google_key.clone()?, model)),
+        llm::Provider::OpenRouter => Box::new(llm::OpenAIClient::openrouter(routing.openrouter_key.clone()?, model)),
+        llm::Provider::Ollama => return None,
+    };
+    Some(llm::ChainLink { provider, model: model.to_string(), client })
+}
+
+/// The light chain: the local model first (when enabled), then every hosted provider
+/// the user holds a key for at its cheap model, cheapest first by `llm::price_rank`.
+fn build_light_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
+    let mut hosted: Vec<llm::ChainLink> = HOSTED_PROVIDERS
+        .iter()
+        .filter_map(|&p| hosted_link(routing, p, light_model(routing, p)))
+        .collect();
+    hosted.sort_by(|a, b| llm::price_rank(a.provider, &a.model).total_cmp(&llm::price_rank(b.provider, &b.model)));
+    let mut chain = Vec::with_capacity(hosted.len() + 1);
+    if routing.use_local_model {
+        chain.push(ollama_link(ollama_model));
+    }
+    chain.extend(hosted);
+    chain
+}
+
+/// The chain for one call of `task`: the light chain for light tasks when cheap-first
+/// is on, otherwise [`build_chain`]. Sensitive mode is Ollama-only for every task.
+pub fn build_chain_for(task: llm::TaskKind, ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
+    if routing.sensitive {
+        return vec![ollama_link(ollama_model)];
+    }
+    match task.tier() {
+        llm::Tier::Light if routing.cheap_first => build_light_chain(ollama_model, routing),
+        _ => build_chain(ollama_model, routing),
+    }
+}
+
+/// How one routine picks its model: today's chain, the light chain, or one provider and
+/// model pinned first. Stored on the `routine` row as `default`, `cheapest`, or
+/// `<provider>/<model>`; a value in any other shape is rejected at write time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoutineModelPref {
+    Default,
+    Cheapest,
+    Pinned { provider: llm::Provider, model: String },
+}
+
+impl RoutineModelPref {
+    /// A malformed stored value reads as `Default`, so an old row or a hand edit can
+    /// never stop a routine from running.
+    pub fn parse(raw: &str) -> Self {
+        Self::try_parse(raw).unwrap_or(Self::Default)
+    }
+
+    /// `None` for any value outside the three shapes.
+    pub fn try_parse(raw: &str) -> Option<Self> {
+        let raw = raw.trim();
+        match raw {
+            "default" => return Some(Self::Default),
+            "cheapest" => return Some(Self::Cheapest),
+            _ => {}
+        }
+        // OpenRouter model ids carry their own slash (`vendor/model`), so split on the
+        // first one only.
+        let (provider, model) = raw.split_once('/')?;
+        let provider = llm::Provider::parse(provider)?;
+        if model.is_empty() {
+            return None;
+        }
+        Some(Self::Pinned { provider, model: model.to_string() })
+    }
+
+    pub fn as_string(&self) -> String {
+        match self {
+            Self::Default => "default".to_string(),
+            Self::Cheapest => "cheapest".to_string(),
+            Self::Pinned { provider, model } => format!("{}/{}", provider.as_str(), model),
+        }
+    }
+}
+
+/// The chain for one routine run. `Pinned` puts that provider at that model first when
+/// its key exists (a pinned Ollama uses the pinned model instead of `ollama_model`) and
+/// the standard chain after it, minus the duplicate; a pinned provider with no key falls
+/// through to the standard chain, the way an unbuildable preferred provider does.
+pub fn build_chain_for_routine(pref: &RoutineModelPref, ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
+    if routing.sensitive {
+        return vec![ollama_link(ollama_model)];
+    }
+    match pref {
+        RoutineModelPref::Default => build_chain(ollama_model, routing),
+        RoutineModelPref::Cheapest if routing.cheap_first => build_light_chain(ollama_model, routing),
+        RoutineModelPref::Cheapest => build_chain(ollama_model, routing),
+        RoutineModelPref::Pinned { provider, model } => {
+            let pinned = match provider {
+                llm::Provider::Ollama => Some(ollama_link(model)),
+                p => hosted_link(routing, *p, model),
+            };
+            let Some(pinned) = pinned else {
+                return build_chain(ollama_model, routing);
+            };
+            let mut chain = vec![pinned];
+            chain.extend(build_chain(ollama_model, routing).into_iter().filter(|l| l.provider != *provider));
+            chain
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use llm::{Provider, TaskKind};
 
     fn providers(chain: &[llm::ChainLink]) -> Vec<llm::Provider> {
         chain.iter().map(|l| l.provider).collect()
+    }
+
+    fn all_keys() -> RoutingConfig {
+        RoutingConfig {
+            anthropic_key: Some("a".into()),
+            openai_key: Some("o".into()),
+            google_key: Some("g".into()),
+            ..RoutingConfig::default()
+        }
+    }
+
+    #[test]
+    fn from_json_reads_cheap_first_and_use_local_model_and_defaults_both_on() {
+        let r = RoutingConfig::from_json(None);
+        assert!(r.cheap_first && r.use_local_model);
+        let r = RoutingConfig::from_json(Some(r#"{"cheap_first":false,"use_local_model":false}"#));
+        assert!(!r.cheap_first && !r.use_local_model);
+        let r = RoutingConfig::from_json(Some(r#"{"cheap_first":"no","use_local_model":0}"#));
+        assert!(r.cheap_first && r.use_local_model, "a wrong-typed field degrades to its default");
+    }
+
+    #[test]
+    fn light_chain_is_ollama_then_hosted_cheap_models_by_price() {
+        let chain = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &all_keys());
+        assert_eq!(providers(&chain), vec![Provider::Ollama, Provider::Google, Provider::OpenAI, Provider::Anthropic]);
+        assert_eq!(chain[1].model, "gemini-2.0-flash");
+        assert_eq!(chain[2].model, "gpt-4o-mini");
+        assert_eq!(chain[3].model, "claude-haiku-4-5");
+    }
+
+    #[test]
+    fn light_chain_ignores_the_preferred_provider_and_skips_providers_without_a_key() {
+        let routing = RoutingConfig {
+            anthropic_key: Some("a".into()),
+            preferred_provider: "anthropic".into(),
+            preferred_model: "claude-opus-5".into(),
+            ..RoutingConfig::default()
+        };
+        let chain = build_chain_for(TaskKind::TopicName, "gemma4:12b", &routing);
+        assert_eq!(providers(&chain), vec![Provider::Ollama, Provider::Anthropic]);
+        assert_eq!(chain[1].model, "claude-haiku-4-5", "the cheap model, not the preferred one");
+    }
+
+    #[test]
+    fn standard_tasks_and_cheap_first_off_use_the_standard_chain() {
+        let routing = RoutingConfig { preferred_provider: "anthropic".into(), preferred_model: "claude-opus-5".into(), ..all_keys() };
+        let standard = build_chain_for(TaskKind::Chat, "gemma4:12b", &routing);
+        assert_eq!(providers(&standard), vec![Provider::Anthropic, Provider::Ollama, Provider::OpenAI, Provider::Google]);
+        assert_eq!(standard[0].model, "claude-opus-5");
+
+        let routing = RoutingConfig { cheap_first: false, ..routing };
+        let light_off = build_chain_for(TaskKind::ProfileSuggest, "gemma4:12b", &routing);
+        assert_eq!(providers(&light_off), providers(&standard));
+        assert_eq!(light_off[0].model, "claude-opus-5");
+    }
+
+    #[test]
+    fn sensitive_is_ollama_only_for_both_tiers_and_ignores_use_local_model() {
+        let routing = RoutingConfig { sensitive: true, use_local_model: false, ..all_keys() };
+        for task in [TaskKind::Chat, TaskKind::ConversationTitle] {
+            assert_eq!(providers(&build_chain_for(task, "gemma4:12b", &routing)), vec![Provider::Ollama]);
+        }
+        assert_eq!(
+            providers(&build_chain_for_routine(&RoutineModelPref::Cheapest, "gemma4:12b", &routing)),
+            vec![Provider::Ollama]
+        );
+    }
+
+    #[test]
+    fn use_local_model_off_drops_ollama_from_standard_and_light_chains() {
+        let routing = RoutingConfig { use_local_model: false, ..all_keys() };
+        assert_eq!(
+            providers(&build_chain("gemma4:12b", &routing)),
+            vec![Provider::Anthropic, Provider::OpenAI, Provider::Google]
+        );
+        assert_eq!(
+            providers(&build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing)),
+            vec![Provider::Google, Provider::OpenAI, Provider::Anthropic]
+        );
+        // No keys and no local model: an empty chain, which try_chain reports as a
+        // provider failure, the same as every other "nothing to call" case.
+        let routing = RoutingConfig { use_local_model: false, ..RoutingConfig::default() };
+        assert!(build_chain("gemma4:12b", &routing).is_empty());
+    }
+
+    #[test]
+    fn cheap_model_falls_back_when_the_live_list_lacks_it() {
+        assert_eq!(cheap_model_for(Provider::Google, None), "gemini-2.0-flash");
+        let live = vec!["gemini-2.5-flash".to_string(), "gemini-2.5-pro".to_string()];
+        assert_eq!(cheap_model_for(Provider::Google, Some(&live)), "gemini-2.5-flash");
+        let live = vec!["gemini-2.0-flash".to_string()];
+        assert_eq!(cheap_model_for(Provider::Google, Some(&live)), "gemini-2.0-flash");
+        assert_eq!(cheap_model_for(Provider::Ollama, None), "");
+    }
+
+    #[test]
+    fn routine_model_pref_parses_the_three_shapes_and_rejects_the_rest() {
+        assert_eq!(RoutineModelPref::try_parse("default"), Some(RoutineModelPref::Default));
+        assert_eq!(RoutineModelPref::try_parse(" cheapest "), Some(RoutineModelPref::Cheapest));
+        assert_eq!(
+            RoutineModelPref::try_parse("anthropic/claude-sonnet-5"),
+            Some(RoutineModelPref::Pinned { provider: Provider::Anthropic, model: "claude-sonnet-5".into() })
+        );
+        assert_eq!(
+            RoutineModelPref::try_parse("ollama/gemma4:12b"),
+            Some(RoutineModelPref::Pinned { provider: Provider::Ollama, model: "gemma4:12b".into() })
+        );
+        for bad in ["", "cheap", "anthropic", "anthropic/", "venice/llama", "default/x"] {
+            assert_eq!(RoutineModelPref::try_parse(bad), None, "{bad:?}");
+            assert_eq!(RoutineModelPref::parse(bad), RoutineModelPref::Default, "{bad:?}");
+        }
+        for pref in [
+            RoutineModelPref::Default,
+            RoutineModelPref::Cheapest,
+            RoutineModelPref::Pinned { provider: Provider::Google, model: "gemini-2.5-pro".into() },
+        ] {
+            assert_eq!(RoutineModelPref::try_parse(&pref.as_string()), Some(pref));
+        }
+    }
+
+    #[test]
+    fn routine_chain_follows_the_routine_preference() {
+        let routing = all_keys();
+        assert_eq!(
+            providers(&build_chain_for_routine(&RoutineModelPref::Default, "gemma4:12b", &routing)),
+            providers(&build_chain("gemma4:12b", &routing))
+        );
+        let cheapest = build_chain_for_routine(&RoutineModelPref::Cheapest, "gemma4:12b", &routing);
+        assert_eq!(providers(&cheapest), vec![Provider::Ollama, Provider::Google, Provider::OpenAI, Provider::Anthropic]);
+        assert_eq!(cheapest[1].model, "gemini-2.0-flash");
+
+        let pinned = RoutineModelPref::Pinned { provider: Provider::OpenAI, model: "gpt-4.1".into() };
+        let chain = build_chain_for_routine(&pinned, "gemma4:12b", &routing);
+        assert_eq!(providers(&chain), vec![Provider::OpenAI, Provider::Ollama, Provider::Anthropic, Provider::Google]);
+        assert_eq!(chain[0].model, "gpt-4.1");
+
+        let pinned_local = RoutineModelPref::Pinned { provider: Provider::Ollama, model: "llama3:8b".into() };
+        let chain = build_chain_for_routine(&pinned_local, "gemma4:12b", &routing);
+        assert_eq!(chain[0].provider, Provider::Ollama);
+        assert_eq!(chain[0].model, "llama3:8b");
+        assert_eq!(chain.iter().filter(|l| l.provider == Provider::Ollama).count(), 1);
+    }
+
+    #[test]
+    fn a_pinned_provider_without_a_key_falls_through_to_the_standard_chain() {
+        let routing = RoutingConfig { openai_key: Some("o".into()), ..RoutingConfig::default() };
+        let pinned = RoutineModelPref::Pinned { provider: Provider::Anthropic, model: "claude-sonnet-5".into() };
+        assert_eq!(
+            providers(&build_chain_for_routine(&pinned, "gemma4:12b", &routing)),
+            vec![Provider::Ollama, Provider::OpenAI]
+        );
     }
 
     #[test]
@@ -405,7 +781,74 @@ mod tests {
             daily_digest_instructions: String::new(),
             weekly_digest_instructions: String::new(),
             profile: String::new(),
+            cheap_first: true,
+            use_local_model: true,
+            openrouter_key: None,
+            openrouter_model: String::new(),
+            openrouter_prices: Default::default(),
         }
+    }
+
+    #[test]
+    fn from_json_reads_openrouter_fields_and_hands_prices_to_the_llm_table() {
+        let r = RoutingConfig::from_json(Some(
+            r#"{"openrouter_key":"sk-or-1","openrouter_model":" vendor/model ","openrouter_prices":{"vendor/parsed-model":{"in":0.01,"out":0.02},"bad":{"in":"x"}}}"#,
+        ));
+        assert_eq!(r.openrouter_key.as_deref(), Some("sk-or-1"));
+        assert_eq!(r.openrouter_model, "vendor/model");
+        assert_eq!(r.openrouter_prices.get("vendor/parsed-model"), Some(&(0.01, 0.02)));
+        assert!(!r.openrouter_prices.contains_key("bad"), "a malformed price entry is dropped, not the config");
+        assert!((llm::price_rank(llm::Provider::OpenRouter, "vendor/parsed-model") - 0.03).abs() < 1e-9);
+        let r = RoutingConfig::from_json(Some("{}"));
+        assert!(r.openrouter_key.is_none() && r.openrouter_model.is_empty() && r.openrouter_prices.is_empty());
+    }
+
+    #[test]
+    fn openrouter_is_last_by_default_first_when_preferred_and_absent_without_a_model() {
+        let routing = RoutingConfig { openrouter_key: Some("or".into()), openrouter_model: "vendor/model".into(), ..all_keys() };
+        let chain = build_chain("gemma4:12b", &routing);
+        assert_eq!(
+            providers(&chain),
+            vec![Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google, Provider::OpenRouter]
+        );
+        assert_eq!(chain[4].model, "vendor/model");
+
+        let routing = RoutingConfig { preferred_provider: "openrouter".into(), preferred_model: "vendor/big".into(), ..routing };
+        let chain = build_chain("gemma4:12b", &routing);
+        assert_eq!(chain[0].provider, Provider::OpenRouter);
+        assert_eq!(chain[0].model, "vendor/big");
+        assert_eq!(chain.len(), 5);
+
+        // A key with no pick yet: no link anywhere, preferred or not.
+        let routing = RoutingConfig { openrouter_key: Some("or".into()), openrouter_model: String::new(), ..all_keys() };
+        assert!(!providers(&build_chain("gemma4:12b", &routing)).contains(&Provider::OpenRouter));
+        assert!(!providers(&build_chain_for(TaskKind::TopicName, "gemma4:12b", &routing)).contains(&Provider::OpenRouter));
+        let routing = RoutingConfig { preferred_provider: "openrouter".into(), ..routing };
+        assert_eq!(build_chain("gemma4:12b", &routing)[0].provider, Provider::Ollama);
+    }
+
+    #[test]
+    fn light_chain_places_openrouter_by_its_cached_price_and_free_models_first() {
+        let routing = RoutingConfig {
+            openrouter_key: Some("or".into()),
+            openrouter_model: "vendor/model:free".into(),
+            ..all_keys()
+        };
+        let chain = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing);
+        assert_eq!(providers(&chain)[..2], [Provider::Ollama, Provider::OpenRouter]);
+
+        let routing = RoutingConfig {
+            openrouter_model: "vendor/pricey".into(),
+            openrouter_prices: [("vendor/pricey".to_string(), (1.0, 5.0))].into_iter().collect(),
+            ..routing
+        };
+        llm::set_price_overrides(routing.openrouter_prices.clone());
+        let chain = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing);
+        assert_eq!(chain.last().unwrap().provider, Provider::OpenRouter);
+
+        let pinned = RoutineModelPref::try_parse("openrouter/vendor/model:free").unwrap();
+        assert_eq!(pinned, RoutineModelPref::Pinned { provider: Provider::OpenRouter, model: "vendor/model:free".into() });
+        assert_eq!(pinned.as_string(), "openrouter/vendor/model:free");
     }
 
     /// Sub-project 2: `preferred_provider`/`preferred_model` reorder the chain instead

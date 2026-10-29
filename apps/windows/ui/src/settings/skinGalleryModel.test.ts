@@ -2,7 +2,20 @@ import { afterEach, describe, expect, it } from "vitest";
 import { chooseSkin, DEFAULT_SELECTION, readSelection, setInstalledSkins, type Selection, type SkinDto, type SkinManifest, type SkinPalette } from "../skin";
 import { fakeWindow } from "../testWindow";
 import { THEMES } from "../themes";
-import { galleryState, GALLERY_FOOTNOTE, lockedCaption, orderedSkins, pickCard, pickPalette, swatchColors } from "./skinGalleryModel";
+import {
+  actionsEnabled,
+  afterDelete,
+  afterImport,
+  cardElementId,
+  deletePrompt,
+  galleryState,
+  GALLERY_FOOTNOTE,
+  lockedCaption,
+  orderedSkins,
+  pickCard,
+  pickPalette,
+  swatchColors,
+} from "./skinGalleryModel";
 
 const manifests = Object.values(import.meta.glob("../../../../../skins/*.json", { import: "default", eager: true }) as Record<string, SkinManifest>).filter((m) =>
   Array.isArray(m.palettes),
@@ -101,5 +114,29 @@ describe("the gallery", () => {
 
   it("states that each PC keeps its own skin", () => {
     expect(GALLERY_FOOTNOTE).toBe("Each PC keeps its own skin.");
+  });
+});
+
+describe("managing your skins", () => {
+  it("actions disabled while a turn runs", () => {
+    expect(actionsEnabled(true)).toBe(false);
+    expect(actionsEnabled(false)).toBe(true);
+  });
+
+  it("delete selected falls back to whimbrel", () => {
+    const showing: Selection = { skinId: "user-a-1", paletteId: "user-a-1-p1", appearance: "dark" };
+    expect(afterDelete(showing, "user-a-1")).toEqual({ skinId: "whimbrel", paletteId: "default", appearance: "dark" });
+    // Deleting another skin leaves the selection alone.
+    expect(afterDelete(showing, "user-b-1")).toBe(showing);
+  });
+
+  it("import selects nothing and scrolls to card", () => {
+    const showing: Selection = { skinId: "game-day", paletteId: "game-day", appearance: "system" };
+    expect(afterImport(showing, "user-imported-1")).toEqual({ selection: showing, scrollTo: "skin-card-user-imported-1" });
+    expect(cardElementId("user-a-1")).toBe("skin-card-user-a-1");
+  });
+
+  it("asks before deleting, saying what goes with it", () => {
+    expect(deletePrompt("Stadium")).toBe("Delete \u201CStadium\u201D? Its chat and earlier versions go too.");
   });
 });

@@ -178,7 +178,10 @@ describe("the Ask composer", () => {
     localOnly: false,
     ollamaModel: "gemma-local",
     openaiModel: "gpt-mini",
+    openrouterModel: "",
     preferredProvider: "ollama",
+    cheapFirst: true,
+    useLocalModel: true,
     ...over,
   });
   const keys = (...saved: ProviderKey["provider"][]): ProviderKey[] =>

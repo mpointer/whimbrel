@@ -83,12 +83,7 @@ extension SkinChatAccess {
         provider = selection.provider
         model = selection.provider == .ollama ? selection.ollamaModel : selection.hostedModel
         localOnly = routing.localOnlyMode
-        switch selection.provider {
-        case .ollama: hasKey = true
-        case .anthropic: hasKey = routing.hasAnthropicKey
-        case .openai: hasKey = routing.hasOpenAIKey
-        case .google: hasKey = routing.hasGoogleKey
-        }
+        hasKey = routing.hasKey(for: selection.provider) && (selection.provider != .openrouter || !routing.openrouterDefaultModel.isEmpty)
         hasSearchKey = KeychainService.exists(for: .imageSearch)
         hasImageKey = routing.hasOpenAIKey || routing.hasGoogleKey
     }
@@ -136,6 +131,7 @@ struct CoreSkinTurnBackend: SkinTurnBackend {
         case .anthropic: key = config.anthropicKey
         case .openai: key = config.openaiKey
         case .google: key = config.googleKey
+        case .openrouter: key = config.openrouterKey
         }
         let dbPath = dbPath
         return try await Self.offPool {

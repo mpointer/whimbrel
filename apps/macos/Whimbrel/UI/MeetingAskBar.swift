@@ -288,6 +288,7 @@ struct MeetingAskBar: View {
             case .google: return hosted(.google, .google)
             case .anthropic: return hosted(.anthropic, .anthropic)
             case .openai: return hosted(.openai, .openai)
+            case .openrouter: return model.isEmpty ? nil : hosted(.openrouter, .openrouter)
             }
         }()
         let noRouteMessage = appState.routing.localOnlyMode

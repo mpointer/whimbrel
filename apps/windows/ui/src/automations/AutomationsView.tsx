@@ -3,19 +3,22 @@ import {
   approvalApprove,
   approvalReject,
   approvalsList,
+  routineModelOptions,
   routineRuns,
   routinesHost,
   routinesSetHost,
   routineSetAutoApprove,
   routineSetEnabled,
+  routineSetModelPref,
   routineSetSchedule,
   routinesList,
 } from "../api";
 import { describeError, isCommandError } from "../errors";
-import type { ApprovalView, HostView, RoutineView, RunView } from "../generated/types";
+import type { ApprovalView, HostView, ModelOptionView, RoutineView, RunView } from "../generated/types";
 import {
   DESCRIPTIONS,
   HOST_ANY,
+  MODEL_PICKER_NOTE,
   NO_APPROVALS,
   NO_OTHER_DEVICES,
   NO_ROUTINES,
@@ -27,8 +30,10 @@ import {
   canApprove,
   canChooseHost,
   canToggle,
+  hasModelPicker,
   hasSchedule,
   lastRunLine,
+  modelPrefValue,
   needsAccountPicker,
   outcomeLabel,
   runHeading,
@@ -50,6 +55,7 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
   const [runs, setRuns] = useState<RunView[]>([]);
   const [approvals, setApprovals] = useState<ApprovalView[]>([]);
   const [host, setHost] = useState<HostView | null>(null);
+  const [modelOptions, setModelOptions] = useState<ModelOptionView[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [working, setWorking] = useState<number | null>(null);
   const [open, setOpen] = useState<number | null>(null);
@@ -64,12 +70,13 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
   );
 
   const refresh = useCallback(() => {
-    Promise.all([routinesList(), routineRuns(), approvalsList(), routinesHost()]).then(
-      ([list, history, waiting, chosen]) => {
+    Promise.all([routinesList(), routineRuns(), approvalsList(), routinesHost(), routineModelOptions()]).then(
+      ([list, history, waiting, chosen, options]) => {
         setRoutines(list);
         setRuns(history);
         showApprovals(waiting);
         setHost(chosen);
+        setModelOptions(options);
       },
       (e: unknown) => setError(message(e)),
     );
@@ -181,9 +188,11 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
               <RoutineRow
                 key={r.id}
                 routine={r}
+                modelOptions={modelOptions}
                 onToggle={(enabled) => void change(routineSetEnabled(r.id, enabled))}
                 onSchedule={(schedule) => void change(routineSetSchedule(r.id, schedule))}
                 onAutoApprove={(enabled) => void change(routineSetAutoApprove(r.id, enabled))}
+                onModelPref={(pref) => void change(routineSetModelPref(r.id, pref))}
               />
             ))}
           </ul>
@@ -265,11 +274,13 @@ function ApprovalRow(props: { approval: ApprovalView; busy: boolean; onApprove: 
 
 function RoutineRow(props: {
   routine: RoutineView;
+  modelOptions: ModelOptionView[];
   onToggle: (enabled: boolean) => void;
   onSchedule: (schedule: string) => void;
   onAutoApprove: (enabled: boolean) => void;
+  onModelPref: (pref: string) => void;
 }) {
-  const { routine } = props;
+  const { routine, modelOptions } = props;
   const [time, setTime] = useState(routine.schedule);
   useEffect(() => setTime(routine.schedule), [routine.schedule]);
   const note = unavailableNote(routine);
@@ -293,6 +304,24 @@ function RoutineRow(props: {
           </>
         )}
         <p className="muted small">{lastRunLine(routine)}</p>
+        {hasModelPicker(routine) && modelOptions.length > 0 && (
+          <label className="field">
+            <span>Model</span>
+            <select
+              className="input"
+              aria-label={`${routine.name} model`}
+              value={modelPrefValue(routine, modelOptions)}
+              onChange={(e) => props.onModelPref(e.target.value)}
+            >
+              {modelOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <span className="muted small">{MODEL_PICKER_NOTE}</span>
+          </label>
+        )}
       </div>
       {hasSchedule(routine) && (
         <label className="field routine-time">

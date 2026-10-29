@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::envelope::{ApiError, ApiResult};
-use crate::routing::{build_chain, RoutingConfig};
+use crate::routing::{build_chain_for, RoutingConfig};
 use crate::util::log_usage_for;
 
 pub use memory::topics::read::{
@@ -134,7 +134,7 @@ fn chain_for(routing: &RoutingConfig, ollama_model: Option<&str>) -> Vec<llm::Ch
     if routing.sensitive && model.is_empty() {
         return vec![];
     }
-    build_chain(model, routing)
+    build_chain_for(llm::TaskKind::TopicName, model, routing)
 }
 
 pub fn run_naming_batch(

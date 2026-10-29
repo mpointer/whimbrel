@@ -111,8 +111,12 @@ pub fn export(store: &UserSkinStore, skin_id: &str) -> Result<Vec<u8>, PackageEr
     }
 
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let dir_options = SimpleFileOptions::default().unix_permissions(0o755);
+    // Unix host on every platform: zip 9 marks Windows-written entries DOS, which drops the modes.
+    let dir_options = SimpleFileOptions::default()
+        .system(zip::System::Unix)
+        .unix_permissions(0o755);
     let file_options = SimpleFileOptions::default()
+        .system(zip::System::Unix)
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(0o644);
     let io = |_| PackageError::Unreadable;
@@ -196,7 +200,10 @@ fn read_package(bytes: &[u8], deadline: Instant) -> Result<Package, PackageError
         let entry = archive
             .by_index_raw(i)
             .map_err(|_| PackageError::Unreadable)?;
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|_| PackageError::Unreadable)?
+            .to_string();
         if !seen.insert(name.clone()) {
             return Err(PackageError::Unreadable);
         }

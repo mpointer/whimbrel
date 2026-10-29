@@ -70,11 +70,77 @@ struct RoutinesSettingsPane: View {
                             .frame(width: 80)
                         }
                     }
+
+                    if Self.callsAModel(routine) {
+                        modelPicker(for: routine)
+                    }
                 }
                 Divider().overlay(Color.whimbrelBorder)
             }
         }
         .onAppear { refresh() }
+    }
+
+    /// Which model chain this routine's runs use (core `routine.model_pref`): the chain
+    /// the user's default provider gives, the cheapest model they have, or one provider's
+    /// default model pinned first. The Model usage section in AI settings shows which model
+    /// each run used, so a routine set to Cheapest can be judged on a week of output.
+    private func modelPicker(for routine: CoreRoutine) -> some View {
+        let options = Self.modelPrefOptions(routing: appState.routing)
+        let current = options.contains { $0.value == routine.modelPref } ? routine.modelPref : "default"
+        return HStack {
+            Text("Model")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+            Picker("", selection: Binding(
+                get: { current },
+                set: { newValue in setModelPref(routine, newValue) }
+            )) {
+                ForEach(options, id: \.value) { Text($0.label).tag($0.value) }
+            }
+            .labelsHidden()
+            .frame(width: 260)
+            .accessibilityIdentifier("routine-model-\(routine.template)")
+        }
+    }
+
+    struct ModelPrefOption: Equatable {
+        let value: String
+        let label: String
+    }
+
+    /// Default, Cheapest, then one entry per provider the user can actually run: Ollama
+    /// with its default model, and each hosted provider that has a key, at that
+    /// provider's default model.
+    @MainActor
+    static func modelPrefOptions(routing: RoutingSettings) -> [ModelPrefOption] {
+        var options = [
+            ModelPrefOption(value: "default", label: "Default (\(routing.preferredProvider.displayName))"),
+            ModelPrefOption(value: "cheapest", label: "Cheapest model you have"),
+        ]
+        if !routing.ollamaDefaultModel.isEmpty {
+            options.append(ModelPrefOption(value: "ollama/\(routing.ollamaDefaultModel)", label: "Ollama (\(routing.ollamaDefaultModel))"))
+        }
+        if routing.hasAnthropicKey {
+            options.append(ModelPrefOption(value: "anthropic/\(routing.anthropicDefaultModel)", label: "Anthropic (\(routing.anthropicDefaultModel))"))
+        }
+        if routing.hasOpenAIKey {
+            options.append(ModelPrefOption(value: "openai/\(routing.openaiDefaultModel)", label: "OpenAI (\(routing.openaiDefaultModel))"))
+        }
+        if routing.hasGoogleKey {
+            options.append(ModelPrefOption(value: "google/\(routing.googleDefaultModel)", label: "Google (\(routing.googleDefaultModel))"))
+        }
+        if routing.hasOpenRouterKey, !routing.openrouterDefaultModel.isEmpty {
+            options.append(ModelPrefOption(value: "openrouter/\(routing.openrouterDefaultModel)", label: "OpenRouter (\(routing.openrouterDefaultModel))"))
+        }
+        return options
+    }
+
+    /// Templates whose runs call a model through the routine's own preference. Reply
+    /// Priorities makes no model call, Meeting Prep runs through `api::meeting_prep` with
+    /// the standard chain, and Away follow-up only files drafts.
+    static func callsAModel(_ routine: CoreRoutine) -> Bool {
+        routine.template == "daily_brief" || routine.template == "eod_recap" || routine.template == "weekly_digest"
     }
 
     /// Which device runs routines. Empty = every device runs its own (the default). Finished runs from
@@ -127,6 +193,15 @@ struct RoutinesSettingsPane: View {
         CoreMemoryStore.accessQueue.async {
             _ = store.updateRoutineSchedule(id: routine.id, scheduleHhmm: scheduleHhmm)
             RoutineSyncFields.noteLocalChange(template: routine.template, field: .schedule)
+            DispatchQueue.main.async { refresh() }
+        }
+    }
+
+    private func setModelPref(_ routine: CoreRoutine, _ pref: String) {
+        guard let store = appState.coreStore else { return }
+        CoreMemoryStore.accessQueue.async {
+            _ = store.setRoutineModelPref(id: routine.id, pref: pref)
+            RoutineSyncFields.noteLocalChange(template: routine.template, field: .modelPref)
             DispatchQueue.main.async { refresh() }
         }
     }

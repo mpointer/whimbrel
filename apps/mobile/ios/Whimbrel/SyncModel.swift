@@ -39,6 +39,19 @@ extension CoreMemoryStore: MeetingSyncStore {
     func lastSyncError() -> String? { Self.lastSyncContentError() }
 }
 
+/// The core's settings calls. They use no store handle, so a round trip never holds the
+/// store queue.
+struct CoreSettingsPuller: SettingsPulling {
+    func iterate(credentials: SyncCredentials, localJSON: String) -> [String: PulledSettingsField]? {
+        CoreMemoryStore.syncSettingsIteration(tursoURL: credentials.tursoDatabaseUrl, tursoToken: credentials.tursoToken,
+                                              groupKeyBase64: credentials.groupKeyBase64, localJSON: localJSON)
+    }
+
+    func applyPlan(pulled: [String: PulledSettingsField], localTimestamps: [String: Int64], apiKeySyncEnabled: [String: Bool]) -> [PulledSettingsField]? {
+        CoreMemoryStore.syncSettingsApplyPlan(pulled: pulled, localTimestamps: localTimestamps, apiKeySyncEnabled: apiKeySyncEnabled)
+    }
+}
+
 /// The phone's pull-only content sync (docs/15-mobile-app-design.md §5.1): once approved
 /// and in the foreground, pulls now and then every minute, backing off on failures like
 /// the Mac's `ContentSyncCoordinator`, and shows the synced meeting count. No background
@@ -64,6 +77,8 @@ final class SyncModel: ObservableObject {
     /// A reset asked for while a round was in flight: runs when that round ends.
     private var pendingReset: (() -> Void)?
     private weak var credentials: SyncCredentialSource?
+    /// Set by the app; nil (tests) skips the settings pull.
+    var settingsPuller: SettingsPulling?
     private let sleep: (UInt64) async throws -> Void
     private let queue = DispatchQueue(label: "com.mpointer.kestrel.mobile.store", qos: .userInitiated)
     private let log = Logger(subsystem: "com.mpointer.kestrel.mobile", category: "content-sync")
@@ -159,6 +174,7 @@ final class SyncModel: ObservableObject {
         if meetingCount == nil { meetingCount = await run(store) { $0.groupedMeetingCount() } }
 
         await credentials?.renewIfDue(afterFailure: false, force: manual)
+        let wipeEpoch = PhoneSettingsSync.currentWipeEpoch
         guard let current = credentials?.syncCredentials() else {
             consecutiveFailures += 1
             lastError = "Couldn't reach the server. Will retry automatically."
@@ -171,6 +187,13 @@ final class SyncModel: ObservableObject {
             lastSyncedAt = Date()
             readRevision += 1
             meetingCount = await run(store) { $0.groupedMeetingCount() } ?? meetingCount
+            // Keys and routing for Ask: off the store queue and the main actor (a network round
+            // trip). Never fails the round.
+            if let puller = settingsPuller {
+                await Task.detached(priority: .utility) {
+                    PhoneSettingsSync(puller: puller, defaults: .standard, keys: PhoneKeyStore()).pullOnce(credentials: current, epoch: wipeEpoch)
+                }.value
+            }
         } else {
             consecutiveFailures += 1
             // The core's cause can name the database host: private in the log, never shown.

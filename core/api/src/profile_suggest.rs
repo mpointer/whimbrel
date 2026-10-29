@@ -2,7 +2,7 @@
 //! day's meeting summaries. The user adds or dismisses each; nothing is added silently.
 //! See docs/superpowers/specs/2026-10-06-profile-design.md.
 
-use crate::routing::{build_chain, RoutingConfig};
+use crate::routing::{build_chain_for, RoutingConfig};
 use crate::routine_runs::RunGate;
 
 const MAX_SUGGESTIONS: usize = 5;
@@ -93,7 +93,7 @@ pub fn run(
     let day_end = day_start + 24 * 60 * 60 * 1000;
     let routing = prepared_routing(routing);
     let cap_config = routing.spend_cap_config();
-    let chain = build_chain(ollama_model, &routing);
+    let chain = build_chain_for(llm::TaskKind::ProfileSuggest, ollama_model, &routing);
     let mut complete = |prompt: &str| -> Option<String> {
         if llm::check_spend_cap(store, &cap_config, None, Some("profile_suggest"), now_unix_ms).is_err() {
             return None;

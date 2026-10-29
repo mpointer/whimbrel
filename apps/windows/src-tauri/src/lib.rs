@@ -26,6 +26,8 @@ pub mod retention;
 pub mod routines;
 pub mod secrets;
 pub mod settings;
+pub mod skin_maker;
+pub mod skin_sync;
 pub mod state;
 pub mod store_actor;
 pub mod syncing;

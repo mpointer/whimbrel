@@ -14,8 +14,10 @@ import {
   canToggle,
   formatRange,
   formatWhen,
+  hasModelPicker,
   hasSchedule,
   lastRunLine,
+  modelPrefValue,
   needsAccountPicker,
   outcomeLabel,
   runHeading,
@@ -34,7 +36,29 @@ const routine = (over: Partial<RoutineView> = {}): RoutineView => ({
   autoApprove: false,
   unavailable: null,
   lastRun: null,
+  modelPref: "default",
+  callsModel: true,
   ...over,
+});
+
+describe("model picker", () => {
+  const options = [
+    { value: "default", label: "Default (Ollama)" },
+    { value: "cheapest", label: "Cheapest model you have" },
+    { value: "anthropic/claude-haiku-4-5", label: "Anthropic (claude-haiku-4-5)" },
+  ];
+
+  it("shows the saved preference while it is still offered, else Default", () => {
+    expect(modelPrefValue(routine({ modelPref: "cheapest" }), options)).toBe("cheapest");
+    expect(modelPrefValue(routine({ modelPref: "google/gemini-2.5-pro" }), options)).toBe("default");
+    expect(modelPrefValue(routine(), [])).toBe("default");
+  });
+
+  it("appears only on routines that call a model and can run here", () => {
+    expect(hasModelPicker(routine())).toBe(true);
+    expect(hasModelPicker(routine({ callsModel: false }))).toBe(false);
+    expect(hasModelPicker(routine({ unavailable: "Connect Gmail first." }))).toBe(false);
+  });
 });
 
 const run = (over: Partial<RunView> = {}): RunView => ({

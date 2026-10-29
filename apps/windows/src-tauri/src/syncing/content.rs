@@ -10,6 +10,7 @@
 //! A round runs when enrollment turns Ready, then every 60 s (the Mac's
 //! `ContentSyncCoordinator` cadence), and right after the PC wakes from sleep.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -101,8 +102,14 @@ fn now_ms() -> i64 {
 
 /// Starts the coordinator thread. It lives for the process and does nothing until
 /// enrollment is Ready.
-pub fn start(controller: Arc<SyncController>, store: StoreHandle, secrets: Arc<dyn SecretStore>, device_id: String) {
+/// `skins_root` is this PC's skins folder: after each good round, skins from other devices are written
+/// there and this PC's are queued (skins Task 15).
+pub fn start(controller: Arc<SyncController>, store: StoreHandle, secrets: Arc<dyn SecretStore>, device_id: String, skins_root: PathBuf) {
     let spawned = std::thread::Builder::new().name("whimbrel-content-sync".into()).spawn(move || {
+        let purged = crate::skin_sync::purge_deleted(&skins_root);
+        if purged > 0 {
+            tracing::info!(purged, "dropped skins deleted over 30 days ago");
+        }
         let mut schedule = Schedule::default();
         let mut last_label_refresh: Option<Instant> = None;
         loop {
@@ -126,6 +133,12 @@ pub fn start(controller: Arc<SyncController>, store: StoreHandle, secrets: Arc<d
                 }
             }
             let ok = result.is_ok();
+            if ok {
+                let root = skins_root.clone();
+                if let Err(e) = store.call_blocking(move |s| crate::skin_sync::after_round(s, &root)) {
+                    tracing::warn!(error = %e, "skins after the sync round failed");
+                }
+            }
             controller.record_content_result(result.map(|()| now_ms()));
             if ok && last_label_refresh.is_none_or(|t| t.elapsed() >= LABEL_REFRESH_MIN) && has_unnamed_peer(&controller, &store) {
                 last_label_refresh = Some(Instant::now());

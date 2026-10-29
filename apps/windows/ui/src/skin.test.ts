@@ -5,6 +5,7 @@ import {
   WHIMBREL,
   LEGACY_THEME_KEY,
   PALETTE_KEY,
+  REVISION_POLL_MS,
   SKIN_KEY,
   WEIGHTS,
   applySkin,
@@ -461,13 +462,43 @@ describe("the page follows the choice", () => {
     expect(f.root.style.colorScheme).toBe("");
   });
 
-  it("falls back to Whimbrel when the shown skin is deleted and the list is reloaded", async () => {
+  it("remote_delete_of_selected_falls_back: to Whimbrel, kept, when the shown skin is gone on reload", async () => {
     const f = fakeWindow({ stored: { skinId: "retro-terminal" } });
     startSkin(f.win, async () => [WHIMBREL, fixture("retro-terminal")]);
     await vi.waitFor(() => expect(f.attrs.get("data-skin")).toBe("retro-terminal"));
     await reloadSkins(f.win, async () => [WHIMBREL]);
     expect(f.attrs.get("data-skin")).toBe("whimbrel");
-    expect(f.data[SKIN_KEY]).toBe("retro-terminal"); // kept, in case it returns
+    // As the Mac does: the choice itself moves to Whimbrel (its Default), keeping the appearance.
+    expect(f.data[SKIN_KEY]).toBe("whimbrel");
+    expect(currentSelection().skinId).toBe("whimbrel");
+  });
+
+  it("reloads the skins when the shell's revision moves (a change synced from another device)", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeWindow();
+      let revision = 0;
+      const load = vi.fn(async () => [WHIMBREL]);
+      const stop = startSkin(f.win, load, async () => revision);
+      await vi.advanceTimersByTimeAsync(REVISION_POLL_MS * 2);
+      expect(load).toHaveBeenCalledTimes(1); // nothing synced yet
+      revision = 8;
+      await vi.advanceTimersByTimeAsync(REVISION_POLL_MS);
+      expect(load).toHaveBeenCalledTimes(2);
+      // A change synced before a window's first look still reloads it.
+      const late = fakeWindow();
+      const lateLoad = vi.fn(async () => [WHIMBREL]);
+      const stopLate = startSkin(late.win, lateLoad, async () => 3);
+      await vi.advanceTimersByTimeAsync(REVISION_POLL_MS);
+      expect(lateLoad).toHaveBeenCalledTimes(2);
+      stopLate();
+      stop();
+      revision = 9;
+      await vi.advanceTimersByTimeAsync(REVISION_POLL_MS * 2);
+      expect(load).toHaveBeenCalledTimes(2); // stopped: no more polling
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("knows every bundled plain theme through Whimbrel and High Contrast", () => {

@@ -7,12 +7,14 @@ pub mod contrast;
 pub mod format;
 pub mod history;
 pub mod icons;
+pub mod images;
 pub mod loader;
 pub mod package;
 pub mod palette;
 pub mod repair;
 pub mod scrim;
 pub mod store;
+pub mod sync;
 
 pub use catalogue::catalogue;
 pub use format::{is_valid_id, whimbrel_default, Skin};

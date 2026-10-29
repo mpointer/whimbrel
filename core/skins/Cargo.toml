@@ -10,7 +10,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 unicode-segmentation = "1"
 base64 = "0.22"
-zip = { version = "1.1", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
+# Approved images are downscaled to 1600 px (`images::downscale`), in the four formats a skin accepts.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+
+# Skin sync (sync.rs): enqueue and reconcile through the store's synced tables (Task 14).
+memory = { path = "../memory" }
 
 [dev-dependencies]
 tempfile = "3"

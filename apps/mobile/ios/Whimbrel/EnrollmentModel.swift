@@ -338,6 +338,7 @@ final class EnrollmentModel: ObservableObject, SyncCredentialSource {
         owedSelfRevoke = nil
         try? SyncKeychain.deleteGroupKey()
         try? SyncKeychain.deleteDeviceSecretKey()
+        PhoneSettingsSync.wipeLocal()
         backend?.signOut()
         onWipe?()
     }
@@ -413,6 +414,7 @@ enum EnrollmentConfig {
         guard !defaults.bool(forKey: marker) else { return }
         try? SyncKeychain.deleteGroupKey()
         try? SyncKeychain.deleteDeviceSecretKey()
+        PhoneSettingsSync.wipeLocal(defaults: defaults)
         signOutGoogle()
         defaults.set(true, forKey: marker)
     }

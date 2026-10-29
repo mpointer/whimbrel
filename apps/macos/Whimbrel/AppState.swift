@@ -1713,3 +1713,39 @@ extension AppState {
         func post(_ text: String) async -> Bool { false }
     }
 }
+
+enum RestartBlock { case recording, missing }
+
+extension AppState {
+    /// Shared by the "Update ready" banner and Settings → General. Returns why it did not
+    /// restart, or nil when the relaunch helper was started (or a failure was only logged).
+    func restartIntoUpdate(_ update: UpdateChecker.DownloadedUpdate) -> RestartBlock? {
+        guard activeMeetingId == nil else { return .recording }
+        // The staged update lives under FileManager.default.temporaryDirectory (see
+        // UpdateChecker.download()), which macOS's periodic cleaner can reap during a
+        // long-running session. A user could click "Restart Now" days after seeing
+        // "Later" on a path that no longer exists, which would otherwise make the
+        // relaunch helper's `ditto` fail mid-swap, after the old app is already renamed
+        // aside. Bail out before spawning anything or terminating this process.
+        guard FileManager.default.fileExists(atPath: update.appPath.path) else {
+            Logger(subsystem: "com.mpointer.kestrel", category: "shell").error("restartIntoUpdate: staged update at \(update.appPath.path, privacy: .public) no longer exists, aborting restart")
+            return .missing
+        }
+        guard let helperPath = Bundle.main.path(forResource: "RelaunchHelper", ofType: "sh") else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [
+            helperPath,
+            String(ProcessInfo.processInfo.processIdentifier),
+            update.appPath.path,
+            Bundle.main.bundleURL.path,
+        ]
+        do {
+            try process.run()
+            NSApp.terminate(nil)
+        } catch {
+            Logger(subsystem: "com.mpointer.kestrel", category: "shell").error("restartIntoUpdate: failed to launch RelaunchHelper: \(error.localizedDescription, privacy: .public)")
+        }
+        return nil
+    }
+}

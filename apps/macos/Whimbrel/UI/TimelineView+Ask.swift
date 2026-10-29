@@ -342,6 +342,8 @@ extension TimelineView {
             case .google: return hosted(.google, .google)
             case .anthropic: return hosted(.anthropic, .anthropic)
             case .openai: return hosted(.openai, .openai)
+            // No model picked yet: the blocking path's chain leaves OpenRouter out.
+            case .openrouter: return effective.modelLabel.isEmpty ? nil : hosted(.openrouter, .openrouter)
             }
         }()
         if let streamRoute {

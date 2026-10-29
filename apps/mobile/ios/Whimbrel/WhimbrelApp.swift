@@ -12,6 +12,7 @@ struct WhimbrelApp: App {
         }
         let enrollment = Self.makeEnrollment()
         let sync = SyncModel(openStore: Self.makeStore, credentials: enrollment)
+        sync.settingsPuller = CoreSettingsPuller()
         if !Self.isDemo {
             // Revoked: close the store, then delete its directory (the demos use a temp store).
             // Marker first, so a wipe cut short by suspension or exit is finished at next launch.

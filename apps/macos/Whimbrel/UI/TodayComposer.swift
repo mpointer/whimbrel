@@ -19,14 +19,9 @@ struct TodayComposer: View {
 
     private var available: Bool {
         let routing = appState.routing
-        let hasKey: Bool
-        switch routing.defaultSelection().provider {
-        case .ollama: hasKey = true
-        case .anthropic: hasKey = routing.hasAnthropicKey
-        case .openai: hasKey = routing.hasOpenAIKey
-        case .google: hasKey = routing.hasGoogleKey
-        }
-        return Self.askAvailable(provider: routing.defaultSelection().provider, localOnly: routing.localOnlyMode, hasKey: hasKey)
+        let provider = routing.defaultSelection().provider
+        let hasKey = routing.hasKey(for: provider) && (provider != .openrouter || !routing.openrouterDefaultModel.isEmpty)
+        return Self.askAvailable(provider: provider, localOnly: routing.localOnlyMode, hasKey: hasKey)
     }
 
     private var modelLabel: String {

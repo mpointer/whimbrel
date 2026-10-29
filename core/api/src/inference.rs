@@ -102,6 +102,10 @@ pub fn start(
             let client = OpenAIStreamingClient::new(hosted_key(api_key)?);
             (Provider::OpenAI, with_base(client, base_url_override, OpenAIStreamingClient::with_base_url))
         }
+        "openrouter" => {
+            let client = OpenAIStreamingClient::openrouter(hosted_key(api_key)?);
+            (Provider::OpenRouter, with_base(client, base_url_override, OpenAIStreamingClient::with_base_url))
+        }
         _ => return None,
     };
 

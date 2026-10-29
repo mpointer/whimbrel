@@ -1,4 +1,4 @@
-import type { ActionView, ApprovalView, HostView, RoutineKind, RoutineView, RunOutcome, RunView } from "../generated/types";
+import type { ActionView, ApprovalView, HostView, ModelOptionView, RoutineKind, RoutineView, RunOutcome, RunView } from "../generated/types";
 
 // What the Automations tab says and decides, apart from the component.
 
@@ -35,6 +35,16 @@ export function lastRunLine(routine: Pick<RoutineView, "lastRun">): string {
 /** Whether the on/off switch may be used. A routine that cannot run here can still be switched off. */
 export const canToggle = (routine: Pick<RoutineView, "enabled" | "unavailable">): boolean =>
   routine.unavailable == null || routine.enabled;
+
+/** The Model picker's current value: the saved preference when it is still offered, else Default. */
+export const modelPrefValue = (routine: Pick<RoutineView, "modelPref">, options: ModelOptionView[]): string =>
+  options.some((o) => o.value === routine.modelPref) ? routine.modelPref : "default";
+
+/** Whether a routine shows the Model picker: it calls a model through its own preference. */
+export const hasModelPicker = (routine: Pick<RoutineView, "callsModel" | "unavailable">): boolean =>
+  routine.callsModel && routine.unavailable == null;
+
+export const MODEL_PICKER_NOTE = "Which model this routine runs on. Model usage in Settings shows what each run used, so a routine set to the cheapest model can be judged on a week of output.";
 
 /** Meeting Prep runs before each meeting, so it has no time of day. */
 export const hasSchedule = (routine: Pick<RoutineView, "kind">): boolean => routine.kind !== "meetingPrep";

@@ -88,6 +88,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # The workspace's debug test binaries (memory, api, skins and ingest each link candle and SQLite)
+      # outgrew the hosted runner's free disk on 2026-10-29 ("No space left on device" while linking).
+      # The image ships toolchains this job never uses; removing them frees about 20-30 GB.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
         with:

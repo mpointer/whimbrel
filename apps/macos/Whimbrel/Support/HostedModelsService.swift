@@ -23,6 +23,10 @@ enum HostedModelsService {
         try await fetch(provider: "google", apiKey: apiKey)
     }
 
+    static func fetchOpenRouterModels(apiKey: String) async throws -> [String] {
+        try await fetch(provider: "openrouter", apiKey: apiKey)
+    }
+
     /// Ollama has no API key (a local, unauthenticated server). Throws if Ollama isn't
     /// running; callers fall back to free-text model entry in that case.
     static func fetchOllamaModels(baseURL: URL = URL(string: "http://localhost:11434")!) async throws -> [String] {

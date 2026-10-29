@@ -26,6 +26,7 @@ struct ProviderModelPicker: View {
         case .anthropic: return appState.routing.anthropicModels
         case .openai: return appState.routing.openaiModels
         case .google: return appState.routing.googleModels
+        case .openrouter: return appState.routing.openrouterModels
         }
     }
 
@@ -35,6 +36,7 @@ struct ProviderModelPicker: View {
         case .anthropic: return appState.routing.isLoadingAnthropicModels
         case .openai: return appState.routing.isLoadingOpenAIModels
         case .google: return appState.routing.isLoadingGoogleModels
+        case .openrouter: return appState.routing.isLoadingOpenRouterModels
         }
     }
 
@@ -44,6 +46,7 @@ struct ProviderModelPicker: View {
         case .anthropic: return appState.routing.anthropicModelsError
         case .openai: return appState.routing.openaiModelsError
         case .google: return appState.routing.googleModelsError
+        case .openrouter: return appState.routing.openrouterModelsError
         }
     }
 
@@ -52,7 +55,7 @@ struct ProviderModelPicker: View {
         switch selectedProvider {
         case .ollama:
             if !hostedModelOptions.contains(ollamaModel) { ollamaModel = hostedModelOptions[0] }
-        case .anthropic, .openai, .google:
+        case .anthropic, .openai, .google, .openrouter:
             if !hostedModelOptions.contains(selectedHostedModel) { selectedHostedModel = hostedModelOptions[0] }
         }
     }
@@ -74,6 +77,9 @@ struct ProviderModelPicker: View {
                 clampSelectedModelIfNeeded()
             case .google where appState.routing.googleModels.isEmpty && appState.routing.hasGoogleKey:
                 await appState.routing.refreshGoogleModels()
+                clampSelectedModelIfNeeded()
+            case .openrouter where appState.routing.openrouterModels.isEmpty && appState.routing.hasOpenRouterKey:
+                await appState.routing.refreshOpenRouterModels()
                 clampSelectedModelIfNeeded()
             default:
                 break
@@ -124,6 +130,10 @@ struct ProviderModelPicker: View {
                     .foregroundStyle(Color.whimbrelWarning)
             } else if selectedProvider == .google && !appState.routing.hasGoogleKey {
                 Text("No Google API key configured — add one in Settings > AI & Routing.")
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(Color.whimbrelWarning)
+            } else if selectedProvider == .openrouter && !appState.routing.hasOpenRouterKey {
+                Text("No OpenRouter API key configured. Add one in Settings > AI & Routing.")
                     .font(.whimbrelBody(.caption2))
                     .foregroundStyle(Color.whimbrelWarning)
             } else if let hostedModelsError, selectedProvider == .ollama {

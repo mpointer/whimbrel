@@ -24,6 +24,7 @@
 //! dispatch queue on macOS, an actor task on Windows).
 
 pub mod ask;
+pub mod citations;
 pub mod away_followup;
 pub mod connectors;
 pub mod digest;
@@ -36,6 +37,7 @@ pub mod models;
 pub mod oauth;
 pub mod retention;
 pub mod prompts;
+pub mod providers;
 pub mod meeting_prep;
 pub mod profile_suggest;
 pub mod meeting_workspace;
@@ -50,6 +52,7 @@ pub mod topics;
 pub mod topics_export;
 pub mod sync_ops;
 pub mod update;
+pub mod usage;
 pub mod util;
 pub mod write_action;
 
