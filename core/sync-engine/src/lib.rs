@@ -279,7 +279,8 @@ async fn pull_only_phased(
     *phase.lock().unwrap() = "schema";
     content::ensure_content_schema(conn).await?;
     *phase.lock().unwrap() = "pull";
-    content::pull_content_with_options(conn, group_key, store, device_id, options).await
+    // A pull-only peer (the phone) has no skins, so it never fetches their rows.
+    content::pull_content_without_skins(conn, group_key, store, device_id, options).await
 }
 
 static LAST_CONTENT_SYNC_ERROR: Mutex<Option<String>> = Mutex::new(None);

@@ -9,7 +9,7 @@ use std::sync::{Mutex, OnceLock};
 use serde::Serialize;
 
 use crate::envelope::{ApiError, ApiResult};
-use crate::routing::{build_chain, RoutingConfig};
+use crate::routing::{build_chain_for, RoutingConfig};
 use crate::util::{log_usage_for, now_unix_ms};
 
 /// Retrieval (keyword, falling back to semantic) using `query` alone, then the spend-cap
@@ -30,7 +30,7 @@ pub fn answer(
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms())?;
 
-    let chain = build_chain(ollama_model, routing);
+    let chain = build_chain_for(llm::TaskKind::Chat, ollama_model, routing);
     let Some((answer, entry)) = llm::try_chain(&chain, |entry| {
         llm::answer_with_citations(
             entry.client.as_ref(),
@@ -109,6 +109,7 @@ fn provider_for_streamed_answer(routing: &RoutingConfig) -> llm::Provider {
         "anthropic" => llm::Provider::Anthropic,
         "openai" => llm::Provider::OpenAI,
         "google" => llm::Provider::Google,
+        "openrouter" => llm::Provider::OpenRouter,
         _ => llm::Provider::Ollama,
     }
 }
@@ -303,7 +304,7 @@ pub fn generate_conversation_title(
         now_unix_ms(),
     )?;
 
-    let chain = build_chain(ollama_model, routing);
+    let chain = build_chain_for(llm::TaskKind::ConversationTitle, ollama_model, routing);
     let Some(((title, token_usage), entry)) = llm::try_chain(&chain, |entry| {
         llm::generate_conversation_title(entry.client.as_ref(), query, answer)
     }) else {

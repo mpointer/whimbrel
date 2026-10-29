@@ -25,9 +25,17 @@ pub mod keys {
     pub const ANTHROPIC_MODEL: &str = "routing.anthropicDefaultModel";
     pub const OPENAI_MODEL: &str = "routing.openaiDefaultModel";
     pub const GOOGLE_MODEL: &str = "routing.googleDefaultModel";
+    pub const OPENROUTER_MODEL: &str = "routing.openrouterDefaultModel";
     pub const USER_DAILY_CAP_CENTS: &str = "routing.userDailyCapCents";
     pub const GLOBAL_DAILY_CAP_CENTS: &str = "routing.globalDailyCapCents";
     pub const LOCAL_ONLY_MODE: &str = "routing.localOnlyMode";
+    /// Cheap-first routing and the local-model switch (the Mac's keys;
+    /// docs/superpowers/specs/2026-10-29-cheap-first-routing-and-key-on-ramp-design.md).
+    pub const CHEAP_FIRST: &str = "routing.cheapFirst";
+    pub const USE_LOCAL_MODEL: &str = "routing.useLocalModel";
+    /// Device-local: OpenRouter prices cached from the catalogue when the key was last
+    /// checked, `{model: {in, out}}` in cents per 1K tokens, the shape core parses.
+    pub const OPENROUTER_PRICES: &str = "routing.openrouterPrices";
     pub const SUMMARY_CUSTOM_PROMPT: &str = "summary.customPromptInstructions";
     pub const EXCLUDED_BUNDLE_IDS: &str = "captureExclusions.excludedBundleIds";
     /// Device-local, not synced (the Mac keeps its capture toggle local too).
@@ -85,6 +93,8 @@ pub enum Provider {
     Anthropic,
     Openai,
     Google,
+    /// One key, any model on OpenRouter's catalogue, free ones included.
+    Openrouter,
 }
 
 impl Provider {
@@ -95,12 +105,15 @@ impl Provider {
             Provider::Anthropic => "anthropic",
             Provider::Openai => "openai",
             Provider::Google => "google",
+            Provider::Openrouter => "openrouter",
         }
     }
+
+    pub const HOSTED: [Provider; 4] = [Provider::Anthropic, Provider::Openai, Provider::Google, Provider::Openrouter];
 }
 
 /// Provider choice, default models and governance, as the Settings UI edits them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RoutingSettings {
     pub preferred_provider: Provider,
@@ -108,11 +121,25 @@ pub struct RoutingSettings {
     pub anthropic_model: String,
     pub openai_model: String,
     pub google_model: String,
+    /// The OpenRouter pick, also the model light tasks use there. Empty means none yet:
+    /// core then leaves OpenRouter out of every chain, because their catalogue changes
+    /// weekly and there is no fallback model to substitute.
+    pub openrouter_model: String,
     /// `None` = the built-in default cap; `Some(0)` = no cap (Mac semantics).
     pub user_daily_cap_cents: Option<i64>,
     pub global_daily_cap_cents: Option<i64>,
     /// FR-CHAT-5 local-only mode: Ollama only, whatever else is configured.
     pub local_only: bool,
+    /// Light tasks (titles, topic names, profile suggestions) use the cheapest model the
+    /// user has. On by default, matching core.
+    pub cheap_first: bool,
+    /// Whether Ollama is a link in the chain at all; ignored in local-only mode. On by default.
+    pub use_local_model: bool,
+    /// Cents per 1K input and output per OpenRouter model id, cached from the catalogue by
+    /// the key check. Device-local and never part of the DTO: the UI never edits it.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub openrouter_prices: BTreeMap<String, (f64, f64)>,
 }
 
 impl Default for RoutingSettings {
@@ -124,9 +151,13 @@ impl Default for RoutingSettings {
             anthropic_model: "claude-haiku-4-5".into(),
             openai_model: "gpt-4o-mini".into(),
             google_model: "gemini-2.5-flash".into(),
+            openrouter_model: String::new(),
             user_daily_cap_cents: None,
             global_daily_cap_cents: None,
             local_only: false,
+            cheap_first: true,
+            use_local_model: true,
+            openrouter_prices: BTreeMap::new(),
         }
     }
 }
@@ -139,6 +170,18 @@ impl RoutingSettings {
             Provider::Anthropic => &self.anthropic_model,
             Provider::Openai => &self.openai_model,
             Provider::Google => &self.google_model,
+            Provider::Openrouter => &self.openrouter_model,
+        }
+    }
+
+    /// `provider`'s default model as the Settings UI holds it.
+    pub fn model_for(&self, provider: Provider) -> &str {
+        match provider {
+            Provider::Ollama => &self.ollama_model,
+            Provider::Anthropic => &self.anthropic_model,
+            Provider::Openai => &self.openai_model,
+            Provider::Google => &self.google_model,
+            Provider::Openrouter => &self.openrouter_model,
         }
     }
 
@@ -161,6 +204,11 @@ impl RoutingSettings {
             daily_digest_instructions: instructions.daily_digest.trim().to_string(),
             weekly_digest_instructions: instructions.weekly_digest.trim().to_string(),
             profile: instructions.profile.clone(),
+            cheap_first: self.cheap_first,
+            use_local_model: self.use_local_model,
+            openrouter_key: keys.openrouter.clone(),
+            openrouter_model: self.openrouter_model.clone(),
+            openrouter_prices: self.openrouter_prices.iter().map(|(k, v)| (k.clone(), *v)).collect(),
         }
     }
 }
@@ -223,6 +271,21 @@ pub struct ApiKeys {
     pub anthropic: Option<String>,
     pub openai: Option<String>,
     pub google: Option<String>,
+    pub openrouter: Option<String>,
+}
+
+impl ApiKeys {
+    /// Whether a key is saved for `provider` (Ollama needs none).
+    pub fn has(&self, provider: Provider) -> bool {
+        let key = match provider {
+            Provider::Ollama => return true,
+            Provider::Anthropic => &self.anthropic,
+            Provider::Openai => &self.openai,
+            Provider::Google => &self.google,
+            Provider::Openrouter => &self.openrouter,
+        };
+        key.as_deref().is_some_and(|k| !k.is_empty())
+    }
 }
 
 impl std::fmt::Debug for ApiKeys {
@@ -241,6 +304,7 @@ impl ApiKeys {
             anthropic: secrets.get_string(APP_SERVICE, accounts::ANTHROPIC_API_KEY)?,
             openai: secrets.get_string(APP_SERVICE, accounts::OPENAI_API_KEY)?,
             google: secrets.get_string(APP_SERVICE, accounts::GOOGLE_API_KEY)?,
+            openrouter: secrets.get_string(APP_SERVICE, accounts::OPENROUTER_API_KEY)?,
         })
     }
 }
@@ -329,21 +393,45 @@ impl SettingsFile {
             anthropic_model: self.get(keys::ANTHROPIC_MODEL).unwrap_or(d.anthropic_model),
             openai_model: self.get(keys::OPENAI_MODEL).unwrap_or(d.openai_model),
             google_model: self.get(keys::GOOGLE_MODEL).unwrap_or(d.google_model),
+            openrouter_model: self.get(keys::OPENROUTER_MODEL).unwrap_or(d.openrouter_model),
             user_daily_cap_cents: self.get(keys::USER_DAILY_CAP_CENTS),
             global_daily_cap_cents: self.get(keys::GLOBAL_DAILY_CAP_CENTS),
             local_only: self.get(keys::LOCAL_ONLY_MODE).unwrap_or(d.local_only),
+            cheap_first: self.get(keys::CHEAP_FIRST).unwrap_or(d.cheap_first),
+            use_local_model: self.get(keys::USE_LOCAL_MODEL).unwrap_or(d.use_local_model),
+            openrouter_prices: self.openrouter_prices(),
         }
     }
 
+    /// The UI's half of the routing settings; the cached OpenRouter prices stay as they are
+    /// (`set_openrouter_prices` is the only writer).
     pub fn set_routing(&mut self, r: &RoutingSettings) {
         self.set(keys::PREFERRED_PROVIDER, Some(r.preferred_provider));
         self.set(keys::OLLAMA_MODEL, Some(&r.ollama_model));
         self.set(keys::ANTHROPIC_MODEL, Some(&r.anthropic_model));
         self.set(keys::OPENAI_MODEL, Some(&r.openai_model));
         self.set(keys::GOOGLE_MODEL, Some(&r.google_model));
+        self.set(keys::OPENROUTER_MODEL, Some(r.openrouter_model.trim()));
         self.set(keys::USER_DAILY_CAP_CENTS, r.user_daily_cap_cents);
         self.set(keys::GLOBAL_DAILY_CAP_CENTS, r.global_daily_cap_cents);
         self.set(keys::LOCAL_ONLY_MODE, Some(r.local_only));
+        self.set(keys::CHEAP_FIRST, Some(r.cheap_first));
+        self.set(keys::USE_LOCAL_MODEL, Some(r.use_local_model));
+    }
+
+    /// Stored as `{model: {"in": cents, "out": cents}}`, the shape core's parser reads.
+    pub fn openrouter_prices(&self) -> BTreeMap<String, (f64, f64)> {
+        self.get::<BTreeMap<String, Value>>(keys::OPENROUTER_PRICES)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(model, price)| Some((model, (price.get("in")?.as_f64()?, price.get("out")?.as_f64()?))))
+            .collect()
+    }
+
+    pub fn set_openrouter_prices(&mut self, prices: &BTreeMap<String, (f64, f64)>) {
+        let map: BTreeMap<String, Value> =
+            prices.iter().map(|(model, (input, output))| (model.clone(), serde_json::json!({"in": input, "out": output}))).collect();
+        self.set(keys::OPENROUTER_PRICES, (!map.is_empty()).then_some(map));
     }
 
     /// Whether the user has the MCP server switched on. Off by default: it opens memory to other programs.
@@ -717,6 +805,44 @@ mod tests {
         assert!(raw.get("routing.globalDailyCapCents").is_none(), "an unset cap is an absent key");
 
         assert_eq!(SettingsFile::load(&path).routing(), routing);
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn cheap_first_local_model_and_openrouter_round_trip_and_default_like_core() {
+        let path = temp_path("cheapfirst");
+        let mut s = SettingsFile::load(&path);
+        let r = s.routing();
+        assert!(r.cheap_first && r.use_local_model, "unset reads as core's defaults");
+        assert_eq!(r.openrouter_model, "");
+        assert!(r.openrouter_prices.is_empty());
+
+        s.set_routing(&RoutingSettings { cheap_first: false, use_local_model: false, openrouter_model: " vendor/model:free ".into(), ..RoutingSettings::default() });
+        s.set_openrouter_prices(&[("vendor/model".to_string(), (0.1, 0.5))].into_iter().collect());
+        s.save().unwrap();
+        let raw: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw["routing.cheapFirst"], false);
+        assert_eq!(raw["routing.useLocalModel"], false);
+        assert_eq!(raw["routing.openrouterDefaultModel"], "vendor/model:free", "trimmed");
+        assert_eq!(raw["routing.openrouterPrices"]["vendor/model"]["in"], 0.1);
+
+        let loaded = SettingsFile::load(&path);
+        let r = loaded.routing();
+        assert!(!r.cheap_first && !r.use_local_model);
+        assert_eq!(r.openrouter_prices.get("vendor/model"), Some(&(0.1, 0.5)));
+
+        // The UI's save never touches the cached prices.
+        let mut s = loaded;
+        s.set_routing(&RoutingSettings::default());
+        assert_eq!(s.openrouter_prices().get("vendor/model"), Some(&(0.1, 0.5)));
+
+        let keys = ApiKeys { openrouter: Some("sk-or-1".into()), ..ApiKeys::default() };
+        let cfg = r.routing_config(&keys, &Instructions::default());
+        assert!(!cfg.cheap_first && !cfg.use_local_model);
+        assert_eq!(cfg.openrouter_key.as_deref(), Some("sk-or-1"));
+        assert_eq!(cfg.openrouter_model, "vendor/model:free");
+        assert_eq!(cfg.openrouter_prices.get("vendor/model"), Some(&(0.1, 0.5)));
+        assert!(keys.has(Provider::Openrouter) && !keys.has(Provider::Google) && keys.has(Provider::Ollama));
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 

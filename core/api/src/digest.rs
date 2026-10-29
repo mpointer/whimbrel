@@ -3,14 +3,14 @@
 //! `core/ffi::whimbrel_llm_daily_digest` (M3.0); the C function is now a thin wrapper.
 
 use crate::envelope::{ApiError, ApiResult};
-use crate::routing::{build_chain, RoutingConfig};
+use crate::routing::{build_chain_for, RoutingConfig};
 use crate::util::{log_usage_for, now_unix_ms};
 
 /// Digest over `[start_unix_ms, end_unix_ms)`; the caller computes the bounds (e.g.
 /// local-time day boundaries). Skips the model call *and* the spend-cap check entirely
 /// when there were no items in range — no reason to spend, or to be refused, over
 /// nothing. `ollama_model` names the Ollama link's model; hosted links come from
-/// `routing` (see [`build_chain`]).
+/// `routing` (see [`build_chain_for`]).
 pub fn daily_digest(
     store: &memory::Store,
     ollama_model: &str,
@@ -39,7 +39,7 @@ pub fn daily_digest(
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("digest"), now_unix_ms())?;
 
-    let chain = build_chain(ollama_model, routing);
+    let chain = build_chain_for(llm::TaskKind::Digest, ollama_model, routing);
     let Some((digest, entry)) = llm::try_chain(&chain, |entry| {
         llm::generate_daily_digest_from_context(
             entry.client.as_ref(),

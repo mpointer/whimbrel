@@ -47,4 +47,12 @@ describe("the gallery card", () => {
     expect(html.match(/class="skin-card skin-card--selected"/g)).toHaveLength(1);
     expect(show(DEFAULT_SELECTION)).not.toMatch(/class="mode[^"]*"[^>]*disabled/);
   });
+
+  it("puts the skin chat below the gallery, its Send held until the shell says a provider is usable", () => {
+    const html = show(DEFAULT_SELECTION);
+    expect(html.indexOf("Make a skin")).toBeGreaterThan(html.indexOf("Each PC keeps its own skin."));
+    expect(html).toContain('placeholder="Describe a skin…"');
+    expect(html).not.toContain("Set up an AI provider");
+    expect(html).toContain("Add your own image…");
+  });
 });

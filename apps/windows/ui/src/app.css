@@ -386,6 +386,35 @@ textarea.input {
   margin-bottom: var(--space-sm);
 }
 
+/* One provider's key row with its links, hint, check line and notes. */
+.key-block {
+  margin-bottom: var(--space-md);
+}
+
+/* Model usage: time, task, model, tokens, cost. */
+.usage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.usage-row {
+  display: grid;
+  grid-template-columns: 5rem 8rem minmax(0, 1fr) 8rem 4rem;
+  gap: var(--space-sm);
+}
+
+.usage-row span:nth-child(3) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-row span:nth-child(4),
+.usage-row span:nth-child(5) {
+  text-align: right;
+}
+
 .key-name {
   width: 88px;
   font-weight: 600;
@@ -1281,4 +1310,144 @@ button.link:focus-visible {
 
 .slide-actions .mode {
   padding: 2px var(--space-sm);
+}
+
+/* Settings → Appearance: the skin chat (skins Task 11). */
+.skin-chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+.skin-chat__turns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.skin-chat__bubble {
+  align-self: flex-start;
+  max-width: 85%;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-card);
+  background: var(--color-background-card);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  white-space: pre-wrap;
+  user-select: text;
+}
+.skin-chat__bubble--user {
+  align-self: flex-end;
+  background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
+  color: var(--color-text-on-accent);
+}
+.skin-chat__status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+.skin-chat__status p {
+  margin: 0;
+}
+.skin-chat__spinner {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  margin-right: var(--space-xs);
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent-primary);
+  border-radius: 50%;
+  animation: skin-chat-spin 0.8s linear infinite;
+}
+@keyframes skin-chat-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skin-chat__spinner {
+    animation: none;
+  }
+}
+.skin-chat__found-heading {
+  margin: 0;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.skin-chat__strip {
+  display: flex;
+  gap: var(--space-sm);
+  overflow-x: auto;
+  padding-bottom: var(--space-xs);
+}
+.skin-candidate {
+  margin: 0;
+  width: 176px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.skin-candidate img,
+.skin-candidate__blank {
+  width: 176px;
+  height: 116px;
+  object-fit: cover;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border);
+  background: var(--color-background-card);
+}
+.skin-candidate figcaption {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.skin-chat__set-up {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-background-card);
+  color: var(--color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.skin-chat__set-up span {
+  color: var(--color-accent-primary);
+}
+.skin-chat__set-up:focus-visible {
+  outline: 2px solid var(--color-accent-primary);
+  outline-offset: 2px;
+}
+
+/* Settings → Appearance: your skins' menu, and Import (skins Task 12). */
+.skin-yours-row {
+  padding: 0 var(--space-sm) var(--space-sm);
+}
+.skin-yours-row p {
+  margin: 0;
+}
+.skin-options {
+  margin-left: auto;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.skin-options:focus-visible {
+  outline: 2px solid var(--color-accent-primary);
+  outline-offset: 2px;
+}
+.skin-gallery-footer p {
+  margin: 0;
 }

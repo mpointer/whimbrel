@@ -57,6 +57,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             // Identity, then the store (which learns its own device id before anything
             // else can touch it), then settings. Failures land in `startup_errors`.
@@ -104,9 +105,14 @@ pub fn run() {
             commands::sync::sync_revoke_device,
             commands::ai::ai_settings,
             commands::ai::set_api_key,
+            commands::ai::set_image_search_key,
             commands::ai::set_prompt,
             commands::ai::set_summary_instructions,
             commands::ai::provider_models,
+            commands::ai::key_check,
+            commands::ai::key_format_hint,
+            commands::ai::usage_rows,
+            commands::ai::open_external,
             commands::capture::capture_settings,
             commands::capture::set_excluded_apps,
             commands::models::model_status,
@@ -181,6 +187,8 @@ pub fn run() {
             commands::routines::routine_set_schedule,
             commands::routines::routine_runs,
             commands::routines::routine_set_auto_approve,
+            commands::routines::routine_set_model_pref,
+            commands::routines::routine_model_options,
             commands::routines::routines_host,
             commands::routines::routines_set_host,
             commands::approvals::approvals_list,
@@ -203,6 +211,23 @@ pub fn run() {
             commands::schedule::meeting_record_start_event,
             commands::skins::skins_list,
             commands::skins::skin_image,
+            commands::skins::skin_sources,
+            commands::skins::skin_turn,
+            commands::skins::skin_turn_stop,
+            commands::skins::skin_chat_load,
+            commands::skins::skin_chat_post,
+            commands::skins::skin_undo,
+            commands::skins::skins_revision,
+            commands::skins::skin_rename,
+            commands::skins::skin_delete,
+            commands::skins::skin_export,
+            commands::skins::skin_import,
+            commands::skins::skin_image_search,
+            commands::skins::skin_image_generate,
+            commands::skins::skin_image_thumbnail,
+            commands::skins::skin_image_reject,
+            commands::skins::skin_image_approve,
+            commands::skins::skin_image_add_file,
             crate::tray::tray_status,
             crate::tray::popup_open_main,
             crate::tray::popup_quit,

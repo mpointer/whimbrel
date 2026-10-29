@@ -405,6 +405,9 @@ struct CoreRoutine: Codable, Identifiable {
     let scheduleHhmm: String
     let enabled: Bool
     let autoApproveWriteActions: Bool
+    /// Which model chain the routine's runs use: `default`, `cheapest`, or
+    /// `<provider>/<model>` (core/api::routing::RoutineModelPref).
+    var modelPref: String = "default"
     let createdAtUnixMs: Int64
 
     enum CodingKeys: String, CodingKey {
@@ -412,7 +415,32 @@ struct CoreRoutine: Codable, Identifiable {
         case scheduleHhmm = "schedule_hhmm"
         case enabled
         case autoApproveWriteActions = "auto_approve_write_actions"
+        case modelPref = "model_pref"
         case createdAtUnixMs = "created_at_unix_ms"
+    }
+
+    init(id: Int64, name: String, template: String, scheduleHhmm: String, enabled: Bool, autoApproveWriteActions: Bool, modelPref: String = "default", createdAtUnixMs: Int64) {
+        self.id = id
+        self.name = name
+        self.template = template
+        self.scheduleHhmm = scheduleHhmm
+        self.enabled = enabled
+        self.autoApproveWriteActions = autoApproveWriteActions
+        self.modelPref = modelPref
+        self.createdAtUnixMs = createdAtUnixMs
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int64.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        template = try c.decode(String.self, forKey: .template)
+        scheduleHhmm = try c.decode(String.self, forKey: .scheduleHhmm)
+        enabled = try c.decode(Bool.self, forKey: .enabled)
+        autoApproveWriteActions = try c.decode(Bool.self, forKey: .autoApproveWriteActions)
+        // Absent from a core older than the column: read as the chain it ran on before.
+        modelPref = try c.decodeIfPresent(String.self, forKey: .modelPref) ?? "default"
+        createdAtUnixMs = try c.decode(Int64.self, forKey: .createdAtUnixMs)
     }
 }
 
@@ -665,6 +693,22 @@ struct CoreRoutingConfig: Encodable {
     let weeklyDigestInstructions: String
     /// The user's Profile text (empty when off); core composes it into prompts.
     var profile: String = ""
+    /// Cheap-first routing: light tasks use the cheapest model the user has. Core's
+    /// default is on (docs/superpowers/specs/2026-10-29-cheap-first-routing-and-key-on-ramp-design.md).
+    var cheapFirst: Bool = true
+    /// Whether Ollama is a link in the chain at all; ignored in local-only mode.
+    var useLocalModel: Bool = true
+    var openrouterKey: String? = nil
+    /// The user's OpenRouter pick; empty means none yet, and core adds no link.
+    var openrouterModel: String = ""
+    /// Cents per 1K input and output per OpenRouter model id, cached from the catalogue.
+    var openrouterPrices: [String: Price] = [:]
+
+    /// Cents per 1K tokens, in and out, as core's price table counts.
+    struct Price: Codable, Equatable {
+        let `in`: Double
+        let out: Double
+    }
 
     /// A copy carrying the TypeSafe key; set only at the moment of the core call.
     func withTypesafeKey(_ key: String?) -> CoreRoutingConfig {
@@ -673,7 +717,9 @@ struct CoreRoutingConfig: Encodable {
             userDailyCapCents: userDailyCapCents, globalDailyCapCents: globalDailyCapCents,
             sensitive: sensitive, preferredProvider: preferredProvider, preferredModel: preferredModel,
             customInstructions: customInstructions, dailyDigestInstructions: dailyDigestInstructions,
-            weeklyDigestInstructions: weeklyDigestInstructions, profile: profile
+            weeklyDigestInstructions: weeklyDigestInstructions, profile: profile,
+            cheapFirst: cheapFirst, useLocalModel: useLocalModel,
+            openrouterKey: openrouterKey, openrouterModel: openrouterModel, openrouterPrices: openrouterPrices
         )
     }
 
@@ -691,6 +737,150 @@ struct CoreRoutingConfig: Encodable {
         case dailyDigestInstructions = "daily_digest_instructions"
         case weeklyDigestInstructions = "weekly_digest_instructions"
         case profile
+        case cheapFirst = "cheap_first"
+        case useLocalModel = "use_local_model"
+        case openrouterKey = "openrouter_key"
+        case openrouterModel = "openrouter_model"
+        case openrouterPrices = "openrouter_prices"
+    }
+}
+
+/// One OpenRouter catalogue entry with its price, as `whimbrel_key_check` returns it
+/// for that provider (core/api::hosted_models::OpenRouterModel).
+struct CoreOpenRouterModel: Codable, Equatable {
+    let id: String
+    let inCentsPer1k: Double
+    let outCentsPer1k: Double
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case inCentsPer1k = "in_cents_per_1k"
+        case outCentsPer1k = "out_cents_per_1k"
+    }
+}
+
+/// JSON shape matching `whimbrel_usage_totals` (core/api::usage::UsageTotals): spend in
+/// cents for the windows the Model usage screen shows, UTC days.
+struct CoreUsageTotals: Codable, Equatable {
+    struct ProviderSpend: Codable, Equatable {
+        let provider: String
+        let cents: Int64
+    }
+
+    let todayCents: Int64
+    let last30DaysCents: Int64
+    let monthToDateCents: Int64
+    let last30DaysByProvider: [ProviderSpend]
+
+    enum CodingKeys: String, CodingKey {
+        case todayCents = "today_cents"
+        case last30DaysCents = "last_30_days_cents"
+        case monthToDateCents = "month_to_date_cents"
+        case last30DaysByProvider = "last_30_days_by_provider"
+    }
+
+    /// Last-30-day spend for one provider id, zero when it made no calls.
+    func cents(for provider: String) -> Int64 {
+        last30DaysByProvider.first { $0.provider == provider }?.cents ?? 0
+    }
+}
+
+/// One call as `whimbrel_usage_list` returns it (core/api::usage::UsageRow).
+struct CoreUsageRow: Codable, Identifiable, Equatable {
+    let tsUnixMs: Int64
+    let task: String
+    let provider: String
+    let model: String
+    let inputTokens: Int64?
+    let outputTokens: Int64?
+    let estimatedCostCents: Int64
+    /// A local call is not metered; the screen says "local", never a zero.
+    let local: Bool
+
+    var id: String { "\(tsUnixMs)-\(provider)-\(model)-\(task)" }
+
+    enum CodingKeys: String, CodingKey {
+        case tsUnixMs = "ts_unix_ms"
+        case task, provider, model, local
+        case inputTokens = "input_tokens"
+        case outputTokens = "output_tokens"
+        case estimatedCostCents = "estimated_cost_cents"
+    }
+}
+
+/// One row of the key on-ramp table (`whimbrel_providers`, core/api::providers).
+struct CoreProviderInfo: Codable, Identifiable, Equatable {
+    struct DataTerms: Codable, Equatable {
+        let text: String
+        /// ISO date the policy page was last read.
+        let checked: String
+    }
+
+    let id: String
+    let name: String
+    let keyPageUrl: String?
+    let policyUrl: String?
+    let keyPrefix: String?
+    let dataTerms: DataTerms?
+    let cheapModel: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case keyPageUrl = "key_page_url"
+        case policyUrl = "policy_url"
+        case keyPrefix = "key_prefix"
+        case dataTerms = "data_terms"
+        case cheapModel = "cheap_model"
+    }
+}
+
+/// What saving a key found out (`whimbrel_key_check`, core/api::hosted_models::KeyCheck),
+/// decoded off its `status` tag.
+enum CoreKeyCheck: Equatable {
+    /// `prices` is filled for OpenRouter only.
+    case valid(models: [String], prices: [CoreOpenRouterModel])
+    case refused(message: String)
+    case unreachable(message: String)
+    case other(message: String)
+
+    /// The one line the key row shows for this outcome.
+    var message: String {
+        switch self {
+        case let .valid(models, _):
+            return "Saved. \(models.count) model\(models.count == 1 ? "" : "s") available."
+        case let .refused(message), let .unreachable(message), let .other(message):
+            return message
+        }
+    }
+
+    /// Whether the line is a problem the user has to act on (a refused key) rather than
+    /// a note (saved, or offline for now).
+    var isError: Bool {
+        if case .refused = self { return true }
+        if case .other = self { return true }
+        return false
+    }
+}
+
+extension CoreKeyCheck: Decodable {
+    private enum CodingKeys: String, CodingKey { case status, models, prices, message }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let status = try container.decode(String.self, forKey: .status)
+        switch status {
+        case "valid":
+            self = .valid(
+                models: try container.decodeIfPresent([String].self, forKey: .models) ?? [],
+                prices: try container.decodeIfPresent([CoreOpenRouterModel].self, forKey: .prices) ?? []
+            )
+        case "refused":
+            self = .refused(message: try container.decode(String.self, forKey: .message))
+        case "unreachable":
+            self = .unreachable(message: try container.decode(String.self, forKey: .message))
+        default:
+            self = .other(message: try container.decodeIfPresent(String.self, forKey: .message) ?? "Couldn't check the key.")
+        }
     }
 }
 
@@ -1758,6 +1948,29 @@ final class CoreMemoryStore {
     /// `false` on a null/invalid handle, unknown id, or DB error.
     func updateRoutineSchedule(id: Int64, scheduleHhmm: String) -> Bool {
         scheduleHhmm.withCString { whimbrel_routines_set_schedule(handle, id, $0) }
+    }
+
+    /// Sets which model chain a routine's runs use: `default`, `cheapest`, or
+    /// `<provider>/<model>`. Returns `false` on a null/invalid handle, a value outside
+    /// those shapes, or a DB error.
+    func setRoutineModelPref(id: Int64, pref: String) -> Bool {
+        pref.withCString { whimbrel_routines_set_model_pref(handle, id, $0) }
+    }
+
+    /// The Model usage screen's totals (core/api::usage::totals). Nil on a null/invalid
+    /// handle.
+    func usageTotals() -> CoreUsageTotals? {
+        guard let json = whimbrel_usage_totals(handle) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
+    /// The newest `limit` calls with `since <= ts < until` (core/api::usage::list),
+    /// newest first. Nil on a null/invalid handle.
+    func usageList(sinceUnixMs: Int64, untilUnixMs: Int64, limit: UInt32) -> [CoreUsageRow]? {
+        guard let json = whimbrel_usage_list(handle, sinceUnixMs, untilUnixMs, limit) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
     }
 
     /// FR-CHAT-2 governance: today's spend-so-far. `userId` may be nil (Whimbrel's
@@ -2901,6 +3114,34 @@ final class CoreMemoryStore {
         }
         if let models = reply.models { return .success(models) }
         return .failure(HostedModelsService.FetchError(message: reply.error ?? "Model list request failed."))
+    }
+
+    /// Validates a pasted key against the provider's model list (core/api::hosted_models::
+    /// validate_key). Blocking, up to 30 s: call off the main actor. Nil only on an
+    /// unknown provider or a decode failure.
+    static func keyCheck(provider: String, apiKey: String, baseURLOverride: String? = nil) -> CoreKeyCheck? {
+        guard let json = provider.withCString({ p in
+            apiKey.withCString { k in
+                withOptionalCString(baseURLOverride) { b in whimbrel_key_check(p, k, b) }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return try? JSONDecoder().decode(CoreKeyCheck.self, from: Data(String(cString: json).utf8))
+    }
+
+    /// The key on-ramp's provider table (core/api::providers::PROVIDERS), in core's order.
+    static func providers() -> [CoreProviderInfo] {
+        guard let json = whimbrel_providers() else { return [] }
+        defer { whimbrel_core_free_string(json) }
+        return (try? JSONDecoder().decode([CoreProviderInfo].self, from: Data(String(cString: json).utf8))) ?? []
+    }
+
+    /// The one-line warning when `key` does not look like `provider`'s
+    /// (core/api::providers::format_hint); nil when it does.
+    static func keyFormatHint(provider: String, key: String) -> String? {
+        guard let hint = provider.withCString({ p in key.withCString { k in whimbrel_key_format_hint(p, k) } }) else { return nil }
+        defer { whimbrel_core_free_string(hint) }
+        return String(cString: hint)
     }
 
     /// M3.0 Task 6: the Before/During/After/Cancelled decision for one meeting

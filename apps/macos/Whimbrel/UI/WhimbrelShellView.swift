@@ -187,35 +187,7 @@ struct WhimbrelShellView: View {
     }
 
     private func restartIntoUpdate(_ update: UpdateChecker.DownloadedUpdate) {
-        guard appState.activeMeetingId == nil else {
-            showActiveRecordingWarning = true
-            return
-        }
-        // The staged update lives under FileManager.default.temporaryDirectory (see
-        // UpdateChecker.download()), which macOS's periodic cleaner can reap during a
-        // long-running session. A user could click "Restart Now" days after seeing
-        // "Later" on a path that no longer exists, which would otherwise make the
-        // relaunch helper's `ditto` fail mid-swap, after the old app is already renamed
-        // aside. Bail out before spawning anything or terminating this process.
-        guard FileManager.default.fileExists(atPath: update.appPath.path) else {
-            Self.log.error("restartIntoUpdate: staged update at \(update.appPath.path, privacy: .public) no longer exists, aborting restart")
-            return
-        }
-        guard let helperPath = Bundle.main.path(forResource: "RelaunchHelper", ofType: "sh") else { return }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = [
-            helperPath,
-            String(ProcessInfo.processInfo.processIdentifier),
-            update.appPath.path,
-            Bundle.main.bundleURL.path,
-        ]
-        do {
-            try process.run()
-            NSApp.terminate(nil)
-        } catch {
-            Self.log.error("restartIntoUpdate: failed to launch RelaunchHelper: \(error.localizedDescription, privacy: .public)")
-        }
+        if appState.restartIntoUpdate(update) == .recording { showActiveRecordingWarning = true }
     }
 }
 

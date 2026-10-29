@@ -109,7 +109,7 @@ Look: the same `themes/` tokens as desktop (default cream `#F7F2E7`, terracotta 
 
 ### 5.2 Ask on the phone
 
-- **Retrieval** runs locally over the replica. Keyword search works as soon as rows land. Embeddings are computed by `memory`'s local embedder in the background while the phone is charging, so semantic search catches up overnight. Measure the model size and battery cost on a real phone in M4.2; if it's too heavy, keep keyword search plus recency on mobile and say so.
+- **Retrieval** runs locally over the replica. Keyword search works as soon as rows land. Embeddings are computed by `memory`'s local embedder in the background while the phone is charging, so semantic search catches up overnight. Measure the model size and battery cost on a real phone in M4.2; if it's too heavy, keep keyword search plus recency on mobile and say so. M4.2 shipped keyword search plus recency on the phone; the embedder waits on the manual-pass measurement (docs/superpowers/plans/2026-10-29-m4.2-phone-ask-manual-pass.md, section F).
 - **Model:** `core/llm` clients with the provider keys that already sync end-to-end encrypted (`apiKey.anthropic`, `apiKey.openai`, …). No new key handling. Ollama doesn't run on a phone; Ollama-only users see an honest empty state that offers to add a key. There is no hosted model to offer ([16-open-core-commercial-model.md](16-open-core-commercial-model.md)).
 - **Spend caps:** the phone uses the same `ledger` defaults, enforced per device.
 

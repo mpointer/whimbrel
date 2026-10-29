@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use chrono::TimeZone;
 
-use crate::routing::{build_chain, RoutingConfig};
+use crate::routing::{build_chain_for_routine, RoutineModelPref, RoutingConfig};
 use crate::util::log_usage_for;
 
 /// Local midnight of `now_local`'s calendar day in UTC milliseconds, falling back to
@@ -136,7 +136,7 @@ pub fn tick(
                     continue;
                 }
 
-                let chain = build_chain(ollama_model, routing);
+                let chain = build_chain_for_routine(&RoutineModelPref::parse(&routine.model_pref), ollama_model, routing);
                 let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
                     routines::run_daily_brief(
                         store,
@@ -214,7 +214,7 @@ pub fn tick(
                     continue;
                 }
 
-                let chain = build_chain(ollama_model, routing);
+                let chain = build_chain_for_routine(&RoutineModelPref::parse(&routine.model_pref), ollama_model, routing);
                 let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
                     routines::run_eod_recap(
                         store,
@@ -285,7 +285,7 @@ pub fn tick(
                     continue;
                 }
 
-                let chain = build_chain(ollama_model, routing);
+                let chain = build_chain_for_routine(&RoutineModelPref::parse(&routine.model_pref), ollama_model, routing);
                 let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
                     routines::run_weekly_digest(
                         store,

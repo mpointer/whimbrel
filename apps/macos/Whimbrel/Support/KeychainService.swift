@@ -12,6 +12,7 @@ enum KeychainService {
         case anthropic = "anthropic-api-key"
         case openai = "openai-api-key"
         case google = "google-api-key"
+        case openrouter = "openrouter-api-key"
         case typesafe = "typesafe-api-key"
         /// The web image search key (Skins Release 2), local to this Mac.
         case imageSearch = "image-search-api-key"

@@ -111,6 +111,8 @@ KEEP = [
     # The skin file extension exported before the rename, accepted on import; the
     # followup writes it with this comment so only that line is kept.
     "kestrelskin</string><!-- exported before the rename -->",
+    # The Windows import picker offers the same old extension (apps/windows skin_maker.rs).
+    '"kestrelskin"]; // exported before the rename',
 ]
 # The self-hosted runner label is the same text as the Windows crate name. It stays
 # only where it is a label: the workflows and the runner install script.

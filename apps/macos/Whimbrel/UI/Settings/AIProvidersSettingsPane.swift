@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct AIProvidersSettingsPane: View {
@@ -15,6 +16,17 @@ struct AIProvidersSettingsPane: View {
     @State private var imageSearchKeyInput: String = ""
     @State private var imageSearchStatus: String?
     @State private var hasImageSearchKey = KeychainService.exists(for: .imageSearch)
+    @State private var anthropicStatusIsError = false
+    @State private var openaiStatusIsError = false
+    @State private var googleStatusIsError = false
+    @State private var openrouterKeyInput: String = ""
+    @State private var openrouterStatus: String?
+    @State private var openrouterStatusIsError = false
+    /// The key on-ramp table from core (key pages, policy pages, data-terms notes).
+    @State private var providers: [CoreProviderInfo] = CoreMemoryStore.providers()
+    @State private var usageTotals: CoreUsageTotals?
+    @State private var usageRows: [CoreUsageRow] = []
+    @State private var usageShowsAll = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -24,24 +36,41 @@ struct AIProvidersSettingsPane: View {
                 .foregroundStyle(Color.whimbrelTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if Self.showsOnRamp(routing: appState.routing) {
+                onRamp
+            }
+
+            providerLinks(for: "anthropic")
             keyRow(
                 title: "Anthropic API Key",
                 hasKey: appState.routing.hasAnthropicKey,
                 input: $anthropicKeyInput,
                 status: anthropicStatus,
+                statusIsError: anthropicStatusIsError,
+                formatHint: formatHint(provider: "anthropic", key: anthropicKeyInput),
                 save: {
                     if appState.routing.saveAnthropicKey(anthropicKeyInput) {
                         anthropicKeyInput = ""
-                        anthropicStatus = "Saved."
+                        anthropicStatus = "Saved. Checking the key…"
+                        anthropicStatusIsError = false
+                        Task {
+                            if let check = await appState.routing.checkSavedKey(.anthropic) {
+                                anthropicStatus = check.message
+                                anthropicStatusIsError = check.isError
+                            }
+                        }
                     } else {
                         anthropicStatus = "Failed to save key."
+                        anthropicStatusIsError = true
                     }
                 },
                 clear: {
                     appState.routing.clearAnthropicKey()
                     anthropicStatus = "Cleared."
+                    anthropicStatusIsError = false
                 }
             )
+            providerNotes(for: "anthropic")
             Toggle("Sync to devices", isOn: $appState.routing.anthropicKeySyncEnabled)
                 .disabled(!appState.routing.hasAnthropicKey)
                 .font(.whimbrelBody(.caption))
@@ -53,24 +82,37 @@ struct AIProvidersSettingsPane: View {
                 refresh: { Task { await appState.routing.refreshAnthropicModels() } }
             )
 
+            providerLinks(for: "openai")
             keyRow(
                 title: "OpenAI API Key",
                 hasKey: appState.routing.hasOpenAIKey,
                 input: $openaiKeyInput,
                 status: openaiStatus,
+                statusIsError: openaiStatusIsError,
+                formatHint: formatHint(provider: "openai", key: openaiKeyInput),
                 save: {
                     if appState.routing.saveOpenAIKey(openaiKeyInput) {
                         openaiKeyInput = ""
-                        openaiStatus = "Saved."
+                        openaiStatus = "Saved. Checking the key…"
+                        openaiStatusIsError = false
+                        Task {
+                            if let check = await appState.routing.checkSavedKey(.openai) {
+                                openaiStatus = check.message
+                                openaiStatusIsError = check.isError
+                            }
+                        }
                     } else {
                         openaiStatus = "Failed to save key."
+                        openaiStatusIsError = true
                     }
                 },
                 clear: {
                     appState.routing.clearOpenAIKey()
                     openaiStatus = "Cleared."
+                    openaiStatusIsError = false
                 }
             )
+            providerNotes(for: "openai")
             Toggle("Sync to devices", isOn: $appState.routing.openaiKeySyncEnabled)
                 .disabled(!appState.routing.hasOpenAIKey)
                 .font(.whimbrelBody(.caption))
@@ -82,24 +124,37 @@ struct AIProvidersSettingsPane: View {
                 refresh: { Task { await appState.routing.refreshOpenAIModels() } }
             )
 
+            providerLinks(for: "google")
             keyRow(
                 title: "Google API Key",
                 hasKey: appState.routing.hasGoogleKey,
                 input: $googleKeyInput,
                 status: googleStatus,
+                statusIsError: googleStatusIsError,
+                formatHint: formatHint(provider: "google", key: googleKeyInput),
                 save: {
                     if appState.routing.saveGoogleKey(googleKeyInput) {
                         googleKeyInput = ""
-                        googleStatus = "Saved."
+                        googleStatus = "Saved. Checking the key…"
+                        googleStatusIsError = false
+                        Task {
+                            if let check = await appState.routing.checkSavedKey(.google) {
+                                googleStatus = check.message
+                                googleStatusIsError = check.isError
+                            }
+                        }
                     } else {
                         googleStatus = "Failed to save key."
+                        googleStatusIsError = true
                     }
                 },
                 clear: {
                     appState.routing.clearGoogleKey()
                     googleStatus = "Cleared."
+                    googleStatusIsError = false
                 }
             )
+            providerNotes(for: "google")
             Toggle("Sync to devices", isOn: $appState.routing.googleKeySyncEnabled)
                 .disabled(!appState.routing.hasGoogleKey)
                 .font(.whimbrelBody(.caption))
@@ -111,9 +166,90 @@ struct AIProvidersSettingsPane: View {
                 refresh: { Task { await appState.routing.refreshGoogleModels() } }
             )
 
+            providerLinks(for: "openrouter")
+            keyRow(
+                title: "OpenRouter API Key",
+                hasKey: appState.routing.hasOpenRouterKey,
+                input: $openrouterKeyInput,
+                placeholder: "sk-or-…",
+                status: openrouterStatus,
+                statusIsError: openrouterStatusIsError,
+                formatHint: formatHint(provider: "openrouter", key: openrouterKeyInput),
+                save: {
+                    if appState.routing.saveOpenRouterKey(openrouterKeyInput) {
+                        openrouterKeyInput = ""
+                        openrouterStatus = "Saved. Checking the key…"
+                        openrouterStatusIsError = false
+                        Task {
+                            if let check = await appState.routing.checkSavedKey(.openrouter) {
+                                openrouterStatus = check.message
+                                openrouterStatusIsError = check.isError
+                            }
+                        }
+                    } else {
+                        openrouterStatus = "Failed to save key."
+                        openrouterStatusIsError = true
+                    }
+                },
+                clear: {
+                    appState.routing.clearOpenRouterKey()
+                    openrouterStatus = "Cleared."
+                    openrouterStatusIsError = false
+                }
+            )
+            Text("One key for any model on OpenRouter's catalogue, free ones included. Pick the model below; until you do, OpenRouter is left out of every chain, because their catalogue changes weekly and there is no fallback model to substitute.")
+                .font(.whimbrelBody(.caption2))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            providerNotes(for: "openrouter")
+            Toggle("Sync to devices", isOn: $appState.routing.openrouterKeySyncEnabled)
+                .disabled(!appState.routing.hasOpenRouterKey)
+                .font(.whimbrelBody(.caption))
+            modelStatusRow(
+                hasKey: appState.routing.hasOpenRouterKey,
+                isLoading: appState.routing.isLoadingOpenRouterModels,
+                models: appState.routing.openrouterModels,
+                error: appState.routing.openrouterModelsError,
+                refresh: { Task { await appState.routing.refreshOpenRouterModels() } }
+            )
+            if appState.routing.hasOpenRouterKey {
+                HStack {
+                    Text("OpenRouter model:").frame(width: 160, alignment: .leading)
+                    if appState.routing.openrouterModels.isEmpty {
+                        TextField("vendor/model or vendor/model:free", text: Binding(
+                            get: { appState.routing.openrouterDefaultModel },
+                            set: { appState.routing.openrouterDefaultModel = $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 260)
+                    } else {
+                        Picker("", selection: Binding(
+                            get: { appState.routing.openrouterDefaultModel },
+                            set: { appState.routing.openrouterDefaultModel = $0 }
+                        )) {
+                            Text("Not picked").tag("")
+                            ForEach(appState.routing.openrouterModels, id: \.self) { Text($0).tag($0) }
+                        }
+                        .labelsHidden()
+                        .frame(width: 260)
+                    }
+                }
+            }
+
             Text("Ollama").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary)
-            Text("Local server — no API key needed.")
+            Text("Local server, no API key needed. Runs on this Mac and nothing leaves it.")
                 .font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+            Toggle("Use local model", isOn: Binding(
+                get: { appState.routing.useLocalModel },
+                set: { appState.routing.useLocalModel = $0 }
+            ))
+            .tint(Color.whimbrelAccentPrimary)
+            Text(appState.routing.localOnlyMode
+                 ? "Local-only mode is on, so the local model is always used."
+                 : "Off skips Ollama entirely. Turn it off on a Mac that does not run Ollama, so calls stop trying to reach it first.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             modelStatusRow(
                 hasKey: true,
                 isLoading: appState.routing.isLoadingOllamaModels,
@@ -121,6 +257,18 @@ struct AIProvidersSettingsPane: View {
                 error: appState.routing.ollamaModelsError,
                 refresh: { Task { await appState.routing.refreshOllamaModels() } }
             )
+
+            Divider().overlay(Color.whimbrelBorder)
+
+            Toggle("Use the cheapest model for small tasks", isOn: Binding(
+                get: { appState.routing.cheapFirst },
+                set: { appState.routing.cheapFirst = $0 }
+            ))
+            .tint(Color.whimbrelAccentPrimary)
+            Text("Conversation titles, topic names and profile suggestions go to the local model first, then to the cheapest model you have a key for. Chat, summaries and digests keep using your default provider. Each routine picks its own model in Routines.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Divider().overlay(Color.whimbrelBorder)
 
@@ -264,6 +412,10 @@ struct AIProvidersSettingsPane: View {
                 Button("Refresh") { refreshSpend() }
                     .buttonStyle(.whimbrelSecondary)
             }
+
+            Divider().overlay(Color.whimbrelBorder)
+
+            usageSection
         }
         .onChange(of: appState.routing.preferredProvider) { _, _ in clampDefaultModelIfNeeded() }
         .onChange(of: appState.routing.ollamaModels) { _, _ in clampDefaultModelIfNeeded() }
@@ -272,6 +424,7 @@ struct AIProvidersSettingsPane: View {
         .onChange(of: appState.routing.googleModels) { _, _ in clampDefaultModelIfNeeded() }
         .onAppear {
             refreshSpend()
+            refreshUsage()
             if appState.routing.ollamaModels.isEmpty {
                 Task { await appState.routing.refreshOllamaModels() }
             }
@@ -283,6 +436,9 @@ struct AIProvidersSettingsPane: View {
             }
             if appState.routing.hasGoogleKey && appState.routing.googleModels.isEmpty {
                 Task { await appState.routing.refreshGoogleModels() }
+            }
+            if appState.routing.hasOpenRouterKey && appState.routing.openrouterModels.isEmpty {
+                Task { await appState.routing.refreshOpenRouterModels() }
             }
             clampDefaultModelIfNeeded()
         }
@@ -297,6 +453,7 @@ struct AIProvidersSettingsPane: View {
         case .anthropic: return appState.routing.anthropicModels
         case .openai: return appState.routing.openaiModels
         case .google: return appState.routing.googleModels
+        case .openrouter: return appState.routing.openrouterModels
         }
     }
 
@@ -324,6 +481,7 @@ struct AIProvidersSettingsPane: View {
                     case .anthropic: appState.routing.anthropicDefaultModel = newValue
                     case .openai: appState.routing.openaiDefaultModel = newValue
                     case .google: appState.routing.googleDefaultModel = newValue
+                    case .openrouter: appState.routing.openrouterDefaultModel = newValue
                     }
                 }
             )) {
@@ -347,6 +505,9 @@ struct AIProvidersSettingsPane: View {
         case .anthropic: appState.routing.anthropicDefaultModel = defaultModelOptions[0]
         case .openai: appState.routing.openaiDefaultModel = defaultModelOptions[0]
         case .google: appState.routing.googleDefaultModel = defaultModelOptions[0]
+        // OpenRouter is never snapped to a model the user did not pick: an unpicked
+        // model keeps it out of the chain on purpose.
+        case .openrouter: break
         }
     }
 
@@ -357,6 +518,8 @@ struct AIProvidersSettingsPane: View {
         input: Binding<String>,
         placeholder: String = "sk-…",
         status: String?,
+        statusIsError: Bool = false,
+        formatHint: String? = nil,
         save: @escaping () -> Void,
         clear: @escaping () -> Void
     ) -> some View {
@@ -373,8 +536,200 @@ struct AIProvidersSettingsPane: View {
                     .buttonStyle(.whimbrelSecondary)
                     .disabled(!hasKey)
             }
+            if let formatHint {
+                // Advisory: prefixes change, so the key saves either way.
+                Text(formatHint).font(.whimbrelBody(.caption2)).foregroundStyle(Color.whimbrelTextSecondary)
+            }
             if let status {
-                Text(status).font(.whimbrelBody(.caption2)).foregroundStyle(Color.whimbrelTextSecondary)
+                Text(status)
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(statusIsError ? Color.whimbrelError : Color.whimbrelTextSecondary)
+            }
+        }
+    }
+
+    /// The format hint for what is in the field right now, nil when it looks right or
+    /// the field is empty.
+    private func formatHint(provider: String, key: String) -> String? {
+        guard !key.isEmpty else { return nil }
+        return CoreMemoryStore.keyFormatHint(provider: provider, key: key)
+    }
+
+    /// "Get a key" and the policy link for one provider, above its key row.
+    @ViewBuilder
+    private func providerLinks(for id: String) -> some View {
+        if let info = providers.first(where: { $0.id == id }) {
+            HStack(spacing: Spacing.md) {
+                if let page = info.keyPageUrl, let url = URL(string: page) {
+                    Link("Get a \(info.name) key", destination: url)
+                        .font(.whimbrelBody(.caption))
+                }
+                if let policy = info.policyUrl, let url = URL(string: policy) {
+                    Link("Data policy", destination: url)
+                        .font(.whimbrelBody(.caption))
+                }
+            }
+        }
+    }
+
+    /// Under a key row: the light-task model and this provider's last-30-day spend, and
+    /// the dated data-terms note where the provider's free tier may use prompts.
+    @ViewBuilder
+    private func providerNotes(for id: String) -> some View {
+        if let info = providers.first(where: { $0.id == id }) {
+            Text(Self.costLine(info: info, totals: usageTotals))
+                .font(.whimbrelBody(.caption2))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let terms = info.dataTerms {
+                Text("\(terms.text) (Checked \(terms.checked).)")
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The cost line for one provider: the light-task model, then the user's own figure
+    /// once there is one, else the one general claim doc 16 makes.
+    static func costLine(info: CoreProviderInfo, totals: CoreUsageTotals?) -> String {
+        var parts: [String] = []
+        if !info.cheapModel.isEmpty {
+            parts.append("Small tasks use \(info.cheapModel).")
+        }
+        if let totals, totals.last30DaysCents > 0 {
+            parts.append("In the last 30 days you spent \(Self.dollars(totals.cents(for: info.id))) on \(info.name).")
+        } else {
+            parts.append("Most people spend under a dollar a month at this setting.")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    static func dollars(_ cents: Int64) -> String {
+        String(format: "$%.2f", Double(cents) / 100)
+    }
+
+    /// Whether the on-ramp card shows: no local model is reachable (or local is off) and
+    /// no hosted key is saved, so chat, summaries and routines have nothing to call.
+    @MainActor
+    static func showsOnRamp(routing: RoutingSettings) -> Bool {
+        let localAvailable = routing.useLocalModel && !routing.ollamaModels.isEmpty
+        return !localAvailable && !routing.hasAnyHostedKey
+    }
+
+    private var onRamp: some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            Text("Pick where AI runs").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Whimbrel works without any AI model: capture, transcripts and search still work. Chat, summaries and routines need one.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: Spacing.md) {
+                if let url = URL(string: "https://ollama.com/download") {
+                    Button("Install Ollama") { NSWorkspace.shared.open(url) }.buttonStyle(.whimbrelSecondary)
+                }
+                if let page = providers.first(where: { $0.id == "google" })?.keyPageUrl, let url = URL(string: page) {
+                    Button("Get a free Gemini key") { NSWorkspace.shared.open(url) }.buttonStyle(.whimbrelSecondary)
+                }
+            }
+            Text("Ollama is free, runs on this Mac and nothing leaves it. Gemini's free tier is free, and Google may use prompts to improve its products. Or paste any Anthropic, OpenAI or Google key below.")
+                .font(.whimbrelBody(.caption2))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(Spacing.md)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.whimbrelBorder))
+        .accessibilityIdentifier("ai-on-ramp")
+    }
+
+    /// Model usage: what every call cost, from the ledger the spend caps already keep.
+    private var usageSection: some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            Text("Model usage").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary)
+            if let usageTotals {
+                Text("Today \(Self.dollars(usageTotals.todayCents)), last 30 days \(Self.dollars(usageTotals.last30DaysCents)), this month \(Self.dollars(usageTotals.monthToDateCents)). Local calls are not metered.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if usageRows.isEmpty {
+                Text("No model calls yet.").font(.whimbrelBody(.caption2)).foregroundStyle(Color.whimbrelTextSecondary)
+            } else {
+                ForEach(Self.groupedByDay(usageRows), id: \.day) { group in
+                    Text(group.day).font(.whimbrelBody(.caption).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+                    ForEach(group.rows) { row in
+                        HStack(spacing: Spacing.md) {
+                            Text(Self.timeLabel(row.tsUnixMs)).frame(width: 56, alignment: .leading)
+                            Text(row.task).frame(width: 120, alignment: .leading)
+                            Text("\(row.provider) \(row.model)").frame(minWidth: 180, alignment: .leading).lineLimit(1)
+                            Text(Self.tokensLabel(row)).frame(width: 110, alignment: .trailing)
+                            Text(row.local ? "local" : Self.dollars(row.estimatedCostCents)).frame(width: 60, alignment: .trailing)
+                        }
+                        .font(.whimbrelBody(.caption2))
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                    }
+                }
+            }
+            HStack {
+                Button(usageShowsAll ? "Show last 7 days" : "Show last 30 days") {
+                    usageShowsAll.toggle()
+                    refreshUsage()
+                }
+                .buttonStyle(.whimbrelSecondary)
+                Button("Refresh") { refreshUsage() }.buttonStyle(.whimbrelSecondary)
+            }
+        }
+        .accessibilityIdentifier("model-usage")
+    }
+
+    struct UsageDay {
+        let day: String
+        let rows: [CoreUsageRow]
+    }
+
+    /// Rows grouped by local calendar day, in the order they arrive (newest first).
+    static func groupedByDay(_ rows: [CoreUsageRow]) -> [UsageDay] {
+        var groups: [UsageDay] = []
+        for row in rows {
+            let day = dayLabel(row.tsUnixMs)
+            if let last = groups.last, last.day == day {
+                groups[groups.count - 1] = UsageDay(day: day, rows: last.rows + [row])
+            } else {
+                groups.append(UsageDay(day: day, rows: [row]))
+            }
+        }
+        return groups
+    }
+
+    static func dayLabel(_ unixMs: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(unixMs) / 1000)
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    static func timeLabel(_ unixMs: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(unixMs) / 1000)
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    static func tokensLabel(_ row: CoreUsageRow) -> String {
+        guard let input = row.inputTokens, let output = row.outputTokens else { return "" }
+        return "\(input) in, \(output) out"
+    }
+
+    private func refreshUsage() {
+        guard let store = appState.coreStore else {
+            usageTotals = nil
+            usageRows = []
+            return
+        }
+        let days: Int64 = usageShowsAll ? 30 : 7
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        CoreMemoryStore.accessQueue.async {
+            let totals = store.usageTotals()
+            let rows = store.usageList(sinceUnixMs: now - days * 24 * 60 * 60 * 1000, untilUnixMs: now + 1, limit: 200) ?? []
+            DispatchQueue.main.async {
+                usageTotals = totals
+                usageRows = rows
             }
         }
     }

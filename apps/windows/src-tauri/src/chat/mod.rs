@@ -116,6 +116,9 @@ pub fn stream_route(routing: &RoutingSettings, keys: &ApiKeys) -> Option<StreamR
         Provider::Google => hosted("google", &keys.google, &routing.google_model),
         Provider::Anthropic => hosted("anthropic", &keys.anthropic, &routing.anthropic_model),
         Provider::Openai => hosted("openai", &keys.openai, &routing.openai_model),
+        // No model picked yet: the blocking path's chain leaves OpenRouter out.
+        Provider::Openrouter if routing.openrouter_model.trim().is_empty() => None,
+        Provider::Openrouter => hosted("openrouter", &keys.openrouter, &routing.openrouter_model),
     }
 }
 

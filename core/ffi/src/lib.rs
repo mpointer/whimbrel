@@ -623,6 +623,7 @@ pub extern "C" fn whimbrel_skin_turn(
         "anthropic" => (llm::Provider::Anthropic, Box::new(llm::AnthropicClient::new(key, &model))),
         "openai" => (llm::Provider::OpenAI, Box::new(llm::OpenAIClient::new(key, &model))),
         "google" => (llm::Provider::Google, Box::new(llm::GoogleClient::new(key, &model))),
+        "openrouter" => (llm::Provider::OpenRouter, Box::new(llm::OpenAIClient::openrouter(key, &model))),
         _ => return ptr::null_mut(),
     };
     let Ok(store) = Store::open(Path::new(&db_path), Path::new("")) else {
@@ -1485,6 +1486,26 @@ pub extern "C" fn whimbrel_routines_set_schedule(
     store.update_routine_schedule(id, &schedule_hhmm).is_ok()
 }
 
+/// Sets which model chain a routine's runs use: `default`, `cheapest`, or
+/// `<provider>/<model>` (design:
+/// `docs/superpowers/specs/2026-10-29-cheap-first-routing-and-key-on-ramp-design.md`).
+/// Returns `false` on a null/invalid handle, a value outside those shapes, or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_routines_set_model_pref(
+    handle: *mut StoreHandle,
+    id: i64,
+    model_pref: *const c_char,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let Some(model_pref) = cstr_to_string(model_pref) else {
+        return false;
+    };
+    let store = unsafe { &(*handle).0 };
+    store.set_routine_model_pref(id, &model_pref).is_ok()
+}
+
 /// FR-RTN-5..7 (Phase B approval gate): every routine run currently sitting in
 /// `PendingApproval`, newest first, each with its routine's name joined in -- the real
 /// backing query for the approvals inbox UI. Bare JSON array, not the LB0-5 envelope --
@@ -1712,6 +1733,42 @@ pub extern "C" fn whimbrel_llm_spend_today(
     let store = unsafe { &(*handle).0 };
     let spend = api::spend::spend_today(store, user_id.as_deref(), now_unix_ms());
     match serde_json::to_string(&spend) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// The Model usage screen's totals (`api::usage::totals`): `{"today_cents",
+/// "last_30_days_cents", "month_to_date_cents", "last_30_days_by_provider": [{"provider",
+/// "cents"}]}`, every window ending now, UTC days. Null on a null/invalid handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_usage_totals(handle: *mut StoreHandle) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    match serde_json::to_string(&api::usage::totals(store, now_unix_ms())) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// The Model usage screen's list (`api::usage::list`): the newest `limit` calls with
+/// `since_unix_ms <= ts < until_unix_ms` as a JSON array of `{"ts_unix_ms", "task",
+/// "provider", "model", "input_tokens", "output_tokens", "estimated_cost_cents",
+/// "local"}`. Null on a null/invalid handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_usage_list(
+    handle: *mut StoreHandle,
+    since_unix_ms: i64,
+    until_unix_ms: i64,
+    limit: u32,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    match serde_json::to_string(&api::usage::list(store, since_unix_ms, until_unix_ms, limit as usize)) {
         Ok(json) => json_to_c_string(json),
         Err(_) => ptr::null_mut(),
     }
@@ -3381,6 +3438,31 @@ pub extern "C" fn whimbrel_memory_get_capture_item(
     }
 }
 
+/// M4.2: display cards for an answer's citations (`api::citations::resolve`). `refs_json`
+/// is a JSON array of `ContextItemRef` (`{"kind":"capture","id":1}`). Returns a JSON array
+/// of cards in input order (a missing row is a card with `found:false`, never dropped), or
+/// null on a null handle/refs or malformed JSON.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_citations_resolve(
+    handle: *mut StoreHandle,
+    refs_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(raw) = cstr_to_string(refs_json) else {
+        return ptr::null_mut();
+    };
+    let Ok(refs) = serde_json::from_str::<Vec<llm::ContextItemRef>>(&raw) else {
+        return ptr::null_mut();
+    };
+    let store = unsafe { &(*handle).0 };
+    match serde_json::to_string(&api::citations::resolve(store, &refs)) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// M3.0 Task 2: per-data-class retention sweep plus file cleanup (`api::retention::apply`).
 /// `capture_item_days`/`meeting_days`/`conversation_days` are the window in days per
 /// data class, or `-1` (any negative value) to keep that class forever. `now_unix_ms` is
@@ -4421,6 +4503,29 @@ mod tests {
     }
 
     #[test]
+    fn whimbrel_citations_resolve_returns_cards_and_rejects_bad_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path_c = to_cstring(dir.path().join("c.db").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let refs = to_cstring(r#"[{"kind":"capture","id":42},{"kind":"thread","id":1}]"#);
+        let out = whimbrel_citations_resolve(handle, refs.as_ptr());
+        assert!(!out.is_null());
+        let s = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        whimbrel_core_free_string(out);
+        let cards: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(cards.as_array().unwrap().len(), 2);
+        assert_eq!(cards[0]["kind"], "capture");
+        assert_eq!(cards[0]["found"], false);
+        assert_eq!(cards[0]["title"], "Not on this iPhone");
+        assert_eq!(cards[1]["kind"], "thread");
+        let bad = to_cstring("not json");
+        assert!(whimbrel_citations_resolve(handle, bad.as_ptr()).is_null());
+        assert!(whimbrel_citations_resolve(handle, ptr::null()).is_null());
+        assert!(whimbrel_citations_resolve(ptr::null_mut(), refs.as_ptr()).is_null());
+    }
+
+    #[test]
     fn whimbrel_llm_answer_does_not_panic_with_a_populated_custom_instructions_field() {
         let dir = tempfile::tempdir().unwrap();
         let db_path_c = to_cstring(dir.path().join("test.sqlite").to_str().unwrap());
@@ -5358,6 +5463,25 @@ mod tests {
             s.contains("\"global_cents\":510"),
             "expected global spend across all identities, got {s}"
         );
+
+        // The Model usage screen reads the same ledger: totals across every identity
+        // and the newest rows in a window.
+        let json = whimbrel_usage_totals(handle);
+        assert!(!json.is_null());
+        let s = unsafe { CStr::from_ptr(json) }.to_str().unwrap().to_string();
+        whimbrel_core_free_string(json);
+        assert!(s.contains("\"today_cents\":510"), "{s}");
+        assert!(s.contains("\"last_30_days_by_provider\":[{\"provider\":\"anthropic\",\"cents\":510}]"), "{s}");
+
+        let json = whimbrel_usage_list(handle, 0, i64::MAX, 1);
+        assert!(!json.is_null());
+        let rows: serde_json::Value = serde_json::from_str(unsafe { CStr::from_ptr(json) }.to_str().unwrap()).unwrap();
+        whimbrel_core_free_string(json);
+        assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
+        assert_eq!(rows[0]["task"], "ask");
+        assert_eq!(rows[0]["local"], false);
+        assert!(whimbrel_usage_totals(ptr::null_mut()).is_null());
+        assert!(whimbrel_usage_list(ptr::null_mut(), 0, 1, 1).is_null());
 
         whimbrel_memory_close(handle);
     }

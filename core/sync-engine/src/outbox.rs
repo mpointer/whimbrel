@@ -13,7 +13,7 @@ use libsql::{params, Connection};
 use memory::{ClaimedOutboxOperation, DeliveryFailureClass, MeetingStatus, Store};
 use sync::GroupKey;
 
-use crate::content::{all_peers_items_capable, content_row_aad};
+use crate::content::{all_peers_items_capable, content_row_aad, MAX_SKIN_CHUNK_BYTES_PER_PASS};
 use crate::SyncEngineError;
 
 const CLAIM_BATCH: i64 = 100;
@@ -64,6 +64,7 @@ pub(crate) async fn dispatch_outbox_at(
     let mut summary = OutboxDispatchSummary::default();
     let mut parent_terminal: HashMap<i64, bool> = HashMap::new();
     let mut processed = 0;
+    let mut chunk_bytes = 0usize;
 
     while processed < MAX_ROWS_PER_PASS {
         let batch = store
@@ -79,6 +80,27 @@ pub(crate) async fn dispatch_outbox_at(
             break;
         }
         for op in batch {
+            // The image budget: chunks past it wait for the next round (not a failure, no backoff), and
+            // don't count toward this pass's rows, so rows enqueued after a large image still go now.
+            if op.row_type == memory::OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK {
+                if chunk_bytes >= MAX_SKIN_CHUNK_BYTES_PER_PASS {
+                    store
+                        .release_outbox_after_failure(
+                            &op.operation_id,
+                            &worker_id,
+                            DeliveryFailureClass::Retryable,
+                            "skin_image_budget",
+                            "held for the next round",
+                            Some(now_unix_ms + 1),
+                            now_unix_ms,
+                        )
+                        .map_err(query_error)?;
+                    summary.deferred += 1;
+                    continue;
+                }
+                // About what the sealed, base64-encoded row will be.
+                chunk_bytes += op.payload_json.len() * 4 / 3;
+            }
             processed += 1;
             if op.row_type == memory::OUTBOX_ROW_TYPE_ITEMS && !items_capable {
                 store

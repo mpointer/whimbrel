@@ -9,7 +9,7 @@ use tauri::State;
 use crate::device_labels::DeviceLabeler;
 use crate::error::CommandError;
 use crate::routines::{capabilities, unavailable, valid_schedule, writes, Capabilities};
-use crate::settings::SettingsFile;
+use crate::settings::{ApiKeys, Provider, RoutingSettings, SettingsFile};
 use crate::syncing::controller::DeviceView;
 use crate::state::AppState;
 
@@ -94,6 +94,69 @@ pub struct RoutineView {
     /// Why this routine cannot run on this PC yet; the tab shows it and will not let it be switched on.
     pub unavailable: Option<String>,
     pub last_run: Option<RunView>,
+    /// Which model chain the routine's runs use: `default`, `cheapest`, or `<provider>/<model>`
+    /// (core `routine.model_pref`). Shown only where `calls_model` is true.
+    pub model_pref: String,
+    /// Whether this routine's runs call a model through its own preference (daily brief,
+    /// end-of-day recap, weekly digest). Reply Priorities calls none; Meeting Prep runs
+    /// through the standard chain.
+    pub calls_model: bool,
+}
+
+/// One entry of a routine's Model picker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelOptionView {
+    /// The `model_pref` value this entry sets.
+    pub value: String,
+    pub label: String,
+}
+
+/// Templates whose runs call a model through the routine's own preference.
+pub fn calls_model(template: &RoutineTemplate) -> bool {
+    matches!(template, RoutineTemplate::DailyBrief | RoutineTemplate::EodRecap | RoutineTemplate::WeeklyDigest)
+}
+
+/// Default, Cheapest, then one entry per provider the user can actually run: Ollama with its
+/// default model, and each hosted provider that has a key, at that provider's default model
+/// (OpenRouter only once a model is picked). The Mac's `RoutinesSettingsPane.modelPrefOptions`.
+pub fn model_options(routing: &RoutingSettings, keys: &ApiKeys) -> Vec<ModelOptionView> {
+    let label = |p: Provider| match p {
+        Provider::Ollama => "Ollama",
+        Provider::Anthropic => "Anthropic",
+        Provider::Openai => "OpenAI",
+        Provider::Google => "Google",
+        Provider::Openrouter => "OpenRouter",
+    };
+    let mut options = vec![
+        ModelOptionView { value: "default".into(), label: format!("Default ({})", label(routing.preferred_provider)) },
+        ModelOptionView { value: "cheapest".into(), label: "Cheapest model you have".into() },
+    ];
+    for provider in [Provider::Ollama, Provider::Anthropic, Provider::Openai, Provider::Google, Provider::Openrouter] {
+        let model = routing.model_for(provider).trim();
+        if model.is_empty() || !keys.has(provider) {
+            continue;
+        }
+        options.push(ModelOptionView { value: format!("{}/{}", provider.as_str(), model), label: format!("{} ({})", label(provider), model) });
+    }
+    options
+}
+
+/// Only the three shapes core accepts reach the store, so a stray value can never leave a
+/// routine on a chain nobody chose.
+pub fn set_model_pref(store: &Store, id: i64, pref: &str) -> Result<(), CommandError> {
+    let routine = find(store, id)?;
+    if !calls_model(&routine.template) {
+        return Err(CommandError::invalid_input("This routine doesn't call a model."));
+    }
+    let pref = pref.trim();
+    let known = pref == "default"
+        || pref == "cheapest"
+        || pref.split_once('/').is_some_and(|(p, m)| ["ollama", "anthropic", "openai", "google", "openrouter"].contains(&p) && !m.is_empty());
+    if !known {
+        return Err(CommandError::invalid_input("Pick a model from the list."));
+    }
+    store.set_routine_model_pref(id, pref).map_err(store_error)
 }
 
 fn run_view(run: &RoutineRun, name: &str) -> RunView {
@@ -120,6 +183,8 @@ fn routine_view(r: &Routine, last: Option<&RoutineRun>, can: Capabilities) -> Ro
         auto_approve: r.auto_approve_write_actions,
         unavailable: unavailable(&r.template, can).map(str::to_string),
         last_run: last.map(|run| run_view(run, &r.name)),
+        model_pref: r.model_pref.clone(),
+        calls_model: calls_model(&r.template),
     }
 }
 
@@ -241,6 +306,64 @@ pub async fn routine_set_auto_approve(state: State<'_, AppState>, id: i64, enabl
             list(s, capabilities(s))
         })
         .await?
+}
+
+#[cfg(test)]
+mod model_pref_tests {
+    use super::*;
+
+    #[test]
+    fn model_options_list_default_cheapest_and_only_runnable_providers() {
+        let routing = RoutingSettings { preferred_provider: Provider::Anthropic, ..RoutingSettings::default() };
+        let keys = ApiKeys { anthropic: Some("a".into()), openrouter: Some("or".into()), ..ApiKeys::default() };
+        let values: Vec<String> = model_options(&routing, &keys).into_iter().map(|o| o.value).collect();
+        assert_eq!(values, ["default", "cheapest", "ollama/gemma4:12b", "anthropic/claude-haiku-4-5"], "OpenRouter waits for a pick");
+        assert_eq!(model_options(&routing, &keys)[0].label, "Default (Anthropic)");
+
+        let routing = RoutingSettings { openrouter_model: "vendor/model:free".into(), ..routing };
+        let values: Vec<String> = model_options(&routing, &keys).into_iter().map(|o| o.value).collect();
+        assert!(values.contains(&"openrouter/vendor/model:free".to_string()));
+    }
+
+    #[test]
+    fn set_model_pref_accepts_the_three_shapes_on_routines_that_call_a_model() {
+        let store = Store::open_in_memory().unwrap();
+        store.seed_builtin_routines().unwrap();
+        let routines = store.list_routines().unwrap();
+        let brief = routines.iter().find(|r| r.template == RoutineTemplate::DailyBrief).unwrap().id;
+        let prep = routines.iter().find(|r| r.template == RoutineTemplate::MeetingPrep).unwrap().id;
+        for good in ["default", "cheapest", "openrouter/vendor/model:free", " anthropic/claude-sonnet-5 "] {
+            set_model_pref(&store, brief, good).unwrap_or_else(|e| panic!("{good}: {e:?}"));
+        }
+        assert_eq!(store.list_routines().unwrap().iter().find(|r| r.id == brief).unwrap().model_pref, "anthropic/claude-sonnet-5");
+        for bad in ["", "cheap", "venice/llama", "anthropic/"] {
+            assert!(set_model_pref(&store, brief, bad).is_err(), "{bad:?}");
+        }
+        assert!(set_model_pref(&store, prep, "cheapest").is_err(), "meeting prep runs on the standard chain");
+        let view = list(&store, Capabilities { approvals: true, calendar: false, gmail_send: false, gmail_mail: false }).unwrap();
+        let brief_view = view.iter().find(|r| r.id == brief).unwrap();
+        assert!(brief_view.calls_model && brief_view.model_pref == "anthropic/claude-sonnet-5");
+        assert!(!view.iter().find(|r| r.id == prep).unwrap().calls_model);
+    }
+}
+
+#[tauri::command]
+pub async fn routine_set_model_pref(state: State<'_, AppState>, id: i64, pref: String) -> Result<Vec<RoutineView>, CommandError> {
+    state
+        .store()?
+        .call(move |s| {
+            set_model_pref(s, id, &pref)?;
+            list(s, capabilities(s))
+        })
+        .await?
+}
+
+/// The Model picker's entries, from the routing settings and the saved keys.
+#[tauri::command]
+pub fn routine_model_options(state: State<'_, AppState>) -> Result<Vec<ModelOptionView>, CommandError> {
+    let routing = state.settings.lock().unwrap().routing();
+    let keys = ApiKeys::load(&*state.secrets)?;
+    Ok(model_options(&routing, &keys))
 }
 
 #[tauri::command]

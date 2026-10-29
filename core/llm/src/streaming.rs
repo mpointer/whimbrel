@@ -886,6 +886,9 @@ pub struct OpenAIStreamingClient {
     base_url: String,
     api_key: String,
     http: reqwest::Client,
+    /// `OpenAI`, or `OpenRouter` for the same wire shape against OpenRouter's host.
+    provider: Provider,
+    extra_headers: Vec<(String, String)>,
 }
 
 impl OpenAIStreamingClient {
@@ -894,7 +897,20 @@ impl OpenAIStreamingClient {
             base_url: "https://api.openai.com".to_string(),
             api_key: api_key.into(),
             http: reqwest::Client::new(),
+            provider: Provider::OpenAI,
+            extra_headers: Vec::new(),
         }
+    }
+
+    /// The same stream against OpenRouter, with the two headers they ask for.
+    pub fn openrouter(api_key: impl Into<String>) -> Self {
+        let mut client = Self::new(api_key).with_base_url(crate::OPENROUTER_BASE_URL);
+        client.provider = Provider::OpenRouter;
+        client.extra_headers = vec![
+            ("HTTP-Referer".to_string(), crate::OPENROUTER_REFERER.to_string()),
+            ("X-Title".to_string(), crate::OPENROUTER_TITLE.to_string()),
+        ];
+        client
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -906,7 +922,7 @@ impl OpenAIStreamingClient {
 #[async_trait]
 impl StreamingLlmClient for OpenAIStreamingClient {
     fn provider(&self) -> Provider {
-        Provider::OpenAI
+        self.provider
     }
 
     async fn stream(
@@ -920,16 +936,18 @@ impl StreamingLlmClient for OpenAIStreamingClient {
             "stream_options": {"include_usage": true},
             "messages": [{"role": "user", "content": request.prompt}],
         });
+        let mut call = self
+            .http
+            .post(format!("{}/v1/chat/completions", self.base_url))
+            .bearer_auth(&self.api_key);
+        for (name, value) in &self.extra_headers {
+            call = call.header(name, value);
+        }
         let response = tokio::select! {
             _ = cancel.cancelled() => {
                 return Err(LlmError::Network("cancelled before connecting".into()));
             }
-            result = self
-                .http
-                .post(format!("{}/v1/chat/completions", self.base_url))
-                .bearer_auth(&self.api_key)
-                .json(&body)
-                .send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
+            result = call.json(&body).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
         };
         if !response.status().is_success() {
             let status = response.status().as_u16();

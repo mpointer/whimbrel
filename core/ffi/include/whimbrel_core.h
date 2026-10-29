@@ -405,6 +405,11 @@ bool whimbrel_routines_set_enabled(StoreHandle *handle, int64_t id, bool enabled
  * false only on a null/invalid handle or DB error. */
 bool whimbrel_routines_set_schedule(StoreHandle *handle, int64_t id, const char *schedule_hhmm);
 
+/* Sets which model chain a routine's runs use: "default" (the preferred provider and
+ * its fallbacks), "cheapest" (the light chain), or "<provider>/<model>" pinned first.
+ * Returns false on a null/invalid handle, a value outside those shapes, or a DB error. */
+bool whimbrel_routines_set_model_pref(StoreHandle *handle, int64_t id, const char *model_pref);
+
 /* FR-RTN-5..7 (Phase B approval gate): every routine run currently sitting in
  * PendingApproval, newest first, each with its routine's name joined in. Bare JSON
  * array, not the LB0-5 envelope -- same convention as whimbrel_routines_list/
@@ -793,6 +798,13 @@ bool whimbrel_memory_replace_meeting_action_items_from_generated(
  * error. */
 char *whimbrel_memory_get_capture_item(StoreHandle *handle, int64_t id);
 
+/* M4.2: display cards for an answer's citations. refs_json is a JSON array of
+ * ContextItemRef ({"kind":"capture"|"transcript"|"routine_run"|"episode"|"thread"|
+ * "snapshot","id":N}). Returns a JSON array of cards in input order (a ref whose row is
+ * missing becomes a card with found:false, never dropped). Returns NULL on a null handle,
+ * null refs_json, or malformed JSON. */
+char *whimbrel_citations_resolve(StoreHandle *handle, const char *refs_json);
+
 /* A page of a meeting's transcript, ordered by start_cs — the source of truth for
  * transcript display on any device, since transcript_segment rows sync independently
  * of the meeting row's own transcript_path (a local file path that never transfers
@@ -1105,6 +1117,32 @@ bool whimbrel_ask_is_time_critical(const char *query);
  * thread and never from the store queue. Returns {"models": [...]} or
  * {"error": "<display-ready message>"}; NULL only on a NULL or unknown provider. */
 char *whimbrel_hosted_models_fetch(const char *provider, const char *api_key, const char *base_url_override);
+
+/* ---- Key on-ramp and Model usage (core/api::hosted_models, providers, usage) ----
+ * Validates a pasted key by fetching the provider's model list. BLOCKING like
+ * whimbrel_hosted_models_fetch. Returns {"status":"valid","models":[...]} (plus
+ * "prices" for openrouter), {"status":"refused","message":...},
+ * {"status":"unreachable","message":...} or {"status":"other","message":...}; NULL only
+ * on a NULL or unknown provider ("anthropic", "openai", "google", "ollama", "openrouter"). */
+char *whimbrel_key_check(const char *provider, const char *api_key, const char *base_url_override);
+
+/* The provider table: a JSON array of {"id","name","key_page_url","policy_url",
+ * "key_prefix","data_terms":{"text","checked"}|null,"cheap_model"}. */
+char *whimbrel_providers(void);
+
+/* A one-line warning when key does not look like provider's key (wrong prefix), as a
+ * plain string; NULL when it does or there is nothing to say. Advisory: save anyway. */
+char *whimbrel_key_format_hint(const char *provider, const char *key);
+
+/* Spend totals in cents, every window ending now, UTC days: {"today_cents",
+ * "last_30_days_cents","month_to_date_cents","last_30_days_by_provider":[{"provider",
+ * "cents"}]}. NULL on a NULL/invalid handle. */
+char *whimbrel_usage_totals(StoreHandle *handle);
+
+/* The newest `limit` calls with since_unix_ms <= ts < until_unix_ms, as a JSON array of
+ * {"ts_unix_ms","task","provider","model","input_tokens","output_tokens",
+ * "estimated_cost_cents","local"}. NULL on a NULL/invalid handle. */
+char *whimbrel_usage_list(StoreHandle *handle, int64_t since_unix_ms, int64_t until_unix_ms, uint32_t limit);
 /* ---- Meeting workspace state (core/api::meeting_workspace, M3.0 Task 6) ----
  * The ONLY place the Before/During/After/Cancelled decision is made. Pure: takes the
  * rows the shell already holds plus its in-process signals, no StoreHandle, so a view

@@ -36,10 +36,14 @@ fn palette_json(id: &str) -> Value {
 /// A zip of `entries` (a name ending in `/` is a folder), written as the Mac's `ditto` does: regular files 0644.
 fn zip_of(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
     let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    // Unix host, as the Mac writes them; on Windows zip 9 would otherwise mark entries DOS.
     let file = SimpleFileOptions::default()
+        .system(zip::System::Unix)
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(0o644);
-    let dir = SimpleFileOptions::default().unix_permissions(0o755);
+    let dir = SimpleFileOptions::default()
+        .system(zip::System::Unix)
+        .unix_permissions(0o755);
     for (name, bytes) in entries {
         if name.ends_with('/') {
             z.add_directory(*name, dir).unwrap();
@@ -238,7 +242,7 @@ fn export_excludes_chat_and_history() {
     std::fs::write(s.folder("user-a-1").unwrap().join("chat.json"), b"[]").unwrap();
     let zip = package::export(&s, "user-a-1").unwrap();
     let archive = zip::ZipArchive::new(Cursor::new(zip)).unwrap();
-    let mut names: Vec<&str> = archive.file_names().collect();
+    let mut names: Vec<String> = archive.file_names().map(|n| n.unwrap().into_owned()).collect();
     names.sort_unstable();
     assert_eq!(
         names,
@@ -265,11 +269,12 @@ fn an_exported_package_is_written_like_the_macs() {
     for i in 0..archive.len() {
         let e = archive.by_index(i).unwrap();
         let mode = e.unix_mode().expect("a Unix mode");
+        // The whole mode, so a DOS-marked entry (synthesized 0o775/0o664) fails too.
         assert_eq!(
-            mode & 0o170000,
-            if e.is_dir() { 0o040000 } else { 0o100000 },
+            mode & 0o170777,
+            if e.is_dir() { 0o040755 } else { 0o100644 },
             "{}",
-            e.name()
+            e.name().unwrap()
         );
     }
 }

@@ -104,7 +104,7 @@ pub use ledger::{
     charge_skin_call, check_spend_cap, ChargeError, SpendCapConfig, SpendCapError, SpendCapScope, DEFAULT_GLOBAL_DAILY_CAP_CENTS,
     DEFAULT_USER_DAILY_CAP_CENTS,
 };
-pub use routing::{falls_through, try_chain, ChainLink, Provider};
+pub use routing::{falls_through, try_chain, ChainLink, Provider, TaskKind, Tier};
 
 #[derive(Debug)]
 pub enum LlmError {
@@ -408,12 +408,20 @@ struct OpenAIResponse {
     usage: Option<OpenAIUsage>,
 }
 
+/// OpenRouter's API host; the OpenAI-shaped path (`/v1/chat/completions`) hangs off
+/// `/api`. OpenRouter asks callers to identify themselves with these two headers.
+pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api";
+pub const OPENROUTER_REFERER: &str = "https://whimbrelapp.com";
+pub const OPENROUTER_TITLE: &str = "Whimbrel";
+
 /// Calls the real OpenAI Chat Completions API (FR-CHAT-2). Same key-sourcing rule as
-/// `AnthropicClient`: the caller passes a key it already has.
+/// `AnthropicClient`: the caller passes a key it already has. Also the client for any
+/// OpenAI-compatible host ([`OpenAIClient::openrouter`]).
 pub struct OpenAIClient {
     base_url: String,
     api_key: String,
     model: String,
+    extra_headers: Vec<(String, String)>,
 }
 
 impl OpenAIClient {
@@ -422,11 +430,25 @@ impl OpenAIClient {
             base_url: "https://api.openai.com".to_string(),
             api_key: api_key.into(),
             model: model.into(),
+            extra_headers: Vec::new(),
         }
+    }
+
+    /// The same request against OpenRouter, with the two headers they ask for.
+    pub fn openrouter(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self::new(api_key, model)
+            .with_base_url(OPENROUTER_BASE_URL)
+            .with_header("HTTP-Referer", OPENROUTER_REFERER)
+            .with_header("X-Title", OPENROUTER_TITLE)
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self
+    }
+
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.extra_headers.push((name.into(), value.into()));
         self
     }
 }
@@ -440,10 +462,12 @@ impl LlmClient for OpenAIClient {
                 content: prompt,
             }],
         };
-        let response = ureq::post(&format!("{}/v1/chat/completions", self.base_url))
-            .set("Authorization", &format!("Bearer {}", self.api_key))
-            .send_json(&request)
-            .map_err(ureq_error_to_llm)?;
+        let mut call = ureq::post(&format!("{}/v1/chat/completions", self.base_url))
+            .set("Authorization", &format!("Bearer {}", self.api_key));
+        for (name, value) in &self.extra_headers {
+            call = call.set(name, value);
+        }
+        let response = call.send_json(&request).map_err(ureq_error_to_llm)?;
         let mut parsed: OpenAIResponse = response
             .into_json()
             .map_err(|e| LlmError::Provider(format!("failed to parse OpenAI response: {e}")))?;
@@ -1957,15 +1981,63 @@ fn pricing_for(model: &str) -> ModelPricing {
     }
 }
 
+/// Prices for models the static table cannot know: OpenRouter's catalogue, read from
+/// their model list when the user picks a model and handed here by the shell's routing
+/// config on every call. Keyed by the namespaced model id; cents per 1K in and out.
+/// Process-wide because `estimate_cost_cents` is called from every usage logger, none
+/// of which carry the routing config.
+static PRICE_OVERRIDES: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<String, (f64, f64)>>> =
+    std::sync::OnceLock::new();
+
+fn price_overrides() -> &'static std::sync::RwLock<std::collections::HashMap<String, (f64, f64)>> {
+    PRICE_OVERRIDES.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()))
+}
+
+/// Merges `prices` into the override table (a model already present takes the new
+/// price). Called whenever a routing config with cached OpenRouter prices is parsed.
+/// A merge rather than a replace: two routing configs parsed in the same process (the
+/// Mac builds one per call) must not wipe each other's entries, and a stale entry for
+/// a model nobody picks any more costs nothing.
+pub fn set_price_overrides(prices: std::collections::HashMap<String, (f64, f64)>) {
+    if let Ok(mut table) = price_overrides().write() {
+        table.extend(prices);
+    }
+}
+
+fn pricing_for_provider(provider: Provider, model: &str) -> ModelPricing {
+    if provider == Provider::OpenRouter {
+        if model.ends_with(":free") {
+            return ModelPricing { in_cents_per_1k: 0.0, out_cents_per_1k: 0.0 };
+        }
+        if let Some(&(input, output)) = price_overrides().read().ok().and_then(|t| t.get(model).copied()).as_ref() {
+            return ModelPricing { in_cents_per_1k: input, out_cents_per_1k: output };
+        }
+    }
+    pricing_for(model)
+}
+
+/// Cents for 1K input plus 1K output tokens on `model`, from the same approximate table
+/// `estimate_cost_cents` uses: the number cheap-first routing sorts hosted links by. An
+/// unknown model gets the fallback price, so it sorts after every model the table knows.
+pub fn price_rank(provider: Provider, model: &str) -> f64 {
+    if provider.is_local() {
+        return 0.0;
+    }
+    let pricing = pricing_for_provider(provider, model);
+    pricing.in_cents_per_1k + pricing.out_cents_per_1k
+}
+
 /// Estimated cost in whole cents (rounded up) for one call. Ollama is always free
 /// (NFR-PRV-1: local-first) — this returns `0` for `Provider::Ollama` without consulting
 /// any pricing table, matching llm-governance-gateway's "endpoint tokens are logged but
-/// cost $0" convention for local/self-hosted endpoints.
+/// cost $0" convention for local/self-hosted endpoints. OpenRouter `:free` models are
+/// free too; other OpenRouter models price from the override table when the shell has
+/// cached their prices, else from the fallback.
 pub fn estimate_cost_cents(provider: Provider, model: &str, usage: TokenUsage) -> i64 {
     if provider.is_local() {
         return 0;
     }
-    let pricing = pricing_for(model);
+    let pricing = pricing_for_provider(provider, model);
     let in_cost = usage.input_tokens.unwrap_or(0) as f64 / 1000.0 * pricing.in_cents_per_1k;
     let out_cost = usage.output_tokens.unwrap_or(0) as f64 / 1000.0 * pricing.out_cents_per_1k;
     (in_cost + out_cost).ceil() as i64
@@ -2022,6 +2094,90 @@ mod tests {
             output_tokens: Some(1000),
         };
         assert!(estimate_cost_cents(Provider::Anthropic, "some-future-model", usage) > 0);
+    }
+
+    #[test]
+    fn price_rank_orders_cheap_models_first_and_unknown_models_last() {
+        let rank = |m: &str| price_rank(Provider::OpenAI, m);
+        assert!(rank("gpt-4o-mini") < rank("claude-haiku-4-5"));
+        assert!(rank("gemini-2.0-flash") < rank("gpt-4o-mini"));
+        assert!(rank("claude-haiku-4-5") < rank("claude-sonnet-5"));
+        let known_max = ["gpt-4o-mini", "claude-haiku-4-5", "gemini-2.5-flash", "claude-sonnet-5"]
+            .iter()
+            .map(|m| rank(m))
+            .fold(0.0_f64, f64::max);
+        assert!(rank("some-future-model") >= known_max);
+        assert_eq!(price_rank(Provider::Ollama, "gemma4:12b"), 0.0);
+    }
+
+    #[test]
+    fn openrouter_free_models_cost_nothing_and_cached_prices_beat_the_fallback() {
+        let usage = TokenUsage { input_tokens: Some(1000), output_tokens: Some(1000) };
+        assert_eq!(estimate_cost_cents(Provider::OpenRouter, "meta-llama/llama-3.3-70b-instruct:free", usage), 0);
+        assert_eq!(price_rank(Provider::OpenRouter, "meta-llama/llama-3.3-70b-instruct:free"), 0.0);
+
+        // Unknown to the static table and never priced: the conservative fallback.
+        assert_eq!(estimate_cost_cents(Provider::OpenRouter, "vendor/never-priced-model", usage), 2);
+
+        set_price_overrides([("vendor/cheap-model".to_string(), (0.01, 0.02))].into_iter().collect());
+        assert_eq!(estimate_cost_cents(Provider::OpenRouter, "vendor/cheap-model", usage), 1, "0.03 cents rounds up to 1");
+        assert!((price_rank(Provider::OpenRouter, "vendor/cheap-model") - 0.03).abs() < 1e-9);
+        // A later table updates a price it carries and keeps the ones it does not.
+        set_price_overrides([("vendor/other-model".to_string(), (1.0, 1.0))].into_iter().collect());
+        assert!((price_rank(Provider::OpenRouter, "vendor/cheap-model") - 0.03).abs() < 1e-9);
+        assert!((price_rank(Provider::OpenRouter, "vendor/other-model") - 2.0).abs() < 1e-9);
+        // Overrides are OpenRouter's namespace only; the static table still answers for OpenAI.
+        assert_eq!(estimate_cost_cents(Provider::OpenAI, "gpt-4o-mini", usage), 1);
+    }
+
+    /// The OpenRouter client is the OpenAI client pointed at their host with the two
+    /// identifying headers; prove the wire shape with a one-shot server.
+    #[test]
+    fn openrouter_client_sends_bearer_and_identifying_headers_to_the_openai_path() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            // The head and the body can arrive in separate reads (they did on CI), so
+            // read until Content-Length is satisfied before answering.
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = std::io::Read::read(&mut conn, &mut buf).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&raw);
+                if let Some(head_end) = text.find("\r\n\r\n") {
+                    let content_length = text
+                        .lines()
+                        .find_map(|l| l.strip_prefix("Content-Length: "))
+                        .and_then(|v| v.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if raw.len() >= head_end + 4 + content_length {
+                        break;
+                    }
+                }
+            }
+            let _ = tx.send(String::from_utf8_lossy(&raw).into_owned());
+            let body = r#"{"choices":[{"message":{"content":"pong"}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}"#;
+            let _ = std::io::Write::write_all(
+                &mut conn,
+                format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes(),
+            );
+        });
+        let client = OpenAIClient::openrouter("sk-or-1", "vendor/model:free").with_base_url(url);
+        let completion = client.complete("ping").unwrap();
+        assert_eq!(completion.text, "pong");
+        let head = rx.recv().unwrap();
+        assert!(head.starts_with("POST /v1/chat/completions "), "{head}");
+        assert!(head.contains("Authorization: Bearer sk-or-1"), "{head}");
+        assert!(head.contains(&format!("HTTP-Referer: {OPENROUTER_REFERER}")), "{head}");
+        assert!(head.contains(&format!("X-Title: {OPENROUTER_TITLE}")), "{head}");
+        assert!(head.contains(r#""model":"vendor/model:free""#), "{head}");
+        assert_eq!(OpenAIClient::openrouter("k", "m").base_url, OPENROUTER_BASE_URL);
     }
 
     #[test]

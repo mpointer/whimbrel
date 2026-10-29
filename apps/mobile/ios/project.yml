@@ -44,6 +44,8 @@ targets:
         group: Shared
       - path: ../../macos/Whimbrel/Support/ReadLogic.swift
         group: Shared
+      - path: ../../macos/Whimbrel/Support/InferenceStreamClient.swift
+        group: Shared
       # Shared theme files (themes/*.json); ThemeStore.bundledThemesDirectory reads them.
       # group: keeps XcodeGen from synthesizing a group named after the clone directory.
       - path: ../../../themes
@@ -74,6 +76,8 @@ targets:
         GoogleOAuthClientID: $(GOOGLE_IOS_CLIENT_ID)
         # Base.xcconfig default (the deployed Worker), overridable in Secrets.xcconfig.
         SyncWorkerBaseURL: $(SYNC_WORKER_BASE_URL)
+        NSMicrophoneUsageDescription: Whimbrel uses the microphone when you dictate a question.
+        NSSpeechRecognitionUsageDescription: Whimbrel turns your dictated question into text on this iPhone.
     settings:
       base:
         PRODUCT_NAME: Whimbrel

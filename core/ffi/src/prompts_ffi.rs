@@ -47,10 +47,80 @@ pub extern "C" fn whimbrel_hosted_models_fetch(
     json_to_c_string(result.to_string())
 }
 
+/// Validates a pasted key by fetching `provider`'s model list
+/// (`api::hosted_models::validate_key`). Returns `{"status":"valid","models":[…]}`
+/// (plus `"prices"` for OpenRouter), `{"status":"refused","message":…}`,
+/// `{"status":"unreachable","message":…}` or `{"status":"other","message":…}`; null
+/// only on a null or unknown provider. **Blocking** (up to 30 s), like
+/// `whimbrel_hosted_models_fetch`.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_key_check(
+    provider: *const c_char,
+    api_key: *const c_char,
+    base_url_override: *const c_char,
+) -> *mut c_char {
+    let Some(provider) = cstr_to_string(provider).and_then(|p| api::hosted_models::HostedProvider::parse(&p)) else {
+        return ptr::null_mut();
+    };
+    let api_key = cstr_to_string(api_key).unwrap_or_default();
+    let base_url = cstr_to_string(base_url_override);
+    let check = api::hosted_models::validate_key(provider, &api_key, base_url.as_deref());
+    match serde_json::to_string(&check) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// The provider table for the key on-ramp (`api::providers::PROVIDERS`): a JSON array of
+/// `{"id","name","key_page_url","policy_url","key_prefix","data_terms","cheap_model"}`.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_providers() -> *mut c_char {
+    match serde_json::to_string(&api::providers::PROVIDERS) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// The one-line warning when `key` does not look like `provider`'s
+/// (`api::providers::format_hint`); null when it does, or there is nothing to say.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_key_format_hint(provider: *const c_char, key: *const c_char) -> *mut c_char {
+    let (Some(provider), Some(key)) = (cstr_to_string(provider), cstr_to_string(key)) else {
+        return ptr::null_mut();
+    };
+    match api::providers::format_hint(&provider, &key) {
+        Some(hint) => json_to_c_string(hint),
+        None => ptr::null_mut(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::{CStr, CString};
+
+    #[test]
+    fn key_check_providers_and_format_hint_over_ffi() {
+        let google = CString::new("google").unwrap();
+        let key = CString::new("AIza-test").unwrap();
+        let unreachable = CString::new("http://127.0.0.1:1").unwrap();
+        let v: serde_json::Value = serde_json::from_str(&take(whimbrel_key_check(google.as_ptr(), key.as_ptr(), unreachable.as_ptr()))).unwrap();
+        assert_eq!(v["status"], "unreachable");
+        assert!(v["message"].as_str().unwrap().starts_with("Couldn't reach Google."));
+        let bogus = CString::new("bogus").unwrap();
+        assert!(whimbrel_key_check(bogus.as_ptr(), key.as_ptr(), ptr::null()).is_null());
+
+        let v: serde_json::Value = serde_json::from_str(&take(whimbrel_providers())).unwrap();
+        assert_eq!(v.as_array().unwrap().len(), 5);
+        assert_eq!(v[4]["id"], "openrouter");
+        assert_eq!(v[3]["data_terms"]["checked"], "2026-10-29");
+
+        let wrong = CString::new("sk-abc").unwrap();
+        let hint = take(whimbrel_key_format_hint(google.as_ptr(), wrong.as_ptr()));
+        assert!(hint.contains("start with \"AIza\""), "{hint}");
+        assert!(whimbrel_key_format_hint(google.as_ptr(), key.as_ptr()).is_null());
+        assert!(whimbrel_key_format_hint(ptr::null(), key.as_ptr()).is_null());
+    }
 
     fn take(ptr: *mut c_char) -> String {
         assert!(!ptr.is_null());

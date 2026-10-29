@@ -7,7 +7,7 @@
 // before skins existed. Every other choice sets the variables, and follows the OS live when the
 // appearance is System.
 
-import { skinsList } from "./api";
+import { skinsList, skinsRevision } from "./api";
 import { APPEARANCE_KEY, cssVariable, parseAppearance, resolveMode, type Appearance, type Mode, type ThemeWindow } from "./theme";
 import { THEMES, TOKENS, type Palette } from "./themes";
 
@@ -51,7 +51,8 @@ export interface SkinDto {
   palettes: SkinPalette[];
   builtIn: boolean;
   /** How strongly the page colour must cover each background image (by asset name) for text to read at
-   *  4.5:1. The shell measures it when an image is added; until it has, an image is fully covered. */
+   *  4.5:1, the worst over the palettes offered. The shell measures it when listing the skins; an image it
+   *  could not measure is missing, and is fully covered. */
   imageScrims?: Record<string, number>;
 }
 
@@ -306,6 +307,20 @@ export function subscribeSkin(listener: () => void): () => void {
   return () => void listeners.delete(listener);
 }
 
+/** How often every window asks whether a sync changed the skins (the shell emits no events; Task 15). */
+export const REVISION_POLL_MS = 5000;
+
+/** Installs a reloaded `list`. When the selected skin is no longer in it (deleted here or on another device),
+ *  the selection falls back to Whimbrel, keeping the appearance, as the Mac's `reloadUserSkins` does; other
+ *  windows follow through storage. */
+function install(list: readonly SkinDto[], win: ThemeWindow): void {
+  setInstalledSkins(list);
+  if (!installed.some((s) => s.skin.id === current.skinId)) {
+    current = { ...DEFAULT_SELECTION, appearance: current.appearance };
+    saveSelection(current, win);
+  }
+}
+
 function paint(win: ThemeWindow): void {
   const { dto, palette } = resolveSelection(installed, current);
   applySkin(dto, palette.id, current.appearance, win.document.documentElement, win.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -316,17 +331,36 @@ function paint(win: ThemeWindow): void {
 /** Applies the stored choice and keeps the page in step with the OS and with other windows (the popup
  *  and the alert share this bundle and this storage). Call before the first render. The first paint is
  *  Whimbrel's, which needs nothing from the shell; the rest of the skins follow when `load` answers. */
-export function startSkin(win: ThemeWindow = window, load: typeof skinsList = skinsList): () => void {
+export function startSkin(
+  win: ThemeWindow = window,
+  load: typeof skinsList = skinsList,
+  revision: typeof skinsRevision | null = skinsRevision,
+): () => void {
   current = readSelection(win);
   paint(win);
   let live = true;
   load()
     .then((list) => {
       if (!live) return;
+      // At launch a missing skin only draws as Whimbrel; the stored choice stays, in case the list was short.
       setInstalledSkins(list);
       paint(win);
     })
     .catch((error) => console.warn("could not load skins; showing Whimbrel", error));
+  // A skin made, changed or deleted on another device: reload when the shell's revision moves. It starts at 0
+  // with the shell, so a change synced before the first look still reloads.
+  let seen = 0;
+  const poll = revision
+    ? setInterval(() => {
+        revision().then(
+          (now) => {
+            if (live && now !== seen) void reloadSkins(win, load).catch(() => {});
+            seen = now;
+          },
+          () => {},
+        );
+      }, REVISION_POLL_MS)
+    : null;
   const system = win.matchMedia("(prefers-color-scheme: dark)");
   const onSystem = () => paint(win);
   const onStorage = (event: Event) => {
@@ -339,6 +373,7 @@ export function startSkin(win: ThemeWindow = window, load: typeof skinsList = sk
   win.addEventListener("storage", onStorage);
   return () => {
     live = false;
+    if (poll !== null) clearInterval(poll);
     system.removeEventListener("change", onSystem);
     win.removeEventListener("storage", onStorage);
   };
@@ -346,7 +381,7 @@ export function startSkin(win: ThemeWindow = window, load: typeof skinsList = sk
 
 /** Fetches the skins again (after one is made, imported or deleted) and repaints. */
 export async function reloadSkins(win: ThemeWindow = window, load: typeof skinsList = skinsList): Promise<void> {
-  setInstalledSkins(await load());
+  install(await load(), win);
   paint(win);
 }
 

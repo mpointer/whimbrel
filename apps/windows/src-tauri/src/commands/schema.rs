@@ -30,6 +30,8 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<crate::syncing::controller::DeviceView>();
     generator.subschema_for::<super::ai::AiSettings>();
     generator.subschema_for::<super::ai::ProviderKey>();
+    generator.subschema_for::<super::ai::KeyCheckView>();
+    generator.subschema_for::<super::ai::UsageRowView>();
     generator.subschema_for::<super::capture::CaptureSettings>();
     generator.subschema_for::<super::models::ModelStatus>();
     generator.subschema_for::<super::models::DownloadView>();
@@ -52,6 +54,11 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::snapshots::SnapshotsView>();
     generator.subschema_for::<super::snapshots::Thumbnail>();
     generator.subschema_for::<super::snapshots::SnapshotSettings>();
+    generator.subschema_for::<crate::skin_maker::SkinSources>();
+    generator.subschema_for::<crate::skin_maker::SkinTurnResult>();
+    generator.subschema_for::<crate::skin_maker::SkinLine>();
+    generator.subschema_for::<crate::skin_maker::ChatLine>();
+    generator.subschema_for::<super::skins::ImageCandidateView>();
     generator.subschema_for::<super::workspace::TranscriptView>();
     generator.subschema_for::<super::workspace::ActionItemView>();
     generator.subschema_for::<super::meetings::MeetingSettings>();
@@ -79,6 +86,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::routines::RunView>();
     generator.subschema_for::<super::routines::HostView>();
     generator.subschema_for::<super::routines::HostOption>();
+    generator.subschema_for::<super::routines::ModelOptionView>();
     generator.subschema_for::<super::approvals::ApprovalView>();
     generator.subschema_for::<super::approvals::ApproveResult>();
     generator.subschema_for::<super::approvals::ActionView>();

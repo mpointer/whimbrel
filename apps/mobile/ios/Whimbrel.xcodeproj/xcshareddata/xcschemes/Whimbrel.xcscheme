@@ -15,7 +15,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "4810B0247359099A10B3780D"
+               BlueprintIdentifier = "2DB60CC6FDEF4D7F46E27A50"
                BuildableName = "Whimbrel.app"
                BlueprintName = "Whimbrel"
                ReferencedContainer = "container:Whimbrel.xcodeproj">
@@ -29,7 +29,7 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "6631B253EBBFEA80F32D0368"
+               BlueprintIdentifier = "150DDA69971901CF178D2FD4"
                BuildableName = "WhimbrelTests.xctest"
                BlueprintName = "WhimbrelTests"
                ReferencedContainer = "container:Whimbrel.xcodeproj">
@@ -46,7 +46,7 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4810B0247359099A10B3780D"
+            BlueprintIdentifier = "2DB60CC6FDEF4D7F46E27A50"
             BuildableName = "Whimbrel.app"
             BlueprintName = "Whimbrel"
             ReferencedContainer = "container:Whimbrel.xcodeproj">
@@ -58,7 +58,7 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "6631B253EBBFEA80F32D0368"
+               BlueprintIdentifier = "150DDA69971901CF178D2FD4"
                BuildableName = "WhimbrelTests.xctest"
                BlueprintName = "WhimbrelTests"
                ReferencedContainer = "container:Whimbrel.xcodeproj">
@@ -82,7 +82,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4810B0247359099A10B3780D"
+            BlueprintIdentifier = "2DB60CC6FDEF4D7F46E27A50"
             BuildableName = "Whimbrel.app"
             BlueprintName = "Whimbrel"
             ReferencedContainer = "container:Whimbrel.xcodeproj">
@@ -101,7 +101,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "4810B0247359099A10B3780D"
+            BlueprintIdentifier = "2DB60CC6FDEF4D7F46E27A50"
             BuildableName = "Whimbrel.app"
             BlueprintName = "Whimbrel"
             ReferencedContainer = "container:Whimbrel.xcodeproj">

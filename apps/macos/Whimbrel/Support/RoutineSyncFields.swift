@@ -5,11 +5,14 @@ import Foundation
 /// the primary does (docs/superpowers/specs/2026-10-12-routines-safety-net-design.md). Write-capable
 /// routines never fail over, so their settings stay per-device.
 enum RoutineSyncFields {
-    enum Field: String { case enabled, schedule }
+    /// `modelPref` joined on 2026-10-29: a device standing in for the primary should run the
+    /// routine on the same model (`default`, `cheapest`, or `<provider>/<model>`).
+    enum Field: String { case enabled, schedule, modelPref = "model_pref" }
 
     enum Change: Equatable {
         case enabled(id: Int64, Bool)
         case schedule(id: Int64, String)
+        case modelPref(id: Int64, String)
     }
 
     static let templates = ["daily_brief", "reply_priorities"]
@@ -31,6 +34,7 @@ enum RoutineSyncFields {
         for r in routines where templates.contains(r.template) {
             out[key(template: r.template, field: .enabled)] = r.enabled ? "true" : "false"
             out[key(template: r.template, field: .schedule)] = r.scheduleHhmm
+            out[key(template: r.template, field: .modelPref)] = r.modelPref
         }
         return out
     }
@@ -46,7 +50,21 @@ enum RoutineSyncFields {
         case .schedule:
             guard isHhmm(value) else { return nil }
             return .schedule(id: routine.id, value)
+        case .modelPref:
+            guard isModelPref(value) else { return nil }
+            return .modelPref(id: routine.id, value)
         }
+    }
+
+    /// The three shapes core accepts (`api::routing::RoutineModelPref`): `default`,
+    /// `cheapest`, or `<provider>/<model>` with a provider core knows. OpenRouter model ids
+    /// carry their own slash, so only the first one splits.
+    static func isModelPref(_ value: String) -> Bool {
+        if value == "default" || value == "cheapest" { return true }
+        guard let slash = value.firstIndex(of: "/") else { return false }
+        let provider = String(value[..<slash])
+        let model = value[value.index(after: slash)...]
+        return ["ollama", "anthropic", "openai", "google", "openrouter"].contains(provider) && !model.isEmpty
     }
 
     private static func parse(_ key: String) -> (String, Field)? {

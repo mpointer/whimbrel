@@ -1,4 +1,4 @@
-import { resolveSelection, type Selection, type SkinDto, type SkinPalette } from "../skin";
+import { DEFAULT_SELECTION, resolveSelection, type Selection, type SkinDto, type SkinPalette } from "../skin";
 import type { Mode } from "../theme";
 import { voiceText } from "../today/layoutModel";
 
@@ -70,6 +70,25 @@ export function pickCard(skins: readonly SkinDto[], selection: Selection, skinId
 }
 
 export const pickPalette = (selection: Selection, skinId: string, paletteId: string): Selection => ({ ...selection, skinId, paletteId });
+
+/** The element id of a skin's card, so an import (or a rename) can scroll to it. */
+export const cardElementId = (skinId: string): string => `skin-card-${skinId}`;
+
+/** Rename, Export, Delete and Import wait while a chat turn runs, since it writes back to the skin it started for. */
+export const actionsEnabled = (turnRunning: boolean): boolean => !turnRunning;
+
+/** After a delete: a deleted skin that was showing falls back to Whimbrel (its first palette), keeping the appearance. */
+export function afterDelete(selection: Selection, deletedId: string): Selection {
+  return selection.skinId === deletedId ? { ...DEFAULT_SELECTION, appearance: selection.appearance } : selection;
+}
+
+/** After an import: the selection stays, and the page scrolls to the new card. */
+export const afterImport = (selection: Selection, importedId: string): { selection: Selection; scrollTo: string } => ({
+  selection,
+  scrollTo: cardElementId(importedId),
+});
+
+export const deletePrompt = (name: string): string => `Delete \u201C${name}\u201D? Its chat and earlier versions go too.`;
 
 /** The colours of one palette row in `mode`; a single-variant palette shows the variant it has. */
 export function swatchColors(palette: SkinPalette, mode: Mode): string[] {

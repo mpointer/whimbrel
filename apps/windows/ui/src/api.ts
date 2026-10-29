@@ -3,6 +3,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AiSettings,
+  ChatLine,
+  ImageCandidateView,
   AppStatus,
   CaptureDetail,
   CaptureSettings,
@@ -43,6 +45,9 @@ import type {
   McpServerView,
   HostView,
   RoutineView,
+  KeyCheckView,
+  UsageRowView,
+  ModelOptionView,
   RunView,
   RetentionSettings,
   RetentionView,
@@ -58,6 +63,9 @@ import type {
   SyncView,
   TrayStatus,
   GeneralSettings,
+  SkinLine,
+  SkinSources,
+  SkinTurnResult,
 } from "./generated/types";
 import type { SkinDto } from "./skin";
 
@@ -100,9 +108,17 @@ export const syncRevokeDevice = (id: string) => invoke<DeviceView[]>("sync_revok
 
 export const aiSettings = () => invoke<AiSettings>("ai_settings");
 export const setApiKey = (provider: Provider, key: string | null) => invoke<ProviderKey[]>("set_api_key", { provider, key });
+/** Saves (or, with null, removes) the skin maker's Brave Search key; resolves to it masked. */
+export const setImageSearchKey = (key: string | null) => invoke<string | null>("set_image_search_key", { key });
 export const setPrompt = (surface: PromptSurface, text: string) => invoke<void>("set_prompt", { surface, text });
 export const setSummaryInstructions = (text: string) => invoke<void>("set_summary_instructions", { text });
 export const providerModels = (provider: Provider) => invoke<string[]>("provider_models", { provider });
+// The key on-ramp and Model usage (plan part 5, cheap-first routing).
+export const keyCheck = (provider: Provider) => invoke<KeyCheckView>("key_check", { provider });
+export const keyFormatHint = (provider: Provider, key: string) => invoke<string | null>("key_format_hint", { provider, key });
+export const usageRows = (days?: number) => invoke<UsageRowView[]>("usage_rows", { days });
+/** Opens an https URL in the default browser (a provider's key page or data policy). */
+export const openExternal = (url: string) => invoke<void>("open_external", { url });
 
 export const captureSettings = () => invoke<CaptureSettings>("capture_settings");
 export const setExcludedApps = (excluded: string[]) => invoke<string[]>("set_excluded_apps", { excluded });
@@ -121,8 +137,39 @@ export const todaySchedule = () => invoke<ScheduleView>("today_schedule");
 
 // Skins (core/skins through src-tauri/src/commands/skins.rs). `SkinDto` is typed by hand in skin.ts.
 export const skinsList = () => invoke<SkinDto[]>("skins_list");
+/** Moves when a sync changed the skins folder (Task 15). */
+export const skinsRevision = () => invoke<number>("skins_revision");
 /** An approved image of one of the user's skins, as raw bytes. */
 export const skinImage = (id: string, name: string) => invoke<ArrayBuffer>("skin_image", { id, name });
+
+// Making skins by chat (Task 10; the decisions are in src-tauri/src/skin_maker.rs).
+export const skinSources = () => invoke<SkinSources>("skin_sources");
+/** One turn on `skinId`. `runId` is the caller's, for `skinTurnStop`. */
+export const skinTurn = (skinId: string, request: string, runId: string) =>
+  invoke<SkinTurnResult>("skin_turn", { skinId, request, runId });
+/** Makes a running turn's late reply change nothing; false when it isn't running. */
+export const skinTurnStop = (runId: string) => invoke<boolean>("skin_turn_stop", { runId });
+/** The skin's chat as stored (Task 11); empty for a built-in. */
+export const skinChatLoad = (skinId: string) => invoke<ChatLine[]>("skin_chat_load", { skinId });
+/** A Whimbrel line for the skin's chat, kept when the skin is yours. */
+export const skinChatPost = (skinId: string, text: string) => invoke<SkinLine>("skin_chat_post", { skinId, text });
+export const skinUndo = (skinId: string) => invoke<SkinLine>("skin_undo", { skinId });
+// Rename, delete, export and import (Task 12). The pickers open in the shell; a refusal is a CommandError
+// whose message is the line to show.
+export const skinRename = (skinId: string, name: string) => invoke<void>("skin_rename", { skinId, name });
+export const skinDelete = (skinId: string) => invoke<void>("skin_delete", { skinId });
+/** False when the save picker is cancelled. */
+export const skinExport = (skinId: string) => invoke<boolean>("skin_export", { skinId });
+/** The new skin's id, or null when the picker is cancelled. */
+export const skinImport = () => invoke<string | null>("skin_import");
+export const skinImageSearch = (query: string) => invoke<ImageCandidateView[]>("skin_image_search", { query });
+export const skinImageGenerate = (prompt: string) => invoke<ImageCandidateView>("skin_image_generate", { prompt });
+/** A candidate's thumbnail as raw bytes, fetched by the shell (the page may not load remote images). */
+export const skinImageThumbnail = (url: string) => invoke<ArrayBuffer>("skin_image_thumbnail", { url });
+export const skinImageReject = (url: string) => invoke<void>("skin_image_reject", { url });
+export const skinImageApprove = (skinId: string, url: string) => invoke<SkinLine>("skin_image_approve", { skinId, url });
+/** Opens a file picker; null when it is cancelled. */
+export const skinImageAddFile = (skinId: string) => invoke<SkinLine | null>("skin_image_add_file", { skinId });
 export const meetingRecordStartEvent = (eventId: string) => invoke<MeetingRecordingView>("meeting_record_start_event", { eventId });
 export const meetingRecordingStatus = () => invoke<MeetingRecordingView>("meeting_recording_status");
 
@@ -211,6 +258,8 @@ export const routineRuns = (limit?: number) => invoke<RunView[]>("routine_runs",
 export const routinesHost = () => invoke<HostView>("routines_host");
 export const routinesSetHost = (id: string) => invoke<HostView>("routines_set_host", { id });
 export const routineSetAutoApprove = (id: number, enabled: boolean) => invoke<RoutineView[]>("routine_set_auto_approve", { id, enabled });
+export const routineSetModelPref = (id: number, pref: string) => invoke<RoutineView[]>("routine_set_model_pref", { id, pref });
+export const routineModelOptions = () => invoke<ModelOptionView[]>("routine_model_options");
 
 // Automations -> Approvals (src-tauri/src/commands/approvals.rs).
 export const approvalsList = () => invoke<ApprovalView[]>("approvals_list");

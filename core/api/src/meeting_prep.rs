@@ -137,7 +137,7 @@ pub fn run_with_chain(
     gate: impl Into<RunGate>,
 ) -> rusqlite::Result<Vec<memory::RoutineRun>> {
     let cap_config = routing.spend_cap_config();
-    let chain = crate::routing::build_chain(ollama_model, routing);
+    let chain = crate::routing::build_chain_for(llm::TaskKind::MeetingPrep, ollama_model, routing);
     let mut complete = |prompt: &str| -> Option<Completed> {
         if llm::check_spend_cap(store, &cap_config, None, Some("routine"), now_unix_ms).is_err() {
             return None;

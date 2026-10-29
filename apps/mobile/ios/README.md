@@ -88,7 +88,7 @@ ad hoc) to run the app; the unit tests use an in-memory Keychain and run unsigne
 
 With `-WhimbrelDemoSynced` the screens read fixture data (`DemoFixtures.swift`: a brief, a
 next meeting with prep, 12 meetings with summaries and one transcript, routine runs).
-For screenshots, also pass `-WhimbrelDemoTab 0|1|2`, `-WhimbrelDemoMeeting <id>` (opens that
+For screenshots, also pass `-WhimbrelDemoTab 0|1|2|3`, `-WhimbrelDemoMeeting <id>` (opens that
 meeting), `-WhimbrelDemoTranscript` (opens its Transcript tab) or `-WhimbrelDemoSettings`.
 
 ## Shared code

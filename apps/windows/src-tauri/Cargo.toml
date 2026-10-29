@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.38"
+version = "0.9.39"
 edition = "2021"
 publish = false
 # Two binaries (the app and the M3.1 capture-spike CLI); the Tauri CLI builds and
@@ -62,6 +62,8 @@ tauri-plugin-autostart = "2"
 # Auto-update (M3.5; docs/12 §7): a minisign-signed `windows/latest.json` on the updates
 # Worker, installed by the NSIS installer in passive mode.
 tauri-plugin-updater = "2"
+# The skin maker's file pickers (skins Task 10), opened from Rust so no path comes from the page.
+tauri-plugin-dialog = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"

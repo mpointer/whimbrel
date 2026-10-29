@@ -135,9 +135,12 @@ final class SettingsSyncCoordinator: ObservableObject {
         add(&fields, "routing.anthropicDefaultModel", routing.anthropicDefaultModel)
         add(&fields, "routing.openaiDefaultModel", routing.openaiDefaultModel)
         add(&fields, "routing.googleDefaultModel", routing.googleDefaultModel)
+        add(&fields, "routing.openrouterDefaultModel", routing.openrouterDefaultModel)
         add(&fields, "routing.userDailyCapCents", routing.userDailyCapCents.map(String.init) ?? "")
         add(&fields, "routing.globalDailyCapCents", routing.globalDailyCapCents.map(String.init) ?? "")
         add(&fields, "routing.localOnlyMode", routing.localOnlyMode ? "true" : "false")
+        add(&fields, "routing.cheapFirst", routing.cheapFirst ? "true" : "false")
+        add(&fields, "routing.useLocalModel", routing.useLocalModel ? "true" : "false")
         add(&fields, "summary.customPromptInstructions", routing.customPromptInstructions)
 
         for surface in PromptSurface.allCases {
@@ -161,6 +164,7 @@ final class SettingsSyncCoordinator: ObservableObject {
         add(&fields, "apiKey.anthropic.syncEnabled", routing.anthropicKeySyncEnabled ? "true" : "false")
         add(&fields, "apiKey.openai.syncEnabled", routing.openaiKeySyncEnabled ? "true" : "false")
         add(&fields, "apiKey.google.syncEnabled", routing.googleKeySyncEnabled ? "true" : "false")
+        add(&fields, "apiKey.openrouter.syncEnabled", routing.openrouterKeySyncEnabled ? "true" : "false")
 
         var local = CoreMemoryStore.SyncLocalSettings()
         local.fields = fields
@@ -168,6 +172,7 @@ final class SettingsSyncCoordinator: ObservableObject {
             apiKeyState(fieldKey: "apiKey.anthropic", provider: .anthropic, syncEnabled: routing.anthropicKeySyncEnabled),
             apiKeyState(fieldKey: "apiKey.openai", provider: .openai, syncEnabled: routing.openaiKeySyncEnabled),
             apiKeyState(fieldKey: "apiKey.google", provider: .google, syncEnabled: routing.googleKeySyncEnabled),
+            apiKeyState(fieldKey: "apiKey.openrouter", provider: .openrouter, syncEnabled: routing.openrouterKeySyncEnabled),
         ]
         return local
     }
@@ -221,6 +226,7 @@ final class SettingsSyncCoordinator: ObservableObject {
             "apiKey.anthropic": routing.anthropicKeySyncEnabled,
             "apiKey.openai": routing.openaiKeySyncEnabled,
             "apiKey.google": routing.googleKeySyncEnabled,
+            "apiKey.openrouter": routing.openrouterKeySyncEnabled,
         ]
         guard let plan = CoreMemoryStore.syncSettingsApplyPlan(pulled: pulled, localTimestamps: localTimestamps, apiKeySyncEnabled: toggles) else {
             return
@@ -268,6 +274,7 @@ final class SettingsSyncCoordinator: ObservableObject {
                 switch change {
                 case let .enabled(id, enabled): ok = coreStore.setRoutineEnabled(id: id, enabled: enabled)
                 case let .schedule(id, hhmm): ok = coreStore.updateRoutineSchedule(id: id, scheduleHhmm: hhmm)
+                case let .modelPref(id, pref): ok = coreStore.setRoutineModelPref(id: id, pref: pref)
                 }
                 if ok { applied.append(field) }
             }
@@ -294,6 +301,8 @@ final class SettingsSyncCoordinator: ObservableObject {
             routing.openaiDefaultModel = field.value
         case "routing.googleDefaultModel":
             routing.googleDefaultModel = field.value
+        case "routing.openrouterDefaultModel":
+            routing.openrouterDefaultModel = field.value
         case "routing.userDailyCapCents":
             if field.value.isEmpty {
                 routing.userDailyCapCents = nil
@@ -311,6 +320,12 @@ final class SettingsSyncCoordinator: ObservableObject {
         case "routing.localOnlyMode":
             guard field.value == "true" || field.value == "false" else { return false }
             routing.localOnlyMode = field.value == "true"
+        case "routing.cheapFirst":
+            guard field.value == "true" || field.value == "false" else { return false }
+            routing.cheapFirst = field.value == "true"
+        case "routing.useLocalModel":
+            guard field.value == "true" || field.value == "false" else { return false }
+            routing.useLocalModel = field.value == "true"
         case "summary.customPromptInstructions":
             routing.customPromptInstructions = field.value
         case "retention.captureItemDays":
@@ -333,12 +348,16 @@ final class SettingsSyncCoordinator: ObservableObject {
             routing.openaiKeySyncEnabled = field.value == "true"
         case "apiKey.google.syncEnabled":
             routing.googleKeySyncEnabled = field.value == "true"
+        case "apiKey.openrouter.syncEnabled":
+            routing.openrouterKeySyncEnabled = field.value == "true"
         case "apiKey.anthropic":
             return applyApiKey(field, provider: .anthropic)
         case "apiKey.openai":
             return applyApiKey(field, provider: .openai)
         case "apiKey.google":
             return applyApiKey(field, provider: .google)
+        case "apiKey.openrouter":
+            return applyApiKey(field, provider: .openrouter)
         default:
             if fieldKey == RoutineHostSettings.fieldKey {
                 return routineHost.apply(fieldKey: fieldKey, value: field.value)
@@ -380,6 +399,7 @@ final class SettingsSyncCoordinator: ObservableObject {
             case .anthropic: routing.clearAnthropicKey()
             case .openai: routing.clearOpenAIKey()
             case .google: routing.clearGoogleKey()
+            case .openrouter: routing.clearOpenRouterKey()
             case .typesafe, .imageSearch: break // local to this Mac, never synced
             }
             return true
@@ -389,6 +409,7 @@ final class SettingsSyncCoordinator: ObservableObject {
         case .anthropic: return routing.saveAnthropicKey(field.value)
         case .openai: return routing.saveOpenAIKey(field.value)
         case .google: return routing.saveGoogleKey(field.value)
+        case .openrouter: return routing.saveOpenRouterKey(field.value)
         case .typesafe, .imageSearch: return false // local to this Mac, never synced
         }
     }
