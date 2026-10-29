@@ -56,6 +56,8 @@ Everything local is under `%LOCALAPPDATA%\Whimbrel\data\`:
 - `models\`: the semantic-search model (Settings → Semantic search).
 - `logs\whimbrel.<date>.log`: the log. Set `WHIMBREL_LOG=debug` for more detail. `logs\crash.log` gets one line per panic, written before the process exits.
 
+Meeting snapshots (one PNG per slide shown in a recorded meeting) are not in `data\`. They go in `Pictures\Whimbrel Snapshots\<yyyy-MM-dd HH.mm> <title>\`, found through the known-folder API, so a Pictures folder redirected to OneDrive is followed. Settings → Meetings can choose another folder. If the folder can't be written, they go in `data\Whimbrel Snapshots\`. Each meeting's folder holds a `.kestrel-snapshots` marker, and retention only deletes a folder that has the marker and nothing but PNGs. Resetting `data\` leaves these folders in place.
+
 Secrets (API keys, Google tokens, the device key and the account key) are in Windows Credential Manager under three services: `com.mpointer.kestrel`, `com.mpointer.kestrel.sync` and `com.mpointer.kestrel.google-oauth`.
 
 To reset this PC to a fresh install:

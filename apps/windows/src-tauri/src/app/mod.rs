@@ -18,7 +18,7 @@ use crate::secrets::CredentialManager;
 use crate::state::AppState;
 
 /// The main window's label in `tauri.conf.json`.
-const MAIN_WINDOW: &str = "main";
+pub(crate) const MAIN_WINDOW: &str = "main";
 /// How often the store's queue-wait percentiles go to the log (Task 10's NFR-PRF-1 run
 /// reads them there, next to the sync and answer lines they coincide with).
 const QUEUE_LOG_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
@@ -133,6 +133,17 @@ pub fn run() {
             commands::workspace::meeting_regeneration_conflict,
             commands::workspace::meeting_forget,
             commands::workspace::meeting_most_relevant,
+            commands::snapshots::meeting_snapshots,
+            commands::snapshots::meeting_snapshot_thumbnail,
+            commands::snapshots::meeting_snapshot_delete,
+            commands::snapshots::meeting_set_keep_snapshots,
+            commands::snapshots::meeting_snapshot_open,
+            commands::snapshots::meeting_snapshot_copy,
+            commands::snapshots::meeting_snapshots_show,
+            commands::snapshots::meeting_snapshot_settings,
+            commands::snapshots::set_meeting_snapshots_enabled,
+            commands::snapshots::choose_meeting_snapshots_folder,
+            commands::snapshots::reset_meeting_snapshots_folder,
             crate::alert::alert_status,
             crate::alert::alert_accept,
             crate::alert::alert_dismiss,

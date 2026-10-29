@@ -8,3 +8,4 @@ pub mod perf;
 pub mod pipeline;
 pub mod recorder;
 pub mod service;
+pub mod snapshots;

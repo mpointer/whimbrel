@@ -1,7 +1,7 @@
 {
   "name": "Whimbrel",
   "url": "https://whimbrelapp.com",
-  "renameNote": "<p class=\"callout\">Kestrel is now called Whimbrel. Until the first Whimbrel release ships, the installer and the app still say Kestrel. It's the same app, and it updates itself to the new name.</p>",
+  "renameNote": "",
   "tagline": "The private AI assistant that remembers your work",
   "description": "Whimbrel is a desktop AI assistant for Mac and Windows that records meetings without a bot, remembers what you worked on, and turns it into briefings, answers, and follow-ups.",
   "ogImage": "/assets/og-image.png",

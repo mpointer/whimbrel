@@ -1,4 +1,4 @@
-import type { ActionItemView, WorkspaceView } from "../generated/types";
+import type { ActionItemView, SnapshotsView, SnapshotView, WorkspaceView } from "../generated/types";
 
 /**
  * Whether a regeneration would overwrite work the user did, so the workspace asks first.
@@ -59,4 +59,33 @@ export function phaseTitle(view: WorkspaceView): string {
     default:
       return "After the meeting";
   }
+}
+
+/**
+ * A slide thumbnail's cache key. The file name and modification time are in it because a
+ * build that replaces a slide writes a new file, sometimes under an earlier name.
+ */
+export function snapshotKey(snapshot: SnapshotView): string {
+  return `${snapshot.id}:${snapshot.fileName}:${snapshot.modifiedUnixMs}`;
+}
+
+/** The slides whose thumbnail isn't cached or already on its way. */
+export function thumbnailsToFetch(snapshots: SnapshotView[], known: ReadonlySet<string>): SnapshotView[] {
+  return snapshots.filter((s) => !known.has(snapshotKey(s)));
+}
+
+/** The cache without thumbnails of slides that are gone or were replaced. */
+export function prunedThumbnails<T>(cache: ReadonlyMap<string, T>, snapshots: SnapshotView[]): Map<string, T> {
+  const live = new Set(snapshots.map(snapshotKey));
+  return new Map([...cache].filter(([key]) => live.has(key)));
+}
+
+/** The strip after deleting a slide, before the next poll confirms it. */
+export function withoutSnapshot(view: SnapshotsView, id: number): SnapshotsView {
+  return { ...view, snapshots: view.snapshots.filter((s) => s.id !== id) };
+}
+
+/** The strip's heading, e.g. "Slides (3)". */
+export function slidesLabel(view: SnapshotsView): string {
+  return `Slides (${view.snapshots.length})`;
 }

@@ -120,14 +120,25 @@ impl AppState {
 
         let settings = Arc::new(Mutex::new(SettingsFile::load(&paths.settings)));
 
+        let detected = Arc::new(Pending::default());
         let (meetings, pipeline) = match (&store, &slow_store, &identity) {
             (Some(store), Some(slow), Some(identity)) => {
                 let pipeline = Arc::new(Pipeline::new(store.clone(), slow.clone(), settings.clone(), secrets.clone(), paths.clone()));
+                let snapshots = crate::meetings::snapshots::service::starter(crate::meetings::snapshots::service::Deps {
+                    store: store.clone(),
+                    settings: settings.clone(),
+                    fallback_root: paths.root.join(crate::meetings::snapshots::storage::ROOT_NAME),
+                    candidate: {
+                        let detected = detected.clone();
+                        Arc::new(move || detected.candidate_pid())
+                    },
+                });
                 let controller = MeetingController::new(
                     store.clone(),
                     identity.device_id.clone(),
                     paths.recordings.clone(),
                     WasapiRecording::starter(paths.recordings.clone(), live_transcribe_config(&paths)),
+                    snapshots,
                     pipeline.clone(),
                 );
                 // Rows first: a meeting left `recording` becomes completed, and the
@@ -150,7 +161,7 @@ impl AppState {
             sync: None,
             meetings,
             pipeline,
-            detected: Arc::new(Pending::default()),
+            detected,
             calendar: None,
             gmail: None,
             retention: None,

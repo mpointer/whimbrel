@@ -69,7 +69,7 @@ Hostnames listed in `REDIRECT_HOSTS` 301 to `CANONICAL_HOST` (308 for non-GET re
 
 `UPDATES_HOSTS` lists the updates Worker's other hostnames (`updates.whimbrelapp.com`), so the download gate accepts release manifests that name either host.
 
-Until the first Whimbrel-named release ships, the installers and the app still say Kestrel. `renameNote` in `site/config.json` explains this on the download pages; set it to `""` once that release is out. The home page FAQ's "used to be called Kestrel" entry stays.
+`renameNote` in `site/config.json` is an optional callout on the download pages. It explained the rename until the first Whimbrel-named release (0.9.35) shipped and is now `""`. The home page FAQ's "used to be called Kestrel" entry stays.
 
 ### IndexNow
 

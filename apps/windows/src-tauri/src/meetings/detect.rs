@@ -172,12 +172,22 @@ fn provider_title(provider: api::connectors::calendar::MeetingProvider) -> Strin
 /// control with a value that parses as a host. `None` when the browser has no window on
 /// this desktop, or UIA won't answer.
 pub fn browser_address(uia: &crate::capture::uia::Uia, pid: u32, tree: &[u32]) -> Option<String> {
+    let _ = pid;
+    let windows: Vec<_> = window::top_level_windows().into_iter().filter(|w| tree.contains(&w.pid)).collect();
+    meeting_browser_window(uia, &windows).map(|(_, address)| address)
+}
+
+/// The first of `windows` whose address bar is on a meeting host, and that address. The
+/// address bar follows the active tab, so a window whose meeting tab is in the background
+/// doesn't count.
+pub fn meeting_browser_window(
+    uia: &crate::capture::uia::Uia,
+    windows: &[window::WindowInfo],
+) -> Option<(windows::Win32::Foundation::HWND, String)> {
     use windows::Win32::UI::Accessibility::{IUIAutomationValuePattern, UIA_EditControlTypeId, UIA_ValuePatternId};
     use windows::Win32::UI::Accessibility::{TreeScope_Descendants, UIA_ControlTypePropertyId};
     use windows::Win32::System::Variant::VARIANT;
 
-    let _ = pid;
-    let windows: Vec<_> = window::top_level_windows().into_iter().filter(|w| tree.contains(&w.pid)).collect();
     unsafe {
         let automation = uia.automation();
         let is_edit = automation.CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(UIA_EditControlTypeId.0)).ok()?;
@@ -192,7 +202,7 @@ pub fn browser_address(uia: &crate::capture::uia::Uia, pid: u32, tree: &[u32]) -
                 };
                 let value = pattern.CurrentValue().map(|v| v.to_string()).unwrap_or_default();
                 if heuristic::meeting_url_provider(&value).is_some() {
-                    return Some(value);
+                    return Some((info.hwnd, value));
                 }
             }
         }

@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.37"
+version = "0.9.38"
 edition = "2021"
 publish = false
 # Two binaries (the app and the M3.1 capture-spike CLI); the Tauri CLI builds and
@@ -48,6 +48,10 @@ rubato = "0.16"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = "0.4"
+# Meeting snapshot PNGs. Already in the build through Tauri's `image`.
+png = "0.18"
+# Slide thumbnails for the workspace strip; also already in the build through Tauri.
+image = { version = "0.25", default-features = false, features = ["png"] }
 clap = { version = "4", features = ["derive"] }
 # The Tauri shell (M3.2). `tray-icon`: the app is tray-resident (docs/12 §4, W2).
 # `image-ico`: the tray's state icons are .ico files (Task 10).
@@ -95,6 +99,8 @@ features = [
     "Win32_System_Performance",
     "Win32_System_Registry",
     "Win32_System_Console",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
     "Win32_Security",
     "Win32_System_ProcessStatus",
     "Win32_System_Diagnostics_ToolHelp",
@@ -126,6 +132,7 @@ features = [
     "Graphics_DirectX",
     "Graphics_DirectX_Direct3D11",
     "Graphics_Imaging",
+    "Media_FaceAnalysis",
     "Media_Ocr",
     "Security_Authorization_AppCapabilityAccess",
     "System_UserProfile",
