@@ -59,6 +59,11 @@ impl Ocr {
         Ok(Self { grabber, engine, max_dim })
     }
 
+    /// The grabber this engine captures with, for a caller that crops before reading.
+    pub fn grabber(&self) -> &Grabber {
+        &self.grabber
+    }
+
     pub fn recognize_window(&self, hwnd: HWND) -> windows::core::Result<OcrOutput> {
         let t0 = Instant::now();
         let grab = self.grabber.grab(hwnd)?;

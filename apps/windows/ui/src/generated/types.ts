@@ -1309,6 +1309,59 @@ export interface ScheduleView {
   recording: boolean;
 }
 /**
+ * Settings → Meetings' snapshot rows. Local to this PC, never synced.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SnapshotSettings".
+ */
+export interface SnapshotSettings {
+  /**
+   * "Save slides and shared screens". On by default.
+   */
+  enabled: boolean;
+  /**
+   * Where new meetings' folders go.
+   */
+  folder: string;
+  /**
+   * No folder has been chosen, so `folder` is the default.
+   */
+  isDefault: boolean;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SnapshotView".
+ */
+export interface SnapshotView {
+  capturedUnixMs: number;
+  fileName: string;
+  height: number;
+  id: number;
+  /**
+   * The file's modification time: a build that replaces a slide can reuse an earlier
+   * file name, so the strip keys its thumbnails on this too.
+   */
+  modifiedUnixMs: number;
+  /**
+   * The start of the slide's text.
+   */
+  text: string;
+  width: number;
+}
+/**
+ * One meeting's snapshots, oldest first, leaving out any whose file is gone.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SnapshotsView".
+ */
+export interface SnapshotsView {
+  /**
+   * "Keep snapshots": retention leaves this meeting's folder alone.
+   */
+  keep: boolean;
+  snapshots: SnapshotView[];
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "StarterPromptView".
  */
@@ -1366,6 +1419,18 @@ export interface ThreadRow {
   status: string;
   subject?: string | null;
   summary?: string | null;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "Thumbnail".
+ */
+export interface Thumbnail {
+  /**
+   * A `data:image/png;base64,` URL, which the CSP's `img-src data:` allows.
+   */
+  dataUrl: string;
+  height: number;
+  width: number;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema

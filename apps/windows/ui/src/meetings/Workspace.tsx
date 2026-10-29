@@ -17,6 +17,7 @@ import { DeviceChip } from "../library/LibraryView";
 import { spanLabel } from "../library/rows";
 import { ActionItems } from "./ActionItems";
 import { elapsedLabel } from "./recordingModel";
+import { SlidesStrip } from "./SlidesStrip";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { overrideOf, phaseTitle } from "./workspaceModel";
 
@@ -145,6 +146,8 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
         )}
         {view.processingStage && <p role="status">{view.processingStage}</p>}
       </header>
+
+      {(view.phase === "during" || view.phase === "after") && <SlidesStrip meetingId={meetingId} refresh={now} />}
 
       {view.phase === "before" && (
         <div className="toolbar">

@@ -18,6 +18,7 @@ use super::pipeline::{Pipeline, PipelineFailure, Processing};
 use super::live::Accumulated;
 use super::pipeline::{started_at, stamp_of};
 use super::recorder::{session_stamp, stranded_audio, ActiveAudio, AudioTarget, RecordingFiles, StartAudio, Stopped};
+use super::snapshots::service::{SnapshotHandle, SnapshotMeeting, StartSnapshots};
 use crate::error::CommandError;
 use crate::store_actor::StoreHandle;
 
@@ -150,13 +151,30 @@ pub fn stranded_completion(audio_path: Option<&str>, recordings: &Path, now_unix
     }
 }
 
+/// A recording in progress: its audio and its snapshots, which stop together. Held in the
+/// lifecycle as one value, so a stop that races a start can't leave either running.
+pub struct Active {
+    audio: Box<dyn ActiveAudio>,
+    snapshots: Option<SnapshotHandle>,
+}
+
+impl Active {
+    fn stop(self) -> Stopped {
+        if let Some(snapshots) = &self.snapshots {
+            snapshots.stop();
+        }
+        self.audio.stop()
+    }
+}
+
 pub struct MeetingController {
     store: StoreHandle,
     device_id: String,
     recordings: PathBuf,
     start_audio: StartAudio,
+    start_snapshots: StartSnapshots,
     pipeline: Arc<Pipeline>,
-    lifecycle: Mutex<Lifecycle<Box<dyn ActiveAudio>>>,
+    lifecycle: Mutex<Lifecycle<Active>>,
 }
 
 fn now_ms() -> i64 {
@@ -164,8 +182,23 @@ fn now_ms() -> i64 {
 }
 
 impl MeetingController {
-    pub fn new(store: StoreHandle, device_id: String, recordings: PathBuf, start_audio: StartAudio, pipeline: Arc<Pipeline>) -> Self {
-        MeetingController { store, device_id, recordings, start_audio, pipeline, lifecycle: Mutex::new(Lifecycle::default()) }
+    pub fn new(
+        store: StoreHandle,
+        device_id: String,
+        recordings: PathBuf,
+        start_audio: StartAudio,
+        start_snapshots: StartSnapshots,
+        pipeline: Arc<Pipeline>,
+    ) -> Self {
+        MeetingController {
+            store,
+            device_id,
+            recordings,
+            start_audio,
+            start_snapshots,
+            pipeline,
+            lifecycle: Mutex::new(Lifecycle::default()),
+        }
     }
 
     /// Completes rows a previous run left `recording` (the Mac's
@@ -243,6 +276,7 @@ impl MeetingController {
         // replaces the path with the file that actually got audio, or `None`.
         let stamp = session_stamp(chrono::Utc::now());
         let expected = self.recordings.join(format!("system-audio-{stamp}.wav"));
+        let snapshot_title = title.clone();
         let row = NewMeeting {
             device_id: self.device_id.clone(),
             start_unix_ms: started,
@@ -267,10 +301,15 @@ impl MeetingController {
         };
 
         let audio = (self.start_audio)(target, &stamp);
-        let finished = self.lifecycle.lock().unwrap().finish_start(generation, meeting_id, now, audio);
-        if let Err(audio) = finished {
+        let root_pid = match target {
+            AudioTarget::Process(pid) => Some(pid),
+            AudioTarget::Endpoint => None,
+        };
+        let snapshots = (self.start_snapshots)(SnapshotMeeting { meeting_id, start_unix_ms: started, title: snapshot_title, root_pid });
+        let finished = self.lifecycle.lock().unwrap().finish_start(generation, meeting_id, now, Active { audio, snapshots });
+        if let Err(active) = finished {
             tracing::info!(meeting_id, "a stop arrived while the meeting was starting; completing it");
-            let stopped = audio.stop();
+            let stopped = active.stop();
             self.complete(meeting_id, stopped.files, stopped.transcribed);
         } else {
             tracing::info!(meeting_id, ?trigger, ?target, "meeting recording");
@@ -281,8 +320,8 @@ impl MeetingController {
     /// Stops the recording meeting, if any, and completes its row.
     pub fn stop(&self) -> Result<MeetingRecordingView, CommandError> {
         let stopped = self.lifecycle.lock().unwrap().begin_stop();
-        if let Some((meeting_id, started, audio)) = stopped {
-            let Stopped { files, transcribed } = audio.stop();
+        if let Some((meeting_id, started, active)) = stopped {
+            let Stopped { files, transcribed } = active.stop();
             tracing::info!(meeting_id, seconds = (now_ms() - started) / 1000, degraded = ?files.degraded, "meeting recording stopped");
             self.complete(meeting_id, files, transcribed);
         }
@@ -309,8 +348,8 @@ impl MeetingController {
         let recording = match self.lifecycle.lock().unwrap().phase() {
             Phase::Idle => (RecordingState::Idle, None, None, None),
             Phase::Starting { .. } => (RecordingState::Starting, None, None, None),
-            Phase::Recording { meeting_id, started_unix_ms, audio, .. } => {
-                (RecordingState::Recording, Some(*meeting_id), Some(*started_unix_ms), audio.degraded())
+            Phase::Recording { meeting_id, started_unix_ms, audio: active, .. } => {
+                (RecordingState::Recording, Some(*meeting_id), Some(*started_unix_ms), active.audio.degraded())
             }
         };
         MeetingRecordingView {
@@ -331,7 +370,7 @@ impl MeetingController {
     /// WAVs alone.
     pub fn recording_stamp(&self) -> Option<String> {
         match self.lifecycle.lock().unwrap().phase() {
-            Phase::Recording { audio, .. } => audio.stamp(),
+            Phase::Recording { audio: active, .. } => active.audio.stamp(),
             _ => None,
         }
     }
@@ -339,7 +378,7 @@ impl MeetingController {
     /// Whether the recording meeting's audio is live right now, for the end rules.
     pub fn audio_active(&self, now_unix_ms: i64) -> Option<bool> {
         match self.lifecycle.lock().unwrap().phase() {
-            Phase::Recording { audio, .. } => Some(audio.audio_active(now_unix_ms)),
+            Phase::Recording { audio: active, .. } => Some(active.audio.audio_active(now_unix_ms)),
             _ => None,
         }
     }
@@ -448,7 +487,7 @@ mod tests {
             Arc::new(crate::secrets::MemorySecrets::default()),
             paths,
         ));
-        (MeetingController::new(store.clone(), "this-pc".into(), recordings, start, pipeline), store)
+        (MeetingController::new(store.clone(), "this-pc".into(), recordings, start, Arc::new(|_| None), pipeline), store)
     }
 
     fn scratch(name: &str) -> PathBuf {
@@ -589,6 +628,34 @@ mod tests {
         assert_eq!(row.status, MeetingStatus::Completed);
         assert_eq!(row.audio_path.as_deref(), Some(r"C:\rec\system-audio-S.wav"));
         assert!(row.end_unix_ms.is_some());
+    }
+
+    #[test]
+    fn a_recording_starts_its_snapshots_and_a_stop_stops_them() {
+        let (mut c, _) = controller(RecordingFiles::default());
+        let started: Arc<Mutex<Vec<SnapshotMeeting>>> = Arc::default();
+        type Probe = Box<dyn Fn() -> bool + Send>;
+        let probes: Arc<Mutex<Vec<Probe>>> = Arc::default();
+        c.start_snapshots = {
+            let (started, probes) = (started.clone(), probes.clone());
+            Arc::new(move |meeting| {
+                started.lock().unwrap().push(meeting);
+                let (handle, probe) = SnapshotHandle::unwatched();
+                probes.lock().unwrap().push(Box::new(probe));
+                Some(handle)
+            })
+        };
+        let id = c.start_detected("Zoom".into(), 42).unwrap().meeting_id.unwrap();
+        {
+            let started = started.lock().unwrap();
+            assert_eq!((started[0].meeting_id, started[0].title.as_str(), started[0].root_pid), (id, "Zoom", Some(42)));
+        }
+        assert!(!probes.lock().unwrap()[0](), "running while the meeting records");
+        c.stop().unwrap();
+        assert!(probes.lock().unwrap()[0](), "stopped with the recording");
+
+        c.start_manual().unwrap();
+        assert_eq!(started.lock().unwrap()[1].root_pid, None, "a manual meeting has no app of its own");
     }
 
     #[test]

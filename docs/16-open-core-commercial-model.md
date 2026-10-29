@@ -72,6 +72,18 @@ client always calls the provider with the user's or organization's key; the serv
 task metadata and outcomes, never prompts or tokens. It is a reason to keep paying, not
 a price.
 
+**In Free, and said out loud: cheap by default with your own keys.** The app already
+runs a provider chain (local first, then the hosted providers the user has keys for),
+forces local-only for sensitive content, and enforces daily spend caps. Free ships the
+static version of routing: classification, extraction and routine plumbing go to a
+small local model or the cheapest hosted model the user has a key for; chat and
+summaries go to the best one; the ledger shows the cost of each call. With a guided
+key on-ramp (a link to each provider's key page, validation on paste, the honest cost
+line) and one-key aggregators as providers, most people run the whole product on free
+and cheap models for under a dollar a month, and the website can say so. The user
+holds every key. Decision 4 below records why the company never holds the cheap keys
+itself.
+
 **Excluded on purpose:** token resale in any form, including "fair use" bundles; affiliate
 or referral revenue on providers; a later licence change to SSPL, BSL or FSL; any local
 feature withheld from Free; a skills marketplace (the skill format, M2.3, does not exist);
@@ -83,7 +95,7 @@ an "at cost" managed key (zero revenue, real fraud and support exposure).
 |---|---|---|---|
 | Price | $0 | **Not published until the package is decided** (see below) | **Not published until Cloud has paying teams** |
 | Everything in the app | Unlimited: capture, meetings, history, search, chat, routines on your devices, connectors, MCP server | Same | Same |
-| Models | Local or your own key | Same, plus routing intelligence when it exists | Same, plus an organization key for every seat and team-level routing policy |
+| Models | Local or your own keys, cheap-first routing by static rule, guided key on-ramp | Same, plus routing intelligence learned from usage when it exists | Same, plus an organization key for every seat and team-level routing policy |
 | Sync | End-to-end encrypted. On **your own relay**: unlimited. On the **hosted relay**: one computer plus one phone, enforced server-side | Hosted relay, unlimited devices, daily backups and restore | Same, plus shared spaces |
 | Cloud routines | No | Yes: scheduled agents that run server-side with keys you grant, per routine, revocable | Yes, including routines that hand off between teammates' agents |
 | Push to phone | No | Yes | Yes |
@@ -137,6 +149,11 @@ Two things ship in Phase C because they are the instruments, not the product: ho
 relay sign-in opens beyond the email allowlist with the one-computer-plus-phone limit
 enforced server-side, and the update feed records weekly unique clients. Without them the
 next gate cannot be measured.
+
+One more ships in Phase C because it is the on-ramp: cheap-first routing by static
+rule, a cost column in the "what left my machine" ledger, the guided key on-ramp with a
+plain note on each provider's free-tier data terms, and at least one one-key aggregator
+as a provider. None of it puts the company in the money path.
 
 Gate to Phase D, all three:
 
@@ -216,7 +233,9 @@ operator.
 
 That is a good independent business and not a venture one. The gates above are written
 for the former. If the goal is the latter, every number in this document is wrong and
-the right document is a fundraising plan, which this is not.
+the right document is a fundraising plan, which this is not. Decision 5 below takes the
+independent path and reopens the question once, at the Phase D gate, with the Phase C
+numbers in hand.
 
 **Cash.** There is no revenue until the end of Phase D, which is four to six months after
 launch at the earliest, and no seat revenue until the end of Phase E, six to twelve
@@ -250,11 +269,39 @@ plus phone limit, now applied to the hosted relay only and enforced server-side.
 
 ## Decisions needed
 
+All five decided 2026-10-29.
+
 1. Replace Pro and Power with Cloud and Team as above, and change the website before the
-   repository goes public.
-2. Open hosted-relay sign-in, with the limit enforced, as part of the launch.
+   repository goes public. **Ratified.** The website side shipped before the mirror went
+   public.
+2. Open hosted-relay sign-in, with the limit enforced, as part of the launch. **Yes,
+   with the device cap and the account ceiling.** Before Phase D: the relay enforces the
+   cap, the ceiling and a provisioning rate limit; the app explains the cap; the Turso
+   per-database cost and the 90-day reclaim policy are written down.
 3. **Whether cloud routines may hold user-granted keys server-side at all.** This is the
    decision the plan rests on. Yes means Cloud is an agent runner and prices at or above
-   $12; no means Cloud is sync plus backups at about $5 and billing waits.
-4. Whether to ever offer an at-cost managed key. The recommendation is no.
+   $12; no means Cloud is sync plus backups at about $5 and billing waits. **Yes,
+   scoped.** Keys are granted per routine, revocable, isolated, with the carve-out stated
+   in the toggle and on the website. The first cloud routines run only on already-synced
+   data (daily brief, recap, search and summarize); no Gmail or Calendar connector runs
+   in the cloud until Google's restricted-scope verification is done, and that
+   verification starts now because it is the long pole. If the carve-out sentence cannot
+   be made honest, the feature does not ship.
+4. Whether to ever offer an at-cost managed key. **No, and not a managed cheap-model
+   key either.** Provider free tiers are per developer project: their rate limits are
+   shared across every user routed through them, their terms generally forbid handing the
+   quota to your users, and some pay for themselves with the prompts. A cheap paid tier
+   still makes the company the metered reseller with the same fraud and abuse system to
+   build. What ships instead, in Free, is the cheap-by-default on-ramp above: static
+   cheap-first routing, the cost column in the ledger, the guided key on-ramp with each
+   provider's free-tier data terms stated, and one-key aggregators as providers. A
+   prepaid credit pack is revisited only once paying Cloud accounts exist to carry it.
 5. Whether this is an independent business or a venture one, because the gates differ.
+   **Independent, reopened once at the Phase D gate.** Every gate in this document reads
+   "pays for itself": the free base is a cost line carried from revenue, no phase starts
+   until the previous one covers its bill, headcount stays at one until Team is paying.
+   The venture question is not refused, it is deferred to the only point where it can be
+   answered with numbers: when Phase C has cleared its three measures and Cloud has
+   conversion and retention data, the question is put again, with a fundraising plan as
+   a separate document if the answer changes. Until then no spend runs ahead of revenue
+   and the hosted free tier gets tighter, not looser, when it costs money.

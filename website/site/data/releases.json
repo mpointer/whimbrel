@@ -1,5 +1,442 @@
 [
   {
+    "tag": "v0.9.35",
+    "date": "2026-10-28",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.35",
+    "entries": [
+      {
+        "title": "mac: the Whimbrel menu-bar glyph",
+        "url": "https://github.com/mpointer/kestrel/pull/399",
+        "number": 399
+      },
+      {
+        "title": "website: Google data in the privacy policy, and terms of service at /tos",
+        "url": "https://github.com/mpointer/kestrel/pull/401",
+        "number": 401
+      },
+      {
+        "title": "windows: draw the tray icons from the Whimbrel mark",
+        "url": "https://github.com/mpointer/kestrel/pull/400",
+        "number": 400
+      },
+      {
+        "title": "windows: keep the crash supervisor after an update",
+        "url": "https://github.com/mpointer/kestrel/pull/403",
+        "number": 403
+      },
+      {
+        "title": "mac: move the data folder from Application Support/Kestrel to Whimbrel",
+        "url": "https://github.com/mpointer/kestrel/pull/404",
+        "number": 404
+      },
+      {
+        "title": "Away Mode: Whimbrel attends the Zoom meetings you skip",
+        "url": "https://github.com/mpointer/kestrel/pull/405",
+        "number": 405
+      },
+      {
+        "title": "windows: move the data folder to %LOCALAPPDATA%\\Whimbrel\\data",
+        "url": "https://github.com/mpointer/kestrel/pull/406",
+        "number": 406
+      },
+      {
+        "title": "release: 0.9.35",
+        "url": "https://github.com/mpointer/kestrel/pull/408",
+        "number": 408
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.34",
+    "date": "2026-10-27",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.34",
+    "entries": [
+      {
+        "title": "mac: keep the kestrel-notary keychain profile name",
+        "url": "https://github.com/mpointer/kestrel/pull/395",
+        "number": 395
+      },
+      {
+        "title": "mac: the Whimbrel icon and wordmark at the top of Today",
+        "url": "https://github.com/mpointer/kestrel/pull/397",
+        "number": 397
+      },
+      {
+        "title": "windows: remove the Kestrel install when Whimbrel installs",
+        "url": "https://github.com/mpointer/kestrel/pull/396",
+        "number": 396
+      },
+      {
+        "title": "release: 0.9.34",
+        "url": "https://github.com/mpointer/kestrel/pull/398",
+        "number": 398
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.33",
+    "date": "2026-10-27",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.33",
+    "entries": [
+      {
+        "title": "workers: keep the workers.dev route on next to the custom domains",
+        "url": "https://github.com/mpointer/kestrel/pull/388",
+        "number": 388
+      },
+      {
+        "title": "Rename the product from Kestrel to Whimbrel (rename design step 4b)",
+        "url": "https://github.com/mpointer/kestrel/pull/389",
+        "number": 389
+      },
+      {
+        "title": "icons: new Whimbrel app icon, favicon and OG logo",
+        "url": "https://github.com/mpointer/kestrel/pull/390",
+        "number": 390
+      },
+      {
+        "title": "mac: regenerate the Xcode project after the rename",
+        "url": "https://github.com/mpointer/kestrel/pull/391",
+        "number": 391
+      },
+      {
+        "title": "windows: the Whimbrel app icon",
+        "url": "https://github.com/mpointer/kestrel/pull/392",
+        "number": 392
+      },
+      {
+        "title": "windows: sort whimbrel-windows into place in Cargo.lock",
+        "url": "https://github.com/mpointer/kestrel/pull/393",
+        "number": 393
+      },
+      {
+        "title": "release: 0.9.33",
+        "url": "https://github.com/mpointer/kestrel/pull/394",
+        "number": 394
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.32",
+    "date": "2026-10-25",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.32",
+    "entries": [
+      {
+        "title": "build(deps): bump the npm_and_yarn group across 3 directories with 1 update",
+        "url": "https://github.com/mpointer/kestrel/pull/381",
+        "number": 381
+      },
+      {
+        "title": "windows: keep a recording stranded by a quit or crash",
+        "url": "https://github.com/mpointer/kestrel/pull/384",
+        "number": 384
+      },
+      {
+        "title": "docs: Windows release evidence for v0.9.31, in-place update proven",
+        "url": "https://github.com/mpointer/kestrel/pull/385",
+        "number": 385
+      },
+      {
+        "title": "windows: re-link a recording stranded by a crash",
+        "url": "https://github.com/mpointer/kestrel/pull/386",
+        "number": 386
+      },
+      {
+        "title": "release: 0.9.32",
+        "url": "https://github.com/mpointer/kestrel/pull/387",
+        "number": 387
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.31",
+    "date": "2026-10-24",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.31",
+    "entries": [
+      {
+        "title": "fix(meetings): recording failsafes — check-in, 6 h cap, disk limits, 16 kHz mono, quit/crash safety",
+        "url": "https://github.com/mpointer/kestrel/pull/382",
+        "number": 382
+      },
+      {
+        "title": "release: 0.9.31",
+        "url": "https://github.com/mpointer/kestrel/pull/383",
+        "number": 383
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.30",
+    "date": "2026-10-24",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.30",
+    "entries": [
+      {
+        "title": "website, mobile design: Whimbrel on whimbrelapp.com, open source, new pricing model",
+        "url": "https://github.com/mpointer/kestrel/pull/373",
+        "number": 373
+      },
+      {
+        "title": "website: keep the workers.dev address and forward it to whimbrelapp.com",
+        "url": "https://github.com/mpointer/kestrel/pull/374",
+        "number": 374
+      },
+      {
+        "title": "website: Whimbrel mark, favicon.ico and icons",
+        "url": "https://github.com/mpointer/kestrel/pull/375",
+        "number": 375
+      },
+      {
+        "title": "website: attach www.whimbrelapp.com, and IndexNow on every deploy",
+        "url": "https://github.com/mpointer/kestrel/pull/377",
+        "number": 377
+      },
+      {
+        "title": "workers: custom domains in front of the relay and the update feed",
+        "url": "https://github.com/mpointer/kestrel/pull/376",
+        "number": 376
+      },
+      {
+        "title": "Connected Topics, PR 1: core entities, topics, naming and Markdown export",
+        "url": "https://github.com/mpointer/kestrel/pull/378",
+        "number": 378
+      },
+      {
+        "title": "Meeting continue: rejoining a dropped call continues the same meeting",
+        "url": "https://github.com/mpointer/kestrel/pull/379",
+        "number": 379
+      },
+      {
+        "title": "release: 0.9.30",
+        "url": "https://github.com/mpointer/kestrel/pull/380",
+        "number": 380
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.29",
+    "date": "2026-10-23",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.29",
+    "entries": [
+      {
+        "title": "core: skins crate with format, loader and shared corpus (skins 1/4)",
+        "url": "https://github.com/mpointer/kestrel/pull/352",
+        "number": 352
+      },
+      {
+        "title": "core: skins contrast, palette repair and scrim (skins 2/4)",
+        "url": "https://github.com/mpointer/kestrel/pull/355",
+        "number": 355
+      },
+      {
+        "title": "core: user skin store and .kestrelskin package (skins 3/4)",
+        "url": "https://github.com/mpointer/kestrel/pull/356",
+        "number": 356
+      },
+      {
+        "title": "build(deps): bump the npm_and_yarn group across 6 directories with 3 updates",
+        "url": "https://github.com/mpointer/kestrel/pull/340",
+        "number": 340
+      },
+      {
+        "title": "core: skin catalogue for the model (skins 4/4)",
+        "url": "https://github.com/mpointer/kestrel/pull/357",
+        "number": 357
+      },
+      {
+        "title": "fix(macos): meeting snapshots follow-ups",
+        "url": "https://github.com/mpointer/kestrel/pull/368",
+        "number": 368
+      },
+      {
+        "title": "fix(core): sync skins version in Cargo.lock",
+        "url": "https://github.com/mpointer/kestrel/pull/369",
+        "number": 369
+      },
+      {
+        "title": "docs: manual pass reflects mid-meeting snapshot resume",
+        "url": "https://github.com/mpointer/kestrel/pull/370",
+        "number": 370
+      },
+      {
+        "title": "windows: load and apply skins (Task 6)",
+        "url": "https://github.com/mpointer/kestrel/pull/362",
+        "number": 362
+      },
+      {
+        "title": "windows: six Today archetypes and skin decoration (Task 7)",
+        "url": "https://github.com/mpointer/kestrel/pull/363",
+        "number": 363
+      },
+      {
+        "title": "windows: skin gallery in Appearance (Task 8)",
+        "url": "https://github.com/mpointer/kestrel/pull/364",
+        "number": 364
+      },
+      {
+        "title": "fix(macos): unit-test host launches an empty app",
+        "url": "https://github.com/mpointer/kestrel/pull/372",
+        "number": 372
+      },
+      {
+        "title": "windows: skin no-overrun matrix in CI (Task 9)",
+        "url": "https://github.com/mpointer/kestrel/pull/367",
+        "number": 367
+      },
+      {
+        "title": "release: 0.9.29",
+        "url": "https://github.com/mpointer/kestrel/pull/371",
+        "number": 371
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.28",
+    "date": "2026-10-22",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.28",
+    "entries": [
+      {
+        "title": "docs: meeting snapshots objective (FR-MTG-11)",
+        "url": "https://github.com/mpointer/kestrel/pull/359",
+        "number": 359
+      },
+      {
+        "title": "docs: meeting snapshots design (FR-MTG-11)",
+        "url": "https://github.com/mpointer/kestrel/pull/360",
+        "number": 360
+      },
+      {
+        "title": "docs: meeting snapshots implementation plan",
+        "url": "https://github.com/mpointer/kestrel/pull/361",
+        "number": 361
+      },
+      {
+        "title": "feat: meeting snapshots (FR-MTG-11)",
+        "url": "https://github.com/mpointer/kestrel/pull/365",
+        "number": 365
+      },
+      {
+        "title": "release: 0.9.28",
+        "url": "https://github.com/mpointer/kestrel/pull/366",
+        "number": 366
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.27",
+    "date": "2026-10-22",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.27",
+    "entries": [
+      {
+        "title": "mac: Settings no longer freezes when a skin change rebuilds it",
+        "url": "https://github.com/mpointer/kestrel/pull/353",
+        "number": 353
+      },
+      {
+        "title": "core: a meeting on two connected calendar accounts appears once",
+        "url": "https://github.com/mpointer/kestrel/pull/354",
+        "number": 354
+      },
+      {
+        "title": "release: 0.9.27",
+        "url": "https://github.com/mpointer/kestrel/pull/358",
+        "number": 358
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.26",
+    "date": "2026-10-22",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.26",
+    "entries": [
+      {
+        "title": "docs: open source, and what people pay for (commercial model proposal)",
+        "url": "https://github.com/mpointer/kestrel/pull/345",
+        "number": 345
+      },
+      {
+        "title": "deps: clear the fixable Dependabot alerts; record the rest in deny.toml",
+        "url": "https://github.com/mpointer/kestrel/pull/348",
+        "number": 348
+      },
+      {
+        "title": "docs: skins on Windows and skin sync (design + plan)",
+        "url": "https://github.com/mpointer/kestrel/pull/349",
+        "number": 349
+      },
+      {
+        "title": "mac: the Daily Brief's Today line lists only today's meetings",
+        "url": "https://github.com/mpointer/kestrel/pull/350",
+        "number": 350
+      },
+      {
+        "title": "release: 0.9.26",
+        "url": "https://github.com/mpointer/kestrel/pull/351",
+        "number": 351
+      }
+    ]
+  },
+  {
+    "tag": "v0.9.25",
+    "date": "2026-10-22",
+    "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.25",
+    "entries": [
+      {
+        "title": "windows: Today refresh 4/4, schedule card",
+        "url": "https://github.com/mpointer/kestrel/pull/334",
+        "number": 334
+      },
+      {
+        "title": "website: auto-deploy, welcome and lead-alert email, changelog page",
+        "url": "https://github.com/mpointer/kestrel/pull/335",
+        "number": 335
+      },
+      {
+        "title": "Apache-2.0 license, dependency license audit, un-vendor the MCP test fixture",
+        "url": "https://github.com/mpointer/kestrel/pull/337",
+        "number": 337
+      },
+      {
+        "title": "Relay config without personal values, fork-safe CI, self-hosting guide, Workers CI",
+        "url": "https://github.com/mpointer/kestrel/pull/338",
+        "number": 338
+      },
+      {
+        "title": "Docs say what the tree does: README, SECURITY.md, competitive table, contributing",
+        "url": "https://github.com/mpointer/kestrel/pull/339",
+        "number": 339
+      },
+      {
+        "title": "mac: skins follow-ups (Appearance caption, live Ask survives skin switch, test isolation)",
+        "url": "https://github.com/mpointer/kestrel/pull/336",
+        "number": 336
+      },
+      {
+        "title": "windows: settings tests start from a clean temp directory",
+        "url": "https://github.com/mpointer/kestrel/pull/341",
+        "number": 341
+      },
+      {
+        "title": "docs: Kestrel to Whimbrel rename design",
+        "url": "https://github.com/mpointer/kestrel/pull/342",
+        "number": 342
+      },
+      {
+        "title": "mac: the updater accepts a renamed bundle and installs it at the new path",
+        "url": "https://github.com/mpointer/kestrel/pull/344",
+        "number": 344
+      },
+      {
+        "title": "Skins Release 2: make a skin by talking to Kestrel (Mac)",
+        "url": "https://github.com/mpointer/kestrel/pull/343",
+        "number": 343
+      },
+      {
+        "title": "release: 0.9.25",
+        "url": "https://github.com/mpointer/kestrel/pull/346",
+        "number": 346
+      }
+    ]
+  },
+  {
     "tag": "v0.9.24",
     "date": "2026-10-20",
     "url": "https://github.com/mpointer/kestrel/releases/tag/v0.9.24",

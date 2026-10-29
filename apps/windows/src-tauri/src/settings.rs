@@ -43,6 +43,10 @@ pub mod keys {
     pub const MEETING_LEAD_MINUTES: &str = "meetings.leadMinutes";
     /// Device-local, as on the Mac (`MeetingPrepSettings`): how long before a meeting its brief is made.
     pub const MEETING_PREP_LEAD_MINUTES: &str = "meetingPrep.leadMinutes";
+    /// Device-local, as on the Mac (`SnapshotSettings`): whether recorded meetings save their
+    /// slides, on unless turned off, and the folder they go in (absent: Pictures\Whimbrel Snapshots).
+    pub const MEETING_SNAPSHOTS_ENABLED: &str = "meetingSnapshots.enabled";
+    pub const MEETING_SNAPSHOTS_ROOT: &str = "meetingSnapshots.root";
     /// Device-local, as on the Mac (UserDefaults): whether the MCP server runs. Off unless the user turns it on.
     pub const MCP_SERVER_ENABLED: &str = "mcpServer.enabled";
     pub const RETENTION_CAPTURE_DAYS: &str = "retention.captureItemDays";
@@ -517,6 +521,24 @@ impl SettingsFile {
         self.set(keys::PROFILE_SUGGEST_ENABLED, Some(p.suggest_enabled));
     }
 
+    pub fn meeting_snapshots_enabled(&self) -> bool {
+        self.get(keys::MEETING_SNAPSHOTS_ENABLED).unwrap_or(true)
+    }
+
+    pub fn set_meeting_snapshots_enabled(&mut self, enabled: bool) {
+        self.set(keys::MEETING_SNAPSHOTS_ENABLED, Some(enabled));
+    }
+
+    /// The folder the user chose for snapshots, or `None` for the default.
+    pub fn meeting_snapshots_root(&self) -> Option<PathBuf> {
+        self.get::<String>(keys::MEETING_SNAPSHOTS_ROOT).filter(|p| !p.trim().is_empty()).map(PathBuf::from)
+    }
+
+    /// `None` goes back to the default.
+    pub fn set_meeting_snapshots_root(&mut self, root: Option<&Path>) {
+        self.set(keys::MEETING_SNAPSHOTS_ROOT, root.map(|p| p.display().to_string()));
+    }
+
     pub fn show_screen_captures(&self) -> bool {
         self.get(keys::LIBRARY_SHOW_CAPTURES).unwrap_or(true)
     }
@@ -901,6 +923,23 @@ mod routine_host_settings_tests {
         let d = std::env::temp_dir().join(format!("whimbrel-settings-host-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         (SettingsFile::load(&d.join("settings.json")), d)
+    }
+
+    #[test]
+    fn meeting_snapshots_are_on_by_default_and_their_folder_can_be_chosen_and_reset() {
+        let (mut s, d) = file("snapshots");
+        assert!(s.meeting_snapshots_enabled());
+        assert_eq!(s.meeting_snapshots_root(), None);
+        s.set_meeting_snapshots_enabled(false);
+        s.set_meeting_snapshots_root(Some(Path::new(r"D:\Slides")));
+        s.save().unwrap();
+        let reloaded = SettingsFile::load(&d.join("settings.json"));
+        assert!(!reloaded.meeting_snapshots_enabled());
+        assert_eq!(reloaded.meeting_snapshots_root(), Some(PathBuf::from(r"D:\Slides")));
+        s.set_meeting_snapshots_root(None);
+        s.save().unwrap();
+        assert_eq!(SettingsFile::load(&d.join("settings.json")).meeting_snapshots_root(), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

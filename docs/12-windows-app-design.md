@@ -144,6 +144,13 @@ The spike's deliverable is that table. The design assumes UIA-first, OCR-fallbac
 
 `Windows.Graphics.Capture` is the only supported way to grab one window's pixels on Windows 11. It draws a yellow border around the captured window by default; `GraphicsCaptureSession.IsBorderRequired = false` removes it after a one-time `GraphicsCaptureAccess.RequestAccessAsync(Borderless)` consent. The frame lives in a `Direct3D11` surface, is handed to `OcrEngine.RecognizeAsync`, and is dropped. Nothing is written to disk. FR-CAP-3's "screenshots are not persisted" holds by construction; FR-CAP-9's opt-in screenshot retention is out of scope for Phase 3 on both platforms.
 
+**The one exception: meeting snapshots (FR-MTG-11).** Ambient capture still never writes a frame. Meeting snapshots do, and only under all three of these conditions:
+- a meeting is recording;
+- the frame is of the meeting's own window (never the whole screen, and never an excluded, private or hidden window);
+- Settings → Meetings → "Save slides and shared screens" is on (the default; local to the PC, not synced).
+
+They are PNGs of slides and shared screens in `Pictures\Whimbrel Snapshots\<date time> <title>\`. Their text is local-only and never synced. Retention deletes the folder with the meeting unless "Keep snapshots" is on. Plan: `docs/superpowers/plans/2026-10-28-windows-meeting-snapshots.md`.
+
 ### 4.3 App identity: what goes in `bundle_id` on Windows
 
 Windows has no bundle ID. The field is populated with, in order of preference:

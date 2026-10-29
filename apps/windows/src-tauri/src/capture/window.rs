@@ -124,6 +124,31 @@ pub fn info(hwnd: HWND) -> WindowInfo {
     }
 }
 
+/// The window's on-screen area in pixels, from DWM's frame bounds (no drop shadow), else
+/// `GetWindowRect`. 0 if Windows can't say.
+pub fn area(hwnd: HWND) -> u64 {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let mut r = RECT::default();
+    let size = std::mem::size_of::<RECT>() as u32;
+    let found = unsafe { DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut r as *mut _ as *mut _, size) }.is_ok()
+        || unsafe { GetWindowRect(hwnd, &mut r) }.is_ok();
+    if !found {
+        return 0;
+    }
+    (r.right - r.left).max(0) as u64 * (r.bottom - r.top).max(0) as u64
+}
+
+/// Whether DWM is hiding the window: on another virtual desktop, a suspended Store app, or
+/// a shell window that only looks visible. Capturing one yields no frame.
+pub fn is_cloaked(hwnd: HWND) -> bool {
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    let mut cloaked = 0u32;
+    let size = std::mem::size_of::<u32>() as u32;
+    unsafe { DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &mut cloaked as *mut _ as *mut _, size) }.is_ok() && cloaked != 0
+}
+
 pub fn foreground() -> Option<WindowInfo> {
     let h = unsafe { GetForegroundWindow() };
     (!h.0.is_null()).then(|| info(h))

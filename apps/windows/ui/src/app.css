@@ -1209,3 +1209,76 @@ button.link:focus-visible {
   outline: 2px solid var(--color-accent-primary);
   outline-offset: 1px;
 }
+
+/* The workspace's Slides strip (meeting snapshots). */
+.slides {
+  margin-bottom: var(--space-lg);
+}
+
+.slides-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.slides-header .section-label {
+  margin: 0;
+}
+
+.slides-header .toggle {
+  margin: 0 0 0 auto;
+}
+
+.slides-row {
+  display: flex;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0 0 var(--space-sm);
+  list-style: none;
+  overflow-x: auto;
+}
+
+.slide {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.slide-image {
+  display: block;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--color-background-page);
+  cursor: pointer;
+}
+
+.slide-image:focus-visible {
+  outline: 2px solid var(--color-accent-primary);
+  outline-offset: 1px;
+}
+
+.slide-image img,
+.slide-placeholder {
+  display: block;
+  height: 120px;
+  width: auto;
+}
+
+.slide-placeholder {
+  aspect-ratio: 16 / 9;
+  background: var(--color-border);
+}
+
+.slide-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.slide-actions .mode {
+  padding: 2px var(--space-sm);
+}

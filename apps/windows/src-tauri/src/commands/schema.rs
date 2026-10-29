@@ -49,6 +49,9 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<crate::meetings::pipeline::Processing>();
     generator.subschema_for::<crate::meetings::pipeline::PipelineFailure>();
     generator.subschema_for::<super::workspace::WorkspaceView>();
+    generator.subschema_for::<super::snapshots::SnapshotsView>();
+    generator.subschema_for::<super::snapshots::Thumbnail>();
+    generator.subschema_for::<super::snapshots::SnapshotSettings>();
     generator.subschema_for::<super::workspace::TranscriptView>();
     generator.subschema_for::<super::workspace::ActionItemView>();
     generator.subschema_for::<super::meetings::MeetingSettings>();

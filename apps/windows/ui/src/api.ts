@@ -11,8 +11,11 @@ import type {
   ChatSpend,
   ConversationRow,
   ConversationView,
+  SnapshotSettings,
+  SnapshotsView,
   StarterPromptView,
   SuggestionView,
+  Thumbnail,
   TodayOverview,
   TodayRecap,
   DeviceView,
@@ -147,6 +150,21 @@ export const meetingRegenerate = (id: number, keepEdits: boolean) => invoke<void
 export const meetingRegenerationConflict = (id: number) => invoke<boolean>("meeting_regeneration_conflict", { id });
 export const meetingForget = (id: number) => invoke<void>("meeting_forget", { id });
 export const meetingMostRelevant = () => invoke<number | null>("meeting_most_relevant");
+
+// Meeting snapshots: the workspace's Slides strip and Settings → Meetings (plan Task 7).
+export const meetingSnapshots = (meetingId: number) => invoke<SnapshotsView>("meeting_snapshots", { meetingId });
+export const meetingSnapshotThumbnail = (meetingId: number, id: number) =>
+  invoke<Thumbnail>("meeting_snapshot_thumbnail", { meetingId, id });
+export const meetingSnapshotDelete = (meetingId: number, id: number) => invoke<void>("meeting_snapshot_delete", { meetingId, id });
+export const meetingSetKeepSnapshots = (meetingId: number, keep: boolean) =>
+  invoke<void>("meeting_set_keep_snapshots", { meetingId, keep });
+export const meetingSnapshotOpen = (meetingId: number, id: number) => invoke<void>("meeting_snapshot_open", { meetingId, id });
+export const meetingSnapshotCopy = (meetingId: number, id: number) => invoke<void>("meeting_snapshot_copy", { meetingId, id });
+export const meetingSnapshotsShow = (meetingId: number, id: number | null) => invoke<void>("meeting_snapshots_show", { meetingId, id });
+export const meetingSnapshotSettings = () => invoke<SnapshotSettings>("meeting_snapshot_settings");
+export const setMeetingSnapshotsEnabled = (enabled: boolean) => invoke<SnapshotSettings>("set_meeting_snapshots_enabled", { enabled });
+export const chooseMeetingSnapshotsFolder = () => invoke<SnapshotSettings>("choose_meeting_snapshots_folder");
+export const resetMeetingSnapshotsFolder = () => invoke<SnapshotSettings>("reset_meeting_snapshots_folder");
 
 // Detection, its alert window, and Settings → Meetings (M3.3 Task 6).
 export const meetingSettings = () => invoke<MeetingSettings>("meeting_settings");

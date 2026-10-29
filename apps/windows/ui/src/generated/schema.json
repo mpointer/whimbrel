@@ -2851,6 +2851,91 @@
       ],
       "type": "object"
     },
+    "SnapshotSettings": {
+      "description": "Settings → Meetings' snapshot rows. Local to this PC, never synced.",
+      "properties": {
+        "enabled": {
+          "description": "\"Save slides and shared screens\". On by default.",
+          "type": "boolean"
+        },
+        "folder": {
+          "description": "Where new meetings' folders go.",
+          "type": "string"
+        },
+        "isDefault": {
+          "description": "No folder has been chosen, so `folder` is the default.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled",
+        "folder",
+        "isDefault"
+      ],
+      "type": "object"
+    },
+    "SnapshotView": {
+      "properties": {
+        "capturedUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "fileName": {
+          "type": "string"
+        },
+        "height": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "modifiedUnixMs": {
+          "description": "The file's modification time: a build that replaces a slide can reuse an earlier\nfile name, so the strip keys its thumbnails on this too.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "text": {
+          "description": "The start of the slide's text.",
+          "type": "string"
+        },
+        "width": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "capturedUnixMs",
+        "fileName",
+        "width",
+        "height",
+        "modifiedUnixMs",
+        "text"
+      ],
+      "type": "object"
+    },
+    "SnapshotsView": {
+      "description": "One meeting's snapshots, oldest first, leaving out any whose file is gone.",
+      "properties": {
+        "keep": {
+          "description": "\"Keep snapshots\": retention leaves this meeting's folder alone.",
+          "type": "boolean"
+        },
+        "snapshots": {
+          "items": {
+            "$ref": "#/definitions/SnapshotView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "snapshots",
+        "keep"
+      ],
+      "type": "object"
+    },
     "SpendScope": {
       "enum": [
         "user",
@@ -3022,6 +3107,30 @@
         "lastActivityTsUnixMs",
         "lastMessageFrom",
         "status"
+      ],
+      "type": "object"
+    },
+    "Thumbnail": {
+      "properties": {
+        "dataUrl": {
+          "description": "A `data:image/png;base64,` URL, which the CSP's `img-src data:` allows.",
+          "type": "string"
+        },
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dataUrl",
+        "width",
+        "height"
       ],
       "type": "object"
     },

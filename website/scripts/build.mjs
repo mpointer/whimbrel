@@ -198,14 +198,17 @@ function renderChangelog() {
   return releases
     .map((r) => {
       const version = r.tag.replace(/^v/, "");
+      // A pull-request link is shown only when it is readable: releases before the
+      // public repository link the private one, and the public notes carry no links.
       const items = r.entries
         .map((e) => ({ ...changelogEntry(e.title), url: e.url, number: e.number }))
-        .filter((e) => e.text);
+        .filter((e) => e.text)
+        .map((e) => ({ ...e, link: Boolean(e.url && e.number && !e.url.includes("github.com/mpointer/kestrel/")) }));
       const list = items.length
         ? `<ul>${items
             .map(
               (e) =>
-                `<li>${e.platform ? `<span class="tag">${e.platform}</span> ` : ""}${escapeHtml(e.text)} <a class="pr" href="${escapeHtml(e.url)}">#${e.number}</a></li>`,
+                `<li>${e.platform ? `<span class="tag">${e.platform}</span> ` : ""}${escapeHtml(e.text)}${e.link ? ` <a class="pr" href="${escapeHtml(e.url)}">#${e.number}</a>` : ""}</li>`,
             )
             .join("")}</ul>`
         : `<p class="muted">Maintenance release: internal improvements.</p>`;
