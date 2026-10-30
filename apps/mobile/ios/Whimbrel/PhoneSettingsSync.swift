@@ -104,7 +104,7 @@ final class PhoneSettingsSync {
     private let puller: SettingsPulling
     private let defaults: UserDefaults
     private let keys: PhoneKeyStore
-    private let log = Logger(subsystem: "com.mpointer.kestrel.mobile", category: "settings-sync")
+    private let log = Logger(subsystem: "com.mpointer.whimbrel.mobile", category: "settings-sync")
 
     private static let prefix = PhoneRoutingPrefs.prefix
     private static let emptyLocal = #"{"fields":{},"api_keys":[]}"#

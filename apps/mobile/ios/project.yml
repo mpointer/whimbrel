@@ -21,6 +21,7 @@ targets:
     type: application
     platform: iOS
     sources:
+      # Includes Whimbrel/PrivacyInfo.xcprivacy, copied into the app as a resource.
       - path: Whimbrel
       # Shared with the Mac app by reference, not copied. Platform bits are split with
       # `#if os(macOS)` in place (ThemeStore.swift).
@@ -69,6 +70,7 @@ targets:
       path: Whimbrel/Info.plist
       properties:
         CFBundleDisplayName: Whimbrel
+        LSRequiresIPhoneOS: true
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
@@ -80,12 +82,23 @@ targets:
         SyncWorkerBaseURL: $(SYNC_WORKER_BASE_URL)
         NSMicrophoneUsageDescription: Whimbrel uses the microphone when you dictate a question.
         NSSpeechRecognitionUsageDescription: Whimbrel turns your dictated question into text on this iPhone.
+        # Export compliance, answered here so TestFlight doesn't ask on every upload. NO:
+        # the app uses only exempt encryption. TLS (rustls in the Rust core, URLSession)
+        # is exempt as HTTPS. Sync's end-to-end encryption (core/sync: X25519,
+        # ChaCha20-Poly1305, HKDF-SHA256 from the RustCrypto crates) uses only standard,
+        # published algorithms in a mass-market app whose primary function is not
+        # information security (EAR Cat. 5 Part 2 Notes 3/4, 740.17(b)(1), no report
+        # needed since BIS's 2021 rule). Change to YES if proprietary crypto is added.
+        ITSAppUsesNonExemptEncryption: false
     settings:
       base:
         PRODUCT_NAME: Whimbrel
         SWIFT_OBJC_BRIDGING_HEADER: Whimbrel/Bridging-Header.h
         HEADER_SEARCH_PATHS: $(SRCROOT)/../../../core/ffi/include
-        MARKETING_VERSION: "0.1.0"
+        # Follows the repo's VERSION (scripts/check-version.sh checks it; docs/RELEASING.md).
+        MARKETING_VERSION: "0.9.42"
+        # Local builds only. scripts/testflight-upload.sh sets the uploaded build's number
+        # (UTC time, YYYYMMDD.HHMM) at archive time, so every upload is higher than the last.
         CURRENT_PROJECT_VERSION: "1"
   WhimbrelTests:
     type: bundle.unit-test
@@ -99,7 +112,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         BUNDLE_LOADER: $(TEST_HOST)
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Whimbrel.app/Whimbrel
-        PRODUCT_BUNDLE_IDENTIFIER: com.mpointer.kestrel.mobile.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.mpointer.whimbrel.mobile.tests
 schemes:
   Whimbrel:
     build:

@@ -77,7 +77,7 @@ final class EnrollmentModel: ObservableObject, SyncCredentialSource {
 
     private let backend: EnrollmentBackend?
     private let sleep: (UInt64) async throws -> Void
-    private let log = Logger(subsystem: "com.mpointer.kestrel.mobile", category: "enrollment")
+    private let log = Logger(subsystem: "com.mpointer.whimbrel.mobile", category: "enrollment")
     /// The running waiting poll, if any. Exposed so tests can await it.
     private(set) var pollTask: Task<Void, Never>?
     private var resumeTask: Task<Void, Never>?

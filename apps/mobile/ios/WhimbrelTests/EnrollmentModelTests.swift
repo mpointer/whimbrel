@@ -420,7 +420,7 @@ final class EnrollmentModelTests: XCTestCase {
 
     func testGoogleSignOutDeletesItsKeychainTokens() {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: (Bundle.main.bundleIdentifier ?? "com.mpointer.kestrel.mobile") + ".google-oauth",
+                                    kSecAttrService as String: (Bundle.main.bundleIdentifier ?? "com.mpointer.whimbrel.mobile") + ".google-oauth",
                                     kSecAttrAccount as String: "google-sync"]
         var add = query
         add[kSecValueData as String] = Data("x".utf8)

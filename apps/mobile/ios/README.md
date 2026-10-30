@@ -40,11 +40,41 @@ committed project. Regenerate and commit it whenever `project.yml` changes.
 `Secrets.xcconfig` (gitignored; copy from `Secrets.xcconfig.example`) holds
 `GOOGLE_IOS_CLIENT_ID` (the iOS OAuth client, written into Info.plist as
 `GoogleOAuthClientID`, the key the shared `SyncConfig` reads) and can override `PRODUCT_BUNDLE_IDENTIFIER`. The default bundle id,
-`com.mpointer.kestrel.mobile`, is set in `Base.xcconfig` and is a placeholder until confirmed.
+`com.mpointer.whimbrel.mobile`, is set in `Base.xcconfig`. It replaced the pre-rename id before the first TestFlight build;
+that made it a new app, so a phone that ran the old id signs in and is approved again.
 `Base.xcconfig` also sets `SYNC_WORKER_BASE_URL` (the deployed Worker, Info.plist
 `SyncWorkerBaseURL`); `Secrets.xcconfig` can override it, e.g. for `wrangler dev`.
 Without `Secrets.xcconfig`, or with the `REPLACE_ME` placeholder, the app still builds and
 runs and the sign-in screen says Google sign-in is not configured.
+
+## TestFlight
+
+`scripts/testflight-upload.sh` builds the release xcframework, archives (Release, automatic
+signing, team GP8PFLM3Q3), checks the archive's bundle id and version, and exports with
+`method app-store-connect`, `destination upload`, which uploads it. It refuses a dirty tree
+and a missing or placeholder `Secrets.xcconfig`. `MARKETING_VERSION` follows `VERSION`
+(`scripts/check-version.sh`); the build number is the UTC time of the run, `YYYYMMDD.HHMM` (HHMM without leading zeros),
+set at archive time, so each upload is higher than the last without a commit.
+
+One-time setup:
+
+1. App Store Connect > Apps > + > New App: iOS, name Whimbrel, bundle id
+   `com.mpointer.whimbrel.mobile` (register it first under Certificates, Identifiers &
+   Profiles > Identifiers if it isn't offered).
+2. Users and Access > Integrations > App Store Connect API > Team Keys: generate a key with
+   the App Manager role. Note the Key ID and the Issuer ID, and download `AuthKey_<KEYID>.p8`
+   (it downloads once).
+3. Store it outside the repo: `mkdir -p ~/.appstoreconnect/private_keys && mv
+   ~/Downloads/AuthKey_<KEYID>.p8 ~/.appstoreconnect/private_keys/ && chmod 600
+   ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8`.
+4. Export `ASC_KEY_ID` and `ASC_ISSUER_ID` in your shell profile (`ASC_KEY_PATH` if the
+   `.p8` lives elsewhere).
+
+Then, from a clean tree: `apps/mobile/ios/scripts/testflight-upload.sh`.
+
+`Info.plist` sets `ITSAppUsesNonExemptEncryption` to NO (reasoning in `project.yml`), and
+`Whimbrel/PrivacyInfo.xcprivacy` is the privacy manifest. Recheck its API declarations
+with `nm -u` on the xcframework's `ios-arm64` library when the core's dependencies change.
 
 ## Enrollment
 

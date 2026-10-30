@@ -27,7 +27,7 @@ struct OAuthStoredTokens: Codable {
 /// secret); refresh goes through the core's `whimbrel_oauth_refresh`, as on the Mac.
 /// Tokens are never logged.
 final class GoogleSignIn: NSObject, ASWebAuthenticationPresentationContextProviding {
-    private static let keychainService = (Bundle.main.bundleIdentifier ?? "com.mpointer.kestrel.mobile") + ".google-oauth"
+    private static let keychainService = (Bundle.main.bundleIdentifier ?? "com.mpointer.whimbrel.mobile") + ".google-oauth"
     private static let keychainAccount = "google-sync"
     private static let scope = "openid email"
 

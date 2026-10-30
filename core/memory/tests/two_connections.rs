@@ -165,3 +165,31 @@ fn a_second_store_can_share_the_first_stores_embedder() {
     let second = Store::open_with_embedder(&path, first.embedder()).unwrap();
     assert!(Arc::ptr_eq(&first.embedder(), &second.embedder()));
 }
+
+/// The app, its slow lane and the MCP server can open the same database at once.
+/// Open recreates some triggers (drop, then create); if two opens interleave those
+/// steps, the second create fails with "trigger ... already exists" and that open
+/// fails. Repeated because the window is small.
+#[test]
+fn simultaneous_opens_of_one_database_all_succeed() {
+    const OPENERS: usize = 4;
+    for round in 0..25 {
+        let (_dir, path) = temp_db(&format!("open-race-{round}.sqlite"));
+        Store::open(&path, Path::new("")).unwrap();
+        let barrier = Arc::new(Barrier::new(OPENERS));
+        let handles: Vec<_> = (0..OPENERS)
+            .map(|_| {
+                let (path, barrier) = (path.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    Store::open(&path, Path::new("")).map(|_| ()).map_err(|e| e.to_string())
+                })
+            })
+            .collect();
+        for h in handles {
+            if let Err(e) = h.join().unwrap() {
+                panic!("round {round}: an open failed: {e}");
+            }
+        }
+    }
+}
