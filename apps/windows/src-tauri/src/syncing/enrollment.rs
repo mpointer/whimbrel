@@ -23,7 +23,8 @@ pub trait WorkerApi: Send + Sync {
 
 impl WorkerApi for en::WorkerClient {
     fn authenticate_google(&self, id_token: &str, pk: &str) -> Result<GoogleAuthResult, WorkerError> {
-        en::WorkerClient::authenticate_google(self, id_token, pk)
+        // The Worker counts the free plan's one computer and one phone by platform.
+        en::WorkerClient::authenticate_google(self, id_token, pk, Some("windows"))
     }
     fn list_devices(&self, id_token: &str, pk: &str) -> Result<Vec<DeviceRecord>, WorkerError> {
         en::WorkerClient::list_devices(self, id_token, pk)
@@ -49,6 +50,7 @@ pub fn is_other_approved(device: &DeviceRecord, my_public_key: &str) -> bool {
 pub fn authenticate(worker: &dyn WorkerApi, id_token: &str, me: &DeviceIdentity, secrets: &dyn SecretStore) -> Result<EnrollmentEvent, WorkerError> {
     match worker.authenticate_google(id_token, &me.device_id)? {
         GoogleAuthResult::Pending => Ok(EnrollmentEvent::AuthPending),
+        GoogleAuthResult::DeviceLimit { kind, devices } => Ok(EnrollmentEvent::AuthDeviceLimit { kind, holders: devices }),
         GoogleAuthResult::Approved { turso_token, turso_database_url, wrapped_group_key } => {
             match obtain_group_key(worker, id_token, me, secrets, wrapped_group_key.as_deref())? {
                 Ok(group_key_held) => Ok(EnrollmentEvent::AuthApproved { turso_token, turso_database_url, group_key_held }),

@@ -1,5 +1,5 @@
 import { it, expect, vi } from "vitest";
-import { mintDeviceToken, TursoApiError, createAccountDatabase, rotateAllTokens } from "../src/turso";
+import { mintDeviceToken, TursoApiError, createAccountDatabase, rotateAllTokens, deleteAccountDatabase } from "../src/turso";
 
 const CONFIG = {
   platformApiToken: "test-platform-token",
@@ -91,4 +91,16 @@ it("throws TursoApiError with the response body on a non-2xx response from rotat
   const fetchImpl = vi.fn(async () => new Response("database not found", { status: 404 }));
 
   await expect(rotateAllTokens(CONFIG, fetchImpl as unknown as typeof fetch)).rejects.toThrow(TursoApiError);
+});
+
+it("deletes a database, treating 404 as already deleted", async () => {
+  const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+    expect(String(url)).toBe("https://api.turso.tech/v1/organizations/test-org/databases/old-db");
+    expect(init?.method).toBe("DELETE");
+    expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer test-platform-token");
+    return new Response("not found", { status: 404 });
+  });
+  await deleteAccountDatabase(DATABASE_CONFIG, "old-db", fetchImpl as unknown as typeof fetch);
+  const failing = vi.fn(async () => new Response("boom", { status: 500 }));
+  await expect(deleteAccountDatabase(DATABASE_CONFIG, "old-db", failing as unknown as typeof fetch)).rejects.toThrow(TursoApiError);
 });

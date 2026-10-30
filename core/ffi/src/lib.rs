@@ -335,6 +335,17 @@ pub extern "C" fn whimbrel_memory_embedding_loaded(handle: *mut StoreHandle) -> 
     store.embedding_model_loaded()
 }
 
+/// After a fresh start: sets the sync push cursor to 0 (every local row goes up again) and the
+/// skin re-push flag. `false` for a null handle or a failed write.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_reset_push_cursor(handle: *mut StoreHandle) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let store = unsafe { &(*handle).0 };
+    store.reset_sync_push_cursor().is_ok()
+}
+
 /// Ingests a `screen-text.jsonl` file (FR-CAP-3 schema, see
 /// `apps/macos/Whimbrel/Models/ScreenTextRecord.swift`) into the store. Returns a
 /// JSON-encoded `IngestStats` string (caller frees with `whimbrel_core_free_string`),

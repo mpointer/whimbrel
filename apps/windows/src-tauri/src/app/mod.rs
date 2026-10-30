@@ -5,7 +5,7 @@
 //! most of the day) while the process keeps running in the tray. Reopening builds the
 //! window again from its `tauri.conf.json` entry. Only an explicit Quit exits.
 
-mod update;
+pub(crate) mod update;
 
 use tauri::{AppHandle, Manager, RunEvent, WebviewWindowBuilder};
 
@@ -229,6 +229,7 @@ pub fn run() {
             commands::skins::skin_image_approve,
             commands::skins::skin_image_add_file,
             crate::tray::tray_status,
+            crate::feedback::send_feedback,
             crate::tray::popup_open_main,
             crate::tray::popup_quit,
             commands::general::general_settings,
@@ -237,6 +238,8 @@ pub fn run() {
             commands::set_routing_settings,
             update::update_ready,
             update::install_update,
+            update::check_for_updates,
+            update::update_check_status,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the Whimbrel app");

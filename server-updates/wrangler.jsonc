@@ -11,6 +11,10 @@
   "routes": [
     { "pattern": "updates.whimbrelapp.com", "custom_domain": true }
   ],
+  // Weekly unique desktop clients; query with scripts/weekly-clients.sql.
+  "analytics_engine_datasets": [
+    { "binding": "CLIENTS", "dataset": "whimbrel_clients" }
+  ],
   "r2_buckets": [
     {
       "binding": "UPDATES_BUCKET",

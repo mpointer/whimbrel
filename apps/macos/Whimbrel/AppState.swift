@@ -296,6 +296,13 @@ final class AppState: ObservableObject {
         AccessQueueWaitProbe.start()
         settingsSyncCoordinator = SettingsSyncCoordinator(routing: routing, retention: retention, promptLibrary: promptLibrary, profile: profile, routineHost: routineHost, syncState: syncState, coreStore: coreStore)
         contentSyncCoordinator = ContentSyncCoordinator(coreStore: coreStore, syncState: syncState, deviceId: deviceId)
+        syncState.resetPushCursor = { [store = coreStore] in
+            await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+                CoreMemoryStore.accessQueue.async {
+                    continuation.resume(returning: store?.resetSyncPushCursor() ?? false)
+                }
+            }
+        }
         reconcileOrphanedRecordingMeetings()
         // `queue: nil` runs the block synchronously on the posting (main) thread, before
         // `terminate()` exits; see McpServerProcessManager.

@@ -4,6 +4,10 @@ struct DevicesSettingsPane: View {
     @EnvironmentObject var appState: AppState
     private let presentationContextProvider = WindowPresentationContextProvider()
     @State private var devicePendingRevocation: SyncDeviceRecord?
+    @State private var confirmingAccountDeletion = false
+    @State private var waitlistWants: Set<String> = []
+    @State private var joinedWaitlist = false
+    @State private var working = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -36,6 +40,14 @@ struct DevicesSettingsPane: View {
         } message: {
             Text("This device will lose access immediately. Every other device on this account will also need to silently reconnect. This can't be undone from here — the device would need to sign in again and be re-approved.")
         }
+        .alert("Delete your sync account?", isPresented: $confirmingAccountDeletion) {
+            Button("Delete", role: .destructive) {
+                Task { await appState.syncState.deleteSyncAccount() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This deletes the encrypted copy on the sync server and signs out every device. Nothing on your devices is deleted.")
+        }
     }
 
     @ViewBuilder
@@ -52,7 +64,10 @@ struct DevicesSettingsPane: View {
             SyncWaitingView(syncState: appState.syncState)
         case .ready:
             deviceList
-        case let .error(message):
+        case let .deviceLimit(kind, holders):
+            limitScreen(kind: kind, holders: holders)
+        case .error, .rateLimited:
+            let message = Self.statusMessage(appState.syncState.status)
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 Text(message)
                     .font(.whimbrelBody(.caption))
@@ -61,6 +76,68 @@ struct DevicesSettingsPane: View {
                     Task { await appState.syncState.enableSync(presentationContextProvider: presentationContextProvider) }
                 }
                 .buttonStyle(.whimbrelSecondary)
+            }
+        }
+    }
+
+    private static func statusMessage(_ status: SyncStatus) -> String {
+        switch status {
+        case let .error(message): return message
+        case .rateLimited: return "Too many sign-in attempts. Try again in a few minutes."
+        default: return ""
+        }
+    }
+
+    /// At the free plan's limit: swap this computer in, or join the waitlist.
+    @ViewBuilder
+    private func limitScreen(kind: String, holders: [LimitHolder]) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            Text(SyncState.limitMessage(kind: kind, holders: holders))
+                .font(.whimbrelBody(.body))
+                .foregroundStyle(Color.whimbrelTextPrimary)
+            if let actionError = appState.syncState.actionError {
+                Text(actionError)
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelError)
+            }
+            if kind == "computer", let holder = holders.first {
+                Button("Use this computer instead") {
+                    Task {
+                        working = true
+                        await appState.syncState.swap(replacing: holder)
+                        working = false
+                    }
+                }
+                .buttonStyle(.whimbrelPrimary)
+                .disabled(working)
+            }
+
+            Divider().overlay(Color.whimbrelBorder)
+
+            if joinedWaitlist {
+                Text("You're on the waitlist. Thanks for telling us what you need.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+            } else {
+                Text("Want more? Tell us what you'd use:")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                ForEach(SyncState.waitlistOptions, id: \.want) { option in
+                    Toggle(option.label, isOn: Binding(
+                        get: { waitlistWants.contains(option.want) },
+                        set: { if $0 { waitlistWants.insert(option.want) } else { waitlistWants.remove(option.want) } }
+                    ))
+                    .toggleStyle(.checkbox)
+                }
+                Button("Join the waitlist") {
+                    Task {
+                        working = true
+                        joinedWaitlist = await appState.syncState.joinWaitlist(wants: waitlistWants)
+                        working = false
+                    }
+                }
+                .buttonStyle(.whimbrelSecondary)
+                .disabled(waitlistWants.isEmpty || working)
             }
         }
     }
@@ -100,7 +177,7 @@ struct DevicesSettingsPane: View {
                         Text(device.name ?? device.platform ?? "Unnamed device")
                             .font(.whimbrelBody(.body))
                             .foregroundStyle(Color.whimbrelTextPrimary)
-                        Text(device.status.capitalized)
+                        Text(device.status == "resetting" ? "Resetting…" : device.status.capitalized)
                             .font(.whimbrelBody(.caption))
                             .foregroundStyle(Color.whimbrelTextSecondary)
                         if device.status == "pending" {
@@ -158,5 +235,12 @@ struct DevicesSettingsPane: View {
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
         }
+
+        Divider().overlay(Color.whimbrelBorder)
+        Button("Delete my sync account…") {
+            confirmingAccountDeletion = true
+        }
+        .buttonStyle(.whimbrelSecondary)
+        .tint(Color.whimbrelError)
     }
 }

@@ -14,6 +14,8 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
+use schemars::JsonSchema;
+use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
@@ -42,11 +44,37 @@ fn replace_if_ok<T, E>(slot: &mut Option<T>, new: Result<T, E>) -> Result<Option
     Ok(slot.replace(new))
 }
 
-/// A downloaded, signature-checked update waiting for "Restart now".
+/// A downloaded, signature-checked update waiting for "Restart now", what the banner was told last, and
+/// where a "Check for Updates" started from Settings has got to.
 // ponytail: the installer bytes stay in memory until then (tens of MB); write them to a
 // file if that ever matters.
 #[derive(Default)]
-pub struct StagedUpdate(Mutex<Option<(Update, Vec<u8>)>>, Mutex<Option<String>>);
+pub struct StagedUpdate(Mutex<Option<(Update, Vec<u8>)>>, Mutex<Option<String>>, Mutex<UpdateCheck>);
+
+/// Settings → General's "Check for Updates", as the Mac's shows it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum UpdateCheck {
+    /// Not asked yet.
+    #[default]
+    Idle,
+    Checking,
+    /// The running version is the latest.
+    UpToDate { version: String },
+    Downloading { version: String },
+    /// Downloaded and waiting for "Restart to Update".
+    Ready { version: String },
+    Failed,
+}
+
+/// What a finished check means for the Settings line. `running` is this app's version.
+fn outcome<E>(checked: Result<Checked, E>, running: &str) -> UpdateCheck {
+    match checked {
+        Ok(Checked::NothingNewer) => UpdateCheck::UpToDate { version: running.to_string() },
+        Ok(Checked::AlreadyStaged(version)) | Ok(Checked::Staged { version, .. }) => UpdateCheck::Ready { version },
+        Err(_) => UpdateCheck::Failed,
+    }
+}
 
 impl StagedUpdate {
     /// The version waiting for "Restart now", if any.
@@ -62,7 +90,7 @@ pub fn start(app: &AppHandle) {
     }
     let app = app.clone();
     let spawned = std::thread::Builder::new().name("whimbrel-update".into()).spawn(move || loop {
-        match tauri::async_runtime::block_on(check_and_stage(&app)) {
+        match tauri::async_runtime::block_on(check_and_stage(&app, |_| {})) {
             Ok(Checked::NothingNewer) => tracing::debug!("no update available"),
             Ok(Checked::AlreadyStaged(version)) => tracing::debug!(%version, "the latest update is already downloaded"),
             Ok(Checked::Staged { version, replaced: None }) => {
@@ -136,18 +164,50 @@ fn banner_change(last: &mut Option<String>, now: Option<String>) -> Option<Strin
     Some(line)
 }
 
-async fn check_and_stage(app: &AppHandle) -> Result<Checked, tauri_plugin_updater::Error> {
+/// `downloading` is told the version just before a download starts.
+async fn check_and_stage(app: &AppHandle, downloading: impl FnOnce(&str)) -> Result<Checked, tauri_plugin_updater::Error> {
     let Some(update) = app.updater()?.check().await? else { return Ok(Checked::NothingNewer) };
     let staged = app.state::<StagedUpdate>().version();
     if decide(staged.as_deref(), &update.version) == Decision::Keep {
         return Ok(Checked::AlreadyStaged(staged.unwrap_or_default()));
     }
+    downloading(&update.version);
     // `download` verifies the minisign signature against the configured key before it returns the bytes.
     let downloaded = update.download(|_, _| {}, || {}).await.map(|bytes| (update.clone(), bytes));
     let version = update.version.clone();
     // The old update (and its installer bytes) is dropped here; a failed download changes nothing.
     replace_if_ok(&mut app.state::<StagedUpdate>().0.lock().unwrap(), downloaded)?;
     Ok(Checked::Staged { version, replaced: staged })
+}
+
+/// Settings → General's "Check for Updates": starts a check (and the download, when there is something
+/// newer) and returns at once; `update_check_status` follows it. A second press while one runs joins it.
+#[tauri::command]
+pub fn check_for_updates(app: AppHandle) -> UpdateCheck {
+    let staged = app.state::<StagedUpdate>();
+    {
+        let mut status = staged.2.lock().unwrap();
+        if matches!(*status, UpdateCheck::Checking | UpdateCheck::Downloading { .. }) {
+            return status.clone();
+        }
+        *status = UpdateCheck::Checking;
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let set = |check: UpdateCheck| *handle.state::<StagedUpdate>().2.lock().unwrap() = check;
+        let checked = check_and_stage(&handle, |version| set(UpdateCheck::Downloading { version: version.to_string() })).await;
+        if let Err(e) = &checked {
+            tracing::warn!(error = %e, "update check from Settings failed");
+        }
+        set(outcome(checked, env!("CARGO_PKG_VERSION")));
+    });
+    UpdateCheck::Checking
+}
+
+/// Where the check from Settings has got to.
+#[tauri::command]
+pub fn update_check_status(staged: State<'_, StagedUpdate>) -> UpdateCheck {
+    staged.2.lock().unwrap().clone()
 }
 
 /// The version of a downloaded update, if one is ready to install.
@@ -197,6 +257,16 @@ pub fn install_update(staged: State<'_, StagedUpdate>, state: State<'_, AppState
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_check_from_settings_reads_as_the_mac_shows_it() {
+        let fail: Result<Checked, &str> = Err("offline");
+        assert_eq!(outcome(fail, "0.9.38"), UpdateCheck::Failed);
+        assert_eq!(outcome::<()>(Ok(Checked::NothingNewer), "0.9.38"), UpdateCheck::UpToDate { version: "0.9.38".into() });
+        assert_eq!(outcome::<()>(Ok(Checked::AlreadyStaged("0.9.39".into())), "0.9.38"), UpdateCheck::Ready { version: "0.9.39".into() });
+        let staged = Checked::Staged { version: "0.9.40".into(), replaced: Some("0.9.39".into()) };
+        assert_eq!(outcome::<()>(Ok(staged), "0.9.38"), UpdateCheck::Ready { version: "0.9.40".into() });
+    }
 
     #[test]
     fn with_nothing_staged_the_latest_is_downloaded() {

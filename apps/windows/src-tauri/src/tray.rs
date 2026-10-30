@@ -233,8 +233,9 @@ pub fn refresh(app: &AppHandle) -> TrayStatus {
 
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Whimbrel", true, None::<&str>)?;
+    let feedback = MenuItem::with_id(app, "feedback", "Send Feedback…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Whimbrel", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &feedback, &quit])?;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(Image::from_bytes(icon_bytes(IconState::Idle, taskbar_is_light()))?)
         .tooltip("Whimbrel")
@@ -242,6 +243,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => crate::app::show_main_window(app),
+            "feedback" => {
+                if let Err(e) = crate::feedback::open() {
+                    tracing::warn!(error = %e, "send feedback from the tray");
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })

@@ -61,7 +61,7 @@ struct EnrollmentView: View {
             secondary("Signing in…")
         case let .pending(code):
             codeBlock(title: "Waiting for approval", code: code,
-                      detail: "On your Mac, open Whimbrel Settings → Devices and approve this iPhone. Check this matches the code on your Mac before approving.")
+                      detail: model.swapRequested ? "Approve this phone on your computer." : "On your Mac, open Whimbrel Settings → Devices and approve this iPhone. Check this matches the code on your Mac before approving.")
         case let .waitingForGroupKey(code):
             codeBlock(title: "Approve this iPhone again", code: code,
                       detail: "This iPhone was approved, but the encryption key didn't arrive in time. Approve it again from Whimbrel Settings → Devices on your Mac. Check this matches the code on your Mac before approving.")
@@ -70,6 +70,8 @@ struct EnrollmentView: View {
             Button("Try again") { Task { await model.signIn() } }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.theme(.accentPrimary))
+        case let .deviceLimit(_, holders):
+            DeviceLimitView(model: model, holders: holders)
         case .approved:
             EmptyView() // shown full screen by `body` as `RootView`
         case .removed:
@@ -125,6 +127,9 @@ final class DemoSyncedBackend: EnrollmentBackend {
     }
     func revokeDevice(idToken: String, devicePublicKey: String, targetDeviceId: String) async throws {}
     func setDeviceName(idToken: String, devicePublicKey: String, name: String) async throws {}
+    func approve(idToken: String, devicePublicKey: String, targetDeviceId: String, wrappedGroupKey: String) async throws {}
+    func swapDevice(idToken: String, devicePublicKey: String, replaceDeviceId: String) async throws {}
+    func joinWaitlist(idToken: String, devicePublicKey: String, wants: [String]) async throws {}
     func signOut() {}
 }
 
@@ -162,6 +167,9 @@ final class DemoEnrollmentBackend: EnrollmentBackend {
     func listDevices(idToken: String, devicePublicKey: String) async throws -> [SyncDeviceRecord] { [] }
     func revokeDevice(idToken: String, devicePublicKey: String, targetDeviceId: String) async throws {}
     func setDeviceName(idToken: String, devicePublicKey: String, name: String) async throws {}
+    func approve(idToken: String, devicePublicKey: String, targetDeviceId: String, wrappedGroupKey: String) async throws {}
+    func swapDevice(idToken: String, devicePublicKey: String, replaceDeviceId: String) async throws {}
+    func joinWaitlist(idToken: String, devicePublicKey: String, wants: [String]) async throws {}
     func signOut() {}
 }
 #endif

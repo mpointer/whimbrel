@@ -1,7 +1,9 @@
-import type { R2Bucket } from "@cloudflare/workers-types";
+import type { AnalyticsEngineDataset, R2Bucket } from "@cloudflare/workers-types";
 
 export interface Env {
   UPDATES_BUCKET: R2Bucket;
+  /** Weekly unique desktop clients; see scripts/weekly-clients.sql. */
+  CLIENTS: AnalyticsEngineDataset;
 }
 
 /** Serves the update manifest and release zip straight out of R2 — no
@@ -19,6 +21,23 @@ const ROUTES: { path: RegExp; contentType: string }[] = [
   { path: /^\/windows\/Whimbrel_[\w.-]+_x64-setup\.exe$/, contentType: "application/octet-stream" },
 ];
 
+const MANIFESTS = new Set(["/version.json", "/windows/latest.json"]);
+
+/** Counts one manifest poll from a current build. Old builds send no headers and
+ * a bad header is ignored, so neither is counted; analytics never touches the response. */
+function countClient(request: Request, env: Env): void {
+  const client = request.headers.get("X-Whimbrel-Client");
+  const platform = request.headers.get("X-Whimbrel-Platform");
+  const version = request.headers.get("X-Whimbrel-Version");
+  if (!client || !platform || !version) return;
+  if (!/^[0-9a-f]{32}$/.test(client) || !/^(mac|windows)$/.test(platform) || !/^\d+\.\d+\.\d+$/.test(version)) return;
+  try {
+    env.CLIENTS.writeDataPoint({ blobs: [client, platform, version], indexes: [client] });
+  } catch {
+    // Analytics is best-effort.
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -29,6 +48,7 @@ export default {
     if (request.method !== "GET") {
       return new Response("Method Not Allowed", { status: 405 });
     }
+    if (MANIFESTS.has(url.pathname)) countClient(request, env);
     const object = await env.UPDATES_BUCKET.get(url.pathname.slice(1)); // strip leading "/"
     if (!object) {
       return new Response("Not Found", { status: 404 });

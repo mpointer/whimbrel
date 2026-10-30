@@ -42,6 +42,8 @@ targets:
         group: Shared
       - path: ../../macos/Whimbrel/Support/SyncTiming.swift
         group: Shared
+      - path: ../../macos/Whimbrel/Support/DeviceCodeCollisions.swift
+        group: Shared
       - path: ../../macos/Whimbrel/Support/ReadLogic.swift
         group: Shared
       - path: ../../macos/Whimbrel/Support/InferenceStreamClient.swift

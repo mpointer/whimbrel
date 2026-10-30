@@ -35,3 +35,21 @@ it("matches one entry among several", () => {
   expect(isEmailAllowed("c@example.com", list)).toBe(true);
   expect(isEmailAllowed("d@example.com", list)).toBe(false);
 });
+
+import { isSignInAllowed, isUnlimited } from "../src/allowlist";
+
+it.each(["true", " TRUE ", "True"])("isSignInAllowed admits anyone when OPEN_SIGN_IN is %j", (v) => {
+  expect(isSignInAllowed("anyone@example.com", { OPEN_SIGN_IN: v, ALLOWED_GOOGLE_EMAILS: "" })).toBe(true);
+});
+
+it.each([undefined, "", "false", "1", "yes"])("isSignInAllowed falls back to the allowlist when OPEN_SIGN_IN is %j", (v) => {
+  expect(isSignInAllowed("a@example.com", { OPEN_SIGN_IN: v, ALLOWED_GOOGLE_EMAILS: "a@example.com" })).toBe(true);
+  expect(isSignInAllowed("b@example.com", { OPEN_SIGN_IN: v, ALLOWED_GOOGLE_EMAILS: "a@example.com" })).toBe(false);
+});
+
+it("isUnlimited matches case-insensitively in a CSV and fails closed when unset", () => {
+  expect(isUnlimited("Mike@Example.com", " a@x.com , mike@example.com ")).toBe(true);
+  expect(isUnlimited("other@example.com", "mike@example.com")).toBe(false);
+  expect(isUnlimited("mike@example.com", undefined)).toBe(false);
+  expect(isUnlimited("mike@example.com", "  ")).toBe(false);
+});

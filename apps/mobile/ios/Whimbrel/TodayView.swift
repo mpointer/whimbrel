@@ -5,6 +5,8 @@ import SwiftUI
 struct TodayView: View {
     @ObservedObject var sync: SyncModel
     let labels: DeviceLabels
+    /// Devices waiting for approval: a local, in-app banner (no push yet).
+    let pendingDevices: Int
     let openSettings: () -> Void
     @StateObject private var model = TodayModel()
     @State private var briefExpanded = false
@@ -14,6 +16,7 @@ struct TodayView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                if pendingDevices > 0 { approvalBanner }
                 briefCard
                 upNextCard
                 recentSection
@@ -48,6 +51,16 @@ struct TodayView: View {
                 .foregroundStyle(Color.theme(.textPrimary))
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private var approvalBanner: some View {
+        Button { openSettings() } label: {
+            card {
+                Label(pendingDevices == 1 ? "A new device is waiting for your approval" : "\(pendingDevices) new devices are waiting for your approval", systemImage: "iphone.badge.plus")
+                    .foregroundStyle(Color.theme(.textPrimary))
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private var briefCard: some View {

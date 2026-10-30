@@ -78,4 +78,33 @@ final class ProfileSuggestionsModelTests: XCTestCase {
         XCTAssertTrue(m.pending.isEmpty)
         XCTAssertTrue(p.facts.isEmpty)
     }
+
+    actor Gate {
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var open = false
+        func wait() async { if !open { await withCheckedContinuation { waiters.append($0) } } }
+        func release() { open = true; waiters.forEach { $0.resume() }; waiters = [] }
+    }
+
+    /// The store queue can be busy for minutes; the row must go when the button is pressed.
+    func testDismissAndAddHideTheRowBeforeTheStoreAnswers() async {
+        let gate = Gate()
+        let rows = Rows([suggestion(1, "a"), suggestion(2, "b")])
+        let m = ProfileSuggestionsModel(
+            profile: profile(),
+            list: { rows.value },
+            dismiss: { id in await gate.wait(); rows.value.removeAll { $0.id == id }; return true },
+            delete: { id in await gate.wait(); rows.value.removeAll { $0.id == id }; return true }
+        )
+        await m.reload()
+        let first = m.pending[0], second = m.pending[1]
+        let dismissing = Task { await m.dismiss(first) }
+        let adding = Task { await m.add(second) }
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertTrue(m.pending.isEmpty, "rows are hidden while the store is still busy")
+        await gate.release()
+        await dismissing.value
+        _ = await adding.value
+        XCTAssertTrue(m.pending.isEmpty)
+    }
 }

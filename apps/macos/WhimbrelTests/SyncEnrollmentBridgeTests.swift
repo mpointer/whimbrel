@@ -22,6 +22,15 @@ final class SyncEnrollmentBridgeTests: XCTestCase {
         XCTAssertFalse(CoreMemoryStore.syncWorkerErrorIsPermanent(.malformedResponse))
     }
 
+    func testNewLimitAndTransientErrorMessagesThroughTheBridge() {
+        let limit = SyncAPIError.httpError(status: 409, body: #"{"error":"device_limit"}"#)
+        XCTAssertEqual(CoreMemoryStore.syncWorkerErrorMessage(limit), "Your free sync plan includes one computer and one phone, and they're already in use.")
+        let limited = SyncAPIError.httpError(status: 429, body: "")
+        XCTAssertFalse(CoreMemoryStore.syncWorkerErrorIsPermanent(limited))
+        XCTAssertEqual(CoreMemoryStore.syncWorkerErrorMessage(limited), "Too many sign-in attempts. Try again in a few minutes.")
+        XCTAssertFalse(CoreMemoryStore.syncWorkerErrorIsPermanent(.httpError(status: 503, body: #"{"error":"account_deleting"}"#)))
+    }
+
     func testGroupKeyDecisionTableThroughTheBridge() {
         XCTAssertEqual(CoreMemoryStore.syncGroupKeyDecision(wrappedKeyPresent: true, localKeyHeld: false, anotherApprovedDeviceExists: true), .unwrap)
         XCTAssertEqual(CoreMemoryStore.syncGroupKeyDecision(wrappedKeyPresent: false, localKeyHeld: true, anotherApprovedDeviceExists: true), .keep)

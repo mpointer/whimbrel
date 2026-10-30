@@ -55,6 +55,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::snapshots::Thumbnail>();
     generator.subschema_for::<super::snapshots::SnapshotSettings>();
     generator.subschema_for::<crate::skin_maker::SkinSources>();
+    generator.subschema_for::<crate::app::update::UpdateCheck>();
     generator.subschema_for::<crate::skin_maker::SkinTurnResult>();
     generator.subschema_for::<crate::skin_maker::SkinLine>();
     generator.subschema_for::<crate::skin_maker::ChatLine>();

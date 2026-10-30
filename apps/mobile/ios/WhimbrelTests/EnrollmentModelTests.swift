@@ -46,7 +46,8 @@ final class FakeBackend: EnrollmentBackend {
         return try authReplies.removeFirst()(devicePublicKey)
     }
 
-    func listDevices(idToken: String, devicePublicKey: String) async throws -> [SyncDeviceRecord] { devices }
+    private(set) var listCalls = 0
+    func listDevices(idToken: String, devicePublicKey: String) async throws -> [SyncDeviceRecord] { listCalls += 1; return devices }
 
     /// While set, `revokeDevice` throws it (offline).
     var revokeError: Error?
@@ -54,6 +55,14 @@ final class FakeBackend: EnrollmentBackend {
     private(set) var deviceNames: [String] = []
     func setDeviceName(idToken: String, devicePublicKey: String, name: String) async throws { deviceNames.append(name) }
     func signOut() { signOutCalls += 1 }
+    private(set) var approvals: [(targetDeviceId: String, wrappedGroupKey: String)] = []
+    func approve(idToken: String, devicePublicKey: String, targetDeviceId: String, wrappedGroupKey: String) async throws {
+        approvals.append((targetDeviceId, wrappedGroupKey))
+    }
+    private(set) var swapTargets: [String] = []
+    func swapDevice(idToken: String, devicePublicKey: String, replaceDeviceId: String) async throws { swapTargets.append(replaceDeviceId) }
+    private(set) var waitlistWants: [[String]] = []
+    func joinWaitlist(idToken: String, devicePublicKey: String, wants: [String]) async throws { waitlistWants.append(wants) }
     private(set) var revokedTargets: [String] = []
     func revokeDevice(idToken: String, devicePublicKey: String, targetDeviceId: String) async throws {
         if throwsWhenCancelled, Task.isCancelled { throw CancellationError() }
@@ -619,5 +628,69 @@ final class EnrollmentModelTests: XCTestCase {
         model.enterBackground()
         await poll.value
         XCTAssertEqual(model.status, before)
+    }
+
+    // MARK: Device limit, swap, waitlist
+
+    func test_device_limit_for_phone_offers_swap_and_waitlist() async throws {
+        sleeper.limit = 0
+        let holder = LimitHolder(id: "old", name: "Mike's iPhone 14", platform: "ios")
+        backend.authReplies = [{ _ in .deviceLimit(kind: "phone", holders: [holder]) }, { _ in .pending }]
+        let model = makeModel()
+        await model.signIn()
+        XCTAssertEqual(model.status, .deviceLimit(kind: "phone", holders: [holder]))
+        XCTAssertNil(model.pollTask, "nothing to poll for at the limit")
+        XCTAssertEqual(EnrollmentModel.limitMessage(holders: [holder]),
+                       "Whimbrel's free sync includes one computer and one phone. Mike's iPhone 14 is your synced phone.")
+        XCTAssertEqual(EnrollmentModel.limitMessage(holders: []),
+                       "Whimbrel's free sync includes one computer and one phone. Your other phone is your synced phone.")
+        XCTAssertEqual(EnrollmentModel.waitlistOptions.map(\.want), ["more_devices", "routines_while_closed", "phone_notifications", "backups"])
+        XCTAssertEqual(EnrollmentModel.waitlistOptions.map(\.label),
+                       ["More devices", "Routines that run while my computer is closed", "Notifications on my phone", "Backups"])
+
+        // Waitlist: sends the chosen wants, never swaps.
+        let joined = await model.joinWaitlist(wants: ["backups", "more_devices"])
+        XCTAssertTrue(joined)
+        XCTAssertEqual(backend.waitlistWants, [["backups", "more_devices"]])
+
+        // Swap: this phone becomes pending and waits for a computer (or the old phone).
+        await model.swap(replacing: holder)
+        XCTAssertEqual(backend.swapTargets, ["old"])
+        guard case .pending = model.status else { return XCTFail("got \(model.status)") }
+        XCTAssertTrue(model.swapRequested)
+        model.enterBackground()
+    }
+
+    func test_two_syncs_within_5_minutes_list_devices_once() async throws {
+        let pair = CoreMemoryStore.generateSyncDeviceKeypair()!
+        try SyncKeychain.saveDeviceSecretKey(pair.secretKeyBase64)
+        try SyncKeychain.saveGroupKey(CoreMemoryStore.generateSyncGroupKey()!)
+        backend.devices = [device(pair.publicKeyBase64)]
+        let model = makeModel()
+        XCTAssertEqual(model.status, .approved)
+        await model.refreshDeviceLabels()
+        await model.refreshDeviceLabels()
+        XCTAssertEqual(backend.listCalls, 1)
+        await model.enterForeground() // becoming active refreshes at the next sync
+        await model.refreshDeviceLabels()
+        XCTAssertEqual(backend.listCalls, 2)
+    }
+
+    func test_revoked_phone_reenrolls_with_new_key() async throws {
+        sleeper.limit = 0
+        backend.authReplies = [{ _ in .pending }]
+        let model = makeWipingModel()
+        await model.signIn()
+        let oldKey = try storedPublicKey()
+        model.enterBackground()
+        // A computer's fresh start (or a revoke) answers "device revoked" at the next resume.
+        backend.authReplies = [{ _ in throw Self.revoked }]
+        await model.resume()
+        XCTAssertEqual(model.status, .removed)
+        XCTAssertNil(try SyncKeychain.loadDeviceSecretKey(), "the old device keypair is deleted")
+        backend.authReplies = [{ _ in .pending }]
+        await model.signIn()
+        XCTAssertNotEqual(try storedPublicKey(), oldKey)
+        model.enterBackground()
     }
 }

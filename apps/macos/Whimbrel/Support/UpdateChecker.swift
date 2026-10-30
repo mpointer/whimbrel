@@ -109,7 +109,8 @@ final class UpdateChecker: ObservableObject {
         let data: Data?
         if let fetchManifest {
             data = await fetchManifest(manifestURL)
-        } else if let (d, response) = try? await URLSession.shared.data(from: manifestURL),
+        } else if let (d, response) = try? await URLSession.shared.data(
+                      for: Self.manifestRequest(url: manifestURL, clientId: WeeklyClientId.current(), version: currentVersion)),
                   let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
             data = d
         } else {
@@ -245,6 +246,16 @@ final class UpdateChecker: ObservableObject {
     }
 
     // MARK: - Pure logic (directly tested)
+
+    /// The manifest fetch, carrying the weekly client id the updates Worker counts
+    /// unique desktops by (never tied to the account, device key or hardware).
+    nonisolated static func manifestRequest(url: URL, clientId: String, version: String) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.setValue(clientId, forHTTPHeaderField: "X-Whimbrel-Client")
+        request.setValue("mac", forHTTPHeaderField: "X-Whimbrel-Platform")
+        request.setValue(version, forHTTPHeaderField: "X-Whimbrel-Version")
+        return request
+    }
 
     /// The one `.app` the update zip unpacked. The bundle's name is not pinned: the
     /// rename release ships `Whimbrel.app` where every earlier zip held `Whimbrel.app`

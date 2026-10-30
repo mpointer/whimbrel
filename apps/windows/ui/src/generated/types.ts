@@ -233,6 +233,34 @@ export type SyncState =
   | "ready"
   | "error";
 /**
+ * Settings → General's "Check for Updates", as the Mac's shows it.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "UpdateCheck".
+ */
+export type UpdateCheck =
+  | {
+      state: "idle";
+    }
+  | {
+      state: "checking";
+    }
+  | {
+      state: "upToDate";
+      version: string;
+    }
+  | {
+      state: "downloading";
+      version: string;
+    }
+  | {
+      state: "ready";
+      version: string;
+    }
+  | {
+      state: "failed";
+    };
+/**
  * The workspace's phase, matching core's `WorkspaceState`.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema

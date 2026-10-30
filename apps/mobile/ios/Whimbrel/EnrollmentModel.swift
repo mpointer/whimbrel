@@ -18,6 +18,8 @@ enum EnrollmentStatus: Equatable {
     /// Signed in, but no approved desktop exists on the account. The phone never creates
     /// the account's group key (it's a peer approved by a desktop), so set up the Mac first.
     case needsDesktopFirst
+    /// `409 device_limit`: the free plan's phone slot is taken. Nothing was enrolled.
+    case deviceLimit(kind: String, holders: [LimitHolder])
     /// Approved and the group key is in the Keychain.
     case approved
     case error(String)
@@ -37,6 +39,11 @@ protocol EnrollmentBackend: AnyObject {
     func revokeDevice(idToken: String, devicePublicKey: String, targetDeviceId: String) async throws
     /// Names this phone's own device row (approved devices only), so the Mac lists it by name.
     func setDeviceName(idToken: String, devicePublicKey: String, name: String) async throws
+    /// Hands `targetDeviceId` the group key, wrapped to its public key (`wrappedGroupKey`).
+    func approve(idToken: String, devicePublicKey: String, targetDeviceId: String, wrappedGroupKey: String) async throws
+    /// "Use this phone instead": this phone becomes a pending swap for `replaceDeviceId`.
+    func swapDevice(idToken: String, devicePublicKey: String, replaceDeviceId: String) async throws
+    func joinWaitlist(idToken: String, devicePublicKey: String, wants: [String]) async throws
     /// Forgets the Google sign-in (deletes its Keychain tokens).
     func signOut()
 }
@@ -61,6 +68,12 @@ final class EnrollmentModel: ObservableObject, SyncCredentialSource {
     /// Names of the account's devices (public key to name) and this phone's own id, for
     /// labelling where a meeting was recorded. Best effort: empty until the first refresh.
     @Published private(set) var deviceLabels = DeviceLabels()
+    /// Devices waiting for this phone's (or a computer's) approval: the Settings badge and the Today banner.
+    @Published private(set) var pendingDeviceCount = 0
+    /// This phone asked to replace the synced phone: the pending screen says who approves it.
+    @Published private(set) var swapRequested = false
+    /// A failed swap or waitlist request, for the limit screen.
+    @Published private(set) var actionError: String?
 
     private let backend: EnrollmentBackend?
     private let sleep: (UInt64) async throws -> Void
@@ -205,6 +218,7 @@ final class EnrollmentModel: ObservableObject, SyncCredentialSource {
     /// Back in the foreground while waiting for approval: re-check now, which restarts
     /// the poll.
     func enterForeground() async {
+        lastDeviceRefreshAt = nil // the next sync refreshes the device list
         guard pollTask == nil else { return }
         switch status {
         case .pending, .waitingForGroupKey: await resume()
@@ -226,7 +240,13 @@ final class EnrollmentModel: ObservableObject, SyncCredentialSource {
             status = .pending(code: code)
             await nameDevice(publicKey: publicKey)
             startPolling(publicKey: publicKey)
+        case let .deviceLimit(kind, holders):
+            pollTask?.cancel()
+            pollTask = nil
+            swapRequested = false
+            status = .deviceLimit(kind: kind, holders: holders)
         case let .approved(tursoToken, tursoDatabaseUrl, wrappedGroupKey):
+            swapRequested = false
             if case let .needsDesktop(ownDeviceId) = try await resolveGroupKey(wrappedGroupKey: wrappedGroupKey, publicKey: publicKey) {
                 // Approved but keyless, and no desktop to hand over a key: leaving would strand the
                 // account (a later Mac setup would find an approved peer), so step out of it.
@@ -336,6 +356,7 @@ final class EnrollmentModel: ObservableObject, SyncCredentialSource {
         pollTask = nil
         turso = nil
         owedSelfRevoke = nil
+        swapRequested = false
         try? SyncKeychain.deleteGroupKey()
         try? SyncKeychain.deleteDeviceSecretKey()
         PhoneSettingsSync.wipeLocal()
@@ -358,13 +379,73 @@ final class EnrollmentModel: ObservableObject, SyncCredentialSource {
         return generated.publicKeyBase64
     }
 
+    // MARK: The device limit
+
+    /// The waitlist's checkboxes, in order, with the Worker's exact `wants` strings (same as the Mac).
+    static let waitlistOptions: [(label: String, want: String)] = [
+        ("More devices", "more_devices"),
+        ("Routines that run while my computer is closed", "routines_while_closed"),
+        ("Notifications on my phone", "phone_notifications"),
+        ("Backups", "backups"),
+    ]
+
+    static func limitMessage(holders: [LimitHolder]) -> String {
+        "Whimbrel's free sync includes one computer and one phone. \(holders.first?.name ?? "Your other phone") is your synced phone."
+    }
+
+    /// "Use this phone instead": becomes a pending swap for `holder`, approved by a computer
+    /// or by the old phone. Unlike the Mac there is no fresh start: a phone can't make the group key.
+    func swap(replacing holder: LimitHolder) async {
+        guard let backend, let publicKey = (try? loadDevicePublicKey()) ?? nil else { return }
+        actionError = nil
+        do {
+            try await backend.swapDevice(idToken: try await backend.idToken(), devicePublicKey: publicKey, replaceDeviceId: holder.id)
+            swapRequested = true
+            status = .pending(code: CoreMemoryStore.deviceComparisonCode(publicKeyBase64: publicKey) ?? "unavailable")
+            await nameDevice(publicKey: publicKey)
+            startPolling(publicKey: publicKey)
+        } catch {
+            actionError = Self.userMessage(for: error)
+        }
+    }
+
+    /// True when the Worker took the request.
+    func joinWaitlist(wants: [String]) async -> Bool {
+        guard let backend, let publicKey = (try? loadDevicePublicKey()) ?? nil else { return false }
+        actionError = nil
+        do {
+            try await backend.joinWaitlist(idToken: try await backend.idToken(), devicePublicKey: publicKey, wants: wants)
+            return true
+        } catch {
+            actionError = Self.userMessage(for: error)
+            return false
+        }
+    }
+
+    /// The Devices screen's model, or nil in a build with no Worker.
+    func makeApprovalModel() -> DeviceApprovalModel? {
+        backend.map { DeviceApprovalModel(backend: $0, onDevices: { [weak self] in self?.noteDevices($0) }) }
+    }
+
+    private func noteDevices(_ records: [SyncDeviceRecord]) {
+        pendingDeviceCount = records.filter { $0.status == "pending" && $0.publicKey != deviceLabels.ownDeviceId }.count
+    }
+
     /// Fetches the account's device list for `deviceLabels`. Silent on any failure (offline,
     /// token trouble): labels fall back to "Device xxxxxx".
+    /// Throttled (each call is a registry write): runs when names are missing, after the app
+    /// became active, or 5 minutes after the last one.
+    static let deviceRefreshInterval: TimeInterval = 300
+    private var lastDeviceRefreshAt: Date?
+
     func refreshDeviceLabels() async {
+        if !deviceLabels.names.isEmpty, let last = lastDeviceRefreshAt, Date().timeIntervalSince(last) < Self.deviceRefreshInterval { return }
         guard let backend, status == .approved, let publicKey = (try? loadDevicePublicKey()) ?? nil,
               let idToken = try? await backend.idToken(),
               let records = try? await backend.listDevices(idToken: idToken, devicePublicKey: publicKey) else { return }
+        lastDeviceRefreshAt = Date()
         deviceLabels = DeviceLabels(names: DeviceLabels.names(from: records), ownDeviceId: publicKey)
+        noteDevices(records)
     }
 
     private func loadDevicePublicKey() throws -> String? {
@@ -457,6 +538,15 @@ final class LiveEnrollmentBackend: EnrollmentBackend {
     }
     func setDeviceName(idToken: String, devicePublicKey: String, name: String) async throws {
         try await client.setDeviceName(idToken: idToken, devicePublicKey: devicePublicKey, name: name)
+    }
+    func approve(idToken: String, devicePublicKey: String, targetDeviceId: String, wrappedGroupKey: String) async throws {
+        try await client.approveDevice(idToken: idToken, devicePublicKey: devicePublicKey, targetDeviceId: targetDeviceId, wrappedGroupKey: wrappedGroupKey)
+    }
+    func swapDevice(idToken: String, devicePublicKey: String, replaceDeviceId: String) async throws {
+        try await client.swapDevice(idToken: idToken, devicePublicKey: devicePublicKey, replaceDeviceId: replaceDeviceId)
+    }
+    func joinWaitlist(idToken: String, devicePublicKey: String, wants: [String]) async throws {
+        try await client.joinWaitlist(idToken: idToken, devicePublicKey: devicePublicKey, wants: wants)
     }
     func signOut() { googleSignIn.signOut() }
 }

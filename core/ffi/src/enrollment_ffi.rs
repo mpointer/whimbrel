@@ -28,11 +28,13 @@ fn client(base_url: *const c_char) -> Option<WorkerClient> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn whimbrel_sync_worker_authenticate_google(base_url: *const c_char, id_token: *const c_char, device_public_key: *const c_char) -> *mut c_char {
+pub extern "C" fn whimbrel_sync_worker_authenticate_google(base_url: *const c_char, id_token: *const c_char, device_public_key: *const c_char, platform: *const c_char) -> *mut c_char {
     let (Some(client), Some(id_token), Some(pk)) = (client(base_url), cstr_to_string(id_token), cstr_to_string(device_public_key)) else {
         return ptr::null_mut();
     };
-    outcome(client.authenticate_google(&id_token, &pk))
+    // NULL or empty: send no platform (the iPhone).
+    let platform = cstr_to_string(platform).filter(|p| !p.is_empty());
+    outcome(client.authenticate_google(&id_token, &pk, platform.as_deref()))
 }
 
 #[unsafe(no_mangle)]
@@ -81,6 +83,60 @@ pub extern "C" fn whimbrel_sync_worker_set_device_name(base_url: *const c_char, 
         return ptr::null_mut();
     };
     outcome(client.set_device_name(&id_token, &pk, &name).map(|()| serde_json::json!({ "ok": true })))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_worker_swap_device(
+    base_url: *const c_char,
+    id_token: *const c_char,
+    device_public_key: *const c_char,
+    platform: *const c_char,
+    replace_device_id: *const c_char,
+) -> *mut c_char {
+    let (Some(client), Some(id_token), Some(pk), Some(target)) =
+        (client(base_url), cstr_to_string(id_token), cstr_to_string(device_public_key), cstr_to_string(replace_device_id))
+    else {
+        return ptr::null_mut();
+    };
+    let platform = cstr_to_string(platform).filter(|p| !p.is_empty());
+    outcome(client.swap_device(&id_token, &pk, platform.as_deref(), &target).map(|()| serde_json::json!({ "ok": true })))
+}
+
+/// `wants_json` is a JSON array of the Worker's wants strings.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_worker_join_waitlist(
+    base_url: *const c_char,
+    id_token: *const c_char,
+    device_public_key: *const c_char,
+    wants_json: *const c_char,
+    platform: *const c_char,
+) -> *mut c_char {
+    let (Some(client), Some(id_token), Some(pk), Some(wants)) = (
+        client(base_url),
+        cstr_to_string(id_token),
+        cstr_to_string(device_public_key),
+        cstr_to_string(wants_json).and_then(|w| serde_json::from_str::<Vec<String>>(&w).ok()),
+    ) else {
+        return ptr::null_mut();
+    };
+    let platform = cstr_to_string(platform).filter(|p| !p.is_empty());
+    outcome(client.join_waitlist(&id_token, &pk, &wants, platform.as_deref()).map(|()| serde_json::json!({ "ok": true })))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_worker_reset_account(base_url: *const c_char, id_token: *const c_char, device_public_key: *const c_char) -> *mut c_char {
+    let (Some(client), Some(id_token), Some(pk)) = (client(base_url), cstr_to_string(id_token), cstr_to_string(device_public_key)) else {
+        return ptr::null_mut();
+    };
+    outcome(client.reset_account(&id_token, &pk))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_worker_delete_account(base_url: *const c_char, id_token: *const c_char, device_public_key: *const c_char) -> *mut c_char {
+    let (Some(client), Some(id_token), Some(pk)) = (client(base_url), cstr_to_string(id_token), cstr_to_string(device_public_key)) else {
+        return ptr::null_mut();
+    };
+    outcome(client.delete_account(&id_token, &pk).map(|()| serde_json::json!({ "ok": true })))
 }
 
 #[unsafe(no_mangle)]
@@ -136,7 +192,7 @@ mod tests {
         let unreachable = CString::new("http://127.0.0.1:1").unwrap();
         let id = CString::new("id").unwrap();
         let pk = CString::new("pk").unwrap();
-        let v: serde_json::Value = serde_json::from_str(&take(whimbrel_sync_worker_authenticate_google(unreachable.as_ptr(), id.as_ptr(), pk.as_ptr()))).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&take(whimbrel_sync_worker_authenticate_google(unreachable.as_ptr(), id.as_ptr(), pk.as_ptr(), std::ptr::null()))).unwrap();
         assert_eq!(v["error"]["kind"], "network");
         let err = CString::new(v.to_string()).unwrap();
         assert!(!whimbrel_sync_worker_error_is_permanent(err.as_ptr()));
@@ -152,5 +208,10 @@ mod tests {
         assert!(whimbrel_sync_enrollment_step(bad.as_ptr(), event.as_ptr()).is_null());
         assert_eq!(take(whimbrel_sync_group_key_decision(false, false, true)), r#""wait_for_handoff""#);
         assert!(whimbrel_sync_worker_list_devices(ptr::null(), id.as_ptr(), pk.as_ptr()).is_null());
+        let v: serde_json::Value = serde_json::from_str(&take(whimbrel_sync_worker_reset_account(unreachable.as_ptr(), id.as_ptr(), pk.as_ptr()))).unwrap();
+        assert_eq!(v["error"]["kind"], "network");
+        let bad_wants = CString::new("not json").unwrap();
+        assert!(whimbrel_sync_worker_join_waitlist(unreachable.as_ptr(), id.as_ptr(), pk.as_ptr(), bad_wants.as_ptr(), ptr::null()).is_null());
+        assert!(!crate::whimbrel_sync_reset_push_cursor(ptr::null_mut()));
     }
 }

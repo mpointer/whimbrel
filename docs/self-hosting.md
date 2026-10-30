@@ -60,6 +60,14 @@ allows 100 databases; each account gets one).
    | `TURSO_DATABASE_AUTH_TOKEN` | The database token from step 1 |
    | `TURSO_PLATFORM_API_TOKEN` | The platform API token from step 1 (creates per-account databases) |
 
+   Optional, and normally left unset on a self-hosted relay:
+
+   | Name | Value |
+   |---|---|
+   | `OPEN_SIGN_IN` | `true` lets any verified Google account sign in, ignoring `ALLOWED_GOOGLE_EMAILS`, **and turns on the free device limit** (one computer and one phone per account). This is the hosted relay's setting. Unset or `false`: allowlist only, no device limit |
+   | `UNLIMITED_EMAILS` | Comma-separated emails exempt from the free device limit (which only exists when `OPEN_SIGN_IN` is `true`) and from inactivity warnings and deletion |
+   | `RESEND_API_KEY` | Sends the inactivity warning emails. Without it the daily cron warns no one, so it deletes no account for inactivity |
+
 5. **Deploy and test.**
 
    ```bash
@@ -70,6 +78,20 @@ allows 100 databases; each account gets one).
    (write `//` as `/$()/`), `sync_worker_base_url` in `apps/windows/src-tauri/Secrets.toml`,
    and `SYNC_WORKER_BASE_URL` in `apps/mobile/ios/Secrets.xcconfig`, together with the OAuth
    client id and secret from step 2. The apps read these at build time.
+
+### Upgrading an existing relay
+
+New versions can add columns and tables to the control-plane registry. The Worker does not
+migrate its own tables, so before you deploy a version that adds a file under
+`server/migrations/`, run each new file once, in order:
+
+```bash
+turso db shell whimbrel-control-plane < server/migrations/0001_open_sign_in.sql
+```
+
+Skip this and every route returns 502, because the Worker's queries name columns the old
+schema lacks. The `ALTER TABLE` lines fail if a file is run twice, so run each one once. A
+new relay set up from `SCHEMA_SQL` already has everything and needs no migrations.
 
 ## Update feed (`server-updates/`)
 
