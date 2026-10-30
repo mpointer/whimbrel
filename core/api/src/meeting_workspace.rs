@@ -139,7 +139,7 @@ mod tests {
             summary_provider: None,
             summary_model: None,
             local_seq: None,
-            estimated_speaker_count: None,             away_outcome: None,             away_outcome_at_unix_ms: None,
+            estimated_speaker_count: None,             away_outcome: None,             away_outcome_at_unix_ms: None, keep_media: false,
         }
     }
 

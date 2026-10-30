@@ -184,6 +184,26 @@ final class AppState: ObservableObject {
     private var checkInTimer: Timer?
     /// "Meeting snapshots": slide images from the meeting window (on by default).
     let snapshotSettings = SnapshotSettings()
+    /// Storage retention: the media folder (audio and snapshots) and the media ages.
+    let mediaSettings = MediaSettings()
+    /// Storage retention's media run: daily and at launch (`retentionScheduler`), when a drive
+    /// mounts, and after each meeting finishes processing. No store in a test host, so it
+    /// never touches real files there.
+    lazy var mediaRetention = MediaRetentionRunner(
+        store: KeychainAccess.isTestHost ? nil : coreStore, settings: mediaSettings, deviceId: deviceId,
+        isBusy: { [weak self] id in self.map { $0.isStartingMeeting || $0.mediaBusyMeetingIds.contains(id) } ?? true },
+        busyIds: { [weak self] in self?.mediaBusyMeetingIds ?? [] }
+    )
+    /// Meetings media retention must not touch now: recording, transcribing (or queued),
+    /// summarizing, or waiting for a split's summary.
+    var mediaBusyMeetingIds: Set<Int64> {
+        var ids = Set(transcriptionQueue?.pendingMeetingIds ?? []).union(regeneratingSummaryIds)
+        for id in [activeMeetingId, processingMeetingId, pendingSplitSummary] { if let id { ids.insert(id) } }
+        return ids
+    }
+    /// Meetings whose summary `regenerateMeetingSummary` is rewriting.
+    private var regeneratingSummaryIds: Set<Int64> = []
+    private var mountObserver: NSObjectProtocol?
     /// System / Light / Dark, per device.
     let appearanceSettings = AppearanceSettings()
     /// The Settings skin chat. Owned here, not by its view, so the chat survives the Settings
@@ -296,6 +316,7 @@ final class AppState: ObservableObject {
         AccessQueueWaitProbe.start()
         settingsSyncCoordinator = SettingsSyncCoordinator(routing: routing, retention: retention, promptLibrary: promptLibrary, profile: profile, routineHost: routineHost, syncState: syncState, coreStore: coreStore)
         contentSyncCoordinator = ContentSyncCoordinator(coreStore: coreStore, syncState: syncState, deviceId: deviceId)
+        SkinSync.connect(store: coreStore, skins: .shared)
         syncState.resetPushCursor = { [store = coreStore] in
             await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
                 CoreMemoryStore.accessQueue.async {
@@ -317,7 +338,7 @@ final class AppState: ObservableObject {
             .merge(with: calendar.objectWillChange, meetingTrigger.objectWillChange, googleCalendarPolling.objectWillChange)
             .merge(with: retention.objectWillChange, meetingHeuristicDetector.objectWillChange)
             .merge(with: routing.objectWillChange, syncState.objectWillChange, replyPriority.objectWillChange, meetingPrepSettings.objectWillChange, meetingTitleCheck.objectWillChange, liveTranscriptSettings.objectWillChange, appearanceSettings.objectWillChange)
-            .merge(with: snapshotSettings.objectWillChange, recordingCheckInSettings.objectWillChange, awayMode.objectWillChange)
+            .merge(with: snapshotSettings.objectWillChange, mediaSettings.objectWillChange, mediaRetention.objectWillChange, recordingCheckInSettings.objectWillChange, awayMode.objectWillChange)
             .merge(with: settingsSyncCoordinator.objectWillChange, contentSyncCoordinator.objectWillChange)
             .merge(with: updateChecker.objectWillChange)
             .merge(with: promptLibrary.objectWillChange, profile.objectWillChange, profileSuggestions.objectWillChange, routineHost.objectWillChange)
@@ -398,7 +419,15 @@ final class AppState: ObservableObject {
         googleCalendarPolling.start(calendarConnectorState: calendarConnectorState, coreStore: coreStore)
         gmailPolling.start(gmailConnectorState: gmailConnectorState, coreStore: coreStore, deviceId: deviceId)
         meetingTrigger.start(meetingsProvider: { [weak self] in self?.allUpcomingMeetings ?? [] })
-        retentionScheduler.start(retention: retention, store: coreStore, audio: audio)
+        retentionScheduler.start(retention: retention, media: mediaSettings, deviceId: deviceId, store: coreStore, audio: audio,
+                                 runner: mediaRetention)
+        // A drive mounting may be the media folder (or hold stored media) coming back.
+        mountObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didMountNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let volume = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL else { return }
+            MainActor.assumeIsolated { self?.mediaRetention.volumeMounted(volume) }
+        }
         routineScheduler.start(
             store: coreStore, slowStore: slowStore, meetingsProvider: { [weak self] in self?.allUpcomingMeetings ?? [] }, routing: routing,
             promptLibrary: promptLibrary, meetingPrepLeadMinutes: { [weak self] in self?.meetingPrepSettings.leadMinutes ?? 30 },
@@ -836,6 +865,18 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Snapshots go to `<media>/Snapshots`, falling back to the data folder when the media folder
+    /// is missing (`SnapshotStorage` only uses a root whose parent exists). The default
+    /// `~/Pictures/Whimbrel` is created here so first use doesn't fall back; a chosen folder
+    /// is never created, since it may be an unmounted drive.
+    private func makeSnapshotStorage() -> SnapshotStorage {
+        if mediaSettings.folderPath == nil {
+            try? FileManager.default.createDirectory(at: mediaSettings.folderURL, withIntermediateDirectories: true)
+        }
+        return SnapshotStorage(root: mediaSettings.snapshotsURL,
+                               fallbackRoot: SpikePaths.root.appendingPathComponent("Snapshots"))
+    }
+
     /// Calendar, detected and manual meetings alike; a nil `appBundleID` makes the source pick
     /// the meeting window per tick (`WindowFrameSource.resolveTarget`). Stopped in `endMeeting`.
     private func startMeetingSnapshots(meetingId: Int64, start: Date, title: String, appBundleID: String?,
@@ -847,8 +888,7 @@ final class AppState: ObservableObject {
             meetingId: meetingId, meetingStart: start, meetingTitle: title,
             source: WindowFrameSource(appBundleID: appBundleID, provider: provider,
                                       browserWindowProvider: browserWindowProvider),
-            storage: SnapshotStorage(root: snapshotSettings.rootURL,
-                                     fallbackRoot: SpikePaths.root.appendingPathComponent("Snapshots")),
+            storage: makeSnapshotStorage(),
             store: store, existingFolder: existingFolder
         )
         if snapshotSettings.enabled { meetingSnapshotService?.start() }
@@ -1013,7 +1053,8 @@ final class AppState: ObservableObject {
 
     /// Re-transcribes every part with audio on disk; each part's segments are replaced.
     func transcribeAgain(_ meeting: CoreMeeting) {
-        guard processingMeetingId == nil, canTranscribeAgain(meeting), let transcriptionQueue else { return }
+        guard processingMeetingId == nil, canTranscribeAgain(meeting), let transcriptionQueue,
+              mediaRetention.workingMeetingId != meeting.id else { return }  // its audio may be mid-move
         markProcessing(meeting.id)
         transcriptionQueue.transcribeAgain(meetingId: meeting.id, notes: meeting.notes ?? "")
     }
@@ -1026,6 +1067,18 @@ final class AppState: ObservableObject {
         transcriptionQueue.enqueue(.init(meetingId: meetingId, partIndex: partIndex, audioPath: audioPath, notes: notes))
     }
 
+    /// "Keep media" switch: exempts this device's own copy of the meeting from the
+    /// retention media steps. `onFailure` runs on main when nothing was written.
+    func setKeepMedia(_ meeting: CoreMeeting, keep: Bool, onFailure: @escaping () -> Void = {}) {
+        guard let store = coreStore, let id = meeting.ownCopyId(deviceId: deviceId) else { return onFailure() }
+        CoreMemoryStore.accessQueue.async {
+            let ok = store.setKeepMedia(meetingId: id, keep: keep)
+            DispatchQueue.main.async {
+                if ok { MeetingLifecycle.postMeetingsChanged([id, meeting.id]) } else { onFailure() }
+            }
+        }
+    }
+
     /// The new meeting from a split waits here until the original's summary finishes.
     private var pendingSplitSummary: Int64?
 
@@ -1035,7 +1088,7 @@ final class AppState: ObservableObject {
         guard processingMeetingId == nil, let store = coreStore, let transcriptionQueue else { return }
         markProcessing(meeting.id)
         processingStage = "Splitting…"
-        let storage = SnapshotStorage(root: snapshotSettings.rootURL, fallbackRoot: SpikePaths.root.appendingPathComponent("Snapshots"))
+        let storage = makeSnapshotStorage()
         MeetingLifecycle.splitLastPart(store: store, meetingId: meeting.id, makeFolder: { try storage.makeMeetingFolder(start: $0, title: $1) }) { [weak self] outcome in
             guard let self else { return }
             guard let outcome else { self.clearProcessingState(for: meeting.id); return }
@@ -1270,6 +1323,8 @@ final class AppState: ObservableObject {
             processingStage = "Summarizing…"
             transcriptionQueue?.summarizeExisting(meetingId: next, notes: "")
         }
+        // The post-meeting trigger: moves the finished recording to the media folder.
+        mediaRetention.run(mode: .daily)
     }
 
     /// FR-MTG-5 follow-on: regenerates a meeting's summary against its full transcript
@@ -1300,10 +1355,12 @@ final class AppState: ObservableObject {
             completion(nil)
             return
         }
+        regeneratingSummaryIds.insert(meetingId)
         CoreMemoryStore.slowLaneQueue.async { [weak self] in
             let slides = slow.meetingSlidesText(meetingId: meetingId)
             let outcome = slow.summarizeMeeting(meetingId: meetingId, notes: notes, transcript: transcript, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions)
             DispatchQueue.main.async {
+                self?.regeneratingSummaryIds.remove(meetingId)
                 completion(outcome)
             }
         }

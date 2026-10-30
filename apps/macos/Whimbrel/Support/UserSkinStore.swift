@@ -28,9 +28,23 @@ final class UserSkinStore {
 
     enum StoreError: Error { case invalidId(String), unreadableManifest(String), notSaved(String) }
 
+    /// Held while a skins folder is written: a save, rename, undo, delete or image here, and a sync
+    /// sending skins or writing other devices' into the folder (`SkinSync`), so neither sees the other half done.
+    /// Recursive, since `rename` saves. Windows' `skin_maker::saving`.
+    static let writing = NSRecursiveLock()
+    /// Where deleted skins wait (core `skins::store::DELETED_DIR`), with the time of deletion in `.deleted-at`.
+    static let deletedFolder = ".deleted"
+    private static let deletedMarker = ".deleted-at"
+
+    /// Called after each save, rename, undo and delete with the skin's id; the app sends it to sync
+    /// (`SkinSync.connect`). Must not block: it runs while `writing` is held.
+    var changed: ((String) -> Void)?
+
     private static let log = Logger(subsystem: "com.mpointer.kestrel", category: "skins")
     private let root: URL
     private let fm: FileManager
+
+    var rootURL: URL { root }
 
     init(root: URL, fileManager: FileManager = .default) {
         self.root = root
@@ -57,6 +71,8 @@ final class UserSkinStore {
 
     /// Writes the skin and appends it as a new version; returns the version number.
     func save(manifest: Data, palettes: [(id: String, data: Data)], for skinId: String) throws -> Int {
+        Self.writing.lock()
+        defer { Self.writing.unlock() }
         let dir = try folder(skinId)
         let version = Version(manifest: manifest, palettes: palettes.map { Version.Palette(id: $0.id, data: $0.data) })
         try writeCurrent(version, in: dir)
@@ -69,17 +85,21 @@ final class UserSkinStore {
         for old in numbers.dropLast(Self.historyLimit) {
             try? fm.removeItem(at: history.appendingPathComponent("\(old).json"))
         }
+        changed?(skinId)
         return next
     }
 
     /// Drops the newest version and restores the one before it (manifest and palettes); false when there is none.
     func undo(skinId: String) throws -> Bool {
+        Self.writing.lock()
+        defer { Self.writing.unlock() }
         let history = try folder(skinId).appendingPathComponent("history", isDirectory: true)
         let numbers = versionNumbers(history)
         guard numbers.count >= 2 else { return false }
         let previous = try JSONDecoder().decode(Version.self, from: Data(contentsOf: history.appendingPathComponent("\(numbers[numbers.count - 2]).json")))
         try writeCurrent(previous, in: history.deletingLastPathComponent())
         try fm.removeItem(at: history.appendingPathComponent("\(numbers[numbers.count - 1]).json"))
+        changed?(skinId)
         return true
     }
 
@@ -138,6 +158,8 @@ final class UserSkinStore {
     /// Writes `images/<flat name>` (lower-case `a-z0-9.-`, at most `nameLimit` before a `-2`, `-3`...
     /// that makes it unique; a URL's query and fragment are dropped); returns the asset name.
     func addImage(_ data: Data, preferredName: String, to skinId: String) throws -> String {
+        Self.writing.lock()
+        defer { Self.writing.unlock() }
         let images = try folder(skinId).appendingPathComponent("images", isDirectory: true)
         try fm.createDirectory(at: images, withIntermediateDirectories: true)
         let path = preferredName.prefix { $0 != "?" && $0 != "#" }
@@ -168,6 +190,8 @@ final class UserSkinStore {
 
     /// Rewrites `name` (capped, `skinName`) in `skin.json` as a new version (so it can be undone).
     func rename(skinId: String, to name: String) throws {
+        Self.writing.lock()
+        defer { Self.writing.unlock() }
         let dir = try folder(skinId)
         guard let data = fm.contents(atPath: dir.appendingPathComponent("skin.json").path),
               var root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
@@ -178,8 +202,47 @@ final class UserSkinStore {
         _ = try save(manifest: manifest, palettes: currentPalettes(in: dir), for: skinId)
     }
 
+    /// Moves the skin to `.deleted/<id>/` (an older copy there is replaced) and stamps when, as core does,
+    /// so an edit that lost to the deletion can still be found; `purgeDeleted` drops it later.
     func delete(skinId: String) throws {
-        try fm.removeItem(at: folder(skinId))
+        Self.writing.lock()
+        defer { Self.writing.unlock() }
+        let from = try folder(skinId)
+        let deleted = root.appendingPathComponent(Self.deletedFolder, isDirectory: true)
+        try fm.createDirectory(at: deleted, withIntermediateDirectories: true)
+        let to = deleted.appendingPathComponent(skinId, isDirectory: true)
+        if fm.fileExists(atPath: to.path) { try fm.removeItem(at: to) }
+        try fm.moveItem(at: from, to: to)
+        // The skin is gone from the folder either way, so it is always sent; without a stamp, the purge goes by the folder's date.
+        try? Data("\(Int64(Date().timeIntervalSince1970 * 1000))".utf8).write(to: to.appendingPathComponent(Self.deletedMarker), options: .atomic)
+        changed?(skinId)
+    }
+
+    /// Removes a skin's folder for good, unsent (a failed import's leftovers); not for a user's delete.
+    func removeFolder(skinId: String) throws {
+        Self.writing.lock()
+        defer { Self.writing.unlock() }
+        let dir = try folder(skinId)
+        if fm.fileExists(atPath: dir.path) { try fm.removeItem(at: dir) }
+    }
+
+    /// Removes what has sat in `.deleted/` for longer than `age` (by its stamp, else the folder's date);
+    /// returns how many were removed. Core's `purge_deleted`.
+    @discardableResult
+    func purgeDeleted(olderThan age: TimeInterval) -> Int {
+        Self.writing.lock()
+        defer { Self.writing.unlock() }
+        let deleted = root.appendingPathComponent(Self.deletedFolder, isDirectory: true)
+        var purged = 0
+        for id in ((try? fm.contentsOfDirectory(atPath: deleted.path)) ?? []) where (try? folder(id)) != nil {
+            let dir = deleted.appendingPathComponent(id, isDirectory: true)
+            let stamp = fm.contents(atPath: dir.appendingPathComponent(Self.deletedMarker).path)
+                .flatMap { Double(String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) }
+                .map { Date(timeIntervalSince1970: $0 / 1000) }
+            let when = stamp ?? (try? fm.attributesOfItem(atPath: dir.path)[.modificationDate] as? Date) ?? Date()
+            if Date().timeIntervalSince(when) > age, (try? fm.removeItem(at: dir)) != nil { purged += 1 }
+        }
+        return purged
     }
 
     /// `user-<slug>-<n>` with the lowest `n` whose folder does not exist; the slug is reduced to

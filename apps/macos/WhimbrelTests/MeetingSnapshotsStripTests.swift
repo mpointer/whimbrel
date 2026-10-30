@@ -39,7 +39,7 @@ final class MeetingSnapshotsStripTests: XCTestCase {
     /// I6: Timeline rows and the strip share one downsampled, cached loader.
     func testThumbnailLoaderDownsamplesAndCaches() async throws {
         let storage = SnapshotStorage(root: tempDir, fallbackRoot: tempDir)
-        let url = try storage.writePNG(SnapshotFixtures.slide(["Roadmap", "Ship it"]), to: tempDir, captured: Date())
+        let url = try storage.writeHEIC(SnapshotFixtures.slide(["Roadmap", "Ship it"]), to: tempDir, captured: Date())
         let first = await SnapshotThumbnails.image(for: url.path)
         let image = try XCTUnwrap(first)
         XCTAssertLessThanOrEqual(max(image.size.width, image.size.height), 480)
@@ -52,14 +52,14 @@ final class MeetingSnapshotsStripTests: XCTestCase {
     /// A build replaces a slide's file; the strip shows the new image after a reload.
     func testReloadRefreshesThumbnailWhenFileChanges() async throws {
         let storage = SnapshotStorage(root: tempDir, fallbackRoot: tempDir)
-        let first = try storage.writePNG(SnapshotFixtures.slide(["Roadmap"]), to: tempDir, captured: Date())
+        let first = try storage.writeHEIC(SnapshotFixtures.slide(["Roadmap"]), to: tempDir, captured: Date())
         let id = try XCTUnwrap(store.insertMeetingSnapshot(meetingId: meetingId, capturedUnixMs: 1, filePath: first.path,
                                                            width: 1, height: 1, ocrText: ""))
         let model = makeModel()
         await model.reload()
         let before = try XCTUnwrap(model.thumbnails[id]?.image)
 
-        let second = try storage.writePNG(SnapshotFixtures.slide(["Roadmap", "Ship it"]), to: tempDir, captured: Date())
+        let second = try storage.writeHEIC(SnapshotFixtures.slide(["Roadmap", "Ship it"]), to: tempDir, captured: Date())
         XCTAssertTrue(store.replaceMeetingSnapshot(id: id, filePath: second.path, width: 1, height: 1, ocrText: ""))
         await model.reload()
         XCTAssertEqual(model.thumbnails[id]?.path, second.path)

@@ -1406,6 +1406,7 @@ mod tests {
             summary_open_questions: vec![],
             summary_provider: None,
             summary_model: None,
+            keep_media: None,
         }
     }
 

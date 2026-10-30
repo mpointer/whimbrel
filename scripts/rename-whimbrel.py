@@ -34,6 +34,7 @@ SKIP_DIRS = {
 SKIP_FILES = {
     "docs/05-roadmap.md",
     "website/site/data/releases.json",  # shipped release titles, quoted as shipped
+    "CHANGELOG.md",                     # past releases, quoted as shipped
     "scripts/rename-whimbrel.py",       # this file names the old identifiers on purpose
     "apps/windows/src-tauri/nsis/hooks.nsh",  # finds and removes the Kestrel install by name
     "apps/windows/src-tauri/src/paths.rs",    # moves the Windows data folder from its old name

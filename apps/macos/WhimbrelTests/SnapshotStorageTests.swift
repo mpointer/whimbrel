@@ -1,5 +1,6 @@
 import XCTest
 import CoreGraphics
+import UniformTypeIdentifiers
 @testable import Whimbrel
 
 final class SnapshotStorageTests: XCTestCase {
@@ -91,45 +92,87 @@ final class SnapshotStorageTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent(".kestrel-snapshots").path))
     }
 
+    func testMediaRootUncreatableFallsBack() throws {
+        // The media folder's parent is unwritable, so `<media>/Snapshots` can't be created.
+        let locked = tmp.appendingPathComponent("lockedParent")
+        let media = locked.appendingPathComponent("Whimbrel")
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: media.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: media.path) }
+        let fallback = tmp.appendingPathComponent("fallback")
+        let s = SnapshotStorage(root: media.appendingPathComponent("Snapshots"), fallbackRoot: fallback)
+        let folder = try s.makeMeetingFolder(start: start, title: "Acme")
+        XCTAssertEqual(folder.deletingLastPathComponent().standardizedFileURL.path, fallback.standardizedFileURL.path)
+    }
+
+    func testMissingMediaFolderFallsBackWithoutCreatingIt() throws {
+        // An unmounted drive: the media folder (the root's parent) doesn't exist. Nothing is
+        // created at that path; the meeting folder lands under the fallback.
+        let mountPoint = tmp.appendingPathComponent("mnt-drive")
+        try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
+        let media = mountPoint.appendingPathComponent("Whimbrel")
+        let fallback = tmp.appendingPathComponent("fallback")
+        let s = SnapshotStorage(root: media.appendingPathComponent("Snapshots"), fallbackRoot: fallback)
+        let folder = try s.makeMeetingFolder(start: start, title: "Acme")
+        XCTAssertEqual(folder.deletingLastPathComponent().standardizedFileURL.path, fallback.standardizedFileURL.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: media.path))
+    }
+
     func testFileNameCollision() {
         let t = Date(timeIntervalSince1970: 1_792_664_040)
         let base = SnapshotStorage.fileName(captured: t, existing: [])
-        XCTAssertTrue(base.hasSuffix(".png"))
-        XCTAssertEqual(base.count, "HH.mm.ss.png".count)
-        XCTAssertEqual(SnapshotStorage.fileName(captured: t, existing: [base]), base.replacingOccurrences(of: ".png", with: "-2.png"))
-        XCTAssertEqual(SnapshotStorage.fileName(captured: t, existing: [base, base.replacingOccurrences(of: ".png", with: "-2.png")]),
-                       base.replacingOccurrences(of: ".png", with: "-3.png"))
+        XCTAssertTrue(base.hasSuffix(".heic"))
+        XCTAssertEqual(base.count, "HH.mm.ss.heic".count)
+        let stem = String(base.dropLast(".heic".count))
+        XCTAssertEqual(SnapshotStorage.fileName(captured: t, existing: [base]), "\(stem)-2.heic")
+        XCTAssertEqual(SnapshotStorage.fileName(captured: t, existing: [base, "\(stem)-2.heic"]), "\(stem)-3.heic")
+        // Any file of that stem takes the name: a PNG or thumbnail would share its `.thumb.jpg`.
+        XCTAssertEqual(SnapshotStorage.fileName(captured: t, existing: ["\(stem).png"]), "\(stem)-2.heic")
+        XCTAssertEqual(SnapshotStorage.fileName(captured: t, existing: ["\(stem).thumb.jpg"]), "\(stem)-2.heic")
+        XCTAssertEqual(SnapshotStorage.fileName(captured: t, existing: [], ext: "png"), "\(stem).png")
     }
 
-    func testWritePNGRoundTripsDimensions() throws {
-        let ctx = CGContext(data: nil, width: 37, height: 21, bitsPerComponent: 8, bytesPerRow: 0,
-                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-        let image = ctx.makeImage()!
+    private func blankImage(width: Int = 37, height: Int = 21) -> CGImage {
+        CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!.makeImage()!
+    }
+
+    func testWriteHEICRoundTripsDimensions() throws {
         let folder = try storage().makeMeetingFolder(start: start, title: "Acme")
         let t = Date()
-        let first = try storage().writePNG(image, to: folder, captured: t)
-        let second = try storage().writePNG(image, to: folder, captured: t)
+        let first = try storage().writeHEIC(blankImage(), to: folder, captured: t)
+        let second = try storage().writeHEIC(blankImage(), to: folder, captured: t)
         XCTAssertNotEqual(first, second, "same-second captures do not overwrite")
+        XCTAssertEqual(first.pathExtension, "heic")
         let src = CGImageSourceCreateWithURL(first as CFURL, nil)!
+        XCTAssertEqual(CGImageSourceGetType(src) as String?, UTType.heic.identifier)
         let back = CGImageSourceCreateImageAtIndex(src, 0, nil)!
         XCTAssertEqual(back.width, 37)
         XCTAssertEqual(back.height, 21)
     }
 
+    /// No HEIC encoder: the frame is still saved, as the PNG it always was.
+    func testWriteHEICFallsBackToPNG() throws {
+        SnapshotStorage.heicType = "com.example.no-such-type"
+        defer { SnapshotStorage.heicType = UTType.heic.identifier }
+        let folder = try storage().makeMeetingFolder(start: start, title: "Acme")
+        let url = try storage().writeHEIC(blankImage(), to: folder, captured: Date())
+        XCTAssertEqual(url.pathExtension, "png")
+        let src = CGImageSourceCreateWithURL(url as CFURL, nil)!
+        XCTAssertEqual(CGImageSourceGetType(src) as String?, UTType.png.identifier)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(),
+                       [SnapshotStorage.markerName, url.lastPathComponent].sorted())
+    }
+
     @MainActor
-    func testSettingsDefaultEnabledAndPicturesRoot() {
+    func testSettingsDefaultEnabled() {
         let suite = "SnapshotSettingsTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = SnapshotSettings(defaults: defaults)
         XCTAssertTrue(settings.enabled)
-        XCTAssertNil(settings.customRootPath)
-        XCTAssertEqual(settings.rootURL.path, NSHomeDirectory() + "/Pictures/Whimbrel Snapshots")
-
-        settings.customRootPath = "/tmp/elsewhere"
         settings.enabled = false
         let reloaded = SnapshotSettings(defaults: defaults)
         XCTAssertFalse(reloaded.enabled)
-        XCTAssertEqual(reloaded.rootURL.path, "/tmp/elsewhere")
     }
 }

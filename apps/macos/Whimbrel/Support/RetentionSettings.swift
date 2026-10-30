@@ -88,14 +88,15 @@ final class RetentionSettings: ObservableObject {
         let capturedCaptureItemDays = captureItemKeepForever ? nil : captureItemDays
         let capturedMeetingDays = meetingKeepForever ? nil : meetingDays
         let capturedConversationDays = conversationKeepForever ? nil : conversationDays
-        CoreMemoryStore.accessQueue.async { [weak self] in
-            let result = store.applyRetention(
+        // Behind `MediaMover.queue`: an expired meeting may be mid-move or mid-compress.
+        MediaMover.queue.async { [weak self] in
+            let result = CoreMemoryStore.accessQueue.sync { store.applyRetention(
                 captureItemDays: capturedCaptureItemDays,
                 meetingDays: capturedMeetingDays,
                 conversationDays: capturedConversationDays,
                 nowUnixMs: nowMs,
                 recordingsDir: SpikePaths.root
-            )
+            ) }
             DispatchQueue.main.async {
                 if let result {
                     self?.log.info(

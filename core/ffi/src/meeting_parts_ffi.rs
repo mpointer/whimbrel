@@ -227,7 +227,8 @@ pub extern "C" fn whimbrel_meeting_split(
     json_out(unsafe { &(*handle).0 }.split_meeting(meeting_id, from_part_index))
 }
 
-/// `moves_json` is `[[old_path,new_path],...]`.
+/// `moves_json` is `[[old_path,new_path],...]`. False, with nothing changed, when any old
+/// path matches no snapshot row of this meeting.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_meeting_set_snapshot_paths(
     handle: *mut StoreHandle,
@@ -248,6 +249,39 @@ pub extern "C" fn whimbrel_meeting_set_snapshot_paths(
     unsafe { &(*handle).0 }
         .set_meeting_snapshot_paths(meeting_id, &moves, &dir)
         .is_ok()
+}
+
+/// `moves_json` is `[[old_path,new_path],...]`: rewrites `meeting.audio_path` and every
+/// part's that equals an old path. Local only (no sync restamp). False, with nothing
+/// changed, when any old path matches no stored path.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meeting_set_audio_paths(
+    handle: *mut StoreHandle,
+    meeting_id: i64,
+    moves_json: *const c_char,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let Some(Ok(moves)) =
+        cstr_to_string(moves_json).map(|m| serde_json::from_str::<Vec<(String, String)>>(&m))
+    else {
+        return false;
+    };
+    unsafe { &(*handle).0 }
+        .set_meeting_audio_paths(meeting_id, &moves)
+        .is_ok()
+}
+
+/// After a path rewrite: true only once the commit is on stable storage (a FULL WAL
+/// checkpoint with F_FULLFSYNC). False means the rows may be rewritten but not durable:
+/// the caller then deletes nothing, neither the originals nor the new files.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_store_checkpoint(handle: *mut StoreHandle) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    matches!(unsafe { &(*handle).0 }.checkpoint_durable(), Ok(true))
 }
 
 /// Deletes the meeting row and returns `DeletedMeetingFiles` JSON (every part's files, and
@@ -411,7 +445,9 @@ mod tests {
             "{split}"
         );
         assert!(whimbrel_meeting_split(h, id, 9).is_null());
-        assert!(whimbrel_meeting_set_snapshot_paths(
+        assert!(whimbrel_meeting_set_snapshot_paths(h, id, c("[]").as_ptr(), c("/d").as_ptr()));
+        // No snapshot row is at /a: nothing may be repointed (the caller keeps its files).
+        assert!(!whimbrel_meeting_set_snapshot_paths(
             h,
             id,
             c("[[\"/a\",\"/b\"]]").as_ptr(),
@@ -423,6 +459,23 @@ mod tests {
             c("nope").as_ptr(),
             c("/d").as_ptr()
         ));
+        assert!(whimbrel_meeting_set_audio_paths(
+            h,
+            id,
+            c("[[\"/r/system-audio-A.caf\",\"/m/system-audio-A.m4a\"]]").as_ptr()
+        ));
+        assert_eq!(
+            unsafe { &(*h).0 }.get_meeting(id).unwrap().unwrap().audio_path.as_deref(),
+            Some("/m/system-audio-A.m4a")
+        );
+        assert!(!whimbrel_meeting_set_audio_paths(h, id, c("nope").as_ptr()));
+        assert!(
+            !whimbrel_meeting_set_audio_paths(h, id, c("[[\"/r/unknown.caf\",\"/m/x.m4a\"]]").as_ptr()),
+            "an old path that matches nothing fails"
+        );
+        assert!(!whimbrel_meeting_set_audio_paths(ptr::null_mut(), id, c("[]").as_ptr()));
+        assert!(whimbrel_store_checkpoint(h));
+        assert!(!whimbrel_store_checkpoint(ptr::null_mut()));
         whimbrel_memory_close(h);
     }
 

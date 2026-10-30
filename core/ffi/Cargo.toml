@@ -42,6 +42,8 @@ mcp-host = { path = "../mcp-host" }
 routines = { path = "../routines" }
 sync = { path = "../sync" }
 sync-engine = { path = "../sync-engine" }
+# Skins Task 16: the Mac sends and receives user skins through core/skins::sync.
+skins = { path = "../skins" }
 serde = "1"
 serde_json = "1"
 base64 = "0.22"
@@ -51,3 +53,5 @@ tempfile = "3"
 # Same version as core/memory; tests read usage_log rows by route.
 rusqlite = "0.32"
 chrono = "0.4"
+# Encodes a test image for whimbrel_skin_downscale; same as core/skins.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }

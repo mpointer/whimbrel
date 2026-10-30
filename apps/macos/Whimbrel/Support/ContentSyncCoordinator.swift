@@ -108,6 +108,7 @@ final class ContentSyncCoordinator: ObservableObject {
             consecutiveFailures = 0
             lastSyncError = nil
             lastSyncedAt = Date()
+            await SkinSync.round(store: coreStore, skins: .shared, skinStore: .shared, defaults: .standard)
         } else {
             consecutiveFailures += 1
             let cause = CoreMemoryStore.lastSyncContentError() ?? "unknown"
@@ -115,5 +116,74 @@ final class ContentSyncCoordinator: ObservableObject {
             lastSyncError = "Content sync failed. Will retry automatically."
             await syncState.renewIfDue(afterFailure: true)
         }
+    }
+}
+
+/// Skins Task 16: the Mac sends and receives user skins, in the order Windows' `skin_sync.rs` uses.
+/// `core/skins::sync` does the work; this decides when. Every call that reads or writes the skins
+/// folder for sync runs on `CoreMemoryStore.accessQueue` (the store handle) with `UserSkinStore.writing`
+/// held, so a local save can't land half-way through. The main thread only takes `writing` for its own
+/// file writes and never waits on `accessQueue` while holding it, so the two can't deadlock.
+enum SkinSync {
+    /// A skin moved to `.deleted/` is kept this long (an edit that lost to a deletion can be found), then purged.
+    static let deletedKept: TimeInterval = 30 * 24 * 60 * 60
+    private static let log = Logger(subsystem: "com.mpointer.kestrel", category: "skins")
+
+    /// At launch: purges old deletions and sends each change made here (`UserSkinStore.changed`) from
+    /// then on. A nil store (no database) sends nothing.
+    static func connect(store: CoreMemoryStore?, skins: UserSkinStore) {
+        DispatchQueue.global(qos: .utility).async {
+            let purged = skins.purgeDeleted(olderThan: deletedKept)
+            if purged > 0 { log.notice("dropped \(purged, privacy: .public) skins deleted over 30 days ago") }
+        }
+        guard let store else { return }
+        // Queued, not waited on: the store may be busy with a sync round. ponytail: a reconcile already
+        // queued ahead of this send can write a peer's version first; the save it replaced stays in Undo,
+        // as on Windows.
+        skins.changed = { [weak skins] id in
+            CoreMemoryStore.accessQueue.async {
+                guard let skins else { return }
+                UserSkinStore.writing.lock()
+                defer { UserSkinStore.writing.unlock() }
+                if !store.skinSyncEnqueue(skinsRoot: skins.rootURL, skinId: id) {
+                    log.error("could not queue skin \(id, privacy: .public) for sync")
+                }
+            }
+        }
+    }
+
+    /// After a good content round, on `accessQueue`: the one-time image downscale, then the skins that
+    /// arrived, then (on the first round here, or when a peer has just started syncing skins) every skin
+    /// again. Returns whether the folder changed.
+    static func afterRound(store: CoreMemoryStore, skins: UserSkinStore, defaults: UserDefaults) -> Bool {
+        UserSkinStore.writing.lock()
+        defer { UserSkinStore.writing.unlock() }
+        let migrated = SkinImageMigration.runIfNeeded(skins: skins, defaults: defaults)
+        guard let report = store.skinSyncReconcile(skinsRoot: skins.rootURL) else {
+            log.error("could not write the skins from other devices")
+            return migrated
+        }
+        if let error = report.error {
+            log.error("could not write the skins from other devices: \(error, privacy: .public)")
+        }
+        if !report.changed.isEmpty || !report.deleted.isEmpty {
+            log.notice("skins from other devices: \(report.changed.count, privacy: .public) changed, \(report.deleted.count, privacy: .public) deleted")
+        }
+        if report.pushAll, !store.skinSyncEnqueueAll(skinsRoot: skins.rootURL) {
+            log.error("could not queue the skins for sync")
+        }
+        return migrated || !report.changed.isEmpty || !report.deleted.isEmpty
+    }
+
+    /// `afterRound`, then a reload when the folder changed: it picks up new and changed skins, recomputes
+    /// scrims, and falls back to Whimbrel when the selected skin was deleted (`SkinStore.reloadUserSkins`).
+    @MainActor static func round(store: CoreMemoryStore?, skins: UserSkinStore, skinStore: SkinStore, defaults: UserDefaults) async {
+        guard let store else { return }
+        let changed = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            CoreMemoryStore.accessQueue.async {
+                continuation.resume(returning: afterRound(store: store, skins: skins, defaults: defaults))
+            }
+        }
+        if changed { skinStore.reloadUserSkins() }
     }
 }

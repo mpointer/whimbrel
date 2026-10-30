@@ -37,14 +37,15 @@ enum MeetingLifecycle {
     }
 
     /// Production entry point. Runs on `CoreMemoryStore.accessQueue` like the
-    /// call sites it replaces, then calls back on the main queue.
+    /// call sites it replaces, then calls back on the main queue. Queued behind
+    /// `MediaMover.queue` first, so it waits for the media retention work in flight.
     static func forgetMeeting(
         store: CoreMemoryStore,
         meetingId: Int64,
         recordingsDir: URL = SpikePaths.root,
         completion: @escaping (ForgetResult) -> Void
     ) {
-        CoreMemoryStore.accessQueue.async {
+        MediaMover.queue.async { CoreMemoryStore.accessQueue.sync {
             // The row delete returns every part's files and the snapshot folder (nil when the
             // meeting kept its snapshots or another meeting still has files in it).
             var files: CoreDeletedMeetingFiles?
@@ -62,7 +63,7 @@ enum MeetingLifecycle {
             DispatchQueue.main.async {
                 completion(result)
             }
-        }
+        } }
     }
 
     /// Splits the last part of a completed meeting into its own meeting and moves the
@@ -104,14 +105,16 @@ enum MeetingLifecycle {
     }
 
     /// Off-main wrapper; on main it posts `meetingsDidChange` for both meetings, then calls back.
+    /// Waits for the media retention work in flight (`MediaMover.queue`): that meeting's or a
+    /// meeting sharing its snapshot folder may be mid-move.
     static func splitLastPart(
         store: CoreMemoryStore,
         meetingId: Int64,
         makeFolder: @escaping (Date, String) throws -> URL,
         completion: @escaping (SplitOutcome?) -> Void
     ) {
-        CoreMemoryStore.accessQueue.async {
-            let outcome = splitLastPartSync(store: store, meetingId: meetingId, makeFolder: makeFolder)
+        MediaMover.queue.async {
+            let outcome = CoreMemoryStore.accessQueue.sync { splitLastPartSync(store: store, meetingId: meetingId, makeFolder: makeFolder) }
             DispatchQueue.main.async {
                 if let outcome { postMeetingsChanged([meetingId, outcome.newMeetingId]) }
                 completion(outcome)

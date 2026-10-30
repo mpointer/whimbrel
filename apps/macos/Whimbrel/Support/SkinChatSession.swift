@@ -609,7 +609,7 @@ final class SkinChatSession: ObservableObject {
             do {
                 let data: Data
                 if let bytes { data = bytes } else { data = try await backend.fetch(candidate.url) }
-                try place(data, name: bytes == nil ? candidate.url : "generated.png", in: skinId)
+                try place(await Self.downscaled(data), name: bytes == nil ? candidate.url : "generated.png", in: skinId)
             } catch {
                 Self.log.error("image approve failed: \(String(describing: error), privacy: .public)")
                 post("That image couldn't be downloaded, so it was left out.", to: skinId, store: true)
@@ -644,12 +644,18 @@ final class SkinChatSession: ObservableObject {
                     return
                 }
                 // A neutral name by type: the file's own name (say, a person's) would reach the provider in the manifest.
-                try place(data, name: "own.\(Self.fileExtension(of: data))", in: skinId)
+                try place(await Self.downscaled(data), name: "own.\(Self.fileExtension(of: data))", in: skinId)
             } catch {
                 Self.log.error("own image failed: \(String(describing: error), privacy: .public)")
                 post("Whimbrel couldn't read that file.", to: skinId, store: true)
             }
         }
+    }
+
+    /// `data` at most 1600 px on its long side (core `whimbrel_skin_downscale`), off the main thread, so an
+    /// approved image syncs cheaply; unchanged when core can't decode it.
+    nonisolated static func downscaled(_ data: Data) async -> Data {
+        await Task.detached { CoreSkinMaker.downscale(data) ?? data }.value
     }
 
     /// The web fetch's limit (core `whimbrel_skin_image_fetch`), applied to your own files too.

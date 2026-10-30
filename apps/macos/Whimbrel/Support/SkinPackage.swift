@@ -120,7 +120,8 @@ enum SkinPackage {
             // Images first: the store gives each its flat name, and the placements follow it.
             var renamed: [String: String] = [:]
             for (name, data) in imageFiles.sorted(by: { $0.key < $1.key }) {
-                renamed[name] = try store.addImage(data, preferredName: name, to: newId)
+                // Kept at most 1600 px on the long side, as an approved image is (skins Task 16).
+                renamed[name] = try store.addImage(CoreSkinMaker.downscale(data) ?? data, preferredName: name, to: newId)
             }
             if var decoration = manifest["decoration"] as? [String: Any], let imagery = decoration["imagery"] as? [Any] {
                 decoration["imagery"] = imagery.map { entry -> Any in
@@ -133,7 +134,7 @@ enum SkinPackage {
             let data = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
             _ = try store.save(manifest: data, palettes: palettes, for: newId)
         } catch {
-            do { try store.delete(skinId: newId) } catch let cleanup {
+            do { try store.removeFolder(skinId: newId) } catch let cleanup {
                 log.error("import cleanup failed for \(newId, privacy: .public): \(String(describing: cleanup), privacy: .public)")
             }
             throw error

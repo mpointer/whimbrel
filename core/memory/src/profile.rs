@@ -132,7 +132,7 @@ impl Store {
     /// Summarized meetings that started in `[start, end)`, oldest first.
     pub fn meetings_between(&self, start_unix_ms: i64, end_unix_ms: i64) -> rusqlite::Result<Vec<Meeting>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, device_id, start_unix_ms, end_unix_ms, title, attendees, trigger, audio_path, status, transcript_path, notes, summary_tldr, summary_decisions_json, summary_action_items_json, summary_open_questions_json, summary_provider, summary_model, local_seq, estimated_speaker_count, away_outcome, away_outcome_at_unix_ms FROM meeting WHERE start_unix_ms >= ?1 AND start_unix_ms < ?2 AND summary_tldr IS NOT NULL ORDER BY start_unix_ms",
+            "SELECT id, device_id, start_unix_ms, end_unix_ms, title, attendees, trigger, audio_path, status, transcript_path, notes, summary_tldr, summary_decisions_json, summary_action_items_json, summary_open_questions_json, summary_provider, summary_model, local_seq, estimated_speaker_count, away_outcome, away_outcome_at_unix_ms, keep_media FROM meeting WHERE start_unix_ms >= ?1 AND start_unix_ms < ?2 AND summary_tldr IS NOT NULL ORDER BY start_unix_ms",
         )?;
         let rows = stmt.query_map(params![start_unix_ms, end_unix_ms], Self::row_to_meeting)?;
         rows.collect()

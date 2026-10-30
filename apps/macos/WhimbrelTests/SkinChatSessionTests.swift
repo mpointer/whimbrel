@@ -466,6 +466,24 @@ final class SkinChatSessionTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: images).sorted(), ["1.png", "2.png"])
     }
 
+    /// Skins Task 16: an approved image is kept at most 1600 px on its long side, so syncing it stays cheap.
+    func test_approval_downscales_to_1600() async throws {
+        access.hasSearchKey = true
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 3200, pixelsHigh: 800, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        let backend = FakeBackend(reply(.new, queries: ["beach"]))
+        backend.image = rep.representation(using: .png, properties: [:])!
+        backend.searchResults = { _ in [self.candidate(1)] }
+        let s = session(backend)
+        await run(s, "a beach skin")
+        s.approve(s.candidates[0])
+        await s.current?.value
+        let stored = try Data(contentsOf: users.imageURL(asset: "1.png", skinId: "user-beach-1"))
+        let image = try XCTUnwrap(NSBitmapImageRep(data: stored))
+        XCTAssertEqual(image.pixelsWide, 1600)
+        XCTAssertEqual(image.pixelsHigh, 400)
+    }
+
     /// M8: switching to local-only mode after images were found stops their downloads.
     func testLocalOnlySwitchStopsImageFetches() async throws {
         access.hasSearchKey = true
