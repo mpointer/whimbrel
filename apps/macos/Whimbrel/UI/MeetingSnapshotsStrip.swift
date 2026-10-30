@@ -59,8 +59,14 @@ final class MeetingSnapshotsModel: ObservableObject {
     func delete(_ snapshot: CoreMeetingSnapshot) async {
         guard let store else { return }
         let snapId = snapshot.id
-        if let path = await Self.onAccessQueue({ store.deleteMeetingSnapshot(id: snapId) }) {
-            try? FileManager.default.removeItem(atPath: path)
+        // Behind `MediaMover.queue`: the meeting's snapshots may be mid-move or mid-shrink.
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            MediaMover.queue.async {
+                if let path = CoreMemoryStore.accessQueue.sync(execute: { store.deleteMeetingSnapshot(id: snapId) }) {
+                    try? FileManager.default.removeItem(atPath: path)
+                }
+                c.resume()
+            }
         }
         snapshots.removeAll { $0.id == snapId }
         thumbnails[snapId] = nil

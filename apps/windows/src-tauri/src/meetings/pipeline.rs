@@ -604,6 +604,7 @@ mod tests {
             estimated_speaker_count: estimated.map(i64::from),
             away_outcome: None,
             away_outcome_at_unix_ms: None,
+            keep_media: false,
         }
     }
 

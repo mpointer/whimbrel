@@ -1095,6 +1095,59 @@ struct CoreMeetingPart: Decodable, Equatable {
     }
 }
 
+/// Mirrors core/api's `media_retention::MediaStep`.
+enum CoreMediaStep: String, Codable, Equatable {
+    case moveAudio = "move_audio"
+    case moveSnapshots = "move_snapshots"
+    case compress
+    case deleteAudio = "delete_audio"
+    case shrinkImages = "shrink_images"
+}
+
+/// Mirrors core/api's `media_retention::MeetingWork`.
+struct CoreMeetingWork: Codable, Equatable {
+    let meetingId: Int64
+    let steps: [CoreMediaStep]
+    let audioPaths: [String]
+    let shrinkSnapshotIds: [Int64]
+
+    enum CodingKeys: String, CodingKey {
+        case meetingId = "meeting_id"
+        case steps
+        case audioPaths = "audio_paths"
+        case shrinkSnapshotIds = "shrink_snapshot_ids"
+    }
+}
+
+/// Mirrors core/api's `media_retention::MediaUsage`.
+struct CoreMediaUsage: Codable, Equatable {
+    let audioFullBytes: Int64
+    let audioCompressedBytes: Int64
+    let imageBytes: Int64
+    /// What deleting audio would free now (at the preview age while deletion is off).
+    var audioDeletableBytes: Int64 = 0
+
+    enum CodingKeys: String, CodingKey {
+        case audioFullBytes = "audio_full_bytes"
+        case audioCompressedBytes = "audio_compressed_bytes"
+        case imageBytes = "image_bytes"
+        case audioDeletableBytes = "audio_deletable_bytes"
+    }
+}
+
+/// Mirrors core/api's `media_retention::MediaPlan`.
+struct CoreMediaPlan: Codable, Equatable {
+    let work: [CoreMeetingWork]
+    let disconnectedMeetings: Int
+    let usage: CoreMediaUsage
+
+    enum CodingKeys: String, CodingKey {
+        case work
+        case disconnectedMeetings = "disconnected_meetings"
+        case usage
+    }
+}
+
 /// Mirrors core/memory's `SplitResult`.
 struct CoreSplitResult: Decodable, Equatable {
     let newMeetingId: Int64
@@ -1206,6 +1259,17 @@ struct CoreMeeting: Codable, Identifiable {
     /// Away Mode outcome; nil on a non-away meeting, and on an away one that was attended.
     var awayOutcome: AwayOutcome? = nil
     var awayOutcomeAtUnixMs: Int64? = nil
+    /// "Keep media": exempt from the retention compress/shrink/delete steps. Stored
+    /// optional so a payload without the key decodes (as false) instead of failing.
+    var keepMediaStored: Bool? = nil
+    var keepMedia: Bool { keepMediaStored ?? false }
+
+    /// This device's own recording of the call: the meeting itself, or its copy in
+    /// `alsoRecorded` when the lead is a peer's. nil when this device has none.
+    func ownCopyId(deviceId: String) -> Int64? {
+        if self.deviceId == deviceId { return id }
+        return alsoRecorded?.first { $0.deviceId == deviceId }?.id
+    }
     /// When Whimbrel was removed from the call (`.removed` only).
     var awayOutcomeAt: Date? {
         awayOutcomeAtUnixMs.map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) }
@@ -1231,6 +1295,7 @@ struct CoreMeeting: Codable, Identifiable {
         case estimatedSpeakerCount = "estimated_speaker_count"
         case awayOutcome = "away_outcome"
         case awayOutcomeAtUnixMs = "away_outcome_at_unix_ms"
+        case keepMediaStored = "keep_media"
     }
 }
 
@@ -1313,7 +1378,7 @@ struct CoreRetentionResult: Codable {
 }
 
 /// JSON shape of `whimbrel_retention_scan_orphans`'s result: full paths of the orphaned
-/// `.caf` files and their summed on-disk size.
+/// recording files and their summed on-disk size.
 struct CoreOrphanScan: Codable {
     let orphaned: [String]
     let totalBytes: Int64
@@ -2137,6 +2202,36 @@ final class CoreMemoryStore {
         }
     }
 
+    /// After moving or compressing audio on disk: rewrites `meeting.audio_path` and every
+    /// part's that equals an `old`. Local only. False, with nothing changed, when any `old`
+    /// matches no stored path: the caller must then keep the originals.
+    func setMeetingAudioPaths(meetingId: Int64, moves: [(old: String, new: String)]) -> Bool {
+        guard let data = try? JSONEncoder().encode(moves.map { [$0.old, $0.new] }) else { return false }
+        return String(decoding: data, as: UTF8.self).withCString { whimbrel_meeting_set_audio_paths(handle, meetingId, $0) }
+    }
+
+    /// After a path rewrite: true only once the commit is on stable storage (FULL WAL
+    /// checkpoint with F_FULLFSYNC). On false the rows may already point at the new files,
+    /// so delete nothing: neither the originals nor the new files.
+    func checkpointDurable() -> Bool {
+        whimbrel_store_checkpoint(handle)
+    }
+
+    /// Storage retention: what to move, compress, delete or shrink (core `media_retention::plan`).
+    /// `busy` meetings get no work. Nil on error.
+    func mediaPlan(policy: CoreMediaPolicy, nowUnixMs: Int64, mediaRoot: URL, busy: Set<Int64>) -> CoreMediaPlan? {
+        guard let policyData = try? JSONEncoder().encode(policy),
+              let busyData = try? JSONEncoder().encode(busy.sorted()) else { return nil }
+        let json = String(decoding: policyData, as: UTF8.self).withCString { policyPtr in
+            mediaRoot.path.withCString { rootPtr in
+                String(decoding: busyData, as: UTF8.self).withCString { whimbrel_media_plan(handle, policyPtr, nowUnixMs, rootPtr, $0) }
+            }
+        }
+        guard let json else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
     /// Deletes a meeting's row and returns every part's files plus the snapshot folder
     /// (nil if another meeting still has snapshots in it). Nil when there was no such
     /// meeting. Delete the files with `deleteAllMeetingFiles`.
@@ -2212,6 +2307,11 @@ final class CoreMemoryStore {
 
     func setKeepSnapshots(meetingId: Int64, keep: Bool) {
         _ = whimbrel_memory_set_keep_snapshots(handle, meetingId, keep)
+    }
+
+    /// Sets the synced "Keep media" flag. Returns whether a row changed.
+    func setKeepMedia(meetingId: Int64, keep: Bool) -> Bool {
+        whimbrel_memory_set_keep_media(handle, meetingId, keep)
     }
 
     /// nil when the meeting does not exist.
@@ -2478,17 +2578,20 @@ final class CoreMemoryStore {
         return decode(json)
     }
 
-    /// Finds `.caf` files in `recordingsDir` that no meeting row claims, directly or via
-    /// the mic/system sibling rule (core/api::retention::scan_orphans). `liveWriteURLs`
+    /// Finds recording files in `recordingsDir` and, when non-nil, `mediaAudioDir` (the
+    /// media folder's `Audio`) that no meeting row claims, directly or via the mic/system
+    /// sibling rule (core/api::retention::scan_orphans_in). `liveWriteURLs`
     /// are the files a currently-active recording is writing right now, snapshotted by
     /// the caller on the main actor before hopping to `accessQueue`. Deletes nothing:
     /// pass `orphaned` to `deleteOrphanedRecordings` after any confirmation. Returns
     /// nil on a DB error.
-    func scanOrphanedRecordings(recordingsDir: URL, excluding liveWriteURLs: Set<URL>) -> CoreOrphanScan? {
+    func scanOrphanedRecordings(recordingsDir: URL, mediaAudioDir: URL?, excluding liveWriteURLs: Set<URL>) -> CoreOrphanScan? {
         guard let excludedData = try? JSONEncoder().encode(liveWriteURLs.map(\.path)),
               let json = recordingsDir.path.withCString({ dir in
-                  String(decoding: excludedData, as: UTF8.self).withCString { excluded in
-                      whimbrel_retention_scan_orphans(handle, dir, excluded)
+                  Self.withOptionalCString(mediaAudioDir?.path) { media in
+                      String(decoding: excludedData, as: UTF8.self).withCString { excluded in
+                          whimbrel_retention_scan_orphans(handle, dir, media, excluded)
+                      }
                   }
               }) else { return nil }
         defer { whimbrel_core_free_string(json) }
@@ -2914,6 +3017,27 @@ final class CoreMemoryStore {
     @discardableResult
     func resetSyncPushCursor() -> Bool {
         whimbrel_sync_reset_push_cursor(handle)
+    }
+
+    /// Skins Task 16: queues the user skin as `skinsRoot` now holds it (a missing folder sends a deletion).
+    /// Call on `accessQueue` with `UserSkinStore.writing` held; see `SkinSync`.
+    @discardableResult
+    func skinSyncEnqueue(skinsRoot: URL, skinId: String) -> Bool {
+        skinsRoot.path.withCString { root in skinId.withCString { whimbrel_skin_sync_enqueue(handle, root, $0) } }
+    }
+
+    /// Queues every skin in `skinsRoot` again (`SkinReconcileReport.pushAll`). As `skinSyncEnqueue`.
+    @discardableResult
+    func skinSyncEnqueueAll(skinsRoot: URL) -> Bool {
+        skinsRoot.path.withCString { whimbrel_skin_sync_enqueue_all(handle, $0) }
+    }
+
+    /// Writes the skins pulled from other devices into `skinsRoot` and takes the first-run and re-push
+    /// flags; nil on a malformed reply. As `skinSyncEnqueue`.
+    func skinSyncReconcile(skinsRoot: URL) -> SkinReconcileReport? {
+        guard let json = skinsRoot.path.withCString({ whimbrel_skin_sync_reconcile(handle, $0) }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return try? CoreLLMEnvelope<SkinReconcileReport>.result(json).get()
     }
 
     /// Why the most recent `syncContent` failed and in which phase; nil if it succeeded.
@@ -3760,8 +3884,25 @@ enum CoreSkinMaker {
         }))
     }
 
+    /// `data` at most 1600 px on its long side, same format (unchanged when it fits); nil when core
+    /// can't decode it. CPU-bound: call off the main thread.
+    static func downscale(_ data: Data) -> Data? {
+        try? bytes(call(data.base64EncodedString().withCString { whimbrel_skin_downscale($0) })).get()
+    }
+
     /// The guarded download (https:443, public addresses only, image bytes only); no charge.
     static func fetchImage(_ url: String) -> Result<Data, CoreLLMError> {
         bytes(call(url.withCString { whimbrel_skin_image_fetch($0) }))
     }
+}
+
+/// What `whimbrel_skin_sync_reconcile` changed in the skins folder, and whether every skin should be sent again.
+struct SkinReconcileReport: Decodable, Equatable {
+    var changed: [String] = []
+    var deleted: [String] = []
+    var pushAll = false
+    /// Why the reconcile failed (the flags were still taken); nil when it worked.
+    var error: String?
+
+    enum CodingKeys: String, CodingKey { case changed, deleted, pushAll = "push_all", error }
 }

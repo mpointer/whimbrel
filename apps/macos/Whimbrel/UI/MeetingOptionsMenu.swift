@@ -16,6 +16,9 @@ struct MeetingOptionsMenu: View {
     @State private var showSplitConfirmation = false
     @State private var partCount = 1
     @State private var splitMoveFailed = false
+    /// This device's own copy's flag, read from the store (the lead may be a peer's
+    /// copy, and `meeting` is the parent's snapshot). nil until loaded.
+    @State private var ownKeepMedia: Bool?
 
     @Environment(\.openWindow) private var openWindow
 
@@ -32,12 +35,14 @@ struct MeetingOptionsMenu: View {
         processingMeetingId != nil
     }
 
-    private func loadPartCount() {
+    private func loadMenuState() {
         guard let store = appState.coreStore else { return }
         let id = meeting.id
+        let ownId = meeting.ownCopyId(deviceId: appState.deviceId)
         CoreMemoryStore.accessQueue.async {
             let n = store.meetingParts(meetingId: id)?.count ?? 1
-            DispatchQueue.main.async { partCount = n }
+            let keep = ownId.flatMap { store.getMeeting(id: $0)?.keepMedia }
+            DispatchQueue.main.async { partCount = n; ownKeepMedia = keep }
         }
     }
 
@@ -58,6 +63,12 @@ struct MeetingOptionsMenu: View {
                 }
                 .disabled(Self.isSplitDisabled(processingMeetingId: appState.processingMeetingId))
             }
+            if let keep = ownKeepMedia {
+                Toggle("Keep media", isOn: Binding(
+                    get: { keep },
+                    set: { ownKeepMedia = $0; appState.setKeepMedia(meeting, keep: $0) { loadMenuState() } }
+                ))
+            }
             Divider()
             Button("Forget meeting…", role: .destructive) {
                 showForgetConfirmation = true
@@ -67,9 +78,9 @@ struct MeetingOptionsMenu: View {
             Label("Meeting options", systemImage: "ellipsis.circle")
         }
         .accessibilityLabel("Meeting options")
-        .onAppear { loadPartCount() }
-        .onChange(of: meeting.id) { _, _ in loadPartCount() }
-        .onChange(of: appState.processingMeetingId) { _, _ in loadPartCount() }
+        .onAppear { loadMenuState() }
+        .onChange(of: meeting.id) { _, _ in ownKeepMedia = nil; loadMenuState() }
+        .onChange(of: appState.processingMeetingId) { _, _ in loadMenuState() }
         .confirmationDialog(
             "Split the last part into its own meeting?",
             isPresented: $showSplitConfirmation,

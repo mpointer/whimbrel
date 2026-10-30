@@ -346,6 +346,95 @@ pub extern "C" fn whimbrel_sync_reset_push_cursor(handle: *mut StoreHandle) -> b
     store.reset_sync_push_cursor().is_ok()
 }
 
+/// Skins Task 16: queues the user skin `skin_id` as `skins_root` now holds it (a missing folder
+/// sends a deletion), after a save, rename, delete, undo or import on this Mac. `skins::sync::enqueue_skin`.
+/// Sends nothing for a built-in or before the handle has a device id. `false` on a null handle,
+/// malformed arguments or a failed read or write.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_skin_sync_enqueue(
+    handle: *mut StoreHandle,
+    skins_root: *const c_char,
+    skin_id: *const c_char,
+) -> bool {
+    let (Some(root), Some(id)) = (cstr_to_string(skins_root), cstr_to_string(skin_id)) else {
+        return false;
+    };
+    if handle.is_null() {
+        return false;
+    }
+    let store = unsafe { &(*handle).0 };
+    skins::sync::enqueue_skin(store, &skins::UserSkinStore::new(root), &id).is_ok()
+}
+
+/// Skins Task 16: queues every skin in `skins_root` again under the version already known for it
+/// (`skins::sync::enqueue_all`); call when `whimbrel_skin_sync_reconcile` answers `push_all`.
+/// `false` on a null handle, malformed arguments or a failed read or write.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_skin_sync_enqueue_all(
+    handle: *mut StoreHandle,
+    skins_root: *const c_char,
+) -> bool {
+    let Some(root) = cstr_to_string(skins_root) else {
+        return false;
+    };
+    if handle.is_null() {
+        return false;
+    }
+    let store = unsafe { &(*handle).0 };
+    skins::sync::enqueue_all(store, &skins::UserSkinStore::new(root)).is_ok()
+}
+
+/// Skins Task 16, after each content sync round: writes the skins pulled from other devices into
+/// `skins_root` (`skins::sync::reconcile_synced_skins`), then takes the first-run and re-push flags
+/// (both, so neither is left set), in the order Windows' `skin_sync::after_round` uses. Envelope
+/// `data` is `{"changed": [id], "deleted": [id], "push_all": bool}`; on `push_all` the caller runs
+/// `whimbrel_skin_sync_enqueue_all` under the same lock. A failed reconcile is logged to stderr and
+/// still takes the flags, with empty lists and its message in `error` (null otherwise). Bare NULL on a null handle or malformed arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_skin_sync_reconcile(
+    handle: *mut StoreHandle,
+    skins_root: *const c_char,
+) -> *mut c_char {
+    let Some(root) = cstr_to_string(skins_root) else {
+        return ptr::null_mut();
+    };
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let (report, error) = match skins::sync::reconcile_synced_skins(store, &skins::UserSkinStore::new(root)) {
+        Ok(report) => (report, None),
+        Err(e) => {
+            eprintln!("could not write the skins from other devices: {e}");
+            (skins::sync::ReconcileReport::default(), Some(e.to_string()))
+        }
+    };
+    let first = store.take_skin_first_push().unwrap_or(false);
+    let repush = store.take_skin_repush_request().unwrap_or(false);
+    let data = serde_json::json!({
+        "changed": report.changed, "deleted": report.deleted, "push_all": first || repush, "error": error,
+    });
+    json_to_c_string(ok_envelope(&data.to_string()))
+}
+
+/// Skins Task 16: an approved image at most 1600 px on its long side, in the format it came in
+/// (`skins::sync::downscale`); one that already fits comes back unchanged. `image_base64` and the
+/// envelope's `data` are base64; an undecodable image is `provider_failure`. Bare NULL on malformed arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_skin_downscale(image_base64: *const c_char) -> *mut c_char {
+    use base64::Engine;
+    let Some(text) = cstr_to_string(image_base64) else {
+        return ptr::null_mut();
+    };
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(text.as_bytes()) else {
+        return ptr::null_mut();
+    };
+    let result = skins::sync::downscale(&bytes, skins::images::MAX_SIDE)
+        .map(|b| base64::engine::general_purpose::STANDARD.encode(b))
+        .map_err(|_| api::ApiError::ProviderFailure);
+    envelope_json(&result).map_or(ptr::null_mut(), json_to_c_string)
+}
+
 /// Ingests a `screen-text.jsonl` file (FR-CAP-3 schema, see
 /// `apps/macos/Whimbrel/Models/ScreenTextRecord.swift`) into the store. Returns a
 /// JSON-encoded `IngestStats` string (caller frees with `whimbrel_core_free_string`),
@@ -2337,6 +2426,17 @@ pub extern "C" fn whimbrel_memory_set_keep_snapshots(handle: *mut StoreHandle, m
     store.set_keep_snapshots(meeting_id, keep).is_ok()
 }
 
+/// Sets a meeting's "Keep media" flag (exempt from compress/shrink/delete) and queues
+/// it for sync. Returns whether a row changed; false on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_memory_set_keep_media(handle: *mut StoreHandle, meeting_id: i64, keep: bool) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let store = unsafe { &(*handle).0 };
+    store.set_keep_media(meeting_id, keep).unwrap_or(false)
+}
+
 /// `{"dir":<string|null>,"keep":<bool>}` for a meeting, or null if it does not exist / on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_memory_meeting_snapshots_info(handle: *mut StoreHandle, meeting_id: i64) -> *mut c_char {
@@ -3514,9 +3614,13 @@ pub extern "C" fn whimbrel_retention_apply(
     }
 }
 
-/// M3.0 Task 2: finds `.caf` files in `recordings_dir` that no `meeting.audio_path`
-/// claims, directly or via the mic/system sibling rule (`api::retention::scan_orphans_with_min_age`, which also spares files modified in the last 7 days).
-/// `excluded_paths_json` is a JSON array of full paths to leave alone (the files a live
+/// M3.0 Task 2: finds recording files (`.caf`, `.wav`, `.m4a`) in `recordings_dir` and,
+/// when `media_audio_dir` is non-null, in that folder too (the media folder's `Audio`,
+/// where recordings are moved and compressed), that no `meeting.audio_path` claims,
+/// directly or via the mic/system sibling rule (`api::retention::scan_orphans_in`, which
+/// also spares files modified in the last 7 days). Only `system-audio-*`/`mic-audio-*`
+/// names are ever orphans; dotfiles (compression temp files) are skipped; a folder that
+/// can't be read is skipped. `excluded_paths_json` is a JSON array of full paths to leave alone (the files a live
 /// recording is writing right now). Returns `{"orphaned":[<full path>,…],
 /// "total_bytes":N}` (an unreadable directory yields an empty scan), or null on a null
 /// handle/path, malformed JSON, or a DB error. Deletes nothing: pass the `orphaned`
@@ -3525,6 +3629,7 @@ pub extern "C" fn whimbrel_retention_apply(
 pub extern "C" fn whimbrel_retention_scan_orphans(
     handle: *mut StoreHandle,
     recordings_dir: *const c_char,
+    media_audio_dir: *const c_char,
     excluded_paths_json: *const c_char,
 ) -> *mut c_char {
     if handle.is_null() {
@@ -3533,6 +3638,14 @@ pub extern "C" fn whimbrel_retention_scan_orphans(
     let Some(recordings_dir) = cstr_to_string(recordings_dir) else {
         return ptr::null_mut();
     };
+    let media_audio_dir = if media_audio_dir.is_null() {
+        None
+    } else {
+        let Some(dir) = cstr_to_string(media_audio_dir) else {
+            return ptr::null_mut();
+        };
+        Some(dir)
+    };
     let Some(excluded_json) = cstr_to_string(excluded_paths_json) else {
         return ptr::null_mut();
     };
@@ -3540,17 +3653,50 @@ pub extern "C" fn whimbrel_retention_scan_orphans(
         return ptr::null_mut();
     };
     let store = unsafe { &(*handle).0 };
-    let Ok(scan) = api::retention::scan_orphans_with_min_age(
-        store,
-        Path::new(&recordings_dir),
-        &excluded,
-        api::retention::ORPHAN_MIN_AGE,
-    ) else {
+    let mut dirs = vec![Path::new(&recordings_dir)];
+    if let Some(media) = &media_audio_dir {
+        dirs.push(Path::new(media));
+    }
+    let Ok(scan) = api::retention::scan_orphans_in(store, &dirs, &excluded, api::retention::ORPHAN_MIN_AGE) else {
         return ptr::null_mut();
     };
     match serde_json::to_string(&scan) {
         Ok(json) => json_to_c_string(json),
         Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Storage retention: the media plan (`api::media_retention::plan`) as `MediaPlan` JSON.
+/// `policy_json` is `MediaPolicy` (a missing or null age is "off"); `media_root` may be
+/// null (no moves); `busy_ids_json` is a JSON array of meeting ids to skip. Null on a null
+/// handle, malformed JSON, or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_media_plan(
+    handle: *mut StoreHandle,
+    policy_json: *const c_char,
+    now_unix_ms: i64,
+    media_root: *const c_char,
+    busy_ids_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(Ok(policy)) = cstr_to_string(policy_json)
+        .map(|p| serde_json::from_str::<api::media_retention::MediaPolicy>(&p))
+    else {
+        return ptr::null_mut();
+    };
+    let Some(Ok(busy)) = cstr_to_string(busy_ids_json).map(|b| serde_json::from_str::<Vec<i64>>(&b)) else {
+        return ptr::null_mut();
+    };
+    let root = cstr_to_string(media_root).unwrap_or_default();
+    let store = unsafe { &(*handle).0 };
+    match api::media_retention::plan(store, &policy, now_unix_ms, Path::new(&root), &busy)
+        .ok()
+        .and_then(|plan| serde_json::to_string(&plan).ok())
+    {
+        Some(json) => json_to_c_string(json),
+        None => ptr::null_mut(),
     }
 }
 
@@ -5531,7 +5677,7 @@ mod tests {
         assert!(whimbrel_memory_get_capture_item(ptr::null_mut(), 1).is_null());
         let rec = to_cstring("/tmp");
         assert!(whimbrel_retention_apply(ptr::null_mut(), 7, 30, 90, 0, rec.as_ptr()).is_null());
-        assert!(whimbrel_retention_scan_orphans(ptr::null_mut(), rec.as_ptr(), rec.as_ptr()).is_null());
+        assert!(whimbrel_retention_scan_orphans(ptr::null_mut(), rec.as_ptr(), ptr::null(), rec.as_ptr()).is_null());
         assert!(whimbrel_llm_spend_today(ptr::null_mut(), ptr::null()).is_null());
         assert!(!whimbrel_memory_set_meeting_transcript(
             ptr::null_mut(),
@@ -5943,6 +6089,8 @@ mod tests {
 
         assert!(whimbrel_memory_set_meeting_snapshots_dir(handle, mid, to_cstring("/snaps").as_ptr()));
         assert!(whimbrel_memory_set_keep_snapshots(handle, mid, true));
+        assert!(whimbrel_memory_set_keep_media(handle, mid, true));
+        assert!(!whimbrel_memory_set_keep_media(handle, 999, true));
         let info: serde_json::Value = serde_json::from_str(&take(whimbrel_memory_meeting_snapshots_info(handle, mid)).unwrap()).unwrap();
         assert_eq!(info, serde_json::json!({"dir": "/snaps", "keep": true}));
         assert!(whimbrel_memory_meeting_snapshots_info(handle, 999).is_null());
@@ -5961,6 +6109,7 @@ mod tests {
         assert!(whimbrel_memory_list_meeting_snapshots(ptr::null_mut(), 1).is_null());
         assert!(!whimbrel_memory_set_meeting_snapshots_dir(ptr::null_mut(), 1, c.as_ptr()));
         assert!(!whimbrel_memory_set_keep_snapshots(ptr::null_mut(), 1, true));
+        assert!(!whimbrel_memory_set_keep_media(ptr::null_mut(), 1, true));
         assert!(whimbrel_memory_meeting_snapshots_info(ptr::null_mut(), 1).is_null());
     }
 
@@ -6419,7 +6568,7 @@ mod tests {
         let rec = to_cstring(dir.path().to_str().unwrap());
         let live = dir.path().join("mic-audio-LIVE.caf");
         let excluded = to_cstring(&serde_json::to_string(&[live.to_str().unwrap()]).unwrap());
-        let json = whimbrel_retention_scan_orphans(handle, rec.as_ptr(), excluded.as_ptr());
+        let json = whimbrel_retention_scan_orphans(handle, rec.as_ptr(), ptr::null(), excluded.as_ptr());
         assert!(!json.is_null());
         let json_str = unsafe { CStr::from_ptr(json) }.to_str().unwrap().to_string();
         whimbrel_core_free_string(json);
@@ -6435,7 +6584,83 @@ mod tests {
 
         let bad = to_cstring("not json");
         assert_eq!(whimbrel_retention_delete_orphans(bad.as_ptr()), -1);
-        assert!(whimbrel_retention_scan_orphans(handle, rec.as_ptr(), bad.as_ptr()).is_null());
+        assert!(whimbrel_retention_scan_orphans(handle, rec.as_ptr(), ptr::null(), bad.as_ptr()).is_null());
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn retention_scan_orphans_also_scans_the_media_audio_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path_c = to_cstring(dir.path().join("scan-media.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let rec_dir = dir.path().join("rec");
+        let media_dir = dir.path().join("media").join("Audio");
+        std::fs::create_dir_all(&rec_dir).unwrap();
+        std::fs::create_dir_all(&media_dir).unwrap();
+        let orphan = media_dir.join("mic-audio-ORPHAN.m4a");
+        let user = media_dir.join("interview.m4a");
+        for p in [&orphan, &user] {
+            std::fs::write(p, "ab").unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(p)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 86_400))
+                .unwrap();
+        }
+
+        let rec = to_cstring(rec_dir.to_str().unwrap());
+        let media = to_cstring(media_dir.to_str().unwrap());
+        let excluded = to_cstring("[]");
+        let json = whimbrel_retention_scan_orphans(handle, rec.as_ptr(), media.as_ptr(), excluded.as_ptr());
+        assert!(!json.is_null());
+        let json_str = unsafe { CStr::from_ptr(json) }.to_str().unwrap().to_string();
+        whimbrel_core_free_string(json);
+        let scan: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(scan["orphaned"], serde_json::json!([orphan.to_str().unwrap()]));
+        assert_eq!(scan["total_bytes"], 2);
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn media_plan_returns_plan_json_and_null_on_bad_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path_c = to_cstring(dir.path().join("media-plan.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let rec = dir.path().join("rec");
+        std::fs::create_dir_all(&rec).unwrap();
+        let system = rec.join("system-audio-S.caf");
+        std::fs::write(&system, "abc").unwrap();
+        std::fs::write(rec.join("mic-audio-S.caf"), "de").unwrap();
+        let id = unsafe { &(*handle).0 }
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "d".into(),
+                start_unix_ms: 0,
+                end_unix_ms: None,
+                title: "M".into(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Calendar,
+                audio_path: Some(system.to_str().unwrap().into()),
+                status: memory::MeetingStatus::Completed,
+            })
+            .unwrap();
+        let policy = to_cstring(r#"{"compress_after_days":30,"delete_audio_after_days":null}"#);
+        let root = to_cstring("/nonexistent/whimbrel-media");
+        let busy = to_cstring("[]");
+        let json = whimbrel_media_plan(handle, policy.as_ptr(), 31 * 86_400_000, root.as_ptr(), busy.as_ptr());
+        assert!(!json.is_null());
+        let plan: serde_json::Value = serde_json::from_str(&take_string(json)).unwrap();
+        assert_eq!(plan["work"][0]["meeting_id"], id);
+        assert_eq!(plan["work"][0]["steps"], serde_json::json!(["compress"]));
+        assert_eq!(plan["usage"]["audio_full_bytes"], 5);
+        assert_eq!(plan["disconnected_meetings"], 0);
+
+        let bad = to_cstring("nope");
+        assert!(whimbrel_media_plan(handle, bad.as_ptr(), 0, root.as_ptr(), busy.as_ptr()).is_null());
+        assert!(whimbrel_media_plan(handle, policy.as_ptr(), 0, root.as_ptr(), bad.as_ptr()).is_null());
+        assert!(whimbrel_media_plan(ptr::null_mut(), policy.as_ptr(), 0, root.as_ptr(), busy.as_ptr()).is_null());
         whimbrel_memory_close(handle);
     }
 
@@ -6561,6 +6786,7 @@ mod tests {
             summary_open_questions: vec![],
             summary_provider: None,
             summary_model: None,
+            keep_media: None,
         };
         store
             .apply_synced_meeting("device-a", 1, None, &meeting)
@@ -7315,6 +7541,61 @@ mod tests {
         assert!(whimbrel_routines_reject_run(handle, run_id));
         assert!(store.pending_routine_runs().unwrap().is_empty());
 
+        whimbrel_memory_close(handle);
+    }
+
+    /// Skins Task 16: the Mac's four skin-sync entry points reach `core/skins::sync`.
+    #[test]
+    fn whimbrel_skin_sync_enqueues_reconciles_and_downscales() {
+        use base64::Engine;
+        let dir = tempfile::tempdir().unwrap();
+        let path = CString::new(dir.path().join("s.sqlite").to_str().unwrap()).unwrap();
+        let root = dir.path().join("skins");
+        let root_c = CString::new(root.to_str().unwrap()).unwrap();
+        let handle = whimbrel_memory_open(path.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let mac = CString::new("mac").unwrap();
+        assert!(whimbrel_memory_set_device_id(handle, mac.as_ptr()));
+        let mut skin = skins::whimbrel_default();
+        skin.id = "user-a-1".into();
+        skins::UserSkinStore::new(&root).save(&skin, &[], &[]).unwrap();
+        let skin_rows = || {
+            unsafe { &(*handle).0 }.list_outbox_operations().unwrap().into_iter().filter(|r| r.1 == "skin").count()
+        };
+
+        let id = CString::new("user-a-1").unwrap();
+        assert!(whimbrel_skin_sync_enqueue(handle, root_c.as_ptr(), id.as_ptr()));
+        assert_eq!(skin_rows(), 1);
+        assert!(!whimbrel_skin_sync_enqueue(ptr::null_mut(), root_c.as_ptr(), id.as_ptr()));
+
+        let reconcile = || {
+            let out = whimbrel_skin_sync_reconcile(handle, root_c.as_ptr());
+            let text = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+            whimbrel_core_free_string(out);
+            serde_json::from_str::<serde_json::Value>(&text).unwrap()
+        };
+        let first = reconcile();
+        assert_eq!(first["ok"], true);
+        assert_eq!(first["data"]["changed"], serde_json::json!([]));
+        assert_eq!(first["data"]["push_all"], true, "the first round sends everything");
+        assert_eq!(reconcile()["data"]["push_all"], false, "once");
+        assert!(whimbrel_skin_sync_enqueue_all(handle, root_c.as_ptr()));
+        assert_eq!(skin_rows(), 2);
+
+        let mut png = Vec::new();
+        let img = image::DynamicImage::ImageRgb8(image::RgbImage::new(3200, 100));
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let input = CString::new(b64.encode(&png)).unwrap();
+        let out = whimbrel_skin_downscale(input.as_ptr());
+        let envelope: serde_json::Value = serde_json::from_str(unsafe { CStr::from_ptr(out) }.to_str().unwrap()).unwrap();
+        whimbrel_core_free_string(out);
+        let small = b64.decode(envelope["data"].as_str().unwrap()).unwrap();
+        assert_eq!(image::load_from_memory(&small).unwrap().width(), 1600);
+        let junk = CString::new(b64.encode(b"not an image")).unwrap();
+        let out = whimbrel_skin_downscale(junk.as_ptr());
+        assert!(unsafe { CStr::from_ptr(out) }.to_str().unwrap().contains("provider_failure"));
+        whimbrel_core_free_string(out);
         whimbrel_memory_close(handle);
     }
 

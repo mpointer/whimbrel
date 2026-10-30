@@ -19,11 +19,17 @@ final class RetentionScheduler: ObservableObject {
     private let log = Logger(subsystem: "com.mpointer.kestrel", category: "retention-scheduler")
     private var initialTimer: Timer?
     private var repeatingTimer: Timer?
+    private var deviceId = ""
+    private weak var runner: MediaRetentionRunner?
 
-    func start(retention: RetentionSettings, store: CoreMemoryStore?, audio: AudioCaptureService) {
+    /// The 30-second initial run is media retention's launch trigger; the repeating one its daily trigger.
+    func start(retention: RetentionSettings, media: MediaSettings, deviceId: String, store: CoreMemoryStore?, audio: AudioCaptureService,
+               runner: MediaRetentionRunner) {
         stop()
+        self.deviceId = deviceId
+        self.runner = runner
         initialTimer = Timer.scheduledTimer(withTimeInterval: Self.initialDelaySeconds, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.runAndScheduleRepeating(retention: retention, store: store, audio: audio) }
+            Task { @MainActor in self?.runAndScheduleRepeating(retention: retention, media: media, store: store, audio: audio) }
         }
     }
 
@@ -34,14 +40,14 @@ final class RetentionScheduler: ObservableObject {
         repeatingTimer = nil
     }
 
-    private func runAndScheduleRepeating(retention: RetentionSettings, store: CoreMemoryStore?, audio: AudioCaptureService) {
-        run(retention: retention, store: store, audio: audio)
+    private func runAndScheduleRepeating(retention: RetentionSettings, media: MediaSettings, store: CoreMemoryStore?, audio: AudioCaptureService) {
+        run(retention: retention, media: media, store: store, audio: audio)
         repeatingTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.run(retention: retention, store: store, audio: audio) }
+            Task { @MainActor in self?.run(retention: retention, media: media, store: store, audio: audio) }
         }
     }
 
-    private func run(retention: RetentionSettings, store: CoreMemoryStore?, audio: AudioCaptureService) {
+    private func run(retention: RetentionSettings, media: MediaSettings, store: CoreMemoryStore?, audio: AudioCaptureService) {
         retention.applyNow(store: store) { [weak self] result in
             if result != nil {
                 self?.log.info("Automatic daily retention run completed")
@@ -49,7 +55,8 @@ final class RetentionScheduler: ObservableObject {
                 self?.log.error("Automatic daily retention run failed (store unavailable or DB error)")
             }
         }
-        sweepOrphanedFiles(store: store, audio: audio)
+        sweepOrphanedFiles(store: store, mediaAudioDir: media.audioURL(deviceId: deviceId), audio: audio)
+        runner?.run(mode: .daily)
     }
 
     /// Same scan/delete the manual "Scan for Orphaned Files" Settings button does
@@ -57,11 +64,11 @@ final class RetentionScheduler: ObservableObject {
     /// prompt — matches `retention.applyNow`'s own hands-off deletion above.
     /// `liveWriteURLs` must be snapshotted here, on the main actor, before hopping to
     /// `CoreMemoryStore.accessQueue` — `AudioCaptureService` is main-actor-isolated.
-    private func sweepOrphanedFiles(store: CoreMemoryStore?, audio: AudioCaptureService) {
+    private func sweepOrphanedFiles(store: CoreMemoryStore?, mediaAudioDir: URL, audio: AudioCaptureService) {
         guard let store else { return }
         let liveWriteURLs = Set([audio.systemAudioFileURL, audio.micAudioFileURL].compactMap { $0 })
         CoreMemoryStore.accessQueue.async { [weak self] in
-            guard let scan = store.scanOrphanedRecordings(recordingsDir: SpikePaths.root, excluding: liveWriteURLs) else {
+            guard let scan = store.scanOrphanedRecordings(recordingsDir: SpikePaths.root, mediaAudioDir: mediaAudioDir, excluding: liveWriteURLs) else {
                 self?.log.error("Automatic orphan sweep failed: could not read referenced file paths from the database")
                 return
             }

@@ -41,6 +41,7 @@ pub mod providers;
 pub mod meeting_prep;
 pub mod profile_suggest;
 pub mod meeting_workspace;
+pub mod media_retention;
 pub mod meetings;
 pub mod routine_runs;
 pub mod routing;

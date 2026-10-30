@@ -134,7 +134,7 @@ final class MeetingPartsBridgeTests: XCTestCase {
         }
         MeetingContinuation.completeRecording(store: store, meetingId: m.id, partIndex: nil, continued: true,
                                               endUnixMs: 120_000, audioPath: m.b.path)
-        let orphaned = store.scanOrphanedRecordings(recordingsDir: tempDir, excluding: [])?.orphaned
+        let orphaned = store.scanOrphanedRecordings(recordingsDir: tempDir, mediaAudioDir: nil, excluding: [])?.orphaned
         XCTAssertEqual(orphaned, [], "both parts' audio stays owned")
         let parts = store.meetingParts(meetingId: m.id)
         XCTAssertEqual(parts?.map(\.partIndex), [1, 2])

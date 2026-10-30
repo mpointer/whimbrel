@@ -19,5 +19,9 @@
   "dependencies": {
     "@tursodatabase/serverless": "^1.4.0",
     "jose": "^6.2.4"
+  },
+  "overrides": {
+    "undici": "^7.30.1",
+    "sharp": "^0.35.5"
   }
 }

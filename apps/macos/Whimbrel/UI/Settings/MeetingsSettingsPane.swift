@@ -105,37 +105,11 @@ struct MeetingsSettingsPane: View {
             ))
             .tint(Color.whimbrelAccentPrimary)
 
-            Text("Saves one image per slide shown in recorded meetings to a folder you can browse. Needs Screen Recording permission."
+            Text("Saves one image per slide shown in recorded meetings to the media folder (set in Retention). Needs Screen Recording permission."
                  + (appState.permissions.screenRecordingGranted ? "" : " Screen Recording permission is off."))
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-
-            HStack {
-                Text("Snapshots folder")
-                Text(appState.snapshotSettings.rootURL.path)
-                    .font(.whimbrelBody(.caption))
-                    .foregroundStyle(Color.whimbrelTextSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-                Button("Choose…") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseFiles = false
-                    panel.canChooseDirectories = true
-                    panel.canCreateDirectories = true
-                    panel.allowsMultipleSelection = false
-                    if panel.runModal() == .OK, let url = panel.url {
-                        appState.snapshotSettings.customRootPath = url.path
-                    }
-                }
-                .buttonStyle(.whimbrelSecondary)
-                .controlSize(.small)
-                Button("Reset") { appState.snapshotSettings.customRootPath = nil }
-                    .buttonStyle(.whimbrelSecondary)
-                    .controlSize(.small)
-                    .disabled(appState.snapshotSettings.customRootPath == nil)
-            }
 
             Divider().overlay(Color.whimbrelBorder)
 

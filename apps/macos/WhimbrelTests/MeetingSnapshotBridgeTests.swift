@@ -32,6 +32,14 @@ final class MeetingSnapshotBridgeTests: XCTestCase {
         try! Data("x".utf8).write(to: url)
     }
 
+    func testSetKeepMediaRoundTrips() {
+        let mid = makeMeeting()
+        XCTAssertEqual(store.getMeeting(id: mid)?.keepMedia, false)
+        XCTAssertTrue(store.setKeepMedia(meetingId: mid, keep: true))
+        XCTAssertEqual(store.getMeeting(id: mid)?.keepMedia, true)
+        XCTAssertFalse(store.setKeepMedia(meetingId: 999, keep: true))
+    }
+
     func testInsertListReplaceDeleteRoundTrip() {
         let mid = makeMeeting()
         let a = tempDir.appendingPathComponent("a.png"), b = tempDir.appendingPathComponent("b.png")

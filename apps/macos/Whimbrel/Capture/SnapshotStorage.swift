@@ -3,8 +3,8 @@ import ImageIO
 import UniformTypeIdentifiers
 
 /// Per-meeting snapshot folders. Rust's retention sweep deletes a folder only if it holds
-/// `SNAPSHOT_MARKER` and otherwise only `.DS_Store` and PNGs named like `fileName` makes them
-/// (`retention::is_snapshot_png`), so write nothing else here and keep the two in step.
+/// `SNAPSHOT_MARKER` and otherwise only `.DS_Store` and images named like `fileName` makes them
+/// (`retention::is_snapshot_file`), so write nothing else here and keep the two in step.
 struct SnapshotStorage {
     static let markerName = ".kestrel-snapshots"
 
@@ -38,14 +38,18 @@ struct SnapshotStorage {
 
     func makeMeetingFolder(start: Date, title: String) throws -> URL {
         let name = Self.folderName(start: start, title: title)
+        // Use the root only when its parent (the media folder) already exists: an unmounted
+        // drive's mount point outside /Volumes must not get folders made on the internal disk.
+        let parentExists = FileManager.default.fileExists(atPath: root.deletingLastPathComponent().path)
         do {
+            guard parentExists else { throw CocoaError(.fileNoSuchFile) }
             return try Self.create(name, under: root)
         } catch {
             return try Self.create(name, under: fallbackRoot)
         }
     }
 
-    private static func create(_ name: String, under parent: URL) throws -> URL {
+    static func create(_ name: String, under parent: URL) throws -> URL {
         let fm = FileManager.default
         try fm.createDirectory(at: parent, withIntermediateDirectories: true)
         var n = 1
@@ -60,25 +64,34 @@ struct SnapshotStorage {
         }
     }
 
-    static func fileName(captured: Date, existing: Set<String>) -> String {
+    /// The encoder `writeHEIC` asks for; a test seam for a Mac without one.
+    nonisolated(unsafe) static var heicType = UTType.heic.identifier
+
+    /// `HH.mm.ss.<ext>`, suffixed `-2`, `-3`… while any file of that stem is taken: a `.png`,
+    /// `.heic` or `.thumb.jpg` of one stem would share a thumbnail name.
+    static func fileName(captured: Date, existing: Set<String>, ext: String = "heic") -> String {
         let base = formatted(captured, "HH.mm.ss", .current)
-        var name = "\(base).png"
+        var stem = base
         var n = 2
-        while existing.contains(name) {
-            name = "\(base)-\(n).png"
+        while ["png", "heic", "thumb.jpg"].contains(where: { existing.contains("\(stem).\($0)") }) {
+            stem = "\(base)-\(n)"
             n += 1
         }
-        return name
+        return "\(stem).\(ext)"
     }
 
-    func writePNG(_ image: CGImage, to folder: URL, captured: Date) throws -> URL {
+    /// Writes the frame as HEIC at full resolution; where HEIC can't be encoded, as the PNG it
+    /// always was, so a frame is never dropped for want of an encoder.
+    func writeHEIC(_ image: CGImage, to folder: URL, captured: Date) throws -> URL {
         let existing = Set((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
-        let url = folder.appendingPathComponent(Self.fileName(captured: captured, existing: existing))
-        guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
-            throw CocoaError(.fileWriteUnknown)
+        for (ext, type) in [("heic", Self.heicType), ("png", UTType.png.identifier)] {
+            let url = folder.appendingPathComponent(Self.fileName(captured: captured, existing: existing, ext: ext))
+            if let dest = CGImageDestinationCreateWithURL(url as CFURL, type as CFString, 1, nil) {
+                CGImageDestinationAddImage(dest, image, nil)
+                if CGImageDestinationFinalize(dest) { return url }
+            }
+            try? FileManager.default.removeItem(at: url)
         }
-        CGImageDestinationAddImage(dest, image, nil)
-        guard CGImageDestinationFinalize(dest) else { throw CocoaError(.fileWriteUnknown) }
-        return url
+        throw CocoaError(.fileWriteUnknown)
     }
 }

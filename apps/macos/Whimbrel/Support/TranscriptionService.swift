@@ -83,23 +83,33 @@ enum TranscriptionService {
     /// transcription runs, a *newer* session may already be in progress, so "latest"
     /// would silently transcribe the wrong meeting.
     static func transcribe(meetingAudioPath: String, expectedSpeakerCount: Int?) throws -> (url: URL, lines: [Line]) {
-        let url = URL(fileURLWithPath: meetingAudioPath)
-        let filename = url.lastPathComponent
-        let prefix = filename.hasPrefix("system-audio-") ? "system-audio-" : "mic-audio-"
-        guard filename.hasPrefix(prefix) else {
+        guard let tracks = trackURLs(forAudioPath: meetingAudioPath) else {
             throw TranscriptionError.noRecordingFound
         }
+        let url = URL(fileURLWithPath: meetingAudioPath)
+        let prefix = url.lastPathComponent.hasPrefix("system-audio-") ? "system-audio-" : "mic-audio-"
         let stamp = timestamp(from: url, prefix: prefix)
-        return try transcribeSession(stamp: stamp, expectedSpeakerCount: expectedSpeakerCount)
+        return try transcribeSession(system: tracks.system, mic: tracks.mic, stamp: stamp, expectedSpeakerCount: expectedSpeakerCount)
     }
 
-    private static func transcribeSession(stamp: String, expectedSpeakerCount: Int?) throws -> (url: URL, lines: [Line]) {
+    /// Mirrors core `sibling_audio_paths`: the track pair lives beside the stored path,
+    /// with the stored path's own extension (.caf, or .m4a once compressed). Nil when the
+    /// file name carries neither track prefix.
+    static func trackURLs(forAudioPath path: String) -> (system: URL, mic: URL)? {
+        let url = URL(fileURLWithPath: path)
+        let name = url.lastPathComponent
+        let stem: String
+        if name.hasPrefix("system-audio-") { stem = String(name.dropFirst("system-audio-".count)) }
+        else if name.hasPrefix("mic-audio-") { stem = String(name.dropFirst("mic-audio-".count)) }
+        else { return nil }
+        let dir = url.deletingLastPathComponent()
+        return (dir.appendingPathComponent("system-audio-" + stem), dir.appendingPathComponent("mic-audio-" + stem))
+    }
+
+    private static func transcribeSession(system systemURL: URL, mic micURL: URL, stamp: String, expectedSpeakerCount: Int?) throws -> (url: URL, lines: [Line]) {
         guard FileManager.default.fileExists(atPath: modelPath.path) else {
             throw TranscriptionError.modelMissing(modelPath)
         }
-
-        let systemURL = SpikePaths.audioFile(name: "system-audio-\(stamp).caf")
-        let micURL = SpikePaths.audioFile(name: "mic-audio-\(stamp).caf")
 
         let hasSystemAudio = FileManager.default.fileExists(atPath: systemURL.path) && AudioConversion.hasAudioContent(systemURL)
         let hasMicAudio = FileManager.default.fileExists(atPath: micURL.path)

@@ -52,11 +52,11 @@ final class MeetingSnapshotServiceTests: XCTestCase {
         for _ in 0..<ticks { await service.tick() }
     }
 
-    /// PNGs in every meeting folder under the root (the marker file is not a snapshot).
+    /// Snapshot images in every meeting folder under the root (the marker file is not a snapshot).
     private func pngs() -> [URL] {
         let folders = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
         return folders.flatMap { (try? FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [] }
-            .filter { $0.pathExtension == "png" }
+            .filter { ["heic", "png"].contains($0.pathExtension) }
             .map { $0.resolvingSymlinksInPath() }  // listings say /private/var; the service stored /var
     }
 

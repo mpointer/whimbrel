@@ -5,7 +5,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
-use crate::{MeetingStatus, NewTranscriptSegment, Store};
+use crate::{MeetingSnapshot, MeetingStatus, NewTranscriptSegment, Store};
 
 /// How long after a meeting ends a new recording with the same key still continues it.
 pub const CONTINUE_WINDOW_MS: i64 = 600_000;
@@ -30,6 +30,23 @@ pub struct MeetingPart {
     pub audio_path: Option<String>,
     pub transcript_path: Option<String>,
     pub transcribed: bool,
+}
+
+/// One meeting's stored media, from [`Store::media_meetings`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct MediaMeeting {
+    pub id: i64,
+    pub start_unix_ms: i64,
+    pub keep_media: bool,
+    /// The meeting's "Keep snapshots": its full images are never shrunk.
+    pub keep_snapshots: bool,
+    /// `meeting.audio_path` then every part's, deduplicated.
+    pub audio_paths: Vec<String>,
+    pub snapshots: Vec<MeetingSnapshot>,
+    pub snapshots_dir: Option<String>,
+    /// Every part is transcribed (a legacy meeting without parts: it has a transcript).
+    /// Audio is never deleted before that.
+    pub all_transcribed: bool,
 }
 
 pub(crate) fn ensure_meeting_part_schema(conn: &Connection) -> rusqlite::Result<()> {
@@ -450,7 +467,9 @@ impl Store {
     }
 
     /// After the caller moved snapshot files on disk: points `meeting_id`'s snapshot rows at
-    /// their new paths and records the directory they now live in.
+    /// their new paths and records the directory they now live in. An `old` that matches no
+    /// row of this meeting is an error and rolls everything back, so the caller keeps its
+    /// originals.
     pub fn set_meeting_snapshot_paths(
         &self,
         meeting_id: i64,
@@ -459,16 +478,112 @@ impl Store {
     ) -> rusqlite::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         for (old, new) in moves {
-            tx.execute(
+            let updated = tx.execute(
                 "UPDATE meeting_snapshot SET file_path = ?1 WHERE meeting_id = ?2 AND file_path = ?3",
                 params![new, meeting_id, old],
             )?;
+            // The caller deletes each `old` file next; one no row pointed at must stop that.
+            if updated == 0 {
+                return Err(bad("snapshot path matches no stored row"));
+            }
         }
         tx.execute(
             "UPDATE meeting SET snapshots_dir = ?2 WHERE id = ?1",
             params![meeting_id, snapshots_dir],
         )?;
         tx.commit()
+    }
+
+    /// After the caller moved or compressed audio on disk: rewrites `meeting.audio_path` and
+    /// every `meeting_part.audio_path` of `meeting_id` that equals an `old`. Local only: no
+    /// restamp, no outbox (paths are device-local). An `old` that matches no row in either
+    /// table is an error and rolls everything back: the caller must not delete originals
+    /// whose stored paths were never rewritten.
+    pub fn set_meeting_audio_paths(
+        &self,
+        meeting_id: i64,
+        moves: &[(String, String)],
+    ) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        for (old, new) in moves {
+            let updated = tx.execute(
+                "UPDATE meeting SET audio_path = ?1 WHERE id = ?2 AND audio_path = ?3",
+                params![new, meeting_id, old],
+            )? + tx.execute(
+                "UPDATE meeting_part SET audio_path = ?1 WHERE meeting_id = ?2 AND audio_path = ?3",
+                params![new, meeting_id, old],
+            )?;
+            if updated == 0 {
+                return Err(bad("audio path matches no stored path"));
+            }
+        }
+        tx.commit()
+    }
+
+    /// Moves the write-ahead log into the database file and flushes it to the drive itself
+    /// (`checkpoint_fullfsync`, so F_FULLFSYNC on macOS). True only when every committed
+    /// frame made it, so a path rewrite before this call survives a power cut: callers
+    /// delete original media files only after this returns true. False when a reader on
+    /// another connection still needs older frames (after the busy timeout).
+    pub fn checkpoint_durable(&self) -> rusqlite::Result<bool> {
+        let (busy, log, done): (i64, i64, i64) = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(FULL)", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(busy == 0 && log == done)
+    }
+
+    /// Every completed meeting with an audio path (its own or a part's) or a snapshot row,
+    /// oldest first: the storage-retention planner's input.
+    pub fn media_meetings(&self) -> rusqlite::Result<Vec<MediaMeeting>> {
+        let rows = self
+            .conn
+            .prepare(
+                "SELECT id, start_unix_ms, keep_media, audio_path, snapshots_dir, keep_snapshots, \
+                 CASE WHEN EXISTS (SELECT 1 FROM meeting_part p WHERE p.meeting_id = m.id) \
+                 THEN NOT EXISTS (SELECT 1 FROM meeting_part p WHERE p.meeting_id = m.id AND p.transcribed = 0) \
+                 ELSE transcript_path IS NOT NULL END \
+                 FROM meeting m \
+                 WHERE status = ?1 AND (audio_path IS NOT NULL \
+                 OR EXISTS (SELECT 1 FROM meeting_part p WHERE p.meeting_id = m.id AND p.audio_path IS NOT NULL) \
+                 OR EXISTS (SELECT 1 FROM meeting_snapshot s WHERE s.meeting_id = m.id)) \
+                 ORDER BY start_unix_ms, id",
+            )?
+            .query_map(params![MeetingStatus::Completed.as_str()], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)? != 0,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, i64>(5)? != 0,
+                    r.get::<_, bool>(6)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut parts = self.conn.prepare(
+            "SELECT audio_path FROM meeting_part WHERE meeting_id = ?1 AND audio_path IS NOT NULL ORDER BY part_index",
+        )?;
+        rows.into_iter()
+            .map(|(id, start_unix_ms, keep_media, audio, snapshots_dir, keep_snapshots, all_transcribed)| {
+                let mut audio_paths: Vec<String> = audio.into_iter().collect();
+                for p in parts.query_map(params![id], |r| r.get::<_, String>(0))? {
+                    let p = p?;
+                    if !audio_paths.contains(&p) {
+                        audio_paths.push(p);
+                    }
+                }
+                Ok(MediaMeeting {
+                    id,
+                    start_unix_ms,
+                    keep_media,
+                    keep_snapshots,
+                    audio_paths,
+                    snapshots: self.list_meeting_snapshots(id)?,
+                    snapshots_dir,
+                    all_transcribed,
+                })
+            })
+            .collect()
     }
 
     /// Parts in order. A legacy meeting (no rows) yields one part built from the meeting row.
@@ -1066,6 +1181,25 @@ mod tests {
     }
 
     #[test]
+    fn set_meeting_snapshot_paths_rejects_an_unknown_old_path_and_changes_nothing() {
+        let s = Store::open_in_memory().unwrap();
+        let id = three_parts(&s);
+        let moves = vec![
+            ("/snaps/o/1.png".to_string(), "/snaps/n/1.png".to_string()),
+            ("/snaps/o/nope.png".to_string(), "/snaps/n/nope.png".to_string()),
+        ];
+        assert!(s.set_meeting_snapshot_paths(id, &moves, "/snaps/n").is_err());
+        assert_eq!(snapshot_paths(&s, id), ["/snaps/o/1.png", "/snaps/o/2.png", "/snaps/o/3.png"]);
+        assert_eq!(s.meeting_snapshots_info(id).unwrap().unwrap().0.as_deref(), Some("/snaps/o"));
+        // Another meeting's row doesn't count as a match either.
+        let other = three_parts(&s);
+        let theirs = vec![("/snaps/o/1.png".to_string(), "/snaps/n/1.png".to_string())];
+        s.conn.execute("DELETE FROM meeting_snapshot WHERE meeting_id = ?1", [id]).unwrap();
+        assert!(s.set_meeting_snapshot_paths(id, &theirs, "/snaps/n").is_err());
+        assert_eq!(snapshot_paths(&s, other)[0], "/snaps/o/1.png");
+    }
+
+    #[test]
     fn split_moves_later_parts_segments_and_snapshots() {
         let s = Store::open_in_memory().unwrap();
         let id = three_parts(&s);
@@ -1330,5 +1464,115 @@ mod tests {
             .moved_snapshot_paths
             .contains(&"/snaps/o/gap.png".to_string()));
         assert!(snapshot_paths(&s, id).contains(&"/snaps/o/gap.png".to_string()));
+    }
+
+    #[test]
+    fn set_meeting_audio_paths_rewrites_meeting_and_parts() {
+        let s = Store::open_in_memory().unwrap();
+        let id = two_parts(&s);
+        let other = two_parts(&s);
+        let seq = |s: &Store| -> i64 {
+            s.conn
+                .query_row("SELECT local_seq FROM meeting WHERE id = ?1", [id], |r| r.get(0))
+                .unwrap()
+        };
+        let before = seq(&s);
+        s.set_meeting_audio_paths(
+            id,
+            &[
+                ("/r/system-audio-A.caf".into(), "/m/Audio/system-audio-A.m4a".into()),
+                ("/r/system-audio-B.caf".into(), "/m/Audio/system-audio-B.m4a".into()),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            s.get_meeting(id).unwrap().unwrap().audio_path.as_deref(),
+            Some("/m/Audio/system-audio-A.m4a")
+        );
+        let paths: Vec<_> = s.meeting_parts(id).unwrap().into_iter().map(|p| p.audio_path.unwrap()).collect();
+        assert_eq!(paths, ["/m/Audio/system-audio-A.m4a", "/m/Audio/system-audio-B.m4a"]);
+        assert_eq!(seq(&s), before, "local only: no restamp");
+        // Another meeting sharing the same old path is untouched.
+        assert_eq!(
+            s.get_meeting(other).unwrap().unwrap().audio_path.as_deref(),
+            Some("/r/system-audio-A.caf")
+        );
+        assert_eq!(s.meeting_parts(other).unwrap()[1].audio_path.as_deref(), Some("/r/system-audio-B.caf"));
+    }
+
+    #[test]
+    fn checkpoint_durable_is_false_while_a_reader_holds_an_older_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ck.sqlite");
+        let store = Store::open(&path, std::path::Path::new("")).unwrap();
+        let reader = rusqlite::Connection::open(&path).unwrap();
+        reader.busy_timeout(std::time::Duration::ZERO).unwrap();
+        store.conn.busy_timeout(std::time::Duration::from_millis(50)).unwrap();
+        assert!(store.checkpoint_durable().unwrap(), "nothing pending");
+
+        // A deferred transaction keeps its snapshot from the first read until COMMIT.
+        reader.execute_batch("BEGIN; SELECT count(*) FROM meeting;").unwrap();
+        let id = store
+            .insert_meeting(&NewMeeting {
+                device_id: "d".into(),
+                start_unix_ms: 1,
+                end_unix_ms: None,
+                title: "t".into(),
+                attendees: vec![],
+                trigger: MeetingTrigger::Manual,
+                audio_path: Some("/r/system-audio-A.caf".into()),
+                status: MeetingStatus::Completed,
+            })
+            .unwrap();
+        store
+            .set_meeting_audio_paths(id, &[("/r/system-audio-A.caf".into(), "/r/system-audio-A.m4a".into())])
+            .unwrap();
+        assert!(!store.checkpoint_durable().unwrap(), "the reader pins frames the checkpoint needs");
+        assert_eq!(
+            store.get_meeting(id).unwrap().unwrap().audio_path.as_deref(),
+            Some("/r/system-audio-A.m4a"),
+            "committed, just not confirmed durable"
+        );
+
+        reader.execute_batch("COMMIT").unwrap();
+        assert!(store.checkpoint_durable().unwrap());
+    }
+
+    #[test]
+    fn set_meeting_audio_paths_fails_and_rolls_back_when_an_old_path_matches_nothing() {
+        let s = Store::open_in_memory().unwrap();
+        let id = two_parts(&s);
+        let err = s.set_meeting_audio_paths(
+            id,
+            &[
+                ("/r/system-audio-A.caf".into(), "/m/system-audio-A.m4a".into()),
+                ("/r/system-audio-NOPE.caf".into(), "/m/system-audio-NOPE.m4a".into()),
+            ],
+        );
+        assert!(err.is_err());
+        assert_eq!(
+            s.get_meeting(id).unwrap().unwrap().audio_path.as_deref(),
+            Some("/r/system-audio-A.caf"),
+            "the earlier move rolled back"
+        );
+        assert_eq!(s.meeting_parts(id).unwrap()[0].audio_path.as_deref(), Some("/r/system-audio-A.caf"));
+    }
+
+    #[test]
+    fn media_meetings_reports_whether_every_part_is_transcribed() {
+        let s = Store::open_in_memory().unwrap();
+        let done = two_parts(&s);
+        let pending = mk(&s, MeetingStatus::Recording, None);
+        s.begin_meeting_part(pending, 1_000, None).unwrap();
+        s.complete_meeting_part(pending, 1, 2_000, Some("/r/system-audio-P.caf")).unwrap();
+        s.complete_meeting(pending, 2_000, Some("/r/system-audio-P.caf")).unwrap();
+        let legacy = mk(&s, MeetingStatus::Recording, Some("/r/system-audio-L.caf"));
+        s.complete_meeting(legacy, 2_000, Some("/r/system-audio-L.caf")).unwrap();
+        let by_id = |id| s.media_meetings().unwrap().into_iter().find(|m| m.id == id).unwrap();
+        assert!(by_id(done).all_transcribed);
+        assert!(!by_id(pending).all_transcribed);
+        assert!(!by_id(legacy).all_transcribed);
+        s.update_meeting_transcript_and_notes(legacy, "/r/t.txt", None).unwrap();
+        assert!(by_id(legacy).all_transcribed);
     }
 }

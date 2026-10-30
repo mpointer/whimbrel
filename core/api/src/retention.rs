@@ -11,8 +11,9 @@ use std::sync::OnceLock;
 use memory::{RetentionCounts, RetentionPolicy, RetentionResult, Store};
 
 /// The recording extensions: `.caf` is what the macOS shell writes, `.wav` the Windows
-/// shell (16 kHz mono PCM straight from WASAPI, so no conversion step).
-const RECORDING_EXTENSIONS: [&str; 2] = ["caf", "wav"];
+/// shell (16 kHz mono PCM straight from WASAPI, so no conversion step), `.m4a` a
+/// recording compressed by the storage-retention pass.
+const RECORDING_EXTENSIONS: [&str; 3] = ["caf", "wav", "m4a"];
 
 /// Result of [`scan_orphans`]: full paths of recording files in the recordings folder that
 /// no `meeting.audio_path` claims (directly or via the mic/system sibling rule), and
@@ -69,17 +70,19 @@ pub fn preview(
 
 /// Best-effort deletion of a meeting's on-disk files. `audio_path`'s filename is either
 /// `system-audio-<stamp>.<ext>` or `mic-audio-<stamp>.<ext>`; both siblings are deleted
-/// from `recordings_dir` since a completed session has both and the row only stores
-/// one. An unrecognized filename is deleted at its own path. A missing file is never an
-/// error: it may already be gone, or never existed for a mic-only session.
+/// from `audio_path`'s own folder (a moved recording lives outside the recordings
+/// folder) since a completed session has both and the row only stores one. An
+/// unrecognized filename is deleted at its own path. A missing file is never an error:
+/// it may already be gone, or never existed for a mic-only session.
+/// `_recordings_dir` is unused; it stays so the Windows shell's call keeps compiling.
 pub fn delete_meeting_files(
     audio_path: Option<&str>,
     transcript_path: Option<&str>,
     snapshots_dir: Option<&str>,
-    recordings_dir: &Path,
+    _recordings_dir: &Path,
 ) {
     if let Some(audio_path) = audio_path {
-        match sibling_audio_paths(audio_path, recordings_dir) {
+        match sibling_audio_paths(audio_path) {
             Some((system, mic)) => {
                 let _ = std::fs::remove_file(system);
                 let _ = std::fs::remove_file(mic);
@@ -111,17 +114,20 @@ pub fn delete_all_meeting_files(deleted: &memory::DeletedMeetingFiles, recording
 /// Marker file Whimbrel drops in every snapshot folder it creates; proves the folder is ours.
 pub const SNAPSHOT_MARKER: &str = ".kestrel-snapshots";
 
-/// A PNG name the macOS shell writes (`SnapshotStorage.fileName`: `HH.mm.ss.png`, or
-/// `HH.mm.ss-N.png` on a same-second collision). Any other PNG is the user's.
-fn is_snapshot_png(name: &str) -> bool {
+/// A snapshot name Whimbrel writes: `HH.mm.ss` (or `HH.mm.ss-N` on a same-second
+/// collision) followed by `.png`, `.heic`, or `.thumb.jpg` (a shrunk image's
+/// thumbnail). Any other file is the user's.
+fn is_snapshot_file(name: &str) -> bool {
     static PATTERN: OnceLock<regex::Regex> = OnceLock::new();
     PATTERN
-        .get_or_init(|| regex::Regex::new(r"^[0-9]{2}\.[0-9]{2}\.[0-9]{2}(-[0-9]+)?\.png$").unwrap())
+        .get_or_init(|| {
+            regex::Regex::new(r"^[0-9]{2}\.[0-9]{2}\.[0-9]{2}(-[0-9]+)?(\.png|\.heic|\.thumb\.jpg)$").unwrap()
+        })
         .is_match(name)
 }
 
 /// Removes a meeting's snapshot folder, but only if it holds the [`SNAPSHOT_MARKER`] and
-/// nothing else except Whimbrel-named `.png` files ([`is_snapshot_png`]) and `.DS_Store`
+/// nothing else except Whimbrel-named snapshot files ([`is_snapshot_file`]) and `.DS_Store`
 /// (the folder is user-visible, so anything foreign means the user put it there). Otherwise removes nothing and logs
 /// one warning. Returns true if the folder was removed.
 pub fn delete_snapshots_dir(dir: &Path) -> bool {
@@ -137,7 +143,7 @@ pub fn delete_snapshots_dir(dir: &Path) -> bool {
         let is_file = entry.file_type().is_ok_and(|t| t.is_file());
         if name == SNAPSHOT_MARKER && is_file {
             marked = true;
-        } else if is_file && (name == ".DS_Store" || is_snapshot_png(&name)) {
+        } else if is_file && (name == ".DS_Store" || is_snapshot_file(&name)) {
             files.push(entry.path());
         } else {
             foreign = true;
@@ -155,21 +161,22 @@ pub fn delete_snapshots_dir(dir: &Path) -> bool {
 }
 
 /// Recovers `<stamp>` from `audio_path`'s filename and returns the
-/// `(system-audio, mic-audio)` sibling paths inside `recordings_dir`, or `None` if the
-/// filename matches neither prefix. The siblings keep `audio_path`'s own extension: one
-/// shell writes both files of a recording in one format. Shared by [`delete_meeting_files`] and
+/// `(system-audio, mic-audio)` sibling paths in `audio_path`'s own folder, or `None` if
+/// the filename matches neither prefix. The siblings keep `audio_path`'s own extension:
+/// both files of a recording are written, moved and compressed together. Shared by [`delete_meeting_files`] and
 /// [`orphaned_filenames`] so the two can never disagree about what counts as "the same
 /// recording."
-pub fn sibling_audio_paths(audio_path: &str, recordings_dir: &Path) -> Option<(PathBuf, PathBuf)> {
+pub fn sibling_audio_paths(audio_path: &str) -> Option<(PathBuf, PathBuf)> {
     let path = Path::new(audio_path);
+    let dir = path.parent().unwrap_or(Path::new(""));
     let stem = path.file_stem()?.to_str()?;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("caf");
     let stamp = stem
         .strip_prefix("system-audio-")
         .or_else(|| stem.strip_prefix("mic-audio-"))?;
     Some((
-        recordings_dir.join(format!("system-audio-{stamp}.{ext}")),
-        recordings_dir.join(format!("mic-audio-{stamp}.{ext}")),
+        dir.join(format!("system-audio-{stamp}.{ext}")),
+        dir.join(format!("mic-audio-{stamp}.{ext}")),
     ))
 }
 
@@ -177,6 +184,8 @@ pub fn sibling_audio_paths(audio_path: &str, recordings_dir: &Path) -> Option<(P
 /// `referenced_paths` (every `meeting.audio_path`, regardless of that meeting's own
 /// retention window). A file counts as referenced if its own filename or its
 /// mic/system sibling's filename is the last path component of any referenced path.
+/// Only `system-audio-<stamp>` and `mic-audio-<stamp>` names are ever orphans: any other
+/// name is a file the user put there.
 pub fn orphaned_filenames(on_disk: &[String], referenced_paths: &[String]) -> Vec<String> {
     let referenced: std::collections::HashSet<String> = referenced_paths
         .iter()
@@ -190,12 +199,12 @@ pub fn orphaned_filenames(on_disk: &[String], referenced_paths: &[String]) -> Ve
             if referenced.contains(filename.as_str()) {
                 return false;
             }
-            match sibling_audio_paths(filename, Path::new("")) {
+            match sibling_audio_paths(filename) {
                 Some((system, mic)) => {
                     !referenced.contains(file_name(&system)) && !referenced.contains(file_name(&mic))
                 }
-                // Unknown naming convention: only the direct match above could protect it.
-                None => true,
+                // Not a Whimbrel recording name: the user's file, never an orphan.
+                None => false,
             }
         })
         .cloned()
@@ -210,7 +219,7 @@ fn file_name(path: &Path) -> &str {
     path.file_name().and_then(|n| n.to_str()).unwrap_or("")
 }
 
-/// Lists the recording files (`.caf`, `.wav`) in `recordings_dir`, computes the orphans against every
+/// Lists the recording files (`.caf`, `.wav`, `.m4a`) in `recordings_dir`, computes the orphans against every
 /// referenced `meeting.audio_path` in `store`, drops anything in `excluded` (the files
 /// a live recording is writing right now, snapshotted by the shell before calling),
 /// and sums the remaining files' sizes. An unreadable directory yields an empty scan.
@@ -233,42 +242,59 @@ pub fn scan_orphans_with_min_age(
     excluded: &[String],
     min_age: std::time::Duration,
 ) -> rusqlite::Result<OrphanScan> {
+    scan_orphans_in(store, &[recordings_dir], excluded, min_age)
+}
+
+/// [`scan_orphans_with_min_age`] over several folders (the recordings folder and the
+/// media folder's `Audio`), in order. A folder that can't be read (an unplugged drive)
+/// is skipped; the others are still scanned. Names starting with `.` (a compression
+/// pass's hidden temp files) are never listed. Each orphan is joined with the folder it
+/// was found in. Every folder is matched against the same referenced paths, by filename.
+pub fn scan_orphans_in(
+    store: &Store,
+    dirs: &[&Path],
+    excluded: &[String],
+    min_age: std::time::Duration,
+) -> rusqlite::Result<OrphanScan> {
     let referenced = store.all_referenced_meeting_audio_paths()?;
-    let Ok(entries) = std::fs::read_dir(recordings_dir) else {
-        return Ok(OrphanScan { orphaned: Vec::new(), total_bytes: 0 });
-    };
-    let on_disk: Vec<String> = entries
-        .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().to_str().map(str::to_string))
-        .filter(|n| {
-            Path::new(n)
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| RECORDING_EXTENSIONS.contains(&e))
-        })
-        .collect();
     let excluded: Vec<PathBuf> = excluded.iter().map(PathBuf::from).collect();
     let mut total_bytes = 0i64;
     let mut orphaned = Vec::new();
-    for name in orphaned_filenames(&on_disk, &referenced) {
-        let path = recordings_dir.join(&name);
-        if excluded.contains(&path) {
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
-        }
-        let meta = std::fs::metadata(&path).ok();
-        if !min_age.is_zero() {
-            let old_enough = meta
-                .as_ref()
-                .and_then(|m| m.modified().ok())
-                .and_then(|m| m.elapsed().ok())
-                .is_some_and(|age| age >= min_age);
-            if !old_enough {
+        };
+        let on_disk: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .filter(|n| !n.starts_with('.'))
+            .filter(|n| {
+                Path::new(n)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| RECORDING_EXTENSIONS.contains(&e))
+            })
+            .collect();
+        for name in orphaned_filenames(&on_disk, &referenced) {
+            let path = dir.join(&name);
+            if excluded.contains(&path) {
                 continue;
             }
+            let meta = std::fs::metadata(&path).ok();
+            if !min_age.is_zero() {
+                let old_enough = meta
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|m| m.elapsed().ok())
+                    .is_some_and(|age| age >= min_age);
+                if !old_enough {
+                    continue;
+                }
+            }
+            // Unreadable metadata without the guard: listed with 0 bytes, as before it.
+            total_bytes += meta.map_or(0, |m| m.len() as i64);
+            orphaned.push(path.to_string_lossy().into_owned());
         }
-        // Unreadable metadata without the guard: listed with 0 bytes, as before it.
-        total_bytes += meta.map_or(0, |m| m.len() as i64);
-        orphaned.push(path.to_string_lossy().into_owned());
     }
     Ok(OrphanScan { orphaned, total_bytes })
 }
@@ -333,8 +359,8 @@ mod tests {
     }
 
     #[test]
-    fn unrecognized_filename_pattern_is_treated_as_orphaned_if_unreferenced() {
-        assert_eq!(orphaned_filenames(&s(&["some-other-file.caf"]), &[]), s(&["some-other-file.caf"]));
+    fn unrecognized_filename_is_never_an_orphan() {
+        assert!(orphaned_filenames(&s(&["some-other-file.caf"]), &[]).is_empty());
     }
 
     // ---- delete_meeting_files / sibling_audio_paths (ported from MeetingFileCleanupTests.swift) ----
@@ -384,26 +410,50 @@ mod tests {
 
     #[test]
     fn sibling_audio_paths_from_system_audio_path() {
-        let dir = Path::new("/tmp/recordings");
-        let (system, mic) = sibling_audio_paths("/some/dir/system-audio-STAMP.caf", dir).unwrap();
+        let dir = Path::new("/some/dir");
+        let (system, mic) = sibling_audio_paths("/some/dir/system-audio-STAMP.caf").unwrap();
         assert_eq!(system, dir.join("system-audio-STAMP.caf"));
         assert_eq!(mic, dir.join("mic-audio-STAMP.caf"));
     }
 
     #[test]
     fn sibling_audio_paths_from_mic_audio_path() {
-        let dir = Path::new("/tmp/recordings");
-        let (system, mic) = sibling_audio_paths("/some/dir/mic-audio-STAMP.caf", dir).unwrap();
+        let dir = Path::new("/some/dir");
+        let (system, mic) = sibling_audio_paths("/some/dir/mic-audio-STAMP.caf").unwrap();
         assert_eq!(system, dir.join("system-audio-STAMP.caf"));
         assert_eq!(mic, dir.join("mic-audio-STAMP.caf"));
     }
 
     #[test]
     fn sibling_audio_paths_keep_a_wav_extension() {
-        let dir = Path::new("/tmp/recordings");
-        let (system, mic) = sibling_audio_paths("/some/dir/mic-audio-STAMP.wav", dir).unwrap();
+        let dir = Path::new("/some/dir");
+        let (system, mic) = sibling_audio_paths("/some/dir/mic-audio-STAMP.wav").unwrap();
         assert_eq!(system, dir.join("system-audio-STAMP.wav"));
         assert_eq!(mic, dir.join("mic-audio-STAMP.wav"));
+    }
+
+    #[test]
+    fn sibling_audio_paths_follow_a_moved_m4a() {
+        let (sys, mic) = sibling_audio_paths("/Volumes/Scratch/Whimbrel/Audio/mic-audio-S.m4a").unwrap();
+        assert_eq!(sys, Path::new("/Volumes/Scratch/Whimbrel/Audio/system-audio-S.m4a"));
+        assert_eq!(mic, Path::new("/Volumes/Scratch/Whimbrel/Audio/mic-audio-S.m4a"));
+    }
+
+    #[test]
+    fn delete_files_removes_a_moved_compressed_pair() {
+        let media = tempfile::tempdir().unwrap();
+        let unrelated = tempfile::tempdir().unwrap();
+        let audio = media.path().join("media").join("Audio");
+        std::fs::create_dir_all(&audio).unwrap();
+        let system = audio.join("system-audio-2026-08-01T00-00-00.000Z.m4a");
+        let mic = audio.join("mic-audio-2026-08-01T00-00-00.000Z.m4a");
+        std::fs::write(&system, "s").unwrap();
+        std::fs::write(&mic, "m").unwrap();
+
+        delete_meeting_files(system.to_str(), None, None, unrelated.path());
+
+        assert!(!system.exists());
+        assert!(!mic.exists());
     }
 
     #[test]
@@ -436,7 +486,7 @@ mod tests {
 
     #[test]
     fn sibling_audio_paths_returns_none_for_unrecognized_filename() {
-        assert!(sibling_audio_paths("/some/dir/not-a-recording.caf", Path::new("/tmp")).is_none());
+        assert!(sibling_audio_paths("/some/dir/not-a-recording.caf").is_none());
     }
 
     // ---- scan_orphans / delete_orphans / apply (against a real store and temp dir) ----
@@ -560,6 +610,51 @@ mod tests {
     }
 
     #[test]
+    fn scan_orphans_in_keeps_moved_and_compressed_pairs_and_user_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("t.sqlite"), Path::new("")).unwrap();
+        let rec = dir.path().join("rec");
+        let media_audio = dir.path().join("media").join("Audio");
+        std::fs::create_dir_all(&rec).unwrap();
+        std::fs::create_dir_all(&media_audio).unwrap();
+        let files = [
+            media_audio.join("system-audio-A.m4a"),
+            media_audio.join("mic-audio-A.m4a"),
+            media_audio.join("interview.m4a"),
+            media_audio.join(".system-audio-B.m4a"),
+            rec.join("system-audio-A.caf"),
+            rec.join("mic-audio-ORPHAN.caf"),
+        ];
+        for f in &files {
+            std::fs::write(f, "x").unwrap();
+            backdate(f);
+        }
+        insert_meeting(&store, 1, Some(media_audio.join("system-audio-A.m4a").to_str().unwrap()));
+
+        let scan = scan_orphans_in(&store, &[&rec, &media_audio], &[], ORPHAN_MIN_AGE).unwrap();
+        let got: std::collections::HashSet<String> = scan.orphaned.into_iter().collect();
+        let want: std::collections::HashSet<String> = [rec.join("system-audio-A.caf"), rec.join("mic-audio-ORPHAN.caf")]
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(got, want);
+        assert_eq!(scan.total_bytes, 2);
+    }
+
+    #[test]
+    fn scan_orphans_in_skips_a_missing_dir_and_scans_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("t.sqlite"), Path::new("")).unwrap();
+        let rec = dir.path().join("rec");
+        std::fs::create_dir(&rec).unwrap();
+        std::fs::write(rec.join("mic-audio-ORPHAN.caf"), "x").unwrap();
+        let missing = dir.path().join("unplugged").join("Audio");
+
+        let scan = scan_orphans_in(&store, &[&missing, &rec], &[], std::time::Duration::ZERO).unwrap();
+        assert_eq!(scan.orphaned, vec![rec.join("mic-audio-ORPHAN.caf").to_string_lossy().into_owned()]);
+    }
+
+    #[test]
     fn scan_orphans_on_a_missing_directory_is_empty() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("t.sqlite"), Path::new("")).unwrap();
@@ -662,14 +757,28 @@ mod tests {
     }
 
     #[test]
-    fn is_snapshot_png_matches_only_whimbrels_names() {
-        for ok in ["00.00.00.png", "23.59.59.png", "10.14.03-2.png", "10.14.03-12.png"] {
-            assert!(is_snapshot_png(ok), "{ok}");
+    fn is_snapshot_file_matches_only_whimbrels_names() {
+        for ok in ["00.00.00.png", "23.59.59.png", "10.14.03-2.png", "10.14.03-12.png",
+                   "10.14.03.heic", "10.14.03-2.thumb.jpg"] {
+            assert!(is_snapshot_file(ok), "{ok}");
         }
         for bad in ["slide-1.png", "1.png", "10.14.03.PNG", "10.14.03-.png", "10.14.3.png",
-                    "10.14.03-2a.png", "x10.14.03.png", "Screenshot 2026-10-22 at 10.14.03.png", "10.14.03.png.txt"] {
-            assert!(!is_snapshot_png(bad), "{bad}");
+                    "10.14.03-2a.png", "x10.14.03.png", "Screenshot 2026-10-22 at 10.14.03.png", "10.14.03.png.txt",
+                    "10.14.03.jpg", "10.14.03.thumb.png"] {
+            assert!(!is_snapshot_file(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn delete_snapshots_dir_removes_heic_and_thumbnails() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("snaps");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join(SNAPSHOT_MARKER), "").unwrap();
+        std::fs::write(dir.join("10.14.03.heic"), "x").unwrap();
+        std::fs::write(dir.join("10.14.03.thumb.jpg"), "x").unwrap();
+        assert!(delete_snapshots_dir(&dir));
+        assert!(!dir.exists());
     }
 
     #[test]

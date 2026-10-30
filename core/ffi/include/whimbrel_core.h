@@ -634,6 +634,8 @@ char *whimbrel_memory_delete_meeting_snapshot(StoreHandle *handle, int64_t id);
 char *whimbrel_memory_list_meeting_snapshots(StoreHandle *handle, int64_t meeting_id);
 bool whimbrel_memory_set_meeting_snapshots_dir(StoreHandle *handle, int64_t meeting_id, const char *dir);
 bool whimbrel_memory_set_keep_snapshots(StoreHandle *handle, int64_t meeting_id, bool keep);
+/* Sets a meeting's "Keep media" flag and queues it for sync. Returns whether a row changed. */
+bool whimbrel_memory_set_keep_media(StoreHandle *handle, int64_t meeting_id, bool keep);
 char *whimbrel_memory_meeting_snapshots_info(StoreHandle *handle, int64_t meeting_id);
 
 /* FR-CHAT-6: creates a new conversation with a placeholder title truncated from
@@ -826,13 +828,26 @@ char *whimbrel_retention_apply(
     StoreHandle *handle, int64_t capture_item_days, int64_t meeting_days, int64_t conversation_days,
     int64_t now_unix_ms, const char *recordings_dir);
 
-/* Finds .caf files in recordings_dir that no meeting.audio_path claims, directly or via
- * the mic/system sibling rule. excluded_paths_json is a JSON array of full paths to
+/* Finds recording files (.caf, .wav, .m4a) in recordings_dir and, when media_audio_dir
+ * is non-NULL, in that folder too (the media folder's Audio), that no meeting.audio_path
+ * claims, directly or via the mic/system sibling rule. Only system-audio-* and
+ * mic-audio-* names are ever orphans; dotfiles are skipped; files modified in the last
+ * 7 days are kept; a folder that can't be read is skipped. excluded_paths_json is a JSON array of full paths to
  * leave alone (files a live recording is writing right now). Returns JSON
  * {"orphaned": [<full path>, ...], "total_bytes": <n>} (an unreadable directory yields
  * an empty scan), or NULL on a null handle/path, malformed JSON, or a DB error. Deletes
  * nothing. */
-char *whimbrel_retention_scan_orphans(StoreHandle *handle, const char *recordings_dir, const char *excluded_paths_json);
+char *whimbrel_retention_scan_orphans(StoreHandle *handle, const char *recordings_dir,
+                                      const char *media_audio_dir /* nullable */, const char *excluded_paths_json);
+
+/* Storage retention media plan. policy_json: {"compress_after_days","delete_audio_after_days",
+ * "shrink_images_after_days"} (null or missing = off). media_root may be NULL (no moves).
+ * busy_ids_json: JSON array of meeting ids to skip. Returns MediaPlan JSON
+ * {"work":[{"meeting_id","steps":["move_audio"|"move_snapshots"|"compress"|"delete_audio"|
+ * "shrink_images"],"audio_paths","shrink_snapshot_ids"}],"disconnected_meetings",
+ * "usage":{"audio_full_bytes","audio_compressed_bytes","image_bytes"}}, or NULL on error. */
+char *whimbrel_media_plan(StoreHandle *handle, const char *policy_json, int64_t now_unix_ms,
+                          const char *media_root /* nullable */, const char *busy_ids_json);
 
 /* Permanently deletes the files in paths_json (a JSON array of full paths, normally the
  * "orphaned" array from whimbrel_retention_scan_orphans). Returns how many were actually
@@ -879,8 +894,19 @@ char *whimbrel_meeting_transcript_text(StoreHandle *handle, int64_t meeting_id);
 /* {"new_meeting_id":N,"moved_snapshot_paths":[...]}. */
 char *whimbrel_meeting_split(StoreHandle *handle, int64_t meeting_id, int64_t from_part_index);
 
-/* moves_json: [[old_path,new_path],...]. */
+/* moves_json: [[old_path,new_path],...]. False, with nothing changed, when any old path
+ * matches no snapshot row of this meeting. */
 bool whimbrel_meeting_set_snapshot_paths(StoreHandle *handle, int64_t meeting_id, const char *moves_json, const char *snapshots_dir);
+
+/* moves_json: [[old_path,new_path],...]. Rewrites meeting.audio_path and every
+ * meeting_part.audio_path of the meeting that equals an old path. Local only. Returns
+ * false, changing nothing, if any old path matches no stored path. */
+bool whimbrel_meeting_set_audio_paths(StoreHandle *handle, int64_t meeting_id, const char *moves_json);
+
+/* After a path rewrite: true only once the commit is on stable storage (FULL WAL
+ * checkpoint, F_FULLFSYNC). False: the rows may be rewritten but not durable, so the
+ * caller deletes nothing, neither the originals nor the new files. */
+bool whimbrel_store_checkpoint(StoreHandle *handle);
 
 /* Deletes the meeting row; returns DeletedMeetingFiles JSON (every part's audio_paths and
  * transcript_paths, snapshots_dir only when no other meeting still has snapshots in it).
@@ -984,6 +1010,27 @@ bool whimbrel_sync_content(StoreHandle *handle, const char *turso_url, const cha
 /* After a fresh start: push cursor to 0 (every local row goes up again) and the skin re-push
  * flag. false on a null handle or a failed write. */
 bool whimbrel_sync_reset_push_cursor(StoreHandle *handle);
+
+/* Skins Task 16. Queues the user skin skin_id as the folder skins_root now holds it (a missing
+ * folder sends a deletion), after a save, rename, delete, undo or import. Nothing for a built-in
+ * or before the handle has a device id. false on a null handle, malformed arguments or a failure. */
+bool whimbrel_skin_sync_enqueue(StoreHandle *handle, const char *skins_root, const char *skin_id);
+
+/* Queues every skin in skins_root again, under the version already known for each. Call when
+ * whimbrel_skin_sync_reconcile answers push_all. false as whimbrel_skin_sync_enqueue. */
+bool whimbrel_skin_sync_enqueue_all(StoreHandle *handle, const char *skins_root);
+
+/* After each content sync round: writes the skins pulled from other devices into skins_root,
+ * then takes the first-run and re-push flags. Envelope data is
+ * {"changed": [id], "deleted": [id], "push_all": bool, "error": string|null}; a failed
+ * reconcile still takes the flags, with empty lists and its message in error. NULL on a null handle or malformed
+ * arguments. Caller frees with whimbrel_core_free_string. */
+char *whimbrel_skin_sync_reconcile(StoreHandle *handle, const char *skins_root);
+
+/* An image (base64) at most 1600 px on its long side, same format; one that fits is unchanged.
+ * Envelope data is the image as base64; an undecodable image is provider_failure. NULL on
+ * malformed arguments. Caller frees with whimbrel_core_free_string. */
+char *whimbrel_skin_downscale(const char *image_base64);
 
 /* Pull-only content sync (the iPhone in M4.0): applies peer rows like
  * whimbrel_sync_content but never pushes or drains the outbox. capture_window_days > 0

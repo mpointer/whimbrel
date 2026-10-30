@@ -36,6 +36,16 @@ enum SnapshotFrameFilter {
     static let barStdDev = 6.0              // an edge row/column flatter than this is a uniform bar
     static let barStep = 40.0               // … and ends where the mean luminance steps by this much
 
+    // The duplicate-frame gate in front of `decide`: a frame is saved only if, against the last
+    // saved frame's 32×32 grayscale copy, at least `dedupeMinChangedCells` pixels changed by more
+    // than `dedupePixelStep`. A near-identical check, not a minimum change: measured on the
+    // SnapshotFixtures slides, the smallest real text-slide change is 14 of 1024 cells (2-line vs
+    // 3-line; 4-bullet vs 4-bullet is 18, title vs 4-bullet 35), while a clock tick or cursor
+    // blink is 1–3. The spec's 4 % (41 cells) dropped every one of those slide changes.
+    static let dedupeSide = 32
+    static let dedupePixelStep = 16
+    static let dedupeMinChangedCells = 6
+
     /// Difference hash: each bit says whether a cell of a 9x8 box-averaged grayscale grid is darker
     /// than its right neighbour.
     static func dHash(_ image: CGImage) -> UInt64 {
@@ -50,6 +60,14 @@ enum SnapshotFrameFilter {
             }
         }
         return hash
+    }
+
+    /// True when at least `dedupeMinChangedCells` pixels differ by more than `dedupePixelStep`
+    /// grey levels. Both sides are `Luma(image, width: 32, height: 32)`.
+    static func differs(_ a: Luma, _ b: Luma) -> Bool {
+        guard a.width == b.width, a.height == b.height else { return true }
+        let changed = zip(a.pixels, b.pixels).filter { abs(Int($0) - Int($1)) > dedupePixelStep }.count
+        return changed >= dedupeMinChangedCells
     }
 
     static func hamming(_ a: UInt64, _ b: UInt64) -> Int { (a ^ b).nonzeroBitCount }
@@ -158,7 +176,7 @@ struct Luma {
 
     let width: Int
     let height: Int
-    private var pixels: [UInt8]
+    private(set) var pixels: [UInt8]
 
     var bounds: Box { (0..<width, 0..<height) }
 

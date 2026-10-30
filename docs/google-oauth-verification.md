@@ -2,6 +2,12 @@
 
 This document is for submitting Whimbrel's Google OAuth app for verification, so that anyone, not just test users, can connect Gmail and Google Calendar. Mike moved the app out of Testing on 2026-10-29.
 
+## Status
+
+- **Verification submitted:** 2026-10-30.
+- **Demo video (unlisted):** https://youtu.be/UrIZPJp29fc
+- **Next:** reply to Google's emails, then the CASA Tier 2 assessment when Google asks for it (see "Steps for Mike").
+
 ## Scopes Whimbrel requests
 
 | Scope | Class | Requested by | Why Whimbrel needs it (paste as the justification) |

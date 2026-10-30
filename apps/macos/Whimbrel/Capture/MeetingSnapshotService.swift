@@ -7,7 +7,7 @@ import Vision
 /// app, window gone, capture failed).
 protocol SnapshotFrameSource { func captureFrame() async -> CGImage? }
 
-/// Samples the meeting window every `interval` while a meeting records and saves one PNG per shared
+/// Samples the meeting window every `interval` while a meeting records and saves one HEIC per shared
 /// slide (plus a DB row with its OCR text). See docs/superpowers/specs for meeting snapshots.
 @MainActor
 final class MeetingSnapshotService {
@@ -30,10 +30,11 @@ final class MeetingSnapshotService {
     private var ticking = false
     private var previousSample: FrameFeatures?
     private var lastAnalysis: Analysis?
-    private var lastKept: (features: FrameFeatures, id: Int64, url: URL, captured: Date)?
+    /// `luma` is the saved image's 32×32 grayscale copy, for the duplicate-frame gate.
+    private var lastKept: (features: FrameFeatures, luma: Luma?, id: Int64, url: URL, captured: Date)?
     private var folder: URL?
     private(set) var keptCount = 0
-    /// Test seam: runs on the main actor right after a PNG is written, before the store call.
+    /// Test seam: runs on the main actor right after an image is written, before the store call.
     var afterFileWritten: (() -> Void)?
 
     init(meetingId: Int64, meetingStart: Date, meetingTitle: String,
@@ -124,7 +125,16 @@ final class MeetingSnapshotService {
                                                             text: textRecognizer(image) ?? "", crop: crop))
     }
 
+    /// The 32×32 copy the duplicate-frame gate compares.
+    private static func dedupeLuma(_ image: CGImage) -> Luma? {
+        Luma(image, width: SnapshotFrameFilter.dedupeSide, height: SnapshotFrameFilter.dedupeSide)
+    }
+
     private func keep(_ image: CGImage, _ features: FrameFeatures, captured: Date) async throws {
+        // Extra to `decide`: a "new slide" that is pixel-for-pixel the last saved one (OCR read
+        // it differently) is not saved again.
+        let luma = Self.dedupeLuma(image)
+        if let last = lastKept?.luma, let luma, !SnapshotFrameFilter.differs(last, luma) { return }
         let (folder, url) = try await write(image, captured: captured)
         self.folder = folder
         guard !discardIfStopped(url) else { return }
@@ -138,7 +148,7 @@ final class MeetingSnapshotService {
             try? FileManager.default.removeItem(at: url)
             throw CocoaError(.fileWriteUnknown)
         }
-        lastKept = (features, id, url, captured)
+        lastKept = (features, luma, id, url, captured)
         keptCount += 1
         postChange()
     }
@@ -157,7 +167,7 @@ final class MeetingSnapshotService {
             throw CocoaError(.fileWriteUnknown)
         }
         try? FileManager.default.removeItem(at: last.url)
-        lastKept = (features, last.id, url, last.captured)
+        lastKept = (features, Self.dedupeLuma(image), last.id, url, last.captured)
         postChange()
     }
 
@@ -165,16 +175,16 @@ final class MeetingSnapshotService {
         NotificationCenter.default.post(name: Self.didChange, object: nil, userInfo: ["meetingId": meetingId])
     }
 
-    /// Writes the PNG into the meeting folder, creating the folder on first use.
+    /// Writes the image (HEIC, PNG where HEIC can't be encoded) into the meeting folder, creating the folder on first use.
     private func write(_ image: CGImage, captured: Date) async throws -> (folder: URL, file: URL) {
         let (storage, existing, start, title) = (storage, folder, meetingStart, meetingTitle)
         return try await Task.detached(priority: .utility) {
             let folder = try existing ?? storage.makeMeetingFolder(start: start, title: title)
-            return (folder, try storage.writePNG(image, to: folder, captured: captured))
+            return (folder, try storage.writeHEIC(image, to: folder, captured: captured))
         }.value
     }
 
-    /// A meeting that ended while the PNG was being written gets no new file or row.
+    /// A meeting that ended while the image was being written gets no new file or row.
     private func discardIfStopped(_ url: URL) -> Bool {
         afterFileWritten?()
         guard stopped else { return false }

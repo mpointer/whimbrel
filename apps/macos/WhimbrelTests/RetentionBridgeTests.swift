@@ -47,7 +47,7 @@ final class RetentionBridgeTests: XCTestCase {
         // The core sweep spares files modified in the last 7 days.
         try! FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-8 * 86_400)], ofItemAtPath: orphan.path)
 
-        guard let scan = store.scanOrphanedRecordings(recordingsDir: tempDir, excluding: [live]) else {
+        guard let scan = store.scanOrphanedRecordings(recordingsDir: tempDir, mediaAudioDir: nil, excluding: [live]) else {
             return XCTFail("scan returned nil")
         }
         XCTAssertEqual(scan.orphaned, [orphan.path])
