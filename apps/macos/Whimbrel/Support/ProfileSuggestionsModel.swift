@@ -32,13 +32,20 @@ final class ProfileSuggestionsModel: ObservableObject {
     @discardableResult
     func add(_ suggestion: CoreProfileSuggestion) async -> Bool {
         let added = profile.addFact(suggestion.text, sourceMeetingId: suggestion.sourceMeetingId)
+        hide(suggestion)
         _ = await deleteRow(suggestion.id)
         await reload()
         return added
     }
 
     func dismiss(_ suggestion: CoreProfileSuggestion) async {
+        hide(suggestion)
         _ = await dismissRow(suggestion.id)
         await reload()
+    }
+
+    /// The store queue can be busy for minutes, so the row goes at once rather than after the write.
+    private func hide(_ suggestion: CoreProfileSuggestion) {
+        pending.removeAll { $0.id == suggestion.id }
     }
 }

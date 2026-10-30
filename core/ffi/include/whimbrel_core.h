@@ -981,6 +981,10 @@ char *whimbrel_sync_settings_apply_plan(const char *pulled_json, const char *loc
 
 bool whimbrel_sync_content(StoreHandle *handle, const char *turso_url, const char *turso_token, const char *group_key_base64, const char *device_id);
 
+/* After a fresh start: push cursor to 0 (every local row goes up again) and the skin re-push
+ * flag. false on a null handle or a failed write. */
+bool whimbrel_sync_reset_push_cursor(StoreHandle *handle);
+
 /* Pull-only content sync (the iPhone in M4.0): applies peer rows like
  * whimbrel_sync_content but never pushes or drains the outbox. capture_window_days > 0
  * skips screen-capture items older than that many days (meetings, transcripts and all
@@ -1293,8 +1297,10 @@ char *whimbrel_oauth_jwt_claims(const char *jwt);
  * {"status": "approved", "turso_token", "turso_database_url", "wrapped_group_key":
  * string-or-null} or {"status": "pending"}, or on failure {"error": {"kind": "http",
  * "status": n, "body": "..."} | {"kind": "network"} | {"kind": "malformed_response"}}.
- * NULL only on a NULL pointer. */
-char *whimbrel_sync_worker_authenticate_google(const char *base_url, const char *id_token, const char *device_public_key);
+ * `platform` is "mac" or "windows"; NULL or "" sends none (the iPhone). A 409
+ * device_limit comes back as {"status": "deviceLimit", "kind", "devices": [{"id",
+ * "name", "platform"}]}. NULL only on a NULL pointer. */
+char *whimbrel_sync_worker_authenticate_google(const char *base_url, const char *id_token, const char *device_public_key, const char *platform);
 
 /* POST /v1/devices: {"devices": [{"id", "accountId", "publicKey", "name", "platform",
  * "status", "enrolledAtUnixMs", "revokedAtUnixMs"}, ...]} or the {"error": ...}
@@ -1306,6 +1312,15 @@ char *whimbrel_sync_worker_list_devices(const char *base_url, const char *id_tok
 char *whimbrel_sync_worker_approve_device(const char *base_url, const char *id_token, const char *device_public_key, const char *target_device_id, const char *wrapped_group_key);
 char *whimbrel_sync_worker_revoke_device(const char *base_url, const char *id_token, const char *device_public_key, const char *target_device_id);
 char *whimbrel_sync_worker_set_device_name(const char *base_url, const char *id_token, const char *device_public_key, const char *name);
+/* Open sign-in routes, same envelope as above. swap: POST /v1/devices/swap (platform NULL or
+ * "" sends none) -> {"ok":true}. join_waitlist: POST /v1/waitlist, wants_json a JSON array of
+ * the Worker's wants strings -> {"ok":true}. reset_account: POST /v1/account/reset with
+ * confirm -> the authenticate_google approved shape (wrappedGroupKey null). delete_account:
+ * POST /v1/account/delete with confirm -> {"ok":true}. */
+char *whimbrel_sync_worker_swap_device(const char *base_url, const char *id_token, const char *device_public_key, const char *platform, const char *replace_device_id);
+char *whimbrel_sync_worker_join_waitlist(const char *base_url, const char *id_token, const char *device_public_key, const char *wants_json, const char *platform);
+char *whimbrel_sync_worker_reset_account(const char *base_url, const char *id_token, const char *device_public_key);
+char *whimbrel_sync_worker_delete_account(const char *base_url, const char *id_token, const char *device_public_key);
 
 /* The enrollment status machine. state_json is {"status": "notSignedIn"|"signingIn"|
  * "waitingForApproval"|"waitingForGroupKey"|"ready" (+ "turso_token",

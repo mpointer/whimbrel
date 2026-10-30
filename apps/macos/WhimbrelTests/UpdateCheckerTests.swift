@@ -6,6 +6,15 @@ final class UpdateCheckerTests: XCTestCase {
     // The version-compare, decode and hash cases themselves are Rust tests
     // (core/api/src/update.rs); these prove the Swift/Rust JSON plumbing.
 
+    func test_update_request_carries_client_headers() {
+        let url = URL(string: "https://updates.whimbrelapp.com/version.json")!
+        let request = UpdateChecker.manifestRequest(url: url, clientId: "abc123", version: "0.9.35")
+        XCTAssertEqual(request.url, url)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Whimbrel-Client"), "abc123")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Whimbrel-Platform"), "mac")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Whimbrel-Version"), "0.9.35")
+    }
+
     func testNewerManifestDecodesAllSevenFieldsThroughTheBridge() throws {
         let json = """
         {"version": "0.3.12", "url": "https://example.com/Whimbrel-0.3.12.zip", "sha256": "abc123", "commit": "a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3", "tag": "v0.3.12", "published_at": "2026-08-18T14:32:00Z", "release_notes_url": "https://github.com/mpointer/whimbrel/releases/tag/v0.3.12"}

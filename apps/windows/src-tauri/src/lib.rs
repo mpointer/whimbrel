@@ -13,6 +13,7 @@ pub mod commands;
 pub mod connectors;
 pub mod device_labels;
 pub mod error;
+pub mod feedback;
 pub mod identity;
 pub mod job;
 pub mod jobs;

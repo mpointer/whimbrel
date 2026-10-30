@@ -36,7 +36,7 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $selection) {
-            NavigationStack { TodayView(sync: sync, labels: enrollment.deviceLabels, openSettings: { showSettings = true }) }
+            NavigationStack { TodayView(sync: sync, labels: enrollment.deviceLabels, pendingDevices: enrollment.pendingDeviceCount, openSettings: { showSettings = true }) }
                 .tabItem { Label("Today", systemImage: "sun.max") }.tag(0)
             NavigationStack { AskView(sync: sync, model: ask, labels: enrollment.deviceLabels) }
                 .tabItem { Label("Ask", systemImage: "bubble.left.and.text.bubble.right") }.tag(1)
@@ -47,10 +47,10 @@ struct RootView: View {
         }
         .tint(Color.theme(.accentPrimary))
         .onChange(of: selection) { old, new in if Self.shouldStopAsk(old: old, new: new) { ask.stop() } }
-        .sheet(isPresented: $showSettings) { SettingsSheet(sync: sync) }
+        .sheet(isPresented: $showSettings) { SettingsSheet(sync: sync, enrollment: enrollment) }
         .task(id: sync.readRevision) {
-            // The device list changes rarely: fetch it once, and again only while names are missing.
-            if enrollment.deviceLabels.names.isEmpty { await enrollment.refreshDeviceLabels() }
+            // Once per sync: also how a new device waiting for approval reaches the Today banner.
+            await enrollment.refreshDeviceLabels()
         }
     }
 }

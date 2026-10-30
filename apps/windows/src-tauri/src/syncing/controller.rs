@@ -97,6 +97,13 @@ pub fn view_of(config_error: Option<&str>, status: &SyncStatus) -> (SyncState, O
         ),
         SyncStatus::Ready { .. } => (SyncState::Ready, None),
         SyncStatus::Error { message } => (SyncState::Error, Some(message.clone())),
+        // Open sign-in (docs/open-sign-in-rollout.md): until the Windows swap, waitlist and fresh-start
+        // screens land, both show as a sync error with the Mac's wording.
+        SyncStatus::DeviceLimit { .. } => (
+            SyncState::Error,
+            Some("Whimbrel's free sync includes one computer and one phone. Use your Mac's Devices settings to manage devices.".into()),
+        ),
+        SyncStatus::RateLimited => (SyncState::Error, Some("Too many attempts. Try again later.".into())),
     }
 }
 
@@ -626,6 +633,11 @@ mod tests {
         assert_eq!((state, message), (SyncState::Ready, None));
         assert!(view_of(None, &SyncStatus::WaitingForApproval).1.unwrap().contains("approve this PC"));
         assert!(view_of(None, &SyncStatus::WaitingForGroupKey).1.unwrap().contains("Re-send Key"));
+        // Open sign-in's free-plan limit and the Worker's rate limit show as errors until the Windows screens land.
+        let (state, message) = view_of(None, &SyncStatus::DeviceLimit { kind: "computer".into(), holders: vec![] });
+        assert_eq!(state, SyncState::Error);
+        assert!(message.unwrap().contains("one computer and one phone"));
+        assert_eq!(view_of(None, &SyncStatus::RateLimited), (SyncState::Error, Some("Too many attempts. Try again later.".into())));
         assert_eq!(view_of(Some("not configured"), &SyncStatus::NotSignedIn).0, SyncState::NotConfigured);
     }
 

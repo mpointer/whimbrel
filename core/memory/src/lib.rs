@@ -2760,6 +2760,16 @@ impl Store {
         Ok(())
     }
 
+    /// After a fresh start (a new, empty sync database): every row this device made goes up
+    /// again, and its skins too (the existing re-push flag on every known skin peer; a peer seen
+    /// later asks for one itself).
+    pub fn reset_sync_push_cursor(&self) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("UPDATE sync_push_cursor SET last_pushed_seq = 0 WHERE id = 1", [])?;
+        tx.execute("UPDATE synced_skin_peer SET repush = 1", [])?;
+        tx.commit()
+    }
+
     /// Every row `device_id` originated with `local_seq > since_local_seq`, across all
     /// three syncable tables, ready to encrypt and push. Only `completed`/`cancelled`
     /// meetings are included (a meeting still `recording` is never pushed).
@@ -11863,6 +11873,23 @@ mod tests {
             SyncableRow::CaptureItem { item, .. } => assert_eq!(item.text, "second"),
             other => panic!("expected CaptureItem, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn reset_push_cursor_reuploads_all_local_rows() {
+        let store = Store::open_in_memory().unwrap();
+        store.insert_capture_item(&item("com.a", "first", 1, 1000)).unwrap();
+        let last_id = store.insert_capture_item(&item("com.a", "second", 2, 2000)).unwrap().unwrap();
+        store.set_sync_push_cursor(capture_item_local_seq(&store, last_id).unwrap()).unwrap();
+        assert!(store.unpushed_rows("test-device", store.get_sync_push_cursor().unwrap()).unwrap().is_empty());
+        store.record_skin_peer("old-mac").unwrap();
+        assert!(store.take_skin_repush_request().unwrap());
+
+        store.reset_sync_push_cursor().unwrap();
+
+        assert_eq!(store.get_sync_push_cursor().unwrap(), 0);
+        assert_eq!(store.unpushed_rows("test-device", store.get_sync_push_cursor().unwrap()).unwrap().len(), 2);
+        assert!(store.take_skin_repush_request().unwrap(), "skins go up again too");
     }
 
     #[test]

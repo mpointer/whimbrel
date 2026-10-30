@@ -3684,6 +3684,98 @@
       ],
       "type": "object"
     },
+    "UpdateCheck": {
+      "description": "Settings → General's \"Check for Updates\", as the Mac's shows it.",
+      "oneOf": [
+        {
+          "description": "Not asked yet.",
+          "properties": {
+            "state": {
+              "const": "idle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "state": {
+              "const": "checking",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The running version is the latest.",
+          "properties": {
+            "state": {
+              "const": "upToDate",
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "version"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "state": {
+              "const": "downloading",
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "version"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Downloaded and waiting for \"Restart to Update\".",
+          "properties": {
+            "state": {
+              "const": "ready",
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state",
+            "version"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "state": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "UsageRowView": {
       "description": "One call as the Model usage list shows it (core/api::usage::UsageRow).",
       "properties": {

@@ -17,6 +17,9 @@
   "routes": [
     { "pattern": "sync.whimbrelapp.com", "custom_domain": true }
   ],
+  // The daily inactivity cron (src/inactivity.ts): warnings, deletions, expired
+  // swaps, reset notices and retired databases.
+  "triggers": { "crons": ["0 9 * * *"] },
   "kv_namespaces": [
     {
       "binding": "ENROLLMENT_HANDOFF",

@@ -2909,6 +2909,13 @@ final class CoreMemoryStore {
         }
     }
 
+    /// After a fresh start: every local row (and skin) goes up again to the new, empty sync
+    /// database. Call on `accessQueue`.
+    @discardableResult
+    func resetSyncPushCursor() -> Bool {
+        whimbrel_sync_reset_push_cursor(handle)
+    }
+
     /// Why the most recent `syncContent` failed and in which phase; nil if it succeeded.
     static func lastSyncContentError() -> String? {
         guard let msg = whimbrel_sync_content_last_error() else { return nil }

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { appStatus } from "../api";
+import { appStatus, sendFeedback } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { AppStatus } from "../generated/types";
 
 export function AboutCard() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
   useEffect(() => {
     appStatus()
@@ -33,6 +34,20 @@ export function AboutCard() {
         <dt>Semantic search model</dt>
         <dd>{status.embeddingModelLoaded ? "Loaded" : "Not downloaded yet"}</dd>
       </dl>
+      <div className="field-row">
+        <button
+          type="button"
+          className="mode"
+          onClick={() => {
+            setFeedbackError(null);
+            sendFeedback().catch((e: unknown) => setFeedbackError(isCommandError(e) ? describeError(e) : String(e)));
+          }}
+        >
+          Send feedback…
+        </button>
+        <span className="muted small">Opens an email to the Whimbrel team with this PC's version filled in.</span>
+      </div>
+      {feedbackError && <p className="muted small">{feedbackError}</p>}
       {status.startupErrors.length > 0 && (
         <div role="alert" className="startup-errors">
           <strong>Startup problems</strong>

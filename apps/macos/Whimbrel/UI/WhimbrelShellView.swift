@@ -155,7 +155,8 @@ struct WhimbrelShellView: View {
         switch appState.syncState.status {
         case .ready: return "Synced"
         case .notSignedIn: return "Sync off"
-        case .error: return "Sync error"
+        case .error, .rateLimited: return "Sync error"
+        case .deviceLimit: return "Sync limit reached"
         case .waitingForGroupKey: return "Approve this Mac"
         case .signingIn, .waitingForApproval: return "Setting up sync"
         }

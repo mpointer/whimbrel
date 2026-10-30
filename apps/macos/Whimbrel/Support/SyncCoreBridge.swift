@@ -154,27 +154,67 @@ extension CoreMemoryStore {
         let tursoToken: String?
         let tursoDatabaseUrl: String?
         let wrappedGroupKey: String?
+        let kind: String?
+        let devices: [LimitHolder]?
 
         enum CodingKeys: String, CodingKey {
             case status
             case tursoToken = "turso_token"
             case tursoDatabaseUrl = "turso_database_url"
             case wrappedGroupKey = "wrapped_group_key"
+            case kind, devices
         }
     }
 
     /// BLOCKING: `POST /v1/auth/google`. Call off the main actor.
-    static func syncWorkerAuthenticateGoogle(baseURL: String, idToken: String, devicePublicKey: String) -> Result<GoogleAuthResult, SyncAPIError> {
-        let json = baseURL.withCString { b in idToken.withCString { t in devicePublicKey.withCString { k in whimbrel_sync_worker_authenticate_google(b, t, k) } } }
-        return syncWorkerOutcome(json, SyncAuthReply.self).flatMap { reply in
-            switch reply.status {
-            case "pending": return .success(.pending)
-            case "approved":
-                guard let token = reply.tursoToken, let url = reply.tursoDatabaseUrl else { return .failure(.malformedResponse) }
-                return .success(.approved(tursoToken: token, tursoDatabaseUrl: url, wrappedGroupKey: reply.wrappedGroupKey))
-            default: return .failure(.malformedResponse)
-            }
+    /// `platform` nil (the iPhone) sends none; the core treats "" as nil.
+    static func syncWorkerAuthenticateGoogle(baseURL: String, idToken: String, devicePublicKey: String, platform: String? = nil) -> Result<GoogleAuthResult, SyncAPIError> {
+        let json = baseURL.withCString { b in idToken.withCString { t in devicePublicKey.withCString { k in (platform ?? "").withCString { p in whimbrel_sync_worker_authenticate_google(b, t, k, p) } } } }
+        return syncWorkerOutcome(json, SyncAuthReply.self).flatMap(authResult)
+    }
+
+    private static func authResult(_ reply: SyncAuthReply) -> Result<GoogleAuthResult, SyncAPIError> {
+        switch reply.status {
+        case "pending": return .success(.pending)
+        case "deviceLimit":
+            guard let kind = reply.kind, let devices = reply.devices else { return .failure(.malformedResponse) }
+            return .success(.deviceLimit(kind: kind, holders: devices))
+        case "approved":
+            guard let token = reply.tursoToken, let url = reply.tursoDatabaseUrl else { return .failure(.malformedResponse) }
+            return .success(.approved(tursoToken: token, tursoDatabaseUrl: url, wrappedGroupKey: reply.wrappedGroupKey))
+        default: return .failure(.malformedResponse)
         }
+    }
+
+    /// BLOCKING: `POST /v1/devices/swap` ("Use this computer instead"). This device becomes a
+    /// pending swap for `replaceDeviceId`.
+    static func syncWorkerSwapDevice(baseURL: String, idToken: String, devicePublicKey: String, platform: String?, replaceDeviceId: String) -> Result<Void, SyncAPIError> {
+        let json = baseURL.withCString { b in idToken.withCString { t in devicePublicKey.withCString { k in (platform ?? "").withCString { p in replaceDeviceId.withCString { d in
+            whimbrel_sync_worker_swap_device(b, t, k, p, d)
+        } } } } }
+        return syncWorkerOutcome(json, OkReply.self).map { _ in () }
+    }
+
+    /// BLOCKING: `POST /v1/waitlist`. `wants` are the Worker's exact strings.
+    static func syncWorkerJoinWaitlist(baseURL: String, idToken: String, devicePublicKey: String, wants: [String], platform: String?) -> Result<Void, SyncAPIError> {
+        let wantsJSON = String(decoding: (try? JSONEncoder().encode(wants)) ?? Data("[]".utf8), as: UTF8.self)
+        let json = baseURL.withCString { b in idToken.withCString { t in devicePublicKey.withCString { k in wantsJSON.withCString { w in (platform ?? "").withCString { p in
+            whimbrel_sync_worker_join_waitlist(b, t, k, w, p)
+        } } } } }
+        return syncWorkerOutcome(json, OkReply.self).map { _ in () }
+    }
+
+    /// BLOCKING: `POST /v1/account/reset` (the fresh start). Success is `.approved` with no
+    /// wrapped key.
+    static func syncWorkerResetAccount(baseURL: String, idToken: String, devicePublicKey: String) -> Result<GoogleAuthResult, SyncAPIError> {
+        let json = baseURL.withCString { b in idToken.withCString { t in devicePublicKey.withCString { k in whimbrel_sync_worker_reset_account(b, t, k) } } }
+        return syncWorkerOutcome(json, SyncAuthReply.self).flatMap(authResult)
+    }
+
+    /// BLOCKING: `POST /v1/account/delete`.
+    static func syncWorkerDeleteAccount(baseURL: String, idToken: String, devicePublicKey: String) -> Result<Void, SyncAPIError> {
+        let json = baseURL.withCString { b in idToken.withCString { t in devicePublicKey.withCString { k in whimbrel_sync_worker_delete_account(b, t, k) } } }
+        return syncWorkerOutcome(json, OkReply.self).map { _ in () }
     }
 
     /// BLOCKING: `POST /v1/devices`.

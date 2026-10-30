@@ -3,6 +3,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AiSettings,
+  UpdateCheck,
   ChatLine,
   ImageCandidateView,
   AppStatus,
@@ -83,6 +84,9 @@ export const popupQuit = () => invoke<void>("popup_quit");
 // Auto-update (M3.5): the version of a downloaded update, and "Restart now".
 export const updateReady = () => invoke<string | null>("update_ready");
 export const installUpdate = () => invoke<void>("install_update");
+/** Settings → General's "Check for Updates": starts a check and returns at once. */
+export const checkForUpdates = () => invoke<UpdateCheck>("check_for_updates");
+export const updateCheckStatus = () => invoke<UpdateCheck>("update_check_status");
 
 export const generalSettings = () => invoke<GeneralSettings>("general_settings");
 export const setAutostart = (enabled: boolean) => invoke<GeneralSettings>("set_autostart", { enabled });
@@ -107,6 +111,8 @@ export const syncApproveDevice = (id: string) => invoke<DeviceView[]>("sync_appr
 export const syncRevokeDevice = (id: string) => invoke<DeviceView[]>("sync_revoke_device", { id });
 
 export const aiSettings = () => invoke<AiSettings>("ai_settings");
+/** Opens a new email to Whimbrel with the version and Windows build filled in. */
+export const sendFeedback = () => invoke<void>("send_feedback");
 export const setApiKey = (provider: Provider, key: string | null) => invoke<ProviderKey[]>("set_api_key", { provider, key });
 /** Saves (or, with null, removes) the skin maker's Brave Search key; resolves to it masked. */
 export const setImageSearchKey = (key: string | null) => invoke<string | null>("set_image_search_key", { key });

@@ -104,3 +104,27 @@ export async function createAccountDatabase(
   const data = (await response.json()) as { database: { Name: string; Hostname: string } };
   return { name: data.database.Name, url: `https://${data.database.Hostname}` };
 }
+
+/** Deletes an account's data-plane database. A 404 means it is already
+ * gone, which counts as success so a retried reset can carry on. */
+export async function deleteAccountDatabase(
+  config: Pick<TursoDatabaseConfig, "platformApiToken" | "organizationSlug">,
+  databaseName: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const url =
+    `https://api.turso.tech/v1/organizations/${encodeURIComponent(config.organizationSlug)}` +
+    `/databases/${encodeURIComponent(databaseName)}`;
+
+  const response = await fetchImpl(url, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${config.platformApiToken}`,
+    },
+  });
+
+  if (!response.ok && response.status !== 404) {
+    const body = await response.text();
+    throw new TursoApiError(`Turso database deletion failed (${response.status}): ${body}`);
+  }
+}
