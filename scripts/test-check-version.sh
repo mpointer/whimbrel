@@ -25,7 +25,7 @@ assert_exit() {
 
 SCRATCH=$(mktemp -d)
 trap 'rm -rf "$SCRATCH"' EXIT
-mkdir -p "$SCRATCH/apps/macos/Whimbrel.xcodeproj" "$SCRATCH/core" "$SCRATCH/scripts"
+mkdir -p "$SCRATCH/apps/macos/Whimbrel.xcodeproj" "$SCRATCH/apps/mobile/ios/Whimbrel.xcodeproj" "$SCRATCH/core" "$SCRATCH/scripts"
 cp "$(pwd)/scripts/check-version.sh" "$SCRATCH/scripts/check-version.sh"
 chmod +x "$SCRATCH/scripts/check-version.sh"
 
@@ -34,6 +34,8 @@ write_agreeing_scratch() {
     echo "$v" > "$SCRATCH/VERSION"
     printf 'targets:\n  Whimbrel:\n    settings:\n      base:\n        MARKETING_VERSION: "%s"\n' "$v" > "$SCRATCH/apps/macos/project.yml"
     printf 'MARKETING_VERSION = %s;\nMARKETING_VERSION = %s;\n' "$v" "$v" > "$SCRATCH/apps/macos/Whimbrel.xcodeproj/project.pbxproj"
+    printf 'targets:\n  Whimbrel:\n    settings:\n      base:\n        MARKETING_VERSION: "%s"\n' "$v" > "$SCRATCH/apps/mobile/ios/project.yml"
+    printf 'MARKETING_VERSION = %s;\nMARKETING_VERSION = %s;\n' "$v" "$v" > "$SCRATCH/apps/mobile/ios/Whimbrel.xcodeproj/project.pbxproj"
     printf '[workspace.package]\nversion = "%s"\n' "$v" > "$SCRATCH/core/Cargo.toml"
 }
 
@@ -47,6 +49,14 @@ assert_exit "agreeing sources pass" 0 run_check
 write_agreeing_scratch "1.2.3"
 echo "1.2.4" > "$SCRATCH/VERSION"
 assert_exit "project.yml mismatch fails" 1 run_check
+
+write_agreeing_scratch "1.2.3"
+printf 'targets:\n  Whimbrel:\n    settings:\n      base:\n        MARKETING_VERSION: "0.1.0"\n' > "$SCRATCH/apps/mobile/ios/project.yml"
+assert_exit "iOS project.yml mismatch fails" 1 run_check
+
+write_agreeing_scratch "1.2.3"
+printf 'MARKETING_VERSION = 1.2.3;\nMARKETING_VERSION = 0.1.0;\n' > "$SCRATCH/apps/mobile/ios/Whimbrel.xcodeproj/project.pbxproj"
+assert_exit "iOS pbxproj disagreement fails" 1 run_check
 
 write_agreeing_scratch "1.2.3"
 assert_exit "matching --tag passes" 0 run_check --tag v1.2.3

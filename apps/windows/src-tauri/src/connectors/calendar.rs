@@ -8,6 +8,11 @@
 //! store calls.
 //!
 //! The same loop raises the lead-time prompt, because it already has today's meetings.
+//!
+//! The calendar rows the Library and sync see are written once per round, from every account
+//! merged and cut to today, as the Mac does (fe473ad5, c640ca4f). Writing each account's
+//! whole list on its own made an invite shared by two accounts flip its one row between the
+//! two copies on every poll, each flip a new `local_seq` and a new row on the relay.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -102,24 +107,15 @@ impl Poller {
             return self.poll_account_with(email, Vec::new(), 1);
         }
         tracing::info!(email, meetings = outcome.meetings.len(), cancelled = outcome.cancelled_count, "calendar sync applied");
-        self.store_events(&outcome.meetings);
         Ok(outcome.meetings)
     }
 
-    /// Writes the meetings into the store as calendar rows, so they show up in the
-    /// Library and in Ask's context like the Mac's do. Upserted on
-    /// `(source, external_id)`: re-syncing the same event updates its row.
-    fn store_events(&self, meetings: &[QualifyingMeeting]) {
-        let items: Vec<memory::NewCalendarEventItem> = meetings
-            .iter()
-            .filter_map(|m| calendar::calendar_event_item(m, &self.device_id))
-            .map(Into::into)
-            .collect();
-        if items.is_empty() {
-            return;
-        }
-        let count = items.len();
-        let stored = self.store.call_blocking(move |s| s.upsert_calendar_event_items(&items).map_err(|e| e.to_string()));
+    /// Writes one round's meetings (`todays_events`) into the store as calendar rows, so they show up
+    /// in the Library and in Ask's context like the Mac's do.
+    fn store_events(&self, meetings: Vec<QualifyingMeeting>) {
+        let device_id = self.device_id.clone();
+        let count = meetings.len();
+        let stored = self.store.call_blocking(move |s| store_events(s, &meetings, &device_id));
         match stored {
             Ok(Ok(())) => tracing::debug!(count, "stored calendar events"),
             Ok(Err(e)) | Err(CommandError::Store { message: e }) => tracing::warn!(error = %e, "could not store calendar events"),
@@ -131,6 +127,36 @@ impl Poller {
     fn call_tool(&self, tool: &str, args_json: &str, token: &str) -> Result<String, CommandError> {
         node::call_connector(&self.host, &self.connectors_root, GOOGLE_CALENDAR, "calendar", tool, args_json, token)
     }
+}
+
+/// The calendar rows for one round: every account's meetings, in account order, cut to today (the
+/// connector keeps every occurrence of a recurring meeting, years ahead) and merged with
+/// `merge_meetings`, so a meeting on two accounts is one row and the first account's copy always wins.
+pub fn todays_events(per_account: &[Vec<QualifyingMeeting>], tomorrow_start_unix_ms: i64) -> Vec<QualifyingMeeting> {
+    let all: Vec<QualifyingMeeting> =
+        per_account.iter().flatten().filter(|m| m.start_unix_ms < tomorrow_start_unix_ms).cloned().collect();
+    calendar::merge_meetings(&[], &all)
+}
+
+/// Upserts `meetings` as calendar rows on `(source, external_id)`: re-syncing the same event leaves
+/// its row (and its `local_seq`) alone unless its content changed.
+pub fn store_events(store: &memory::Store, meetings: &[QualifyingMeeting], device_id: &str) -> Result<(), String> {
+    let items: Vec<memory::NewCalendarEventItem> =
+        meetings.iter().filter_map(|m| calendar::calendar_event_item(m, device_id)).map(Into::into).collect();
+    if items.is_empty() {
+        return Ok(());
+    }
+    store.upsert_calendar_event_items(&items).map_err(|e| e.to_string())
+}
+
+/// The start of tomorrow on this PC's clock: the end of the window the Mac stores (`todayWindowEnd`).
+fn tomorrow_start(now: chrono::DateTime<chrono::Local>) -> i64 {
+    use chrono::TimeZone;
+    let tomorrow = now.date_naive() + chrono::Days::new(1);
+    chrono::Local
+        .from_local_datetime(&tomorrow.and_hms_opt(0, 0, 0).expect("midnight exists"))
+        .earliest()
+        .map_or(now.timestamp_millis() + 24 * 60 * 60 * 1000, |t| t.timestamp_millis())
 }
 
 /// The calendar half of the meetings service: polls the connected accounts and prompts
@@ -209,7 +235,7 @@ impl CalendarService {
             }
         };
         let mut failure = None;
-        for email in emails {
+        for email in emails.iter().cloned() {
             if full {
                 if let Err(e) = self.poller.forget_sync_token(&email) {
                     tracing::warn!(email, error = %e, "could not ask for a full calendar sync");
@@ -228,6 +254,12 @@ impl CalendarService {
                 }
             }
         }
+        // One write for the round, in account order, so the same account's copy wins every time.
+        let per_account: Vec<Vec<QualifyingMeeting>> = {
+            let known = self.known.lock().unwrap();
+            emails.iter().filter_map(|e| known.get(e).cloned()).collect()
+        };
+        self.poller.store_events(todays_events(&per_account, tomorrow_start(chrono::Local::now())));
         let mut status = self.status.lock().unwrap();
         status.error = failure;
         if status.error.is_none() {
@@ -312,6 +344,76 @@ mod tests {
             app_bundle_id: None,
             ..Default::default()
         }
+    }
+
+    fn at(id: &str, title: &str, start: i64, attendees: &[&str]) -> QualifyingMeeting {
+        QualifyingMeeting { title: title.into(), start_unix_ms: start, end_unix_ms: start + 1_800_000, ..meeting(id, attendees, true) }
+    }
+
+    const DAY: i64 = 24 * 60 * 60 * 1000;
+
+    /// The `local_seq`s of the calendar rows the next push would send, after `since`.
+    fn pending(store: &memory::Store, since: i64) -> Vec<i64> {
+        store
+            .unpushed_item_rows("pc", since)
+            .unwrap()
+            .into_iter()
+            .filter_map(|r| match r {
+                memory::SyncableRow::Item { local_seq, .. } => Some(local_seq),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_meeting_shared_by_two_accounts_is_one_row_that_stays_put() {
+        let now = 1_800_000_000_000;
+        // The same invite on both accounts: the same event id and start, a slightly different copy.
+        let work = vec![at("evt-1", "Partner Sync", now, &["me@work", "them@x"])];
+        let home = vec![at("evt-1", "partner sync", now, &["me@home", "them@x", "other@x"])];
+
+        // The old way, each account's list on its own: every poll flips the row and re-stamps it.
+        let old = memory::Store::open_in_memory().unwrap();
+        for list in [&work, &home] {
+            store_events(&old, list, "pc").unwrap();
+        }
+        let seen = *pending(&old, 0).iter().max().unwrap();
+        for list in [&work, &home] {
+            store_events(&old, list, "pc").unwrap();
+        }
+        assert!(!pending(&old, seen).is_empty(), "the old way re-stamps the shared row on the next poll");
+
+        // Merged first: one row, the first account's copy, and a second poll changes nothing.
+        let store = memory::Store::open_in_memory().unwrap();
+        let round = todays_events(&[work.clone(), home.clone()], now + DAY);
+        assert_eq!(round.len(), 1, "one row for the shared invite");
+        assert_eq!(round[0].title, "Partner Sync", "the first account's copy");
+        store_events(&store, &round, "pc").unwrap();
+        let first = pending(&store, 0);
+        assert_eq!(first.len(), 1);
+        store_events(&store, &todays_events(&[work, home], now + DAY), "pc").unwrap();
+        assert!(pending(&store, first[0]).is_empty(), "no second local_seq change");
+    }
+
+    #[test]
+    fn only_todays_meetings_are_stored() {
+        let now = 1_800_000_000_000;
+        let tomorrow = now + 6 * 60 * 60 * 1000;
+        let account = vec![
+            at("a", "Standup", now, &["me", "you"]),
+            at("b", "Standup", tomorrow + 1, &["me", "you"]),
+            at("c", "Standup", now + 700 * DAY, &["me", "you"]),
+        ];
+        let round = todays_events(&[account], tomorrow);
+        assert_eq!(round.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["a"]);
+    }
+
+    #[test]
+    fn tomorrow_starts_at_local_midnight() {
+        use chrono::{TimeZone, Timelike};
+        let now = chrono::Local.with_ymd_and_hms(2026, 10, 30, 8, 31, 0).single().unwrap();
+        let start = chrono::Local.timestamp_millis_opt(tomorrow_start(now)).single().unwrap();
+        assert_eq!((start.date_naive(), start.hour(), start.minute()), (now.date_naive() + chrono::Days::new(1), 0, 0));
     }
 
     #[test]

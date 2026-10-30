@@ -41,14 +41,18 @@ echo "$NEW_VERSION" > VERSION
 echo "==> Bumping apps/macos/project.yml's MARKETING_VERSION: $CURRENT_VERSION -> $NEW_VERSION"
 sed -i '' "s/MARKETING_VERSION: \"$CURRENT_VERSION\"/MARKETING_VERSION: \"$NEW_VERSION\"/" apps/macos/project.yml
 
+echo "==> Bumping apps/mobile/ios/project.yml's MARKETING_VERSION: $CURRENT_VERSION -> $NEW_VERSION"
+sed -i '' "s/MARKETING_VERSION: \"$CURRENT_VERSION\"/MARKETING_VERSION: \"$NEW_VERSION\"/" apps/mobile/ios/project.yml
+
 # core/Cargo.toml's workspace version is what whimbrel_core_version() (Settings,
 # CoreSelfTest) reports -- kept in lockstep with VERSION so it can't drift the
 # way it did pre-0.3.5 (stuck at 0.2.0 across several app releases).
 echo "==> Bumping core/Cargo.toml version: $CURRENT_VERSION -> $NEW_VERSION"
 sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" core/Cargo.toml
 
-echo "==> Regenerating Xcode project (xcodegen generate)..."
+echo "==> Regenerating the Mac and iPhone Xcode projects (xcodegen generate)..."
 (cd apps/macos && xcodegen generate)
+(cd apps/mobile/ios && xcodegen generate)
 
 echo "==> Updating core/Cargo.lock for the version bump..."
 (cd core && cargo check --workspace >/dev/null)
@@ -58,7 +62,7 @@ scripts/check-version.sh
 
 echo ""
 echo "Prepared $NEW_VERSION. Review the diff above (git status / git diff), then:"
-echo "  git add VERSION apps/macos/project.yml apps/macos/Whimbrel.xcodeproj/project.pbxproj core/Cargo.toml core/Cargo.lock"
+echo "  git add VERSION apps/macos/project.yml apps/macos/Whimbrel.xcodeproj/project.pbxproj apps/mobile/ios/project.yml apps/mobile/ios/Whimbrel.xcodeproj/project.pbxproj core/Cargo.toml core/Cargo.lock"
 echo "  git commit -m \"release: prepare $NEW_VERSION\""
 echo "  git tag -a v$NEW_VERSION -m \"v$NEW_VERSION\""
 echo ""

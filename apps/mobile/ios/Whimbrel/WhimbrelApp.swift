@@ -83,7 +83,7 @@ struct WhimbrelApp: App {
 /// the directory is gone, so an interrupted wipe finishes at the next launch.
 enum StoreRemoval {
     static let pendingKey = "kestrel.sync.storeRemovalPending"
-    private static let log = Logger(subsystem: "com.mpointer.kestrel.mobile", category: "wipe")
+    private static let log = Logger(subsystem: "com.mpointer.whimbrel.mobile", category: "wipe")
 
     static func markPending(_ defaults: UserDefaults = .standard) {
         defaults.set(true, forKey: pendingKey)

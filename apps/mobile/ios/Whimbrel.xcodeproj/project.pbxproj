@@ -37,6 +37,7 @@
 		6739529E549BDDC0E641A2F5 /* SyncModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5CBE46597D3D7AE4651618A /* SyncModel.swift */; };
 		691749D4F0DBCC8ACFB04185 /* ThemeDefaults.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEFFC5E56A5F95235A225BB6 /* ThemeDefaults.swift */; };
 		71E747C7C35E491B952F4492 /* SyncModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD7E98EF52AA1B907A1887E3 /* SyncModelTests.swift */; };
+		7987E3478689EE2ECB79E784 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = C77BB420B7D6E7738B15480C /* PrivacyInfo.xcprivacy */; };
 		80522EB44C73362B72EBCF09 /* DictationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B02D831038C96564D1D0616 /* DictationTests.swift */; };
 		88BD1D7951BBA7E189AE72CA /* TodayModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444DCEE207247AAF6418E035 /* TodayModel.swift */; };
 		948A1AC5A69A727FEE98C793 /* WhimbrelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5DF5B19F3E6749DB9CB5667 /* WhimbrelApp.swift */; };
@@ -129,6 +130,7 @@
 		C2978DE5AF2B7F7DA47FCF04 /* MeetingsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingsModel.swift; sourceTree = "<group>"; };
 		C5CBE46597D3D7AE4651618A /* SyncModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncModel.swift; sourceTree = "<group>"; };
 		C778C88C281CA40B5C0AEFC3 /* AskModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskModelTests.swift; sourceTree = "<group>"; };
+		C77BB420B7D6E7738B15480C /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		CAC8996EFB9C6DD68AA02041 /* PhoneReadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneReadStore.swift; sourceTree = "<group>"; };
 		CF994560594CBF3AB90F35C2 /* SyncTiming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SyncTiming.swift; path = ../../macos/Whimbrel/Support/SyncTiming.swift; sourceTree = "<group>"; };
 		D34FC6488404AAF7D47E4A6F /* Dictation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Dictation.swift; sourceTree = "<group>"; };
@@ -251,6 +253,7 @@
 				B4DE453A8EC34BF32F79F1D6 /* PhoneModels.swift */,
 				CAC8996EFB9C6DD68AA02041 /* PhoneReadStore.swift */,
 				D462F464540BF376A6EC8A9E /* PhoneSettingsSync.swift */,
+				C77BB420B7D6E7738B15480C /* PrivacyInfo.xcprivacy */,
 				28760234C3CF7ECEBC430B7A /* ReadAloud.swift */,
 				0A2CA8CA2E8A59C5092E2388 /* RootView.swift */,
 				6AD5C8E21874D7F46E48D17E /* RoutinesView.swift */,
@@ -358,6 +361,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				CF4B29AADE92437A0DEE9D54 /* Assets.xcassets in Resources */,
+				7987E3478689EE2ECB79E784 /* PrivacyInfo.xcprivacy in Resources */,
 				341BFFB35D53EC5AFB03E89A /* themes in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -459,7 +463,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.9.42;
 				PRODUCT_NAME = Whimbrel;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Whimbrel/Bridging-Header.h";
@@ -477,7 +481,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel.mobile.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.whimbrel.mobile.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Whimbrel.app/Whimbrel";
@@ -554,7 +558,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel.mobile.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.whimbrel.mobile.tests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Whimbrel.app/Whimbrel";
@@ -645,7 +649,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.9.42;
 				PRODUCT_NAME = Whimbrel;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Whimbrel/Bridging-Header.h";

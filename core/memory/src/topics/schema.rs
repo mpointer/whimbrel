@@ -16,7 +16,11 @@ pub(crate) const PRUNE_DIRTY_KEY: &str = "topic_prune_dirty";
 /// Called at the end of `Store::init`, after every `ALTER TABLE` the triggers depend on
 /// (`meeting.summary_tldr`, `episodes.hidden`).
 pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(&format!(
+    // One write transaction: two connections opening at once (the app, its slow lane, the
+    // MCP server) would otherwise interleave the DROP TRIGGER / CREATE TRIGGER pairs below,
+    // and the second create fails with "trigger ... already exists". Rolled back on error.
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    tx.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS topic_source (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             kind TEXT NOT NULL,
@@ -171,6 +175,7 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
              WHERE NOT EXISTS (SELECT 1 FROM topic_dirty WHERE kind = 'episode' AND ref_id = new.id);
         END;"
     ))?;
+    tx.commit()?;
     ensure_entity_name_key(conn)
 }
 

@@ -80,8 +80,8 @@ final class SyncModel: ObservableObject {
     /// Set by the app; nil (tests) skips the settings pull.
     var settingsPuller: SettingsPulling?
     private let sleep: (UInt64) async throws -> Void
-    private let queue = DispatchQueue(label: "com.mpointer.kestrel.mobile.store", qos: .userInitiated)
-    private let log = Logger(subsystem: "com.mpointer.kestrel.mobile", category: "content-sync")
+    private let queue = DispatchQueue(label: "com.mpointer.whimbrel.mobile.store", qos: .userInitiated)
+    private let log = Logger(subsystem: "com.mpointer.whimbrel.mobile", category: "content-sync")
     private var consecutiveFailures = 0
     /// The running cadence loop, if any. Exposed so tests can await it.
     private(set) var loopTask: Task<Void, Never>?

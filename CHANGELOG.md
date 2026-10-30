@@ -2,6 +2,18 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.42] - 2026-10-30
+
+### Sync service
+- Syncing no longer stalls when many rows are waiting for a related meeting. Those lookups are batched and time-limited, which fixes the iPhone's "Couldn't sync" timeouts (#457).
+- Opening the database from two places at once (the app, its background work, the MCP server) no longer fails occasionally (#455).
+
+### Windows
+- With two Google accounts connected, shared calendar events are no longer re-saved on every poll; events are merged across accounts once per poll, today only (#458).
+
+### iPhone
+- Ready for TestFlight: new bundle ID `com.mpointer.whimbrel.mobile`, a privacy manifest, and the version now follows the Mac and Windows apps (#459).
+
 ## [0.9.41] - 2026-10-30
 
 ### Mac

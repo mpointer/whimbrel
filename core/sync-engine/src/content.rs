@@ -450,6 +450,21 @@ const MAX_ROWS_PER_PULL_PASS: i64 = 500;
 /// rounds. Per peer, so one peer's backlog can't starve another's pulls.
 const PULL_PEER_TIME_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// Most pending-dependency rows fetched by one batched query (keeps the SQL well under
+/// SQLite's bound-parameter limit).
+const PENDING_LOOKUP_CHUNK: usize = 200;
+
+// Counts `sync_row` reads on the pull path, so tests can assert the pending pass is batched.
+#[cfg(test)]
+thread_local! {
+    static ROW_QUERIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn count_row_query() {
+    #[cfg(test)]
+    ROW_QUERIES.with(|c| c.set(c.get() + 1));
+}
+
 /// `skip_skins` leaves out skin rows at the query, so a puller that never applies them (the phone)
 /// never downloads their images.
 async fn fetch_rows_since(
@@ -464,10 +479,15 @@ async fn fetch_rows_since(
     } else {
         "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 ORDER BY local_seq ASC LIMIT ?3"
     };
-    let mut rows = conn
+    let rows = conn
         .query(sql, params![peer_device_id, since_local_seq, limit])
         .await
         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    read_envelopes(rows).await
+}
+
+async fn read_envelopes(mut rows: libsql::Rows) -> Result<Vec<RowEnvelope>, SyncEngineError> {
+    count_row_query();
     let mut envelopes = Vec::new();
     while let Some(row) = rows
         .next()
@@ -489,41 +509,30 @@ async fn fetch_rows_since(
     Ok(envelopes)
 }
 
-/// Point-lookup for one exact `(peer_device_id, local_seq, row_type)` row, used to
-/// retry a pending-dependency entry outside the cursor-bounded window — the row may
-/// sit well behind the peer's current fetch horizon by the time its dependency
-/// resolves, since the cursor no longer waits for it.
-async fn fetch_row(
+/// One query for these exact `(local_seq, row_type)` rows of a peer, used to retry
+/// pending-dependency entries (and their missing meetings) outside the cursor-bounded
+/// window: those rows may sit well behind the peer's fetch horizon, since the cursor no
+/// longer waits for them. Callers chunk `keys` to at most `PENDING_LOOKUP_CHUNK`. A row
+/// that isn't on the relay is simply absent from the result.
+async fn fetch_rows_by_key(
     conn: &Connection,
     peer_device_id: &str,
-    local_seq: i64,
-    row_type: &str,
-) -> Result<Option<RowEnvelope>, SyncEngineError> {
-    let mut rows = conn
-        .query(
-            "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq = ?2 AND row_type = ?3",
-            params![peer_device_id, local_seq, row_type],
-        )
+    keys: &[(i64, String)],
+) -> Result<Vec<RowEnvelope>, SyncEngineError> {
+    let placeholders = (0..keys.len()).map(|i| format!("?{}", i + 2)).collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq IN ({placeholders})"
+    );
+    let mut values = vec![Value::Text(peer_device_id.to_string())];
+    values.extend(keys.iter().map(|(seq, _)| Value::Integer(*seq)));
+    let rows = conn
+        .query(&sql, Params::Positional(values))
         .await
         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-    let Some(row) = rows
-        .next()
-        .await
-        .map_err(|e| SyncEngineError::Query(e.to_string()))?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(RowEnvelope {
-        local_seq: row
-            .get(0)
-            .map_err(|e| SyncEngineError::Query(e.to_string()))?,
-        row_type: row
-            .get(1)
-            .map_err(|e| SyncEngineError::Query(e.to_string()))?,
-        ciphertext_base64: row
-            .get(2)
-            .map_err(|e| SyncEngineError::Query(e.to_string()))?,
-    }))
+    let mut envelopes = read_envelopes(rows).await?;
+    // The key is (local_seq, row_type); drop a same-seq row of another type.
+    envelopes.retain(|env| keys.iter().any(|(seq, ty)| *seq == env.local_seq && *ty == env.row_type));
+    Ok(envelopes)
 }
 
 /// Decrypts one row's ciphertext. Returns `None` (never an `Err`) on any failure —
@@ -748,62 +757,6 @@ async fn pull_content_with_budget(
     // bandwidth on the phone matters.
     let capture_cutoff = options.capture_window_ms.map(|w| now_unix_ms() - w);
     let outside_window = |ts_unix_ms: i64| capture_cutoff.is_some_and(|cutoff| ts_unix_ms < cutoff);
-    /// A row that can't be applied until its parent meeting resolves. Both variants
-    /// carry the `meeting_local_seq` fallback for a peer whose meeting was applied from
-    /// a legacy pre-`source_meeting_id` envelope (no `sync_meeting_map` entry exists to
-    /// resolve against). It is `Option` on `Item` only because an items row pushed
-    /// before that field existed deserializes to `None`.
-    // AppliedItem is much wider than AppliedTranscriptSegment. Boxing would buy nothing
-    // here: this Vec holds one entry per deferred row of a single pull cycle, and the
-    // payloads are moved into it exactly once.
-    #[allow(clippy::large_enum_variant)]
-    enum PendingSegment {
-        Legacy {
-            source_meeting_id: Option<i64>,
-            meeting_local_seq: i64,
-            segment: memory::AppliedTranscriptSegment,
-        },
-        Item {
-            source_meeting_id: Option<i64>,
-            meeting_local_seq: Option<i64>,
-            item: memory::AppliedItem,
-        },
-    }
-
-    /// Decrypts and decodes one row known (or suspected) to need FK resolution before
-    /// it can be applied. Used only by the pending-dependency retry pass below -- the
-    /// fresh-envelope scan already inlines its own decode (it also needs to apply
-    /// non-transcript items immediately, which this helper deliberately does not do).
-    fn decode_pending_segment(
-        group_key: &GroupKey,
-        peer_device_id: &str,
-        env: &RowEnvelope,
-    ) -> Option<PendingSegment> {
-        let plaintext = decrypt_row(group_key, peer_device_id, env)?;
-        match env.row_type.as_str() {
-            ROW_TYPE_TRANSCRIPT_SEGMENT => {
-                let decoded: TranscriptSegmentPayload = serde_json::from_slice(&plaintext).ok()?;
-                Some(PendingSegment::Legacy {
-                    source_meeting_id: decoded.source_meeting_id,
-                    meeting_local_seq: decoded.meeting_local_seq,
-                    segment: decoded.segment,
-                })
-            }
-            ROW_TYPE_ITEMS => {
-                let decoded: ItemPayload = serde_json::from_slice(&plaintext).ok()?;
-                if decoded.item.kind != "transcript" {
-                    return None;
-                }
-                Some(PendingSegment::Item {
-                    source_meeting_id: decoded.source_meeting_id,
-                    meeting_local_seq: decoded.meeting_local_seq,
-                    item: decoded.item,
-                })
-            }
-            _ => None,
-        }
-    }
-
     for peer in distinct_peer_device_ids(conn, own_device_id).await? {
         let cursor = store
             .get_sync_cursor(&peer)
@@ -827,6 +780,11 @@ async fn pull_content_with_budget(
                     .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             }
         }
+        // Snapshot before this pass records its own new pending rows: those were just
+        // tried, so retrying them in the same round would only repeat the lookup.
+        let pending_before = store
+            .list_sync_pending_dependencies(&peer)
+            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
         let envelopes =
             fetch_rows_since(conn, &peer, cursor, MAX_ROWS_PER_PULL_PASS, skip_skins).await?;
         let peer_started = std::time::Instant::now();
@@ -945,14 +903,29 @@ async fn pull_content_with_budget(
             apply_parent_row(store, &peer, env.local_seq, &env.row_type, &plaintext)?;
         }
 
-        // Retry every row still waiting on a dependency from a previous pass, by exact
-        // point-lookup -- these can sit well behind the cursor's current window (the
-        // cursor no longer waits for them), so `fetch_rows_since`'s bounded window
-        // above would never see them again on its own.
-        for (dep_local_seq, dep_row_type) in store
-            .list_sync_pending_dependencies(&peer)
-            .map_err(|e| SyncEngineError::Query(e.to_string()))?
-        {
+        resolve_segments(conn, group_key, store, &peer, segments).await?;
+
+        // Advance to the highest row this pass handled: every fetched row, unless the time
+        // budget stopped it early, in which case the rest are fetched again next pass.
+        // Unresolved dependencies are tracked in sync_pending_dependency and retried
+        // independently above, so a row that may never resolve no longer caps how far
+        // this device can ever pull.
+        let new_cursor = processed_through;
+        store
+            .set_sync_cursor(&peer, new_cursor)
+            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+
+        // Retry every row still waiting on a dependency from an earlier pass. These can sit
+        // well behind the cursor's window (the cursor no longer waits for them), so they're
+        // looked up by key, in batches, AFTER the cursor is saved: the forward pull never
+        // waits on this pass, and a meeting fetched above already resolves its segments
+        // here. The pass has its own time budget, so a large pending set (227 entries hit
+        // SYNC_TIMEOUT on the phone, one round trip each) can never stall the round; what
+        // it doesn't reach stays pending for the next round. Always one chunk, like the
+        // forward pass's one row, so a zero budget still progresses.
+        let pending_started = std::time::Instant::now();
+        let mut retry = Vec::new();
+        for (dep_local_seq, dep_row_type) in pending_before {
             if store
                 .resolve_sync_row_map(&peer, dep_local_seq, &dep_row_type)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?
@@ -964,117 +937,186 @@ async fn pull_content_with_budget(
                     .map_err(|e| SyncEngineError::Query(e.to_string()))?;
                 continue;
             }
-            let Some(env) = fetch_row(conn, &peer, dep_local_seq, &dep_row_type).await? else {
-                continue; // row vanished somehow; leave it pending rather than lose it silently
-            };
-            let Some(pending) = decode_pending_segment(group_key, &peer, &env) else {
-                continue; // still can't decrypt/decode; retry again next pass
-            };
-            segments.push((env, pending));
+            retry.push((dep_local_seq, dep_row_type));
         }
-
-        for (env, pending) in &segments {
-            let (source_meeting_id, fallback_local_seq) = match pending {
-                PendingSegment::Legacy {
-                    source_meeting_id,
-                    meeting_local_seq,
-                    ..
-                } => (*source_meeting_id, Some(*meeting_local_seq)),
-                PendingSegment::Item {
-                    source_meeting_id,
-                    meeting_local_seq,
-                    ..
-                } => (*source_meeting_id, *meeting_local_seq),
-            };
-
-            // Prefer the stable source_meeting_id (via sync_meeting_map). Fall back to
-            // the legacy meeting_local_seq + sync_row_map lookup for historical rows
-            // pushed before source_meeting_id existed, or if the primary lookup misses.
-            let mut resolved_meeting_id = match source_meeting_id {
-                Some(source_id) => store
-                    .resolve_sync_meeting_map(&peer, source_id)
-                    .map_err(|e| SyncEngineError::Query(e.to_string()))?,
-                None => None,
-            };
-            if resolved_meeting_id.is_none() {
-                if let Some(meeting_local_seq) = fallback_local_seq {
-                    resolved_meeting_id = store
-                        .resolve_sync_row_map(&peer, meeting_local_seq, ROW_TYPE_MEETING)
-                        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-                    // The meeting may never have been in a fetch window at all -- e.g.
-                    // the cursor has since advanced past its local_seq (it no longer
-                    // waits for unresolved dependencies) while the meeting was still in
-                    // flight to the relay. Its exact local_seq is known from this row's
-                    // own payload, so look it up and apply it directly rather than
-                    // waiting for a window that may never include it again.
-                    if resolved_meeting_id.is_none() {
-                        if let Some(meeting_env) =
-                            fetch_row(conn, &peer, meeting_local_seq, ROW_TYPE_MEETING).await?
-                        {
-                            if let Some(plaintext) = decrypt_row(group_key, &peer, &meeting_env) {
-                                apply_parent_row(
-                                    store,
-                                    &peer,
-                                    meeting_env.local_seq,
-                                    &meeting_env.row_type,
-                                    &plaintext,
-                                )?;
-                                resolved_meeting_id = store
-                                    .resolve_sync_row_map(&peer, meeting_local_seq, ROW_TYPE_MEETING)
-                                    .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-                            }
-                        }
-                    }
-                }
+        for (i, chunk) in retry.chunks(PENDING_LOOKUP_CHUNK).enumerate() {
+            // ponytail: the budget is checked per chunk, so one chunk's applies run to the end
+            // (fine without embedding; with it, check the budget per row in resolve_segments).
+            if i > 0 && pending_started.elapsed() >= budget {
+                break;
             }
+            // A vanished row is absent and an undecodable one is dropped here: both stay
+            // pending and are retried next round rather than lost.
+            let pending = fetch_rows_by_key(conn, &peer, chunk)
+                .await?
+                .into_iter()
+                .filter_map(|env| decode_pending_segment(group_key, &peer, &env).map(|p| (env, p)))
+                .collect();
+            resolve_segments(conn, group_key, store, &peer, pending).await?;
+        }
+    }
+    Ok(())
+}
 
-            match resolved_meeting_id {
-                Some(local_meeting_id) => {
-                    let local_id = match pending {
-                        PendingSegment::Legacy { segment, .. } => store
-                            .apply_synced_transcript_segment(
-                                env.local_seq,
-                                local_meeting_id,
-                                segment,
-                            )
-                            .map_err(|e| SyncEngineError::Query(e.to_string()))?,
-                        // The ONLY call site that may pass a transcript-kind item to
-                        // apply_synced_item, and it is unreachable unless the meeting
-                        // resolved -- the Some arm is what makes thread_id non-NULL.
-                        PendingSegment::Item { item, .. } => store
-                            .apply_synced_item(&peer, env.local_seq, Some(local_meeting_id), item)
-                            .map_err(|e| SyncEngineError::Query(e.to_string()))?,
-                    };
-                    store
-                        .record_sync_row_map(&peer, env.local_seq, &env.row_type, local_id)
-                        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-                    // A no-op if this row wasn't pending (the common case: it resolved
-                    // on its first pass and never got here via list_sync_pending_dependencies).
-                    store
-                        .delete_sync_pending_dependency(&peer, env.local_seq, &env.row_type)
-                        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-                }
-                None => {
-                    // Still unresolved -- track it for point-lookup retry on every future
-                    // pass. Unlike the old cursor-blocking design, this no longer holds
-                    // back anything else: the cursor advances past it below, so it costs
-                    // one cheap lookup per pass rather than a frozen pull stream.
-                    store
-                        .record_sync_pending_dependency(&peer, env.local_seq, &env.row_type)
-                        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-                }
+/// A row that can't be applied until its parent meeting resolves. Both variants
+/// carry the `meeting_local_seq` fallback for a peer whose meeting was applied from
+/// a legacy pre-`source_meeting_id` envelope (no `sync_meeting_map` entry exists to
+/// resolve against). It is `Option` on `Item` only because an items row pushed
+/// before that field existed deserializes to `None`.
+// AppliedItem is much wider than AppliedTranscriptSegment. Boxing would buy nothing
+// here: this Vec holds one entry per deferred row of a single pull cycle, and the
+// payloads are moved into it exactly once.
+#[allow(clippy::large_enum_variant)]
+enum PendingSegment {
+    Legacy {
+        source_meeting_id: Option<i64>,
+        meeting_local_seq: i64,
+        segment: memory::AppliedTranscriptSegment,
+    },
+    Item {
+        source_meeting_id: Option<i64>,
+        meeting_local_seq: Option<i64>,
+        item: memory::AppliedItem,
+    },
+}
+
+/// Decrypts and decodes one row known (or suspected) to need FK resolution before
+/// it can be applied. Used only by the pending-dependency retry pass below -- the
+/// fresh-envelope scan already inlines its own decode (it also needs to apply
+/// non-transcript items immediately, which this helper deliberately does not do).
+fn decode_pending_segment(
+    group_key: &GroupKey,
+    peer_device_id: &str,
+    env: &RowEnvelope,
+) -> Option<PendingSegment> {
+    let plaintext = decrypt_row(group_key, peer_device_id, env)?;
+    match env.row_type.as_str() {
+        ROW_TYPE_TRANSCRIPT_SEGMENT => {
+            let decoded: TranscriptSegmentPayload = serde_json::from_slice(&plaintext).ok()?;
+            Some(PendingSegment::Legacy {
+                source_meeting_id: decoded.source_meeting_id,
+                meeting_local_seq: decoded.meeting_local_seq,
+                segment: decoded.segment,
+            })
+        }
+        ROW_TYPE_ITEMS => {
+            let decoded: ItemPayload = serde_json::from_slice(&plaintext).ok()?;
+            if decoded.item.kind != "transcript" {
+                return None;
+            }
+            Some(PendingSegment::Item {
+                source_meeting_id: decoded.source_meeting_id,
+                meeting_local_seq: decoded.meeting_local_seq,
+                item: decoded.item,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Resolves each segment's parent meeting and applies it, or records it in
+/// `sync_pending_dependency` for a later round. A meeting that isn't applied locally but
+/// whose exact `meeting_local_seq` is known is fetched by key first (batched): it may never
+/// have been in a fetch window at all, e.g. the cursor advanced past its local_seq while
+/// the meeting was still in flight to the relay.
+async fn resolve_segments(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    peer: &str,
+    segments: Vec<(RowEnvelope, PendingSegment)>,
+) -> Result<(), SyncEngineError> {
+    let fallback = |pending: &PendingSegment| match pending {
+        PendingSegment::Legacy {
+            source_meeting_id,
+            meeting_local_seq,
+            ..
+        } => (*source_meeting_id, Some(*meeting_local_seq)),
+        PendingSegment::Item {
+            source_meeting_id,
+            meeting_local_seq,
+            ..
+        } => (*source_meeting_id, *meeting_local_seq),
+    };
+    // Prefer the stable source_meeting_id (via sync_meeting_map). Fall back to the legacy
+    // meeting_local_seq + sync_row_map lookup for historical rows pushed before
+    // source_meeting_id existed, or if the primary lookup misses.
+    let resolve = |source_meeting_id: Option<i64>, fallback_local_seq: Option<i64>| -> Result<Option<i64>, SyncEngineError> {
+        if let Some(source_id) = source_meeting_id {
+            if let Some(id) = store
+                .resolve_sync_meeting_map(peer, source_id)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?
+            {
+                return Ok(Some(id));
             }
         }
+        match fallback_local_seq {
+            Some(seq) => store
+                .resolve_sync_row_map(peer, seq, ROW_TYPE_MEETING)
+                .map_err(|e| SyncEngineError::Query(e.to_string())),
+            None => Ok(None),
+        }
+    };
 
-        // Advance to the highest row this pass handled: every fetched row, unless the time
-        // budget stopped it early, in which case the rest are fetched again next pass.
-        // Unresolved dependencies are tracked in sync_pending_dependency and retried
-        // independently above, so a row that may never resolve no longer caps how far
-        // this device can ever pull.
-        let new_cursor = processed_through;
-        store
-            .set_sync_cursor(&peer, new_cursor)
-            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    let mut missing_meetings: Vec<(i64, String)> = Vec::new();
+    for (_, pending) in &segments {
+        let (source_meeting_id, fallback_local_seq) = fallback(pending);
+        if let Some(seq) = fallback_local_seq {
+            if resolve(source_meeting_id, fallback_local_seq)?.is_none()
+                && !missing_meetings.iter().any(|(s, _)| *s == seq)
+            {
+                missing_meetings.push((seq, ROW_TYPE_MEETING.to_string()));
+            }
+        }
+    }
+    for chunk in missing_meetings.chunks(PENDING_LOOKUP_CHUNK) {
+        for meeting_env in fetch_rows_by_key(conn, peer, chunk).await? {
+            if let Some(plaintext) = decrypt_row(group_key, peer, &meeting_env) {
+                apply_parent_row(store, peer, meeting_env.local_seq, &meeting_env.row_type, &plaintext)?;
+            }
+        }
+    }
+
+    for (env, pending) in &segments {
+        let (source_meeting_id, fallback_local_seq) = fallback(pending);
+
+        let resolved_meeting_id = resolve(source_meeting_id, fallback_local_seq)?;
+        match resolved_meeting_id {
+            Some(local_meeting_id) => {
+                let local_id = match pending {
+                    PendingSegment::Legacy { segment, .. } => store
+                        .apply_synced_transcript_segment(
+                            env.local_seq,
+                            local_meeting_id,
+                            segment,
+                        )
+                        .map_err(|e| SyncEngineError::Query(e.to_string()))?,
+                    // The ONLY call site that may pass a transcript-kind item to
+                    // apply_synced_item, and it is unreachable unless the meeting
+                    // resolved -- the Some arm is what makes thread_id non-NULL.
+                    PendingSegment::Item { item, .. } => store
+                        .apply_synced_item(peer, env.local_seq, Some(local_meeting_id), item)
+                        .map_err(|e| SyncEngineError::Query(e.to_string()))?,
+                };
+                store
+                    .record_sync_row_map(peer, env.local_seq, &env.row_type, local_id)
+                    .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+                // A no-op if this row wasn't pending (the common case: it resolved
+                // on its first pass and never got here via list_sync_pending_dependencies).
+                store
+                    .delete_sync_pending_dependency(peer, env.local_seq, &env.row_type)
+                    .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            }
+            None => {
+                // Still unresolved -- track it for point-lookup retry on every future
+                // pass. Unlike the old cursor-blocking design, this no longer holds
+                // back anything else: the cursor advances past it, and the retry
+                // pass looks it up in a batch rather than a frozen pull stream.
+                store
+                    .record_sync_pending_dependency(peer, env.local_seq, &env.row_type)
+                    .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            }
+        }
     }
     Ok(())
 }
@@ -1352,7 +1394,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = local_connection(&dir.path().join("remote.db")).await;
         ensure_content_schema(&conn).await.unwrap();
-        for sql in [NEXT_PEER_SQL, PEER_MARKER_SQL] {
+        // The last one is fetch_rows_by_key's shape with two keys.
+        let by_key = "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq IN (?2, ?3)";
+        for sql in [NEXT_PEER_SQL, PEER_MARKER_SQL, by_key] {
             let args = vec![libsql::Value::Text("x".into()); sql.matches('?').count()];
             let mut rows = conn.query(&format!("EXPLAIN QUERY PLAN {sql}"), args).await.unwrap();
             let mut plan = Vec::new();
@@ -1826,6 +1870,95 @@ mod tests {
         for text in ["alpha row 2", "alpha row 3", "gamma row 1", "gamma row 2"] {
             assert_eq!(found(text), 1, "{text} applied exactly once");
         }
+    }
+
+    /// Seeds `count` transcript segments (local_seq 1..=count) whose meeting
+    /// (meeting_local_seq 999) isn't on the relay, and pulls once so they all go pending.
+    async fn seed_pending_segments(conn: &Connection, group_key: &GroupKey, store: &Store, count: i64) {
+        for local_seq in 1..=count {
+            let payload = serde_json::to_string(&TranscriptSegmentPayload {
+                meeting_local_seq: 999,
+                source_meeting_id: None,
+                segment: AppliedTranscriptSegment {
+                    start_cs: local_seq,
+                    speaker_label: "Alice".to_string(),
+                    text: format!("pending segment {local_seq}"),
+                },
+            })
+            .unwrap();
+            seed_content_row(conn, group_key, "device-a", local_seq, ROW_TYPE_TRANSCRIPT_SEGMENT, &payload).await;
+        }
+        pull_content(conn, group_key, store, "device-b").await.unwrap();
+        assert_eq!(store.list_sync_pending_dependencies("device-a").unwrap().len() as i64, count);
+    }
+
+    fn take_row_queries() -> usize {
+        ROW_QUERIES.with(|c| c.replace(0))
+    }
+
+    /// The 2026-10 iPhone stall: one point lookup per pending entry (and another for its
+    /// missing meeting) ran past SYNC_TIMEOUT every round. The retry pass must batch.
+    #[tokio::test]
+    async fn three_hundred_pending_entries_are_retried_in_a_few_batched_queries() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_key = GroupKey::generate();
+        let conn = local_connection(&dir.path().join("shared.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let store_b = Store::open_in_memory().unwrap();
+        seed_pending_segments(&conn, &group_key, &store_b, 300).await;
+
+        take_row_queries();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        let queries = take_row_queries();
+        assert!(queries <= 5, "300 pending entries took {queries} sync_row queries");
+        assert_eq!(store_b.list_sync_pending_dependencies("device-a").unwrap().len(), 300, "still waiting on the meeting");
+
+        let meeting_json = serde_json::to_string(&sample_applied_meeting("Standup")).unwrap();
+        seed_content_row(&conn, &group_key, "device-a", 999, ROW_TYPE_MEETING, &meeting_json).await;
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        let queries = take_row_queries();
+        assert!(queries <= 5, "resolving 300 pending entries took {queries} sync_row queries");
+        assert!(store_b.list_sync_pending_dependencies("device-a").unwrap().is_empty());
+        assert_eq!(store_b.search_transcript_keyword("pending segment", 500).unwrap().len(), 300);
+    }
+
+    /// A spent budget stops the pending pass after one chunk, but never before the forward
+    /// pull has saved its cursor. The rest resolve on later rounds.
+    #[tokio::test]
+    async fn many_pending_entries_never_hold_back_the_forward_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_key = GroupKey::generate();
+        let conn = local_connection(&dir.path().join("shared.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let store_b = Store::open_in_memory().unwrap();
+        seed_pending_segments(&conn, &group_key, &store_b, 450).await;
+        // The meeting arrives in this round's forward fetch, plus a new capture after it.
+        let meeting_json = serde_json::to_string(&sample_applied_meeting("Standup")).unwrap();
+        seed_content_row(&conn, &group_key, "device-a", 999, ROW_TYPE_MEETING, &meeting_json).await;
+        let capture_json = serde_json::to_string(&AppliedCaptureItem {
+            ts_unix_ms: 1000,
+            app_bundle_id: "com.apple.Safari".to_string(),
+            window_title: "Peer Window".to_string(),
+            url: None,
+            text: "fresh forward row".to_string(),
+            hash: 1000,
+            source: Some("ax".to_string()),
+        })
+        .unwrap();
+        seed_content_row(&conn, &group_key, "device-a", 1000, ROW_TYPE_CAPTURE_ITEM, &capture_json).await;
+
+        let zero = std::time::Duration::ZERO;
+        let pending = |s: &Store| s.list_sync_pending_dependencies("device-a").unwrap().len();
+        // A zero budget still handles one forward row per round; two rounds reach 1000.
+        for _ in 0..2 {
+            pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
+        }
+        assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), 1000, "the forward cursor advances");
+        assert_eq!(store_b.search_keyword("fresh forward row", 10).unwrap().len(), 1);
+        assert_eq!(pending(&store_b), 450 - 2 * PENDING_LOOKUP_CHUNK, "each round retries one chunk");
+        pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
+        assert_eq!(pending(&store_b), 0, "a later round drains the rest");
+        assert_eq!(store_b.search_transcript_keyword("pending segment", 500).unwrap().len(), 450);
     }
 
     #[tokio::test]

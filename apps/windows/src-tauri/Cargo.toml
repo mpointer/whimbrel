@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.41"
+version = "0.9.42"
 edition = "2021"
 publish = false
 # Two binaries (the app and the M3.1 capture-spike CLI); the Tauri CLI builds and

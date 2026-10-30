@@ -48,7 +48,7 @@ BINARY_SUFFIXES = {
 # Strings that must survive byte for byte. Longer, more specific entries first.
 KEEP = [
     # Identifiers that key user data (decision 1 of the design).
-    "com.mpointer.kestrel",                       # bundle ids, Tauri identifier, UserDefaults,
+    "com.mpointer.kestrel",                       # Mac bundle id, Tauri identifier, UserDefaults,
                                                   # Keychain and Credential Manager services,
                                                   # LaunchAgent label, OSLog subsystems
     'previousFolderName = "Kestrel"',            # the Mac data folder's old name, searched for once
@@ -115,6 +115,12 @@ KEEP = [
     # The Windows import picker offers the same old extension (apps/windows skin_maker.rs).
     '"kestrelskin"]; // exported before the rename',
 ]
+# Kept-prefix identifiers that were renamed after all; --check flags them even though
+# KEEP's "com.mpointer.kestrel" covers them. The iOS app moved to com.mpointer.whimbrel.mobile
+# (and .tests, and its OSLog subsystem) before its first TestFlight build, when no
+# installed copy held data worth keeping.
+RETIRED = ["com.mpointer.kestrel.mobile"]
+
 # The self-hosted runner label is the same text as the Windows crate name. It stays
 # only where it is a label: the workflows and the runner install script.
 RUNNER_LABEL_FILES = {".github/workflows", "apps/windows/scripts/install-actions-runner.ps1"}
@@ -333,7 +339,13 @@ def check() -> int:
         rel = path.relative_to(ROOT).as_posix()
         if skipped(rel) or not path.exists() or is_binary(path):
             continue
-        protected, _ = protect(read(path), rel)
+        text = read(path)
+        for s in RETIRED:
+            for m in re.finditer(re.escape(s), text):
+                line = text.count("\n", 0, m.start()) + 1
+                print(f"{rel}:{line}: retired identifier survives: {s}")
+                findings += 1
+        protected, _ = protect(text, rel)
         for m in token.finditer(protected):
             if PLACEHOLDER[0] in m.group(0):
                 continue
