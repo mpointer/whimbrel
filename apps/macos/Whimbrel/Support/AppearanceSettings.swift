@@ -66,8 +66,8 @@ final class AppearanceSettings: ObservableObject {
     /// Shown under the picker when the palette overrides it, so the picker doesn't look broken. nil = picker is live.
     static func lockedCaption(variants: ThemeVariants) -> String? {
         switch variants {
-        case .darkOnly: return "This palette is dark only, so it always uses Dark."
-        case .lightOnly: return "This palette is light only, so it always uses Light."
+        case .darkOnly: return String(localized: "This palette is dark only, so it always uses Dark.")
+        case .lightOnly: return String(localized: "This palette is light only, so it always uses Light.")
         case .both: return nil
         }
     }

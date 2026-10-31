@@ -16,7 +16,15 @@ final class AwayOutcomeLabelTests: XCTestCase {
             (.appFailed, "Couldn't get in: Zoom didn't open"),
             (.missedOverlap, "Missed: another meeting was on at the same time"),
         ]
-        for (outcome, text) in expected { XCTAssertEqual(AwayOutcomeLabel.text(outcome, at: at), text) }
+        let en = Locale(identifier: "en_US")
+        for (outcome, text) in expected {
+            XCTAssertEqual(AwayOutcomeLabel.text(outcome, at: at, locale: en).replacingOccurrences(of: "\u{202F}", with: " "), text)
+        }
+    }
+
+    func test_time_uses_locale() {
+        let at = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 20, hour: 14, minute: 5))!
+        XCTAssertEqual(AwayOutcomeLabel.text(.removed, at: at, locale: Locale(identifier: "en_GB")), "Removed at 14:05")
     }
 
     private func meeting(_ trigger: CoreMeetingTrigger, _ outcome: AwayOutcome?) -> CoreMeeting {

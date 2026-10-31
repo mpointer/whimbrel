@@ -8,6 +8,7 @@ pub mod capture;
 pub mod chat;
 pub mod connectors;
 pub mod general;
+pub mod language;
 pub mod library;
 pub mod mcp;
 pub mod meetings;

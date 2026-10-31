@@ -28,7 +28,7 @@ struct TodaySlots: View {
 
     var decisionSlot: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            WhimbrelSectionLabel(text: "Needs your decision")
+            WhimbrelSectionLabel(text: String(localized: "Needs your decision"))
             HStack {
                 Text("\(decisionCount) pending approval\(decisionCount == 1 ? "" : "s")")
                     .font(.whimbrelBody(.body))
@@ -46,9 +46,9 @@ struct TodaySlots: View {
         case .noCalendar:
             WhimbrelEmptyState(
                 systemImage: "calendar.badge.exclamationmark",
-                title: "No calendar connected",
-                message: "Connect a calendar in Settings to see upcoming meetings here.",
-                actionTitle: "Open Settings",
+                title: String(localized: "No calendar connected"),
+                message: String(localized: "Connect a calendar in Settings to see upcoming meetings here."),
+                actionTitle: String(localized: "Open Settings"),
                 action: { actions.openSettings() }
             )
             .frame(maxWidth: .infinity, minHeight: 240)
@@ -56,8 +56,8 @@ struct TodaySlots: View {
             WhimbrelEmptyState(
                 systemImage: "mic",
                 title: SkinStore.shared.selected.voice.text(.emptyDay, name: ""),
-                message: "Start a manual note to begin.",
-                actionTitle: "Start note",
+                message: String(localized: "Start a manual note to begin."),
+                actionTitle: String(localized: "Start note"),
                 action: { actions.startNote() }
             )
             .frame(maxWidth: .infinity, minHeight: 240)

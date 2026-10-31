@@ -156,12 +156,14 @@ pub fn origin(user: &UserSkinStore, bundled_skins: &Path, id: &str) -> Option<Or
 }
 
 /// The model's input for a turn on `origin`: its chat, its manifest and the catalogue of allowed values.
-pub fn turn_input(user: &UserSkinStore, origin: &Origin, request: &str) -> SkinTurnInput {
+/// `output_language` is the tag its reply is written in (`RoutingSettings::output_language`).
+pub fn turn_input(user: &UserSkinStore, origin: &Origin, request: &str, output_language: &str) -> SkinTurnInput {
     SkinTurnInput {
         request: request.to_string(),
         history: chat(user, &origin.id).into_iter().map(|t| llm::skin_maker::ChatTurn { role: t.role, text: t.text }).collect(),
         current_manifest: origin.manifest.clone(),
         catalogue: skins::catalogue(),
+        output_language: output_language.to_string(),
     }
 }
 
@@ -887,7 +889,7 @@ mod tests {
             }
         }
         let store = memory::Store::open(&scratch.0.join("db.sqlite"), Path::new("")).unwrap();
-        let input = turn_input(&user, &origin, "a skin");
+        let input = turn_input(&user, &origin, "a skin", "");
         let err = call_model(&store, &llm::SpendCapConfig::default(), llm::Provider::Ollama, "m", &Garbage, &input).unwrap_err();
         assert_eq!(err, CommandError::ProviderFailure);
         assert!(user.skin_ids().is_empty());
@@ -921,7 +923,7 @@ mod tests {
             }
         }
         let user = scratch.store();
-        let input = turn_input(&user, &built_in(&user, "whimbrel"), "a skin");
+        let input = turn_input(&user, &built_in(&user, "whimbrel"), "a skin", "");
         let err = call_model(&store, &caps, llm::Provider::Anthropic, "m", &Unreachable, &input).unwrap_err();
         assert!(matches!(err, CommandError::SpendCap { .. }), "{err:?}");
         assert!(matches!(charge(&store, &caps, "skin-image-search", 1), Err(CommandError::SpendCap { .. })));

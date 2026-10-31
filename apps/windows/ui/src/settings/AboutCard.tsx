@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { appStatus, sendFeedback } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { AppStatus } from "../generated/types";
+import { t } from "../l10n";
 
 export function AboutCard() {
   const [status, setStatus] = useState<AppStatus | null>(null);
@@ -14,25 +15,25 @@ export function AboutCard() {
       .catch((e: unknown) => setError(isCommandError(e) ? describeError(e) : String(e)));
   }, []);
 
-  if (error) return <div className="card">Couldn't read the app status: {error}</div>;
-  if (!status) return <div className="card">Loading…</div>;
+  if (error) return <div className="card">{t("Couldn't read the app status: {error}", { error })}</div>;
+  if (!status) return <div className="card">{t("Loading…")}</div>;
 
   return (
     <section className="card about" aria-labelledby="about-heading">
       <h2 id="about-heading" className="section-label">
-        About this PC
+        {t("About this PC")}
       </h2>
       <dl>
-        <dt>Version</dt>
+        <dt>{t("Version")}</dt>
         <dd>{status.version}</dd>
-        <dt>Device ID</dt>
-        <dd className="mono">{status.deviceId ?? "not available"}</dd>
-        <dt>Data folder</dt>
+        <dt>{t("Device ID")}</dt>
+        <dd className="mono">{status.deviceId ?? t("not available")}</dd>
+        <dt>{t("Data folder")}</dt>
         <dd className="mono">{status.dataDir}</dd>
-        <dt>Database</dt>
-        <dd>{status.storeOpen ? "Open" : "Not open"}</dd>
-        <dt>Semantic search model</dt>
-        <dd>{status.embeddingModelLoaded ? "Loaded" : "Not downloaded yet"}</dd>
+        <dt>{t("Database")}</dt>
+        <dd>{status.storeOpen ? t("Open") : t("Not open")}</dd>
+        <dt>{t("Semantic search model")}</dt>
+        <dd>{status.embeddingModelLoaded ? t("Loaded") : t("Not downloaded yet")}</dd>
       </dl>
       <div className="field-row">
         <button
@@ -43,14 +44,14 @@ export function AboutCard() {
             sendFeedback().catch((e: unknown) => setFeedbackError(isCommandError(e) ? describeError(e) : String(e)));
           }}
         >
-          Send feedback…
+          {t("Send feedback…")}
         </button>
-        <span className="muted small">Opens an email to the Whimbrel team with this PC's version filled in.</span>
+        <span className="muted small">{t("Opens an email to the Whimbrel team with this PC's version filled in.")}</span>
       </div>
       {feedbackError && <p className="muted small">{feedbackError}</p>}
       {status.startupErrors.length > 0 && (
         <div role="alert" className="startup-errors">
-          <strong>Startup problems</strong>
+          <strong>{t("Startup problems")}</strong>
           <ul>
             {status.startupErrors.map((e) => (
               <li key={e}>{e}</li>

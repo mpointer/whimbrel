@@ -245,7 +245,7 @@ struct TodayView: View {
                 case .some(.failure(let error)):
                     digestError = error.userFacingMessage
                 case .none:
-                    digestError = "Couldn't write today's recap. Try again."
+                    digestError = String(localized: "Couldn't write today's recap. Try again.")
                 }
             }
         }

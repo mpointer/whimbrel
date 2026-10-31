@@ -29,7 +29,7 @@ struct ThreadDetailView: View {
             }
         }
         .frame(minWidth: 480, idealWidth: 560, minHeight: 400, idealHeight: 560)
-        .navigationTitle(loadedThread?.subject ?? "Thread")
+        .navigationTitle(loadedThread?.subject ?? String(localized: "Thread"))
         .background(Color.whimbrelBackgroundPage)
         .overlay(alignment: .topTrailing) {
             Button {
@@ -74,7 +74,7 @@ private struct ThreadDetailContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.lg) {
                 Text(thread.subject ?? thread.lastMessageFrom).font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
-                Text("\(thread.messageCount) message\(thread.messageCount == 1 ? "" : "s") · \(Self.statusLabel(thread.status))")
+                (Text("\(thread.messageCount) messages") + Text(verbatim: " · \(Self.statusLabel(thread.status))"))
                     .font(.whimbrelBody(.caption))
                     .foregroundStyle(Color.whimbrelTextSecondary)
                 Text(Self.formattedTime(thread.lastActivityTsUnixMs))
@@ -86,7 +86,7 @@ private struct ThreadDetailContentView: View {
                 Text("Summary").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
                 switch thread.summarizeStatus {
                 case "summarized":
-                    Text(thread.summary ?? "Summary unavailable")
+                    Text(thread.summary ?? String(localized: "Summary unavailable"))
                         .font(.whimbrelBody(.callout))
                         .foregroundStyle(Color.whimbrelTextPrimary)
                         .textSelection(.enabled)
@@ -106,9 +106,9 @@ private struct ThreadDetailContentView: View {
 
     private static func statusLabel(_ status: String) -> String {
         switch status {
-        case "waiting_on_me": "Waiting on you"
-        case "waiting_on_them": "Waiting on them"
-        case "resolved": "Resolved"
+        case "waiting_on_me": String(localized: "Waiting on you")
+        case "waiting_on_them": String(localized: "Waiting on them")
+        case "resolved": String(localized: "Resolved")
         case "fyi": "FYI"
         default: status
         }

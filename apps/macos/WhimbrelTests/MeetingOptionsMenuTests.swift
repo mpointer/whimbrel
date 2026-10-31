@@ -53,4 +53,10 @@ final class MeetingOptionsMenuTests: XCTestCase {
         XCTAssertTrue(MeetingOptionsMenu.isSplitDisabled(processingMeetingId: 7))
         XCTAssertFalse(MeetingOptionsMenu.isSplitDisabled(processingMeetingId: nil))
     }
+
+    func test_transcript_language_menu_hidden_when_english_mode() {
+        XCTAssertFalse(MeetingOptionsMenu.showsTranscriptLanguage(multilingual: false))
+        XCTAssertTrue(MeetingOptionsMenu.showsTranscriptLanguage(multilingual: true))
+        XCTAssertEqual(MeetingOptionsMenu.transcriptLanguages.map(\.code), [nil, "en", "es", "fr"])
+    }
 }

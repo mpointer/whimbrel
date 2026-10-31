@@ -79,7 +79,7 @@ final class MeetingAskSession: ObservableObject {
                 self.prepareToken = nil
                 switch prepared {
                 case .none:
-                    self.exchanges[index].errorText = "Couldn't prepare the question. Try again."
+                    self.exchanges[index].errorText = String(localized: "Couldn't prepare the question. Try again.")
                 case .some(.failure(let error)):
                     self.exchanges[index].errorText = error.userFacingMessage
                 case .some(.success(let data)):
@@ -151,7 +151,7 @@ final class MeetingAskSession: ObservableObject {
         case .failed:
             Self.discard(pending.prepareId, store: store)
             exchanges[pending.index].partial = streaming.streamedText
-            exchanges[pending.index].errorText = "Couldn't reach the AI provider. Try again."
+            exchanges[pending.index].errorText = String(localized: "Couldn't reach the AI provider. Try again.")
             self.pending = nil
         default:
             break
@@ -185,7 +185,7 @@ struct MeetingAskBar: View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             if !session.exchanges.isEmpty { answerPanel }
             HStack(spacing: Spacing.sm) {
-                TextField(disabledReason ?? "Ask about this meeting", text: $question)
+                TextField(disabledReason ?? String(localized: "Ask about this meeting"), text: $question)
                     .textFieldStyle(.plain)
                     .disabled(disabledReason != nil || isBusy)
                     .onSubmit(send)
@@ -292,8 +292,8 @@ struct MeetingAskBar: View {
             }
         }()
         let noRouteMessage = appState.routing.localOnlyMode
-            ? "Local-only mode is on, so Ask can't use a hosted model. Choose a local model in Settings."
-            : "No API key is set for the selected provider. Choose a local model or add a key in Settings."
+            ? String(localized: "Local-only mode is on, so Ask can't use a hosted model. Choose a local model in Settings.")
+            : String(localized: "No API key is set for the selected provider. Choose a local model or add a key in Settings.")
         session.submit(text, meetingId: meeting.id, store: store, routing: routing, model: model, route: route, noRouteMessage: noRouteMessage)
     }
 }

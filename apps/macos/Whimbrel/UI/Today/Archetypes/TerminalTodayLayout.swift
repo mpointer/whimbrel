@@ -133,7 +133,7 @@ struct TerminalTodayLayout: TodayArchetypeView {
             }
             if sections.contains(.threads) {
                 rule
-                section("Open loops") {
+                section(String(localized: "Open loops")) {
                     ForEach(content.attentionThreads) { thread in
                         Button { actions.openThread(thread.id) } label: {
                             HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {

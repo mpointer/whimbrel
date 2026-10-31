@@ -58,6 +58,7 @@ fn input(history_len: usize) -> SkinTurnInput {
             "fonts": ["Avenir Next"],
             "voice": {"greetingMorning": {"limit": 40}}
         }),
+        output_language: String::new(),
     }
 }
 
@@ -147,4 +148,29 @@ fn prompt_contains_catalogue_history_and_no_name_slot_fill() {
     assert!(!prompt.contains("history-turn-04"));
     assert!(prompt.contains("{name}"));
     assert!(prompt.contains(&input.request));
+}
+
+#[test]
+fn skin_maker_es_us_adds_language_line_first() {
+    let mut i = input(0);
+    i.output_language = "es-US".into();
+    let p = build_skin_prompt(&i);
+    let at = p.find(&llm::profile::language_line("es-US")).expect("language line present");
+    assert!(at < p.find("You are Whimbrel's skin maker").unwrap());
+    assert!(p.contains("Keep JSON field names"));
+}
+
+#[test]
+fn skin_maker_empty_lang_has_no_language_line() {
+    let p = build_skin_prompt(&input(0));
+    assert!(!p.contains("Language:"));
+    assert!(p.starts_with("You are Whimbrel's skin maker"));
+}
+
+#[test]
+fn skin_maker_input_without_output_language_still_parses() {
+    let i: SkinTurnInput = serde_json::from_str(r#"{"request":"r","catalogue":{}}"#).unwrap();
+    assert_eq!(i.output_language, "");
+    let i: SkinTurnInput = serde_json::from_str(r#"{"request":"r","catalogue":{},"outputLanguage":"fr-CA"}"#).unwrap();
+    assert_eq!(i.output_language, "fr-CA");
 }

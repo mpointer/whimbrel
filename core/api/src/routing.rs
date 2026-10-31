@@ -40,6 +40,9 @@ pub struct RoutingConfig {
     /// Prices cached from OpenRouter's model list when the pick was made, keyed by model
     /// id, cents per 1K input and output. Handed to `llm::set_price_overrides` on parse.
     pub openrouter_prices: std::collections::HashMap<String, (f64, f64)>,
+    /// BCP 47 tag AI output is written in. "" (the default, and en-US with the English
+    /// model) adds no language line, so prompts stay byte-identical. Device-local.
+    pub output_language: String,
 }
 
 impl Default for RoutingConfig {
@@ -65,6 +68,7 @@ impl Default for RoutingConfig {
             openrouter_key: None,
             openrouter_model: String::new(),
             openrouter_prices: std::collections::HashMap::new(),
+            output_language: String::new(),
         }
     }
 }
@@ -183,6 +187,12 @@ impl RoutingConfig {
                 .map(String::from)
                 .unwrap_or_default(),
             openrouter_prices,
+            output_language: v
+                .get("output_language")
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .map(String::from)
+                .unwrap_or_default(),
         }
     }
 
@@ -786,6 +796,7 @@ mod tests {
             openrouter_key: None,
             openrouter_model: String::new(),
             openrouter_prices: Default::default(),
+            output_language: String::new(),
         }
     }
 
@@ -1043,5 +1054,13 @@ mod tests {
         assert_eq!(RoutingConfig::from_json(Some(r#"{"profile":"  Role: CFO \n"}"#)).profile, "Role: CFO");
         assert_eq!(RoutingConfig::from_json(Some(r#"{"profile":7}"#)).profile, "");
         assert_eq!(RoutingConfig::from_json(None).profile, "");
+    }
+
+    #[test]
+    fn from_json_reads_output_language_and_defaults_empty() {
+        assert_eq!(RoutingConfig::from_json(None).output_language, "");
+        assert_eq!(RoutingConfig::from_json(Some(r#"{"output_language":"es-US"}"#)).output_language, "es-US");
+        assert_eq!(RoutingConfig::from_json(Some(r#"{"output_language":5}"#)).output_language, "");
+        assert_eq!(RoutingConfig::from_json(Some(r#"{"profile":"Role: CFO"}"#)).output_language, "", "older settings without the key");
     }
 }

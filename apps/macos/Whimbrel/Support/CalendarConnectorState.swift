@@ -49,7 +49,7 @@ final class CalendarConnectorState: ObservableObject {
         } catch {
             clientId = nil
             clientSecret = nil
-            configError = "Calendar connector isn't configured in this build. See apps/macos/README.md to set up Secrets.xcconfig."
+            configError = String(localized: "Calendar connector isn't configured in this build. See apps/macos/README.md to set up Secrets.xcconfig.")
         }
 
         migrateOldSingleAccountIfNeeded()
@@ -113,7 +113,7 @@ final class CalendarConnectorState: ObservableObject {
     func addAccount(presentationContextProvider: ASWebAuthenticationPresentationContextProviding) async {
         guard addAccountState != .connecting else { return }
         guard let clientId, let clientSecret else {
-            addAccountState = .error(configError ?? "Calendar connector is not configured")
+            addAccountState = .error(configError ?? String(localized: "Calendar connector is not configured"))
             return
         }
         addAccountState = .connecting
@@ -274,7 +274,7 @@ enum CalendarConnectorError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .nodeNotFound: return "Node.js isn't installed on this Mac. The Calendar connector needs it to run."
-        case .connectorScriptNotFound: return "The Calendar connector's files weren't found in this build."
+        case .connectorScriptNotFound: return String(localized: "The Calendar connector's files weren't found in this build.")
         case .hostUnavailable: return "Couldn't start the connector host."
         case .connectFailed: return "Couldn't start the Calendar connector process."
         case .listToolsFailed: return "Connected, but the connector didn't report its expected capability."

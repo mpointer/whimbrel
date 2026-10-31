@@ -141,7 +141,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let display = content.displays.first else {
-                degradedReason = "No display available for system audio capture."
+                degradedReason = String(localized: "No display available for system audio capture.")
                 return
             }
 
@@ -273,7 +273,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
             Task {
                 await reopenSystemAudio(
                     reason: "no buffers for 5 s",
-                    failure: "System audio stopped arriving. The recording keeps the audio captured before that; the rest is microphone only."
+                    failure: String(localized: "System audio stopped arriving. The recording keeps the audio captured before that; the rest is microphone only.")
                 )
             }
         }
@@ -307,7 +307,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
             self.systemWriter = nil
             self.systemConverter = nil
             self.systemAudioActive = false
-            self.degradedReason = "System audio started but no audio arrived after 5 seconds. Falling back to microphone only."
+            self.degradedReason = String(localized: "System audio started but no audio arrived after 5 seconds. Falling back to microphone only.")
             self.cleanUpEmptySystemAudioFile(at: fileURL)
         }
     }
@@ -409,8 +409,8 @@ final class AudioCaptureService: NSObject, ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .noInputDevice: "No microphone is available."
-            case .unconvertible(let format): "The microphone's new format (\(format)) can't be converted to the recording's."
+            case .noInputDevice: String(localized: "No microphone is available.")
+            case .unconvertible(let format): String(localized: "The microphone's new format (\(format)) can't be converted to the recording's.")
             }
         }
     }
@@ -434,7 +434,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
         } catch {
             log.error("Microphone restart failed: \(error.localizedDescription, privacy: .public)")
             micActive = false
-            micDegradedReason = "The microphone stopped (\(error.localizedDescription)). The recording keeps the audio captured before that."
+            micDegradedReason = String(localized: "The microphone stopped (\(error.localizedDescription)). The recording keeps the audio captured before that.")
         }
     }
 
@@ -468,7 +468,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
             }
             engine.stop()
             micActive = false
-            micDegradedReason = "The microphone stopped delivering audio. The recording keeps the audio captured before that."
+            micDegradedReason = String(localized: "The microphone stopped delivering audio. The recording keeps the audio captured before that.")
         }
     }
 
@@ -619,7 +619,7 @@ extension AudioCaptureService: SCStreamOutput {
                 self.systemAudioActive = false
                 self.systemAudioWatchdogTask?.cancel()
                 self.systemAudioWatchdogTask = nil
-                self.degradedReason = "System audio format mismatch — falling back to microphone only."
+                self.degradedReason = String(localized: "System audio format mismatch — falling back to microphone only.")
                 if let stream = self.stream {
                     self.stream = nil
                     Task { try? await stream.stopCapture() }

@@ -534,6 +534,9 @@ pub struct Skin {
     pub icons: Icons,
     pub decoration: Decoration,
     pub voice: Voice,
+    /// Voice per language tag ("es", "fr-CA"); a missing key falls back to `voice`.
+    #[serde(rename = "voiceLocalized", default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub voice_localized: BTreeMap<String, Voice>,
     pub today: Today,
     pub motion: Motion,
 }
@@ -597,6 +600,7 @@ pub fn whimbrel_default() -> Skin {
             imagery: vec![],
         },
         voice: Voice(voice.into_iter().map(|(k, s)| (k, s.to_string())).collect()),
+        voice_localized: BTreeMap::new(),
         today: Today {
             archetype: Archetype::Standard,
             options: BTreeMap::new(),

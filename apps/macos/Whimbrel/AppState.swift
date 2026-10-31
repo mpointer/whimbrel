@@ -43,6 +43,9 @@ final class AppState: ObservableObject {
     /// The notes typed into the meeting that ended last, carried into its next part if it
     /// continues before part 1's transcript has stored them.
     private var lastEndedMeetingNotes: (id: Int64, notes: String)?
+    /// The active recording's call link (its event's, or a browser detection's): what
+    /// `MeetingSplit` compares the next calendar meeting's link against.
+    private var activeCallLink: DetectedConferenceLink?
     /// Polls a detected meeting's own app UI for a running participant-count hint
     /// (see `ParticipantCountEstimator`) — started in `finishStartingCapture` for
     /// `.detected`-sourced meetings only, stopped/cleared in `endMeeting`. Calendar
@@ -152,7 +155,7 @@ final class AppState: ObservableObject {
     }
     let meetingTrigger = MeetingTriggerService()
     /// "Away Mode": join Zoom meetings unattended. Owns the keep-awake assertion while on.
-    let awayMode = AwayModeSettings(keepAwake: KeepAwake())
+    let awayMode = AwayModeSettings(keepAwake: KeepAwake(), available: AppState.awayZoomJoinEnabled)
     /// Away Mode's join logic. Eligible calendar prompts go here instead of the alert panel.
     private(set) lazy var awayCoordinator = AwayModeCoordinator(
         env: LiveAwayEnvironment(app: self), isEnabled: { [awayMode] in awayMode.enabled }
@@ -213,7 +216,13 @@ final class AppState: ObservableObject {
     )
     lazy var liveTranscript = LiveTranscriptionService(
         store: { [weak self] in self?.coreStore },
-        modelPath: { TranscriptionService.modelPath.path },
+        // Multilingual mode transcribes live with the multilingual model, detecting the language.
+        modelPath: {
+            let multilingual = MeetingTranscriptionQueue.usesMultilingual(
+                enabled: AppLanguage.multilingual(),
+                modelPresent: FileManager.default.fileExists(atPath: TranscriptionService.multilingualModelPath.path))
+            return (multilingual ? TranscriptionService.multilingualModelPath : TranscriptionService.modelPath).path
+        },
         systemURL: { [weak self] in self?.audio.systemAudioFileURL },
         micURL: { [weak self] in self?.audio.micAudioFileURL }
     )
@@ -412,8 +421,7 @@ final class AppState: ObservableObject {
             } else {
                 self.stopRowlessRecording()
             }
-            let why = stop == .durationCap ? "6-hour limit reached." : "less than 2 GB free."
-            self.postRecordingNotice("Whimbrel stopped recording: \(why)" + (hasMeeting ? " The recording was saved." : ""))
+            self.postRecordingNotice(StatusMenuCopy.forcedStop(durationCap: stop == .durationCap, saved: hasMeeting))
         }
         calendar.start()
         googleCalendarPolling.start(calendarConnectorState: calendarConnectorState, coreStore: coreStore)
@@ -484,7 +492,8 @@ final class AppState: ObservableObject {
             .sink { [weak self] meeting in
                 guard let self else { return }
                 // An Away Mode join holds the mic before its capture starts: not a meeting to prompt for.
-                if self.activeMeetingId == nil, !self.awayCoordinator.isRunning {
+                // Nor while a start is in flight (a split's next meeting: its call is still on).
+                if self.activeMeetingId == nil, !self.isStartingMeeting, !self.awayCoordinator.isRunning {
                     self.meetingTrigger.handleDetectedMeeting(meeting)
                 }
                 self.meetingHeuristicDetector.clearDetection()
@@ -531,18 +540,13 @@ final class AppState: ObservableObject {
         meetingTrigger.$pendingPrompt
             .sink { [weak self] prompt in
                 guard let self else { return }
-                self.callWaitTimer?.invalidate()
-                self.callWaitTimer = nil
                 guard let prompt else {
-                    self.meetingAlertPanel.hide()
+                    self.callWaitTimer?.invalidate()
+                    self.callWaitTimer = nil
+                    self.meetingAlertPanel.hidePrompt()
                     return
                 }
-                if AwayModeCoordinator.takesPrompt(prompt, enabled: self.awayMode.enabled, joinAvailable: Self.awayZoomJoinEnabled) {
-                    self.meetingAlertPanel.hide()
-                    self.scheduleAwayRun(for: prompt)
-                    return
-                }
-                self.promptNormally(prompt)
+                self.handlePrompt(prompt)
             }
             .store(in: &cancellables)
 
@@ -554,8 +558,27 @@ final class AppState: ObservableObject {
             .store(in: &cancellables)
     }
 
+    /// A new pending prompt: Away Mode's if it takes it, else the alert panel (or a hold).
+    /// Also where a held prompt goes once its recording ends on its own.
+    private func handlePrompt(_ prompt: QualifyingMeeting) {
+        callWaitTimer?.invalidate()
+        callWaitTimer = nil
+        if AwayModeCoordinator.takesPrompt(prompt, enabled: awayMode.enabled, joinAvailable: Self.awayZoomJoinEnabled) {
+            meetingAlertPanel.hidePrompt()
+            scheduleAwayRun(for: prompt)
+            return
+        }
+        promptNormally(prompt)
+    }
+
     /// The meeting-alert panel for a pending prompt (Away Mode off, or it handed the meeting back).
     private func promptNormally(_ prompt: QualifyingMeeting) {
+        // During a recording the prompt couldn't start anything (`startCapture` needs no
+        // active meeting), so a calendar prompt waits for its start and splits instead.
+        if prompt.source != .detected, activeMeetingId != nil || isStartingMeeting {
+            holdForSplit(prompt)
+            return
+        }
         // A calendar event only auto-starts once this Mac is in the call: with
         // several Macs in one room, an event on a Mac that isn't in it would
         // otherwise record whatever its mic overhears. Until then the prompt waits,
@@ -574,6 +597,157 @@ final class AppState: ObservableObject {
                 timer.invalidate()
                 self.callWaitTimer = nil
                 self.showMeetingAlert(for: prompt, autoStart: true)
+            }
+        }
+    }
+
+    /// The recording `MeetingSplit` compares a next meeting against; nil until its row lands.
+    /// Its start is the meeting's original one, so a continued or joined meeting counts from
+    /// when it really began.
+    private var splitCurrent: MeetingSplit.Current? {
+        guard activeMeetingId != nil, let activeMeetingStartedAt else { return nil }
+        return .init(calendarEvent: activeCalendarEvent, link: activeCallLink, meetingStartedAt: activeMeetingStartedAt)
+    }
+
+    /// The call's current URL where it can be read: a Google Meet tab in the frontmost browser.
+    // ponytail: native Zoom/Teams expose no meeting ID here, so rule 2 only sees Meet tabs.
+    private func liveCallURL() -> String? {
+        MeetingHeuristicDetector.resolveFrontmostGoogleMeetWindow().flatMap(BrowserMeetingCheck.currentURL(of:))
+    }
+
+    /// Holds a calendar prompt that came in during a recording, checking every 5 s
+    /// (`MeetingSplit.holdAction`, with the event re-read from the calendar) until its
+    /// meeting starts and splits, the recording ends on its own (then it's a normal prompt),
+    /// or the meeting is over, gone or declined.
+    private func holdForSplit(_ next: QualifyingMeeting) {
+        Task { @MainActor [weak self] in
+            while true {
+                guard let self, self.meetingTrigger.pendingPrompt?.id == next.id else { return }
+                // An Away Mode recording is never split (it leaves the call itself): wait.
+                let action = MeetingSplit.holdAction(
+                    recording: self.activeMeetingId != nil || self.isStartingMeeting,
+                    current: self.awayCoordinator.isRunning ? nil : self.splitCurrent,
+                    next: self.allUpcomingMeetings.first { $0.id == next.id },
+                    liveCallURL: { self.liveCallURL() }, now: Date()
+                )
+                switch action {
+                case .wait: break
+                case .prompt: return self.handlePrompt(next)
+                case .split: return self.splitForNextMeeting(next)
+                case .drop: return self.meetingTrigger.dismissPrompt()
+                }
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+    }
+
+    /// A calendar prompt still showing when another recording starts could no longer start
+    /// its meeting (`startCapture`'s guard), so it is held for a split too. `startingId` is
+    /// the meeting being started, whose own prompt (an Away Mode run's) is left alone.
+    private func holdPendingPromptForSplit(startingId: String?) {
+        guard let prompt = meetingTrigger.pendingPrompt, prompt.source != .detected, prompt.id != startingId else { return }
+        callWaitTimer?.invalidate()
+        callWaitTimer = nil
+        meetingAlertPanel.hidePrompt()
+        holdForSplit(prompt)
+    }
+
+    /// Ends the active meeting and starts `next` (still the pending prompt), then offers
+    /// "Keep together". Audio stops and restarts, a sub-second gap between the two files.
+    private func splitForNextMeeting(_ next: QualifyingMeeting) {
+        guard let earlierId = activeMeetingId else { return }
+        // Low disk: the next meeting couldn't start, so keep recording this one whole
+        // (`hasRoomToRecord` posts the usual notice) and drop the held prompt.
+        guard hasRoomToRecord() else {
+            meetingTrigger.dismissPrompt()
+            return
+        }
+        let earlierTitle = activeMeetingTitle ?? "Meeting"
+        MeetingSplit.log.notice("meeting \(earlierId): split for the next calendar meeting")
+        endMeeting(reason: .split)
+        let splitAt = Date()
+        meetingTrigger.acceptPrompt()  // -> startCapture(for: next); hides the prompt panel
+        guard isStartingMeeting else { return }  // refused (disk): nothing to keep together
+        let generation = captureGeneration
+        meetingAlertPanel.showKeepTogether(for: next, earlierTitle: earlierTitle) { [weak self] in
+            self?.keepTogether(earlierId: earlierId, splitAt: splitAt, generation: generation)
+        }
+        // Offered for as long as meeting continue would have joined a restart.
+        DispatchQueue.main.asyncAfter(deadline: .now() + MeetingContinuation.continueWindow) { [weak self] in
+            self?.meetingAlertPanel.hideKeepTogether(for: next.id)
+        }
+    }
+
+    /// "Keep together": the split-off meeting's recording becomes the earlier meeting's next
+    /// part, as meeting continue does, and the split-off meeting is deleted. Audio keeps
+    /// going; only the bookkeeping moves. `generation` is the split's start: if that
+    /// recording ended or was replaced meanwhile, nothing changes (or the reopen is undone).
+    /// The rejoin queues behind the split-off meeting's own insert on `accessQueue`, so a tap
+    /// before that row lands still works.
+    private func keepTogether(earlierId: Int64, splitAt: Date, generation: Int) {
+        guard generation == captureGeneration, Date().timeIntervalSince(splitAt) <= MeetingContinuation.continueWindow,
+              let store = coreStore else { return }
+        let partStartMs = Int64(splitAt.timeIntervalSince1970 * 1000)
+        CoreMemoryStore.accessQueue.async {
+            guard let rejoined = MeetingSplit.rejoin(store: store, meetingId: earlierId, partStartUnixMs: partStartMs) else {
+                MeetingSplit.log.error("meeting \(earlierId): keep together could not add a part; left split")
+                return
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, generation == self.captureGeneration, !self.isStartingMeeting,
+                      let splitId = self.activeMeetingId, splitId != earlierId else {
+                    MeetingSplit.log.error("meeting \(earlierId): keep together lost to the recording ending; left split")
+                    CoreMemoryStore.accessQueue.async { store.undoMeetingReopen(meetingId: earlierId, partIndex: rejoined.partIndex) }
+                    return
+                }
+                self.finishKeepTogether(rejoined, splitId: splitId, store: store)
+            }
+        }
+    }
+
+    private func finishKeepTogether(_ rejoined: MeetingSplit.Rejoined, splitId: Int64, store: CoreMemoryStore) {
+        let earlier = rejoined.meeting
+        // Stop the split-off meeting's snapshots before its slides move.
+        meetingSnapshotService?.stop()
+        meetingSnapshotService = nil
+        // Queued before `activeMeetingId` changes, so the live writes for the joined part land after.
+        CoreMemoryStore.accessQueue.async { store.clearLiveSegments(meetingId: earlier.id) }
+        let start = Date(timeIntervalSince1970: TimeInterval(earlier.startUnixMs) / 1000)
+        let typedSinceSplit = meetingNotes
+        let carried = MeetingContinuation.notes(stored: earlier.notes, lastEnded: lastEndedMeetingNotes, meetingId: earlier.id)
+        meetingNotes = [carried, typedSinceSplit].filter { !$0.isEmpty }.joined(separator: "\n")
+        activeMeetingId = earlier.id
+        activeMeetingStartedAt = start
+        activeMeetingTitle = earlier.title
+        activeMeetingIsContinued = true
+        activePartIndex = rejoined.partIndex
+        // The event, end detector and check-in stay the split-off meeting's: they describe
+        // the call now recording.
+        // The split-off slides move into the earlier meeting (never deleted), then its row
+        // goes. Behind the media retention work in flight, like the manual split. Snapshots
+        // restart once the earlier meeting's folder is settled.
+        let storage = makeSnapshotStorage()
+        let appBundleID = activeMeetingBundleID, provider = activeCallLink?.provider
+        MediaMover.queue.async {
+            let dir: String? = CoreMemoryStore.accessQueue.sync {
+                switch MeetingSplit.absorb(store: store, into: earlier.id, from: splitId,
+                                           makeFolder: { try storage.makeMeetingFolder(start: $0, title: $1) }) {
+                case nil:
+                    MeetingSplit.log.error("meeting \(splitId): keep together could not move its slides; row kept")
+                case .some:
+                    MeetingSplit.discard(store: store, meetingId: splitId)
+                }
+                return store.meetingSnapshotsInfo(meetingId: earlier.id)?.dir
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                MeetingLifecycle.postMeetingsChanged([earlier.id, splitId])
+                guard self.activeMeetingId == earlier.id else { return }
+                let existingFolder = dir
+                    .map { URL(fileURLWithPath: $0, isDirectory: true) }
+                    .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+                self.startMeetingSnapshots(meetingId: earlier.id, start: start, title: earlier.title, appBundleID: appBundleID,
+                                           provider: provider, existingFolder: existingFolder, browserWindowProvider: { nil })
             }
         }
     }
@@ -604,7 +778,7 @@ final class AppState: ObservableObject {
         if screenText.isRunning { parts.append("screen text") }
         let suffix: String
         if parts.isEmpty {
-            suffix = activityCaptureEnabled ? "Activity capture on — waiting for permissions" : "Activity capture paused"
+            suffix = activityCaptureEnabled ? String(localized: "Activity capture on — waiting for permissions") : String(localized: "Activity capture paused")
         } else {
             suffix = "Capturing: \(parts.joined(separator: ", "))"
         }
@@ -688,6 +862,7 @@ final class AppState: ObservableObject {
         }
         activeMeetingBundleID = nil
         activeCalendarEvent = nil
+        activeCallLink = nil
         activeMeetingTitle = nil
         activeMeetingStartedAt = nil
         activePartIndex = nil
@@ -706,6 +881,7 @@ final class AppState: ObservableObject {
         // `activeMeetingId` itself isn't set until the round-trip completes. Mirrors
         // `startCapture(for:)`'s identical synchronous set for the same reason.
         isStartingMeeting = true
+        holdPendingPromptForSplit(startingId: nil)
         captureGeneration += 1
         let thisGeneration = captureGeneration
         let startDate = Date()
@@ -752,6 +928,7 @@ final class AppState: ObservableObject {
         activePartIndex = partIndex
         activeMeetingBundleID = nil
         activeCalendarEvent = nil
+        activeCallLink = nil
         meetingNotes = ""
         Task { await audio.start() }
         if let insertedMeetingId {
@@ -798,7 +975,7 @@ final class AppState: ObservableObject {
 
     private func hasRoomToRecord() -> Bool {
         guard RecordingLimits.canStart(freeBytes: RecordingLimits.freeBytes()) else {
-            postRecordingNotice("Whimbrel didn't start recording: less than 5 GB free on this Mac.")
+            postRecordingNotice(StatusMenuCopy.lowDiskStart)
             return false
         }
         return true
@@ -858,7 +1035,7 @@ final class AppState: ObservableObject {
                 onKeep: { [weak self] in self?.activeCheckIn?.keepRecording(now: Date()) },
                 onStop: { [weak self] in self?.endActiveMeetingIfNeeded(reason: .checkInStop) }
             )
-            postRecordingNotice("Still recording? Whimbrel stops in 5 minutes unless you choose Keep recording.")
+            postRecordingNotice(StatusMenuCopy.checkInWarning)
         case .stop:
             recordingCheckInPanel.hide()
             endActiveMeetingIfNeeded(reason: .checkInTimeout)
@@ -917,6 +1094,8 @@ final class AppState: ObservableObject {
             }
         }
         activeCalendarEvent = nil
+        activeCallLink = nil
+        meetingAlertPanel.hideKeepTogether()
         let partIndex = activePartIndex
         let continued = activeMeetingIsContinued
         activePartIndex = nil
@@ -1057,6 +1236,15 @@ final class AppState: ObservableObject {
               mediaRetention.workingMeetingId != meeting.id else { return }  // its audio may be mid-move
         markProcessing(meeting.id)
         transcriptionQueue.transcribeAgain(meetingId: meeting.id, notes: meeting.notes ?? "")
+    }
+
+    /// Transcribes every part again in `language` (a whisper code; nil detects) and stores it.
+    /// The caller has checked that a part's audio is on disk (`MeetingOptionsMenu`).
+    func transcribeAgain(_ meeting: CoreMeeting, language: String?) {
+        guard processingMeetingId == nil, meeting.status == .completed, let transcriptionQueue,
+              mediaRetention.workingMeetingId != meeting.id else { return }
+        markProcessing(meeting.id)
+        transcriptionQueue.transcribeAgain(meetingId: meeting.id, notes: meeting.notes ?? "", language: .some(language))
     }
 
     /// FR-MTG-5: queues one part's transcription (`MeetingTranscriptionQueue`, one part at
@@ -1379,6 +1567,7 @@ final class AppState: ObservableObject {
         // below) so this guard still blocks a rapid second call during that gap —
         // `activeMeetingId` itself isn't set until the round-trip completes.
         isStartingMeeting = true
+        holdPendingPromptForSplit(startingId: meeting.id)
         captureGeneration += 1
         let thisGeneration = captureGeneration
         // Start recording immediately rather than waiting on the DB round-trip below —
@@ -1523,6 +1712,7 @@ final class AppState: ObservableObject {
         activeCalendarEvent = (meeting.source == .calendar || meeting.source == .googleCalendar)
             ? .init(id: meeting.id, conferenceLink: meeting.conferenceLink, scheduledEnd: meeting.endDate)
             : inheritedEvent
+        activeCallLink = meeting.conferenceLink ?? activeCalendarEvent?.conferenceLink
         meetingNotes = previous.map {
             MeetingContinuation.notes(stored: $0.meeting.notes, lastEnded: lastEndedMeetingNotes, meetingId: $0.meeting.id)
         } ?? ""
@@ -1672,12 +1862,12 @@ extension AppState {
             return name
         }
         if deviceId == self.deviceId {
-            return "This Mac"
+            return String(localized: "This Mac")
         }
         if deviceId == "spike-device" {
-            return "Unknown device"
+            return String(localized: "Unknown device")
         }
-        return "Device \(deviceId.prefix(6))"
+        return String(localized: "Device \(deviceId.prefix(6))")
     }
 }
 
@@ -1811,5 +2001,19 @@ extension AppState {
             Logger(subsystem: "com.mpointer.kestrel", category: "shell").error("restartIntoUpdate: failed to launch RelaunchHelper: \(error.localizedDescription, privacy: .public)")
         }
         return nil
+    }
+}
+
+/// Recording notices shown in notifications, from the String Catalog.
+enum StatusMenuCopy {
+    static var lowDiskStart: String { String(localized: "Whimbrel didn't start recording: less than 5 GB free on this Mac.") }
+    static var checkInWarning: String { String(localized: "Still recording? Whimbrel stops in 5 minutes unless you choose Keep recording.") }
+    static func forcedStop(durationCap: Bool, saved: Bool) -> String {
+        switch (durationCap, saved) {
+        case (true, true): String(localized: "Whimbrel stopped recording: 6-hour limit reached. The recording was saved.")
+        case (true, false): String(localized: "Whimbrel stopped recording: 6-hour limit reached.")
+        case (false, true): String(localized: "Whimbrel stopped recording: less than 2 GB free. The recording was saved.")
+        case (false, false): String(localized: "Whimbrel stopped recording: less than 2 GB free.")
+        }
     }
 }

@@ -45,13 +45,13 @@ enum TranscriptionService {
         var description: String {
             switch self {
             case .noRecordingFound:
-                return "No captured audio found in the spike folder — run a capture session first."
+                return String(localized: "No captured audio found in the spike folder — run a capture session first.")
             case .modelMissing(let url):
-                return "Whisper model not found at \(url.path) — use the first-run \"Set Up Models\" prompt to fetch it automatically, or see core/transcribe/README.md to fetch one manually."
+                return String(localized: "Whisper model not found at \(url.path) — use the first-run \"Set Up Models\" prompt to fetch it automatically, or see core/transcribe/README.md to fetch one manually.")
             case .conversionFailed(let msg):
-                return "Audio conversion failed: \(msg)"
+                return String(localized: "Audio conversion failed: \(msg)")
             case .transcriptionFailed(let file):
-                return "Transcription failed for \(file) (bad model, bad audio, or a whisper.cpp error)."
+                return String(localized: "Transcription failed for \(file) (bad model, bad audio, or a whisper.cpp error).")
             }
         }
     }
@@ -62,6 +62,9 @@ enum TranscriptionService {
     /// Same model file core/transcribe/README.md documents fetching — not bundled with
     /// the app, must be present on disk under the spike folder. Overridable from
     /// Settings > Transcription (e.g. to point at a larger/more accurate GGML model).
+    /// The multilingual model (`ggml-base.bin`), downloaded only when multilingual transcription is on.
+    static var multilingualModelPath: URL { SpikePaths.root.appendingPathComponent("models/ggml-base.bin") }
+
     static var modelPath: URL {
         get {
             ModelPathDefaultsMigration.resolve(
@@ -82,14 +85,24 @@ enum TranscriptionService {
     /// scanning the directory for "the newest" recording — by the time a background
     /// transcription runs, a *newer* session may already be in progress, so "latest"
     /// would silently transcribe the wrong meeting.
-    static func transcribe(meetingAudioPath: String, expectedSpeakerCount: Int?) throws -> (url: URL, lines: [Line]) {
+    /// `language`: "en" is today's path (the English model); any other code is forced with the
+    /// multilingual model, and nil detects on the system track (then forces it on the mic).
+    /// Returns the language used.
+    static func transcribe(meetingAudioPath: String, expectedSpeakerCount: Int?, language: String?) throws -> (url: URL, lines: [Line], language: String?) {
         guard let tracks = trackURLs(forAudioPath: meetingAudioPath) else {
             throw TranscriptionError.noRecordingFound
         }
         let url = URL(fileURLWithPath: meetingAudioPath)
         let prefix = url.lastPathComponent.hasPrefix("system-audio-") ? "system-audio-" : "mic-audio-"
         let stamp = timestamp(from: url, prefix: prefix)
-        return try transcribeSession(system: tracks.system, mic: tracks.mic, stamp: stamp, expectedSpeakerCount: expectedSpeakerCount)
+        return try transcribeSession(system: tracks.system, mic: tracks.mic, stamp: stamp, expectedSpeakerCount: expectedSpeakerCount, language: language)
+    }
+
+    /// Whisper on one converted WAV: "en" with the English model exactly as before, anything
+    /// else (or nil, detect) with the multilingual model.
+    private static func whisper(_ wav: URL, language: String?) -> (segments: [CoreTranscriptSegment], language: String?)? {
+        if language == "en" { return CoreMemoryStore.transcribeWav(modelPath: modelPath, wavPath: wav).map { ($0, "en") } }
+        return CoreMemoryStore.transcribeWavLang(modelPath: multilingualModelPath, wavPath: wav, language: language)
     }
 
     /// Mirrors core `sibling_audio_paths`: the track pair lives beside the stored path,
@@ -106,9 +119,10 @@ enum TranscriptionService {
         return (dir.appendingPathComponent("system-audio-" + stem), dir.appendingPathComponent("mic-audio-" + stem))
     }
 
-    private static func transcribeSession(system systemURL: URL, mic micURL: URL, stamp: String, expectedSpeakerCount: Int?) throws -> (url: URL, lines: [Line]) {
-        guard FileManager.default.fileExists(atPath: modelPath.path) else {
-            throw TranscriptionError.modelMissing(modelPath)
+    private static func transcribeSession(system systemURL: URL, mic micURL: URL, stamp: String, expectedSpeakerCount: Int?, language: String?) throws -> (url: URL, lines: [Line], language: String?) {
+        let model = language == "en" ? modelPath : multilingualModelPath
+        guard FileManager.default.fileExists(atPath: model.path) else {
+            throw TranscriptionError.modelMissing(model)
         }
 
         let hasSystemAudio = FileManager.default.fileExists(atPath: systemURL.path) && AudioConversion.hasAudioContent(systemURL)
@@ -117,8 +131,19 @@ enum TranscriptionService {
             throw TranscriptionError.noRecordingFound
         }
 
-        let systemLines = hasSystemAudio ? try transcribeSystemAudioWithDiarization(systemURL, expectedSpeakerCount: expectedSpeakerCount) : []
-        let micLines = hasMicAudio ? try transcribeFile(micURL, speaker: .me) : []
+        var language = language
+        var systemLines: [Line] = []
+        if hasSystemAudio {
+            let system = try transcribeSystemAudioWithDiarization(systemURL, expectedSpeakerCount: expectedSpeakerCount, language: language)
+            systemLines = system.lines
+            if language == nil, !systemLines.isEmpty { language = system.language }
+        }
+        var micLines: [Line] = []
+        if hasMicAudio {
+            let mic = try transcribeFile(micURL, speaker: .me, language: language)
+            micLines = mic.lines
+            if language == nil, !micLines.isEmpty { language = mic.language }
+        }
         // Bleed filter + chronological interleave + same-speaker merge live in
         // core/transcribe::postprocess (M3.0 Task 1); with no system audio this is
         // exactly the same-speaker merge of the mic channel.
@@ -128,7 +153,7 @@ enum TranscriptionService {
         if hasSystemAudio, hasMicAudio {
             log.info("filterBleedThrough: \(micLines.count) mic lines before, \(micLinesKept) after")
         }
-        return (url: try writeTranscript(lines, stamp: stamp), lines: lines)
+        return (url: try writeTranscript(lines, stamp: stamp), lines: lines, language: language)
     }
 
     private static func timestamp(from url: URL, prefix: String) -> String {
@@ -144,7 +169,7 @@ enum TranscriptionService {
     /// fails for any reason, or the merge step fails; never throws over a diarization
     /// problem specifically, only over a transcription failure (matching
     /// `transcribeFile`'s existing contract).
-    private static func transcribeSystemAudioWithDiarization(_ source: URL, expectedSpeakerCount: Int?) throws -> [Line] {
+    private static func transcribeSystemAudioWithDiarization(_ source: URL, expectedSpeakerCount: Int?, language: String?) throws -> (lines: [Line], language: String?) {
         let wavURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
         defer { try? FileManager.default.removeItem(at: wavURL) }
         do {
@@ -154,12 +179,15 @@ enum TranscriptionService {
         }
 
         var transcriptSegments: [CoreTranscriptSegment]?
+        var detected: String?
         var speakerSegments: [CoreSpeakerSegment]?
         let group = DispatchGroup()
 
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
-            transcriptSegments = CoreMemoryStore.transcribeWav(modelPath: modelPath, wavPath: wavURL)
+            let result = whisper(wavURL, language: language)
+            transcriptSegments = result?.segments
+            detected = result?.language
             group.leave()
         }
 
@@ -197,16 +225,16 @@ enum TranscriptionService {
             } else {
                 log.info("Diarization models not configured — system-audio channel labeled 'Others'.")
             }
-            return transcriptSegments.map { Line(speakerLabel: Speaker.others.rawValue, startCs: $0.startCs, endCs: $0.endCs, text: $0.text) }
+            return (transcriptSegments.map { Line(speakerLabel: Speaker.others.rawValue, startCs: $0.startCs, endCs: $0.endCs, text: $0.text) }, detected)
         }
 
-        return labeled.map { segment in
+        return (labeled.map { segment in
             let label = segment.speakerId.map { "Speaker \($0 + 1)" } ?? Speaker.others.rawValue
             return Line(speakerLabel: label, startCs: segment.startCs, endCs: segment.endCs, text: segment.text)
-        }
+        }, detected)
     }
 
-    private static func transcribeFile(_ source: URL, speaker: Speaker) throws -> [Line] {
+    private static func transcribeFile(_ source: URL, speaker: Speaker, language: String?) throws -> (lines: [Line], language: String?) {
         let wavURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
         defer { try? FileManager.default.removeItem(at: wavURL) }
         do {
@@ -215,10 +243,10 @@ enum TranscriptionService {
             throw TranscriptionError.conversionFailed(String(describing: error))
         }
 
-        guard let segments = CoreMemoryStore.transcribeWav(modelPath: modelPath, wavPath: wavURL) else {
+        guard let result = whisper(wavURL, language: language) else {
             throw TranscriptionError.transcriptionFailed(source.lastPathComponent)
         }
-        return segments.map { Line(speakerLabel: speaker.rawValue, startCs: $0.startCs, endCs: $0.endCs, text: $0.text) }
+        return (result.segments.map { Line(speakerLabel: speaker.rawValue, startCs: $0.startCs, endCs: $0.endCs, text: $0.text) }, result.language)
     }
 
     /// Fixed 24-hour format regardless of the user's locale — a transcript is a

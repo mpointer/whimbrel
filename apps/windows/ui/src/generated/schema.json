@@ -1621,6 +1621,53 @@
       ],
       "type": "object"
     },
+    "LanguageSettings": {
+      "properties": {
+        "choice": {
+          "description": "The Language picker's choice; `\"\"` is Automatic.",
+          "type": "string"
+        },
+        "languages": {
+          "description": "The Language picker's options besides Automatic.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "localModelNote": {
+          "description": "Show \"Local models may write less well in …\": the output isn't English and Ollama does the work.",
+          "type": "boolean"
+        },
+        "outputLanguage": {
+          "description": "The tag notes and summaries are written in; `\"\"` is English.",
+          "type": "string"
+        },
+        "uiLanguage": {
+          "description": "What the app shows: the choice, or Windows' language, resolved (`en-US`, `en-GB`, …).",
+          "type": "string"
+        },
+        "writeIn": {
+          "description": "\"Write notes and summaries in\"; `\"\"` is \"Same as app language\".",
+          "type": "string"
+        },
+        "writeInOptions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "choice",
+        "uiLanguage",
+        "languages",
+        "writeIn",
+        "writeInOptions",
+        "outputLanguage",
+        "localModelNote"
+      ],
+      "type": "object"
+    },
     "LibraryRow": {
       "oneOf": [
         {
@@ -2136,11 +2183,11 @@
           "type": "string"
         },
         "installed": {
-          "description": "All three files are on disk.",
+          "description": "Every file in core's embedding manifest is on disk.",
           "type": "boolean"
         },
         "loaded": {
-          "description": "The running store has the model loaded (false until a restart after install).",
+          "description": "The running store has the model loaded (it loads on the first search or embed after install).",
           "type": "boolean"
         }
       },

@@ -13,7 +13,10 @@ use libsql::{params, Connection};
 use memory::{ClaimedOutboxOperation, DeliveryFailureClass, MeetingStatus, Store};
 use sync::GroupKey;
 
-use crate::content::{all_peers_items_capable, content_row_aad, MAX_SKIN_CHUNK_BYTES_PER_PASS};
+use crate::content::{
+    all_peers_items_capable, content_row_aad, is_missing_entity_tag_column, outbox_entity_identity, tag_for,
+    CompactionBudget, ENTITY_TAG_COLUMN_SEEN, MAX_SKIN_CHUNK_BYTES_PER_PASS,
+};
 use crate::SyncEngineError;
 
 const CLAIM_BATCH: i64 = 100;
@@ -65,6 +68,18 @@ pub(crate) async fn dispatch_outbox_at(
     let mut parent_terminal: HashMap<i64, bool> = HashMap::new();
     let mut processed = 0;
     let mut chunk_bytes = 0usize;
+    // As `push_content`: untagged while the column is known missing or the epoch is unreadable.
+    let mut epoch = if ENTITY_TAG_COLUMN_SEEN.get() {
+        store
+            .sync_entity_epoch()
+            .inspect_err(|e| eprintln!("[sync] dispatching untagged, no entity epoch: {e}"))
+            .ok()
+    } else {
+        None
+    };
+    let mut compaction = CompactionBudget::default();
+    // ponytail: per-pass batching can leak one stale row per entity when SYNC_TIMEOUT hits mid-pass; upgrade path: delete before acknowledging
+    let mut tags: Vec<String> = Vec::new();
 
     while processed < MAX_ROWS_PER_PASS {
         let batch = store
@@ -129,12 +144,31 @@ pub(crate) async fn dispatch_outbox_at(
                 summary.deferred += 1;
                 continue;
             }
-            match write_sync_row(conn, group_key, &op, now_unix_ms).await {
-                Ok(receipt) => {
+            let tag = epoch
+                .as_deref()
+                .zip(outbox_entity_identity(&op))
+                .map(|(epoch, id)| tag_for(group_key, &op.device_id, epoch, &id));
+            match write_sync_row(conn, group_key, &op, tag.as_deref(), now_unix_ms).await {
+                Ok((receipt, tagged)) => {
+                    // Acknowledged before the batched DELETE (spec D8.2).
                     store
                         .acknowledge_outbox_operation(&op.operation_id, &worker_id, &receipt, now_unix_ms)
                         .map_err(query_error)?;
                     summary.delivered += 1;
+                    match tag {
+                        Some(t) if tagged => {
+                            if !tags.contains(&t) {
+                                tags.push(t);
+                            }
+                            if tags.len() >= 50 {
+                                compaction.compact(conn, device_id, &tags).await;
+                                tags.clear();
+                            }
+                        }
+                        // The relay has no `entity_tag`: the rest of the pass goes untagged.
+                        Some(_) => epoch = None,
+                        None => {}
+                    }
                 }
                 Err(error) => {
                     // ponytail: every relay error is retried with backoff — `SyncEngineError`
@@ -158,6 +192,7 @@ pub(crate) async fn dispatch_outbox_at(
             }
         }
     }
+    compaction.compact(conn, device_id, &tags).await;
     Ok(summary)
 }
 
@@ -185,29 +220,42 @@ fn deferral_reason(
     (!terminal).then_some("parent_meeting_not_terminal")
 }
 
+/// Writes one op's row. The `bool` is true when it went in with `tag`; a relay that
+/// predates `entity_tag` gets the untagged INSERT instead.
 async fn write_sync_row(
     conn: &Connection,
     group_key: &GroupKey,
     op: &ClaimedOutboxOperation,
+    tag: Option<&str>,
     now_unix_ms: i64,
-) -> Result<String, SyncEngineError> {
+) -> Result<(String, bool), SyncEngineError> {
     let aad = content_row_aad(&op.device_id, op.local_seq, &op.row_type);
-    let ciphertext = sync::encrypt_payload(group_key, op.payload_json.as_bytes(), &aad);
-    conn.execute(
-        "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) \
-         VALUES (?1, ?2, ?3, ?4, ?5) \
-         ON CONFLICT (device_id, local_seq, row_type) DO NOTHING",
-        params![
-            op.device_id.as_str(),
-            op.local_seq,
-            op.row_type.as_str(),
-            STANDARD.encode(&ciphertext).as_str(),
-            now_unix_ms
-        ],
-    )
-    .await
+    let ciphertext = STANDARD.encode(sync::encrypt_payload(group_key, op.payload_json.as_bytes(), &aad));
+    let untagged = || {
+        conn.execute(
+            "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT (device_id, local_seq, row_type) DO NOTHING",
+            params![op.device_id.as_str(), op.local_seq, op.row_type.as_str(), ciphertext.as_str(), now_unix_ms],
+        )
+    };
+    let tagged = match tag {
+        None => untagged().await.map(|_| false),
+        Some(tag) => match conn
+            .execute(
+                "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms, entity_tag) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT (device_id, local_seq, row_type) DO NOTHING",
+                params![op.device_id.as_str(), op.local_seq, op.row_type.as_str(), ciphertext.as_str(), now_unix_ms, tag],
+            )
+            .await
+        {
+            Err(e) if is_missing_entity_tag_column(&e.to_string()) => untagged().await.map(|_| false),
+            other => other.map(|_| true),
+        },
+    }
     .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-    Ok(format!("sync_row:{}:{}:{}", op.device_id, op.local_seq, op.row_type))
+    Ok((format!("sync_row:{}:{}:{}", op.device_id, op.local_seq, op.row_type), tagged))
 }
 
 fn backoff_ms(attempts: i64) -> i64 {
@@ -324,6 +372,23 @@ mod tests {
         let legacy_value: serde_json::Value = serde_json::from_str(&legacy_json).unwrap();
         let outbox_value: serde_json::Value = serde_json::from_str(&outbox_json).unwrap();
         assert_eq!(outbox_value, legacy_value);
+    }
+
+    #[tokio::test]
+    async fn both_push_paths_name_a_meeting_with_the_same_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let _conn = local_connection(&dir.path().join("relay.db")).await;
+        let (store, meeting_id) = own_store("device-a");
+        store.complete_meeting(meeting_id, 2000, None).unwrap();
+        let legacy = store.unpushed_meeting_rows("device-a", 0).unwrap();
+        let op = store
+            .claim_due_outbox_batch(memory::OUTBOX_CONNECTOR, "w", t0(), t0() + LEASE_MS, 10)
+            .unwrap()
+            .pop()
+            .unwrap();
+        let expected = Some(format!("meeting:{meeting_id}"));
+        assert_eq!(crate::content::entity_identity(&legacy[0]), expected);
+        assert_eq!(crate::content::outbox_entity_identity(&op), expected);
     }
 
     #[tokio::test]
@@ -522,5 +587,169 @@ mod tests {
         let store_b = Store::open_in_memory().unwrap();
         pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
         assert_eq!(store_b.list_profile_suggestions("pending").unwrap().len(), 1);
+    }
+
+    fn save_prep(store: &Store, event_id: &str, generated_at_unix_ms: i64) {
+        store
+            .save_meeting_prep(&memory::prep::MeetingPrepRow {
+                event_id: event_id.into(), title: "Sync".into(), start_unix_ms: 2_000_000, generated_at_unix_ms,
+                brief_json: "{}".into(), provider: "p".into(), model: "m".into(),
+            })
+            .unwrap();
+    }
+
+    async fn relay_seqs(conn: &Connection, row_type: &str) -> Vec<i64> {
+        let mut rows = conn
+            .query("SELECT local_seq FROM sync_row WHERE row_type = ?1 ORDER BY local_seq", params![row_type])
+            .await
+            .unwrap();
+        let mut seqs = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            seqs.push(row.get::<i64>(0).unwrap());
+        }
+        seqs
+    }
+
+    fn newest_op_seq(store: &Store, row_type: &str) -> i64 {
+        store.list_outbox_operations().unwrap().into_iter().filter(|r| r.1 == row_type).map(|r| r.0).max().unwrap()
+    }
+
+    /// The legacy scan sends the newest meeting version first; the outbox delivers the
+    /// older one late. Its own pass deletes it, because a higher `local_seq` is there.
+    #[tokio::test]
+    async fn a_late_older_outbox_version_is_deleted_and_the_newest_survives() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::content::tests::compacting_relay(&dir).await;
+        let group_key = GroupKey::generate();
+        let (store_a, meeting_id) = own_store("device-a");
+        store_a.complete_meeting(meeting_id, 2000, None).unwrap();
+        store_a.set_meeting_title(meeting_id, "Renamed").unwrap();
+
+        crate::content::push_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 1, "the legacy scan pushes only the newest");
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+
+        assert_eq!(relay_seqs(&conn, ROW_TYPE_MEETING).await, vec![newest_op_seq(&store_a, ROW_TYPE_MEETING)]);
+    }
+
+    #[tokio::test]
+    async fn meeting_prep_resaves_compact_to_one_row() {
+        use crate::content::ROW_TYPE_MEETING_PREP;
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::content::tests::compacting_relay(&dir).await;
+        let group_key = GroupKey::generate();
+        let (store_a, _) = own_store("device-a");
+        save_prep(&store_a, "ev1", 9);
+        save_prep(&store_a, "ev1", 10);
+
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING_PREP).await, 1);
+
+        let store_b = Store::open_in_memory().unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert_eq!(store_b.get_meeting_prep("ev1").unwrap().unwrap().generated_at_unix_ms, 10);
+    }
+
+    #[tokio::test]
+    async fn outbox_deletes_run_once_per_fifty_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::content::tests::compacting_relay(&dir).await;
+        let (store_a, _) = own_store("device-a");
+        for i in 0..60 {
+            save_prep(&store_a, &format!("ev{i}"), 9);
+        }
+        crate::content::take_compaction_deletes();
+
+        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0()).await.unwrap();
+
+        assert_eq!(summary.delivered, 60);
+        assert_eq!(crate::content::take_compaction_deletes(), 2, "one at 50 tags, one at the end of the pass");
+    }
+
+    /// The outbox shares one 5 s compaction budget across its pass (the legacy push has its
+    /// own, so up to 10 s per round): after the first
+    /// DELETE times out, the second batch of tags is not compacted, and every op is
+    /// still delivered. The clock is paused, so the injected 60 s delay costs no real time.
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_compaction_spends_one_budget_per_outbox_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::content::tests::compacting_relay(&dir).await;
+        let (store_a, _) = own_store("device-a");
+        for i in 0..60 {
+            save_prep(&store_a, &format!("ev{i}"), 9);
+        }
+        crate::content::take_compaction_deletes();
+        crate::content::INJECTED_DELETE_DELAY.with(|d| d.set(Some(std::time::Duration::from_secs(60))));
+
+        let started = tokio::time::Instant::now();
+        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0()).await.unwrap();
+        let spent = started.elapsed();
+
+        assert!(spent <= std::time::Duration::from_secs(6), "{spent:?}");
+        assert_eq!(crate::content::take_compaction_deletes(), 1, "after the timeout, the pass stops compacting");
+        assert_eq!(summary.delivered, 60);
+        assert_eq!(states(&store_a), vec!["delivered"; 60]);
+    }
+
+    #[tokio::test]
+    async fn an_old_schema_relay_still_takes_outbox_deliveries() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(crate::content::tests::OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        // The account-switch case: this process saw the column on another relay, so it
+        // still tries the tagged INSERT and must fall back.
+        crate::content::ENTITY_TAG_COLUMN_SEEN.set();
+        let (store_a, meeting_id) = own_store("device-a");
+        store_a.complete_meeting(meeting_id, 2000, None).unwrap();
+        store_a.set_meeting_title(meeting_id, "Renamed").unwrap();
+        crate::content::take_compaction_deletes();
+
+        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0()).await.unwrap();
+
+        assert_eq!(summary, OutboxDispatchSummary { delivered: 2, ..Default::default() });
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 2);
+        assert_eq!(crate::content::take_compaction_deletes(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_failing_compaction_delete_never_fails_the_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::content::tests::compacting_relay(&dir).await;
+        conn.execute("CREATE TRIGGER no_delete BEFORE DELETE ON sync_row BEGIN SELECT RAISE(ABORT, 'nope'); END", ())
+            .await
+            .unwrap();
+        let (store_a, meeting_id) = own_store("device-a");
+        store_a.complete_meeting(meeting_id, 2000, None).unwrap();
+        store_a.set_meeting_title(meeting_id, "Renamed").unwrap();
+        crate::content::take_compaction_deletes();
+
+        let summary = dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0()).await.unwrap();
+
+        assert_eq!(summary, OutboxDispatchSummary { delivered: 2, ..Default::default() });
+        assert_eq!(states(&store_a), vec!["delivered", "delivered"]);
+        assert_eq!(crate::content::take_compaction_deletes(), 1, "the DELETE was tried and failed");
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 2);
+    }
+
+    /// Rows are tagged without the ops index; only the DELETE waits for it.
+    #[tokio::test]
+    async fn no_outbox_compaction_without_the_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        crate::content::COMPACTION_INDEX_SEEN.reset();
+        let (store_a, meeting_id) = own_store("device-a");
+        store_a.complete_meeting(meeting_id, 2000, None).unwrap();
+        store_a.set_meeting_title(meeting_id, "Renamed").unwrap();
+        crate::content::take_compaction_deletes();
+
+        dispatch_outbox_at(&conn, &GroupKey::generate(), &store_a, "device-a", t0()).await.unwrap();
+
+        assert_eq!(crate::content::take_compaction_deletes(), 0);
+        let mut rows = conn
+            .query("SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND entity_tag IS NOT NULL", ())
+            .await
+            .unwrap();
+        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 2, "both versions stay, tagged");
     }
 }

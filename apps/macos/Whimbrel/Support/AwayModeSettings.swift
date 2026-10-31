@@ -14,10 +14,13 @@ final class AwayModeSettings: ObservableObject {
         }
     }
 
-    init(defaults: UserDefaults = .standard, keepAwake: KeepAwakeControlling) {
+    /// `available` false (joining isn't built yet): stays off and clears an earlier choice, so
+    /// the Mac isn't kept awake for a feature that can't run.
+    init(defaults: UserDefaults = .standard, keepAwake: KeepAwakeControlling, available: Bool = true) {
         self.defaults = defaults
         self.keepAwake = keepAwake
-        enabled = defaults.bool(forKey: Self.enabledKey)
+        if !available { defaults.removeObject(forKey: Self.enabledKey) }
+        enabled = available && defaults.bool(forKey: Self.enabledKey)
         if enabled { keepAwake.begin() }
     }
 }

@@ -1,11 +1,8 @@
 import type { RetentionPreview, RetentionSettings } from "../generated/types";
+import { t } from "../l10n";
 
 /** One row of the first-run notice: what a window covers, and how much is past it. */
 export type NoticeLine = { label: string; count: string };
-
-function plural(n: number, one: string, many = `${one}s`): string {
-  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
-}
 
 /** "34.2 MB", the way the rest of the app writes sizes. */
 export function megabytes(bytes: number): string {
@@ -19,19 +16,32 @@ export function megabytes(bytes: number): string {
  */
 export function noticeLines(settings: RetentionSettings, preview: RetentionPreview): NoticeLine[] {
   const lines: NoticeLine[] = [];
-  const windows: [number | null | undefined, string, string][] = [
-    [settings.captureDays, "Screen text", plural(preview.captures, "item")],
-    [settings.meetingDays, "Meetings and recordings", plural(preview.meetings, "meeting")],
-    [settings.conversationDays, "Chats", plural(preview.conversations, "chat")],
+  // Each label is one whole plural sentence per window, so a language can place the count itself.
+  const windows: [number | null | undefined, (days: number) => string, string][] = [
+    [
+      settings.captureDays,
+      (days) => t("Screen text older than {count} days", { count: days }),
+      t("{count} items", { count: preview.captures }),
+    ],
+    [
+      settings.meetingDays,
+      (days) => t("Meetings and recordings older than {count} days", { count: days }),
+      t("{count} meetings", { count: preview.meetings }),
+    ],
+    [
+      settings.conversationDays,
+      (days) => t("Chats older than {count} days", { count: days }),
+      t("{count} chats", { count: preview.conversations }),
+    ],
   ];
   for (const [days, label, count] of windows) {
     if (days == null) continue;
-    lines.push({ label: `${label} older than ${plural(days, "day")}`, count });
+    lines.push({ label: label(days), count });
   }
   if (preview.orphans > 0) {
     lines.push({
-      label: "Recordings no meeting uses any more",
-      count: `${plural(preview.orphans, "file")} (${megabytes(preview.orphanBytes)})`,
+      label: t("Recordings no meeting uses any more"),
+      count: t("{count} files ({size})", { count: preview.orphans, size: megabytes(preview.orphanBytes) }),
     });
   }
   return lines;

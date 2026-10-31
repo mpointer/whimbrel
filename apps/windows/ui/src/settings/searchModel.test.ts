@@ -13,12 +13,12 @@ const job = (over: Partial<DownloadView>): DownloadView => ({
 });
 
 describe("searchModelState", () => {
-  it("walks missing → downloading → restart → ready", () => {
+  it("walks missing → downloading → ready, with no restart: the next search loads the model", () => {
     expect(searchModelState(missing, null)).toBe("missing");
     expect(searchModelState(missing, job({}))).toBe("downloading");
     // Done, before the status refetch lands.
-    expect(searchModelState(missing, job({ done: true, fraction: 1 }))).toBe("restart");
-    expect(searchModelState({ ...missing, installed: true }, null)).toBe("restart");
+    expect(searchModelState(missing, job({ done: true, fraction: 1 }))).toBe("ready");
+    expect(searchModelState({ ...missing, installed: true }, null)).toBe("ready");
     expect(searchModelState({ ...missing, installed: true, loaded: true }, null)).toBe("ready");
   });
 

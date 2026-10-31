@@ -3,12 +3,12 @@ import type { ChatLine, ImageCandidateView, SkinTurnResult } from "../generated/
 import {
   chatReducer,
   composer,
-  FAILED_LINE,
+  failedLine,
   initialChat,
   placeholder,
   providerLine,
   runTurn,
-  SPEND_CAP_LINE,
+  spendCapLine,
   type ChatEvent,
   type ChatState,
   type SkinChatApi,
@@ -113,7 +113,7 @@ describe("a turn", () => {
     const h = harness();
     const turn = h.send("a skin");
     await runTurn(fakeApi({ turn: vi.fn(async () => Promise.reject({ kind: "provider_failure" })) }), turn, h.dispatch, () => true);
-    expect(texts(h.get())).toEqual(["a skin", FAILED_LINE]);
+    expect(texts(h.get())).toEqual(["a skin", failedLine()]);
     expect(h.get().running).toBe(false);
   });
 
@@ -122,7 +122,7 @@ describe("a turn", () => {
     const cap = { kind: "spend_cap", scope: "user", spent_cents: 200, cap_cents: 200 };
     const turn = h.send("a skin");
     await runTurn(fakeApi({ turn: vi.fn(async () => Promise.reject(cap)) }), turn, h.dispatch, () => true);
-    expect(texts(h.get()).at(-1)).toBe(SPEND_CAP_LINE);
+    expect(texts(h.get()).at(-1)).toBe(spendCapLine());
     expect(h.get().running).toBe(false);
     // Mid-search: the line is posted to the skin's chat, and no image is made after it.
     const h2 = harness();
@@ -134,8 +134,8 @@ describe("a turn", () => {
     await runTurn(api, turn2, h2.dispatch, () => h2.get().run === turn2.run);
     expect(api.search).toHaveBeenCalledTimes(1);
     expect(api.generate).not.toHaveBeenCalled();
-    expect(api.post).toHaveBeenCalledWith("user-stadium-1", SPEND_CAP_LINE);
-    expect(texts(h2.get()).at(-1)).toBe(SPEND_CAP_LINE);
+    expect(api.post).toHaveBeenCalledWith("user-stadium-1", spendCapLine());
+    expect(texts(h2.get()).at(-1)).toBe(spendCapLine());
     expect(h2.get().running).toBe(false);
   });
 

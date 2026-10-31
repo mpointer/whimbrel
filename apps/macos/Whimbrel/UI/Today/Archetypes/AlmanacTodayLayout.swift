@@ -52,7 +52,7 @@ struct AlmanacTodayLayout: TodayArchetypeView {
             }
             if sections.contains(.threads) {
                 divider
-                section("Open loops") {
+                section(String(localized: "Open loops")) {
                     ForEach(content.attentionThreads) { thread in
                         Button { actions.openThread(thread.id) } label: {
                             SkinText(thread.subject ?? thread.lastMessageFrom, lines: 2)

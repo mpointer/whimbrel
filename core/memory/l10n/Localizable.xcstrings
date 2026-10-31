@@ -1,0 +1,2016 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "%A, %B %-d": {
+      "comment": "Not prose: a chrono strftime pattern for the meeting day inside the stored Away Mode email ({day}). Keep every %-field; reorder them and add words for the language (es \"%A, %-d de %B\", fr \"%A %-d %B\"). Weekday and month names come from the locale.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%A, %-d. %B"
+          }
+        },
+        "en-AU": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%A, %-d %B"
+          }
+        },
+        "en-GB": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%A, %-d %B"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%A, %-d de %B"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%A %-d %B"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%A %-d %B"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "%A, %-d de %B"
+          }
+        }
+      }
+    },
+    "(no subject)": {
+      "comment": "Stored: inside the Reply Priorities routine_run.output_summary, for an email thread with no subject.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "(kein Betreff)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "(sin asunto)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "(sans objet)"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "(sans objet)"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "(sem assunto)"
+          }
+        }
+      }
+    },
+    "Added \"{title}\" to your calendar.": {
+      "comment": "Stored: routine_run.output_summary after a calendar event is created (api::write_action). {title} is the event title.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "„{title}“ zu Ihrem Kalender hinzugefügt."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Se agregó \"{title}\" a tu calendario."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "« {title} » ajouté à votre calendrier."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "« {title} » ajouté à votre calendrier."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "\"{title}\" foi adicionado à sua agenda."
+          }
+        }
+      }
+    },
+    "Any trend this week?": {
+      "comment": "Not stored: an Ask starter chip title (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ein Trend diese Woche?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "¿Alguna tendencia esta semana?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Une tendance cette semaine ?"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Une tendance cette semaine ?"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Alguma tendência nesta semana?"
+          }
+        }
+      }
+    },
+    "Approve this computer on your other device; it was active in the last week.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Genehmigen Sie diesen Computer auf Ihrem anderen Gerät; er war in der letzten Woche aktiv."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aprueba esta computadora en tu otro dispositivo; estuvo activa en la última semana."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Approuvez cet ordinateur sur votre autre appareil ; il était actif la semaine dernière."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Approuvez cet ordinateur sur votre autre appareil ; il a été actif au cours de la dernière semaine."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aprove este computador no seu outro dispositivo; ele esteve ativo na última semana."
+          }
+        }
+      }
+    },
+    "Approve this computer on {devices}; it was active in the last week.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Genehmigen Sie diesen Computer auf {devices}; er war in der letzten Woche aktiv."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aprueba esta computadora en {devices}; estuvo activa en la última semana."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Approuvez cet ordinateur sur {devices} ; il était actif la semaine dernière."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Approuvez cet ordinateur sur {devices} ; il a été actif au cours de la dernière semaine."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aprove este computador em {devices}; ele esteve ativo na última semana."
+          }
+        }
+      }
+    },
+    "Ask {organizer} for the recording of {title}": {
+      "comment": "Stored: meeting_followup.text, the Away Mode to-do (api::away_followup). {organizer} is a name, an email or 'the organizer'.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "{organizer} nach der Aufzeichnung von {title} fragen"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Pedirle a {organizer} la grabación de {title}"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Demander l'enregistrement de {title} à {organizer}"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Demander à {organizer} l'enregistrement de {title}"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Peça a {organizer} a gravação de {title}"
+          }
+        }
+      }
+    },
+    "Briefly viewed \"{title}\" in {app}.": {
+      "comment": "Stored: episode summary for a one-capture glance (api::jobs::skip_reason). {title} is the window title, {app} the app name.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "„{title}“ in {app} kurz angesehen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Se vio brevemente \"{title}\" en {app}."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Consulté brièvement « {title} » dans {app}."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Brève consultation de « {title} » dans {app}."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Viu rapidamente \"{title}\" em {app}."
+          }
+        }
+      }
+    },
+    "Briefly viewed {app}.": {
+      "comment": "Stored: episode summary for a one-capture glance (api::jobs::skip_reason). {app} is the app name.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "{app} kurz angesehen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Se vio brevemente {app}."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "{app} consulté brièvement."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Brève consultation de {app}."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Viu rapidamente {app}."
+          }
+        }
+      }
+    },
+    "Calendar isn't connected, or needs to be reconnected. Check Settings → Connectors, then try Approve again.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Der Kalender ist nicht verbunden oder muss neu verbunden werden. Prüfen Sie Einstellungen → Connectors und versuchen Sie dann erneut, zu genehmigen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Calendar no está conectado o necesita reconectarse. Revisa Ajustes → Conectores y vuelve a intentar Aprobar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Le calendrier n'est pas connecté ou doit être reconnecté. Vérifiez Paramètres → Connecteurs, puis appuyez de nouveau sur Approuver."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Le calendrier n'est pas connecté, ou doit être reconnecté. Vérifiez Réglages → Connecteurs, puis réessayez d'approuver."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "O Calendário não está conectado ou precisa ser reconectado. Verifique Configurações → Conectores e tente aprovar novamente."
+          }
+        }
+      }
+    },
+    "Confirm that you want to start fresh to continue.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Bestätigen Sie, dass Sie neu beginnen möchten, um fortzufahren."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Confirma que quieres empezar de cero para continuar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Confirmez que vous souhaitez repartir de zéro pour continuer."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Confirmez que vous voulez repartir à zéro pour continuer."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Confirme que você quer começar do zero para continuar."
+          }
+        }
+      }
+    },
+    "Couldn't complete this action just now ({reason}). It's still pending -- try Approve again in a bit.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Diese Aktion konnte gerade nicht abgeschlossen werden ({reason}). Sie steht weiterhin aus – versuchen Sie es in Kürze erneut mit Genehmigen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "No se pudo completar esta acción en este momento ({reason}). Sigue pendiente; vuelve a intentar Aprobar en un rato."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Impossible de terminer cette action pour le moment ({reason}). Elle est toujours en attente ; réessayez d'approuver dans un instant."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Impossible de terminer cette action pour le moment ({reason}). Elle est toujours en attente -- réessayez d'approuver dans un instant."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Não foi possível concluir esta ação agora ({reason}). Ela continua pendente; tente aprovar novamente daqui a pouco."
+          }
+        }
+      }
+    },
+    "Couldn't reach the sync server. Check your connection and try again.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Der Sync-Server ist nicht erreichbar. Prüfen Sie Ihre Verbindung und versuchen Sie es erneut."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "No se pudo conectar con el servidor de sincronización. Revisa tu conexión e inténtalo de nuevo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Impossible de joindre le serveur de synchronisation. Vérifiez votre connexion et réessayez."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Impossible de joindre le serveur de synchronisation. Vérifiez votre connexion et réessayez."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Não foi possível acessar o servidor de sincronização. Verifique sua conexão e tente novamente."
+          }
+        }
+      }
+    },
+    "Couldn't reach {provider}. The key is saved; models will load when you're online.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "{provider} ist nicht erreichbar. Der Schlüssel ist gespeichert; die Modelle werden geladen, sobald Sie online sind."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "No se pudo conectar con {provider}. La clave está guardada; los modelos se cargarán cuando tengas conexión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Impossible de joindre {provider}. La clé est enregistrée ; les modèles se chargeront une fois en ligne."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Impossible de joindre {provider}. La clé est enregistrée ; les modèles se chargeront une fois que vous serez en ligne."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Não foi possível acessar {provider}. A chave foi salva; os modelos serão carregados quando você estiver online."
+          }
+        }
+      }
+    },
+    "Couldn't read the drafted action.": {
+      "comment": "Stored: routine_run.output_summary when a drafted write action cannot be read (api::write_action::plan).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aktionsentwurf konnte nicht gelesen werden."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "No se pudo leer la acción redactada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Impossible de lire l’action préparée."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Impossible de lire l’action rédigée."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Não foi possível ler a ação redigida."
+          }
+        }
+      }
+    },
+    "Email {to} asking for the recording of {title}": {
+      "comment": "Stored: Away Mode pending routine_run.output_summary shown in the approvals inbox. {to} is an email address.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "E-Mail an {to} mit der Bitte um die Aufzeichnung von {title}"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Enviar correo a {to} para pedir la grabación de {title}"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Écrire à {to} pour demander l’enregistrement de {title}"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Envoyer un courriel à {to} pour demander l’enregistrement de {title}"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Enviar e-mail para {to} pedindo a gravação de {title}"
+          }
+        }
+      }
+    },
+    "Gmail isn't connected, or needs to be reconnected. Check Settings → Connectors, then try Approve again.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gmail ist nicht verbunden oder muss neu verbunden werden. Prüfen Sie Einstellungen → Konnektoren und wählen Sie dann erneut Genehmigen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gmail no está conectado o necesita volver a conectarse. Revisa Ajustes → Conectores y vuelve a intentar con Aprobar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gmail n’est pas connecté, ou doit être reconnecté. Vérifiez Paramètres → Connecteurs, puis réessayez d’approuver."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gmail n’est pas connecté, ou doit être reconnecté. Vérifiez Paramètres → Connecteurs, puis réessayez d’approuver."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "O Gmail não está conectado ou precisa ser reconectado. Verifique Configurações → Conectores e tente Aprovar novamente."
+          }
+        }
+      }
+    },
+    "Google rejected the calendar event request.": {
+      "comment": "Stored: routine_run.output_summary when Google rejects a calendar event (api::write_action).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Google hat die Anfrage für den Kalendertermin abgelehnt."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Google rechazó la solicitud del evento de calendario."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Google a rejeté la demande d’événement d’agenda."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Google a rejeté la demande d’événement de calendrier."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "O Google recusou a solicitação de evento de calendário."
+          }
+        }
+      }
+    },
+    "Google rejected the email send request.": {
+      "comment": "Stored: routine_run.output_summary when Google rejects an email send (api::write_action).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Google hat die Anfrage zum Senden der E-Mail abgelehnt."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Google rechazó la solicitud de envío del correo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Google a rejeté la demande d’envoi de l’e-mail."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Google a rejeté la demande d’envoi du courriel."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "O Google recusou a solicitação de envio de e-mail."
+          }
+        }
+      }
+    },
+    "Hi {first_name},\n\nI couldn't join {title} on {day}. Could you share the recording or transcript when you have a moment?\n\nThanks,\n{signature}": {
+      "comment": "Stored: Away Mode email body in the pending routine run's action payload; sent to the organizer. {day} is a localized weekday and date; {signature} is the user's name.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Hallo {first_name},\n\nich konnte am {day} nicht an {title} teilnehmen. Könnten Sie mir die Aufzeichnung oder das Transkript schicken, wenn Sie einen Moment Zeit haben?\n\nVielen Dank,\n{signature}"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Hola {first_name},\n\nNo pude unirme a {title} el {day}. ¿Podrías compartirme la grabación o la transcripción cuando tengas un momento?\n\nGracias,\n{signature}"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Bonjour {first_name},\n\nJe n’ai pas pu participer à {title} le {day}. Pourriez-vous partager l’enregistrement ou la transcription quand vous aurez un moment ?\n\nMerci,\n{signature}"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Bonjour {first_name},\n\nJe n’ai pas pu me joindre à {title} le {day}. Pourriez-vous me transmettre l’enregistrement ou la transcription quand vous aurez un instant ?\n\nMerci,\n{signature}"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Olá, {first_name},\n\nNão consegui participar de {title} em {day}. Você poderia compartilhar a gravação ou a transcrição quando tiver um momento?\n\nObrigado,\n{signature}"
+          }
+        }
+      }
+    },
+    "Is there a trend across my meetings this week — recurring topics, blockers, or themes?": {
+      "comment": "Not stored: the question an Ask starter chip sends (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gibt es einen Trend in meinen Meetings dieser Woche – wiederkehrende Themen, Blocker oder Muster?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "¿Hay alguna tendencia en mis reuniones de esta semana: temas recurrentes, bloqueos o patrones?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Y a-t-il une tendance dans mes réunions cette semaine — sujets récurrents, points bloquants ou thèmes ?"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Y a-t-il une tendance dans mes réunions cette semaine — sujets récurrents, obstacles ou thèmes ?"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Há alguma tendência nas minhas reuniões desta semana, como assuntos recorrentes, bloqueios ou temas?"
+          }
+        }
+      }
+    },
+    "No activity captured today.": {
+      "comment": "Stored: DailyDigest.summary for an empty day (api::digest::daily_digest; cached digests, Daily Brief routine_run.output_summary).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Heute wurden keine Aktivitäten erfasst."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "No se registró actividad hoy."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aucune activité enregistrée aujourd’hui."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aucune activité saisie aujourd’hui."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Nenhuma atividade registrada hoje."
+          }
+        }
+      }
+    },
+    "No events on today's calendar.": {
+      "comment": "Stored: Daily Brief routine_run.output_summary, after the digest (routines::run_daily_brief).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Keine Termine im heutigen Kalender."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "No hay eventos en el calendario de hoy."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aucun événement dans l’agenda d’aujourd’hui."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aucun événement au calendrier aujourd’hui."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Nenhum evento na agenda de hoje."
+          }
+        }
+      }
+    },
+    "Nothing to rank yet. Turn on Rank email by reply priority in AI & Routing settings.": {
+      "comment": "Stored: Reply Priorities routine_run.output_summary when nothing is scored (routines::run_reply_priorities). \"Rank email by reply priority\" and \"AI & Routing\" name a Settings toggle and pane.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Noch nichts zu ordnen. Aktivieren Sie „E-Mail nach Antwortpriorität ranken“ in den Einstellungen „AI & Routing“."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aún no hay nada que clasificar. Activa Clasificar correo por prioridad de respuesta en los ajustes de IA y enrutamiento."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Rien à classer pour l’instant. Activez « Classer les e-mails par priorité de réponse » dans les paramètres IA et routage."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Rien à classer pour l’instant. Activez « Classer les courriels par priorité de réponse » dans les paramètres IA et routage."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Nada para classificar ainda. Ative Classificar e-mails por prioridade de resposta nas configurações de IA e roteamento."
+          }
+        }
+      }
+    },
+    "Pick at least one option to join the waitlist.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Wählen Sie mindestens eine Option für die Warteliste."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Elige al menos una opción para unirte a la lista de espera."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Choisissez au moins une option pour rejoindre la liste d’attente."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Choisissez au moins une option pour joindre la liste d’attente."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Escolha pelo menos uma opção para entrar na lista de espera."
+          }
+        }
+      }
+    },
+    "Recording of {title}": {
+      "comment": "Stored: Away Mode email subject in the pending routine run's action payload; sent to the organizer.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Aufzeichnung von {title}"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Grabación de {title}"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Enregistrement de {title}"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Enregistrement de {title}"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Gravação de {title}"
+          }
+        }
+      }
+    },
+    "Sent \"{subject}\" to {to}.": {
+      "comment": "Stored: routine_run.output_summary after an email is sent (api::write_action). {subject} is the subject, {to} the address.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "„{subject}“ an {to} gesendet."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Se envió \"{subject}\" a {to}."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "« {subject} » envoyé à {to}."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "« {subject} » envoyé à {to}."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Enviado \"{subject}\" para {to}."
+          }
+        }
+      }
+    },
+    "Starting fresh has to be done from a computer.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ein Neustart muss an einem Computer erfolgen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Para empezar de cero, debes hacerlo desde una computadora."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Repartir de zéro doit se faire depuis un ordinateur."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Pour repartir à zéro, il faut utiliser un ordinateur."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Começar do zero precisa ser feito em um computador."
+          }
+        }
+      }
+    },
+    "Summarize the decisions I've made in my recent meetings.": {
+      "comment": "Not stored: the question an Ask starter chip sends (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Fassen Sie meine Entscheidungen aus den letzten Meetings zusammen."
+          }
+        },
+        "en-AU": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Summarise the decisions I've made in my recent meetings."
+          }
+        },
+        "en-GB": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Summarise the decisions I've made in my recent meetings."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Resume las decisiones que he tomado en mis reuniones recientes."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Résume les décisions que j’ai prises lors de mes réunions récentes."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Résumez les décisions que j’ai prises dans mes réunions récentes."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Resuma as decisões que tomei nas minhas reuniões recentes."
+          }
+        }
+      }
+    },
+    "Summarize today": {
+      "comment": "Not stored: an Ask starter chip title (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Heute zusammenfassen"
+          }
+        },
+        "en-AU": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Summarise today"
+          }
+        },
+        "en-GB": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Summarise today"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Resumir hoy"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Résumer la journée"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Résumer la journée"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Resumir hoje"
+          }
+        }
+      }
+    },
+    "Summarize what happened today across my meetings and captures.": {
+      "comment": "Not stored: the question an Ask starter chip sends (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Fassen Sie zusammen, was heute in meinen Meetings und Aufnahmen passiert ist."
+          }
+        },
+        "en-AU": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Summarise what happened today across my meetings and captures."
+          }
+        },
+        "en-GB": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Summarise what happened today across my meetings and captures."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Resume lo que pasó hoy en mis reuniones y capturas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Résume ce qui s’est passé aujourd’hui dans mes réunions et mes captures."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Résumez ce qui s’est passé aujourd’hui dans mes réunions et mes saisies."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Resuma o que aconteceu hoje nas minhas reuniões e capturas."
+          }
+        }
+      }
+    },
+    "Sync is temporarily unavailable (server error {status}).": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Die Synchronisierung ist vorübergehend nicht verfügbar (Serverfehler {status})."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "La sincronización no está disponible por el momento (error del servidor {status})."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "La synchronisation est temporairement indisponible (erreur serveur {status})."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "La synchronisation est temporairement indisponible (erreur de serveur {status})."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "A sincronização está temporariamente indisponível (erro do servidor {status})."
+          }
+        }
+      }
+    },
+    "That device can't take the place of this one.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dieses Gerät kann nicht an die Stelle dieses Geräts treten."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ese dispositivo no puede reemplazar a este."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Cet appareil ne peut pas remplacer celui-ci."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Cet appareil ne peut pas remplacer celui-ci."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Esse dispositivo não pode substituir este."
+          }
+        }
+      }
+    },
+    "That device is no longer on this account.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dieses Gerät gehört nicht mehr zu diesem Konto."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ese dispositivo ya no pertenece a esta cuenta."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Cet appareil n’est plus associé à ce compte."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Cet appareil ne fait plus partie de ce compte."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Esse dispositivo não está mais nesta conta."
+          }
+        }
+      }
+    },
+    "The sync server returned an unexpected response. Try again.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Der Sync-Server hat eine unerwartete Antwort gesendet. Versuchen Sie es erneut."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "El servidor de sincronización devolvió una respuesta inesperada. Inténtalo de nuevo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Le serveur de synchronisation a renvoyé une réponse inattendue. Réessayez."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Le serveur de synchronisation a renvoyé une réponse inattendue. Réessayez."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "O servidor de sincronização retornou uma resposta inesperada. Tente novamente."
+          }
+        }
+      }
+    },
+    "This Google account isn't allowed to sign in to Whimbrel.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dieses Google-Konto darf sich nicht bei Whimbrel anmelden."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Esta cuenta de Google no tiene permiso para iniciar sesión en Whimbrel."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ce compte Google n’est pas autorisé à se connecter à Whimbrel."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ce compte Google n’est pas autorisé à se connecter à Whimbrel."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Esta conta do Google não tem permissão para entrar no Whimbrel."
+          }
+        }
+      }
+    },
+    "This device isn't approved on this account yet.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Dieses Gerät ist für dieses Konto noch nicht genehmigt."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Este dispositivo aún no está aprobado en esta cuenta."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Cet appareil n’est pas encore approuvé sur ce compte."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Cet appareil n’est pas encore approuvé sur ce compte."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Este dispositivo ainda não foi aprovado nesta conta."
+          }
+        }
+      }
+    },
+    "This device's access was revoked. Sign in again from Settings to request access.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Der Zugriff dieses Geräts wurde widerrufen. Melden Sie sich in den Einstellungen erneut an, um Zugriff anzufordern."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Se revocó el acceso de este dispositivo. Vuelve a iniciar sesión desde Ajustes para solicitar acceso."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "L’accès de cet appareil a été révoqué. Reconnectez-vous depuis les paramètres pour demander l’accès."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "L’accès de cet appareil a été révoqué. Reconnectez-vous depuis les paramètres pour demander l’accès."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "O acesso deste dispositivo foi revogado. Entre novamente em Configurações para solicitar acesso."
+          }
+        }
+      }
+    },
+    "Today: {titles}.": {
+      "comment": "Stored: Daily Brief routine_run.output_summary, after the digest (routines::run_daily_brief). {titles} is a comma-separated list of event titles.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Today: {titles}."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Today: {titles}."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Today : {titles}."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Today : {titles}."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Today: {titles}."
+          }
+        }
+      }
+    },
+    "Too many sign-in attempts. Try again in a few minutes.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Zu viele Anmeldeversuche. Versuchen Sie es in einigen Minuten erneut."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Demasiados intentos de inicio de sesión. Inténtalo de nuevo en unos minutos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Trop de tentatives de connexion. Réessayez dans quelques minutes."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Trop de tentatives de connexion. Réessayez dans quelques minutes."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Muitas tentativas de login. Tente novamente em alguns minutos."
+          }
+        }
+      }
+    },
+    "What action items are still open?": {
+      "comment": "Not stored: an Ask starter chip title (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Welche Aufgaben sind noch offen?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "¿Qué tareas siguen pendientes?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quelles actions à mener restent ouvertes ?"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quelles actions à faire sont encore ouvertes ?"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quais tarefas ainda estão abertas?"
+          }
+        }
+      }
+    },
+    "What action items from my recent meetings are still open?": {
+      "comment": "Not stored: the question an Ask starter chip sends (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Welche Aufgaben aus meinen letzten Meetings sind noch offen?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "¿Qué tareas de mis reuniones recientes siguen pendientes?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quelles actions à mener de mes réunions récentes restent ouvertes ?"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quelles actions à faire issues de mes réunions récentes sont encore ouvertes ?"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quais tarefas das minhas reuniões recentes ainda estão abertas?"
+          }
+        }
+      }
+    },
+    "What decisions did I make recently?": {
+      "comment": "Not stored: an Ask starter chip title (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Welche Entscheidungen habe ich zuletzt getroffen?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "¿Qué decisiones tomé recientemente?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quelles décisions ai-je prises récemment ?"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quelles décisions ai-je prises récemment ?"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Que decisões tomei recentemente?"
+          }
+        }
+      }
+    },
+    "What's quietly slipping?": {
+      "comment": "Not stored: an Ask starter chip title (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Was gerät unbemerkt ins Rutschen?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "¿Qué se retrasa sin avisar?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Qu’est-ce qui prend du retard ?"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Qu’est-ce qui passe sous le radar ?"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "O que está escapando em silêncio?"
+          }
+        }
+      }
+    },
+    "What's quietly slipping? Look across my recent meetings and captures for things that keep getting mentioned but never resolved.": {
+      "comment": "Not stored: the question an Ask starter chip sends (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Was gerät unbemerkt ins Rutschen? Prüfen Sie meine letzten Meetings und Aufnahmen auf Dinge, die immer wieder erwähnt, aber nie geklärt werden."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "¿Qué se está descuidando en silencio? Revisa mis reuniones y capturas recientes en busca de cosas que se mencionan una y otra vez, pero nunca se resuelven."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Qu’est-ce qui prend discrètement du retard ? Parcours mes réunions et captures récentes pour trouver ce qui revient sans cesse sans jamais être réglé."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Qu’est-ce qui passe sous le radar ? Examinez mes réunions et mes saisies récentes à la recherche de sujets souvent mentionnés mais jamais résolus."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "O que está escapando em silêncio? Procure nas minhas reuniões e capturas recentes coisas que sempre são mencionadas, mas nunca resolvidas."
+          }
+        }
+      }
+    },
+    "Which recurring meetings can I kill?": {
+      "comment": "Not stored: an Ask starter chip title (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Auf welche Serientermine kann ich verzichten?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "¿Qué reuniones recurrentes puedo eliminar?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quelles réunions récurrentes puis-je supprimer ?"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quelles réunions récurrentes puis-je abolir ?"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quais reuniões recorrentes posso cancelar?"
+          }
+        }
+      }
+    },
+    "Which recurring meetings can I kill? Look for meetings that keep happening but don't seem to produce decisions or action items.": {
+      "comment": "Not stored: the question an Ask starter chip sends (api::prompts::starter_prompts).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Auf welche Serientermine kann ich verzichten? Suchen Sie nach Meetings, die immer wieder stattfinden, aber offenbar keine Entscheidungen oder Aufgaben hervorbringen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "¿Qué reuniones recurrentes puedo eliminar? Busca reuniones que siguen ocurriendo pero que no parecen producir decisiones ni tareas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quelles réunions récurrentes puis-je supprimer ? Cherche les réunions qui se répètent sans produire de décisions ni d’actions à mener."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quelles réunions récurrentes puis-je abolir ? Cherchez les réunions qui reviennent sans sembler produire de décisions ni d’actions à faire."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Quais reuniões recorrentes posso cancelar? Procure reuniões que continuam acontecendo, mas não parecem gerar decisões ou tarefas."
+          }
+        }
+      }
+    },
+    "Your Google sign-in expired. Try signing in again.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ihre Google-Anmeldung ist abgelaufen. Melden Sie sich erneut an."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Tu inicio de sesión de Google caducó. Intenta iniciar sesión de nuevo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Votre connexion Google a expiré. Essayez de vous reconnecter."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Votre connexion Google a expiré. Essayez de vous reconnecter."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Seu login do Google expirou. Tente entrar novamente."
+          }
+        }
+      }
+    },
+    "Your free sync plan includes one computer and one phone, and they're already in use.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ihr kostenloser Sync-Tarif umfasst einen Computer und ein Smartphone, und beide sind bereits belegt."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Tu plan de sincronización gratuito incluye una computadora y un teléfono, y ya están en uso."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Votre forfait de synchronisation gratuit inclut un ordinateur et un téléphone, déjà utilisés."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Votre forfait de synchronisation gratuit comprend un ordinateur et un téléphone, et ils sont déjà utilisés."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Seu plano gratuito de sincronização inclui um computador e um celular, e ambos já estão em uso."
+          }
+        }
+      }
+    },
+    "Your sync account is being changed. Try again in a few minutes.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Ihr Sync-Konto wird gerade geändert. Versuchen Sie es in einigen Minuten erneut."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Se está modificando tu cuenta de sincronización. Inténtalo de nuevo en unos minutos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Votre compte de synchronisation est en cours de modification. Réessayez dans quelques minutes."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Votre compte de synchronisation est en cours de modification. Réessayez dans quelques minutes."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Sua conta de sincronização está sendo alterada. Tente novamente em alguns minutos."
+          }
+        }
+      }
+    },
+    "the organizer": {
+      "comment": "Stored: substituted for {organizer} in the Away Mode to-do when the organizer is unknown.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "der Veranstalter"
+          }
+        },
+        "en-AU": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "the organiser"
+          }
+        },
+        "en-GB": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "the organiser"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "el organizador"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "l’organisateur"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "l’organisateur"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "o organizador"
+          }
+        }
+      }
+    },
+    "there": {
+      "comment": "Stored: substituted for {first_name} in the Away Mode email ('Hi there,') when the organizer's name is unknown.",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "zusammen"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "buen día"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "à vous"
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "à vous"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "tudo bem"
+          }
+        }
+      }
+    },
+    "{count} threads look like they need a reply, most likely first: {names}.": {
+      "comment": "Stored: Reply Priorities routine_run.output_summary (routines::run_reply_priorities). Plural on {count}; {names} is a '; '-separated list of 'subject (sender)'.",
+      "localizations": {
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "needs_review",
+                  "value": "{count} Unterhaltung scheint eine Antwort zu brauchen, die wahrscheinlichste zuerst: {names}."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "needs_review",
+                  "value": "{count} Unterhaltungen scheinen eine Antwort zu brauchen, die wahrscheinlichste zuerst: {names}."
+                }
+              }
+            }
+          }
+        },
+        "es": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "needs_review",
+                  "value": "{count} hilo parece necesitar respuesta: {names}."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "needs_review",
+                  "value": "{count} hilos parecen necesitar respuesta, los más probables primero: {names}."
+                }
+              }
+            }
+          }
+        },
+        "fr": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "needs_review",
+                  "value": "{count} conversation semble nécessiter une réponse, la plus probable en premier : {names}."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "needs_review",
+                  "value": "{count} conversations semblent nécessiter une réponse, les plus probables en premier : {names}."
+                }
+              }
+            }
+          }
+        },
+        "fr-CA": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "needs_review",
+                  "value": "{count} conversation semble appeler une réponse, la plus probable en premier : {names}."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "needs_review",
+                  "value": "{count} conversations semblent appeler une réponse, les plus probables en premier : {names}."
+                }
+              }
+            }
+          }
+        },
+        "pt": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "needs_review",
+                  "value": "{count} conversa parece precisar de resposta, a mais provável primeiro: {names}."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "needs_review",
+                  "value": "{count} conversas parecem precisar de resposta, as mais prováveis primeiro: {names}."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "{provider} refused this key. Check it on {provider}'s key page.": {
+      "comment": "Not stored: transient message core renders in English only; the shells localize it by code (Task 4).",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "{provider} hat diesen Schlüssel abgelehnt. Prüfen Sie ihn bei {provider}."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "{provider} rechazó esta clave. Revísala en la página de claves de {provider}."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "{provider} a refusé cette clé. Vérifiez-la sur la page des clés de {provider}."
+          }
+        },
+        "fr-CA": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "{provider} a refusé cette clé. Vérifiez-la sur la page des clés de {provider}."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "{provider} recusou esta chave. Verifique na página de chaves de {provider}."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

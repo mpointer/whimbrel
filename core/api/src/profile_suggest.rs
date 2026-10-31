@@ -23,6 +23,7 @@ pub fn run_with_complete(
     day_end_ms: i64,
     facts: &[String],
     profile: &str,
+    lang: &str,
     gate: impl Into<RunGate>,
     complete: &mut dyn FnMut(&str) -> Option<String>,
 ) -> rusqlite::Result<usize> {
@@ -60,7 +61,7 @@ pub fn run_with_complete(
             action_items: m.summary_action_items.clone(),
         })
         .collect();
-    let prompt = llm::profile::build_suggest_prompt(&summarized, profile, facts);
+    let prompt = llm::profile::build_suggest_prompt(&summarized, profile, facts, lang);
     store.set_profile_suggest_last_attempt(now_unix_ms)?;
     let Some(reply) = complete(&prompt) else { return Ok(0) };
 
@@ -103,7 +104,7 @@ pub fn run(
         Some(completion.text)
     };
     // The composed profile text is not passed: the model is told what is already known through `facts`.
-    run_with_complete(store, now_unix_ms, &local_day, day_start, day_end, facts, "", gate, &mut complete)
+    run_with_complete(store, now_unix_ms, &local_day, day_start, day_end, facts, "", &routing.output_language, gate, &mut complete)
 }
 
 #[cfg(test)]
@@ -136,11 +137,11 @@ mod tests {
             let reply = format!(r#"{{"suggestions":[{{"text":"Falcon is the Q4 launch","source_meeting_id":{id}}}]}}"#);
             let calls = std::cell::Cell::new(0);
             let mut complete = |_: &str| { calls.set(calls.get() + 1); Some(reply.clone()) };
-            let added = run_with_complete(&s, 10_000, DAY, 0, 86_400_000, &[], "", true, &mut complete).unwrap();
+            let added = run_with_complete(&s, 10_000, DAY, 0, 86_400_000, &[], "", "", true, &mut complete).unwrap();
             assert_eq!(added, 1);
             assert_eq!(s.list_profile_suggestions("pending").unwrap().len(), 1);
             assert_eq!(s.profile_suggest_last_day().unwrap().as_deref(), Some(DAY));
-            let again = run_with_complete(&s, 20_000, DAY, 0, 86_400_000, &[], "", true, &mut complete).unwrap();
+            let again = run_with_complete(&s, 20_000, DAY, 0, 86_400_000, &[], "", "", true, &mut complete).unwrap();
             assert_eq!(again, 0);
             assert_eq!(calls.get(), 1, "the day gate stops a second model call");
         }
@@ -150,9 +151,9 @@ mod tests {
             let (s, _) = seeded();
             let calls = std::cell::Cell::new(0);
             let mut complete = |_: &str| { calls.set(calls.get() + 1); Some("{}".to_string()) };
-            assert_eq!(run_with_complete(&s, 1, DAY, 0, 86_400_000, &[], "", false, &mut complete).unwrap(), 0);
+            assert_eq!(run_with_complete(&s, 1, DAY, 0, 86_400_000, &[], "", "", false, &mut complete).unwrap(), 0);
             let empty = memory::Store::open_in_memory().unwrap();
-            assert_eq!(run_with_complete(&empty, 1, DAY, 0, 86_400_000, &[], "", true, &mut complete).unwrap(), 0);
+            assert_eq!(run_with_complete(&empty, 1, DAY, 0, 86_400_000, &[], "", "", true, &mut complete).unwrap(), 0);
             assert_eq!(calls.get(), 0);
         }
 
@@ -161,12 +162,12 @@ mod tests {
             let (s, _) = seeded();
             let calls = std::cell::Cell::new(0);
             let mut fail = |_: &str| { calls.set(calls.get() + 1); None };
-            assert_eq!(run_with_complete(&s, 10_000, DAY, 0, 86_400_000, &[], "", true, &mut fail).unwrap(), 0);
+            assert_eq!(run_with_complete(&s, 10_000, DAY, 0, 86_400_000, &[], "", "", true, &mut fail).unwrap(), 0);
             assert_eq!(s.profile_suggest_last_day().unwrap(), None);
             assert!(s.list_profile_suggestions("pending").unwrap().is_empty());
-            run_with_complete(&s, 10_000 + 59 * 60_000, DAY, 0, 86_400_000, &[], "", true, &mut fail).unwrap();
+            run_with_complete(&s, 10_000 + 59 * 60_000, DAY, 0, 86_400_000, &[], "", "", true, &mut fail).unwrap();
             assert_eq!(calls.get(), 1, "no retry inside the hour");
-            run_with_complete(&s, 10_000 + 61 * 60_000, DAY, 0, 86_400_000, &[], "", true, &mut fail).unwrap();
+            run_with_complete(&s, 10_000 + 61 * 60_000, DAY, 0, 86_400_000, &[], "", "", true, &mut fail).unwrap();
             assert_eq!(calls.get(), 2);
         }
 
@@ -178,7 +179,7 @@ mod tests {
             s.add_profile_suggestion("Pending fact", None, 1).unwrap();
             let reply = r#"{"suggestions":[{"text":"dismissed fact"},{"text":"PENDING FACT"},{"text":"Known fact"},{"text":"Brand new fact"}]}"#;
             let mut complete = |_: &str| Some(reply.to_string());
-            let added = run_with_complete(&s, 10_000, DAY, 0, 86_400_000, &["known fact".to_string()], "", true, &mut complete).unwrap();
+            let added = run_with_complete(&s, 10_000, DAY, 0, 86_400_000, &["known fact".to_string()], "", "", true, &mut complete).unwrap();
             assert_eq!(added, 1);
             let pending: Vec<_> = s.list_profile_suggestions("pending").unwrap().into_iter().map(|p| p.text).collect();
             assert_eq!(pending, vec!["Pending fact", "Brand new fact"]);
@@ -198,9 +199,9 @@ mod tests {
             let mut complete = |_: &str| Some(reply.clone());
             let start = 5_000;
             let early = start + routines::FAILOVER_GRACE_MS - 1;
-            assert_eq!(run_with_complete(&s, early, DAY, 0, 86_400_000, &[], "", RunGate::Failover, &mut complete).unwrap(), 0);
+            assert_eq!(run_with_complete(&s, early, DAY, 0, 86_400_000, &[], "", "", RunGate::Failover, &mut complete).unwrap(), 0);
             let on_time = start + routines::FAILOVER_GRACE_MS;
-            assert_eq!(run_with_complete(&s, on_time, DAY, 0, 86_400_000, &[], "", RunGate::Failover, &mut complete).unwrap(), 1);
+            assert_eq!(run_with_complete(&s, on_time, DAY, 0, 86_400_000, &[], "", "", RunGate::Failover, &mut complete).unwrap(), 1);
         }
 
         #[test]
@@ -213,7 +214,7 @@ mod tests {
             let mut complete = |_: &str| -> Option<String> { panic!("must not call the model") };
             let late = 5_000 + routines::FAILOVER_GRACE_MS;
             for gate in [RunGate::Full, RunGate::Failover, RunGate::Off] {
-                assert_eq!(run_with_complete(&s, late, DAY, 0, 86_400_000, &[], "", gate, &mut complete).unwrap(), 0);
+                assert_eq!(run_with_complete(&s, late, DAY, 0, 86_400_000, &[], "", "", gate, &mut complete).unwrap(), 0);
             }
         }
 }

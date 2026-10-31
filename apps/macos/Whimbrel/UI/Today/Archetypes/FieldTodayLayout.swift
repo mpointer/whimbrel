@@ -75,8 +75,8 @@ struct FieldMarker: Identifiable {
     var accessibilityLabel: String {
         let suffix = isNext ? ", up next" : ""
         switch action {
-        case .start?: return "Start \(title), \(timeText)\(suffix)"
-        case .open?: return "Open \(title), \(timeText)\(suffix)"
+        case .start?: return String(localized: "Start \(title), \(timeText)\(suffix)")
+        case .open?: return String(localized: "Open \(title), \(timeText)\(suffix)")
         case nil: return "\(title), \(timeText)\(suffix)"
         }
     }

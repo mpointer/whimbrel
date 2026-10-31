@@ -1,0 +1,18 @@
+# UI areas whose text isn't in t() yet. translate.py check skips them for the bare-JSX-text rule.
+# Each extraction PR deletes its own lines; the last one deletes this file
+# (docs/superpowers/plans/2026-10-31-windows-localization.md, W4a–W4d).
+
+# W4b
+today
+App.tsx
+SkinIcon.tsx
+
+# W4c
+meetings
+library
+
+# W4d
+automations
+chat
+popup
+alert

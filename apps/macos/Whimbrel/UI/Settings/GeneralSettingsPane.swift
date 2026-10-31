@@ -4,6 +4,9 @@ struct GeneralSettingsPane: View {
     @EnvironmentObject var appState: AppState
     var openAISettings: () -> Void = {}
     @State private var restartBlockedByRecording = false
+    @State private var languageOverride = AppLanguage.override ?? ""
+    @State private var languageChanged = false
+    @AppStorage(AppLanguage.writeInKey) private var writeIn = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -18,8 +21,49 @@ struct GeneralSettingsPane: View {
             updateRow
 
             Divider().overlay(Color.whimbrelBorder)
+            languageRows
+
+            Divider().overlay(Color.whimbrelBorder)
             AppearanceThemeSettings(appearance: appState.appearanceSettings, skinChat: appState.skinChat, openAISettings: openAISettings)
         }
+    }
+
+    private func languageName(_ tag: String) -> String {
+        Locale.current.localizedString(forIdentifier: tag) ?? tag
+    }
+
+    private var languageRows: some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            Picker("Language", selection: $languageOverride) {
+                Text("Automatic").tag("")
+                ForEach(AppLanguage.shipped, id: \.self) { Text(verbatim: languageName($0)).tag($0) }
+            }
+            .onChange(of: languageOverride) { _, tag in
+                AppLanguage.setOverride(tag.isEmpty ? nil : tag)
+                languageChanged = true
+            }
+            if languageChanged {
+                Text("Quit and reopen Whimbrel to use the new language.")
+                    .font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelTextSecondary)
+            }
+            Picker("Write notes and summaries in", selection: $writeIn) {
+                Text("Same as app language").tag("")
+                ForEach(AppLanguage.writeInOptions, id: \.self) { Text(verbatim: languageName($0)).tag($0) }
+            }
+            Text("Routines run on your primary device and write in that device's language.")
+                .font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelTextSecondary)
+            if let weak = localModelNote {
+                Text(weak).font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelTextSecondary)
+            }
+        }
+    }
+
+    /// Shown when notes are written in a language other than English by a local model.
+    private var localModelNote: String? {
+        let tag = AppLanguage.outputTag(uiTag: AppLanguage.uiTag(), writeIn: writeIn,
+                                        multilingual: AppLanguage.multilingual())
+        guard !tag.isEmpty, !tag.hasPrefix("en"), appState.routing.preferredProvider == .ollama else { return nil }
+        return String(localized: "Local models may write less well in \(languageName(tag)).")
     }
 
     private var updateStatus: UpdateChecker.UpdateStatus { appState.updateChecker.status }

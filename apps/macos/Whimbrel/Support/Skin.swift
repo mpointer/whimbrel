@@ -166,9 +166,27 @@ enum SkinVoiceKey: String, CaseIterable {
 
 struct SkinVoice: Equatable {
     var values: [SkinVoiceKey: String]
-    func text(_ key: SkinVoiceKey, name: String) -> String {
-        (values[key] ?? "").replacingOccurrences(of: "{name}", with: name)
+    /// Per language tag ("es", "fr-CA") from the manifest's `voiceLocalized`.
+    var localized: [String: [SkinVoiceKey: String]] = [:]
+
+    static var currentLang: String { AppLanguage.uiTag() }
+
+    /// `localized[lang]`, then `localized[base]`, then `values`. The Whimbrel wording (English
+    /// source) comes from the String Catalog.
+    func template(_ key: SkinVoiceKey, lang: String = SkinVoice.currentLang) -> String {
+        let base = String(lang.split(separator: "-").first ?? "")
+        if let s = localized[lang]?[key] ?? localized[base]?[key] { return s }
+        guard let s = values[key] else { return "" }
+        return s == SkinDefaults.englishVoice[key] ? SkinDefaults.catalogVoice(key) : s
     }
+
+    func text(_ key: SkinVoiceKey, name: String, lang: String = SkinVoice.currentLang) -> String {
+        template(key, lang: lang).replacingOccurrences(of: "{name}", with: name)
+    }
+}
+
+extension Skin {
+    func voiceText(_ key: SkinVoiceKey, lang: String) -> String { voice.template(key, lang: lang) }
 }
 
 enum SkinArchetype: String, CaseIterable { case standard, terminal, glass, field, almanac, reference }
@@ -177,6 +195,31 @@ enum SkinMotion: String, CaseIterable { case none, subtle }
 
 /// The Whimbrel skin: today's look. `skins/whimbrel.json` mirrors it (guarded by a test).
 enum SkinDefaults {
+    static let englishVoice: [SkinVoiceKey: String] = [
+        .greetingMorning: "Good morning, {name}", .greetingAfternoon: "Good afternoon, {name}",
+        .greetingEvening: "Good evening, {name}",
+        .upNextHeader: "Up next", .upcomingHeader: "Today", .earlierHeader: "Earlier", .recapHeader: "Daily recap",
+        .emptyDay: "No meetings yet", .emptyEarlier: "Nothing yet today",
+        .askPlaceholder: "Ask Whimbrel about your meetings", .tagline: "Your meetings, remembered.",
+    ]
+
+    /// `englishVoice` through the String Catalog (literals, so Xcode extracts them).
+    static func catalogVoice(_ key: SkinVoiceKey) -> String {
+        switch key {
+        case .greetingMorning: String(localized: "Good morning, {name}")
+        case .greetingAfternoon: String(localized: "Good afternoon, {name}")
+        case .greetingEvening: String(localized: "Good evening, {name}")
+        case .upNextHeader: String(localized: "Up next")
+        case .upcomingHeader: String(localized: "Today")
+        case .earlierHeader: String(localized: "Earlier")
+        case .recapHeader: String(localized: "Daily recap")
+        case .emptyDay: String(localized: "No meetings yet")
+        case .emptyEarlier: String(localized: "Nothing yet today")
+        case .askPlaceholder: String(localized: "Ask Whimbrel about your meetings")
+        case .tagline: String(localized: "Your meetings, remembered.")
+        }
+    }
+
     static let whimbrel = Skin(
         id: "whimbrel", name: "Whimbrel", author: "Whimbrel",
         paletteIds: ["default", "slate", "sepia"],
@@ -189,12 +232,6 @@ enum SkinDefaults {
             .ask: "arrow.up.circle.fill", .person: "person", .time: "clock", .prep: "doc.text", .recap: "text.alignleft",
         ]),
         decoration: SkinDecoration(),
-        voice: SkinVoice(values: [
-            .greetingMorning: "Good morning, {name}", .greetingAfternoon: "Good afternoon, {name}",
-            .greetingEvening: "Good evening, {name}",
-            .upNextHeader: "Up next", .upcomingHeader: "Today", .earlierHeader: "Earlier", .recapHeader: "Daily recap",
-            .emptyDay: "No meetings yet", .emptyEarlier: "Nothing yet today",
-            .askPlaceholder: "Ask Whimbrel about your meetings", .tagline: "Your meetings, remembered.",
-        ]),
+        voice: SkinVoice(values: englishVoice),
         archetype: .standard, archetypeOptions: [:], motion: .none)
 }

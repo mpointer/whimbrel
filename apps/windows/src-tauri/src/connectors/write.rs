@@ -178,9 +178,11 @@ fn default_account(store: &StoreHandle, connector: &str) -> Option<String> {
 }
 
 /// Runs one pending run's write action against the real connector. Blocking: it spawns a
-/// process and waits on the network, so callers are off the async runtime.
-pub fn execute(store: &StoreHandle, run_id: i64, account: Option<&str>, connectors: &dyn Connectors) -> Result<Executed, CommandError> {
-    let planned = store.call_blocking(move |s| write_action::plan(s, run_id))?.map_err(store_error)?;
+/// process and waits on the network, so callers are off the async runtime. `lang` is the output
+/// language (`RoutingSettings::output_language`) the action's stored summary is written in.
+pub fn execute(store: &StoreHandle, run_id: i64, account: Option<&str>, lang: &str, connectors: &dyn Connectors) -> Result<Executed, CommandError> {
+    let lang = lang.to_string();
+    let planned = store.call_blocking(move |s| write_action::plan(s, run_id, &lang))?.map_err(store_error)?;
     let plan = match planned {
         PlanResult::NotClaimable => return Ok(Executed::NotClaimable),
         PlanResult::Undecodable => return Ok(Executed::Unreadable),
@@ -202,8 +204,8 @@ pub fn execute(store: &StoreHandle, run_id: i64, account: Option<&str>, connecto
 
 /// After a tick: runs every pending write action whose routine is switched on **and** has
 /// auto-approve on. A routine the user has since switched off does not act unattended, even if it
-/// left a draft behind. Returns how many were attempted.
-pub fn auto_approve(store: &StoreHandle, connectors: &dyn Connectors) -> usize {
+/// left a draft behind. Returns how many were attempted. `lang` is as for `execute`.
+pub fn auto_approve(store: &StoreHandle, lang: &str, connectors: &dyn Connectors) -> usize {
     let due: Vec<i64> = match store.call_blocking(|s| -> Result<Vec<i64>, String> {
         let routines = s.list_routines().map_err(|e| e.to_string())?;
         let pending = s.pending_routine_runs().map_err(|e| e.to_string())?;
@@ -224,7 +226,7 @@ pub fn auto_approve(store: &StoreHandle, connectors: &dyn Connectors) -> usize {
         }
     };
     for id in &due {
-        match execute(store, *id, None, connectors) {
+        match execute(store, *id, None, lang, connectors) {
             Ok(Executed::Done { finalized: true, .. }) => tracing::info!(run = id, "auto-approve: done"),
             Ok(Executed::Done { message, .. }) => tracing::info!(run = id, message = message.as_deref().unwrap_or(""), "auto-approve: left pending"),
             Ok(other) => tracing::info!(run = id, outcome = ?other, "auto-approve: nothing to do"),
@@ -321,7 +323,7 @@ mod tests {
         let (_, run) = pending(&store, &payload_json(&focus_event()), false, true);
         let fake = Fake::success();
 
-        let done = execute(&store, run, None, &fake).unwrap();
+        let done = execute(&store, run, None, "", &fake).unwrap();
         assert_eq!(done, Executed::Done { finalized: true, message: None });
         let called = fake.called.lock().unwrap();
         assert_eq!(called.len(), 1);
@@ -337,8 +339,8 @@ mod tests {
         connect(&store, "me@example.com");
         let (_, run) = pending(&store, &payload_json(&focus_event()), false, true);
         let fake = Fake::success();
-        execute(&store, run, None, &fake).unwrap();
-        assert_eq!(execute(&store, run, None, &fake).unwrap(), Executed::NotClaimable);
+        execute(&store, run, None, "", &fake).unwrap();
+        assert_eq!(execute(&store, run, None, "", &fake).unwrap(), Executed::NotClaimable);
         assert_eq!(fake.called.lock().unwrap().len(), 1, "it was only ever created once");
     }
 
@@ -350,8 +352,8 @@ mod tests {
         let (_, a) = pending(&store, &payload_json(&focus_event()), false, true);
         let (_, b) = pending(&store, &payload_json(&focus_event()), false, true);
         let fake = Fake::success();
-        execute(&store, a, Some("second@example.com"), &fake).unwrap();
-        execute(&store, b, None, &fake).unwrap();
+        execute(&store, a, Some("second@example.com"), "", &fake).unwrap();
+        execute(&store, b, None, "", &fake).unwrap();
         assert_eq!(*fake.asked.lock().unwrap(), ["second@example.com", "first@example.com"], "the first account added is the default");
     }
 
@@ -359,7 +361,7 @@ mod tests {
     fn no_account_or_no_token_leaves_the_draft_waiting_and_says_to_reconnect() {
         let store = store();
         let (_, no_account) = pending(&store, &payload_json(&focus_event()), false, true);
-        let done = execute(&store, no_account, None, &Fake::success()).unwrap();
+        let done = execute(&store, no_account, None, "", &Fake::success()).unwrap();
         let Executed::Done { finalized: false, message: Some(message) } = done else { panic!("{done:?}") };
         assert!(message.contains("Calendar isn't connected"), "{message}");
         assert_eq!(run_state(&store, no_account).0, RunStatus::PendingApproval, "the draft survives");
@@ -367,7 +369,7 @@ mod tests {
         connect(&store, "me@example.com");
         let (_, expired) = pending(&store, &payload_json(&focus_event()), false, true);
         let fake = Fake { token: None, ..Fake::success() };
-        assert!(matches!(execute(&store, expired, None, &fake).unwrap(), Executed::Done { finalized: false, .. }));
+        assert!(matches!(execute(&store, expired, None, "", &fake).unwrap(), Executed::Done { finalized: false, .. }));
         assert_eq!(run_state(&store, expired).0, RunStatus::PendingApproval);
         assert!(fake.called.lock().unwrap().is_empty(), "no call is made without a usable token");
     }
@@ -378,12 +380,12 @@ mod tests {
         connect(&store, "me@example.com");
         let (_, retry) = pending(&store, &payload_json(&focus_event()), false, true);
         let fake = Fake::answering(ToolOutcome::RetryableFailure { reason: "Node.js isn't installed.".into() });
-        let Executed::Done { finalized: false, message: Some(message) } = execute(&store, retry, None, &fake).unwrap() else { panic!() };
+        let Executed::Done { finalized: false, message: Some(message) } = execute(&store, retry, None, "", &fake).unwrap() else { panic!() };
         assert!(message.contains("Node.js isn't installed.") && message.contains("still pending"), "{message}");
         assert_eq!(run_state(&store, retry).0, RunStatus::PendingApproval);
 
         let (_, refused) = pending(&store, &payload_json(&focus_event()), false, true);
-        let done = execute(&store, refused, None, &Fake::answering(ToolOutcome::TerminalFailure)).unwrap();
+        let done = execute(&store, refused, None, "", &Fake::answering(ToolOutcome::TerminalFailure)).unwrap();
         assert_eq!(done, Executed::Done { finalized: true, message: None });
         assert_eq!(run_state(&store, refused), (RunStatus::Failed, "Google rejected the calendar event request.".to_string()));
     }
@@ -394,7 +396,7 @@ mod tests {
         connect(&store, "me@example.com");
         let (_, run) = pending(&store, "not json", false, true);
         let fake = Fake::success();
-        assert_eq!(execute(&store, run, None, &fake).unwrap(), Executed::Unreadable);
+        assert_eq!(execute(&store, run, None, "", &fake).unwrap(), Executed::Unreadable);
         assert_eq!(run_state(&store, run).0, RunStatus::Failed);
         assert!(fake.called.lock().unwrap().is_empty());
     }
@@ -405,7 +407,7 @@ mod tests {
         connect(&store, "me@example.com");
         let (_, run) = pending(&store, &payload_json(&focus_event()), false, true);
         let fake = Fake { panics: true, ..Fake::success() };
-        let Executed::Done { finalized: false, .. } = execute(&store, run, None, &fake).unwrap() else { panic!() };
+        let Executed::Done { finalized: false, .. } = execute(&store, run, None, "", &fake).unwrap() else { panic!() };
         assert_eq!(run_state(&store, run).0, RunStatus::PendingApproval, "released, not left executing");
     }
 
@@ -418,7 +420,7 @@ mod tests {
         let (_, switched_off) = pending(&store, &payload_json(&focus_event()), true, false);
         let fake = Fake::success();
 
-        assert_eq!(auto_approve(&store, &fake), 1);
+        assert_eq!(auto_approve(&store, "", &fake), 1);
         assert_eq!(run_state(&store, opted_in).0, RunStatus::Success);
         assert_eq!(run_state(&store, asks_first).0, RunStatus::PendingApproval, "no opt-in, no action");
         assert_eq!(run_state(&store, switched_off).0, RunStatus::PendingApproval, "a routine switched off does not act unattended");
@@ -429,7 +431,7 @@ mod tests {
     fn auto_approve_with_nothing_pending_does_nothing() {
         let store = store();
         let fake = Fake::success();
-        assert_eq!(auto_approve(&store, &fake), 0);
+        assert_eq!(auto_approve(&store, "", &fake), 0);
         assert!(fake.called.lock().unwrap().is_empty());
     }
 

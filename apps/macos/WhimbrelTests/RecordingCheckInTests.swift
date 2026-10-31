@@ -122,3 +122,13 @@ final class RecordingCheckInTests: XCTestCase {
         XCTAssertTrue(c.suppressesMaxDuration(now: t0.addingTimeInterval(4 * h)))
     }
 }
+
+final class StatusMenuCopyTests: XCTestCase {
+    func test_menu_titles_resolve_from_catalog() {
+        XCTAssertEqual(StatusMenuCopy.lowDiskStart, String(localized: "Whimbrel didn't start recording: less than 5 GB free on this Mac."))
+        XCTAssertEqual(StatusMenuCopy.checkInWarning, String(localized: "Still recording? Whimbrel stops in 5 minutes unless you choose Keep recording."))
+        XCTAssertEqual(StatusMenuCopy.forcedStop(durationCap: true, saved: true), "Whimbrel stopped recording: 6-hour limit reached. The recording was saved.")
+        XCTAssertEqual(StatusMenuCopy.forcedStop(durationCap: false, saved: false), "Whimbrel stopped recording: less than 2 GB free.")
+        XCTAssertEqual(WhimbrelTab.allCases.map(\.title), ["Today", "Meetings", "Library", "Automations", "Settings"])
+    }
+}

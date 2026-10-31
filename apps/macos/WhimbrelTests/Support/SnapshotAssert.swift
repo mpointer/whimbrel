@@ -17,7 +17,9 @@ func assertSnapshot(
     guard ProcessInfo.processInfo.environment["WHIMBREL_SNAPSHOTS"] == "1" else {
         throw XCTSkip("Set WHIMBREL_SNAPSHOTS=1 to run snapshot tests")
     }
-    guard let rep = OffscreenRender.bitmap(of: view, size: size, colorScheme: colorScheme, scale: 2) else {
+    // en_US pin: dates and numbers must not follow the test machine's locale.
+    let pinned = view.environment(\.locale, Locale(identifier: "en_US"))
+    guard let rep = OffscreenRender.bitmap(of: pinned, size: size, colorScheme: colorScheme, scale: 2) else {
         XCTFail("Could not render \(named)", file: file, line: line)
         return
     }

@@ -64,6 +64,7 @@ import type {
   SyncView,
   TrayStatus,
   GeneralSettings,
+  LanguageSettings,
   SkinLine,
   SkinSources,
   SkinTurnResult,
@@ -90,6 +91,11 @@ export const updateCheckStatus = () => invoke<UpdateCheck>("update_check_status"
 
 export const generalSettings = () => invoke<GeneralSettings>("general_settings");
 export const setAutostart = (enabled: boolean) => invoke<GeneralSettings>("set_autostart", { enabled });
+
+/** Settings → General's language pickers. A change applies at once; re-render in `uiLanguage`. */
+export const languageSettings = () => invoke<LanguageSettings>("language_settings");
+export const setLanguage = (choice: string) => invoke<LanguageSettings>("set_language", { choice });
+export const setWriteIn = (tag: string) => invoke<LanguageSettings>("set_write_in", { tag });
 
 export const libraryRecent = () => invoke<LibraryRow[]>("library_recent");
 export const libraryEpisodes = (includeHidden: boolean) => invoke<LibraryRow[]>("library_episodes", { includeHidden });

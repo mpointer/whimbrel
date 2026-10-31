@@ -59,17 +59,19 @@ int64_t whimbrel_memory_run_episode_segment_batch(StoreHandle *handle, uint64_t 
  * Store::claim_episode_summarize_jobs) against a local Ollama model.
  * custom_instructions may be NULL or malformed UTF-8, treated as empty; a
  * whitespace-only value trims to empty too, so it's "no instructions" rather
- * than injected verbatim. Returns the count actually processed (0 means nothing
- * was eligible), or -1 if handle or model is NULL. */
-int64_t whimbrel_episodes_run_summarize_batch(StoreHandle *handle, const char *model, uint64_t max_jobs, const char *custom_instructions);
+ * than injected verbatim. output_language is the BCP 47 tag summaries are
+ * written in; NULL or "" adds no language line. Returns the count actually
+ * processed (0 means nothing was eligible), or -1 if handle or model is NULL. */
+int64_t whimbrel_episodes_run_summarize_batch(StoreHandle *handle, const char *model, uint64_t max_jobs, const char *custom_instructions, const char *output_language);
 
 /* Runs up to max_jobs pending thread_summarize jobs (see
  * Store::claim_thread_summarize_jobs) against a local Ollama model.
  * custom_instructions may be NULL or malformed UTF-8, treated as empty; a
  * whitespace-only value trims to empty too, so it's "no instructions" rather
- * than injected verbatim. Returns the count actually processed (0 means nothing
- * was eligible), or -1 if handle or model is NULL. */
-int64_t whimbrel_threads_run_summarize_batch(StoreHandle *handle, const char *model, uint64_t max_jobs, const char *custom_instructions);
+ * than injected verbatim. output_language is the BCP 47 tag summaries are
+ * written in; NULL or "" adds no language line. Returns the count actually
+ * processed (0 means nothing was eligible), or -1 if handle or model is NULL. */
+int64_t whimbrel_threads_run_summarize_batch(StoreHandle *handle, const char *model, uint64_t max_jobs, const char *custom_instructions, const char *output_language);
 
 /* Runs up to max_jobs pending thread_priority jobs (Reply Priorities) against TypeSafe
  * using api_key. Returns the count actually processed (0 = nothing was eligible), -1 if
@@ -225,6 +227,11 @@ char *whimbrel_live_transcribe_chunk(
 
 /* Where to cut a growing 16 kHz mono buffer: {"at":N,"overlap":M}, or the JSON "null" when
  * it is too early to cut. NULL only on a null pointer. */
+/* Sets the live handle's language: a whisper code ("es") forces it, NULL detects it from the
+ * next chunk with speech and then keeps it. New handles start forced to "en". */
+void whimbrel_live_transcriber_set_language(LiveTranscriberHandle *handle, const char *language);
+/* The live handle's locked language, or NULL while still detecting. */
+char *whimbrel_live_transcriber_language(LiveTranscriberHandle *handle);
 char *whimbrel_live_next_cut(const float *samples, size_t n_samples, uint32_t sample_rate);
 
 /* Stores one transcribed chunk as provisional live rows (local only, never synced).
@@ -337,7 +344,8 @@ char *whimbrel_meeting_prep_get(StoreHandle *handle, const char *event_id);
 
 /* Away Mode could not attend a meeting: records the to-do and, when the organizer's address is
  * known and is not the user, files the organizer email as a pending approval. request_json is
- * an AwayFollowupRequest; returns {"ok":true,"data":{followup_id,routine_run_id}} or NULL. */
+ * an AwayFollowupRequest, plus an optional "output_language" tag the to-do and email are
+ * written in (absent or "" is English); returns {"ok":true,"data":{followup_id,routine_run_id}} or NULL. */
 char *whimbrel_away_record_followup(StoreHandle *handle, const char *request_json);
 
 /* Follow-ups not yet done, as a bare JSON array, or NULL on error. */
@@ -493,6 +501,9 @@ char *whimbrel_llm_spend_today(StoreHandle *handle, const char *user_id);
  * Returns a JSON array of {"start_cs", "end_cs", "text"} (timestamps in centiseconds),
  * or NULL on a null/invalid path, a missing/bad model, or a non-16kHz WAV. */
 char *whimbrel_transcribe_wav(const char *model_path, const char *wav_path);
+/* whimbrel_transcribe_wav in `language` (a whisper code; NULL detects). Returns
+ * {"segments":[...],"language":"es"|null}, or NULL as whimbrel_transcribe_wav does. */
+char *whimbrel_transcribe_wav_lang(const char *model_path, const char *wav_path, const char *language);
 
 /* whimbrel_diarize_wav and whimbrel_label_speakers exist only when core/ffi is built
  * with the `diarize` cargo feature (default on; off for iOS/Android).
@@ -636,6 +647,10 @@ bool whimbrel_memory_set_meeting_snapshots_dir(StoreHandle *handle, int64_t meet
 bool whimbrel_memory_set_keep_snapshots(StoreHandle *handle, int64_t meeting_id, bool keep);
 /* Sets a meeting's "Keep media" flag and queues it for sync. Returns whether a row changed. */
 bool whimbrel_memory_set_keep_media(StoreHandle *handle, int64_t meeting_id, bool keep);
+/* The language a meeting was transcribed in (a whisper code, device-local): set (NULL
+ * clears; false on error) and get (NULL when unknown). */
+bool whimbrel_memory_set_meeting_spoken_language(StoreHandle *handle, int64_t meeting_id, const char *language);
+char *whimbrel_memory_meeting_spoken_language(StoreHandle *handle, int64_t meeting_id);
 char *whimbrel_memory_meeting_snapshots_info(StoreHandle *handle, int64_t meeting_id);
 
 /* FR-CHAT-6: creates a new conversation with a placeholder title truncated from
@@ -894,6 +909,10 @@ char *whimbrel_meeting_transcript_text(StoreHandle *handle, int64_t meeting_id);
 /* {"new_meeting_id":N,"moved_snapshot_paths":[...]}. */
 char *whimbrel_meeting_split(StoreHandle *handle, int64_t meeting_id, int64_t from_part_index);
 
+/* "Keep together": moves from's snapshot rows and continue key to into. JSON array of the
+ * moved file paths, oldest first. */
+char *whimbrel_meeting_absorb_split(StoreHandle *handle, int64_t into, int64_t from);
+
 /* moves_json: [[old_path,new_path],...]. False, with nothing changed, when any old path
  * matches no snapshot row of this meeting. */
 bool whimbrel_meeting_set_snapshot_paths(StoreHandle *handle, int64_t meeting_id, const char *moves_json, const char *snapshots_dir);
@@ -1129,6 +1148,12 @@ void whimbrel_inference_release(const char *run_id);
  * "embedding_model_path"} (already-present files are skipped) and returns
  * {"job_id":"..."} immediately, or NULL on a null pointer/malformed JSON. */
 char *whimbrel_models_download_start(const char *destinations_json);
+/* Starts downloading the semantic-search embedding model into its own folder under
+ * models_dir (the store's models directory). Returns {"job_id":...}, polled with
+ * whimbrel_models_download_poll; NULL on a NULL path. */
+char *whimbrel_embedding_download_start(const char *models_dir);
+/* The folder the current embedding model lives in under models_dir; NULL on a NULL path. */
+char *whimbrel_embedding_model_dir(const char *models_dir);
 
 /* Latest progress for job_id: {"fraction": 0..1, "status": "...", "done": bool,
  * "cancelled": bool, "error": string-or-null}. NULL if job_id is unknown (never
@@ -1155,8 +1180,9 @@ char *whimbrel_update_check_manifest(const char *manifest_json, const char *curr
 bool whimbrel_update_verify_sha256(const char *path, const char *expected_sha256);
 
 /* ---- Ask-surface helpers (core/api::prompts, core/api::hosted_models, M3.0 Task 5) ----
- * The built-in Ask starter prompts as a JSON array of {"id", "title", "query"}. */
-char *whimbrel_prompts_starters(void);
+ * The built-in Ask starter prompts as a JSON array of {"id", "title", "query"}, in `lang`
+ * (BCP 47; NULL or "" is English). */
+char *whimbrel_prompts_starters(const char *lang);
 
 /* Whether an Ask-mode question needs a fast response rather than tolerating a slower
  * local model. A NULL query is time-critical (never downgraded). */
@@ -1173,12 +1199,13 @@ char *whimbrel_hosted_models_fetch(const char *provider, const char *api_key, co
  * Validates a pasted key by fetching the provider's model list. BLOCKING like
  * whimbrel_hosted_models_fetch. Returns {"status":"valid","models":[...]} (plus
  * "prices" for openrouter), {"status":"refused","message":...},
- * {"status":"unreachable","message":...} or {"status":"other","message":...}; NULL only
- * on a NULL or unknown provider ("anthropic", "openai", "google", "ollama", "openrouter"). */
+ * {"status":"unreachable","message":...} or {"status":"other","message":...}; refused and
+ * unreachable also carry "code" ("key_refused"/"key_unreachable") and
+ * "params":{"provider"}. NULL only on a NULL or unknown provider ("anthropic", "openai", "google", "ollama", "openrouter"). */
 char *whimbrel_key_check(const char *provider, const char *api_key, const char *base_url_override);
 
 /* The provider table: a JSON array of {"id","name","key_page_url","policy_url",
- * "key_prefix","data_terms":{"text","checked"}|null,"cheap_model"}. */
+ * "key_prefix","data_terms":{"note_id","text","checked"}|null,"cheap_model"}. */
 char *whimbrel_providers(void);
 
 /* A one-line warning when key does not look like provider's key (wrong prefix), as a
@@ -1215,8 +1242,9 @@ char *whimbrel_meeting_workspace_state(const char *meeting_json, const char *dra
  * draft was unreadable and the run has been finalized as failed), or {"status":
  * "planned", "plan": {"run_id", "connector": "google-calendar"|"gmail", "tool",
  * "args_json", "token_env", "no_token_message", "success_summary",
- * "terminal_failure_summary"}}. NULL on a null handle or DB error. */
-char *whimbrel_routines_plan_write_action(StoreHandle *handle, int64_t run_id);
+ * "terminal_failure_summary"}}; summaries are in `lang` (BCP 47; NULL or "" is English).
+ * NULL on a null handle or DB error. */
+char *whimbrel_routines_plan_write_action(StoreHandle *handle, int64_t run_id, const char *lang);
 
 /* Records the connector call's outcome for a planned run. plan_json is the "plan"
  * object from whimbrel_routines_plan_write_action, verbatim; outcome_json is one of
@@ -1224,7 +1252,9 @@ char *whimbrel_routines_plan_write_action(StoreHandle *handle, int64_t run_id);
  * {"kind": "retryable_failure", "reason": "..."}, {"kind": "no_token"}. success and
  * terminal_failure finalize the run; the other two release it back to pending
  * approval so the draft survives. Returns JSON {"finalized": bool, "user_message":
- * string-or-null} (the message the shell surfaces when the run stays pending), or
+ * string-or-null} (the message the shell surfaces when the run stays pending), plus
+ * "code":"action_retryable" and "params":{"reason"} on a retryable failure, or
+ * "code":"connector_not_connected" and "params":{"connector"} on no_token; or
  * NULL on a null handle, malformed JSON, or DB error. */
 char *whimbrel_routines_settle_write_action(StoreHandle *handle, int64_t run_id, const char *plan_json, const char *outcome_json);
 /* ---- Connector sync, one iteration per account (core/api::connectors, M3.0 Task 8) ----
@@ -1387,5 +1417,8 @@ char *whimbrel_sync_group_key_decision(bool wrapped_key_present, bool local_key_
  * permanent for this device/account), and the user-facing message. */
 bool whimbrel_sync_worker_error_is_permanent(const char *error_json);
 char *whimbrel_sync_worker_error_message(const char *error_json);
+/* The same failure as {"code","params","message"}: a stable snake_case code and its
+ * params for the shell to localize, beside the English message. NULL on bad JSON. */
+char *whimbrel_sync_worker_error_code(const char *error_json);
 
 #endif /* WHIMBREL_CORE_H */

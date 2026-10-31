@@ -333,9 +333,9 @@ final class AudioCompressorTests: XCTestCase {
         var calls: [String] = []
         let queue = MeetingTranscriptionQueue(
             store: store,
-            transcribe: { path, _ in
+            transcribe: { path, _, language in
                 lock.withLock { calls.append(path) }
-                return (self.tempDir.appendingPathComponent("t.txt"), [])
+                return (self.tempDir.appendingPathComponent("t.txt"), [], language)
             },
             summarize: { _, _, _ in }, onStage: { _, _ in })
         queue.transcribeAgain(meetingId: m.id, notes: "")

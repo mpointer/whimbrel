@@ -21,6 +21,9 @@ pub struct ModelDestinations {
     pub whisper_model_path: PathBuf,
     pub segmentation_model_path: PathBuf,
     pub embedding_model_path: PathBuf,
+    /// Where the multilingual whisper model goes; `None` (the default) skips it.
+    #[serde(default)]
+    pub whisper_multilingual_path: Option<PathBuf>,
 }
 
 /// One step of the download. `archive_member` is set when the URL is a `.tar.bz2` and
@@ -42,6 +45,8 @@ pub struct ModelSpec {
 
 const WHISPER_MODEL_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin";
+pub const WHISPER_MULTILINGUAL_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
 const SEGMENTATION_ARCHIVE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2";
 const EMBEDDING_MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx";
 const SEGMENTATION_ARCHIVE_MEMBER: &str = "sherpa-onnx-pyannote-segmentation-3-0/model.onnx";
@@ -49,7 +54,7 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The production manifest for `destinations`.
 pub fn manifest(destinations: &ModelDestinations) -> Vec<ModelSpec> {
-    vec![
+    let mut specs = vec![
         ModelSpec {
             name: "Transcription model",
             url: WHISPER_MODEL_URL.to_string(),
@@ -77,33 +82,48 @@ pub fn manifest(destinations: &ModelDestinations) -> Vec<ModelSpec> {
             archive_member: None,
             timeout: DOWNLOAD_TIMEOUT,
         },
-    ]
+    ];
+    if let Some(path) = &destinations.whisper_multilingual_path {
+        specs.push(ModelSpec {
+            name: "Multilingual transcription model",
+            url: WHISPER_MULTILINGUAL_URL.to_string(),
+            destination: path.clone(),
+            min_bytes: 100_000_000,
+            weight: 1.2,
+            archive_member: None,
+            timeout: DOWNLOAD_TIMEOUT,
+        });
+    }
+    specs
 }
 
-const MINILM_BASE_URL: &str = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main";
-
-/// The semantic-search embedding model `core/memory` loads (all-MiniLM-L6-v2's
-/// `config.json`, `tokenizer.json` and `model.safetensors`), for a shell that downloads
-/// it instead of bundling it (Windows, M3.2 Task 7). Same files and source as
-/// `apps/macos/scripts/release-publish.sh` and CI, so every device embeds identically.
-/// `dir` is the store's `models_dir`: the loader joins the file names directly onto it.
+/// The semantic-search embedding model `core/memory` loads (`memory::EMBEDDING_MODEL_*`:
+/// `config.json`, `tokenizer.json` and `model.safetensors` at a pinned Hugging Face commit),
+/// for a shell that downloads it at runtime (Mac and Windows). `dir` is the store's
+/// `models_dir`; the files land in `memory::embedding_model_dir(dir)`, where the loader reads
+/// them, so a new model version is a new folder and never reuses an old model's files.
 /// The weights go last, so a failed weights download leaves the two small files in
 /// place and a retry fetches only what is missing.
 pub fn embedding_manifest(dir: &Path) -> Vec<ModelSpec> {
+    let target = memory::embedding_model_dir(dir);
     [
         ("Search model configuration", "config.json", 200, 0.01),
-        ("Search model tokenizer", "tokenizer.json", 100_000, 0.04),
-        ("Search model weights", "model.safetensors", 50_000_000, 0.95),
+        ("Search model tokenizer", "tokenizer.json", 5_000_000, 0.04),
+        ("Search model weights", "model.safetensors", 300_000_000, 0.95),
     ]
     .into_iter()
     .map(|(name, file, min_bytes, weight)| ModelSpec {
         name,
-        url: format!("{MINILM_BASE_URL}/{file}"),
-        destination: dir.join(file),
+        url: format!(
+            "https://huggingface.co/{}/resolve/{}/{file}",
+            memory::EMBEDDING_MODEL_REPO,
+            memory::EMBEDDING_MODEL_REVISION
+        ),
+        destination: target.join(file),
         min_bytes,
         weight,
         archive_member: None,
-        timeout: DOWNLOAD_TIMEOUT,
+        timeout: Duration::from_secs(900),
     })
     .collect()
 }
@@ -486,16 +506,17 @@ mod tests {
     }
 
     #[test]
-    fn embedding_manifest_is_the_three_minilm_files_the_mac_bundles() {
-        let dir = Path::new("/k/models/minilm");
-        let m = embedding_manifest(dir);
-        let base = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main";
+    fn embedding_manifest_is_the_pinned_model_in_its_own_folder() {
+        let models = Path::new("/k/models/minilm");
+        let m = embedding_manifest(models);
+        let dir = models.join("paraphrase-multilingual-minilm-l12-v2");
+        let base = "https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/e8f8c211226b894fcb81acc59f3b34ba3efd5f42";
         assert_eq!(
             m.iter().map(|s| (s.url.as_str(), s.destination.clone(), s.min_bytes)).collect::<Vec<_>>(),
             [
                 (format!("{base}/config.json").as_str(), dir.join("config.json"), 200),
-                (format!("{base}/tokenizer.json").as_str(), dir.join("tokenizer.json"), 100_000),
-                (format!("{base}/model.safetensors").as_str(), dir.join("model.safetensors"), 50_000_000),
+                (format!("{base}/tokenizer.json").as_str(), dir.join("tokenizer.json"), 5_000_000),
+                (format!("{base}/model.safetensors").as_str(), dir.join("model.safetensors"), 300_000_000),
             ]
         );
         assert!((m.iter().map(|s| s.weight).sum::<f64>() - 1.0).abs() < 1e-9);
@@ -531,22 +552,25 @@ mod tests {
         let p = wait_done(&job);
         assert_eq!(p.error, None);
         assert_eq!(p.fraction, 1.0);
-        assert_eq!(std::fs::read(minilm.join("config.json")).unwrap(), b"{\"hidden_size\":384}");
-        assert_eq!(std::fs::read(minilm.join("tokenizer.json")).unwrap(), b"{\"model\":{}}");
-        assert_eq!(std::fs::read(minilm.join("model.safetensors")).unwrap().len(), 64);
+        let installed = memory::embedding_model_dir(&minilm);
+        assert_eq!(std::fs::read(installed.join("config.json")).unwrap(), b"{\"hidden_size\":384}");
+        assert_eq!(std::fs::read(installed.join("tokenizer.json")).unwrap(), b"{\"model\":{}}");
+        assert_eq!(std::fs::read(installed.join("model.safetensors")).unwrap().len(), 64);
     }
 
     #[test]
     fn an_embedding_retry_fetches_only_the_missing_weights() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("config.json"), b"kept-config").unwrap();
-        std::fs::write(dir.path().join("tokenizer.json"), b"kept-tokenizer").unwrap();
+        let installed = memory::embedding_model_dir(dir.path());
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("config.json"), b"kept-config").unwrap();
+        std::fs::write(installed.join("tokenizer.json"), b"kept-tokenizer").unwrap();
         // The two small files would fail to fetch, so success proves they were skipped.
         let job = start_with_manifest(local_embedding_manifest(dir.path(), [None, None, Some(vec![7u8; 64])]));
         let p = wait_done(&job);
         assert_eq!(p.error, None);
-        assert_eq!(std::fs::read(dir.path().join("config.json")).unwrap(), b"kept-config");
-        assert_eq!(std::fs::read(dir.path().join("model.safetensors")).unwrap().len(), 64);
+        assert_eq!(std::fs::read(installed.join("config.json")).unwrap(), b"kept-config");
+        assert_eq!(std::fs::read(installed.join("model.safetensors")).unwrap().len(), 64);
     }
 
     #[test]
@@ -555,6 +579,7 @@ mod tests {
             whisper_model_path: "/m/w.bin".into(),
             segmentation_model_path: "/m/s.onnx".into(),
             embedding_model_path: "/m/e.onnx".into(),
+            whisper_multilingual_path: None,
         };
         let m = manifest(&d);
         assert_eq!(m.iter().map(|s| (s.name, s.min_bytes, s.weight)).collect::<Vec<_>>(), [
@@ -564,5 +589,34 @@ mod tests {
         ]);
         assert_eq!(m[1].archive_member, Some(SEGMENTATION_ARCHIVE_MEMBER));
         assert_eq!(m[1].destination, PathBuf::from("/m/s.onnx"));
+    }
+
+    fn destinations(multilingual: Option<&str>) -> ModelDestinations {
+        ModelDestinations {
+            whisper_model_path: "/m/w.bin".into(),
+            segmentation_model_path: "/m/s.onnx".into(),
+            embedding_model_path: "/m/e.onnx".into(),
+            whisper_multilingual_path: multilingual.map(PathBuf::from),
+        }
+    }
+
+    #[test]
+    fn manifest_default_is_unchanged() {
+        let names: Vec<_> = manifest(&destinations(None)).iter().map(|s| s.name).collect();
+        assert_eq!(names, ["Transcription model", "Speaker segmentation model", "Speaker embedding model"]);
+        let json: ModelDestinations = serde_json::from_str(r#"{"whisper_model_path":"/w","segmentation_model_path":"/s","embedding_model_path":"/e"}"#).unwrap();
+        assert!(json.whisper_multilingual_path.is_none(), "an older shell's JSON still parses");
+    }
+
+    #[test]
+    fn manifest_adds_multilingual_only_when_requested() {
+        let m = manifest(&destinations(Some("/m/ggml-base.bin")));
+        assert_eq!(m.len(), 4);
+        let last = &m[3];
+        assert_eq!(last.name, "Multilingual transcription model");
+        assert_eq!(last.url, WHISPER_MULTILINGUAL_URL);
+        assert_eq!(last.destination, PathBuf::from("/m/ggml-base.bin"));
+        assert_eq!(last.min_bytes, 100_000_000);
+        assert_eq!(last.timeout, m[0].timeout);
     }
 }

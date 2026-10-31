@@ -208,8 +208,8 @@ struct AtAGlancePanelView: View {
 
     private static func threadStatusLabel(_ status: String) -> String {
         switch status {
-        case "waiting_on_me": "Waiting on you"
-        case "waiting_on_them": "Waiting on them"
+        case "waiting_on_me": String(localized: "Waiting on you")
+        case "waiting_on_them": String(localized: "Waiting on them")
         default: status
         }
     }

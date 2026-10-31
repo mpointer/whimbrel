@@ -66,7 +66,7 @@ enum TodayScheduleItem: Identifiable {
 
 enum TodayRows {
     /// The label between the upcoming and the already-held meetings in a schedule (Standard's wording).
-    static let heldSeparator = "Earlier today"
+    static var heldSeparator: String { String(localized: "Earlier today") }
 
     /// `agenda.upcomingToday.first`, with its prep state.
     static func upNext(_ content: TodayContent) -> TodayEventRowModel? {
@@ -131,7 +131,7 @@ enum TodayRows {
         guard let meeting = content.recentMeetings.first(where: { $0.id == id }) else { return nil }
         return TodayMeetingRowModel(
             id: id, startUnixMs: meeting.startUnixMs, timeText: MeetingRowText.time(meeting.startUnixMs), title: meeting.title,
-            subtitle: content.processingMeetingId == id ? "Transcribing…" : MeetingRowText.subtitle(for: meeting)
+            subtitle: content.processingMeetingId == id ? String(localized: "Transcribing…") : MeetingRowText.subtitle(for: meeting)
         )
     }
 }

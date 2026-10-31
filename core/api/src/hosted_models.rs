@@ -124,6 +124,21 @@ pub enum KeyCheck {
     Other { message: String },
 }
 
+
+impl KeyCheck {
+    /// The stable code and params a shell localizes the message from. `provider` is the
+    /// one `validate_key` checked (the variants do not carry it). `None` for `Valid`
+    /// (the shell writes that line) and `Other` (a free-form fetch error).
+    pub fn user_code(&self, provider: HostedProvider) -> Option<(&'static str, serde_json::Value)> {
+        let code = match self {
+            KeyCheck::Refused { .. } => "key_refused",
+            KeyCheck::Unreachable { .. } => "key_unreachable",
+            KeyCheck::Valid { .. } | KeyCheck::Other { .. } => return None,
+        };
+        Some((code, serde_json::json!({ "provider": provider.label() })))
+    }
+}
+
 /// Validates `api_key` by fetching `provider`'s model list, mapping the outcome to the
 /// three things the key row says. BLOCKING, like `fetch_models`.
 pub fn validate_key(provider: HostedProvider, api_key: &str, base_url: Option<&str>) -> KeyCheck {
@@ -131,12 +146,10 @@ pub fn validate_key(provider: HostedProvider, api_key: &str, base_url: Option<&s
     let body = match fetch_body(provider, api_key, base_url) {
         Ok(body) => body,
         Err(FetchError { status: Some(401 | 403), .. }) => {
-            return KeyCheck::Refused { message: format!("{name} refused this key. Check it on {name}'s key page.") }
+            return KeyCheck::Refused { message: crate::l10n::text("", crate::l10n::keys::KEY_REFUSED, &[("provider", name)]) }
         }
         Err(FetchError { status: None, .. }) => {
-            return KeyCheck::Unreachable {
-                message: format!("Couldn't reach {name}. The key is saved; models will load when you're online."),
-            }
+            return KeyCheck::Unreachable { message: crate::l10n::text("", crate::l10n::keys::KEY_UNREACHABLE, &[("provider", name)]) }
         }
         Err(FetchError { message, .. }) => return KeyCheck::Other { message },
     };
@@ -371,6 +384,16 @@ mod tests {
         assert_eq!(json, serde_json::json!({"status": "refused", "message": "m"}));
         let json = serde_json::to_value(KeyCheck::Valid { models: vec!["a".into()], prices: vec![] }).unwrap();
         assert_eq!(json, serde_json::json!({"status": "valid", "models": ["a"]}));
+    }
+
+    #[test]
+    fn key_check_refused_has_code() {
+        let refused = KeyCheck::Refused { message: "m".into() };
+        assert_eq!(refused.user_code(HostedProvider::Anthropic), Some(("key_refused", serde_json::json!({"provider": "Anthropic"}))));
+        let offline = KeyCheck::Unreachable { message: "m".into() };
+        assert_eq!(offline.user_code(HostedProvider::Google), Some(("key_unreachable", serde_json::json!({"provider": "Google"}))));
+        assert_eq!(KeyCheck::Other { message: "m".into() }.user_code(HostedProvider::OpenAi), None);
+        assert_eq!(KeyCheck::Valid { models: vec![], prices: vec![] }.user_code(HostedProvider::OpenAi), None);
     }
 
     #[test]

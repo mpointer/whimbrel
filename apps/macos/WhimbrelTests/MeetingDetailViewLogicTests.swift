@@ -153,4 +153,28 @@ final class MeetingDetailViewLogicTests: XCTestCase {
         XCTAssertEqual(chunks.map(\.label), [nil, "\u{2014} rejoined 10:05 \u{2014}"])
         XCTAssertEqual(chunks.map(\.body), ["[00:00:01] Me: hi", "[00:01:01] Me: back"])
     }
+
+    // MARK: - Localized display (stored text stays English)
+
+    func test_rejoined_divider_still_splits_when_rendered_localized() {
+        let label = MeetingDetailLogic.dividerLabel(startUnixMs: 1_761_000_000_000)
+        let text = "a\n\(label)\nb"
+        let chunks = MeetingDetailLogic.splitAtDividers(text)
+        XCTAssertEqual(chunks.map(\.label), [nil, label])
+        XCTAssertEqual(chunks.map(\.body), ["a", "b"])
+        XCTAssertTrue(MeetingDetailLogic.renderedDivider(label).contains("rejoined"))
+        XCTAssertTrue(MeetingDetailLogic.renderedDivider(label).hasPrefix("\u{2014} "))
+    }
+
+    func test_speakerLabel_maps_for_display_only() {
+        let stored = "[10:00:00] Speaker 2: hi"
+        XCTAssertEqual(MeetingDetailLogic.displaySpeaker("Speaker 2"), "Speaker 2")
+        XCTAssertEqual(MeetingDetailLogic.displaySpeaker("Me"), "Me")
+        XCTAssertEqual(MeetingDetailLogic.displaySpeaker("Alice"), "Alice")
+        XCTAssertEqual(stored, "[10:00:00] Speaker 2: hi")
+    }
+
+    func test_placeholder_title_renders_verbatim() {
+        XCTAssertEqual(MeetingDetailLogic.displayTitle("Meeting"), "Meeting")
+    }
 }

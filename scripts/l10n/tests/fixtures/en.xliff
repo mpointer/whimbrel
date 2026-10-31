@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:1.2" version="1.2">
+  <file original="Whimbrel/InfoPlist.xcstrings" source-language="en" target-language="en" datatype="plaintext">
+    <body>
+      <trans-unit id="NSMicrophoneUsageDescription" xml:space="preserve">
+        <source>Whimbrel records microphone audio.</source>
+        <target state="new">Whimbrel records microphone audio.</target>
+        <note>Privacy - Microphone Usage Description</note>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="Whimbrel/Localizable.xcstrings" source-language="en" target-language="en" datatype="plaintext">
+    <body>
+      <trans-unit id="%lld meetings|==|plural.one" xml:space="preserve">
+        <source>%lld meeting</source>
+        <target state="new">%lld meeting</target>
+        <note/>
+      </trans-unit>
+      <trans-unit id="%lld meetings|==|plural.other" xml:space="preserve">
+        <source>%lld meetings</source>
+        <target state="new">%lld meetings</target>
+        <note/>
+      </trans-unit>
+      <trans-unit id="%@ · %@" xml:space="preserve">
+        <source>%1$@ · %2$@</source>
+        <target state="new">%1$@ · %2$@</target>
+        <note/>
+      </trans-unit>
+      <trans-unit id="Hello, %@" xml:space="preserve">
+        <source>Hello, %@</source>
+        <target state="new">Hello, %@</target>
+        <note/>
+      </trans-unit>
+      <trans-unit id="Kept" xml:space="preserve">
+        <source>Kept</source>
+        <target state="new">Kept</target>
+        <note>A kept string</note>
+      </trans-unit>
+      <trans-unit id="New string" xml:space="preserve">
+        <source>New string</source>
+        <target state="new">New string</target>
+        <note>Shown on the new screen</note>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

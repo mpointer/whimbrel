@@ -350,7 +350,7 @@ pub async fn chat_delete_conversation(state: State<'_, AppState>, id: i64) -> Re
 
 #[tauri::command]
 pub fn chat_starter_prompts() -> Vec<StarterPromptView> {
-    api::prompts::STARTER_PROMPTS
+    api::prompts::starter_prompts(&crate::l10n::ui_language())
         .iter()
         .map(|p| StarterPromptView { id: p.id.into(), title: p.title.into(), query: p.query.into() })
         .collect()

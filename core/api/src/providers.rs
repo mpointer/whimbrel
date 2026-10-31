@@ -12,6 +12,9 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DataTermsNote {
+    /// Stable code a shell localizes `text` from; serialized as `note_id`.
+    #[serde(rename = "note_id")]
+    pub id: &'static str,
     pub text: &'static str,
     /// ISO date the policy page was last read.
     pub checked: &'static str,
@@ -71,6 +74,7 @@ pub const PROVIDERS: [ProviderInfo; 5] = [
         policy_url: Some("https://ai.google.dev/gemini-api/terms"),
         key_prefix: Some("AIza"),
         data_terms: Some(DataTermsNote {
+            id: "google_free_tier_training",
             text: "On Google's free tier, prompts and responses may be used to improve Google's products. The paid tier does not use them that way. Check Google's terms for the current wording.",
             checked: "2026-10-29",
         }),
@@ -83,6 +87,7 @@ pub const PROVIDERS: [ProviderInfo; 5] = [
         policy_url: Some("https://openrouter.ai/privacy"),
         key_prefix: Some("sk-or-"),
         data_terms: Some(DataTermsNote {
+            id: "openrouter_free_logging",
             text: "Free models on OpenRouter may log prompts. Paid models follow each upstream provider's policy. Check OpenRouter's privacy page for the current wording.",
             checked: "2026-10-29",
         }),
@@ -168,6 +173,8 @@ mod tests {
         let json = serde_json::to_value(&PROVIDERS[3]).unwrap();
         assert_eq!(json["id"], "google");
         assert_eq!(json["data_terms"]["checked"], "2026-10-29");
+        assert_eq!(json["data_terms"]["note_id"], "google_free_tier_training");
+        assert_eq!(serde_json::to_value(&PROVIDERS[4]).unwrap()["data_terms"]["note_id"], "openrouter_free_logging");
         assert_eq!(serde_json::to_value(&PROVIDERS[0]).unwrap()["key_page_url"], serde_json::Value::Null);
     }
 }

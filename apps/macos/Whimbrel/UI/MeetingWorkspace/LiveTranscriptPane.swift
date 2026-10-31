@@ -65,8 +65,8 @@ struct LiveTranscriptPane: View {
 
     private var subtitle: String {
         switch status {
-        case .idle, .listening: return "Provisional, about a minute behind"
-        case .paused: return "Paused (Low Power Mode or heat)"
+        case .idle, .listening: return String(localized: "Provisional, about a minute behind")
+        case .paused: return String(localized: "Paused (Low Power Mode or heat)")
         case .unavailable(let reason): return reason
         }
     }
@@ -74,8 +74,8 @@ struct LiveTranscriptPane: View {
     private var emptyText: String {
         switch status {
         case .unavailable(let reason): return reason
-        case .paused: return "Paused. It resumes automatically."
-        default: return "Listening. The transcript starts appearing after the first minute."
+        case .paused: return String(localized: "Paused. It resumes automatically.")
+        default: return String(localized: "Listening. The transcript starts appearing after the first minute.")
         }
     }
 

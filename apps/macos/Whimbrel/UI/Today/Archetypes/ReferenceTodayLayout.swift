@@ -45,13 +45,13 @@ struct ReferenceTodayLayout: TodayArchetypeView {
     private var entries: [Entry] {
         let present = content.nonEmptySections()
         var out: [Entry] = []
-        if present.contains(.composer), composer != nil { out.append(Entry(section: .composer, title: "Ask")) }
+        if present.contains(.composer), composer != nil { out.append(Entry(section: .composer, title: String(localized: "Ask"))) }
         if present.contains(.upNext), TodayRows.upNext(content) != nil { out.append(Entry(section: .upNext, title: voice.text(.upNextHeader, name: ""))) }
         if present.contains(.schedule), !(schedule.upcoming.isEmpty && schedule.held.isEmpty) { out.append(Entry(section: .schedule, title: voice.text(.upcomingHeader, name: ""))) }
         if present.contains(.earlier) { out.append(Entry(section: .earlier, title: voice.text(.earlierHeader, name: ""))) }
-        if present.contains(.threads) { out.append(Entry(section: .threads, title: "Open loops")) }
+        if present.contains(.threads) { out.append(Entry(section: .threads, title: String(localized: "Open loops"))) }
         if present.contains(.recap) { out.append(Entry(section: .recap, title: voice.text(.recapHeader, name: ""))) }
-        if present.contains(.devices) { out.append(Entry(section: .devices, title: "Devices")) }
+        if present.contains(.devices) { out.append(Entry(section: .devices, title: String(localized: "Devices"))) }
         return out
     }
 
@@ -140,7 +140,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
                 if let relative = event.relative { SkinText(relative, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
                 if !event.attendees.isEmpty { SkinText(event.attendees, role: .label, lines: 2).foregroundStyle(Color.whimbrelTextSecondary) }
                 ReferencePrepLine(prep: event.prep)
-                if event.showsStart { ReferenceLink("Start", role: .primary) { actions.startMeeting(event.event) } }
+                if event.showsStart { ReferenceLink(String(localized: "Start"), role: .primary) { actions.startMeeting(event.event) } }
             }
             .padding(Spacing.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -170,7 +170,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
             }
         }
         if present.contains(.threads) {
-            section(.threads, "Open loops") {
+            section(.threads, String(localized: "Open loops")) {
                 ForEach(content.attentionThreads) { thread in
                     Button { actions.openThread(thread.id) } label: {
                         SkinText(thread.subject ?? thread.lastMessageFrom, lines: 2)
@@ -187,7 +187,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
             section(.recap, voice.text(.recapHeader, name: "")) { recap }
         }
         if present.contains(.devices) {
-            section(.devices, "Devices") { devicesFooter }
+            section(.devices, String(localized: "Devices")) { devicesFooter }
         }
     }
 
@@ -212,7 +212,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
             }
             if let relative = event.relative { SkinText(relative, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             if !event.attendees.isEmpty { SkinText(event.attendees, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
-            if event.showsStart { ReferenceLink("Start", role: .primary) { actions.startMeeting(event.event) } }
+            if event.showsStart { ReferenceLink(String(localized: "Start"), role: .primary) { actions.startMeeting(event.event) } }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -224,7 +224,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
                 SkinText(meeting.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
             }
             if !meeting.subtitle.isEmpty { SkinText(meeting.subtitle, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
-            ReferenceLink("Open") { actions.openMeeting(meeting.id) }
+            ReferenceLink(String(localized: "Open")) { actions.openMeeting(meeting.id) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -240,7 +240,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
             recapText(text)
         case let .failed(message, retryEnabled):
             SkinText(message, lines: .max).foregroundStyle(Color.whimbrelError)
-            ReferenceLink("Try again", enabled: retryEnabled) { actions.generateDigest() }
+            ReferenceLink(String(localized: "Try again"), enabled: retryEnabled) { actions.generateDigest() }
         case .none:
             EmptyView()
         }
@@ -364,7 +364,7 @@ struct ReferencePrepLine: View {
         case let .ready(prep):
             HStack(spacing: Spacing.sm) {
                 SkinText("Prep ready", role: .label).foregroundStyle(Color.whimbrelTextSecondary)
-                ReferenceLink(expanded ? "Hide brief" : "Open brief") { expanded.toggle() }
+                ReferenceLink(expanded ? String(localized: "Hide brief") : String(localized: "Open brief")) { expanded.toggle() }
             }
             if expanded { MeetingPrepView(prep: prep) }
         case .missing:

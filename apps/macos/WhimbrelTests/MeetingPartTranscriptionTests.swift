@@ -19,6 +19,10 @@ final class MeetingPartTranscriptionTests: XCTestCase {
     private var silent: Set<String> = []
     /// The fake hears only the mic ("Me").
     private var meOnly = false
+    /// The language each transcription was asked for.
+    private var languages: [String?] = []
+    /// Multilingual mode for the queue under test.
+    private var multilingual = false
 
     override func setUp() {
         super.setUp()
@@ -37,24 +41,25 @@ final class MeetingPartTranscriptionTests: XCTestCase {
     private func makeQueue() -> MeetingTranscriptionQueue {
         MeetingTranscriptionQueue(
             store: store,
-            transcribe: { [unowned self] audioPath, _ in
-                lock.withLock { transcribeCalls.append(audioPath) }
+            transcribe: { [unowned self] audioPath, _, language in
+                lock.withLock { transcribeCalls.append(audioPath); languages.append(language) }
                 if lock.withLock({ gated.contains(audioPath) }) { gate.wait() }
                 if lock.withLock({ failing.contains(audioPath) }) { throw CocoaError(.fileReadUnknown) }
                 let name = URL(fileURLWithPath: audioPath).deletingPathExtension().lastPathComponent
                 let url = tempDir.appendingPathComponent("transcript-\(name).txt")
                 try "x".write(to: url, atomically: true, encoding: .utf8)
-                if lock.withLock({ silent.contains(audioPath) }) { return (url, []) }
+                if lock.withLock({ silent.contains(audioPath) }) { return (url, [], language) }
                 let me = TranscriptionService.Speaker.me.rawValue
                 return (url, [
                     TranscriptionService.Line(speakerLabel: lock.withLock { meOnly } ? me : "Them", startCs: 100, text: "said in \(name)"),
                     TranscriptionService.Line(speakerLabel: me, startCs: 200, text: "replied in \(name)")
-                ])
+                ], language ?? "es")
             },
             summarize: { [unowned self] id, notes, transcript in
                 lock.withLock { summaries.append((id, notes, transcript)) }
             },
-            onStage: { _, _ in }
+            onStage: { _, _ in },
+            multilingual: { [unowned self] in lock.withLock { multilingual } }
         )
     }
 
@@ -86,6 +91,32 @@ final class MeetingPartTranscriptionTests: XCTestCase {
 
     private func count(_ needle: String, in text: String) -> Int {
         text.components(separatedBy: needle).count - 1
+    }
+
+    func test_multilingual_needs_the_model_on_disk() {
+        XCTAssertTrue(MeetingTranscriptionQueue.usesMultilingual(enabled: true, modelPresent: true))
+        XCTAssertFalse(MeetingTranscriptionQueue.usesMultilingual(enabled: true, modelPresent: false),
+                       "until ggml-base.bin lands, meetings are transcribed in English, not failed")
+        XCTAssertFalse(MeetingTranscriptionQueue.usesMultilingual(enabled: false, modelPresent: true))
+    }
+
+    func test_batch_forces_stored_language() {
+        let m = makeTwoPartMeeting()
+        let queue = makeQueue()
+        queue.enqueue(.init(meetingId: m.id, partIndex: 1, audioPath: m.a, notes: ""))
+        queue.waitUntilIdle()
+        XCTAssertEqual(languages, ["en"], "English mode forces English, as before")
+        XCTAssertNil(store.meetingSpokenLanguage(meetingId: m.id))
+
+        multilingual = true
+        queue.enqueue(.init(meetingId: m.id, partIndex: 1, audioPath: m.a, notes: ""))
+        queue.waitUntilIdle()
+        XCTAssertEqual(languages.last, .some(nil), "nothing stored yet: detect")
+        XCTAssertEqual(store.meetingSpokenLanguage(meetingId: m.id), "es", "the detected language is stored")
+
+        queue.enqueue(.init(meetingId: m.id, partIndex: 2, audioPath: m.b, notes: ""))
+        queue.waitUntilIdle()
+        XCTAssertEqual(languages.last, "es", "later parts force the stored language")
     }
 
     func test_part2_waits_for_part1() {

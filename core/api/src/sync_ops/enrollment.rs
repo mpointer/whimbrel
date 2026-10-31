@@ -148,37 +148,83 @@ pub fn is_permanent_failure(error: &WorkerError) -> bool {
 /// The user-facing message for a Worker failure (the OAuth/Keychain messages stay in
 /// the shell, whose error types they describe).
 pub fn user_message(error: &WorkerError) -> String {
-    match error {
-        WorkerError::Http { status: 403, body } if body.contains("device revoked") => {
-            "This device's access was revoked. Sign in again from Settings to request access.".into()
+    let (_, source, params) = error.classify();
+    // `devices` is a list in `params`; English joins it with " or " (each shell uses its
+    // own list formatter when it renders the code).
+    let rendered: Vec<(&str, String)> = params
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(k, v)| {
+            let text = match v {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Array(a) => a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" or "),
+                other => other.to_string(),
+            };
+            (k.as_str(), text)
+        })
+        .collect();
+    let pairs: Vec<(&str, &str)> = rendered.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    crate::l10n::text("", source, &pairs)
+}
+
+impl WorkerError {
+    /// The stable code and params a shell localizes this failure from; `user_message`
+    /// is the English rendering of the same code.
+    pub fn user_code(&self) -> (&'static str, serde_json::Value) {
+        let (code, _, params) = self.classify();
+        (code, params)
+    }
+
+    fn classify(&self) -> (&'static str, &'static str, serde_json::Value) {
+        use crate::l10n::keys;
+        use serde_json::json;
+        let none = json!({});
+        match self {
+            WorkerError::Http { status: 403, body } if body.contains("device revoked") => {
+                ("device_revoked", keys::DEVICE_REVOKED, none)
+            }
+            WorkerError::Http { status: 403, body } if body.contains("device not approved") => {
+                ("device_not_approved", keys::DEVICE_NOT_APPROVED, none)
+            }
+            WorkerError::Http { status: 403, body } if body.contains("other_device_active") => {
+                let names: Vec<String> = serde_json::from_str::<serde_json::Value>(body)
+                    .ok()
+                    .and_then(|v| v["devices"].as_array().map(|d| d.iter().filter_map(|d| d["name"].as_str().map(str::to_string)).collect()))
+                    .unwrap_or_default();
+                if names.is_empty() {
+                    ("approve_on_other_device_unnamed", keys::APPROVE_ON_OTHER_DEVICE_UNNAMED, none)
+                } else {
+                    ("approve_on_other_device", keys::APPROVE_ON_OTHER_DEVICE, json!({ "devices": names }))
+                }
+            }
+            WorkerError::Http { status: 403, body } if body.contains("reset_requires_computer") => {
+                ("reset_requires_computer", keys::RESET_REQUIRES_COMPUTER, none)
+            }
+            WorkerError::Http { status: 403, .. } => ("account_not_allowed", keys::ACCOUNT_NOT_ALLOWED, none),
+            WorkerError::Http { status: 401, .. } => ("signin_expired", keys::SIGNIN_EXPIRED, none),
+            WorkerError::Http { status: 409, body } if body.contains("device_limit") => {
+                ("device_limit", keys::DEVICE_LIMIT, none)
+            }
+            WorkerError::Http { status: 429, .. } => ("rate_limited", keys::RATE_LIMITED, none),
+            WorkerError::Http { status: 409, body } if body.contains("reset_in_progress") => ("account_changing", keys::ACCOUNT_CHANGING, none),
+            WorkerError::Http { status: 503, body } if body.contains("account_deleting") => ("account_changing", keys::ACCOUNT_CHANGING, none),
+            WorkerError::Http { status: 400, body } if body.contains("swap_kind_mismatch") => {
+                ("swap_kind_mismatch", keys::SWAP_KIND_MISMATCH, none)
+            }
+            WorkerError::Http { status: 400, body } if body.contains("wants_required") => {
+                ("wants_required", keys::WANTS_REQUIRED, none)
+            }
+            WorkerError::Http { status: 400, body } if body.contains("reset_confirm_required") => {
+                ("reset_confirm_required", keys::RESET_CONFIRM_REQUIRED, none)
+            }
+            WorkerError::Http { status: 404, body } if body.contains("device not found") => {
+                ("device_not_found", keys::DEVICE_NOT_FOUND, none)
+            }
+            WorkerError::Http { status, .. } => ("server_error", keys::SERVER_ERROR, json!({ "status": status })),
+            WorkerError::Network => ("network", keys::NETWORK, none),
+            WorkerError::MalformedResponse => ("malformed_response", keys::MALFORMED_RESPONSE, none),
         }
-        WorkerError::Http { status: 403, body } if body.contains("device not approved") => {
-            "This device isn't approved on this account yet.".into()
-        }
-        WorkerError::Http { status: 403, body } if body.contains("other_device_active") => {
-            let names: Vec<String> = serde_json::from_str::<serde_json::Value>(body)
-                .ok()
-                .and_then(|v| v["devices"].as_array().map(|d| d.iter().filter_map(|d| d["name"].as_str().map(str::to_string)).collect()))
-                .unwrap_or_default();
-            let on = if names.is_empty() { "your other device".to_string() } else { names.join(" or ") };
-            format!("Approve this computer on {on}; it was active in the last week.")
-        }
-        WorkerError::Http { status: 403, body } if body.contains("reset_requires_computer") => "Starting fresh has to be done from a computer.".into(),
-        WorkerError::Http { status: 403, .. } => "This Google account isn't allowed to sign in to Whimbrel.".into(),
-        WorkerError::Http { status: 401, .. } => "Your Google sign-in expired. Try signing in again.".into(),
-        WorkerError::Http { status: 409, body } if body.contains("device_limit") => {
-            "Your free sync plan includes one computer and one phone, and they're already in use.".into()
-        }
-        WorkerError::Http { status: 429, .. } => "Too many sign-in attempts. Try again in a few minutes.".into(),
-        WorkerError::Http { status: 409, body } if body.contains("reset_in_progress") => "Your sync account is being changed. Try again in a few minutes.".into(),
-        WorkerError::Http { status: 503, body } if body.contains("account_deleting") => "Your sync account is being changed. Try again in a few minutes.".into(),
-        WorkerError::Http { status: 400, body } if body.contains("swap_kind_mismatch") => "That device can't take the place of this one.".into(),
-        WorkerError::Http { status: 400, body } if body.contains("wants_required") => "Pick at least one option to join the waitlist.".into(),
-        WorkerError::Http { status: 400, body } if body.contains("reset_confirm_required") => "Confirm that you want to start fresh to continue.".into(),
-        WorkerError::Http { status: 404, body } if body.contains("device not found") => "That device is no longer on this account.".into(),
-        WorkerError::Http { status, .. } => format!("Sync is temporarily unavailable (server error {status})."),
-        WorkerError::Network => "Couldn't reach the sync server. Check your connection and try again.".into(),
-        WorkerError::MalformedResponse => "The sync server returned an unexpected response. Try again.".into(),
     }
 }
 
@@ -563,5 +609,48 @@ mod tests {
         assert_eq!(user_message(&WorkerError::Http { status: 401, body: String::new() }), "Your Google sign-in expired. Try signing in again.");
         assert_eq!(user_message(&WorkerError::Network), "Couldn't reach the sync server. Check your connection and try again.");
         assert_eq!(user_message(&WorkerError::MalformedResponse), "The sync server returned an unexpected response. Try again.");
+    }
+
+    #[test]
+    fn enrollment_error_carries_code_and_params() {
+        let http = |status: u16, body: &str| WorkerError::Http { status, body: body.into() };
+        let limit = http(409, r#"{"error":"device_limit"}"#);
+        assert_eq!(limit.user_code(), ("device_limit", serde_json::json!({})));
+        assert_eq!(user_message(&limit), "Your free sync plan includes one computer and one phone, and they're already in use.");
+
+        // Every arm: code, params, and today's English, byte for byte.
+        let cases: Vec<(WorkerError, &str, serde_json::Value, &str)> = vec![
+            (http(403, "device revoked"), "device_revoked", serde_json::json!({}), "This device's access was revoked. Sign in again from Settings to request access."),
+            (http(403, "device not approved"), "device_not_approved", serde_json::json!({}), "This device isn't approved on this account yet."),
+            (
+                http(403, r#"{"error":"other_device_active","devices":[{"name":"Studio Mac"},{"name":"iPhone"}]}"#),
+                "approve_on_other_device",
+                serde_json::json!({"devices": ["Studio Mac", "iPhone"]}),
+                "Approve this computer on Studio Mac or iPhone; it was active in the last week.",
+            ),
+            (
+                http(403, r#"{"error":"other_device_active","devices":[{"name":null}]}"#),
+                "approve_on_other_device_unnamed",
+                serde_json::json!({}),
+                "Approve this computer on your other device; it was active in the last week.",
+            ),
+            (http(403, r#"{"error":"reset_requires_computer"}"#), "reset_requires_computer", serde_json::json!({}), "Starting fresh has to be done from a computer."),
+            (http(403, "email not allowed"), "account_not_allowed", serde_json::json!({}), "This Google account isn't allowed to sign in to Whimbrel."),
+            (http(401, ""), "signin_expired", serde_json::json!({}), "Your Google sign-in expired. Try signing in again."),
+            (http(429, ""), "rate_limited", serde_json::json!({}), "Too many sign-in attempts. Try again in a few minutes."),
+            (http(409, r#"{"error":"reset_in_progress"}"#), "account_changing", serde_json::json!({}), "Your sync account is being changed. Try again in a few minutes."),
+            (http(503, r#"{"error":"account_deleting"}"#), "account_changing", serde_json::json!({}), "Your sync account is being changed. Try again in a few minutes."),
+            (http(400, r#"{"error":"swap_kind_mismatch"}"#), "swap_kind_mismatch", serde_json::json!({}), "That device can't take the place of this one."),
+            (http(400, r#"{"error":"wants_required"}"#), "wants_required", serde_json::json!({}), "Pick at least one option to join the waitlist."),
+            (http(400, r#"{"error":"reset_confirm_required"}"#), "reset_confirm_required", serde_json::json!({}), "Confirm that you want to start fresh to continue."),
+            (http(404, r#"{"error":"device not found"}"#), "device_not_found", serde_json::json!({}), "That device is no longer on this account."),
+            (http(502, ""), "server_error", serde_json::json!({"status": 502}), "Sync is temporarily unavailable (server error 502)."),
+            (WorkerError::Network, "network", serde_json::json!({}), "Couldn't reach the sync server. Check your connection and try again."),
+            (WorkerError::MalformedResponse, "malformed_response", serde_json::json!({}), "The sync server returned an unexpected response. Try again."),
+        ];
+        for (error, code, params, message) in cases {
+            assert_eq!(error.user_code(), (code, params), "{error:?}");
+            assert_eq!(user_message(&error), message, "{error:?}");
+        }
     }
 }

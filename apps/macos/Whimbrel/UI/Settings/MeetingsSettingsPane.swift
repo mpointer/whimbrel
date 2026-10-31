@@ -76,26 +76,37 @@ struct MeetingsSettingsPane: View {
 
             Divider().overlay(Color.whimbrelBorder)
 
-            Toggle("Away Mode", isOn: Binding(
-                get: { appState.awayMode.enabled },
-                set: { appState.awayMode.enabled = $0 }
-            ))
-            .tint(Color.whimbrelAccentPrimary)
+            if AppState.awayZoomJoinEnabled {
+                Toggle("Away Mode", isOn: Binding(
+                    get: { appState.awayMode.enabled },
+                    set: { appState.awayMode.enabled = $0 }
+                ))
+                .tint(Color.whimbrelAccentPrimary)
 
-            Text("While this is on, Whimbrel joins your Zoom meetings for you, muted with the camera off, records them, and posts a short note in the meeting chat. Keep this Mac unlocked and signed in to Zoom.")
-                .font(.whimbrelBody(.caption))
-                .foregroundStyle(Color.whimbrelTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+                Text("While this is on, Whimbrel joins your Zoom meetings for you, muted with the camera off, records them, and posts a short note in the meeting chat. Keep this Mac unlocked and signed in to Zoom.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            Text("In Zoom > Settings > Audio, turn on \"Automatically join audio by computer\" and \"Always mute my microphone when joining\". In Zoom > Settings > Video, turn on \"Turn off my video when joining\" and turn off \"Always show video preview dialog\".")
-                .font(.whimbrelBody(.caption))
-                .foregroundStyle(Color.whimbrelTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+                Text("In Zoom > Settings > Audio, turn on \"Automatically join audio by computer\" and \"Always mute my microphone when joining\". In Zoom > Settings > Video, turn on \"Turn off my video when joining\" and turn off \"Always show video preview dialog\".")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            Text("Some places require everyone's consent before a meeting is recorded. The chat note tells people, but it isn't consent. Check the rules where you and the people you meet are.")
-                .font(.whimbrelBody(.caption))
-                .foregroundStyle(Color.whimbrelTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+                Text("Some places require everyone's consent before a meeting is recorded. The chat note tells people, but it isn't consent. Check the rules where you and the people you meet are.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(spacing: Spacing.sm) {
+                    Text(verbatim: "Away Mode").foregroundStyle(Color.whimbrelTextPrimary)
+                    WhimbrelMetadataChip(text: String(localized: "Beta coming soon"))
+                }
+                Text("Whimbrel will join the Zoom meetings you can't make, record them and post a short note in the chat.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Divider().overlay(Color.whimbrelBorder)
 

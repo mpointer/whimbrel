@@ -54,17 +54,17 @@ struct EnrollmentView: View {
             signInButton.disabled(true)
             secondary(message)
         case .signedOut:
-            secondary("Sign in with the Google account you use for Whimbrel on your Mac.")
+            secondary(String(localized: "Sign in with the Google account you use for Whimbrel on your Mac."))
             signInButton
         case .signingIn:
             ProgressView()
-            secondary("Signing in…")
+            secondary(String(localized: "Signing in…"))
         case let .pending(code):
-            codeBlock(title: "Waiting for approval", code: code,
-                      detail: model.swapRequested ? "Approve this phone on your computer." : "On your Mac, open Whimbrel Settings → Devices and approve this iPhone. Check this matches the code on your Mac before approving.")
+            codeBlock(title: String(localized: "Waiting for approval"), code: code,
+                      detail: model.swapRequested ? String(localized: "Approve this phone on your computer.") : String(localized: "On your Mac, open Whimbrel Settings → Devices and approve this iPhone. Check this matches the code on your Mac before approving."))
         case let .waitingForGroupKey(code):
-            codeBlock(title: "Approve this iPhone again", code: code,
-                      detail: "This iPhone was approved, but the encryption key didn't arrive in time. Approve it again from Whimbrel Settings → Devices on your Mac. Check this matches the code on your Mac before approving.")
+            codeBlock(title: String(localized: "Approve this iPhone again"), code: code,
+                      detail: String(localized: "This iPhone was approved, but the encryption key didn't arrive in time. Approve it again from Whimbrel Settings → Devices on your Mac. Check this matches the code on your Mac before approving."))
         case .needsDesktopFirst:
             Text("Set up Whimbrel on your Mac first, then come back and sign in here.").foregroundStyle(Color.theme(.textPrimary))
             Button("Try again") { Task { await model.signIn() } }

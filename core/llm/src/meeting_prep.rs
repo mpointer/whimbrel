@@ -64,8 +64,9 @@ struct RawNote {
     sources: Vec<String>,
 }
 
-pub fn build_prompt(title: &str, attendees: &[String], context: &PrepContext, profile: &str) -> String {
-    let mut prompt = format!(
+pub fn build_prompt(title: &str, attendees: &[String], context: &PrepContext, profile: &str, lang: &str) -> String {
+    let mut prompt = crate::profile::language_prefix(lang);
+    prompt += &format!(
         "You prepare a short pre-meeting brief. Meeting: \"{title}\". Attendees: {}.\n\n\
          Use ONLY the numbered sources below. Cite the source ids that support every claim. \
          Do not write anything you cannot cite. Respond with ONLY a JSON object, no markdown \
@@ -171,7 +172,7 @@ pub fn generate(
     attendees: &[String],
     context: &PrepContext,
 ) -> Result<(Brief, TokenUsage), LlmError> {
-    let completion = client.complete(&build_prompt(title, attendees, context, ""))?;
+    let completion = client.complete(&build_prompt(title, attendees, context, "", ""))?;
     let brief = parse_brief(&completion.text, title, attendees, context)?;
     Ok((brief, completion.token_usage))
 }
@@ -208,7 +209,7 @@ mod tests {
 
     #[test]
     fn the_prompt_lists_every_source_with_its_id_and_asks_for_citations() {
-        let prompt = build_prompt("Acme renewal", &attendees(), &context(), "");
+        let prompt = build_prompt("Acme renewal", &attendees(), &context(), "", "");
         assert!(prompt.contains("Acme renewal") && prompt.contains("Ben Lawrick"));
         assert!(prompt.contains("[M1]") && prompt.contains("text of M1") && prompt.contains("[E1]"));
         assert!(prompt.to_lowercase().contains("cite"), "{prompt}");
@@ -218,12 +219,27 @@ mod tests {
     #[test]
     fn the_prep_prompt_carries_the_profile_before_the_sources_and_omits_it_when_blank() {
         let ctx = context();
-        let with = build_prompt("Sync", &["Dana".into()], &ctx, "Role: CFO");
-        let without = build_prompt("Sync", &["Dana".into()], &ctx, "  ");
+        let with = build_prompt("Sync", &["Dana".into()], &ctx, "Role: CFO", "");
+        let without = build_prompt("Sync", &["Dana".into()], &ctx, "  ", "");
         assert!(with.contains("About the user"));
         assert!(with.contains("Role: CFO"));
         assert!(with.find("About the user").unwrap() < with.find("Sources:").unwrap());
         assert!(!without.contains("About the user"));
+    }
+
+    #[test]
+    fn meeting_brief_es_us_adds_language_line_first() {
+        let p = build_prompt("Sync", &attendees(), &context(), "Role: CFO", "es-US");
+        let at = p.find(&crate::profile::language_line("es-US")).expect("language line present");
+        assert!(at < p.find("You prepare a short pre-meeting brief").unwrap());
+        assert!(p.contains("Keep JSON field names"));
+    }
+
+    #[test]
+    fn meeting_brief_empty_lang_has_no_language_line() {
+        let p = build_prompt("Sync", &attendees(), &context(), "Role: CFO", "");
+        assert!(!p.contains("Language:"));
+        assert!(p.starts_with("You prepare a short pre-meeting brief"));
     }
 
     #[test]

@@ -2,6 +2,7 @@ name: Whimbrel
 options:
   deploymentTarget:
     iOS: "17.0"
+  developmentLanguage: en
 # Listing Base.xcconfig here gives it a stable object ID (as a configFiles-only file
 # XcodeGen gives it a fresh TEMP_<uuid> on every run).
 fileGroups:
@@ -13,6 +14,9 @@ settings:
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: GP8PFLM3Q3
     TARGETED_DEVICE_FAMILY: "1"
+    # String Catalogs (Localizable.xcstrings, InfoPlist.xcstrings under Whimbrel/).
+    SWIFT_EMIT_LOC_STRINGS: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
     # build/WhimbrelCore.xcframework has no x86_64 simulator slice (Apple Silicon only),
     # see scripts/build-ffi-xcframework.sh.
     EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
@@ -41,6 +45,10 @@ targets:
         group: Shared
       - path: ../../macos/Whimbrel/Support/SyncCoreBridge.swift
         group: Shared
+      - path: ../../macos/Whimbrel/Support/CoreUserMessage.swift
+        group: Shared
+      - path: ../../macos/Whimbrel/Support/AppLanguage.swift
+        group: Shared
       - path: ../../macos/Whimbrel/Support/SyncTiming.swift
         group: Shared
       - path: ../../macos/Whimbrel/Support/DeviceCodeCollisions.swift
@@ -63,6 +71,11 @@ targets:
       - sdk: libc++.tbd
       # whisper.cpp/ggml use Accelerate (vDSP, cblas).
       - sdk: Accelerate.framework
+    postBuildScripts:
+      - name: Strip pseudo-locale in Release
+        script: |
+          [ "$CONFIGURATION" = Release ] && rm -rf "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/en-XA.lproj" || true
+        basedOnDependencyAnalysis: false
     configFiles:
       Debug: Base.xcconfig
       Release: Base.xcconfig
@@ -96,7 +109,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Whimbrel/Bridging-Header.h
         HEADER_SEARCH_PATHS: $(SRCROOT)/../../../core/ffi/include
         # Follows the repo's VERSION (scripts/check-version.sh checks it; docs/RELEASING.md).
-        MARKETING_VERSION: "0.9.42"
+        MARKETING_VERSION: "0.9.43"
         # Local builds only. scripts/testflight-upload.sh sets the uploaded build's number
         # (UTC time, YYYYMMDD.HHMM) at archive time, so every upload is higher than the last.
         CURRENT_PROJECT_VERSION: "1"

@@ -34,21 +34,21 @@ struct MeetingsView: View {
         .scrollContentBackground(.hidden)
         .background(Color.theme(.backgroundPage).ignoresSafeArea())
         .navigationTitle("Meetings")
-        .searchable(text: $model.query, prompt: "Search titles")
+        .searchable(text: $model.query, prompt: String(localized: "Search titles"))
         .navigationDestination(for: Int64.self) { MeetingDetailView(meetingId: $0, sync: sync, labels: labels) }
         .task(id: sync.readRevision) { await model.reload(sync: sync) }
         .refreshable { await sync.syncNow(manual: true) }
     }
 
     private var emptyText: String {
-        if !model.loaded { return "Loading…" }
-        return model.meetings.isEmpty ? "No meetings yet" : "No meetings match"
+        if !model.loaded { return String(localized: "Loading…") }
+        return model.meetings.isEmpty ? String(localized: "No meetings yet") : String(localized: "No meetings match")
     }
 
     private var deviceChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                chip("All", selected: model.deviceFilter == nil) { model.deviceFilter = nil }
+                chip(String(localized: "All"), selected: model.deviceFilter == nil) { model.deviceFilter = nil }
                 ForEach(model.devices, id: \.self) { device in
                     chip(labels.label(for: device), selected: model.deviceFilter == device) { model.deviceFilter = device }
                 }
@@ -74,8 +74,8 @@ struct MeetingsView: View {
 
     private func dayTitle(_ day: Date) -> String {
         let calendar = Calendar.current
-        if calendar.isDateInToday(day) { return "Today" }
-        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        if calendar.isDateInToday(day) { return String(localized: "Today") }
+        if calendar.isDateInYesterday(day) { return String(localized: "Yesterday") }
         if calendar.isDate(day, equalTo: Date(), toGranularity: .year) {
             return day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
         }

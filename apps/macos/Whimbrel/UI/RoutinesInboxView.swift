@@ -97,8 +97,8 @@ struct RoutinesInboxView: View {
 
     private static func statusLabel(_ status: String) -> String {
         switch status {
-        case "success": "Completed"
-        case "failed": "Failed"
+        case "success": String(localized: "Completed")
+        case "failed": String(localized: "Failed")
         default: status
         }
     }

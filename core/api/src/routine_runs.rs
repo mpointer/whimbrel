@@ -145,7 +145,8 @@ pub fn tick(
                         yesterday_end,
                         today_events,
                         now_unix_ms,
-                        &llm::profile::compose_instructions(&routing.daily_digest_instructions, &routing.profile),
+                        &llm::profile::compose_instructions(&routing.daily_digest_instructions, &routing.profile, &routing.output_language),
+                        &routing.output_language,
                     )
                 }) else {
                     continue;
@@ -224,7 +225,8 @@ pub fn tick(
                         now_unix_ms,
                         gmail_connected,
                         recipient_email,
-                        &llm::profile::compose_instructions(&routing.daily_digest_instructions, &routing.profile),
+                        &llm::profile::compose_instructions(&routing.daily_digest_instructions, &routing.profile, &routing.output_language),
+                        &routing.output_language,
                     )
                 }) else {
                     continue;
@@ -295,7 +297,7 @@ pub fn tick(
                         now_unix_ms,
                         gmail_connected,
                         recipient_email,
-                        &llm::profile::compose_instructions(&routing.weekly_digest_instructions, &routing.profile),
+                        &llm::profile::compose_instructions(&routing.weekly_digest_instructions, &routing.profile, &routing.output_language),
                     )
                 }) else {
                     continue;
@@ -344,7 +346,7 @@ pub fn tick(
             memory::RoutineTemplate::MeetingPrep | memory::RoutineTemplate::AwayFollowUp => continue,
             memory::RoutineTemplate::ReplyPriorities => {
                 // Deterministic: no spend cap, no provider chain, nothing to approve.
-                let mut new_run = routines::run_reply_priorities(store, now_unix_ms);
+                let mut new_run = routines::run_reply_priorities(store, now_unix_ms, &routing.output_language);
                 new_run.routine_id = routine.id;
                 let Ok(run_id) = store.insert_routine_run(&new_run) else {
                     continue;

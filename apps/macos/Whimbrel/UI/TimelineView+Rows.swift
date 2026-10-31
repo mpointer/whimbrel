@@ -51,7 +51,7 @@ extension TimelineView {
                     Text(Self.formattedMeetingTime(startUnixMs: meeting.startUnixMs, endUnixMs: meeting.endUnixMs))
                         .font(.whimbrelBody(.caption))
                         .foregroundStyle(Color.whimbrelTextSecondary)
-                    Text("\(meeting.attendees.count) attendee\(meeting.attendees.count == 1 ? "" : "s")")
+                    Text("\(meeting.attendees.count) attendees")
                         .font(.whimbrelBody(.caption))
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 }
@@ -131,7 +131,7 @@ extension TimelineView {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.top, 40)
             } else if visibleEpisodes.isEmpty {
-                Text(appState.coreStore == nil ? Self.storeUnavailableMessage : "No episodes yet. They form from screen activity after a few minutes of use.")
+                Text(appState.coreStore == nil ? Self.storeUnavailableMessage : String(localized: "No episodes yet. They form from screen activity after a few minutes of use."))
                     .font(.whimbrelBody(.callout))
                     .foregroundStyle(Color.whimbrelTextSecondary)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -182,9 +182,9 @@ extension TimelineView {
 
     func episodeSummaryText(_ episode: CoreEpisode) -> String {
         switch episode.status {
-        case "summarized": return episode.summary ?? "Summary unavailable"
-        case "summarize_failed": return "Summary unavailable"
-        default: return "Summarizing…"
+        case "summarized": return episode.summary ?? String(localized: "Summary unavailable")
+        case "summarize_failed": return String(localized: "Summary unavailable")
+        default: return String(localized: "Summarizing…")
         }
     }
 

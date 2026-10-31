@@ -96,7 +96,7 @@ describe("model usage", () => {
   it("groups rows by day in arrival order", () => {
     const noon = new Date(2026, 9, 8, 12, 0).getTime();
     const day = 24 * 60 * 60 * 1000;
-    const groups = groupUsageByDay([row({ tsUnixMs: noon }), row({ tsUnixMs: noon - 60_000 }), row({ tsUnixMs: noon - day }), row({ tsUnixMs: noon - 2 * day })]);
+    const groups = groupUsageByDay([row({ tsUnixMs: noon }), row({ tsUnixMs: noon - 60_000 }), row({ tsUnixMs: noon - day }), row({ tsUnixMs: noon - 2 * day })], "en-US");
     expect(groups.map((g) => g.rows.length)).toEqual([2, 1, 1]);
   });
 });

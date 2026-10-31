@@ -89,7 +89,7 @@ final class SettingsSyncCoordinator: ObservableObject {
         // Optional (SE-0230) rather than double-wrapping — one `guard let`
         // here correctly handles both "threw" and "returned nil".
         guard let groupKeyBase64 = try? SyncKeychain.loadGroupKey() else {
-            lastSyncError = "No group key available yet."
+            lastSyncError = String(localized: "No group key available yet.")
             return
         }
 
@@ -116,7 +116,7 @@ final class SettingsSyncCoordinator: ObservableObject {
             )
         }.value
         guard let iteration else {
-            lastSyncError = "Settings sync failed. Will retry automatically."
+            lastSyncError = String(localized: "Settings sync failed. Will retry automatically.")
             return
         }
 

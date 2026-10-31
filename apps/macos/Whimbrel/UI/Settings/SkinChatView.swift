@@ -14,7 +14,7 @@ struct SkinChatView: View {
     static let scrollId = "skin-chat"
 
     static func placeholder(for skin: Skin) -> String {
-        SkinGallery.isUserSkin(skin) ? "Ask for a change…" : "Describe a skin…"
+        SkinGallery.isUserSkin(skin) ? String(localized: "Ask for a change…") : String(localized: "Describe a skin…")
     }
 
     private var canSend: Bool {

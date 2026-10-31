@@ -6,8 +6,14 @@ struct TranscriptionSettingsPane: View {
     @State private var segmentationModelPath: URL = DiarizationService.segmentationModelPath
     @State private var embeddingModelPath: URL = DiarizationService.embeddingModelPath
     @State private var diarizationStatusMessage: String?
+    @State private var multilingual = AppLanguage.multilingual()
+    @State private var showModelSetup = false
 
     var body: some View {
+        content.sheet(isPresented: $showModelSetup) { ModelSetupView() }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             Text("Transcription").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
             Text("Whisper.cpp GGML model used to transcribe captured meeting audio.")
@@ -23,6 +29,15 @@ struct TranscriptionSettingsPane: View {
 
             Button("Choose Model File…") { chooseModel() }
                 .buttonStyle(.whimbrelSecondary)
+
+            Toggle("I have meetings in other languages", isOn: $multilingual)
+                .onChange(of: multilingual) { _, on in
+                    UserDefaults.standard.set(on, forKey: AppLanguage.multilingualKey)
+                    if on, !ModelDownloadService.allModelsPresent { showModelSetup = true }
+                }
+            Text("Whimbrel detects each meeting's language and transcribes it as spoken, using a larger multilingual model. Off, every meeting is transcribed as English.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
 
             if let statusMessage {
                 Text(statusMessage)
@@ -70,11 +85,11 @@ struct TranscriptionSettingsPane: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose"
-        panel.message = "Choose a GGML whisper model (.bin)"
+        panel.message = String(localized: "Choose a GGML whisper model (.bin)")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         TranscriptionService.modelPath = url
         modelPath = url
-        statusMessage = "Model set to \(url.lastPathComponent)."
+        statusMessage = String(localized: "Model set to \(url.lastPathComponent).")
     }
 
     private func chooseSegmentationModel() {
@@ -84,11 +99,11 @@ struct TranscriptionSettingsPane: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose"
-        panel.message = "Choose the pyannote segmentation ONNX model"
+        panel.message = String(localized: "Choose the pyannote segmentation ONNX model")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         DiarizationService.segmentationModelPath = url
         segmentationModelPath = url
-        diarizationStatusMessage = "Segmentation model set to \(url.lastPathComponent)."
+        diarizationStatusMessage = String(localized: "Segmentation model set to \(url.lastPathComponent).")
     }
 
     private func chooseEmbeddingModel() {
@@ -98,10 +113,10 @@ struct TranscriptionSettingsPane: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose"
-        panel.message = "Choose the speaker-embedding ONNX model"
+        panel.message = String(localized: "Choose the speaker-embedding ONNX model")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         DiarizationService.embeddingModelPath = url
         embeddingModelPath = url
-        diarizationStatusMessage = "Speaker-embedding model set to \(url.lastPathComponent)."
+        diarizationStatusMessage = String(localized: "Speaker-embedding model set to \(url.lastPathComponent).")
     }
 }

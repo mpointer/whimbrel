@@ -7,7 +7,7 @@ enum SkinLoader {
     private static let log = Logger(subsystem: "com.mpointer.kestrel", category: "skins")
 
     /// The manifest keys `parse` reads; any other top-level key is ignored.
-    static let topLevelKeys: Set<String> = ["id", "name", "author", "palettes", "typography", "shape", "icons", "decoration", "voice", "today", "motion"]
+    static let topLevelKeys: Set<String> = ["id", "name", "author", "palettes", "typography", "shape", "icons", "decoration", "voice", "voiceLocalized", "today", "motion"]
 
     static func parse(_ data: Data, base: Skin) -> (Skin, repairs: [String])? {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -99,6 +99,24 @@ enum SkinLoader {
             } else {
                 repair("voice \(key.rawValue) is empty, not text or over \(key.limit) characters, using the Whimbrel wording")
             }
+        }
+
+        skin.voice.localized = [:]
+        for (lang, value) in root["voiceLocalized"] as? [String: Any] ?? [:] {
+            guard let voice = value as? [String: Any] else {
+                repair("voiceLocalized \(lang) is not an object, ignored")
+                continue
+            }
+            var out: [SkinVoiceKey: String] = [:]
+            for key in SkinVoiceKey.allCases {
+                guard let value = voice[key.rawValue] else { continue }
+                if let s = value as? String, key.fits(s) {
+                    out[key] = s
+                } else {
+                    repair("voiceLocalized \(lang) \(key.rawValue) is empty, not text or over \(key.limit) characters, using the Whimbrel wording")
+                }
+            }
+            if !out.isEmpty { skin.voice.localized[lang] = out }
         }
 
         let today = root["today"] as? [String: Any]

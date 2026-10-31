@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { mcpClients, mcpCreateClient, mcpRevokeClient, mcpServerState, mcpSetEnabled } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { McpClientView, McpNewClient, McpServerView } from "../generated/types";
-import { MCP_INTRO, MCP_TOKEN_ONCE, SCOPES, canCreate, clientLine, connectHelp, revokeQuestion, serverLine, toggleScope } from "./mcpModel";
+import { useL10n } from "../l10n";
+import { canCreate, clientLine, connectHelp, mcpIntro, mcpTokenOnce, revokeQuestion, scopes as scopeList, serverLine, toggleScope } from "./mcpModel";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -10,6 +11,7 @@ function message(e: unknown): string {
 
 /** Settings → AI assistants (M3.4 Task 5): the MCP server switch and the tokens that let a program read Whimbrel. */
 export function McpCard() {
+  const { t, locale } = useL10n();
   const [server, setServer] = useState<McpServerView | null>(null);
   const [clients, setClients] = useState<McpClientView[]>([]);
   const [name, setName] = useState("");
@@ -46,14 +48,14 @@ export function McpCard() {
       .finally(() => setBusy(false));
   };
 
-  if (!server) return <section className="card about">{error ? <p role="alert">{error}</p> : "Loading…"}</section>;
+  if (!server) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
 
   return (
     <section className="card about" aria-labelledby="mcp-heading">
       <h2 id="mcp-heading" className="section-label">
-        AI assistants (MCP)
+        {t("AI assistants (MCP)")}
       </h2>
-      <p className="muted">{MCP_INTRO}</p>
+      <p className="muted">{mcpIntro()}</p>
       <label className="field-row">
         <input
           type="checkbox"
@@ -61,26 +63,26 @@ export function McpCard() {
           disabled={busy}
           onChange={(e) => run(() => mcpSetEnabled(e.target.checked).then(setServer))}
         />
-        <span>Enable the MCP server</span>
+        <span>{t("Enable the MCP server")}</span>
       </label>
       <p className={server.status === "failed" ? undefined : "muted small"} role={server.status === "failed" ? "alert" : undefined}>
         {serverLine(server)}
       </p>
       {server.status === "running" && <p className="muted small">{connectHelp(server.address)}</p>}
 
-      <h3 className="section-label">Add an assistant</h3>
+      <h3 className="section-label">{t("Add an assistant")}</h3>
       <div className="field-row">
         <input
           type="text"
           value={name}
-          placeholder="Name, for example Claude Desktop"
+          placeholder={t("Name, for example Claude Desktop")}
           maxLength={60}
-          aria-label="Assistant name"
+          aria-label={t("Assistant name")}
           onChange={(e) => setName(e.target.value)}
         />
       </div>
       <ul className="rows">
-        {SCOPES.map((s) => (
+        {scopeList().map((s) => (
           <li key={s.id} className="field-row">
             <label>
               <input type="checkbox" checked={scopes.includes(s.id)} onChange={() => setScopes((cur) => toggleScope(cur, s.id))} />
@@ -104,46 +106,46 @@ export function McpCard() {
             })
           }
         >
-          Create token
+          {t("Create token")}
         </button>
       </div>
 
       {made && (
-        <div role="dialog" aria-label="Your new token" className="card">
+        <div role="dialog" aria-label={t("Your new token")} className="card">
           <p>
-            <strong>Token for {made.name}</strong>
+            <strong>{t("Token for {name}", { name: made.name })}</strong>
           </p>
           <code className="mono" data-testid="mcp-token">
             {made.token}
           </code>
-          <p className="muted small">{MCP_TOKEN_ONCE}</p>
+          <p className="muted small">{mcpTokenOnce()}</p>
           <div className="toolbar">
             <button className="mode" onClick={() => void navigator.clipboard?.writeText(made.token)}>
-              Copy
+              {t("Copy")}
             </button>
             <button className="mode mode--active" onClick={() => setMade(null)}>
-              Done
+              {t("Done")}
             </button>
           </div>
         </div>
       )}
 
-      <h3 className="section-label">Assistants</h3>
+      <h3 className="section-label">{t("Assistants")}</h3>
       {clients.length === 0 ? (
-        <p className="muted small">None yet.</p>
+        <p className="muted small">{t("None yet.")}</p>
       ) : (
         <ul className="rows">
           {clients.map((c) => (
             <li key={c.id} className="field-row">
               <span>{c.name}</span>
-              <span className="muted small">{clientLine(c)}</span>
+              <span className="muted small">{clientLine(c, locale)}</span>
               {c.revokedUnixMs == null && (
                 <button className="mode" disabled={busy} onClick={() => setRevoking(c)}>
-                  Revoke…
+                  {t("Revoke…")}
                 </button>
               )}
               {revoking?.id === c.id && (
-                <span role="group" aria-label="Confirm revoking">
+                <span role="group" aria-label={t("Confirm revoking")}>
                   <span className="muted small">{revokeQuestion(c.name)}</span>
                   <button
                     className="mode mode--active"
@@ -155,10 +157,10 @@ export function McpCard() {
                       })
                     }
                   >
-                    Revoke
+                    {t("Revoke")}
                   </button>
                   <button className="mode" onClick={() => setRevoking(null)}>
-                    Cancel
+                    {t("Cancel")}
                   </button>
                 </span>
               )}

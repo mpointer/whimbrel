@@ -175,6 +175,19 @@ pub extern "C" fn whimbrel_sync_worker_error_message(error_json: *const c_char) 
     }
 }
 
+/// `{"code","params","message"}` for a Worker failure: the stable code and params a shell
+/// localizes from, beside the same English `whimbrel_sync_worker_error_message` returns.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_worker_error_code(error_json: *const c_char) -> *mut c_char {
+    match parse_error(error_json) {
+        Some(error) => {
+            let (code, params) = error.user_code();
+            encode(&serde_json::json!({ "code": code, "params": params, "message": enrollment::user_message(&error) }))
+        }
+        None => ptr::null_mut(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +213,17 @@ mod tests {
         let revoked = CString::new(r#"{"error":{"kind":"http","status":403,"body":"device revoked"}}"#).unwrap();
         assert!(whimbrel_sync_worker_error_is_permanent(revoked.as_ptr()));
         assert!(take(whimbrel_sync_worker_error_message(revoked.as_ptr())).starts_with("This device's access was revoked"));
+        let active = CString::new(r#"{"error":{"kind":"http","status":403,"body":"{\"error\":\"other_device_active\",\"devices\":[{\"name\":\"Studio Mac\"},{\"name\":\"iPad\"}]}"}}"#).unwrap();
+        let coded: serde_json::Value = serde_json::from_str(&take(whimbrel_sync_worker_error_code(active.as_ptr()))).unwrap();
+        assert_eq!(
+            coded,
+            serde_json::json!({
+                "code": "approve_on_other_device",
+                "params": {"devices": ["Studio Mac", "iPad"]},
+                "message": "Approve this computer on Studio Mac or iPad; it was active in the last week."
+            })
+        );
+        assert!(whimbrel_sync_worker_error_code(ptr::null()).is_null());
 
         let state = CString::new(r#"{"status":"signingIn"}"#).unwrap();
         let event = CString::new(r#"{"event":"auth_approved","turso_token":"t","turso_database_url":"u","group_key_held":false}"#).unwrap();

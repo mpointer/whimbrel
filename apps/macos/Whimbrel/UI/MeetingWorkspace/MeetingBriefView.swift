@@ -53,7 +53,7 @@ struct MeetingBriefView: View {
 
     private var attendeesRow: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            WhimbrelSectionLabel(text: "Attendees")
+            WhimbrelSectionLabel(text: String(localized: "Attendees"))
             if meeting.attendees.isEmpty {
                 Text("No attendees on record.")
                     .font(.whimbrelBody(.caption))
@@ -68,10 +68,10 @@ struct MeetingBriefView: View {
 
     private var relatedThreadsSection: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            WhimbrelSectionLabel(text: "Open loops")
+            WhimbrelSectionLabel(text: String(localized: "Open loops"))
             FlowChips {
                 ForEach(relatedThreads) { thread in
-                    WhimbrelSourceChip(systemImage: "envelope", text: thread.subject ?? "Untitled thread", onTap: nil)
+                    WhimbrelSourceChip(systemImage: "envelope", text: thread.subject ?? String(localized: "Untitled thread"), onTap: nil)
                 }
             }
         }
@@ -79,7 +79,7 @@ struct MeetingBriefView: View {
 
     private var suggestedQuestionsSection: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            WhimbrelSectionLabel(text: "Suggested questions")
+            WhimbrelSectionLabel(text: String(localized: "Suggested questions"))
             ForEach(suggestedQuestions, id: \.self) { question in
                 Text("· \(question)")
                     .font(.whimbrelBody(.body))

@@ -53,7 +53,7 @@ struct ProfileSettingsPane: View {
         .task { await suggestions.reload() }
     }
 
-    private func field(_ title: String, text: Binding<String>) -> some View {
+    private func field(_ title: LocalizedStringKey, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             Text(title).font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
             TextField(title, text: text).textFieldStyle(.roundedBorder).labelsHidden()
@@ -94,7 +94,7 @@ struct ProfileSettingsPane: View {
             newFact = ""
             factError = nil
         } else {
-            factError = "That fact is blank, already listed, too long (200 characters), or the list is full (30)."
+            factError = String(localized: "That fact is blank, already listed, too long (200 characters), or the list is full (30).")
         }
     }
 

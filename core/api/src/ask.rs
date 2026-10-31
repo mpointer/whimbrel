@@ -37,7 +37,7 @@ pub fn answer(
             history,
             query,
             &context,
-            &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile),
+            &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language),
             date_scope_label.as_deref(),
         )
     }) else {
@@ -143,7 +143,7 @@ pub fn prepare_ask(
         history,
         query,
         &context,
-        &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile),
+        &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language),
         date_scope_label.as_deref(),
     );
     let prepare_id = llm::streaming::new_run_id();
@@ -226,7 +226,7 @@ pub fn prepare_meeting_ask(
         history,
         query,
         &context.items,
-        &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile),
+        &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language),
         &meeting.title,
         &summary,
         &notes,
@@ -306,7 +306,7 @@ pub fn generate_conversation_title(
 
     let chain = build_chain_for(llm::TaskKind::ConversationTitle, ollama_model, routing);
     let Some(((title, token_usage), entry)) = llm::try_chain(&chain, |entry| {
-        llm::generate_conversation_title(entry.client.as_ref(), query, answer)
+        llm::generate_conversation_title(entry.client.as_ref(), query, answer, &routing.output_language)
     }) else {
         return Err(ApiError::ProviderFailure);
     };

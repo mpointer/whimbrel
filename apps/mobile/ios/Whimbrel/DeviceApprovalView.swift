@@ -10,15 +10,15 @@ final class DeviceApprovalModel: ObservableObject {
         let code: String?
         /// Another pending device shows the same code.
         let collides: Bool
-        var statusLine: String { device.status == "resetting" ? "Resetting…" : device.status.capitalized }
+        var statusLine: String { device.status == "resetting" ? String(localized: "Resetting…") : device.status.capitalized }
         var codeLine: String? {
             guard device.status == "pending" else { return nil }
-            return code.map { "Check this matches the code on the new device: \($0)" } ?? "Can't verify this device"
+            return code.map { String(localized: "Check this matches the code on the new device: \($0)") } ?? String(localized: "Can't verify this device")
         }
         var canApprove: Bool { device.status == "pending" && !collides }
     }
 
-    static let collisionWarning = "Another pending device shows the same code — don't approve it"
+    static var collisionWarning: String { String(localized: "Another pending device shows the same code — don't approve it") }
     static let pollSeconds: UInt64 = 5
 
     @Published private(set) var rows: [Row] = []
@@ -74,7 +74,7 @@ final class DeviceApprovalModel: ObservableObject {
             guard let own = Self.ownPublicKey(), let secret = try SyncKeychain.loadDeviceSecretKey() else { throw SyncStateError.noDeviceKeypair }
             guard let groupKey = try SyncKeychain.loadGroupKey() else { throw SyncStateError.noGroupKey }
             guard let wrapped = CoreMemoryStore.wrapSyncGroupKey(senderSecretKeyBase64: secret, recipientPublicKeyBase64: device.publicKey, groupKeyBase64: groupKey) else {
-                actionError = "Failed to wrap the group key for the new device."
+                actionError = String(localized: "Failed to wrap the group key for the new device.")
                 return
             }
             try await backend.approve(idToken: try await backend.idToken(), devicePublicKey: own, targetDeviceId: device.id, wrappedGroupKey: wrapped)

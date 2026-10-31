@@ -59,11 +59,11 @@ struct RegenerationConflictSheet: View {
     private var compareView: some View {
         HStack(alignment: .top, spacing: Spacing.lg) {
             VStack(alignment: .leading, spacing: Spacing.xs) {
-                WhimbrelSectionLabel(text: "Your edited version")
+                WhimbrelSectionLabel(text: String(localized: "Your edited version"))
                 Text(previousSummary ?? "—").font(.whimbrelBody(.caption))
             }
             VStack(alignment: .leading, spacing: Spacing.xs) {
-                WhimbrelSectionLabel(text: "New generated version")
+                WhimbrelSectionLabel(text: String(localized: "New generated version"))
                 Text(newSummary ?? "—").font(.whimbrelBody(.caption))
             }
         }

@@ -51,7 +51,7 @@ struct AIProvidersSettingsPane: View {
                 save: {
                     if appState.routing.saveAnthropicKey(anthropicKeyInput) {
                         anthropicKeyInput = ""
-                        anthropicStatus = "Saved. Checking the key…"
+                        anthropicStatus = String(localized: "Saved. Checking the key…")
                         anthropicStatusIsError = false
                         Task {
                             if let check = await appState.routing.checkSavedKey(.anthropic) {
@@ -60,13 +60,13 @@ struct AIProvidersSettingsPane: View {
                             }
                         }
                     } else {
-                        anthropicStatus = "Failed to save key."
+                        anthropicStatus = String(localized: "Failed to save key.")
                         anthropicStatusIsError = true
                     }
                 },
                 clear: {
                     appState.routing.clearAnthropicKey()
-                    anthropicStatus = "Cleared."
+                    anthropicStatus = String(localized: "Cleared.")
                     anthropicStatusIsError = false
                 }
             )
@@ -93,7 +93,7 @@ struct AIProvidersSettingsPane: View {
                 save: {
                     if appState.routing.saveOpenAIKey(openaiKeyInput) {
                         openaiKeyInput = ""
-                        openaiStatus = "Saved. Checking the key…"
+                        openaiStatus = String(localized: "Saved. Checking the key…")
                         openaiStatusIsError = false
                         Task {
                             if let check = await appState.routing.checkSavedKey(.openai) {
@@ -102,13 +102,13 @@ struct AIProvidersSettingsPane: View {
                             }
                         }
                     } else {
-                        openaiStatus = "Failed to save key."
+                        openaiStatus = String(localized: "Failed to save key.")
                         openaiStatusIsError = true
                     }
                 },
                 clear: {
                     appState.routing.clearOpenAIKey()
-                    openaiStatus = "Cleared."
+                    openaiStatus = String(localized: "Cleared.")
                     openaiStatusIsError = false
                 }
             )
@@ -135,7 +135,7 @@ struct AIProvidersSettingsPane: View {
                 save: {
                     if appState.routing.saveGoogleKey(googleKeyInput) {
                         googleKeyInput = ""
-                        googleStatus = "Saved. Checking the key…"
+                        googleStatus = String(localized: "Saved. Checking the key…")
                         googleStatusIsError = false
                         Task {
                             if let check = await appState.routing.checkSavedKey(.google) {
@@ -144,13 +144,13 @@ struct AIProvidersSettingsPane: View {
                             }
                         }
                     } else {
-                        googleStatus = "Failed to save key."
+                        googleStatus = String(localized: "Failed to save key.")
                         googleStatusIsError = true
                     }
                 },
                 clear: {
                     appState.routing.clearGoogleKey()
-                    googleStatus = "Cleared."
+                    googleStatus = String(localized: "Cleared.")
                     googleStatusIsError = false
                 }
             )
@@ -178,7 +178,7 @@ struct AIProvidersSettingsPane: View {
                 save: {
                     if appState.routing.saveOpenRouterKey(openrouterKeyInput) {
                         openrouterKeyInput = ""
-                        openrouterStatus = "Saved. Checking the key…"
+                        openrouterStatus = String(localized: "Saved. Checking the key…")
                         openrouterStatusIsError = false
                         Task {
                             if let check = await appState.routing.checkSavedKey(.openrouter) {
@@ -187,13 +187,13 @@ struct AIProvidersSettingsPane: View {
                             }
                         }
                     } else {
-                        openrouterStatus = "Failed to save key."
+                        openrouterStatus = String(localized: "Failed to save key.")
                         openrouterStatusIsError = true
                     }
                 },
                 clear: {
                     appState.routing.clearOpenRouterKey()
-                    openrouterStatus = "Cleared."
+                    openrouterStatus = String(localized: "Cleared.")
                     openrouterStatusIsError = false
                 }
             )
@@ -281,16 +281,16 @@ struct AIProvidersSettingsPane: View {
                 save: {
                     if KeychainService.save(imageSearchKeyInput, for: .imageSearch) {
                         imageSearchKeyInput = ""
-                        imageSearchStatus = "Saved."
+                        imageSearchStatus = String(localized: "Saved.")
                     } else {
-                        imageSearchStatus = "Failed to save key."
+                        imageSearchStatus = String(localized: "Failed to save key.")
                     }
                     hasImageSearchKey = KeychainService.exists(for: .imageSearch)
                 },
                 clear: {
                     KeychainService.delete(for: .imageSearch)
                     hasImageSearchKey = KeychainService.exists(for: .imageSearch)
-                    imageSearchStatus = "Cleared."
+                    imageSearchStatus = String(localized: "Cleared.")
                 }
             )
             Text("Lets the skin chat in General settings find images on the web, with strict safe-search. Searches count toward the daily spending limit. The key stays on this Mac. Local-only mode blocks it.")
@@ -311,14 +311,14 @@ struct AIProvidersSettingsPane: View {
                 save: {
                     if appState.replyPriority.saveKey(typesafeKeyInput) {
                         typesafeKeyInput = ""
-                        typesafeStatus = "Saved."
+                        typesafeStatus = String(localized: "Saved.")
                     } else {
-                        typesafeStatus = "Failed to save key."
+                        typesafeStatus = String(localized: "Failed to save key.")
                     }
                 },
                 clear: {
                     appState.replyPriority.clearKey()
-                    typesafeStatus = "Cleared."
+                    typesafeStatus = String(localized: "Cleared.")
                 }
             )
             Toggle("Rank email by reply priority", isOn: Binding(
@@ -513,7 +513,7 @@ struct AIProvidersSettingsPane: View {
 
     @ViewBuilder
     private func keyRow(
-        title: String,
+        title: LocalizedStringKey,
         hasKey: Bool,
         input: Binding<String>,
         placeholder: String = "sk-…",
@@ -582,7 +582,7 @@ struct AIProvidersSettingsPane: View {
                 .foregroundStyle(Color.whimbrelTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let terms = info.dataTerms {
-                Text("\(terms.text) (Checked \(terms.checked).)")
+                Text("\(terms.localizedText) (Checked \(terms.checked).)")
                     .font(.whimbrelBody(.caption2))
                     .foregroundStyle(Color.whimbrelTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -760,7 +760,7 @@ struct AIProvidersSettingsPane: View {
     }
 
     @ViewBuilder
-    private func capRow(label: String, value: Binding<Int?>) -> some View {
+    private func capRow(label: LocalizedStringKey, value: Binding<Int?>) -> some View {
         HStack {
             Text(label).frame(width: 260, alignment: .leading)
             TextField("default", text: Binding(

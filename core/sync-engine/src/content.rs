@@ -13,6 +13,8 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use libsql::{params, params::Params, Connection, Value};
 use memory::{AppliedTranscriptSegment, Store, SyncableRow};
+#[cfg(not(test))]
+use std::sync::atomic::{AtomicBool, Ordering};
 use sync::GroupKey;
 
 use crate::{now_unix_ms, SyncEngineError};
@@ -100,13 +102,121 @@ pub async fn ensure_content_schema(conn: &Connection) -> Result<(), SyncEngineEr
             row_type TEXT NOT NULL,
             ciphertext TEXT NOT NULL,
             created_at_unix_ms INTEGER NOT NULL,
+            entity_tag TEXT,
             PRIMARY KEY (device_id, local_seq, row_type)
         );
         CREATE INDEX IF NOT EXISTS idx_sync_row_created ON sync_row(created_at_unix_ms);",
     )
     .await
     .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    // ponytail: one process-wide flag, so an account switch to an unmigrated DB pushes untagged until restart; key it by URL if that matters
+    if !ENTITY_TAG_COLUMN_SEEN.get() && ensure_entity_tag_column(conn).await {
+        ENTITY_TAG_COLUMN_SEEN.set();
+    }
     Ok(())
+}
+
+/// A process-wide "seen once, true for good" latch. Under `cfg(test)` it is per thread, so
+/// parallel tests (each on its own thread, each with its own relay) cannot see each other's.
+pub(crate) struct Latch(
+    #[cfg(not(test))] AtomicBool,
+    #[cfg(test)] &'static std::thread::LocalKey<std::cell::Cell<bool>>,
+);
+
+impl Latch {
+    pub(crate) fn get(&self) -> bool {
+        #[cfg(not(test))]
+        return self.0.load(Ordering::Relaxed);
+        #[cfg(test)]
+        return self.0.with(|c| c.get());
+    }
+
+    pub(crate) fn set(&self) {
+        #[cfg(not(test))]
+        self.0.store(true, Ordering::Relaxed);
+        #[cfg(test)]
+        self.0.with(|c| c.set(true));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset(&self) {
+        self.0.with(|c| c.set(false));
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static COLUMN_SEEN_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static INDEX_SEEN_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Set once this process has confirmed `sync_row.entity_tag`. `push_content` runs after
+/// `ensure_content_schema`, so while it is false the column is known missing.
+#[cfg(not(test))]
+pub(crate) static ENTITY_TAG_COLUMN_SEEN: Latch = Latch(AtomicBool::new(false));
+#[cfg(test)]
+pub(crate) static ENTITY_TAG_COLUMN_SEEN: Latch = Latch(&COLUMN_SEEN_CELL);
+
+/// Set once this process has seen the ops index on the relay.
+#[cfg(not(test))]
+static COMPACTION_INDEX_SEEN: Latch = Latch(AtomicBool::new(false));
+#[cfg(test)]
+pub(crate) static COMPACTION_INDEX_SEEN: Latch = Latch(&INDEX_SEEN_CELL);
+
+/// The index ops creates out of band (scripts/sync-row-entity-tag.sql). Clients never create it.
+pub(crate) const COMPACTION_INDEX: &str = "idx_sync_row_entity";
+
+/// Whether compaction may run: only once the ops index exists, since without it each
+/// DELETE's MAX subquery scans the device's rows (Review Focus 1). A true result is cached
+/// for the process; callers check at most once per round, so a false one is rechecked next
+/// round and the ops step turns compaction on without a restart. A failed check is false.
+pub(crate) async fn compaction_index_ready(conn: &Connection) -> bool {
+    if COMPACTION_INDEX_SEEN.get() {
+        return true;
+    }
+    let Ok(mut rows) = conn
+        .query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            params![COMPACTION_INDEX],
+        )
+        .await
+    else {
+        return false;
+    };
+    let ready = matches!(rows.next().await, Ok(Some(_)));
+    if ready {
+        COMPACTION_INDEX_SEEN.set();
+    }
+    ready
+}
+
+/// Makes sure an existing relay's `sync_row` has `entity_tag`. Best effort: many devices run
+/// this at once, so a "duplicate column" error means another device won the race and counts as
+/// success. Any other failure returns `false` (pushes stay untagged) and never fails the sync.
+/// Never creates `idx_sync_row_entity`; only the ops SQL does.
+pub(crate) async fn ensure_entity_tag_column(conn: &Connection) -> bool {
+    if let Ok(mut rows) = conn.query("PRAGMA table_info(sync_row)", ()).await {
+        while let Ok(Some(row)) = rows.next().await {
+            if row.get::<String>(1).is_ok_and(|name| name == "entity_tag") {
+                return true;
+            }
+        }
+    }
+    add_entity_tag_column(conn).await
+}
+
+async fn add_entity_tag_column(conn: &Connection) -> bool {
+    match conn
+        .execute("ALTER TABLE sync_row ADD COLUMN entity_tag TEXT", ())
+        .await
+    {
+        Ok(_) => true,
+        Err(e) if e.to_string().contains("duplicate column name") => true,
+        Err(e) => {
+            eprintln!("[sync] entity_tag column not added: {e}");
+            false
+        }
+    }
 }
 
 /// Mirrors `field_aad` in `lib.rs` exactly, for the same reason: binds the ciphertext
@@ -179,6 +289,41 @@ pub(crate) fn encode_row(row: &SyncableRow) -> Result<(i64, &'static str, String
     };
     let json = json.map_err(|_| SyncEngineError::Crypto)?;
     Ok((local_seq, row_type, json))
+}
+
+/// The stable name of the entity a legacy-scan row is a version of, the input to its
+/// `entity_tag`. `None` means the row is never tagged, so never compacted. Must equal
+/// `outbox_entity_identity` for the same entity (spec D3,
+/// docs/superpowers/specs/2026-10-30-sync-row-compaction-design.md).
+pub(crate) fn entity_identity(row: &SyncableRow) -> Option<String> {
+    match row {
+        SyncableRow::Meeting { source_meeting_id, .. } => Some(format!("{ROW_TYPE_MEETING}:{source_meeting_id}")),
+        // `source` is a colon-free token, so a `:` inside `external_id` cannot collide.
+        SyncableRow::Item { item, .. } if item.kind == "calendar_event" => match (&item.source, &item.external_id) {
+            (Some(source), Some(external_id)) => Some(format!("{ROW_TYPE_ITEMS}:calendar_event:{source}:{external_id}")),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The outbox twin of `entity_identity`: each tagged type already enqueues its
+/// stable id as `aggregate_id`.
+pub(crate) fn outbox_entity_identity(op: &memory::ClaimedOutboxOperation) -> Option<String> {
+    match op.row_type.as_str() {
+        ROW_TYPE_MEETING | ROW_TYPE_ROUTINE_RUN | ROW_TYPE_MEETING_PREP | ROW_TYPE_SKIN | ROW_TYPE_SKIN_IMAGE_CHUNK => {
+            Some(format!("{}:{}", op.row_type, op.aggregate_id))
+        }
+        _ => None,
+    }
+}
+
+/// The `entity_tag` for an identity from `entity_identity` or `outbox_entity_identity`. Both
+/// push paths make tags only through here, with `Store::sync_entity_epoch`.
+/// The epoch keeps a wiped database's reused ids (same Keychain `device_id`, restarted
+/// `local_seq` and meeting ids) from matching an earlier database's rows on the relay.
+pub(crate) fn tag_for(group_key: &GroupKey, device_id: &str, epoch: &str, identity: &str) -> String {
+    sync::entity_tag(group_key, device_id, &format!("{epoch}:{identity}"))
 }
 
 /// Unconditionally (re-)announces this device's Slice-3 capability every sync round —
@@ -279,9 +424,50 @@ const PEER_MARKER_SQL: &str =
 /// Bounded passes plus per-chunk cursor saves drain any backlog across the 60 s cycle.
 const MAX_ROWS_PER_PUSH_PASS: usize = 500;
 
-/// Rows per multi-row INSERT: one network round trip each, not one per row. Five
-/// parameters per row keeps a chunk (250) well under SQLite's 999-variable floor.
+/// Rows per multi-row INSERT: one network round trip each, not one per row. Six
+/// parameters per row keeps a chunk (300) under SQLite's 999-variable floor. It also
+/// caps a chunk's distinct tags at 50, the most `compact_entity_tags` takes.
 const PUSH_CHUNK_ROWS: usize = 50;
+
+/// One multi-row INSERT of a chunk of encoded `(local_seq, row_type, ciphertext, tag)`
+/// rows. `with_tag` adds the `entity_tag` column (NULL for untagged rows).
+async fn insert_push_chunk(
+    conn: &Connection,
+    device_id: &str,
+    now: i64,
+    rows: &[(i64, &'static str, String, Option<String>)],
+    with_tag: bool,
+) -> Result<u64, libsql::Error> {
+    let width = if with_tag { 6 } else { 5 };
+    let mut placeholders = Vec::with_capacity(rows.len());
+    let mut values: Vec<Value> = Vec::with_capacity(rows.len() * width);
+    for (i, (local_seq, row_type, ciphertext, tag)) in rows.iter().enumerate() {
+        let p = i * width;
+        let slots: Vec<String> = (p + 1..=p + width).map(|n| format!("?{n}")).collect();
+        placeholders.push(format!("({})", slots.join(", ")));
+        values.extend([
+            Value::Text(device_id.to_string()),
+            Value::Integer(*local_seq),
+            Value::Text(row_type.to_string()),
+            Value::Text(ciphertext.clone()),
+            Value::Integer(now),
+        ]);
+        if with_tag {
+            values.push(tag.clone().map_or(Value::Null, Value::Text));
+        }
+    }
+    let columns = if with_tag {
+        "device_id, local_seq, row_type, ciphertext, created_at_unix_ms, entity_tag"
+    } else {
+        "device_id, local_seq, row_type, ciphertext, created_at_unix_ms"
+    };
+    let sql = format!(
+        "INSERT INTO sync_row ({columns}) VALUES {} \
+         ON CONFLICT (device_id, local_seq, row_type) DO NOTHING",
+        placeholders.join(", ")
+    );
+    conn.execute(&sql, Params::Positional(values)).await
+}
 
 fn row_local_seq(row: &SyncableRow) -> i64 {
     match row {
@@ -350,35 +536,60 @@ pub async fn push_content(
 
     let rows = plan_push_pass(rows, MAX_ROWS_PER_PUSH_PASS);
     let mut highest = last_pushed;
+    // Known missing (ensure_content_schema ran this round and could not confirm it): push
+    // untagged rather than send a tagged INSERT that is bound to fail.
+    // An unreadable epoch also means untagged: tagging must never fail the round.
+    let mut epoch = if ENTITY_TAG_COLUMN_SEEN.get() {
+        store
+            .sync_entity_epoch()
+            .inspect_err(|e| eprintln!("[sync] pushing untagged, no entity epoch: {e}"))
+            .ok()
+    } else {
+        None
+    };
+    let mut compaction = CompactionBudget::default();
     for chunk in rows.chunks(PUSH_CHUNK_ROWS) {
         let now = now_unix_ms();
-        let mut placeholders = Vec::with_capacity(chunk.len());
-        let mut values: Vec<Value> = Vec::with_capacity(chunk.len() * 5);
+        let mut encoded = Vec::with_capacity(chunk.len());
+        let mut tags: Vec<String> = Vec::new();
         let mut chunk_highest = highest;
-        for (i, row) in chunk.iter().enumerate() {
+        for row in chunk {
             let (local_seq, row_type, payload_json) = encode_row(row)?;
             let aad = content_row_aad(device_id, local_seq, row_type);
             let ciphertext = sync::encrypt_payload(group_key, payload_json.as_bytes(), &aad);
-            let p = i * 5;
-            placeholders.push(format!("(?{}, ?{}, ?{}, ?{}, ?{})", p + 1, p + 2, p + 3, p + 4, p + 5));
-            values.extend([
-                Value::Text(device_id.to_string()),
-                Value::Integer(local_seq),
-                Value::Text(row_type.to_string()),
-                Value::Text(STANDARD.encode(&ciphertext)),
-                Value::Integer(now),
-            ]);
+            let tag = epoch
+                .as_deref()
+                .zip(entity_identity(row))
+                .map(|(epoch, id)| tag_for(group_key, device_id, epoch, &id));
+            if let Some(t) = &tag {
+                if !tags.contains(t) {
+                    tags.push(t.clone());
+                }
+            }
+            encoded.push((local_seq, row_type, STANDARD.encode(&ciphertext), tag));
             chunk_highest = chunk_highest.max(local_seq);
         }
-        let sql = format!(
-            "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) \
-             VALUES {} \
-             ON CONFLICT (device_id, local_seq, row_type) DO NOTHING",
-            placeholders.join(", ")
-        );
-        conn.execute(&sql, Params::Positional(values))
-            .await
-            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+        let inserted = if tags.is_empty() {
+            insert_push_chunk(conn, device_id, now, &encoded, false).await
+        } else {
+            match insert_push_chunk(conn, device_id, now, &encoded, true).await {
+                Err(e) if is_missing_entity_tag_column(&e.to_string()) => {
+                    // A relay that predates `entity_tag`: push untagged, compact nothing, and
+                    // stop tagging for the rest of this call (as the outbox does).
+                    #[cfg(test)]
+                    FAILED_TAGGED_INSERTS.with(|c| c.set(c.get() + 1));
+                    tags.clear();
+                    epoch = None;
+                    insert_push_chunk(conn, device_id, now, &encoded, false).await
+                }
+                other => other,
+            }
+        };
+        inserted.map_err(|e| SyncEngineError::Query(e.to_string()))?;
+        // Before the cursor save (spec D8.1): a pass cut short here re-sends the chunk
+        // (a no-op INSERT) and the DELETE runs then. Rows stay tagged without the index;
+        // only the DELETE waits for it.
+        compaction.compact(conn, device_id, &tags).await;
         // Save progress per chunk: a pass cut short by SYNC_TIMEOUT keeps what it sent.
         if chunk_highest > highest {
             store
@@ -463,6 +674,139 @@ thread_local! {
 fn count_row_query() {
     #[cfg(test)]
     ROW_QUERIES.with(|c| c.set(c.get() + 1));
+}
+
+// Counts compaction DELETEs, so tests can assert a push issued none.
+#[cfg(test)]
+thread_local! {
+    static COMPACTION_DELETES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_compaction_deletes() -> usize {
+    COMPACTION_DELETES.with(|c| c.replace(0))
+}
+
+/// Deletes this device's superseded versions of `tags` (spec D1): every row of a tag below
+/// that tag's MAX `local_seq`, so the newest version always survives and a late older
+/// version is removed by its own push. Scoped to `device_id`, so another device's rows are
+/// never touched; NULL tags never match `IN`. Best effort: an error is logged, never
+/// returned, and the next push of that entity heals it. Callers pass at most 50 tags.
+/// Push paths go through `CompactionBudget` instead, which adds the index check and the
+/// per-round time budget; this single unbudgeted call is for tests.
+#[cfg(test)]
+pub(crate) async fn compact_entity_tags(conn: &Connection, device_id: &str, tags: &[String]) -> u64 {
+    compact_within(conn, device_id, tags, COMPACTION_TIMEOUT).await.unwrap_or(0)
+}
+
+/// One pass's compaction (the legacy push and the outbox each make their own): checks the
+/// ops index at most once, and spends at most `COMPACTION_TIMEOUT` in total on DELETEs,
+/// counted from the first one, so the index check runs before the clock starts. After a
+/// timeout or once that time is used up, the rest of the pass skips compaction. Rows are
+/// still tagged, and the next push of each entity catches up (spec D1). A round runs both
+/// passes, so up to 10 s in all, within the 30 s `SYNC_TIMEOUT`. Without this, ten 50-row
+/// chunks at 5 s each could outlast `SYNC_TIMEOUT` and starve pull and the outbox.
+#[derive(Default)]
+pub(crate) struct CompactionBudget {
+    index_ready: Option<bool>,
+    deadline: Option<tokio::time::Instant>,
+}
+
+impl CompactionBudget {
+    pub(crate) async fn compact(&mut self, conn: &Connection, device_id: &str, tags: &[String]) -> u64 {
+        if tags.is_empty() {
+            return 0;
+        }
+        if self.index_ready.is_none() {
+            self.index_ready = Some(compaction_index_ready(conn).await);
+        }
+        if self.index_ready != Some(true) {
+            return 0;
+        }
+        // A timeout uses up exactly what was left, so it also ends compaction for the round.
+        let now = tokio::time::Instant::now();
+        let left = self.deadline.get_or_insert(now + COMPACTION_TIMEOUT).saturating_duration_since(now);
+        if left.is_zero() {
+            return 0;
+        }
+        compact_within(conn, device_id, tags, left).await.unwrap_or(0)
+    }
+}
+
+/// One compaction DELETE under `limit`. `None` means it timed out.
+async fn compact_within(
+    conn: &Connection,
+    device_id: &str,
+    tags: &[String],
+    limit: std::time::Duration,
+) -> Option<u64> {
+    if tags.is_empty() {
+        return Some(0);
+    }
+    #[cfg(test)]
+    COMPACTION_DELETES.with(|c| c.set(c.get() + 1));
+    let mut values = vec![Value::Text(device_id.to_string())];
+    values.extend(tags.iter().map(|t| Value::Text(t.clone())));
+    let sql = compaction_delete_sql(tags.len());
+    let delete = async {
+        // A local relay answers synchronously, so a test cannot make a real DELETE slow.
+        #[cfg(test)]
+        if let Some(delay) = INJECTED_DELETE_DELAY.with(|d| d.get()) {
+            tokio::time::sleep(delay).await;
+        }
+        conn.execute(&sql, Params::Positional(values)).await
+    };
+    bounded_compaction(delete, limit).await
+}
+
+#[cfg(test)]
+thread_local! {
+    static FAILED_TAGGED_INSERTS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    pub(crate) static INJECTED_DELETE_DELAY: std::cell::Cell<Option<std::time::Duration>> = const { std::cell::Cell::new(None) };
+}
+
+/// The most one round spends on compaction DELETEs, and the limit on a single one.
+const COMPACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The spec D1 statement for `tag_count` tags: `?1` is the device, `?2..` the tags.
+fn compaction_delete_sql(tag_count: usize) -> String {
+    let placeholders: Vec<String> = (2..tag_count + 2).map(|i| format!("?{i}")).collect();
+    format!(
+        "DELETE FROM sync_row WHERE device_id = ?1 AND entity_tag IN ({}) \
+         AND local_seq < (SELECT MAX(s.local_seq) FROM sync_row s \
+         WHERE s.device_id = sync_row.device_id AND s.entity_tag = sync_row.entity_tag)",
+        placeholders.join(", ")
+    )
+}
+
+/// Runs a compaction DELETE under `limit`. An error or a timeout is logged and counts as
+/// skipped; neither ever fails the round. `None` means it timed out.
+///
+/// Dropping a timed-out remote `execute` is safe for later statements on the same
+/// connection (libsql 0.9.30, `hrana/stream.rs`): every autocommit statement is sent with
+/// a Close and has no baton, the baton only changes after a response arrives, and the
+/// stream lock is a `tokio::sync::Mutex` whose guard is released on drop.
+async fn bounded_compaction(
+    delete: impl std::future::Future<Output = Result<u64, libsql::Error>>,
+    limit: std::time::Duration,
+) -> Option<u64> {
+    match tokio::time::timeout(limit, delete).await {
+        Ok(Ok(n)) => Some(n),
+        Ok(Err(e)) => {
+            eprintln!("[sync] compaction skipped: {e}");
+            Some(0)
+        }
+        Err(_) => {
+            eprintln!("[sync] compaction skipped for this round: no reply within {limit:?}");
+            None
+        }
+    }
+}
+
+/// True when an INSERT failed because the relay's `sync_row` predates `entity_tag`
+/// ("table sync_row has no column named entity_tag").
+pub(crate) fn is_missing_entity_tag_column(error: &str) -> bool {
+    error.contains("no column named entity_tag")
 }
 
 /// `skip_skins` leaves out skin rows at the query, so a puller that never applies them (the phone)
@@ -1122,9 +1466,110 @@ async fn resolve_segments(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use memory::AppliedCaptureItem;
+
+    /// The `sync_row` table as relays created it before `entity_tag` existed.
+    pub(crate) const OLD_SYNC_ROW_DDL: &str =
+        "CREATE TABLE sync_row (device_id TEXT NOT NULL, local_seq INTEGER NOT NULL, \
+    row_type TEXT NOT NULL, ciphertext TEXT NOT NULL, created_at_unix_ms INTEGER NOT NULL, \
+    PRIMARY KEY (device_id, local_seq, row_type))";
+
+    async fn has_entity_tag(conn: &Connection) -> bool {
+        let mut rows = conn.query("PRAGMA table_info(sync_row)", ()).await.unwrap();
+        while let Some(row) = rows.next().await.unwrap() {
+            if row.get::<String>(1).unwrap() == "entity_tag" {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn ensure_entity_tag_column_adds_the_column_to_an_old_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        assert!(ensure_entity_tag_column(&conn).await);
+        assert!(ensure_entity_tag_column(&conn).await);
+        assert!(has_entity_tag(&conn).await);
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_sync_row_entity'"
+            )
+            .await,
+            0,
+            "the client never creates the index"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_duplicate_column_error_counts_as_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row ADD COLUMN entity_tag TEXT", ())
+            .await
+            .unwrap();
+        // The race loser: its check saw no column, then another device's ALTER landed first.
+        assert!(add_entity_tag_column(&conn).await);
+    }
+
+    /// Shaped like `simultaneous_opens_of_one_database_all_succeed` (#455). Local libsql may
+    /// serialize the two ALTERs, so this asserts convergence, not that the duplicate error fired.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn simultaneous_schema_setups_all_converge() {
+        for round in 0..25 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("relay.db");
+            let mut conns = Vec::new();
+            for _ in 0..2 {
+                let db = libsql::Builder::new_local(&path).build().await.unwrap();
+                let conn = db.connect().unwrap();
+                conn.busy_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                conns.push((db, conn));
+            }
+            conns[0].1.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+            let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+            let handles: Vec<_> = conns
+                .iter()
+                .map(|(_, conn)| {
+                    let (conn, barrier) = (conn.clone(), barrier.clone());
+                    tokio::spawn(async move {
+                        barrier.wait().await;
+                        ensure_entity_tag_column(&conn).await
+                    })
+                })
+                .collect();
+            let mut results = Vec::new();
+            for h in handles {
+                results.push(h.await.unwrap());
+            }
+            assert_eq!((results[0], results[1]), (true, true), "round {round}");
+            assert!(has_entity_tag(&conns[0].1).await, "round {round}");
+        }
+    }
+
+    #[tokio::test]
+    async fn ensure_entity_tag_column_reports_false_when_the_alter_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute("CREATE VIEW sync_row AS SELECT 1 AS device_id", ())
+            .await
+            .unwrap();
+        assert!(!ensure_entity_tag_column(&conn).await);
+    }
+
+    #[tokio::test]
+    async fn a_new_relay_gets_the_column_from_create_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        assert!(has_entity_tag(&conn).await);
+    }
 
     async fn local_connection(path: &std::path::Path) -> Connection {
         let db = libsql::Builder::new_local(path).build().await.unwrap();
@@ -1894,6 +2339,421 @@ mod tests {
 
     fn take_row_queries() -> usize {
         ROW_QUERIES.with(|c| c.replace(0))
+    }
+
+    async fn seed_tagged_row(conn: &Connection, device_id: &str, local_seq: i64, row_type: &str, tag: &str) {
+        conn.execute(
+            "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms, entity_tag) \
+             VALUES (?1, ?2, ?3, 'x', 0, ?4)",
+            params![device_id, local_seq, row_type, tag],
+        )
+        .await
+        .unwrap();
+    }
+
+    fn completed_meeting(store: &Store, device_id: &str) -> i64 {
+        let id = store
+            .insert_meeting(&memory::NewMeeting {
+                device_id: device_id.to_string(),
+                start_unix_ms: 1000,
+                end_unix_ms: None,
+                title: "Standup".to_string(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Calendar,
+                audio_path: None,
+                status: memory::MeetingStatus::Recording,
+            })
+            .unwrap();
+        store.complete_meeting(id, 2000, None).unwrap();
+        id
+    }
+
+    async fn meeting_rows(conn: &Connection, device_id: &str) -> i64 {
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM sync_row WHERE device_id = ?1 AND row_type = 'meeting'",
+                params![device_id],
+            )
+            .await
+            .unwrap();
+        rows.next().await.unwrap().unwrap().get(0).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_meeting_restamped_three_times_leaves_one_relay_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let key = GroupKey::generate();
+        let store = Store::open_in_memory().unwrap();
+
+        let id = completed_meeting(&store, "device-a");
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+        store.set_meeting_title(id, "Renamed").unwrap();
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+        store
+            .update_meeting_summary(id, "tl;dr", &[], &[], &[], "anthropic", "claude-haiku-4-5")
+            .unwrap();
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+
+        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND row_type = 'meeting'").await, 1);
+        assert_eq!(single_i64(&conn, "SELECT local_seq FROM sync_row WHERE device_id = 'device-a' AND row_type = 'meeting'").await,
+                   store.get_sync_push_cursor().unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_restamped_calendar_event_keeps_one_row_and_captures_are_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let key = GroupKey::generate();
+        let store = Store::open_in_memory().unwrap();
+
+        store.insert_capture_item(&sample_new_capture_item("first capture")).unwrap();
+        // A distinct hash, or the per-app dedup drops it.
+        store
+            .insert_capture_item(&memory::NewCaptureItem { hash: 10, ..sample_new_capture_item("second capture") })
+            .unwrap();
+        let mut event = memory::NewCalendarEventItem {
+            device_id: "dev-a".to_string(),
+            source: "google_calendar".to_string(),
+            external_id: "evt-1".to_string(),
+            ts_unix_ms: 5000,
+            title: "Planning".to_string(),
+            actors: vec![],
+        };
+        store.upsert_calendar_event_items(std::slice::from_ref(&event)).unwrap();
+        push_content(&conn, &key, &store, "dev-a").await.unwrap();
+        event.title = "Planning (moved)".to_string();
+        store.upsert_calendar_event_items(std::slice::from_ref(&event)).unwrap();
+        push_content(&conn, &key, &store, "dev-a").await.unwrap();
+
+        let tagged = "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND entity_tag IS NOT NULL";
+        let untagged = "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND entity_tag IS NULL";
+        assert_eq!(single_i64(&conn, tagged).await, 1);
+        assert_eq!(single_i64(&conn, untagged).await, 2);
+    }
+
+    #[tokio::test]
+    async fn a_capture_only_push_issues_no_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let store = Store::open_in_memory().unwrap();
+        store.insert_capture_item(&sample_new_capture_item("only a capture")).unwrap();
+        take_compaction_deletes();
+
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+
+        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 1);
+        assert_eq!(take_compaction_deletes(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_old_schema_relay_still_takes_untagged_pushes() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        // The account-switch case: this process saw the column on another relay, so it
+        // still tries the tagged INSERT and must fall back.
+        ENTITY_TAG_COLUMN_SEEN.set();
+        let key = GroupKey::generate();
+        let store = Store::open_in_memory().unwrap();
+        take_compaction_deletes();
+
+        let id = completed_meeting(&store, "device-a");
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+        store.set_meeting_title(id, "Renamed").unwrap();
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+
+        assert_eq!(meeting_rows(&conn, "device-a").await, 2);
+        assert_eq!(take_compaction_deletes(), 0);
+    }
+
+    /// One failed tagged INSERT (a relay without the column, after an account switch), then
+    /// the rest of the call pushes untagged: later chunks do not pay a doomed INSERT.
+    #[tokio::test]
+    async fn after_a_missing_column_fallback_the_rest_of_the_push_is_untagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        ENTITY_TAG_COLUMN_SEEN.set();
+        let store = Store::open_in_memory().unwrap();
+        let events: Vec<memory::NewCalendarEventItem> = (0..120)
+            .map(|i| memory::NewCalendarEventItem {
+                device_id: "dev-a".to_string(),
+                source: "google_calendar".to_string(),
+                external_id: format!("evt-{i}"),
+                ts_unix_ms: 5000 + i,
+                title: format!("Event {i}"),
+                actors: vec![],
+            })
+            .collect();
+        store.upsert_calendar_event_items(&events).unwrap();
+        FAILED_TAGGED_INSERTS.with(|c| c.set(0));
+
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+
+        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 120);
+        assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 1, "three chunks, one doomed INSERT");
+    }
+
+    #[tokio::test]
+    async fn a_failing_compaction_delete_never_fails_the_push() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        conn.execute("CREATE TRIGGER no_delete BEFORE DELETE ON sync_row BEGIN SELECT RAISE(ABORT, 'nope'); END", ())
+            .await
+            .unwrap();
+        let key = GroupKey::generate();
+        let store = Store::open_in_memory().unwrap();
+
+        let id = completed_meeting(&store, "device-a");
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+        store.set_meeting_title(id, "Renamed").unwrap();
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+
+        assert_eq!(meeting_rows(&conn, "device-a").await, 2);
+        assert_eq!(
+            single_i64(&conn, "SELECT MAX(local_seq) FROM sync_row WHERE device_id = 'device-a' AND row_type = 'meeting'").await,
+            store.get_sync_push_cursor().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn compaction_never_touches_another_devices_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let key = GroupKey::generate();
+        let store = Store::open_in_memory().unwrap();
+
+        let id = completed_meeting(&store, "device-a");
+        let forged = tag_for(&key, "device-a", &store.sync_entity_epoch().unwrap(), &format!("meeting:{id}"));
+        // Two versions, so device-b's older row would go if the DELETE lost its device scope.
+        seed_tagged_row(&conn, "device-b", 1, "meeting", &forged).await;
+        seed_tagged_row(&conn, "device-b", 2, "meeting", &forged).await;
+        // Without a marker, device-b would close the items cutover gate.
+        seed_peer_capability_marker(&conn, "device-b").await;
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+        store.set_meeting_title(id, "Renamed").unwrap();
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+
+        assert_eq!(meeting_rows(&conn, "device-a").await, 1, "device-a's own old version is compacted");
+        assert_eq!(meeting_rows(&conn, "device-b").await, 2, "device-b's rows survive");
+        assert_eq!(
+            single_i64(&conn, "SELECT COUNT(DISTINCT entity_tag) FROM sync_row WHERE row_type = 'meeting'").await,
+            1,
+            "the forged tag really collides with device-a's"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_different_group_key_never_deletes_the_other_keys_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let store = Store::open_in_memory().unwrap();
+
+        let id = completed_meeting(&store, "device-a");
+        push_content(&conn, &GroupKey::generate(), &store, "device-a").await.unwrap();
+        store.set_meeting_title(id, "Renamed").unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "device-a").await.unwrap();
+
+        assert_eq!(meeting_rows(&conn, "device-a").await, 2);
+    }
+
+    #[tokio::test]
+    async fn compact_entity_tags_keeps_the_newest_version_of_every_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        // Tag "a": three versions; tag "b": a single version; one untagged row.
+        for seq in [1, 4, 7] {
+            seed_tagged_row(&conn, "device-a", seq, "meeting", "a").await;
+        }
+        seed_tagged_row(&conn, "device-a", 2, "meeting", "b").await;
+        seed_content_row(&conn, &GroupKey::from_bytes([7; 32]), "device-a", 3, "items", "{}").await;
+
+        let tags = ["a".to_string(), "b".to_string(), "unseen".to_string()];
+        assert_eq!(compact_entity_tags(&conn, "device-a", &tags).await, 2);
+        assert_eq!(compact_entity_tags(&conn, "device-a", &tags).await, 0, "idempotent");
+        assert_eq!(compact_entity_tags(&conn, "device-a", &[]).await, 0);
+
+        let mut rows = conn
+            .query("SELECT local_seq FROM sync_row ORDER BY local_seq", ())
+            .await
+            .unwrap();
+        let mut left = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            left.push(row.get::<i64>(0).unwrap());
+        }
+        assert_eq!(left, [2, 3, 7]);
+    }
+
+    #[test]
+    fn two_databases_under_one_device_id_tag_the_same_meeting_differently() {
+        let key = GroupKey::generate();
+        let (old_db, new_db) = (Store::open_in_memory().unwrap(), Store::open_in_memory().unwrap());
+        let tag = |store: &Store| tag_for(&key, "device-a", &store.sync_entity_epoch().unwrap(), "meeting:1");
+        assert_ne!(tag(&old_db), tag(&new_db));
+        assert_eq!(tag(&old_db), tag(&old_db));
+    }
+
+    /// The wipe case: the Keychain keeps `device_id`, the new local database restarts
+    /// meeting ids, so its meeting 1 is a different meeting from the relay's meeting 1.
+    #[tokio::test]
+    async fn a_push_from_a_new_database_never_deletes_the_old_databases_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let key = GroupKey::generate();
+
+        let old_db = Store::open_in_memory().unwrap();
+        let old_id = completed_meeting(&old_db, "device-a");
+        for title in ["b", "c", "d", "e"] {
+            old_db.set_meeting_title(old_id, title).unwrap();
+        }
+        push_content(&conn, &key, &old_db, "device-a").await.unwrap();
+        let old_seq = single_i64(&conn, "SELECT local_seq FROM sync_row WHERE row_type = 'meeting'").await;
+
+        let new_db = Store::open_in_memory().unwrap();
+        let new_id = completed_meeting(&new_db, "device-a");
+        assert_eq!(new_id, old_id, "the wipe reuses the meeting id");
+        push_content(&conn, &key, &new_db, "device-a").await.unwrap();
+
+        assert_eq!(meeting_rows(&conn, "device-a").await, 2, "neither database's meeting is deleted");
+        assert!(new_db.get_sync_push_cursor().unwrap() < old_seq, "the new row sits below the old MAX");
+    }
+
+    #[test]
+    fn missing_entity_tag_column_is_recognized() {
+        assert!(is_missing_entity_tag_column("table sync_row has no column named entity_tag"));
+        assert!(!is_missing_entity_tag_column("database is locked"));
+        // Mentions the column but is not the missing-column error: must not trigger the retry.
+        assert!(!is_missing_entity_tag_column("CHECK constraint failed: entity_tag"));
+    }
+
+    /// A relay as ops leaves it: the column plus the out-of-band index.
+    pub(crate) async fn compacting_relay(dir: &tempfile::TempDir) -> Connection {
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        create_ops_index(&conn).await;
+        conn
+    }
+
+    /// The index exactly as scripts/sync-row-entity-tag.sql creates it (plan Task 8).
+    async fn create_ops_index(conn: &Connection) {
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sync_row_entity ON sync_row(device_id, entity_tag, local_seq) \
+             WHERE entity_tag IS NOT NULL",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn no_compaction_without_the_index_until_ops_creates_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        COMPACTION_INDEX_SEEN.reset();
+        let key = GroupKey::generate();
+        let store = Store::open_in_memory().unwrap();
+        take_compaction_deletes();
+
+        let id = completed_meeting(&store, "device-a");
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+        store.set_meeting_title(id, "Renamed").unwrap();
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+        assert_eq!(take_compaction_deletes(), 0, "no index, no DELETE");
+        assert_eq!(meeting_rows(&conn, "device-a").await, 2);
+        assert_eq!(
+            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'meeting' AND entity_tag IS NOT NULL").await,
+            2,
+            "rows are tagged even without the index"
+        );
+
+        create_ops_index(&conn).await;
+        store.set_meeting_title(id, "Renamed again").unwrap();
+        push_content(&conn, &key, &store, "device-a").await.unwrap();
+        assert_eq!(take_compaction_deletes(), 1, "the next round compacts, no restart");
+        assert_eq!(meeting_rows(&conn, "device-a").await, 1);
+    }
+
+    #[tokio::test]
+    async fn a_known_missing_column_pushes_untagged_without_trying() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        // As if this round's ensure_content_schema could not confirm the column.
+        ENTITY_TAG_COLUMN_SEEN.reset();
+        let store = Store::open_in_memory().unwrap();
+        take_compaction_deletes();
+
+        completed_meeting(&store, "device-a");
+        push_content(&conn, &GroupKey::generate(), &store, "device-a").await.unwrap();
+
+        assert_eq!(meeting_rows(&conn, "device-a").await, 1);
+        assert_eq!(
+            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE entity_tag IS NOT NULL").await,
+            0,
+            "no tagged INSERT was sent"
+        );
+        assert_eq!(take_compaction_deletes(), 0);
+    }
+
+    /// Three tagged chunks against a relay whose DELETE never answers in time: the round
+    /// spends one 5 s budget on compaction in total for the pass (not 5 s per chunk), skips the rest, and
+    /// still inserts every chunk and saves the cursor. The clock is paused, so the
+    /// injected 60 s delay costs no real time.
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_compaction_spends_one_budget_per_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let store = Store::open_in_memory().unwrap();
+        let events: Vec<memory::NewCalendarEventItem> = (0..120)
+            .map(|i| memory::NewCalendarEventItem {
+                device_id: "dev-a".to_string(),
+                source: "google_calendar".to_string(),
+                external_id: format!("evt-{i}"),
+                ts_unix_ms: 5000 + i,
+                title: format!("Event {i}"),
+                actors: vec![],
+            })
+            .collect();
+        store.upsert_calendar_event_items(&events).unwrap();
+        take_compaction_deletes();
+        INJECTED_DELETE_DELAY.with(|d| d.set(Some(std::time::Duration::from_secs(60))));
+
+        let started = tokio::time::Instant::now();
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+        let spent = started.elapsed();
+
+        assert!(spent <= COMPACTION_TIMEOUT + std::time::Duration::from_secs(1), "{spent:?}");
+        assert_eq!(take_compaction_deletes(), 1, "after the timeout, the round stops compacting");
+        assert_eq!(
+            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND entity_tag IS NOT NULL").await,
+            120,
+            "every chunk is still inserted, tagged"
+        );
+        assert_eq!(
+            single_i64(&conn, "SELECT MAX(local_seq) FROM sync_row WHERE device_id = 'dev-a'").await,
+            store.get_sync_push_cursor().unwrap(),
+            "the cursor reaches the last chunk"
+        );
+        assert_eq!(COMPACTION_TIMEOUT, std::time::Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn the_compaction_delete_uses_the_ops_index_for_both_lookups() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let sql = compaction_delete_sql(3);
+        let args = vec![libsql::Value::Text("x".into()); 4];
+        let mut rows = conn.query(&format!("EXPLAIN QUERY PLAN {sql}"), args).await.unwrap();
+        let mut plan = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            plan.push(row.get::<String>(3).unwrap());
+        }
+        // A bare "USING COVERING INDEX idx_sync_row_entity" with no key terms walks the whole index.
+        let seek = "INDEX idx_sync_row_entity (device_id=? AND entity_tag=?)";
+        let seeks = plan.iter().filter(|step| step.contains(seek)).count();
+        assert_eq!(seeks, 2, "the outer DELETE and the MAX subquery both seek: {plan:?}");
+        assert!(!plan.iter().any(|step| step.contains("SCAN")), "{plan:?}");
     }
 
     /// The 2026-10 iPhone stall: one point lookup per pending entry (and another for its
@@ -2795,6 +3655,171 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_lagging_puller_applies_the_newest_meeting_after_compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let key = GroupKey::generate();
+        let store_a = Store::open_in_memory().unwrap();
+        let store_b = Store::open_in_memory().unwrap();
+
+        let id = completed_meeting(&store_a, "device-a");
+        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
+        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        store_a
+            .update_meeting_transcript_and_notes(id, "/path/transcript.txt", Some("some notes"))
+            .unwrap();
+        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
+        store_a
+            .update_meeting_summary(id, "tl;dr", &[], &[], &[], "anthropic", "claude-haiku-4-5")
+            .unwrap();
+        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
+        assert_eq!(meeting_rows(&conn, "device-a").await, 1, "precondition: the older versions were compacted");
+
+        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+
+        let meetings = store_b.recent_meetings(10).unwrap();
+        assert_eq!(meetings.len(), 1);
+        assert_eq!(meetings[0].notes.as_deref(), Some("some notes"));
+        assert_eq!(meetings[0].summary_tldr.as_deref(), Some("tl;dr"));
+        assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), store_a.get_sync_push_cursor().unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_lagging_puller_gets_the_newest_calendar_event_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let key = GroupKey::generate();
+        let store_a = Store::open_in_memory().unwrap();
+        let store_b = Store::open_in_memory().unwrap();
+        let mut event = memory::NewCalendarEventItem {
+            device_id: "device-a".to_string(),
+            source: "google_calendar".to_string(),
+            external_id: "evt-1".to_string(),
+            ts_unix_ms: 5000,
+            title: "v1".to_string(),
+            actors: vec![],
+        };
+
+        store_a.upsert_calendar_event_items(std::slice::from_ref(&event)).unwrap();
+        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
+        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        for title in ["v2", "v3"] {
+            event.title = title.to_string();
+            store_a.upsert_calendar_event_items(std::slice::from_ref(&event)).unwrap();
+            push_content(&conn, &key, &store_a, "device-a").await.unwrap();
+        }
+        assert_eq!(
+            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND row_type = 'items'").await,
+            1,
+            "precondition: v1 and v2 were compacted"
+        );
+        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+
+        let events = store_b.upcoming_calendar_events(0, i64::MAX, 10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title, "v3");
+    }
+
+    #[tokio::test]
+    async fn a_transcript_item_whose_meeting_version_was_compacted_still_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let key = GroupKey::generate();
+        let store_a = Store::open_in_memory().unwrap();
+        seed_peer_capability_marker(&conn, "dev-b").await;
+
+        let meeting_id = completed_meeting(&store_a, "dev-a");
+        store_a
+            .insert_transcript_segments(&[memory::NewTranscriptSegment {
+                meeting_id,
+                start_cs: 0,
+                speaker_label: "Me".to_string(),
+                text: "backfilled transcript line".to_string(),
+            }])
+            .unwrap();
+        push_content(&conn, &key, &store_a, "dev-a").await.unwrap();
+        let o = single_i64(&conn, "SELECT local_seq FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'").await;
+        store_a
+            .update_meeting_summary(meeting_id, "tl;dr", &[], &[], &[], "anthropic", "claude-haiku-4-5")
+            .unwrap();
+        push_content(&conn, &key, &store_a, "dev-a").await.unwrap();
+        assert_eq!(
+            single_i64(&conn, &format!("SELECT COUNT(*) FROM sync_row WHERE device_id = 'dev-a' AND local_seq = {o}")).await,
+            0,
+            "precondition: the meeting version the item points at was compacted"
+        );
+        assert_eq!(
+            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'items'").await,
+            1,
+            "precondition: the transcript item is still on the relay"
+        );
+
+        let store_b = Store::open_in_memory().unwrap();
+        pull_content(&conn, &key, &store_b, "dev-b").await.unwrap();
+        pull_content(&conn, &key, &store_b, "dev-b").await.unwrap();
+
+        let n = single_i64(&conn, "SELECT local_seq FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'").await;
+        let local_meeting = store_b.resolve_sync_row_map("dev-a", n, ROW_TYPE_MEETING).unwrap().unwrap();
+        let hits = store_b.search_transcript_keyword("backfilled transcript line", 10).unwrap();
+        assert_eq!((hits.len(), hits[0].meeting_id), (1, local_meeting));
+        assert!(store_b.list_sync_pending_dependencies("dev-a").unwrap().is_empty());
+        assert_eq!(store_b.get_sync_cursor("dev-a").unwrap(), n);
+    }
+
+    /// The meeting fallback: a NULL-tagged legacy meeting row is never compacted, even
+    /// when a later tagged version of the same meeting lands above it.
+    #[tokio::test]
+    async fn a_legacy_untagged_meeting_row_survives_a_tagged_push() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let key = GroupKey::generate();
+        let store_a = Store::open_in_memory().unwrap();
+        seed_peer_capability_marker(&conn, "dev-b").await;
+
+        let meeting_id = completed_meeting(&store_a, "dev-a");
+        store_a
+            .insert_transcript_segments(&[memory::NewTranscriptSegment {
+                meeting_id,
+                start_cs: 0,
+                speaker_label: "Me".to_string(),
+                text: "backfilled transcript line".to_string(),
+            }])
+            .unwrap();
+        push_content(&conn, &key, &store_a, "dev-a").await.unwrap();
+        let meeting_seq = single_i64(&conn, "SELECT local_seq FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'").await;
+        conn.execute("DELETE FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'", params![])
+            .await
+            .unwrap();
+        let legacy_json = serde_json::to_string(&sample_applied_meeting("Standup")).unwrap();
+        seed_content_row(&conn, &key, "dev-a", meeting_seq, ROW_TYPE_MEETING, &legacy_json).await;
+
+        store_a.set_meeting_title(meeting_id, "Renamed").unwrap();
+        push_content(&conn, &key, &store_a, "dev-a").await.unwrap();
+        assert_eq!(
+            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting' AND entity_tag IS NOT NULL").await,
+            1,
+            "precondition: the new version is tagged"
+        );
+        assert_eq!(
+            single_i64(&conn, &format!("SELECT COUNT(*) FROM sync_row WHERE device_id = 'dev-a' AND local_seq = {meeting_seq}")).await,
+            1,
+            "the untagged legacy row must survive the tagged push"
+        );
+
+        let store_c = Store::open_in_memory().unwrap();
+        pull_content(&conn, &key, &store_c, "dev-c").await.unwrap();
+        pull_content(&conn, &key, &store_c, "dev-c").await.unwrap();
+
+        // Pull applies parents first, so the item resolves through the tagged version's
+        // source_meeting_id. The legacy envelope also yields its own copy on C, as it does
+        // with no compaction at all: it carries no source_meeting_id to merge on.
+        let local_meeting = store_c.resolve_sync_meeting_map("dev-a", meeting_id).unwrap().unwrap();
+        let hits = store_c.search_transcript_keyword("backfilled transcript line", 10).unwrap();
+        assert_eq!((hits.len(), hits[0].meeting_id), (1, local_meeting));
+        assert!(store_c.list_sync_pending_dependencies("dev-a").unwrap().is_empty());
+    }
+
     const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
     fn applied_item(kind: &str, ts_unix_ms: i64, body_text: &str) -> memory::AppliedItem {
@@ -3019,6 +4044,84 @@ mod tests {
             assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 4);
         }
     }
+
+    #[test]
+    fn a_calendar_item_is_identified_by_source_and_external_id() {
+        let mut item = applied_item("calendar_event", 1, "standup");
+        item.source = Some("google_calendar".to_string());
+        item.external_id = Some("evt-1".to_string());
+        let row = SyncableRow::Item { local_seq: 1, source_meeting_id: None, meeting_local_seq: None, item };
+        assert_eq!(entity_identity(&row), Some("items:calendar_event:google_calendar:evt-1".to_string()));
+    }
+
+    #[test]
+    fn a_calendar_item_missing_source_or_external_id_is_untagged() {
+        for (source, external_id) in [(None, Some("evt-1")), (Some("google_calendar"), None), (None, None)] {
+            let mut item = applied_item("calendar_event", 1, "standup");
+            item.source = source.map(str::to_string);
+            item.external_id = external_id.map(str::to_string);
+            let row = SyncableRow::Item { local_seq: 1, source_meeting_id: None, meeting_local_seq: None, item };
+            assert_eq!(entity_identity(&row), None, "{source:?} {external_id:?}");
+        }
+    }
+
+    #[test]
+    fn captures_transcripts_and_legacy_rows_are_untagged() {
+        for kind in ["capture", "transcript"] {
+            let mut item = applied_item(kind, 1, "x");
+            item.external_id = Some("e".to_string());
+            let row = SyncableRow::Item { local_seq: 1, source_meeting_id: Some(7), meeting_local_seq: Some(2), item };
+            assert_eq!(entity_identity(&row), None, "{kind}");
+        }
+        let capture = SyncableRow::CaptureItem {
+            local_seq: 1,
+            item: AppliedCaptureItem {
+                ts_unix_ms: 1,
+                app_bundle_id: "com.a".to_string(),
+                window_title: "W".to_string(),
+                url: None,
+                text: "t".to_string(),
+                hash: 1,
+                source: Some("ax".to_string()),
+            },
+        };
+        assert_eq!(entity_identity(&capture), None);
+        let segment = SyncableRow::TranscriptSegment {
+            local_seq: 2,
+            meeting_local_seq: 1,
+            source_meeting_id: 7,
+            segment: AppliedTranscriptSegment { start_cs: 0, speaker_label: "A".to_string(), text: "hi".to_string() },
+        };
+        assert_eq!(entity_identity(&segment), None);
+    }
+
+    #[test]
+    fn only_the_five_outbox_types_are_tagged() {
+        let op = |row_type: &str, aggregate_id: &str| memory::ClaimedOutboxOperation {
+            operation_id: "op".to_string(),
+            device_id: "device-a".to_string(),
+            local_seq: 1,
+            row_type: row_type.to_string(),
+            aggregate_type: row_type.to_string(),
+            aggregate_id: aggregate_id.to_string(),
+            operation_kind: memory::OutboxOperationKind::Upsert,
+            payload_json: "{}".to_string(),
+            connector: memory::OUTBOX_CONNECTOR.to_string(),
+            attempts: 0,
+        };
+        for (row_type, id, expected) in [
+            (ROW_TYPE_MEETING, "42", "meeting:42"),
+            (ROW_TYPE_ROUTINE_RUN, "7", "routine_run:7"),
+            (ROW_TYPE_MEETING_PREP, "evt-1", "meeting_prep:evt-1"),
+            (ROW_TYPE_SKIN, "user-1", "skin:user-1"),
+            (ROW_TYPE_SKIN_IMAGE_CHUNK, "abc:0", "skin_image_chunk:abc:0"),
+        ] {
+            assert_eq!(outbox_entity_identity(&op(row_type, id)), Some(expected.to_string()));
+        }
+        for row_type in [ROW_TYPE_ITEMS, ROW_TYPE_PROFILE_SUGGESTION] {
+            assert_eq!(outbox_entity_identity(&op(row_type, "9")), None, "{row_type}");
+        }
+    }
 }
 
 /// Skin sync over a local relay database (docs/superpowers/plans/2026-10-22-skins-windows-and-sync.md,
@@ -3089,17 +4192,38 @@ mod skin_tests {
         assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0);
     }
 
+    /// The puller's LWW rule, across devices (plan ruling 7): compaction keeps each device's
+    /// last-enqueued version, and one device only ever enqueues its current state. B pulls
+    /// device-a before device-c, so the older version arrives last and must still lose.
     #[tokio::test]
     async fn older_skin_loses_to_newer() {
         let (_dir, conn, key) = relay().await;
-        let (a, b) = (device("device-a"), device("device-b"));
+        let (a, b, c) = (device("device-a"), device("device-b"), device("device-c"));
         a.enqueue_skin_row(&skin("user-x-1", 200, vec![])).unwrap();
-        a.enqueue_skin_row(&skin("user-x-1", 100, vec![])).unwrap();
+        c.enqueue_skin_row(&SkinSyncPayload { device_id: "device-c".into(), ..skin("user-x-1", 100, vec![]) }).unwrap();
         crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &c, "device-c").await.unwrap();
         pull_content(&conn, &key, &b, "device-b").await.unwrap();
         let ready = b.synced_skins_ready().unwrap();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].updated_at_unix_ms, 200);
+    }
+
+    /// Spec D5: a delete is the newest version, so compaction keeps it and drops what came before.
+    #[tokio::test]
+    async fn a_skin_tombstone_survives_its_older_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = super::tests::compacting_relay(&dir).await;
+        let a = device("device-a");
+        let saved = save_on_a(&a, &[1, 2, 3]);
+        a.enqueue_skin_row(&SkinSyncPayload { deleted: true, updated_at_unix_ms: 200, ..saved }).unwrap();
+
+        crate::outbox::dispatch_outbox(&conn, &GroupKey::generate(), &a, "device-a").await.unwrap();
+
+        assert_eq!(rows_of(&conn, ROW_TYPE_SKIN).await, 1);
+        let newest = a.list_outbox_operations().unwrap().into_iter().filter(|r| r.1 == ROW_TYPE_SKIN).map(|r| r.0).max();
+        let mut rows = conn.query("SELECT local_seq FROM sync_row WHERE row_type = 'skin'", ()).await.unwrap();
+        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).ok(), newest);
     }
 
     #[tokio::test]

@@ -272,7 +272,7 @@ final class SkinChatSession: ObservableObject {
         } catch {
             guard run == myRun else { return }
             Self.log.error("skin turn failed: \(String(describing: error), privacy: .public)")
-            post(Self.isSpendCap(error) ? Self.spendCapLine : "Whimbrel couldn't make that skin, so nothing changed. Try again or say it another way.",
+            post(Self.isSpendCap(error) ? Self.spendCapLine : String(localized: "Whimbrel couldn't make that skin, so nothing changed. Try again or say it another way."),
                  to: origin.id, store: false)
             return
         }
@@ -283,7 +283,7 @@ final class SkinChatSession: ObservableObject {
             // A question back or a decline: chat only.
             let saved = userSkins.manifest(for: origin.id) != nil
             if saved { try? userSkins.appendChat(userTurn, to: origin.id) }
-            post(reply.reply.isEmpty ? "Could you say a bit more about the skin you want?" : reply.reply, to: origin.id, store: saved)
+            post(reply.reply.isEmpty ? String(localized: "Could you say a bit more about the skin you want?") : reply.reply, to: origin.id, store: saved)
             return
         }
         guard let (target, lines) = saveSkin(reply, origin: origin, sentAssets: sentAssets) else {
@@ -694,7 +694,7 @@ final class SkinChatSession: ObservableObject {
         let updated = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
         _ = try userSkins.save(manifest: updated, palettes: userSkins.palettes(for: skinId), for: skinId)
         reloadAndMarkScroll()
-        post(replaced ? "Replaced the header image with this one." : "Added the image to the header.", to: skinId, store: true)
+        post(replaced ? String(localized: "Replaced the header image with this one.") : String(localized: "Added the image to the header."), to: skinId, store: true)
     }
 
     /// `imagery` with `entry` added, replacing any entry for the same placement: one image is drawn per placement,

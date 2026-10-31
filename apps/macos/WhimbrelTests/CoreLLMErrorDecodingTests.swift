@@ -52,4 +52,31 @@ final class CoreLLMErrorDecodingTests: XCTestCase {
         XCTAssertTrue(spendCapGlobal.userFacingMessage.contains("5000¢/5000¢"))
         XCTAssertFalse(providerFailure.userFacingMessage.contains("¢"))
     }
+
+    // MARK: - CoreUserMessage (Task 4 codes rendered from the String Catalog)
+
+    private func userMessage(_ json: String) throws -> CoreUserMessage {
+        try JSONDecoder().decode(CoreUserMessage.self, from: Data(json.utf8))
+    }
+
+    func test_device_limit_code_renders_catalog_text() throws {
+        let m = try userMessage(#"{"code":"device_limit","params":{},"message":"English from core"}"#)
+        XCTAssertEqual(m.localized(), "Your free sync plan includes one computer and one phone, and they're already in use.")
+    }
+
+    func test_unknown_code_falls_back_to_message() throws {
+        XCTAssertEqual(try userMessage(#"{"code":"brand_new_code","params":{},"message":"From core"}"#).localized(), "From core")
+        XCTAssertEqual(try userMessage(#"{"message":"No code"}"#).localized(), "No code")
+    }
+
+    func test_approve_on_other_device_lists_names() throws {
+        let m = try userMessage(#"{"code":"approve_on_other_device","params":{"devices":["Mac mini","iPhone"]},"message":"x"}"#)
+        XCTAssertEqual(m.localized(locale: Locale(identifier: "en_US")), "Approve this computer on Mac mini or iPhone; it was active in the last week.")
+    }
+
+    func test_params_render_and_missing_param_falls_back() throws {
+        XCTAssertEqual(try userMessage(#"{"code":"server_error","params":{"status":502},"message":"x"}"#).localized(),
+                       "Sync is temporarily unavailable (server error 502).")
+        XCTAssertEqual(try userMessage(#"{"code":"key_refused","params":{},"message":"core text"}"#).localized(), "core text")
+    }
 }

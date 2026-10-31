@@ -987,6 +987,37 @@ export interface KeyCheckView {
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LanguageSettings".
+ */
+export interface LanguageSettings {
+  /**
+   * The Language picker's choice; `""` is Automatic.
+   */
+  choice: string;
+  /**
+   * The Language picker's options besides Automatic.
+   */
+  languages: string[];
+  /**
+   * Show "Local models may write less well in …": the output isn't English and Ollama does the work.
+   */
+  localModelNote: boolean;
+  /**
+   * The tag notes and summaries are written in; `""` is English.
+   */
+  outputLanguage: string;
+  /**
+   * What the app shows: the choice, or Windows' language, resolved (`en-US`, `en-GB`, …).
+   */
+  uiLanguage: string;
+  /**
+   * "Write notes and summaries in"; `""` is "Same as app language".
+   */
+  writeIn: string;
+  writeInOptions: string[];
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "MeetingRow".
  */
 export interface MeetingRow {
@@ -1207,11 +1238,11 @@ export interface ModelOptionView {
 export interface ModelStatus {
   dir: string;
   /**
-   * All three files are on disk.
+   * Every file in core's embedding manifest is on disk.
    */
   installed: boolean;
   /**
-   * The running store has the model loaded (false until a restart after install).
+   * The running store has the model loaded (it loads on the first search or embed after install).
    */
   loaded: boolean;
 }

@@ -17,6 +17,7 @@ pub mod feedback;
 pub mod identity;
 pub mod job;
 pub mod jobs;
+pub mod l10n;
 pub mod logging;
 pub mod mcp_server;
 pub mod meetings;

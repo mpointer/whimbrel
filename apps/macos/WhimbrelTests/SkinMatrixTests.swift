@@ -9,6 +9,26 @@ private struct WidthKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
+/// Test-only mirror of `translate.py pseudo` (en-XA): accented, 40% longer, bracketed; placeholders and
+/// `{tokens}` unchanged. The matrix applies it to skin voice, so it needs no catalog at runtime.
+enum Pseudo {
+    private static let placeholder = try! NSRegularExpression(
+        pattern: #"%(?:\d+\$)?[-+ #0]*\d*(?:\.\d+)?(?:hh|h|ll|l|q|z|t|j|L)?[@dDiuUxXoOfFeEgGcCsSpaA]|\{\w+\}"#)
+    private static let accents = Dictionary(uniqueKeysWithValues: zip("aceinousyACEINOUSY", "åçéîñöûšýÅÇÉÎÑÖÛŠÝ"))
+
+    static func apply(_ s: String) -> String {
+        let ns = s as NSString
+        var out = "", last = 0
+        func accent(_ part: String) -> String { String(part.map { accents[$0] ?? $0 }) }
+        for m in placeholder.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out += accent(ns.substring(with: NSRange(location: last, length: m.range.location - last))) + ns.substring(with: m.range)
+            last = m.range.location + m.range.length
+        }
+        out += accent(ns.substring(from: last))
+        return "[" + out + String(repeating: "~", count: (s.count * 2 + 4) / 5) + "]"
+    }
+}
+
 /// Every installed skin x each of its palettes x light/dark, against Today's content and widths.
 @MainActor
 final class SkinMatrixTests: XCTestCase {
@@ -98,6 +118,52 @@ final class SkinMatrixTests: XCTestCase {
             XCTAssertEqual(cells, skins.count * widths.count * contents.count + all.count * 2 * 2 * contents.count)
         }
         XCTAssertEqual(all.count, skins.map(\.paletteIds.count).reduce(0, +))
+    }
+
+    func test_pseudo_apply_matches_translate_py() {
+        XCTAssertEqual(Pseudo.apply("Good morning, {name}"), "[Gööd mörñîñg, {name}~~~~~~~~]")
+        XCTAssertEqual(Pseudo.apply("%lld days"), "[%lld dåýš~~~~]")
+    }
+
+    /// The locale axis: en (above) and en-XA, every skin's voice pseudo-localized, at the two extreme widths.
+    func test_pseudo_locale_fits_every_skin() {
+        let all = combos()
+        for base in skins {
+            var skin = base
+            skin.voice.values = skin.voice.values.mapValues(Pseudo.apply)
+            skin.voice.localized = [:]
+            let palette = all.first { $0.skin.id == base.id }!.palette
+            SkinStore.shared.withOverride(skin: skin, paletteId: palette.id) {
+                for width in [widths.first!, widths.last!] {
+                    for content in contents {
+                        let measured = renderedWidth(chrome(content), proposing: width, dark: false)
+                        XCTAssertGreaterThan(measured, 0, "the probe measured nothing")
+                        XCTAssertLessThanOrEqual(measured, width + 0.5, "en-XA \(skin.id) at \(width)")
+                    }
+                }
+            }
+        }
+    }
+
+    /// The real translations: every skin's voice in each shipped language at the two extreme widths.
+    func test_translated_voice_fits_every_skin() {
+        let all = combos()
+        for lang in ["es", "fr", "fr-CA", "de", "pt"] {
+            for base in skins {
+                var skin = base
+                skin.voice.values = Dictionary(uniqueKeysWithValues: SkinVoiceKey.allCases.map { ($0, base.voice.template($0, lang: lang)) })
+                skin.voice.localized = [:]
+                let palette = all.first { $0.skin.id == base.id }!.palette
+                SkinStore.shared.withOverride(skin: skin, paletteId: palette.id) {
+                    for width in [widths.first!, widths.last!] {
+                        for content in contents {
+                            let measured = renderedWidth(chrome(content), proposing: width, dark: false)
+                            XCTAssertLessThanOrEqual(measured, width + 0.5, "\(lang) \(skin.id) at \(width)")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Every skin and palette as a user skin with a header, background and badge image, light and dark, at every

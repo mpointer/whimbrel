@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.42"
+version = "0.9.43"
 edition = "2021"
 publish = false
 # Two binaries (the app and the M3.1 capture-spike CLI); the Tauri CLI builds and
@@ -129,6 +129,7 @@ features = [
     "Foundation",
     "Foundation_Collections",
     "Globalization",
+    "Globalization_DateTimeFormatting",
     "Graphics",
     "Graphics_Capture",
     "Graphics_DirectX",
@@ -142,6 +143,10 @@ features = [
 
 [dependencies.windows-core]
 version = "0.62"
+
+# IIterable, to pass a language list to WinRT (l10n.rs); already in the lock through windows.
+[dependencies.windows-collections]
+version = "0.3"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

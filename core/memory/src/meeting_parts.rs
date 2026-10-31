@@ -494,6 +494,35 @@ impl Store {
         tx.commit()
     }
 
+    /// "Keep together" after a back-to-back split (Mac): moves `from`'s snapshot rows and
+    /// their search mirror to `into`, and gives `into` `from`'s continue key (when it has
+    /// one) so a rejoin of the call now recording continues `into`. Returns the moved file
+    /// paths, oldest first: the caller moves those files into `into`'s folder
+    /// (`set_meeting_snapshot_paths`) before deleting `from`. Device-local, no sync restamp.
+    pub fn absorb_split_meeting(&self, into: i64, from: i64) -> rusqlite::Result<Vec<String>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let paths = tx
+            .prepare("SELECT file_path FROM meeting_snapshot WHERE meeting_id = ?1 ORDER BY captured_unix_ms, id")?
+            .query_map(params![from], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        tx.execute(
+            "UPDATE items SET thread_id = ?1 WHERE source_table = 'meeting_snapshot' AND source_id IN \
+             (SELECT id FROM meeting_snapshot WHERE meeting_id = ?2)",
+            params![into, from],
+        )?;
+        tx.execute(
+            "UPDATE meeting_snapshot SET meeting_id = ?1 WHERE meeting_id = ?2",
+            params![into, from],
+        )?;
+        tx.execute(
+            "UPDATE meeting SET continue_key = (SELECT continue_key FROM meeting WHERE id = ?2) \
+             WHERE id = ?1 AND (SELECT continue_key FROM meeting WHERE id = ?2) IS NOT NULL",
+            params![into, from],
+        )?;
+        tx.commit()?;
+        Ok(paths)
+    }
+
     /// After the caller moved or compressed audio on disk: rewrites `meeting.audio_path` and
     /// every `meeting_part.audio_path` of `meeting_id` that equals an `old`. Local only: no
     /// restamp, no outbox (paths are device-local). An `old` that matches no row in either
@@ -1197,6 +1226,44 @@ mod tests {
         s.conn.execute("DELETE FROM meeting_snapshot WHERE meeting_id = ?1", [id]).unwrap();
         assert!(s.set_meeting_snapshot_paths(id, &theirs, "/snaps/n").is_err());
         assert_eq!(snapshot_paths(&s, other)[0], "/snaps/o/1.png");
+    }
+
+    /// "Keep together" (Mac back-to-back split): the split-off meeting's snapshots and
+    /// continue key go to the earlier meeting before the split-off row is deleted.
+    #[test]
+    fn absorb_split_meeting_moves_snapshots_and_key() {
+        let s = Store::open_in_memory().unwrap();
+        let a = done(&s, Some("cal:A"), 5_000);
+        s.insert_meeting_snapshot(&snap(a, 2_000, "/snaps/a/1.png")).unwrap();
+        s.set_meeting_snapshots_dir(a, "/snaps/a").unwrap();
+        let b = mk(&s, MeetingStatus::Recording, None);
+        s.begin_meeting_part(b, 6_000, Some("cal:B")).unwrap();
+        s.insert_meeting_snapshot(&snap(b, 7_000, "/snaps/b/1.png")).unwrap();
+        s.insert_meeting_snapshot(&snap(b, 8_000, "/snaps/b/2.png")).unwrap();
+        s.set_meeting_snapshots_dir(b, "/snaps/b").unwrap();
+
+        let moved = s.absorb_split_meeting(a, b).unwrap();
+        assert_eq!(moved, ["/snaps/b/1.png", "/snaps/b/2.png"]);
+        assert_eq!(snapshot_paths(&s, a), ["/snaps/a/1.png", "/snaps/b/1.png", "/snaps/b/2.png"]);
+        assert!(snapshot_paths(&s, b).is_empty());
+        let items: i64 = s
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM items WHERE source_table = 'meeting_snapshot' AND thread_id = ?1",
+                [a],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(items, 3, "the search mirror follows the rows");
+        assert_eq!(key_of(&s, a).as_deref(), Some("cal:B"), "a rejoin of B's call continues A");
+
+        // Deleting B now leaves A's snapshots alone.
+        s.delete_meeting_returning_files(b).unwrap().unwrap();
+        assert_eq!(snapshot_paths(&s, a).len(), 3);
+        // No key on the split-off meeting: A keeps its own.
+        let c = mk(&s, MeetingStatus::Recording, None);
+        assert!(s.absorb_split_meeting(a, c).unwrap().is_empty());
+        assert_eq!(key_of(&s, a).as_deref(), Some("cal:B"));
     }
 
     #[test]

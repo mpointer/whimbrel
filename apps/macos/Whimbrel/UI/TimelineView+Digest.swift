@@ -67,7 +67,7 @@ extension TimelineView {
                 case .some(.failure(let error)):
                     digestError = error.userFacingMessage
                 case .none:
-                    digestError = "Couldn't generate the digest. Try again."
+                    digestError = String(localized: "Couldn't generate the digest. Try again.")
                 }
             }
         }

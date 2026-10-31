@@ -20,18 +20,49 @@ pub struct MeetingAskContext {
     pub narrowed: bool,
 }
 
-const STOPWORDS: &[&str] = &[
-    "the", "and", "for", "are", "was", "were", "did", "does", "say", "said", "what", "when", "where", "who", "how",
-    "why", "about", "with", "from", "that", "this", "have", "has", "had", "you", "your", "they", "them", "their",
-    "not", "but", "can", "will", "would", "could", "should", "there", "here", "which", "into", "than", "then",
-    "just", "also", "any", "all",
+// Exact-token match over the union of rows. Phase 4 appends `de`, `pt`. Left out because they
+// are also English terms: "est" (timezone), "comment", "par", "plus", "sans", "son", "sin".
+// Accented and bare forms are both listed; there is no Unicode folding. Tokens under 3 chars
+// ("de", "la", "qu") are already dropped by `terms`.
+const KEYWORDS_STOPWORDS: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &[
+            "the", "and", "for", "are", "was", "were", "did", "does", "say", "said", "what", "when", "where", "who",
+            "how", "why", "about", "with", "from", "that", "this", "have", "has", "had", "you", "your", "they",
+            "them", "their", "not", "but", "can", "will", "would", "could", "should", "there", "here", "which",
+            "into", "than", "then", "just", "also", "any", "all",
+        ],
+    ),
+    (
+        "es",
+        &[
+            "los", "las", "una", "uno", "unos", "unas", "del", "con", "por", "para", "que", "qué", "como", "cómo",
+            "cual", "cuál", "quien", "quién", "cuando", "cuándo", "donde", "dónde", "sobre", "dijo", "dijeron",
+            "fue", "fueron", "ser", "está", "están", "pero", "este", "esta", "esto", "ese", "esa", "eso",
+            "sus", "tus", "nos", "les", "muy", "también", "todo", "toda", "todos", "todas", "entre",
+        ],
+    ),
+    (
+        "fr",
+        &[
+            "les", "des", "une", "aux", "avec", "dans", "sont", "qui", "que", "quoi", "quand", "pourquoi", "dit",
+            "dire", "ont", "pas", "mais", "cette", "ces", "pour", "sur", "était", "étaient", "elle", "elles",
+            "nous", "vous", "ils", "mon", "mes", "ton", "tes", "ses", "notre", "votre", "leur", "leurs", "aussi",
+            "tout", "tous", "toute", "toutes", "très", "entre",
+        ],
+    ),
 ];
+
+fn is_stopword(w: &str) -> bool {
+    KEYWORDS_STOPWORDS.iter().any(|(_, ws)| ws.contains(&w))
+}
 
 fn terms(query: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for word in query.split(|c: char| !c.is_alphanumeric()) {
         let w = word.to_lowercase();
-        if w.chars().count() >= 3 && !STOPWORDS.contains(&w.as_str()) && !out.contains(&w) {
+        if w.chars().count() >= 3 && !is_stopword(&w) && !out.contains(&w) {
             out.push(w);
         }
     }
@@ -158,6 +189,19 @@ mod tests {
     }
 
     #[test]
+    fn ask_stopwords_drop_spanish_function_words() {
+        assert_eq!(terms("de la reunión"), vec!["reunión"]);
+        assert_eq!(terms("¿Qué dijo Ana sobre los clientes con una oferta?"), vec!["ana", "clientes", "oferta"]);
+    }
+
+    #[test]
+    fn ask_stopwords_drop_french_function_words_and_keep_english_terms() {
+        assert_eq!(terms("Que dit Ana sur les clients avec une offre"), vec!["ana", "clients", "offre"]);
+        assert_eq!(terms("what is the EST schedule"), vec!["est", "schedule"]);
+        assert_eq!(terms("how do we comment"), vec!["comment"]);
+    }
+
+    #[test]
     fn a_transcript_within_budget_is_kept_whole_and_in_order() {
         let ctx = assemble_meeting_context(vec![seg(1, "hello"), seg(2, "world")], "anything", 1_000);
         assert_eq!(ids(&ctx), [1, 2]);
@@ -210,10 +254,10 @@ mod tests {
 
     #[test]
     fn the_meeting_background_starts_its_own_paragraph_after_instructions_and_a_profile() {
-        let instructions = crate::profile::compose_instructions("be terse", "Role: CFO");
+        let instructions = crate::profile::compose_instructions("be terse", "Role: CFO", "");
         let prompt = build_meeting_ask_prompt(&[], "q", &[], &instructions, "Acme sync", "", "");
         assert!(prompt.contains("be terse\n\nThis meeting is titled"), "{prompt}");
-        let profile_only = crate::profile::compose_instructions("", "Role: CFO");
+        let profile_only = crate::profile::compose_instructions("", "Role: CFO", "");
         let prompt = build_meeting_ask_prompt(&[], "q", &[], &profile_only, "Acme sync", "", "");
         assert!(prompt.contains("Role: CFO\n\nThis meeting is titled"), "{prompt}");
     }

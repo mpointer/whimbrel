@@ -83,7 +83,7 @@ final class McpServerProcessManager: ObservableObject {
         reapStaleInstance()
         let task = Process()
         task.executableURL = binaryURL
-        task.arguments = ["--db", SpikePaths.database.path]
+        task.arguments = ["--db", SpikePaths.database.path] + (EmbeddingModelLocator.modelsDirectoryPath().map { ["--models", $0] } ?? [])
         task.terminationHandler = { [weak self] finishedProcess in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -106,7 +106,7 @@ final class McpServerProcessManager: ObservableObject {
             isRunning = true
             lastError = nil
         } catch {
-            lastError = "Failed to start the MCP server: \(error.localizedDescription)"
+            lastError = String(localized: "Failed to start the MCP server: \(error.localizedDescription)")
             log.error("Failed to start whimbrel-mcp-server: \(error.localizedDescription, privacy: .public)")
         }
     }

@@ -168,7 +168,7 @@ final class SyncModel: ObservableObject {
             readRevision += 1
         }
         guard let store else {
-            lastError = "This iPhone's local storage is unavailable."
+            lastError = String(localized: "This iPhone's local storage is unavailable.")
             return
         }
         if meetingCount == nil { meetingCount = await run(store) { $0.groupedMeetingCount() } }
@@ -177,7 +177,7 @@ final class SyncModel: ObservableObject {
         let wipeEpoch = PhoneSettingsSync.currentWipeEpoch
         guard let current = credentials?.syncCredentials() else {
             consecutiveFailures += 1
-            lastError = "Couldn't reach the server. Will retry automatically."
+            lastError = String(localized: "Couldn't reach the server. Will retry automatically.")
             return
         }
         let ok = await run(store) { $0.pullOnly(current, captureWindowDays: Self.captureWindowDays) }
@@ -199,7 +199,7 @@ final class SyncModel: ObservableObject {
             // The core's cause can name the database host: private in the log, never shown.
             let cause = await run(store) { $0.lastSyncError() } ?? "unknown"
             log.error("pull failed (\(self.consecutiveFailures, privacy: .public) in a row): \(cause, privacy: .private)")
-            lastError = "Couldn't sync. Will retry automatically."
+            lastError = String(localized: "Couldn't sync. Will retry automatically.")
             await credentials?.renewIfDue(afterFailure: true, force: false)
         }
     }

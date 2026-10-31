@@ -9,7 +9,7 @@ import {
   cardElementId,
   deletePrompt,
   galleryState,
-  GALLERY_FOOTNOTE,
+  galleryFootnote,
   lockedCaption,
   orderedSkins,
   pickCard,
@@ -113,7 +113,7 @@ describe("the gallery", () => {
   });
 
   it("states that each PC keeps its own skin", () => {
-    expect(GALLERY_FOOTNOTE).toBe("Each PC keeps its own skin.");
+    expect(galleryFootnote()).toBe("Each PC keeps its own skin.");
   });
 });
 

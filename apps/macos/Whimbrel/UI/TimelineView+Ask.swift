@@ -214,7 +214,7 @@ extension TimelineView {
                     .foregroundStyle(Color.whimbrelTextPrimary)
                     .textSelection(.enabled)
                 if !answer.citations.isEmpty {
-                    WhimbrelSectionLabel(text: "Sources")
+                    WhimbrelSectionLabel(text: String(localized: "Sources"))
                         .padding(.top, Spacing.xs)
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                         ForEach(citedItems(for: exchange)) { item in

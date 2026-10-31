@@ -23,6 +23,7 @@ use tauri::{ipc::Response, AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::error::CommandError;
+use crate::l10n::tr;
 use crate::secrets::{accounts, APP_SERVICE};
 use crate::settings::{ApiKeys, Instructions, Provider, RoutingSettings};
 use crate::skin_maker::{self, SkinLine, SkinSources, SkinTurnResult};
@@ -342,7 +343,7 @@ pub async fn skin_turn(app: AppHandle, state: State<'_, AppState>, skin_id: Stri
     let origin = skin_maker::origin(&user, &dirs.skins, &skin_id).ok_or_else(|| CommandError::invalid_input(format!("no skin {skin_id}")))?;
     let (provider, model, client) = skin_client(&routing, &keys)?;
     let caps = caps(&routing, &keys);
-    let input = skin_maker::turn_input(&user, &origin, &request);
+    let input = skin_maker::turn_input(&user, &origin, &request, &routing.output_language);
     let slow = state.slow_store()?.clone();
     RUNS.lock().unwrap().insert(run_id.clone(), false);
     // The provider call holds the slow lane, as Ask's blocking answer does, never the main store.
@@ -426,7 +427,7 @@ pub async fn skin_export(app: AppHandle, state: State<'_, AppState>, skin_id: St
     let user = UserSkinStore::new(state.paths.skins.clone());
     tauri::async_runtime::spawn_blocking(move || {
         // The id, not the name: it is always a valid file name, whatever the name holds.
-        let picked = file_dialog(&app, "Export skin").set_file_name(format!("{skin_id}.whimbrelskin")).blocking_save_file();
+        let picked = file_dialog(&app, &tr("Export skin", &[])).set_file_name(format!("{skin_id}.whimbrelskin")).blocking_save_file();
         let Some(picked) = picked else { return Ok(false) };
         let path = picked.into_path().map_err(|e| CommandError::invalid_input(format!("not a file on this PC: {e}")))?;
         skin_maker::export_to(&user, &skin_id, &path).map(|()| true).map_err(refused)
@@ -440,7 +441,7 @@ pub async fn skin_export(app: AppHandle, state: State<'_, AppState>, skin_id: St
 pub async fn skin_import(app: AppHandle, state: State<'_, AppState>) -> Result<Option<String>, CommandError> {
     let user = UserSkinStore::new(state.paths.skins.clone());
     let imported = tauri::async_runtime::spawn_blocking(move || {
-        let Some(picked) = file_dialog(&app, "Import skin").blocking_pick_file() else { return Ok(None) };
+        let Some(picked) = file_dialog(&app, &tr("Import skin", &[])).blocking_pick_file() else { return Ok(None) };
         let path = picked.into_path().map_err(|e| CommandError::invalid_input(format!("not a file on this PC: {e}")))?;
         skin_maker::import_from(&user, &path).map(Some).map_err(refused)
     })
@@ -545,7 +546,7 @@ pub async fn skin_image_add_file(app: AppHandle, state: State<'_, AppState>, ski
     }
     let id = skin_id.clone();
     let line = tauri::async_runtime::spawn_blocking(move || {
-        let mut dialog = app.dialog().file().set_title("Choose an image for this skin").add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"]);
+        let mut dialog = app.dialog().file().set_title(tr("Choose an image for this skin", &[])).add_filter(tr("Images", &[]), &["png", "jpg", "jpeg", "gif", "webp"]);
         if let Some(window) = app.get_webview_window(crate::app::MAIN_WINDOW) {
             dialog = dialog.set_parent(&window);
         }

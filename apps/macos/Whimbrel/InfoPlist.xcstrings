@@ -1,0 +1,146 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "comment" : "Bundle display name",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Whimbrel"
+          }
+        }
+      },
+      "shouldTranslate" : false
+    },
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Whimbrel"
+          }
+        }
+      },
+      "shouldTranslate" : false
+    },
+    "NSCalendarsFullAccessUsageDescription" : {
+      "comment" : "Privacy - Calendars Full Access Usage Description",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel liest Termine mit Konferenzlink oder weiteren Teilnehmenden, um Ihnen kurz vor Beginn die Aufnahme eines Meetings vorzuschlagen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Whimbrel reads events with a conferencing link or other attendees so it can prompt you to record a meeting shortly before it starts."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel lee los eventos que tienen un enlace de videoconferencia u otros asistentes para poder sugerirte grabar una reunión poco antes de que empiece."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel lit les événements contenant un lien de visioconférence ou d’autres participants afin de vous proposer d’enregistrer une réunion peu avant son début."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel lit les événements qui comportent un lien de conférence ou d'autres participants afin de vous proposer d'enregistrer une réunion peu avant son début."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel lê eventos com link de conferência ou outros participantes para poder sugerir que você grave uma reunião pouco antes de ela começar."
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "Privacy - Microphone Usage Description",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel nimmt bei von Ihnen gewählten Meetings Mikrofonton auf, vollständig auf diesem Mac."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Whimbrel records microphone audio during meetings you choose to capture, entirely on this Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel graba el audio del micrófono durante las reuniones que elijas capturar, todo en esta Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel enregistre le son du microphone pendant les réunions que vous choisissez de capturer, entièrement sur ce Mac."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel enregistre l'audio du microphone pendant les réunions que vous choisissez de capturer, entièrement sur ce Mac."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel grava o áudio do microfone durante as reuniões que você escolher capturar, inteiramente neste Mac."
+          }
+        }
+      }
+    },
+    "Whimbrel Skin" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel Skin"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skin de Whimbrel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skin Whimbrel"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel Skin"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skin do Whimbrel"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

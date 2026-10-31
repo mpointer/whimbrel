@@ -310,11 +310,6 @@ final class MeetingHeuristicDetector: ObservableObject {
     }
 
     private static func title(for provider: MeetingProvider) -> String {
-        switch provider {
-        case .googleMeet: "Google Meet"
-        case .teams: "Microsoft Teams"
-        case .zoom: "Zoom"
-        case .webex: "Webex"
-        }
+        provider.displayName
     }
 }

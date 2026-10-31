@@ -23,6 +23,28 @@ pub extern "C" fn whimbrel_models_download_start(destinations_json: *const c_cha
     json_to_c_string(serde_json::json!({ "job_id": job_id }).to_string())
 }
 
+/// Starts downloading the semantic-search embedding model into its folder under `models_dir`
+/// (the store's models directory; `api::models::embedding_manifest`). Files already there are
+/// skipped. Returns `{"job_id":…}` to poll like `whimbrel_models_download_start`'s; NULL on a
+/// NULL path.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_embedding_download_start(models_dir: *const c_char) -> *mut c_char {
+    let Some(dir) = cstr_to_string(models_dir) else {
+        return ptr::null_mut();
+    };
+    let job_id = api::models::start_with_manifest(api::models::embedding_manifest(std::path::Path::new(&dir)));
+    json_to_c_string(serde_json::json!({ "job_id": job_id }).to_string())
+}
+
+/// The folder the current embedding model lives in under `models_dir`; NULL on a NULL path.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_embedding_model_dir(models_dir: *const c_char) -> *mut c_char {
+    let Some(dir) = cstr_to_string(models_dir) else {
+        return ptr::null_mut();
+    };
+    json_to_c_string(memory::embedding_model_dir(std::path::Path::new(&dir)).to_string_lossy().into_owned())
+}
+
 /// Latest progress for `job_id` as `{"fraction":0…1,"status":"…","done":bool,
 /// "cancelled":bool,"error":string-or-null}`; null if the job is unknown (never
 /// started, or already released).

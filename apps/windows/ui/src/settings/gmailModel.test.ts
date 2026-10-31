@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { GMAIL_INTRO, deleteMailQuestion, GMAIL_MAIL_NOTE, GMAIL_PERMISSIONS, accountNote, canConnect, connectLabel, readStatus } from "./gmailModel";
+import { accountNote, canConnect, connectLabel, deleteMailQuestion, gmailIntro, gmailMailNote, gmailPermissions, readStatus } from "./gmailModel";
+
+const GMAIL_INTRO = gmailIntro();
+const GMAIL_MAIL_NOTE = gmailMailNote();
+const GMAIL_PERMISSIONS = gmailPermissions();
 
 describe("the Gmail card's words", () => {
   it("says what connecting is for, and that sending needs approval unless the user turns that off", () => {
@@ -58,19 +62,19 @@ describe("deleting stored mail", () => {
 
 describe("what the last read says", () => {
   it("says it has not read yet before the first round", () => {
-    expect(readStatus({ lastReadUnixMs: null, readError: null })).toBe("Not read yet");
-    expect(readStatus({})).toBe("Not read yet");
+    expect(readStatus({ lastReadUnixMs: null, readError: null }, "en")).toBe("Not read yet");
+    expect(readStatus({}, "en")).toBe("Not read yet");
   });
 
   it("gives the time of the last good read", () => {
     const at = new Date(2026, 9, 15, 14, 5).getTime();
-    expect(readStatus({ lastReadUnixMs: at, readError: null })).toMatch(/^Read mail /);
+    expect(readStatus({ lastReadUnixMs: at, readError: null }, "en")).toMatch(/^Read mail /);
   });
 
   it("puts a failure first, because the time alone would look healthy", () => {
     const at = new Date(2026, 9, 15, 14, 5).getTime();
-    expect(readStatus({ lastReadUnixMs: at, readError: "offline" })).toBe("Last read failed: offline");
-    expect(readStatus({ lastReadUnixMs: null, readError: "offline" })).toBe("Last read failed: offline");
+    expect(readStatus({ lastReadUnixMs: at, readError: "offline" }, "en")).toBe("Last read failed: offline");
+    expect(readStatus({ lastReadUnixMs: null, readError: "offline" }, "en")).toBe("Last read failed: offline");
   });
 });
 

@@ -19,8 +19,17 @@ struct MeetingOptionsMenu: View {
     /// This device's own copy's flag, read from the store (the lead may be a peer's
     /// copy, and `meeting` is the parent's snapshot). nil until loaded.
     @State private var ownKeepMedia: Bool?
+    @State private var hasAudio = false
 
     @Environment(\.openWindow) private var openWindow
+
+    /// The per-meeting "Transcript language" choices; nil is Automatic (detect).
+    static let transcriptLanguages: [(code: String?, title: String)] = [
+        (nil, String(localized: "Automatic")), ("en", "English"), ("es", "Español"), ("fr", "Français"),
+    ]
+
+    /// Only in multilingual mode; English mode always transcribes English.
+    static func showsTranscriptLanguage(multilingual: Bool) -> Bool { multilingual }
 
     static func isForgetDisabled(for meeting: CoreMeeting) -> Bool {
         meeting.status == .recording
@@ -40,9 +49,12 @@ struct MeetingOptionsMenu: View {
         let id = meeting.id
         let ownId = meeting.ownCopyId(deviceId: appState.deviceId)
         CoreMemoryStore.accessQueue.async {
-            let n = store.meetingParts(meetingId: id)?.count ?? 1
+            let stored = store.meetingParts(meetingId: id)
+            let n = stored?.count ?? 1
+            let parts = stored ?? []
+            let audio = parts.contains { $0.audioPath.map(FileManager.default.fileExists(atPath:)) ?? false }
             let keep = ownId.flatMap { store.getMeeting(id: $0)?.keepMedia }
-            DispatchQueue.main.async { partCount = n; ownKeepMedia = keep }
+            DispatchQueue.main.async { partCount = n; ownKeepMedia = keep; hasAudio = audio }
         }
     }
 
@@ -54,6 +66,14 @@ struct MeetingOptionsMenu: View {
             if appState.canTranscribeAgain(meeting) {
                 Button("Transcribe again") {
                     appState.transcribeAgain(meeting)
+                }
+                .disabled(appState.processingMeetingId != nil)
+            }
+            if Self.showsTranscriptLanguage(multilingual: AppLanguage.multilingual()), hasAudio, meeting.status == .completed {
+                Menu("Transcript language") {
+                    ForEach(Self.transcriptLanguages, id: \.title) { option in
+                        Button(option.title) { appState.transcribeAgain(meeting, language: option.code) }
+                    }
                 }
                 .disabled(appState.processingMeetingId != nil)
             }

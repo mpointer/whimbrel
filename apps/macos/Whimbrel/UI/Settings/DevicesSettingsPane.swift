@@ -221,7 +221,7 @@ struct DevicesSettingsPane: View {
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
         } else if let lastSyncedAt = appState.settingsSyncCoordinator.lastSyncedAt {
-            Text("Settings last synced \(lastSyncedAt.formatted(.relative(presentation: .named)))")
+            Text("Settings last synced \(lastSyncedAt, format: .relative(presentation: .named))")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
         }
@@ -231,7 +231,7 @@ struct DevicesSettingsPane: View {
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
         } else if let lastSyncedAt = appState.contentSyncCoordinator.lastSyncedAt {
-            Text("Content last synced \(lastSyncedAt.formatted(.relative(presentation: .named)))")
+            Text("Content last synced \(lastSyncedAt, format: .relative(presentation: .named))")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
         }

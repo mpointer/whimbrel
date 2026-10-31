@@ -86,15 +86,15 @@ struct ActionProposalCard: View {
     private var statusChip: some View {
         switch state {
         case .unavailable:
-            WhimbrelMetadataChip(text: proposal.unavailableReason ?? "Not available yet")
+            WhimbrelMetadataChip(text: proposal.unavailableReason ?? String(localized: "Not available yet"))
         case .pendingApproval:
-            WhimbrelMetadataChip(systemImage: "clock", text: "Needs approval")
+            WhimbrelMetadataChip(systemImage: "clock", text: String(localized: "Needs approval"))
         case .inFlight:
-            WhimbrelMetadataChip(systemImage: "arrow.triangle.2.circlepath", text: "In progress")
+            WhimbrelMetadataChip(systemImage: "arrow.triangle.2.circlepath", text: String(localized: "In progress"))
         case .completed:
             WhimbrelMetadataChip(systemImage: "checkmark", text: "Completed")
         case .dismissed:
-            WhimbrelMetadataChip(text: "Dismissed")
+            WhimbrelMetadataChip(text: String(localized: "Dismissed"))
         case .failed:
             WhimbrelMetadataChip(systemImage: "exclamationmark.triangle", text: "Failed")
         }

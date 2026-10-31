@@ -18,13 +18,58 @@ pub fn profile_section(profile: &str) -> String {
     )
 }
 
-/// The profile section first, then the user's own style instructions.
-pub fn compose_instructions(custom: &str, profile: &str) -> String {
+/// Output-language names (spec §4). Exact tag first, then the base-language row.
+const LANGUAGE_NAMES: &[(&str, &str)] = &[
+    ("en-US", "American English"),
+    ("en", "American English"),
+    ("en-GB", "British English, with British spelling"),
+    ("en-CA", "Canadian English, with Canadian spelling"),
+    ("en-AU", "Australian English, with Australian spelling"),
+    ("es", "Spanish as used in the United States (neutral Latin American Spanish)"),
+    ("fr-CA", "Canadian French"),
+    ("fr", "French as used in France"),
+    ("de", "German as used in Germany, using \"Sie\""),
+    ("pt", "Brazilian Portuguese"),
+];
+
+/// The language name for a BCP 47 tag: exact match, then its base language, else `None`.
+pub fn language_name(tag: &str) -> Option<&'static str> {
+    let find = |t: &str| LANGUAGE_NAMES.iter().find(|(k, _)| *k == t).map(|(_, v)| *v);
+    find(tag).or_else(|| find(tag.split('-').next().unwrap_or(tag)))
+}
+
+/// The prompt line asking for output in `tag`'s language, or "" for an empty or unknown tag.
+pub fn language_line(tag: &str) -> String {
+    match language_name(tag) {
+        Some(name) => format!(
+            "Language: write all of your response in {name}, even if the meeting, notes or other material are in another language. Keep JSON field names, citation markers such as [1], people's names and the product name Whimbrel exactly as written."
+        ),
+        None => String::new(),
+    }
+}
+
+/// The language line and a blank line, or "" for an empty or unknown tag: the head of a
+/// prompt that does not go through `compose_instructions`.
+pub fn language_prefix(tag: &str) -> String {
+    let line = language_line(tag);
+    if line.is_empty() { line } else { format!("{line}\n\n") }
+}
+
+/// The language line, then the profile section, then the user's own style instructions,
+/// so the user's text comes last and wins. Empty parts are skipped; with `lang == ""` this
+/// is byte-identical to the two-part version.
+pub fn compose_instructions(custom: &str, profile: &str, lang: &str) -> String {
     let section = profile_section(profile);
-    match (section.is_empty(), custom.trim().is_empty()) {
+    let body = match (section.is_empty(), custom.trim().is_empty()) {
         (true, _) => custom.to_string(),
         (false, true) => section,
         (false, false) => format!("{section}\n\n{custom}"),
+    };
+    let line = language_line(lang);
+    match (line.is_empty(), body.trim().is_empty()) {
+        (true, _) => body,
+        (false, true) => line,
+        (false, false) => format!("{line}\n\n{body}"),
     }
 }
 
@@ -50,8 +95,9 @@ pub fn normalize(text: &str) -> String {
     collapsed.trim_end_matches(|c: char| c.is_ascii_punctuation() || c == '…').to_string()
 }
 
-pub fn build_suggest_prompt(meetings: &[SuggestMeeting], profile: &str, facts: &[String]) -> String {
-    let mut p = String::from(
+pub fn build_suggest_prompt(meetings: &[SuggestMeeting], profile: &str, facts: &[String], lang: &str) -> String {
+    let mut p = language_prefix(lang);
+    p.push_str(
         "You maintain a short personal profile for the user of a meeting notebook. From TODAY'S MEETING SUMMARIES below, propose up to 5 NEW one-line facts worth remembering about the user's work: people and their roles, projects and what they are, and terms or acronyms. Use ONLY what the summaries say; do not guess or invent. Skip anything already in the profile or the known facts. Each fact is one sentence of at most 200 characters.\n\nReply with ONLY a JSON object: {\"suggestions\":[{\"text\":\"...\",\"source_meeting_id\":<id from the brackets below>}]}. Use an empty list when there is nothing new.\n\n",
     );
     let profile = redact_secrets(profile.trim());
@@ -115,7 +161,7 @@ mod tests {
     fn a_blank_profile_adds_nothing() {
         assert_eq!(profile_section(""), "");
         assert_eq!(profile_section("  \n\t "), "");
-        assert_eq!(compose_instructions("be terse", "   "), "be terse");
+        assert_eq!(compose_instructions("be terse", "   ", ""), "be terse");
     }
 
     #[test]
@@ -142,11 +188,44 @@ mod tests {
 
     #[test]
     fn the_section_comes_first_and_custom_instructions_follow() {
-        let composed = compose_instructions("be terse", "Role: CFO");
+        let composed = compose_instructions("be terse", "Role: CFO", "");
         let (head, tail) = composed.split_once("\n\n").unwrap();
         assert!(head.starts_with("About the user"));
         assert_eq!(tail, "be terse");
-        assert_eq!(compose_instructions("", "Role: CFO"), profile_section("Role: CFO"));
+        assert_eq!(compose_instructions("", "Role: CFO", ""), profile_section("Role: CFO"));
+    }
+
+    #[test]
+    fn compose_instructions_empty_lang_is_byte_identical() {
+        assert_eq!(compose_instructions("", "", ""), "");
+        assert_eq!(compose_instructions("Be brief.", "", ""), "Be brief.");
+        assert_eq!(compose_instructions("", "PM at Acme", ""), profile_section("PM at Acme"));
+        assert_eq!(compose_instructions("Be brief.", "PM at Acme", ""), format!("{}\n\nBe brief.", profile_section("PM at Acme")));
+    }
+
+    #[test]
+    fn compose_instructions_puts_language_line_before_profile_and_custom() {
+        let s = compose_instructions("Answer in English.", "PM at Acme", "es-US");
+        assert!(s.starts_with("Language: write all of your response in Spanish as used in the United States (neutral Latin American Spanish),"));
+        let (l, p, c) = (s.find("Language:").unwrap(), s.find("About the user").unwrap(), s.find("Answer in English.").unwrap());
+        assert!(l < p && p < c);
+    }
+
+    #[test]
+    fn language_name_falls_back_to_base_then_none() {
+        assert_eq!(language_name("es-MX"), language_name("es-US"));
+        assert_eq!(language_name("fr-BE"), Some("French as used in France"));
+        assert_eq!(language_name("fr-CA"), Some("Canadian French"));
+        assert_eq!(language_name("de-AT"), Some("German as used in Germany, using \"Sie\""));
+        assert_eq!(language_name("pt-BR"), Some("Brazilian Portuguese"));
+        assert_eq!(language_name("en-NZ"), Some("American English"));
+        assert_eq!(language_name("it-IT"), None);
+        assert_eq!(language_line("it-IT"), "");
+    }
+
+    #[test]
+    fn language_line_exact_copy() {
+        assert_eq!(language_line("en-GB"), "Language: write all of your response in British English, with British spelling, even if the meeting, notes or other material are in another language. Keep JSON field names, citation markers such as [1], people's names and the product name Whimbrel exactly as written.");
     }
 
     #[test]
@@ -182,13 +261,30 @@ mod tests {
     #[test]
     fn the_suggest_prompt_lists_meetings_facts_and_asks_for_json_without_inventing() {
         let meetings = vec![SuggestMeeting { id: 3, title: "Pricing".into(), tldr: "Agreed Q4 launch".into(), decisions: vec!["Ship Oct 30".into()], action_items: vec![] }];
-        let p = build_suggest_prompt(&meetings, "Role: CFO", &["Falcon is the Q4 launch".into()]);
+        let p = build_suggest_prompt(&meetings, "Role: CFO", &["Falcon is the Q4 launch".into()], "");
         assert!(p.contains("[3] Pricing"));
         assert!(p.contains("Agreed Q4 launch"));
         assert!(p.contains("Falcon is the Q4 launch"));
         assert!(p.contains("Role: CFO"));
         assert!(p.contains("\"suggestions\""));
         assert!(p.to_lowercase().contains("only"), "must tell the model to use only what the summaries say");
+    }
+
+    #[test]
+    fn profile_suggestions_es_us_adds_language_line_first() {
+        let meetings = vec![SuggestMeeting { id: 3, title: "Pricing".into(), tldr: "t".into(), decisions: vec![], action_items: vec![] }];
+        let p = build_suggest_prompt(&meetings, "", &[], "es-US");
+        let at = p.find(&language_line("es-US")).expect("language line present");
+        assert!(at < p.find("You maintain a short personal profile").unwrap());
+        assert!(p.contains("Keep JSON field names"));
+    }
+
+    #[test]
+    fn profile_suggestions_empty_lang_has_no_language_line() {
+        let meetings = vec![SuggestMeeting { id: 3, title: "Pricing".into(), tldr: "t".into(), decisions: vec![], action_items: vec![] }];
+        let p = build_suggest_prompt(&meetings, "", &[], "");
+        assert!(!p.contains("Language:"));
+        assert!(p.starts_with("You maintain a short personal profile"));
     }
 
     #[test]

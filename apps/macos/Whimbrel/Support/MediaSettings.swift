@@ -99,11 +99,11 @@ final class MediaSettings: ObservableObject {
         }
         let f = components(folder)
         let d = components(dataFolder)
-        if f.starts(with: d) { return "This folder is inside Whimbrel's data folder. Choose another." }
+        if f.starts(with: d) { return String(localized: "This folder is inside Whimbrel's data folder. Choose another.") }
         let probe = folder.appendingPathComponent(".whimbrel-write-probe-\(UUID().uuidString)")
         guard FileManager.default.createFile(atPath: probe.path, contents: Data()),
               (try? FileManager.default.removeItem(at: probe)) != nil else {
-            return "Whimbrel can't write to this folder."
+            return String(localized: "Whimbrel can't write to this folder.")
         }
         return nil
     }

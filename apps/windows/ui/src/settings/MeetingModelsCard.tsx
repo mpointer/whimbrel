@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { meetingModelsDownloadStart, meetingModelsStatus, modelDownloadCancel, modelDownloadPoll } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { DownloadView, MeetingModelsStatus } from "../generated/types";
+import { t } from "../l10n";
 import { meetingModelsState, missingList } from "./meetingModels";
 import { percent } from "./searchModel";
 
@@ -45,29 +46,31 @@ export function MeetingModelsCard() {
   const start = () => {
     setError(null);
     meetingModelsDownloadStart()
-      .then((id) => setJob({ jobId: id, fraction: 0, status: "Starting…", done: false, cancelled: false }))
+      .then((id) => setJob({ jobId: id, fraction: 0, status: t("Starting…"), done: false, cancelled: false }))
       .catch((e: unknown) => setError(message(e)));
   };
 
-  if (!status) return <section className="card about">{error ? <p role="alert">{error}</p> : "Loading…"}</section>;
+  if (!status) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
   const state = meetingModelsState(status, job);
 
   return (
     <section className="card about" aria-labelledby="meeting-models-heading">
       <h2 id="meeting-models-heading" className="section-label">
-        Meeting models
+        {t("Meeting models")}
       </h2>
-      {state === "ready" && <p role="status">Transcription and speaker models are installed.</p>}
+      {state === "ready" && <p role="status">{t("Transcription and speaker models are installed.")}</p>}
       {(state === "missing" || state === "failed") && (
         <>
           <p>
-            Recording meetings needs {missingList(status.missing)} (about 110 MB in all), downloaded once. Meetings are
-            transcribed on this PC; audio never leaves it.
+            {t(
+              "Recording meetings needs {models} (about 110 MB in all), downloaded once. Meetings are transcribed on this PC; audio never leaves it.",
+              { models: missingList(status.missing) },
+            )}
           </p>
           {job?.error && <p role="alert">{job.error}</p>}
           <div className="toolbar">
             <button className="mode mode--active" onClick={start}>
-              {state === "failed" ? "Try again" : "Download meeting models"}
+              {state === "failed" ? t("Try again") : t("Download meeting models")}
             </button>
           </div>
         </>
@@ -80,7 +83,7 @@ export function MeetingModelsCard() {
           <progress className="progress" value={job.fraction} max={1} />
           <div className="toolbar">
             <button className="mode" onClick={() => modelDownloadCancel(job.jobId)}>
-              Cancel
+              {t("Cancel")}
             </button>
           </div>
         </>

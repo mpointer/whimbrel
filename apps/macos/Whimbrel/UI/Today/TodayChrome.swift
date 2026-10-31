@@ -147,7 +147,7 @@ struct TodayLeftovers: View {
             if let composer = slots.composer { composer }
         case .upNext:
             if let next = TodayRows.upNext(content) {
-                block("Up next") {
+                block(String(localized: "Up next")) {
                     HStack {
                         row(next.timeText, next.title)
                         if next.showsStart {
@@ -178,7 +178,7 @@ struct TodayLeftovers: View {
                 ForEach(TodayRows.earlier(content), id: \.id) { meetingRow($0) }
             }
         case .threads:
-            block("Open loops") {
+            block(String(localized: "Open loops")) {
                 ForEach(content.attentionThreads) { thread in
                     Button { actions.openThread(thread.id) } label: {
                         Text(thread.subject ?? thread.lastMessageFrom)
@@ -190,7 +190,7 @@ struct TodayLeftovers: View {
                 }
             }
         case .followups:
-            block("Follow-ups") {
+            block(String(localized: "Follow-ups")) {
                 ForEach(content.followups) { TodayFollowupRow(followup: $0, actions: actions) }
             }
         case .recap:

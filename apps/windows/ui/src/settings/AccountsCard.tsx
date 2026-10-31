@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { calendarAccounts, calendarConnect, calendarDisconnect, calendarSyncNow } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { CalendarAccounts } from "../generated/types";
+import { t, useL10n } from "../l10n";
 import { dateTimeLabel, timeLabel } from "../library/rows";
 
 function message(e: unknown): string {
@@ -13,6 +14,7 @@ export function AccountsCard() {
   const [accounts, setAccounts] = useState<CalendarAccounts | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { locale } = useL10n();
 
   const load = useCallback(
     () =>
@@ -35,18 +37,18 @@ export function AccountsCard() {
       .finally(() => setBusy(false));
   };
 
-  if (!accounts) return <section className="card about">{error ? <p role="alert">{error}</p> : "Loading…"}</section>;
+  if (!accounts) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
 
   return (
     <section className="card about" aria-labelledby="accounts-heading">
       <h2 id="accounts-heading" className="section-label">
-        Connected accounts
+        {t("Connected accounts")}
       </h2>
       {accounts.blocked ? (
         <p role="alert">{accounts.blocked}</p>
       ) : (
         <p className="muted">
-          A connected Google Calendar lets Whimbrel offer to record a meeting just before it starts.
+          {t("A connected Google Calendar lets Whimbrel offer to record a meeting just before it starts.")}
         </p>
       )}
       {accounts.emails.length > 0 && (
@@ -55,7 +57,7 @@ export function AccountsCard() {
             <li key={email} className="field-row">
               <span>{email}</span>
               <button className="mode" disabled={busy} onClick={() => run(() => calendarDisconnect(email))}>
-                Disconnect
+                {t("Disconnect")}
               </button>
             </li>
           ))}
@@ -63,23 +65,29 @@ export function AccountsCard() {
       )}
       <div className="toolbar">
         <button className="mode mode--active" disabled={busy || accounts.blocked != null} onClick={() => run(calendarConnect)}>
-          {accounts.emails.length > 0 ? "Connect another calendar" : "Connect Google Calendar"}
+          {accounts.emails.length > 0 ? t("Connect another calendar") : t("Connect Google Calendar")}
         </button>
         {accounts.emails.length > 0 && (
           <button className="mode" disabled={busy} onClick={() => run(calendarSyncNow)}>
-            Sync now
+            {t("Sync now")}
           </button>
         )}
       </div>
       {accounts.emails.length > 0 && (
         <p className="muted small" role="status">
           {accounts.syncError
-            ? `Last sync failed: ${accounts.syncError}`
+            ? t("Last sync failed: {error}", { error: accounts.syncError })
             : [
-                accounts.lastSyncedUnixMs ? `Synced ${timeLabel(accounts.lastSyncedUnixMs)}` : "Not synced yet",
+                accounts.lastSyncedUnixMs
+                  ? t("Synced {time}", { time: timeLabel(accounts.lastSyncedUnixMs, locale) })
+                  : t("Not synced yet"),
                 accounts.upcoming === 0
-                  ? "nothing coming up to record"
-                  : `${accounts.upcoming} coming up · next: ${accounts.nextMeeting} at ${dateTimeLabel(accounts.nextStartUnixMs!)}`,
+                  ? t("nothing coming up to record")
+                  : t("{count} coming up · next: {meeting} at {time}", {
+                      count: accounts.upcoming,
+                      meeting: String(accounts.nextMeeting),
+                      time: dateTimeLabel(accounts.nextStartUnixMs!, new Date(), locale),
+                    }),
               ].join(" · ")}
         </p>
       )}

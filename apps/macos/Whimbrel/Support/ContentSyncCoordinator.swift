@@ -73,15 +73,15 @@ final class ContentSyncCoordinator: ObservableObject {
         log.log("syncNow: starting (status=\(String(describing: self.syncState.status), privacy: .public))")
         await syncState.renewIfDue()
         guard case let .ready(tursoToken, tursoDatabaseUrl) = syncState.status else {
-            lastSyncError = "Not enrolled in sync yet."
+            lastSyncError = String(localized: "Not enrolled in sync yet.")
             return
         }
         guard let groupKeyBase64 = try? SyncKeychain.loadGroupKey() else {
-            lastSyncError = "No group key available yet."
+            lastSyncError = String(localized: "No group key available yet.")
             return
         }
         guard let coreStore else {
-            lastSyncError = "Local store is unavailable."
+            lastSyncError = String(localized: "Local store is unavailable.")
             return
         }
 
@@ -113,7 +113,7 @@ final class ContentSyncCoordinator: ObservableObject {
             consecutiveFailures += 1
             let cause = CoreMemoryStore.lastSyncContentError() ?? "unknown"
             log.error("syncNow: failed (\(self.consecutiveFailures, privacy: .public) in a row): \(cause, privacy: .public)")
-            lastSyncError = "Content sync failed. Will retry automatically."
+            lastSyncError = String(localized: "Content sync failed. Will retry automatically.")
             await syncState.renewIfDue(afterFailure: true)
         }
     }

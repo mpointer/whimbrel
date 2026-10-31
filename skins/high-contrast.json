@@ -1,25 +1,123 @@
 {
-  "id": "high-contrast",
-  "name": "High Contrast",
   "author": "Whimbrel",
-  "palettes": ["high-contrast"],
-  "typography": { "display": "New York/semibold", "body": "SF Pro/regular", "numerals": "SF Pro/regular", "label": "SF Pro/regular", "caps": "upper" },
-  "shape": { "radius": 12, "border": "solid", "borderWidth": 1, "density": "regular" },
-  "icons": { "today": "sun.max", "meetings": "person.2", "routines": "bolt", "settings": "gearshape", "ask": "arrow.up.circle.fill", "person": "person", "time": "clock", "prep": "doc.text", "recap": "text.alignleft" },
-  "decoration": { "headerBand": "none", "dividers": "none", "texture": "none", "imagery": [] },
+  "decoration": {
+    "dividers": "none",
+    "headerBand": "none",
+    "imagery": [],
+    "texture": "none"
+  },
+  "icons": {
+    "ask": "arrow.up.circle.fill",
+    "meetings": "person.2",
+    "person": "person",
+    "prep": "doc.text",
+    "recap": "text.alignleft",
+    "routines": "bolt",
+    "settings": "gearshape",
+    "time": "clock",
+    "today": "sun.max"
+  },
+  "id": "high-contrast",
+  "motion": "none",
+  "name": "High Contrast",
+  "palettes": [
+    "high-contrast"
+  ],
+  "shape": {
+    "border": "solid",
+    "borderWidth": 1,
+    "density": "regular",
+    "radius": 12
+  },
+  "today": {
+    "archetype": "standard",
+    "options": {}
+  },
+  "typography": {
+    "body": "SF Pro/regular",
+    "caps": "upper",
+    "display": "New York/semibold",
+    "label": "SF Pro/regular",
+    "numerals": "SF Pro/regular"
+  },
   "voice": {
-    "greetingMorning": "Good morning, {name}",
-    "greetingAfternoon": "Good afternoon, {name}",
-    "greetingEvening": "Good evening, {name}",
-    "upNextHeader": "Up next",
-    "upcomingHeader": "Today",
+    "askPlaceholder": "Ask Whimbrel about your meetings",
     "earlierHeader": "Earlier",
-    "recapHeader": "Daily recap",
     "emptyDay": "No meetings yet",
     "emptyEarlier": "Nothing yet today",
-    "askPlaceholder": "Ask Whimbrel about your meetings",
-    "tagline": "Your meetings, remembered."
+    "greetingAfternoon": "Good afternoon, {name}",
+    "greetingEvening": "Good evening, {name}",
+    "greetingMorning": "Good morning, {name}",
+    "recapHeader": "Daily recap",
+    "tagline": "Your meetings, remembered.",
+    "upNextHeader": "Up next",
+    "upcomingHeader": "Today"
   },
-  "today": { "archetype": "standard", "options": {} },
-  "motion": "none"
+  "voiceLocalized": {
+    "de": {
+      "askPlaceholder": "Fragen Sie Whimbrel zu Ihren Terminen",
+      "earlierHeader": "Früher",
+      "emptyDay": "Noch keine Termine",
+      "emptyEarlier": "Heute noch nichts",
+      "greetingAfternoon": "Guten Tag, {name}",
+      "greetingEvening": "Guten Abend, {name}",
+      "greetingMorning": "Guten Morgen, {name}",
+      "recapHeader": "Recap des Tages",
+      "tagline": "Ihre Meetings, nie vergessen.",
+      "upNextHeader": "Als Nächstes",
+      "upcomingHeader": "Today"
+    },
+    "es": {
+      "askPlaceholder": "Pregunta a Whimbrel sobre tus reuniones",
+      "earlierHeader": "Antes",
+      "emptyDay": "Aún no hay reuniones",
+      "emptyEarlier": "Aún no hay nada hoy",
+      "greetingAfternoon": "Buenas tardes, {name}",
+      "greetingEvening": "Buenas noches, {name}",
+      "greetingMorning": "Buenos días, {name}",
+      "recapHeader": "Recap diario",
+      "tagline": "Tus reuniones, recordadas.",
+      "upNextHeader": "A continuación",
+      "upcomingHeader": "Today"
+    },
+    "fr": {
+      "askPlaceholder": "Interrogez Whimbrel sur vos réunions",
+      "earlierHeader": "Plus tôt",
+      "emptyDay": "Aucune réunion pour l'instant",
+      "emptyEarlier": "Rien pour le moment aujourd'hui",
+      "greetingAfternoon": "Bon après-midi, {name}",
+      "greetingEvening": "Bonsoir, {name}",
+      "greetingMorning": "Bonjour, {name}",
+      "recapHeader": "Recap du jour",
+      "tagline": "Vos réunions, en mémoire.",
+      "upNextHeader": "À suivre",
+      "upcomingHeader": "Today"
+    },
+    "fr-CA": {
+      "askPlaceholder": "Interrogez Whimbrel sur vos réunions",
+      "earlierHeader": "Plus tôt",
+      "emptyDay": "Aucune réunion pour l'instant",
+      "emptyEarlier": "Rien encore aujourd'hui",
+      "greetingAfternoon": "Bon après-midi, {name}",
+      "greetingEvening": "Bonsoir, {name}",
+      "greetingMorning": "Bonjour, {name}",
+      "recapHeader": "Recap quotidien",
+      "tagline": "Vos réunions, mémorisées.",
+      "upNextHeader": "À suivre",
+      "upcomingHeader": "Today"
+    },
+    "pt": {
+      "askPlaceholder": "Pergunte ao Whimbrel sobre reuniões",
+      "earlierHeader": "Anteriores",
+      "emptyDay": "Nenhuma reunião ainda",
+      "emptyEarlier": "Nada ainda hoje",
+      "greetingAfternoon": "Boa tarde, {name}",
+      "greetingEvening": "Boa noite, {name}",
+      "greetingMorning": "Bom dia, {name}",
+      "recapHeader": "Recap diário",
+      "tagline": "Suas reuniões, lembradas.",
+      "upNextHeader": "A seguir",
+      "upcomingHeader": "Today"
+    }
+  }
 }

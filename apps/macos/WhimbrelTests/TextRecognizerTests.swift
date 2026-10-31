@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreText
+import Vision
 import XCTest
 @testable import Whimbrel
 
@@ -21,5 +22,12 @@ final class TextRecognizerTests: XCTestCase {
 
         let image = try XCTUnwrap(ctx.makeImage())
         XCTAssertTrue(TextRecognizer.recognize(image)?.contains("Quarterly Roadmap") == true)
+    }
+
+    func test_request_detects_language() {
+        let request = TextRecognizer.makeRequest()
+        XCTAssertTrue(request.automaticallyDetectsLanguage)
+        XCTAssertEqual(request.recognitionLevel, VNRequestTextRecognitionLevel.accurate)
+        XCTAssertTrue(request.usesLanguageCorrection)
     }
 }

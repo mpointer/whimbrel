@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { skinDelete, skinExport, skinImport, skinRename } from "../api";
 import { describeError, isCommandError } from "../errors";
 import { chooseSkin, currentSelection, installedSkins, reloadSkins, resolveSelection, skinRevision, subscribeSkin } from "../skin";
+import { useL10n, type L10n } from "../l10n";
 import { APPEARANCES, resolveMode, type Appearance } from "../theme";
 import { SkinChat } from "./SkinChat";
 import {
@@ -11,7 +12,7 @@ import {
   cardElementId,
   deletePrompt,
   galleryState,
-  GALLERY_FOOTNOTE,
+  galleryFootnote,
   lockedCaption,
   pickCard,
   pickPalette,
@@ -29,6 +30,7 @@ function scrollToCard(elementId: string) {
 /** The "Yours" mark and the card's menu. Renaming and the delete confirmation happen right on the card. */
 function YoursRow(props: { card: Card; enabled: boolean }) {
   const { card, enabled } = props;
+  const { t } = useL10n();
   const [mode, setMode] = useState<"idle" | "menu" | "rename" | "delete">("idle");
   const [name, setName] = useState(card.name);
   const [failure, setFailure] = useState<string | null>(null);
@@ -69,12 +71,12 @@ function YoursRow(props: { card: Card; enabled: boolean }) {
           rename();
         }}
       >
-        <input className="input grow" aria-label={`New name for ${card.name}`} value={name} maxLength={40} onChange={(e) => setName(e.target.value)} autoFocus />
+        <input className="input grow" aria-label={t("New name for {name}", { name: card.name })} value={name} maxLength={40} onChange={(e) => setName(e.target.value)} autoFocus />
         <button type="submit" className="skin-action mode mode--active" disabled={!name.trim()}>
-          Save
+          {t("Save")}
         </button>
         <button type="button" className="skin-action mode" onClick={() => setMode("idle")}>
-          Cancel
+          {t("Cancel")}
         </button>
       </form>
     );
@@ -85,10 +87,10 @@ function YoursRow(props: { card: Card; enabled: boolean }) {
         <p className="small">{deletePrompt(card.name)}</p>
         <div className="field-row">
           <button type="button" className="skin-action mode mode--active" onClick={remove}>
-            Delete
+            {t("Delete")}
           </button>
           <button type="button" className="skin-action mode" onClick={() => setMode("idle")}>
-            Cancel
+            {t("Cancel")}
           </button>
         </div>
       </div>
@@ -97,11 +99,11 @@ function YoursRow(props: { card: Card; enabled: boolean }) {
   return (
     <div className="skin-yours-row stack-sm">
       <div className="field-row">
-        <span className="skin-yours">Yours</span>
+        <span className="skin-yours">{t("Yours")}</span>
         <button
           type="button"
           className="skin-options"
-          aria-label={`${card.name} options`}
+          aria-label={t("{name} options", { name: card.name })}
           aria-expanded={mode === "menu"}
           onClick={() => setMode(mode === "menu" ? "idle" : "menu")}
         >
@@ -109,15 +111,15 @@ function YoursRow(props: { card: Card; enabled: boolean }) {
         </button>
       </div>
       {mode === "menu" && (
-        <div className="field-row" role="group" aria-label={`${card.name} options`}>
+        <div className="field-row" role="group" aria-label={t("{name} options", { name: card.name })}>
           <button type="button" className="skin-action mode" disabled={!enabled} onClick={() => start("rename")}>
-            Rename…
+            {t("Rename…")}
           </button>
           <button type="button" className="skin-action mode" disabled={!enabled} onClick={exportSkin}>
-            Export…
+            {t("Export…")}
           </button>
           <button type="button" className="skin-action mode" disabled={!enabled} onClick={() => start("delete")}>
-            Delete…
+            {t("Delete…")}
           </button>
         </div>
       )}
@@ -126,7 +128,8 @@ function YoursRow(props: { card: Card; enabled: boolean }) {
   );
 }
 
-const APPEARANCE_LABELS: Record<Appearance, string> = { system: "System", light: "Light", dark: "Dark" };
+/** Called at render with the window's t, so the labels follow the language. */
+const appearanceLabels = (t: L10n["t"]): Record<Appearance, string> => ({ system: t("System"), light: t("Light"), dark: t("Dark") });
 
 const DARK_QUERY = "(prefers-color-scheme: dark)";
 
@@ -155,6 +158,7 @@ function Swatches({ colors }: { colors: string[] }) {
 /** Settings → Appearance: System / Light / Dark, and a card per installed skin; the selected one offers its
  *  palettes. Kept on this PC only. */
 export function SkinGallery() {
+  const { t } = useL10n();
   useSyncExternalStore(subscribeSkin, skinRevision, skinRevision);
   const systemDark = useSystemDark();
   const skins = installedSkins();
@@ -162,6 +166,7 @@ export function SkinGallery() {
   const cards = galleryState(skins, selection);
   const { palette } = resolveSelection(skins, selection);
   const caption = lockedCaption(palette);
+  const labels = appearanceLabels(t);
   const mode = resolveMode(selection.appearance, systemDark);
   const pick = (next: typeof selection) => chooseSkin(next);
   const [turnRunning, setTurnRunning] = useState(false);
@@ -180,9 +185,9 @@ export function SkinGallery() {
   return (
     <section className="card" aria-labelledby="appearance-heading">
       <h2 id="appearance-heading" className="section-label">
-        Appearance
+        {t("Appearance")}
       </h2>
-      <div className="mode-picker" role="group" aria-label="Appearance">
+      <div className="mode-picker" role="group" aria-label={t("Appearance")}>
         {APPEARANCES.map((appearance) => (
           <button
             key={appearance}
@@ -191,12 +196,12 @@ export function SkinGallery() {
             disabled={caption !== null}
             onClick={() => pick({ ...selection, appearance })}
           >
-            {APPEARANCE_LABELS[appearance]}
+            {labels[appearance]}
           </button>
         ))}
       </div>
       {caption && <p className="muted small">{caption}</p>}
-      <h3 className="gallery-heading muted small">Skin</h3>
+      <h3 className="gallery-heading muted small">{t("Skin")}</h3>
       <div className="skin-gallery">
         {cards.map((card: Card) => (
           <div key={card.id} id={cardElementId(card.id)} className={card.selected ? "skin-card skin-card--selected" : "skin-card"}>
@@ -211,7 +216,7 @@ export function SkinGallery() {
             </button>
             {card.yours && <YoursRow card={card} enabled={actionsEnabled(turnRunning)} />}
             {card.selected && card.palettes.length > 1 && (
-              <div className="skin-palettes" role="group" aria-label={`${card.name} palettes`}>
+              <div className="skin-palettes" role="group" aria-label={t("{name} palettes", { name: card.name })}>
                 {card.palettes.map((p) => {
                   const choice = skins.find((s) => s.skin.id === card.id)?.palettes.find((x) => x.id === p.id);
                   return (
@@ -233,9 +238,9 @@ export function SkinGallery() {
         ))}
       </div>
       <div className="field-row skin-gallery-footer">
-        <p className="muted small grow">{GALLERY_FOOTNOTE}</p>
+        <p className="muted small grow">{galleryFootnote()}</p>
         <button type="button" className="skin-action mode" disabled={!actionsEnabled(turnRunning)} onClick={importSkin}>
-          Import Skin…
+          {t("Import Skin…")}
         </button>
       </div>
       {importFailure && <p className="muted small">{importFailure}</p>}

@@ -15,10 +15,15 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playback, mode: .spokenAudio)
         try? session.setActive(true)
-        synth.speak(AVSpeechUtterance(string: text))
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: Self.voiceLanguage(outputTag: AppLanguage.currentOutputTag()))
+        synth.speak(utterance)
     }
 
     func stop() { synth.stopSpeaking(at: .immediate) }
+
+    /// The voice speaks the language answers are written in; "" (English) is en-US.
+    static func voiceLanguage(outputTag: String) -> String { outputTag.isEmpty ? "en-US" : outputTag }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) { release() }
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) { release() }

@@ -28,15 +28,15 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .general: return "General"
-        case .profile: return "Profile"
-        case .capture: return "Capture & Privacy"
-        case .meetings: return "Meetings"
-        case .ai: return "AI"
-        case .devices: return "Sync & Devices"
-        case .connectors: return "Connectors"
-        case .automations: return "Automations"
-        case .diagnostics: return "Diagnostics"
+        case .general: return String(localized: "General")
+        case .profile: return String(localized: "Profile")
+        case .capture: return String(localized: "Capture & Privacy")
+        case .meetings: return String(localized: "Meetings")
+        case .ai: return String(localized: "AI")
+        case .devices: return String(localized: "Sync & Devices")
+        case .connectors: return String(localized: "Connectors")
+        case .automations: return String(localized: "Automations")
+        case .diagnostics: return String(localized: "Diagnostics")
         }
     }
 
