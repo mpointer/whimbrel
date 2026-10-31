@@ -105,7 +105,7 @@ struct StandardTodayLayout: View {
                     VStack(alignment: .leading, spacing: Spacing.md) {
                         ForEach(events, id: \.id) { eventRow($0, isNext: $0.id == events.first?.id, now: now) }
                         if !events.isEmpty, !agenda.pastToday.isEmpty {
-                            WhimbrelSectionLabel(text: "Earlier today")
+                            WhimbrelSectionLabel(text: String(localized: "Earlier today"))
                         }
                         ForEach(agenda.pastToday, id: \.self) { recordedRow($0) }
                     }
@@ -131,7 +131,7 @@ struct StandardTodayLayout: View {
                             .font(.whimbrelBody(.body))
                             .foregroundStyle(Color.whimbrelTextPrimary)
                             .lineLimit(2)
-                        let subtitle = transcribing ? "Transcribing…" : MeetingRowText.subtitle(for: meeting)
+                        let subtitle = transcribing ? String(localized: "Transcribing…") : MeetingRowText.subtitle(for: meeting)
                         if !subtitle.isEmpty {
                             Text(subtitle)
                                 .font(.whimbrelBody(.subheadline))
@@ -221,9 +221,9 @@ struct StandardTodayLayout: View {
             let transcribing = content.processingMeetingId == id
             MeetingRowView(
                 title: meeting.title,
-                subtitle: transcribing ? "Transcribing…" : MeetingRowText.subtitle(for: meeting),
+                subtitle: transcribing ? String(localized: "Transcribing…") : MeetingRowText.subtitle(for: meeting),
                 time: MeetingRowText.time(meeting.startUnixMs),
-                actionLabel: "Open",
+                actionLabel: String(localized: "Open"),
                 action: { actions.openMeeting(id) }
             )
         }
@@ -275,7 +275,7 @@ struct StandardTodayLayout: View {
 
     private var attentionThreadsSection: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            WhimbrelSectionLabel(text: "Open loops")
+            WhimbrelSectionLabel(text: String(localized: "Open loops"))
             ForEach(content.attentionThreads) { thread in
                 Button {
                     actions.openThread(thread.id)
@@ -294,7 +294,7 @@ struct StandardTodayLayout: View {
 
     private var followupsSection: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            WhimbrelSectionLabel(text: "Follow-ups")
+            WhimbrelSectionLabel(text: String(localized: "Follow-ups"))
             ForEach(content.followups) { followup in
                 TodayFollowupRow(followup: followup, actions: actions)
             }

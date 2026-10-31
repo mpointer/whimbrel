@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { retentionPreview, retentionRunNow, retentionSettings } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { RetentionPreview, RetentionSettings } from "../generated/types";
+import { t } from "../l10n";
 import { noticeLines, nothingToDelete } from "./retentionModel";
 
 function message(e: unknown): string {
@@ -38,7 +39,7 @@ export function RetentionNotice({ onChangeSettings }: { onChangeSettings: () => 
   if (!state) {
     return error ? (
       <section className="card notice">
-        <p role="alert">Whimbrel could not work out what its daily cleanup would delete: {error}</p>
+        <p role="alert">{t("Whimbrel could not work out what its daily cleanup would delete: {error}", { error })}</p>
       </section>
     ) : null;
   }
@@ -47,20 +48,21 @@ export function RetentionNotice({ onChangeSettings }: { onChangeSettings: () => 
   return (
     <section className="card notice" aria-labelledby="retention-notice-heading" role="region">
       <h2 id="retention-notice-heading" className="section-label">
-        Before Whimbrel deletes anything
+        {t("Before Whimbrel deletes anything")}
       </h2>
       <p>
-        Whimbrel keeps data for a while and then deletes it, once a day. The daily sweep is waiting for your answer; here
-        is what it would remove under the current settings.
+        {t(
+          "Whimbrel keeps data for a while and then deletes it, once a day. The daily sweep is waiting for your answer; here is what it would remove under the current settings.",
+        )}
       </p>
       <ul>
         {lines.map((line) => (
           <li key={line.label}>
-            {line.label}: <strong>{line.count}</strong>
+            {t("{label}:", { label: line.label })} <strong>{line.count}</strong>
           </li>
         ))}
       </ul>
-      {nothingToDelete(state.preview) && <p className="muted small">Nothing has aged out yet, so this first sweep removes nothing.</p>}
+      {nothingToDelete(state.preview) && <p className="muted small">{t("Nothing has aged out yet, so this first sweep removes nothing.")}</p>}
       <div className="toolbar">
         <button
           className="mode"
@@ -74,10 +76,10 @@ export function RetentionNotice({ onChangeSettings }: { onChangeSettings: () => 
               .finally(() => setBusy(false));
           }}
         >
-          Keep current settings
+          {t("Keep current settings")}
         </button>
         <button className="mode" disabled={busy} onClick={onChangeSettings}>
-          Change settings…
+          {t("Change settings…")}
         </button>
       </div>
       {error && <p role="alert">{error}</p>}

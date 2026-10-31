@@ -364,6 +364,7 @@ fn link_check() {
         whisper_model_path: PathBuf::from("w"),
         segmentation_model_path: PathBuf::from("s"),
         embedding_model_path: PathBuf::from("e"),
+        whisper_multilingual_path: None,
     });
     println!("api:        {} model specs", specs.len());
 
@@ -1023,6 +1024,7 @@ fn cmd_models(dir: Option<PathBuf>) -> Result<(), String> {
         whisper_model_path: dir.join("ggml-tiny.en.bin"),
         segmentation_model_path: dir.join("pyannote-segmentation-3-0.onnx"),
         embedding_model_path: dir.join("wespeaker_en_voxceleb_resnet34_LM.onnx"),
+        whisper_multilingual_path: None,
     };
     let job = api::models::download_all_start(&dest);
     let mut last = String::new();

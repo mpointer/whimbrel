@@ -98,7 +98,7 @@ final class EnrollmentModel: ObservableObject, SyncCredentialSource {
         self.backend = backend
         self.sleep = sleep
         if backend == nil {
-            status = .notConfigured(configError ?? "Google sign-in is not configured in this build.")
+            status = .notConfigured(configError ?? String(localized: "Google sign-in is not configured in this build."))
         } else if (try? SyncKeychain.loadGroupKey()) != nil, (try? SyncKeychain.loadDeviceSecretKey()) != nil {
             // Approved before: stay approved offline; `resume()` fetches a fresh token.
             status = .approved
@@ -383,14 +383,15 @@ final class EnrollmentModel: ObservableObject, SyncCredentialSource {
 
     /// The waitlist's checkboxes, in order, with the Worker's exact `wants` strings (same as the Mac).
     static let waitlistOptions: [(label: String, want: String)] = [
-        ("More devices", "more_devices"),
-        ("Routines that run while my computer is closed", "routines_while_closed"),
-        ("Notifications on my phone", "phone_notifications"),
-        ("Backups", "backups"),
+        (String(localized: "More devices"), "more_devices"),
+        (String(localized: "Routines that run while my computer is closed"), "routines_while_closed"),
+        (String(localized: "Notifications on my phone"), "phone_notifications"),
+        (String(localized: "Backups"), "backups"),
     ]
 
     static func limitMessage(holders: [LimitHolder]) -> String {
-        "Whimbrel's free sync includes one computer and one phone. \(holders.first?.name ?? "Your other phone") is your synced phone."
+        let phone = holders.first?.name ?? String(localized: "Your other phone")
+        return String(localized: "Whimbrel's free sync includes one computer and one phone. \(phone) is your synced phone.")
     }
 
     /// "Use this phone instead": becomes a pending swap for `holder`, approved by a computer
@@ -458,12 +459,12 @@ final class EnrollmentModel: ObservableObject, SyncCredentialSource {
             return message
         }
         switch error {
-        case GoogleSignInError.notSignedIn: return "You're not signed in. Sign in with Google again."
-        case GoogleSignInError.failed: return "Couldn't complete Google sign-in. Try again."
-        case SyncKeychainError.readFailed, SyncKeychainError.writeFailed: return "Couldn't access the Keychain. Try again."
+        case GoogleSignInError.notSignedIn: return String(localized: "You're not signed in. Sign in with Google again.")
+        case GoogleSignInError.failed: return String(localized: "Couldn't complete Google sign-in. Try again.")
+        case SyncKeychainError.readFailed, SyncKeychainError.writeFailed: return String(localized: "Couldn't access the Keychain. Try again.")
         case SyncStateError.cryptoFailed: return "A local encryption operation failed. Try again."
-        case is URLError: return "Couldn't reach the server. Check your connection and try again."
-        default: return "Something went wrong. Try again."
+        case is URLError: return String(localized: "Couldn't reach the server. Check your connection and try again.")
+        default: return String(localized: "Something went wrong. Try again.")
         }
     }
 }
@@ -503,12 +504,12 @@ enum EnrollmentConfig {
     /// The live model, or a `.notConfigured` one with the reason.
     @MainActor
     static func makeModel() -> EnrollmentModel {
-        let notConfigured = "Google sign-in is not configured in this build. Set GOOGLE_IOS_CLIENT_ID in apps/mobile/ios/Secrets.xcconfig."
+        let notConfigured = String(localized: "Google sign-in is not configured in this build. Set GOOGLE_IOS_CLIENT_ID in apps/mobile/ios/Secrets.xcconfig.")
         guard let clientId = try? SyncConfig.googleOAuthClientId(), isUsableClientId(clientId) else {
             return EnrollmentModel(backend: nil, configError: notConfigured)
         }
         guard let baseURL = try? SyncConfig.workerBaseURL() else {
-            return EnrollmentModel(backend: nil, configError: "The sync server URL is not configured in this build.")
+            return EnrollmentModel(backend: nil, configError: String(localized: "The sync server URL is not configured in this build."))
         }
         let google = GoogleSignIn(clientId: clientId)
         clearStaleSecretsOnFirstLaunch(signOutGoogle: google.signOut)

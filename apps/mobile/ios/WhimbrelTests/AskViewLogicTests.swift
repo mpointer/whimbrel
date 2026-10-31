@@ -55,3 +55,11 @@ final class AskViewLogicTests: XCTestCase {
         XCTAssertFalse(RootView.shouldStopAsk(old: 2, new: 3))
     }
 }
+
+final class ReadAloudTests: XCTestCase {
+    func test_voice_language_follows_output_tag() {
+        XCTAssertEqual(ReadAloud.voiceLanguage(outputTag: ""), "en-US")
+        XCTAssertEqual(ReadAloud.voiceLanguage(outputTag: "es-US"), "es-US")
+        XCTAssertEqual(ReadAloud.voiceLanguage(outputTag: AppLanguage.outputTag(uiTag: "fr-CA", writeIn: "", multilingual: false)), "fr-CA")
+    }
+}

@@ -74,6 +74,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::retention::RetentionView>();
     generator.subschema_for::<crate::retention::RetentionPreview>();
     generator.subschema_for::<super::general::GeneralSettings>();
+    generator.subschema_for::<super::language::LanguageSettings>();
     generator.subschema_for::<super::prep::NextMeetingView>();
     generator.subschema_for::<super::prep::PrepBriefView>();
     generator.subschema_for::<super::prep::PrepAttendee>();

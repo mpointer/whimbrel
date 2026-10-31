@@ -1,25 +1,127 @@
 {
-  "id": "game-day",
-  "name": "Game Day",
   "author": "Whimbrel",
-  "palettes": ["navy-red", "black-gold", "green-white", "purple-gold", "orange-blue"],
-  "typography": { "display": "Avenir Next/heavy", "body": "Avenir Next/regular", "numerals": "Helvetica Neue/bold", "label": "Avenir Next/semibold", "caps": "upper" },
-  "shape": { "radius": 10, "border": "solid", "borderWidth": 2, "density": "regular" },
-  "icons": { "today": "sportscourt", "meetings": "person.2", "routines": "bolt", "settings": "gearshape", "ask": "arrow.up", "person": "person", "time": "stopwatch", "prep": "doc.text", "recap": "text.alignleft" },
-  "decoration": { "headerBand": "stripes-diagonal", "dividers": "chalk", "texture": "none", "imagery": [] },
+  "decoration": {
+    "dividers": "chalk",
+    "headerBand": "stripes-diagonal",
+    "imagery": [],
+    "texture": "none"
+  },
+  "icons": {
+    "ask": "arrow.up",
+    "meetings": "person.2",
+    "person": "person",
+    "prep": "doc.text",
+    "recap": "text.alignleft",
+    "routines": "bolt",
+    "settings": "gearshape",
+    "time": "stopwatch",
+    "today": "sportscourt"
+  },
+  "id": "game-day",
+  "motion": "none",
+  "name": "Game Day",
+  "palettes": [
+    "navy-red",
+    "black-gold",
+    "green-white",
+    "purple-gold",
+    "orange-blue"
+  ],
+  "shape": {
+    "border": "solid",
+    "borderWidth": 2,
+    "density": "regular",
+    "radius": 10
+  },
+  "today": {
+    "archetype": "field",
+    "options": {}
+  },
+  "typography": {
+    "body": "Avenir Next/regular",
+    "caps": "upper",
+    "display": "Avenir Next/heavy",
+    "label": "Avenir Next/semibold",
+    "numerals": "Helvetica Neue/bold"
+  },
   "voice": {
-    "greetingMorning": "Game day, {name}.",
-    "greetingAfternoon": "Second half, {name}.",
-    "greetingEvening": "Full time, {name}.",
-    "upNextHeader": "Next up",
-    "upcomingHeader": "Fixtures",
+    "askPlaceholder": "Ask the coach…",
     "earlierHeader": "Results",
-    "recapHeader": "Match report",
     "emptyDay": "Rest day",
     "emptyEarlier": "No results yet",
-    "askPlaceholder": "Ask the coach…",
-    "tagline": "Every day is a match."
+    "greetingAfternoon": "Second half, {name}.",
+    "greetingEvening": "Full time, {name}.",
+    "greetingMorning": "Game day, {name}.",
+    "recapHeader": "Match report",
+    "tagline": "Every day is a match.",
+    "upNextHeader": "Next up",
+    "upcomingHeader": "Fixtures"
   },
-  "today": { "archetype": "field", "options": {} },
-  "motion": "none"
+  "voiceLocalized": {
+    "de": {
+      "askPlaceholder": "Fragen Sie den Trainer…",
+      "earlierHeader": "Ergebnisse",
+      "emptyDay": "Ruhetag",
+      "emptyEarlier": "Noch keine Ergebnisse",
+      "greetingAfternoon": "Zweite Halbzeit, {name}.",
+      "greetingEvening": "Abpfiff, {name}.",
+      "greetingMorning": "Spieltag, {name}.",
+      "recapHeader": "Spielbericht",
+      "tagline": "Jeder Tag ist ein Spiel.",
+      "upNextHeader": "Als Nächstes",
+      "upcomingHeader": "Spielplan"
+    },
+    "es": {
+      "askPlaceholder": "Pregunta al entrenador…",
+      "earlierHeader": "Resultados",
+      "emptyDay": "Día de descanso",
+      "emptyEarlier": "Aún no hay resultados",
+      "greetingAfternoon": "Segundo tiempo, {name}.",
+      "greetingEvening": "Final, {name}.",
+      "greetingMorning": "Día de partido, {name}.",
+      "recapHeader": "Crónica del partido",
+      "tagline": "Cada día es un partido.",
+      "upNextHeader": "A continuación",
+      "upcomingHeader": "Próximos partidos"
+    },
+    "fr": {
+      "askPlaceholder": "Demandez au coach…",
+      "earlierHeader": "Résultats",
+      "emptyDay": "Jour de repos",
+      "emptyEarlier": "Aucun résultat pour l'instant",
+      "greetingAfternoon": "Seconde période, {name}.",
+      "greetingEvening": "Fin du match, {name}.",
+      "greetingMorning": "Jour de match, {name}.",
+      "recapHeader": "Compte rendu du match",
+      "tagline": "Chaque jour est un match.",
+      "upNextHeader": "Prochain match",
+      "upcomingHeader": "Calendrier"
+    },
+    "fr-CA": {
+      "askPlaceholder": "Questionnez le coach…",
+      "earlierHeader": "Résultats",
+      "emptyDay": "Jour de repos",
+      "emptyEarlier": "Aucun résultat pour l'instant",
+      "greetingAfternoon": "Seconde demie, {name}.",
+      "greetingEvening": "Fin du match, {name}.",
+      "greetingMorning": "Jour de match, {name}.",
+      "recapHeader": "Compte rendu du match",
+      "tagline": "Chaque jour est un match.",
+      "upNextHeader": "Prochain match",
+      "upcomingHeader": "Calendrier"
+    },
+    "pt": {
+      "askPlaceholder": "Pergunte ao treinador…",
+      "earlierHeader": "Resultados",
+      "emptyDay": "Dia de descanso",
+      "emptyEarlier": "Ainda sem resultados",
+      "greetingAfternoon": "Segundo tempo, {name}.",
+      "greetingEvening": "Fim de jogo, {name}.",
+      "greetingMorning": "Dia de jogo, {name}.",
+      "recapHeader": "Relatório da partida",
+      "tagline": "Todo dia é dia de jogo.",
+      "upNextHeader": "A seguir",
+      "upcomingHeader": "Próximos jogos"
+    }
+  }
 }

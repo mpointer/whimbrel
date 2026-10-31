@@ -60,7 +60,7 @@ struct ConnectorsSettingsPane: View {
             ForEach(accounts) { account in
                 accountRow(
                     email: account.email,
-                    detail: account.eventCount.map { "\($0) event\($0 == 1 ? "" : "s") found in the next 7 days." } ?? "Connected.",
+                    detail: account.eventCount.map { SettingsCopy.eventsFound($0) } ?? String(localized: "Connected."),
                     // Adding an already-listed email replaces its tokens, so re-adding is the way back.
                     reconnectDetail: appState.calendarConnectorState.needsReconnect.contains(account.email)
                         ? "Reconnect needed. Click Add Google Account and sign in as this address again." : nil,
@@ -103,7 +103,7 @@ struct ConnectorsSettingsPane: View {
             ForEach(accounts) { account in
                 accountRow(
                     email: account.email,
-                    detail: account.eventCount.map { "\($0) event\($0 == 1 ? "" : "s") found in the next 7 days." } ?? "Connected.",
+                    detail: account.eventCount.map { SettingsCopy.eventsFound($0) } ?? String(localized: "Connected."),
                     isDefault: account.email == appState.outlook365ConnectorState.defaultEmail,
                     showMakeDefault: accounts.count > 1,
                     onMakeDefault: { appState.outlook365ConnectorState.makeDefault(email: account.email) },
@@ -141,7 +141,7 @@ struct ConnectorsSettingsPane: View {
     }
 
     @ViewBuilder
-    private func addAccountControl(state: AddAccountState, label: String, action: @escaping () -> Void) -> some View {
+    private func addAccountControl(state: AddAccountState, label: LocalizedStringKey, action: @escaping () -> Void) -> some View {
         switch state {
         case .idle:
             Button(label, action: action).buttonStyle(.whimbrelSecondary)

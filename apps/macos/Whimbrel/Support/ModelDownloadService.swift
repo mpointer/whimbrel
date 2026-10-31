@@ -16,7 +16,7 @@ enum ModelDownloadService {
         var description: String {
             switch self {
             case .failed(let message): return message
-            case .bridgeUnavailable: return "Model download could not be started."
+            case .bridgeUnavailable: return String(localized: "Model download could not be started.")
             }
         }
     }
@@ -24,6 +24,8 @@ enum ModelDownloadService {
     static var allModelsPresent: Bool {
         FileManager.default.fileExists(atPath: TranscriptionService.modelPath.path)
             && DiarizationService.modelsAvailable
+            && (!AppLanguage.multilingual() || FileManager.default.fileExists(atPath: TranscriptionService.multilingualModelPath.path))
+            && EmbeddingModelLocator.modelPresent
     }
 
     /// Downloads and installs all 3 missing model files. Already-present files are
@@ -36,10 +38,21 @@ enum ModelDownloadService {
         guard let jobId = CoreMemoryStore.startModelDownload(
             whisperModelPath: TranscriptionService.modelPath,
             segmentationModelPath: DiarizationService.segmentationModelPath,
-            embeddingModelPath: DiarizationService.embeddingModelPath
+            embeddingModelPath: DiarizationService.embeddingModelPath,
+            multilingualModelPath: AppLanguage.multilingual() ? TranscriptionService.multilingualModelPath : nil
         ) else {
             throw DownloadError.bridgeUnavailable
         }
+        try await poll(jobId, progress: progress)
+        // The search model (runtime download, its own folder; core re-embeds once it loads).
+        guard let embeddingJob = CoreMemoryStore.startEmbeddingDownload(modelsDir: EmbeddingModelLocator.modelsDirectory) else {
+            throw DownloadError.bridgeUnavailable
+        }
+        try await poll(embeddingJob, progress: progress)
+    }
+
+    @MainActor
+    private static func poll(_ jobId: String, progress: @escaping (Double, String) -> Void) async throws {
         defer { CoreMemoryStore.releaseModelDownload(jobId: jobId) }
 
         var lastStatus = ""

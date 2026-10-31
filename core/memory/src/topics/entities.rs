@@ -66,12 +66,39 @@ pub const GENERIC_PHRASES: &[&str] = &[
     "system settings",
 ];
 
-const STOPWORDS: &[&str] = &[
-    "a", "an", "the", "and", "or", "but", "of", "in", "on", "at", "to", "for", "with", "from",
-    "by", "via", "as", "is", "are", "was", "were", "be", "this", "that", "these", "those", "it",
-    "its", "if", "we", "you", "i", "he", "she", "they", "our", "your", "my", "re", "fwd", "fw",
-    "hi", "hello", "dear", "thanks", "thank", "please", "not", "no", "yes", "so", "then",
+// Leading-word trim list over the union of rows. Phase 4 appends `de`, `pt`. Left out on
+// purpose because they open real names or are English words: de, del, la, le, du, di, son,
+// sin, pour, est, para, sale.
+const KEYWORDS_STOPWORDS: &[(&str, &[&str])] = &[
+    (
+        "en",
+        &[
+            "a", "an", "the", "and", "or", "but", "of", "in", "on", "at", "to", "for", "with", "from",
+            "by", "via", "as", "is", "are", "was", "were", "be", "this", "that", "these", "those", "it",
+            "its", "if", "we", "you", "i", "he", "she", "they", "our", "your", "my", "re", "fwd", "fw",
+            "hi", "hello", "dear", "thanks", "thank", "please", "not", "no", "yes", "so", "then",
+        ],
+    ),
+    (
+        "es",
+        &[
+            "el", "los", "las", "un", "una", "unos", "unas", "al", "y", "pero", "con", "por", "sobre",
+            "este", "esta", "estos", "estas", "ese", "esa", "mi", "mis", "tu", "tus", "su", "sus", "nuestro",
+            "nuestra", "hola", "gracias", "favor", "sí",
+        ],
+    ),
+    (
+        "fr",
+        &[
+            "les", "des", "une", "aux", "et", "ou", "mais", "avec", "dans", "sur", "sont", "cette", "ces",
+            "mes", "tes", "notre", "nos", "votre", "vos", "bonjour", "salut", "merci",
+            "oui",
+        ],
+    ),
 ];
+fn is_stopword(w: &str) -> bool {
+    KEYWORDS_STOPWORDS.iter().any(|(_, ws)| ws.contains(&w))
+}
 
 // Full names only: short forms (may, mar, sun, sat, wed, mon, dec, jan...) are also names/words.
 const DAYS_MONTHS: &[&str] = &[
@@ -245,7 +272,7 @@ pub fn extract_phrases(text: &str, max: usize) -> Vec<String> {
         // Trim leading stopwords and day/month tokens at either edge.
         let is_dm = |w: &String| DAYS_MONTHS.contains(&w.as_str());
         let mut lo = 0;
-        while lo < run.len() && (STOPWORDS.contains(&run[lo].as_str()) || is_dm(&run[lo])) {
+        while lo < run.len() && (is_stopword(&run[lo]) || is_dm(&run[lo])) {
             lo += 1;
         }
         let mut hi = run.len();
@@ -296,6 +323,16 @@ pub fn extract_phrases(text: &str, max: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entity_stopwords_include_es_fr_but_not_name_particles() {
+        for w in ["los", "las", "una", "hola", "gracias", "les", "une", "bonjour", "merci"] {
+            assert!(is_stopword(w), "{w}");
+        }
+        for w in ["de", "del", "la", "le", "du", "son", "sin", "pour", "est"] {
+            assert!(!is_stopword(w), "{w}");
+        }
+    }
 
     #[test]
     fn parse_addresses_handles_names_bare_and_lists() {

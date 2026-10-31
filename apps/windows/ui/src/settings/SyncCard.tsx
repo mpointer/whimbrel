@@ -11,6 +11,7 @@ import {
 } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { DeviceView, SyncView } from "../generated/types";
+import { useL10n } from "../l10n";
 import { collidingPendingIds, contentLine, deviceActions, deviceTitle, primaryAction, stateLabel } from "./syncModel";
 
 function message(e: unknown): string {
@@ -18,6 +19,7 @@ function message(e: unknown): string {
 }
 
 export function SyncCard() {
+  const { t, locale } = useL10n();
   const [view, setView] = useState<SyncView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,13 +41,13 @@ export function SyncCard() {
       .finally(() => setBusy(false));
   };
 
-  if (!view) return <section className="card about">Loading…</section>;
+  if (!view) return <section className="card about">{t("Loading…")}</section>;
   const action = primaryAction(view.state);
 
   return (
     <section className="card about" aria-labelledby="sync-heading">
       <h2 id="sync-heading" className="section-label">
-        Sync
+        {t("Sync")}
       </h2>
       <p role="status">
         <strong>{stateLabel(view.state)}</strong>
@@ -54,21 +56,21 @@ export function SyncCard() {
       <div className="toolbar">
         {action === "signIn" && (
           <button className="mode mode--active" disabled={busy} onClick={() => act(syncSignIn)}>
-            Enable Sync (sign in with Google)
+            {t("Enable Sync (sign in with Google)")}
           </button>
         )}
         {action === "cancel" && (
           <button className="mode" disabled={busy} onClick={() => act(syncCancelSignIn)}>
-            Cancel
+            {t("Cancel")}
           </button>
         )}
         {action === "checkAgain" && (
           <button className="mode mode--active" disabled={busy} onClick={() => act(syncCheckAgain)}>
-            Check Again
+            {t("Check Again")}
           </button>
         )}
       </div>
-      {contentLine(view) && <p className="muted small">{contentLine(view)}</p>}
+      {contentLine(view, locale) && <p className="muted small">{contentLine(view, locale)}</p>}
       {error && <p role="alert">{error}</p>}
       {view.state === "ready" && <Devices />}
     </section>
@@ -76,6 +78,7 @@ export function SyncCard() {
 }
 
 function Devices() {
+  const { t } = useL10n();
   const [devices, setDevices] = useState<DeviceView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -115,7 +118,7 @@ function Devices() {
   const collisions = collidingPendingIds(devices ?? []);
   return (
     <div className="stack">
-      <h3 className="section-label">Devices on this account</h3>
+      <h3 className="section-label">{t("Devices on this account")}</h3>
       {me && (
         <form
           className="search"
@@ -124,38 +127,40 @@ function Devices() {
             run(() => syncSetDeviceName(name));
           }}
         >
-          <input value={name} onChange={(e) => setName(e.target.value)} aria-label="This PC's name" maxLength={64} />
+          <input value={name} onChange={(e) => setName(e.target.value)} aria-label={t("This PC's name")} maxLength={64} />
           <button type="submit" className="mode">
-            Save name
+            {t("Save name")}
           </button>
         </form>
       )}
       {error && <p role="alert">{error}</p>}
       {devices === null ? (
-        <p className="muted">Loading devices…</p>
+        <p className="muted">{t("Loading devices…")}</p>
       ) : (
         <ul className="rows">
           {devices.map((d) => (
             <li key={d.id} className="row-card" style={{ cursor: "default" }}>
               <span className="row-top">
                 <span className="row-title">{deviceTitle(d)}</span>
-                <span className={d.thisDevice ? "chip chip--this" : "chip"}>{d.thisDevice ? "This PC" : d.status}</span>
+                <span className={d.thisDevice ? "chip chip--this" : "chip"}>{d.thisDevice ? t("This PC") : d.status}</span>
               </span>
               <span className="row-meta muted small mono">{d.publicKey.slice(0, 12)}…</span>
               {d.status === "pending" && (
                 <span className="row-meta small">
-                  {d.comparisonCode ? `Check this matches the code on the new device: ${d.comparisonCode}` : "Can't verify this device"}
-                  {collisions.has(d.id) && " Another pending device shows the same code — don't approve it"}
+                  {d.comparisonCode
+                    ? t("Check this matches the code on the new device: {code}", { code: d.comparisonCode })
+                    : t("Can't verify this device")}
+                  {collisions.has(d.id) && ` ${t("Another pending device shows the same code — don't approve it")}`}
                 </span>
               )}
               {confirmRevoke === d.id ? (
                 <span className="toolbar">
-                  <span className="small">Revoking signs every device out of sync until it re-authenticates.</span>
+                  <span className="small">{t("Revoking signs every device out of sync until it re-authenticates.")}</span>
                   <button className="mode mode--active" onClick={() => run(() => syncRevokeDevice(d.id))}>
-                    Revoke
+                    {t("Revoke")}
                   </button>
                   <button className="mode" onClick={() => setConfirmRevoke(null)}>
-                    Keep
+                    {t("Keep")}
                   </button>
                 </span>
               ) : (
@@ -163,11 +168,11 @@ function Devices() {
                   {deviceActions(d).map((a) =>
                     a === "revoke" ? (
                       <button key={a} className="mode" onClick={() => setConfirmRevoke(d.id)}>
-                        Revoke…
+                        {t("Revoke…")}
                       </button>
                     ) : (
                       <button key={a} className="mode" disabled={a === "approve" && collisions.has(d.id)} onClick={() => run(() => syncApproveDevice(d.id))}>
-                        {a === "approve" ? "Approve" : "Re-send Key"}
+                        {a === "approve" ? t("Approve") : t("Re-send Key")}
                       </button>
                     ),
                   )}

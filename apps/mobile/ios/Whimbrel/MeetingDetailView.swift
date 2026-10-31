@@ -24,7 +24,7 @@ struct MeetingDetailView: View {
                 if let meeting = model.meeting {
                     header(meeting)
                     Picker("Section", selection: $tab) {
-                        ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        ForEach(Tab.allCases, id: \.self) { Text($0 == .summary ? String(localized: "Summary") : String(localized: "Transcript")).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     switch tab {
@@ -47,7 +47,7 @@ struct MeetingDetailView: View {
 
     private func header(_ meeting: PhoneMeeting) -> some View {
         let start = Date(timeIntervalSince1970: Double(meeting.startUnixMs) / 1000)
-        var where_ = ["Recorded on \(labels.label(for: meeting.deviceId))"]
+        var where_ = [String(localized: "Recorded on \(labels.label(for: meeting.deviceId))")]
         if let copies = meeting.alsoRecorded, !copies.isEmpty {
             where_.append("also on " + copies.map { labels.label(for: $0.deviceId) }.joined(separator: ", "))
         }
@@ -74,9 +74,9 @@ struct MeetingDetailView: View {
             Text("No summary yet").foregroundStyle(Color.theme(.textSecondary))
         } else {
             if let tldr = meeting.summaryTldr { block("TL;DR") { Text(tldr).foregroundStyle(Color.theme(.textPrimary)) } }
-            if !meeting.summaryDecisions.isEmpty { list("Decisions", meeting.summaryDecisions.map { ($0, nil) }) }
-            if !actionTexts.isEmpty { list("Action items", actionTexts.map { ($0.0, $0.1) }) }
-            if !meeting.summaryOpenQuestions.isEmpty { list("Open questions", meeting.summaryOpenQuestions.map { ($0, nil) }) }
+            if !meeting.summaryDecisions.isEmpty { list(String(localized: "Decisions"), meeting.summaryDecisions.map { ($0, nil) }) }
+            if !actionTexts.isEmpty { list(String(localized: "Action items"), actionTexts.map { ($0.0, $0.1) }) }
+            if !meeting.summaryOpenQuestions.isEmpty { list(String(localized: "Open questions"), meeting.summaryOpenQuestions.map { ($0, nil) }) }
         }
     }
 
@@ -128,7 +128,7 @@ struct MeetingDetailView: View {
                         Text(line.0).foregroundStyle(Color.theme(.textPrimary))
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel(line.1 == true ? "Done: \(line.0)" : line.0)
+                    .accessibilityLabel(line.1 == true ? String(localized: "Done: \(line.0)") : line.0)
                 }
             }
         }

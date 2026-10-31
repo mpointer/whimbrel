@@ -15,13 +15,20 @@ struct MeetingAlertView: View {
                         .frame(width: 32, height: 32)
 
                     VStack(alignment: .leading, spacing: Spacing.xs) {
-                        Text(meeting.source != .detected ? "Meeting Starting Soon" : "Meeting Detected")
+                        Text(controller.earlierTitle != nil ? "Recording as a New Meeting"
+                             : meeting.source != .detected ? "Meeting Starting Soon" : "Meeting Detected")
                             .font(.whimbrelBody(.callout).bold())
                             .foregroundStyle(Color.whimbrelTextPrimary)
                         Text(meeting.title)
                             .font(.whimbrelBody(.caption))
                             .foregroundStyle(Color.whimbrelTextSecondary)
                             .lineLimit(1)
+                        if let earlierTitle = controller.earlierTitle {
+                            Text("Ended “\(earlierTitle)” and saved it separately.")
+                                .font(.whimbrelBody(.caption2))
+                                .foregroundStyle(Color.whimbrelTextSecondary)
+                                .lineLimit(1)
+                        }
                         if let seconds = controller.secondsRemaining {
                             Text("Auto-starting in \(seconds)s…")
                                 .font(.whimbrelBody(.caption2))
@@ -32,10 +39,25 @@ struct MeetingAlertView: View {
                     Spacer(minLength: Spacing.sm)
 
                     VStack(alignment: .trailing, spacing: Spacing.xs) {
-                        startRecordingControl
-                        Button("Dismiss") { controller.dismissTapped() }
-                            .buttonStyle(.whimbrelSecondary)
-                            .font(.whimbrelBody(.caption2))
+                        if controller.earlierTitle != nil {
+                            Button("Keep together") { controller.acceptTapped() }
+                                .buttonStyle(.whimbrelSecondary)
+                                .font(.whimbrelBody(.caption2))
+                                .help("Undo the split: record this as part of the earlier meeting")
+                        } else {
+                            startRecordingControl
+                        }
+                        HStack(spacing: Spacing.xs) {
+                            if let join = controller.joinTarget {
+                                Button("Join") { controller.joinTapped() }
+                                    .buttonStyle(.whimbrelSecondary)
+                                    .font(.whimbrelBody(.caption2))
+                                    .accessibilityLabel("Join on \(join.provider.displayName)")
+                            }
+                            Button("Dismiss") { controller.dismissTapped() }
+                                .buttonStyle(.whimbrelSecondary)
+                                .font(.whimbrelBody(.caption2))
+                        }
                     }
                 }
             }

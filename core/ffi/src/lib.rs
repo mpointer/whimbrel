@@ -211,15 +211,17 @@ pub extern "C" fn whimbrel_memory_run_episode_segment_batch(
 /// (docs/superpowers/specs/2026-08-12-l2-episodes-design.md). `custom_instructions`
 /// may be null or malformed UTF-8, which is treated as an empty string rather than
 /// a failure; a whitespace-only value is trimmed to empty as well, so it's treated
-/// as "no instructions" rather than injected verbatim. Returns the count actually
-/// processed (`0` means nothing was eligible), or `-1` if `handle` or `model` is
-/// null.
+/// as "no instructions" rather than injected verbatim. `output_language` is the BCP 47
+/// tag summaries are written in; NULL or "" adds no language line. Returns the count
+/// actually processed (`0` means nothing was eligible), or `-1` if `handle` or `model`
+/// is null.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_episodes_run_summarize_batch(
     handle: *mut StoreHandle,
     model: *const c_char,
     max_jobs: u64,
     custom_instructions: *const c_char,
+    output_language: *const c_char,
 ) -> i64 {
     if handle.is_null() {
         return -1;
@@ -228,8 +230,9 @@ pub extern "C" fn whimbrel_episodes_run_summarize_batch(
         return -1;
     };
     let custom_instructions = cstr_to_string(custom_instructions).unwrap_or_default();
+    let output_language = cstr_to_string(output_language).unwrap_or_default();
     let store = unsafe { &(*handle).0 };
-    api::jobs::run_episode_summarize_batch(store, &model, max_jobs as usize, &custom_instructions)
+    api::jobs::run_episode_summarize_batch(store, &model, max_jobs as usize, &custom_instructions, &output_language)
         .map(|n| n as i64)
         .unwrap_or(-1)
 }
@@ -242,15 +245,17 @@ pub extern "C" fn whimbrel_episodes_run_summarize_batch(
 /// (docs/superpowers/specs/2026-08-14-thread-distillation-design.md). `custom_instructions`
 /// may be null or malformed UTF-8, which is treated as an empty string rather than
 /// a failure; a whitespace-only value is trimmed to empty as well, so it's treated
-/// as "no instructions" rather than injected verbatim. Returns the count actually
-/// processed (`0` means nothing was eligible), or `-1` if `handle` or `model` is
-/// null.
+/// as "no instructions" rather than injected verbatim. `output_language` is the BCP 47
+/// tag summaries are written in; NULL or "" adds no language line. Returns the count
+/// actually processed (`0` means nothing was eligible), or `-1` if `handle` or `model`
+/// is null.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_threads_run_summarize_batch(
     handle: *mut StoreHandle,
     model: *const c_char,
     max_jobs: u64,
     custom_instructions: *const c_char,
+    output_language: *const c_char,
 ) -> i64 {
     if handle.is_null() {
         return -1;
@@ -259,8 +264,9 @@ pub extern "C" fn whimbrel_threads_run_summarize_batch(
         return -1;
     };
     let custom_instructions = cstr_to_string(custom_instructions).unwrap_or_default();
+    let output_language = cstr_to_string(output_language).unwrap_or_default();
     let store = unsafe { &(*handle).0 };
-    api::jobs::run_thread_summarize_batch(store, &model, max_jobs as usize, &custom_instructions)
+    api::jobs::run_thread_summarize_batch(store, &model, max_jobs as usize, &custom_instructions, &output_language)
         .map(|n| n as i64)
         .unwrap_or(-1)
 }
@@ -1199,7 +1205,11 @@ pub extern "C" fn whimbrel_meeting_prep_run(
 
 /// Opaque holder for a whisper model kept loaded for the length of a meeting
 /// (live transcription).
-pub struct LiveTranscriberHandle(transcribe::Transcriber);
+/// `language` is forced on each chunk; `None` detects until a chunk with speech locks it.
+pub struct LiveTranscriberHandle {
+    transcriber: transcribe::Transcriber,
+    language: std::sync::Mutex<Option<String>>,
+}
 
 /// Loads the whisper model for live transcription. NULL on a null path or a missing/bad
 /// model.
@@ -1209,7 +1219,8 @@ pub extern "C" fn whimbrel_live_transcriber_new(model_path: *const c_char) -> *m
         return ptr::null_mut();
     };
     match transcribe::Transcriber::load(Path::new(&model_path)) {
-        Ok(t) => Box::into_raw(Box::new(LiveTranscriberHandle(t))),
+        // English until the shell asks to detect, as before multilingual transcription.
+        Ok(t) => Box::into_raw(Box::new(LiveTranscriberHandle { transcriber: t, language: std::sync::Mutex::new(Some("en".into())) })),
         Err(_) => ptr::null_mut(),
     }
 }
@@ -1237,11 +1248,19 @@ pub extern "C" fn whimbrel_live_transcribe_chunk(
     if handle.is_null() || samples.is_null() {
         return ptr::null_mut();
     }
-    let transcriber = unsafe { &(*handle).0 };
+    let handle = unsafe { &*handle };
     let slice = unsafe { std::slice::from_raw_parts(samples, n_samples) };
-    let Ok(mut segments) = transcriber.transcribe_samples(slice, (threads > 0).then_some(threads)) else {
+    let mut language = handle.language.lock().unwrap_or_else(|e| e.into_inner());
+    let lang = match language.as_deref() {
+        Some(code) => transcribe::Lang::Force(code),
+        None => transcribe::Lang::Detect,
+    };
+    let Ok(result) = handle.transcriber.transcribe(slice, (threads > 0).then_some(threads), lang) else {
         return ptr::null_mut();
     };
+    *language = transcribe::lock_language(language.as_deref(), result.segments.len(), result.language.as_deref());
+    drop(language);
+    let mut segments = result.segments;
     for s in &mut segments {
         s.start_cs += start_offset_cs;
         s.end_cs += start_offset_cs;
@@ -1249,6 +1268,30 @@ pub extern "C" fn whimbrel_live_transcribe_chunk(
     match serde_json::to_string(&segments) {
         Ok(json) => json_to_c_string(json),
         Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Sets the live handle's language: a whisper code ("es") forces it, NULL detects it from
+/// the next chunk with speech and then keeps it. A null handle is a no-op.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_live_transcriber_set_language(handle: *mut LiveTranscriberHandle, language: *const c_char) {
+    if handle.is_null() {
+        return;
+    }
+    let handle = unsafe { &*handle };
+    *handle.language.lock().unwrap_or_else(|e| e.into_inner()) = cstr_to_string(language);
+}
+
+/// The live handle's locked language, or NULL while it is still detecting (or on a null handle).
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_live_transcriber_language(handle: *mut LiveTranscriberHandle) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let handle = unsafe { &*handle };
+    match handle.language.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        Some(code) => json_to_c_string(code),
+        None => ptr::null_mut(),
     }
 }
 
@@ -1412,8 +1455,15 @@ pub extern "C" fn whimbrel_away_record_followup(handle: *mut StoreHandle, reques
     let Some(req) = cstr_to_string(request_json).and_then(|raw| serde_json::from_str::<api::away_followup::AwayFollowupRequest>(&raw).ok()) else {
         return ptr::null_mut();
     };
+    // Optional `output_language` beside the request fields: the tag the to-do and email are written in.
+    #[derive(serde::Deserialize)]
+    struct Lang {
+        #[serde(default)]
+        output_language: String,
+    }
+    let lang = cstr_to_string(request_json).and_then(|raw| serde_json::from_str::<Lang>(&raw).ok()).map(|l| l.output_language).unwrap_or_default();
     let store = unsafe { &(*handle).0 };
-    match api::away_followup::record_away_followup(store, &req) {
+    match api::away_followup::record_away_followup(store, &req, &lang) {
         Ok(res) => serde_json::to_string(&res).map(|json| json_to_c_string(ok_envelope(&json))).unwrap_or(ptr::null_mut()),
         Err(_) => ptr::null_mut(),
     }
@@ -1902,6 +1952,32 @@ pub extern "C" fn whimbrel_transcribe_wav(
         return ptr::null_mut();
     };
     match serde_json::to_string(&segments) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// [`whimbrel_transcribe_wav`] in `language` (a whisper code; NULL detects). Returns
+/// `{"segments":[…],"language":"es"}`; `language` is null when nothing was detected.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_transcribe_wav_lang(
+    model_path: *const c_char,
+    wav_path: *const c_char,
+    language: *const c_char,
+) -> *mut c_char {
+    let (Some(model_path), Some(wav_path)) = (cstr_to_string(model_path), cstr_to_string(wav_path)) else {
+        return ptr::null_mut();
+    };
+    let Ok(transcriber) = transcribe::Transcriber::load(Path::new(&model_path)) else {
+        return ptr::null_mut();
+    };
+    let language = cstr_to_string(language);
+    let lang = language.as_deref().map_or(transcribe::Lang::Detect, transcribe::Lang::Force);
+    let Ok(mut result) = transcriber.transcribe_wav_lang(Path::new(&wav_path), lang) else {
+        return ptr::null_mut();
+    };
+    result.language = transcribe::lock_language(language.as_deref(), result.segments.len(), result.language.as_deref());
+    match serde_json::to_string(&result) {
         Ok(json) => json_to_c_string(json),
         Err(_) => ptr::null_mut(),
     }
@@ -2435,6 +2511,30 @@ pub extern "C" fn whimbrel_memory_set_keep_media(handle: *mut StoreHandle, meeti
     }
     let store = unsafe { &(*handle).0 };
     store.set_keep_media(meeting_id, keep).unwrap_or(false)
+}
+
+/// Stores the language a meeting was transcribed in (a whisper code; NULL clears it).
+/// False on a null handle or a database error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_memory_set_meeting_spoken_language(handle: *mut StoreHandle, meeting_id: i64, language: *const c_char) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let store = unsafe { &(*handle).0 };
+    store.set_meeting_spoken_language(meeting_id, cstr_to_string(language).as_deref()).is_ok()
+}
+
+/// The language a meeting was transcribed in, or NULL when unknown (or on a null handle).
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_memory_meeting_spoken_language(handle: *mut StoreHandle, meeting_id: i64) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    match store.meeting_spoken_language(meeting_id) {
+        Ok(Some(code)) => json_to_c_string(code),
+        _ => ptr::null_mut(),
+    }
 }
 
 /// `{"dir":<string|null>,"keep":<bool>}` for a meeting, or null if it does not exist / on error.
@@ -4867,6 +4967,16 @@ mod tests {
         assert!(whimbrel_live_transcriber_new(path.as_ptr()).is_null());
         assert!(whimbrel_live_transcriber_new(ptr::null()).is_null());
         whimbrel_live_transcriber_free(ptr::null_mut()); // a no-op, must not crash
+    }
+
+    #[test]
+    fn live_language_calls_are_null_safe_and_batch_lang_rejects_bad_input() {
+        whimbrel_live_transcriber_set_language(ptr::null_mut(), ptr::null());
+        assert!(whimbrel_live_transcriber_language(ptr::null_mut()).is_null());
+        let model = to_cstring("/nonexistent/model.bin");
+        let wav = to_cstring("/nonexistent/a.wav");
+        assert!(whimbrel_transcribe_wav_lang(model.as_ptr(), wav.as_ptr(), ptr::null()).is_null());
+        assert!(whimbrel_transcribe_wav_lang(ptr::null(), wav.as_ptr(), ptr::null()).is_null());
     }
 
     #[test]
@@ -7967,7 +8077,7 @@ mod tests {
     fn episodes_run_summarize_batch_returns_negative_one_on_null_handle() {
         let model_c = to_cstring("gemma4:12b");
         let result =
-            whimbrel_episodes_run_summarize_batch(ptr::null_mut(), model_c.as_ptr(), 1, ptr::null());
+            whimbrel_episodes_run_summarize_batch(ptr::null_mut(), model_c.as_ptr(), 1, ptr::null(), ptr::null());
         assert_eq!(result, -1);
     }
 
@@ -7977,7 +8087,7 @@ mod tests {
         let db_path_c = to_cstring(dir.path().join("t.sqlite").to_str().unwrap());
         let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
         assert!(!handle.is_null());
-        let result = whimbrel_episodes_run_summarize_batch(handle, ptr::null(), 1, ptr::null());
+        let result = whimbrel_episodes_run_summarize_batch(handle, ptr::null(), 1, ptr::null(), ptr::null());
         assert_eq!(result, -1);
         whimbrel_memory_close(handle);
     }
@@ -7989,7 +8099,7 @@ mod tests {
         let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
         assert!(!handle.is_null());
         let model_c = to_cstring("gemma4:12b");
-        let result = whimbrel_episodes_run_summarize_batch(handle, model_c.as_ptr(), 5, ptr::null());
+        let result = whimbrel_episodes_run_summarize_batch(handle, model_c.as_ptr(), 5, ptr::null(), ptr::null());
         assert_eq!(result, 0);
         whimbrel_memory_close(handle);
     }
@@ -8007,6 +8117,7 @@ mod tests {
             model_c.as_ptr(),
             5,
             instructions_c.as_ptr(),
+            ptr::null(),
         );
         assert_eq!(result, 0);
         whimbrel_memory_close(handle);
@@ -8101,6 +8212,24 @@ mod tests {
     }
 
     #[test]
+    fn away_followup_writes_the_date_in_the_requests_output_language() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path_c = to_cstring(dir.path().join("t.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        let req = std::ffi::CString::new(
+            r#"{"meeting_id":1,"meeting_title":"Standup","meeting_start_unix_ms":1000,"organizer_email":"a@x.com","organizer_name":"Ana","self_is_organizer":false,"profile_name":"Mike","now_unix_ms":5000,"output_language":"es-US"}"#,
+        )
+        .unwrap();
+        let out = whimbrel_away_record_followup(handle, req.as_ptr());
+        let v: serde_json::Value = serde_json::from_str(unsafe { CStr::from_ptr(out).to_str().unwrap() }).unwrap();
+        whimbrel_core_free_string(out);
+        let run_id = v["data"]["routine_run_id"].as_i64().unwrap();
+        let body = unsafe { &(*handle).0 }.pending_action_for_run(run_id).unwrap().unwrap();
+        assert!(body.contains("enero") || body.contains("diciembre"), "{body}");
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
     fn meeting_prep_get_is_null_without_a_brief() {
         let dir = tempfile::tempdir().unwrap();
         let db_path_c = to_cstring(dir.path().join("t.sqlite").to_str().unwrap());
@@ -8125,7 +8254,7 @@ mod tests {
     fn whimbrel_threads_run_summarize_batch_returns_minus_one_on_null_handle() {
         let model_c = to_cstring("llama3.1:8b");
         let result =
-            whimbrel_threads_run_summarize_batch(ptr::null_mut(), model_c.as_ptr(), 1, ptr::null());
+            whimbrel_threads_run_summarize_batch(ptr::null_mut(), model_c.as_ptr(), 1, ptr::null(), ptr::null());
         assert_eq!(result, -1);
     }
 
@@ -8135,7 +8264,7 @@ mod tests {
         let db_path_c = to_cstring(dir.path().join("t.sqlite").to_str().unwrap());
         let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
         assert!(!handle.is_null());
-        let result = whimbrel_threads_run_summarize_batch(handle, ptr::null(), 1, ptr::null());
+        let result = whimbrel_threads_run_summarize_batch(handle, ptr::null(), 1, ptr::null(), ptr::null());
         assert_eq!(result, -1);
         whimbrel_memory_close(handle);
     }
@@ -8147,7 +8276,7 @@ mod tests {
         let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
         assert!(!handle.is_null());
         let model_c = to_cstring("llama3.1:8b");
-        let result = whimbrel_threads_run_summarize_batch(handle, model_c.as_ptr(), 5, ptr::null());
+        let result = whimbrel_threads_run_summarize_batch(handle, model_c.as_ptr(), 5, ptr::null(), ptr::null());
         assert_eq!(result, 0);
         whimbrel_memory_close(handle);
     }
@@ -8165,6 +8294,7 @@ mod tests {
             model_c.as_ptr(),
             5,
             instructions_c.as_ptr(),
+            ptr::null(),
         );
         assert_eq!(result, 0);
         whimbrel_memory_close(handle);

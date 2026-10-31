@@ -24,6 +24,16 @@ final class AwayModeSettingsTests: XCTestCase {
         XCTAssertEqual(fake.begins, 0)
     }
 
+    func test_unavailable_stays_off_and_clears_an_earlier_choice() {
+        let d = makeDefaults()
+        AwayModeSettings(defaults: d, keepAwake: FakeKeepAwake()).enabled = true
+        let fake = FakeKeepAwake()
+        let s = AwayModeSettings(defaults: d, keepAwake: fake, available: false)
+        XCTAssertFalse(s.enabled)
+        XCTAssertEqual(fake.begins, 0, "a switch that can't join must not keep the Mac awake")
+        XCTAssertFalse(AwayModeSettings(defaults: d, keepAwake: FakeKeepAwake()).enabled)
+    }
+
     func test_enable_begins_keep_awake() {
         let fake = FakeKeepAwake()
         let s = AwayModeSettings(defaults: makeDefaults(), keepAwake: fake)

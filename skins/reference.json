@@ -1,25 +1,123 @@
 {
-  "id": "reference",
-  "name": "Reference",
   "author": "Whimbrel",
-  "palettes": ["paper"],
-  "typography": { "display": "Georgia/regular", "body": "SF Pro/regular", "numerals": "SF Pro/regular", "label": "SF Pro/semibold", "caps": "none" },
-  "shape": { "radius": 2, "border": "solid", "borderWidth": 1, "density": "regular" },
-  "icons": { "today": "book", "meetings": "person.2", "routines": "bolt", "settings": "gearshape", "ask": "magnifyingglass", "person": "person", "time": "clock", "prep": "doc.text", "recap": "text.alignleft" },
-  "decoration": { "headerBand": "rule", "dividers": "hairline", "texture": "none", "imagery": [] },
+  "decoration": {
+    "dividers": "hairline",
+    "headerBand": "rule",
+    "imagery": [],
+    "texture": "none"
+  },
+  "icons": {
+    "ask": "magnifyingglass",
+    "meetings": "person.2",
+    "person": "person",
+    "prep": "doc.text",
+    "recap": "text.alignleft",
+    "routines": "bolt",
+    "settings": "gearshape",
+    "time": "clock",
+    "today": "book"
+  },
+  "id": "reference",
+  "motion": "none",
+  "name": "Reference",
+  "palettes": [
+    "paper"
+  ],
+  "shape": {
+    "border": "solid",
+    "borderWidth": 1,
+    "density": "regular",
+    "radius": 2
+  },
+  "today": {
+    "archetype": "reference",
+    "options": {}
+  },
+  "typography": {
+    "body": "SF Pro/regular",
+    "caps": "none",
+    "display": "Georgia/regular",
+    "label": "SF Pro/semibold",
+    "numerals": "SF Pro/regular"
+  },
   "voice": {
-    "greetingMorning": "Good morning, {name}",
-    "greetingAfternoon": "Good afternoon, {name}",
-    "greetingEvening": "Good evening, {name}",
-    "upNextHeader": "Up next",
-    "upcomingHeader": "Schedule",
+    "askPlaceholder": "Search your meetings",
     "earlierHeader": "Earlier",
-    "recapHeader": "Summary",
     "emptyDay": "No entries for today",
     "emptyEarlier": "No earlier entries",
-    "askPlaceholder": "Search your meetings",
-    "tagline": "Your days, cross-referenced."
+    "greetingAfternoon": "Good afternoon, {name}",
+    "greetingEvening": "Good evening, {name}",
+    "greetingMorning": "Good morning, {name}",
+    "recapHeader": "Summary",
+    "tagline": "Your days, cross-referenced.",
+    "upNextHeader": "Up next",
+    "upcomingHeader": "Schedule"
   },
-  "today": { "archetype": "reference", "options": {} },
-  "motion": "none"
+  "voiceLocalized": {
+    "de": {
+      "askPlaceholder": "Meetings durchsuchen",
+      "earlierHeader": "Früher",
+      "emptyDay": "Keine Einträge für heute",
+      "emptyEarlier": "Keine früheren Einträge",
+      "greetingAfternoon": "Guten Tag, {name}",
+      "greetingEvening": "Guten Abend, {name}",
+      "greetingMorning": "Guten Morgen, {name}",
+      "recapHeader": "Zusammenfassung",
+      "tagline": "Ihre Tage, querverwiesen.",
+      "upNextHeader": "Als Nächstes",
+      "upcomingHeader": "Terminplan"
+    },
+    "es": {
+      "askPlaceholder": "Busca en tus reuniones",
+      "earlierHeader": "Antes",
+      "emptyDay": "Sin entradas para hoy",
+      "emptyEarlier": "Sin entradas anteriores",
+      "greetingAfternoon": "Buenas tardes, {name}",
+      "greetingEvening": "Buenas noches, {name}",
+      "greetingMorning": "Buenos días, {name}",
+      "recapHeader": "Resumen",
+      "tagline": "Tus días, con referencias cruzadas.",
+      "upNextHeader": "A continuación",
+      "upcomingHeader": "Agenda"
+    },
+    "fr": {
+      "askPlaceholder": "Rechercher dans vos réunions",
+      "earlierHeader": "Plus tôt",
+      "emptyDay": "Aucune entrée pour aujourd'hui",
+      "emptyEarlier": "Aucune entrée antérieure",
+      "greetingAfternoon": "Bon après-midi, {name}",
+      "greetingEvening": "Bonsoir, {name}",
+      "greetingMorning": "Bonjour, {name}",
+      "recapHeader": "Résumé",
+      "tagline": "Vos journées, en références croisées.",
+      "upNextHeader": "À suivre",
+      "upcomingHeader": "Planning"
+    },
+    "fr-CA": {
+      "askPlaceholder": "Rechercher dans vos réunions",
+      "earlierHeader": "Plus tôt",
+      "emptyDay": "Aucune entrée pour aujourd'hui",
+      "emptyEarlier": "Aucune entrée antérieure",
+      "greetingAfternoon": "Bon après-midi, {name}",
+      "greetingEvening": "Bonsoir, {name}",
+      "greetingMorning": "Bonjour, {name}",
+      "recapHeader": "Sommaire",
+      "tagline": "Vos journées, avec renvois.",
+      "upNextHeader": "À suivre",
+      "upcomingHeader": "Horaire"
+    },
+    "pt": {
+      "askPlaceholder": "Buscar nas suas reuniões",
+      "earlierHeader": "Anteriores",
+      "emptyDay": "Nenhuma entrada para hoje",
+      "emptyEarlier": "Nenhuma entrada anterior",
+      "greetingAfternoon": "Boa tarde, {name}",
+      "greetingEvening": "Boa noite, {name}",
+      "greetingMorning": "Bom dia, {name}",
+      "recapHeader": "Resumo",
+      "tagline": "Seus dias, com referências cruzadas.",
+      "upNextHeader": "A seguir",
+      "upcomingHeader": "Agenda"
+    }
+  }
 }

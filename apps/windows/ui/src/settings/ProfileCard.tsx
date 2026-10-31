@@ -12,18 +12,19 @@ import {
 } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { Fact, ProfileView, SuggestionView } from "../generated/types";
+import { useL10n } from "../l10n";
 import {
-  SUGGESTIONS_EMPTY,
-  SUGGEST_PRIVACY,
   addFactBlocker,
   canAddFact,
   counterLine,
-  factsLine,
+  factsCaption,
   fieldsDirty,
   isOverCap,
   previewText,
   sourceLabel,
+  suggestPrivacy,
   suggestStatus,
+  suggestionsEmpty,
   toDraft,
   type FieldsDraft,
 } from "./profileModel";
@@ -34,6 +35,7 @@ function message(e: unknown): string {
 
 /** Settings → Profile: who you are, as background for summaries and answers. */
 export function ProfileCard() {
+  const { t, locale } = useL10n();
   const [view, setView] = useState<ProfileView | null>(null);
   const [draft, setDraft] = useState<FieldsDraft | null>(null);
   const [suggestions, setSuggestions] = useState<SuggestionView[]>([]);
@@ -52,7 +54,7 @@ export function ProfileCard() {
       .catch((e: unknown) => setError(message(e)));
   }, []);
 
-  if (!view || !draft) return <section className="card about">{error ? <p role="alert">{error}</p> : "Loading…"}</section>;
+  if (!view || !draft) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
 
   /** Runs a change that returns the new view; true when it was saved. A refusal is shown and nothing changes. */
   const run = (change: Promise<ProfileView>): Promise<boolean> =>
@@ -93,11 +95,12 @@ export function ProfileCard() {
   return (
     <section className="card about" aria-labelledby="profile-heading">
       <h2 id="profile-heading" className="section-label">
-        Profile
+        {t("Profile")}
       </h2>
       <p className="muted small">
-        Background about you, added to summaries, answers and digests so they fit you. It is stored on this PC and reaches a model only
-        through the AI routing you chose (a hosted model sees it unless Local-only is on). It is context, not instructions.
+        {t(
+          "Background about you, added to summaries, answers and digests so they fit you. It is stored on this PC and reaches a model only through the AI routing you chose (a hosted model sees it unless Local-only is on). It is context, not instructions.",
+        )}
       </p>
       <label className="toggle">
         <input
@@ -105,20 +108,20 @@ export function ProfileCard() {
           checked={view.enabled}
           onChange={(e) => void run(profileSetSwitches({ enabled: e.target.checked, suggestEnabled: view.suggestEnabled }))}
         />
-        Use my profile in summaries and answers
+        {t("Use my profile in summaries and answers")}
       </label>
 
       <div className="stack-sm">
         <label className="field">
-          <span>Name</span>
+          <span>{t("Name")}</span>
           <input className="input" value={draft.name} onChange={(e) => setField("name", e.target.value)} onBlur={saveFields} />
         </label>
         <label className="field">
-          <span>Role</span>
+          <span>{t("Role")}</span>
           <input className="input" value={draft.role} onChange={(e) => setField("role", e.target.value)} onBlur={saveFields} />
         </label>
         <label className="field">
-          <span>Organization</span>
+          <span>{t("Organization")}</span>
           <input
             className="input"
             value={draft.organization}
@@ -127,7 +130,7 @@ export function ProfileCard() {
           />
         </label>
         <label className="field">
-          <span>About me and my work</span>
+          <span>{t("About me and my work")}</span>
           <textarea
             className="input"
             rows={3}
@@ -137,12 +140,12 @@ export function ProfileCard() {
           />
         </label>
         <p className={isOverCap(view) ? "small" : "muted small"} role={isOverCap(view) ? "alert" : undefined}>
-          {counterLine(view)}
+          {counterLine(view, locale)}
         </p>
       </div>
 
-      <h3 className="section-label">Learned facts</h3>
-      <p className="muted small">{factsLine(view)}. One line each. Edit or remove any of them.</p>
+      <h3 className="section-label">{t("Learned facts")}</h3>
+      <p className="muted small">{factsCaption(view)}</p>
       {view.facts.length > 0 && (
         <ul className="fact-list">
           {view.facts.map((f) => (
@@ -164,30 +167,30 @@ export function ProfileCard() {
       >
         <input
           className="input fact-input"
-          aria-label="Add a fact"
-          placeholder="e.g. Works in US Eastern time"
+          aria-label={t("Add a fact")}
+          placeholder={t("e.g. Works in US Eastern time")}
           value={newFact}
           onChange={(e) => setNewFact(e.target.value)}
         />
         <button type="submit" className="mode" disabled={!canAddFact(view, newFact)}>
-          Add fact
+          {t("Add fact")}
         </button>
       </form>
       {addBlocker && <p className="muted small">{addBlocker}</p>}
 
-      <h3 className="section-label">Suggested</h3>
+      <h3 className="section-label">{t("Suggested")}</h3>
       <label className="toggle">
         <input
           type="checkbox"
           checked={view.suggestEnabled}
           onChange={(e) => void run(profileSetSwitches({ enabled: view.enabled, suggestEnabled: e.target.checked }))}
         />
-        Suggest additions from my meetings
+        {t("Suggest additions from my meetings")}
       </label>
-      <p className="muted small">{SUGGEST_PRIVACY}</p>
+      <p className="muted small">{suggestPrivacy()}</p>
       <p className="small">{suggestStatus(view)}</p>
       {suggestions.length === 0 ? (
-        <p className="muted small">{SUGGESTIONS_EMPTY}</p>
+        <p className="muted small">{suggestionsEmpty()}</p>
       ) : (
         <ul className="fact-list">
           {suggestions.map((s) => (
@@ -197,19 +200,19 @@ export function ProfileCard() {
                 {sourceLabel(s) && <span className="muted small">{sourceLabel(s)}</span>}
               </div>
               <button className="mode" onClick={() => void accept(s)}>
-                Add
+                {t("Add")}
               </button>
               <button className="mode" onClick={() => void dismiss(s)}>
-                Dismiss
+                {t("Dismiss")}
               </button>
             </li>
           ))}
         </ul>
       )}
 
-      <h3 className="section-label">What Whimbrel sees</h3>
-      <p className="muted small">Exactly what is added to a prompt, after the {view.maxChars.toLocaleString("en-US")}-character limit.</p>
-      <pre className="profile-preview" aria-label="What Whimbrel sees">
+      <h3 className="section-label">{t("What Whimbrel sees")}</h3>
+      <p className="muted small">{t("Exactly what is added to a prompt, after the {limit}-character limit.", { limit: view.maxChars.toLocaleString(locale) })}</p>
+      <pre className="profile-preview" aria-label={t("What Whimbrel sees")}>
         {previewText(view)}
       </pre>
       {error && <p role="alert">{error}</p>}
@@ -218,6 +221,7 @@ export function ProfileCard() {
 }
 
 function FactRow(props: { fact: Fact; onSave: (text: string) => Promise<boolean>; onRemove: () => void }) {
+  const { t } = useL10n();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(props.fact.text);
 
@@ -232,22 +236,22 @@ function FactRow(props: { fact: Fact; onSave: (text: string) => Promise<boolean>
             setEditing(true);
           }}
         >
-          Edit
+          {t("Edit")}
         </button>
         <button className="mode" onClick={props.onRemove}>
-          Remove
+          {t("Remove")}
         </button>
       </li>
     );
   }
   return (
     <li className="fact-row">
-      <input className="input fact-input" aria-label="Edit fact" value={text} onChange={(e) => setText(e.target.value)} autoFocus />
+      <input className="input fact-input" aria-label={t("Edit fact")} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
       <button className="mode" onClick={() => void props.onSave(text).then((saved) => saved && setEditing(false))}>
-        Save
+        {t("Save")}
       </button>
       <button className="mode" onClick={() => setEditing(false)}>
-        Cancel
+        {t("Cancel")}
       </button>
     </li>
   );

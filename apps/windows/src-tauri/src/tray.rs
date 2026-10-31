@@ -16,6 +16,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, PhysicalPosition, Rect, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
+use crate::l10n::tr;
 use crate::state::AppState;
 use crate::syncing::controller::SyncState;
 
@@ -102,17 +103,17 @@ pub fn icon_state(capture: CaptureLine, sync: SyncLine, recording: bool) -> Icon
 
 pub fn status_line(capture: CaptureLine, sync: SyncLine, time: impl Fn(i64) -> String) -> String {
     let capture = match capture {
-        CaptureLine::On => "Capturing",
-        CaptureLine::Paused => "Capture paused",
-        CaptureLine::Off => "Capture off",
-        CaptureLine::Stopped => "Capture stopped",
+        CaptureLine::On => tr("Capturing", &[]),
+        CaptureLine::Paused => tr("Capture paused", &[]),
+        CaptureLine::Off => tr("Capture off", &[]),
+        CaptureLine::Stopped => tr("Capture stopped", &[]),
     };
     let sync = match sync {
-        SyncLine::Off => "Sync off".to_string(),
-        SyncLine::SettingUp => "Sync setting up".to_string(),
-        SyncLine::Synced(Some(ms)) => format!("Synced {}", time(ms)),
-        SyncLine::Synced(None) => "Sync on".to_string(),
-        SyncLine::Error => "Sync error".to_string(),
+        SyncLine::Off => tr("Sync off", &[]),
+        SyncLine::SettingUp => tr("Sync setting up", &[]),
+        SyncLine::Synced(Some(ms)) => tr("Synced {time}", &[("time", &time(ms))]),
+        SyncLine::Synced(None) => tr("Sync on", &[]),
+        SyncLine::Error => tr("Sync error", &[]),
     };
     format!("{capture} · {sync}")
 }
@@ -157,8 +158,7 @@ fn current(state: &AppState) -> (CaptureLine, SyncLine) {
 }
 
 fn clock_time(ms: i64) -> String {
-    use chrono::TimeZone;
-    chrono::Local.timestamp_millis_opt(ms).single().map(|t| t.format("%-I:%M %p").to_string()).unwrap_or_default()
+    crate::l10n::short_time(ms, &crate::l10n::ui_language())
 }
 
 /// Whether the taskbar uses the light theme (`SystemUsesLightTheme`). Unset means dark,
@@ -202,7 +202,7 @@ pub fn refresh(app: &AppHandle) -> TrayStatus {
     let recording_started_unix_ms = state.meetings.as_ref().and_then(|m| m.status().started_unix_ms);
     let line = status_line(capture, sync, clock_time);
     let tooltip = match recording_started_unix_ms {
-        Some(ms) => format!("Whimbrel · Recording since {} · {line}", clock_time(ms)),
+        Some(ms) => format!("Whimbrel · {} · {line}", tr("Recording since {time}", &[("time", &clock_time(ms))])),
         None => format!("Whimbrel · {line}"),
     };
     let shown = (icon_state(capture, sync, recording_started_unix_ms.is_some()), taskbar_is_light(), tooltip.clone());
@@ -231,11 +231,30 @@ pub fn refresh(app: &AppHandle) -> TrayStatus {
     TrayStatus { line, capture_enabled: capture != CaptureLine::Off, recording_started_unix_ms }
 }
 
+/// The right-click menu, in the current language.
+fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let open = MenuItem::with_id(app, "open", tr("Open Whimbrel", &[]), true, None::<&str>)?;
+    let feedback = MenuItem::with_id(app, "feedback", tr("Send Feedback…", &[]), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", tr("Quit Whimbrel", &[]), true, None::<&str>)?;
+    Menu::with_items(app, &[&open, &feedback, &quit])
+}
+
+/// After a language change: a new menu, and the tooltip re-rendered (its cached text differs).
+/// Call off the main thread, like `refresh`.
+pub fn relabel(app: &AppHandle) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        match menu(app) {
+            Ok(menu) => {
+                let _ = tray.set_menu(Some(menu));
+            }
+            Err(e) => tracing::warn!(error = %e, "could not rebuild the tray menu"),
+        }
+    }
+    refresh(app);
+}
+
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open Whimbrel", true, None::<&str>)?;
-    let feedback = MenuItem::with_id(app, "feedback", "Send Feedback…", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Whimbrel", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &feedback, &quit])?;
+    let menu = menu(app)?;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(Image::from_bytes(icon_bytes(IconState::Idle, taskbar_is_light()))?)
         .tooltip("Whimbrel")

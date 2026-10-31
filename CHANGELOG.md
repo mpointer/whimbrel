@@ -2,6 +2,29 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.43] - 2026-10-31
+
+### Languages
+- Whimbrel now speaks Spanish, French (Canada and France), German and Brazilian Portuguese, plus British, Canadian and Australian English. The translations are AI-generated and still being reviewed (#464, #469, #471).
+- New settings: Language, and "Write notes and summaries in", which applies to notes, summaries, Ask answers and Away follow-ups (#464).
+- Meetings in other languages: turn on "I have meetings in other languages" to have each meeting's language detected and transcribed as spoken, with a per-meeting "Transcript language" menu. Uses an optional larger model (#464).
+- Search now understands 50+ languages, so a Spanish question finds an English meeting. On first launch Whimbrel downloads a new search model of about 470 MB and rebuilds its search index in the background; until that finishes, Ask and semantic search find less, and keyword search works as usual. The model is no longer bundled in the Mac app (#467, #468).
+- Slides and windows are read in their own language (#464).
+
+### Mac
+- Back-to-back meetings no longer merge into one recording: Whimbrel splits at the next meeting's start, with a "Keep together" option (#463).
+- A Join button in the meeting-start pop-up opens Zoom, Teams, Google Meet and Webex (#462).
+- Away Mode is shown as "Beta coming soon" until it can join meetings. Its old switch only kept the Mac awake, so that setting is cleared (#473).
+
+### Windows
+- The language setting, the shell and Settings are translated; the rest of the app follows (#465, #470, #472).
+
+### iPhone
+- Strings are translated, with a Language row and the "Write notes and summaries in" picker. Read Aloud speaks in the output language (#464).
+
+### Sync service
+- Superseded copies of a row are now removed as devices push, which keeps sync small (#461).
+
 ## [0.9.42] - 2026-10-30
 
 ### Sync service

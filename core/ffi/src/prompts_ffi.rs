@@ -6,10 +6,12 @@ use std::ptr;
 
 use crate::{cstr_to_string, json_to_c_string};
 
-/// The built-in Ask starter prompts as a JSON array of `{"id","title","query"}`.
+/// The built-in Ask starter prompts as a JSON array of `{"id","title","query"}`, in `lang`
+/// (BCP 47; NULL or "" is English).
 #[unsafe(no_mangle)]
-pub extern "C" fn whimbrel_prompts_starters() -> *mut c_char {
-    match serde_json::to_string(&api::prompts::STARTER_PROMPTS) {
+pub extern "C" fn whimbrel_prompts_starters(lang: *const c_char) -> *mut c_char {
+    let lang = cstr_to_string(lang).unwrap_or_default();
+    match serde_json::to_string(&api::prompts::starter_prompts(&lang)) {
         Ok(json) => json_to_c_string(json),
         Err(_) => ptr::null_mut(),
     }
@@ -50,7 +52,8 @@ pub extern "C" fn whimbrel_hosted_models_fetch(
 /// Validates a pasted key by fetching `provider`'s model list
 /// (`api::hosted_models::validate_key`). Returns `{"status":"valid","models":[…]}`
 /// (plus `"prices"` for OpenRouter), `{"status":"refused","message":…}`,
-/// `{"status":"unreachable","message":…}` or `{"status":"other","message":…}`; null
+/// `{"status":"unreachable","message":…}` or `{"status":"other","message":…}`; refused
+/// and unreachable also carry `"code"` and `"params"` (`KeyCheck::user_code`); null
 /// only on a null or unknown provider. **Blocking** (up to 30 s), like
 /// `whimbrel_hosted_models_fetch`.
 #[unsafe(no_mangle)]
@@ -65,14 +68,19 @@ pub extern "C" fn whimbrel_key_check(
     let api_key = cstr_to_string(api_key).unwrap_or_default();
     let base_url = cstr_to_string(base_url_override);
     let check = api::hosted_models::validate_key(provider, &api_key, base_url.as_deref());
-    match serde_json::to_string(&check) {
-        Ok(json) => json_to_c_string(json),
-        Err(_) => ptr::null_mut(),
+    let Ok(mut json) = serde_json::to_value(&check) else {
+        return ptr::null_mut();
+    };
+    if let Some((code, params)) = check.user_code(provider) {
+        json["code"] = code.into();
+        json["params"] = params;
     }
+    json_to_c_string(json.to_string())
 }
 
 /// The provider table for the key on-ramp (`api::providers::PROVIDERS`): a JSON array of
-/// `{"id","name","key_page_url","policy_url","key_prefix","data_terms","cheap_model"}`.
+/// `{"id","name","key_page_url","policy_url","key_prefix","data_terms","cheap_model"}`;
+/// `data_terms` is `{"note_id","text","checked"}` or null.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_providers() -> *mut c_char {
     match serde_json::to_string(&api::providers::PROVIDERS) {
@@ -107,6 +115,8 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&take(whimbrel_key_check(google.as_ptr(), key.as_ptr(), unreachable.as_ptr()))).unwrap();
         assert_eq!(v["status"], "unreachable");
         assert!(v["message"].as_str().unwrap().starts_with("Couldn't reach Google."));
+        assert_eq!(v["code"], "key_unreachable");
+        assert_eq!(v["params"], serde_json::json!({"provider": "Google"}));
         let bogus = CString::new("bogus").unwrap();
         assert!(whimbrel_key_check(bogus.as_ptr(), key.as_ptr(), ptr::null()).is_null());
 
@@ -114,6 +124,7 @@ mod tests {
         assert_eq!(v.as_array().unwrap().len(), 5);
         assert_eq!(v[4]["id"], "openrouter");
         assert_eq!(v[3]["data_terms"]["checked"], "2026-10-29");
+        assert_eq!(v[4]["data_terms"]["note_id"], "openrouter_free_logging");
 
         let wrong = CString::new("sk-abc").unwrap();
         let hint = take(whimbrel_key_format_hint(google.as_ptr(), wrong.as_ptr()));
@@ -131,7 +142,7 @@ mod tests {
 
     #[test]
     fn starters_and_urgency_over_ffi() {
-        let v: serde_json::Value = serde_json::from_str(&take(whimbrel_prompts_starters())).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&take(whimbrel_prompts_starters(ptr::null()))).unwrap();
         assert_eq!(v.as_array().unwrap().len(), 6);
         assert_eq!(v[2]["id"], "todays-digest");
         let slow = CString::new("summarize my week").unwrap();

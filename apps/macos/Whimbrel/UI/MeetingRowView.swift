@@ -61,7 +61,7 @@ enum MeetingRowText {
         if let outcome = meeting.effectiveAwayOutcome { parts.append(AwayOutcomeLabel.text(outcome, at: meeting.awayOutcomeAt)) }
         if !meeting.attendees.isEmpty { parts.append(attendeeSummary(meeting.attendees)) }
         if let copies = meeting.alsoRecorded, !copies.isEmpty {
-            parts.append("+\(copies.count) \(copies.count == 1 ? "copy" : "copies")")
+            parts.append(String(localized: "+\(copies.count) copies"))
         }
         return parts.joined(separator: " · ")
     }

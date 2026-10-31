@@ -153,6 +153,8 @@ final class MeetingEndDetector {
         case checkInStop = "check_in_stop"
         case durationCap = "duration_cap"
         case lowDisk = "low_disk"
+        /// The next calendar meeting started (`MeetingSplit`).
+        case split = "split"
 
         /// The call itself went away (left, closed or quit), as opposed to the user being done
         /// (silence, the caps). Only these re-arm a calendar event for a rejoin.
@@ -160,7 +162,7 @@ final class MeetingEndDetector {
             switch self {
             case .appQuit, .captureReleased, .browserTabGone: return true
             case .scheduledEndHardCeiling, .maxDuration, .silence,
-                 .checkInTimeout, .checkInStop, .durationCap, .lowDisk: return false
+                 .checkInTimeout, .checkInStop, .durationCap, .lowDisk, .split: return false
             }
         }
     }

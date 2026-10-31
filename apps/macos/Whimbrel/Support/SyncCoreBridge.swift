@@ -264,9 +264,9 @@ extension CoreMemoryStore {
     }
 
     static func syncWorkerErrorMessage(_ error: SyncAPIError) -> String? {
-        guard let json = syncWorkerErrorJSON(error).withCString({ whimbrel_sync_worker_error_message($0) }) else { return nil }
+        guard let json = syncWorkerErrorJSON(error).withCString({ whimbrel_sync_worker_error_code($0) }) else { return nil }
         defer { whimbrel_core_free_string(json) }
-        return String(cString: json)
+        return (try? JSONDecoder().decode(CoreUserMessage.self, from: Data(String(cString: json).utf8)))?.localized()
     }
 
     private static func syncWorkerErrorJSON(_ error: SyncAPIError) -> String {

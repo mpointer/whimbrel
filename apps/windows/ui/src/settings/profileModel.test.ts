@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProfileView, SuggestionView } from "../generated/types";
 import {
-  SUGGESTIONS_EMPTY,
-  SUGGEST_PRIVACY,
   addFactBlocker,
   canAddFact,
   counterLine,
@@ -11,7 +9,9 @@ import {
   isOverCap,
   previewText,
   sourceLabel,
+  suggestPrivacy,
   suggestStatus,
+  suggestionsEmpty,
   toDraft,
 } from "./profileModel";
 
@@ -36,14 +36,14 @@ const fact = (id: string) => ({ id, text: `fact ${id}`, sourceMeetingId: null })
 
 describe("counterLine", () => {
   it("says how much of the cap is used", () => {
-    expect(counterLine(view({ composedChars: 1203 }))).toBe("1,203 of 2,000 characters");
-    expect(counterLine(view({ composedChars: 0 }))).toBe("0 of 2,000 characters");
-    expect(counterLine(view({ composedChars: 2000 }))).toBe("2,000 of 2,000 characters");
+    expect(counterLine(view({ composedChars: 1203 }), "en")).toBe("1,203 of 2,000 characters");
+    expect(counterLine(view({ composedChars: 0 }), "en")).toBe("0 of 2,000 characters");
+    expect(counterLine(view({ composedChars: 2000 }), "en")).toBe("2,000 of 2,000 characters");
   });
 
   it("says how much is not sent once it is over", () => {
     const v = view({ composedChars: 2431 });
-    expect(counterLine(v)).toBe("2,431 of 2,000 characters. The last 431 are not sent. Shorten it to send all of it.");
+    expect(counterLine(v, "en")).toBe("2,431 of 2,000 characters. The last 431 are not sent. Shorten it to send all of it.");
     expect(isOverCap(v)).toBe(true);
     expect(isOverCap(view({ composedChars: 2000 }))).toBe(false);
   });
@@ -113,10 +113,10 @@ describe("the suggestion switch", () => {
   });
 
   it("states what is sent and where, next to the switch", () => {
-    expect(SUGGEST_PRIVACY).toMatch(/meeting summaries/);
-    expect(SUGGEST_PRIVACY).toMatch(/AI routing you chose/);
-    expect(SUGGEST_PRIVACY).toMatch(/hosted model sees them unless Local-only/);
-    expect(SUGGEST_PRIVACY).toMatch(/Nothing is added unless you press Add/);
+    expect(suggestPrivacy()).toMatch(/meeting summaries/);
+    expect(suggestPrivacy()).toMatch(/AI routing you chose/);
+    expect(suggestPrivacy()).toMatch(/hosted model sees them unless Local-only/);
+    expect(suggestPrivacy()).toMatch(/Nothing is added unless you press Add/);
   });
 });
 
@@ -154,7 +154,7 @@ describe("suggestions", () => {
   });
 
   it("explains when suggestions appear, and that nothing is added without Add", () => {
-    expect(SUGGESTIONS_EMPTY).toMatch(/Once a day/);
-    expect(SUGGESTIONS_EMPTY).toMatch(/Nothing is added unless you press Add/);
+    expect(suggestionsEmpty()).toMatch(/Once a day/);
+    expect(suggestionsEmpty()).toMatch(/Nothing is added unless you press Add/);
   });
 });

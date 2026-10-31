@@ -118,28 +118,9 @@ echo "==> Installing Gmail connector dependencies..."
 echo "==> Installing Outlook 365 connector dependencies..."
 (cd ../../mcp-servers/outlook365 && npm ci --omit=dev)
 
-# core/memory/models is gitignored, same reasoning as mcp-servers/google-calendar/
-# node_modules above -- download it if a fresh checkout doesn't have it yet, so this
-# script stays self-sufficient rather than requiring a manual setup step first.
-echo "==> Ensuring embedding model files are present..."
-mkdir -p ../../core/memory/models
-for f in config.json tokenizer.json model.safetensors; do
-    if [ ! -f "../../core/memory/models/$f" ]; then
-        curl -fL --retry 3 -o "../../core/memory/models/$f" "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/$f"
-    fi
-done
-
-# XcodeGen's folder-reference resources copy whatever exists on disk at build time
-# with no check of their own (same hazard as the Calendar connector's node_modules,
-# documented above) -- but this model is load-bearing for every single capture_item
-# insert, not just an on-demand connector, so a silently-empty bundle here would
-# degrade ambient search continuously. Fail loudly rather than ship it.
-for f in config.json tokenizer.json model.safetensors; do
-    if [ ! -f "../../core/memory/models/$f" ]; then
-        echo "error: ../../core/memory/models/$f still missing after download attempt." >&2
-        exit 1
-    fi
-done
+# The semantic-search embedding model is not bundled: the app downloads it at runtime into
+# its data folder (core/api::models::embedding_manifest), so updates stay small and a newer
+# model is a new folder.
 
 SCRATCH="$(mktemp -d)"
 ARCHIVE_PATH="$SCRATCH/Whimbrel.xcarchive"

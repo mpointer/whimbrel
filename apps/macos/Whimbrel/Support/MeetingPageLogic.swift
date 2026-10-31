@@ -50,9 +50,9 @@ enum MeetingAskAvailability {
         if status == .recording {
             return segmentCount > 0 ? nil : "Listening. The transcript starts appearing after the first minute."
         }
-        if status != .completed { return "Ask is available once the meeting has ended." }
-        if isProcessing { return "Transcribing — Ask will be available shortly." }
-        if segmentCount == 0 { return "There is no transcript for this meeting to ask about." }
+        if status != .completed { return String(localized: "Ask is available once the meeting has ended.") }
+        if isProcessing { return String(localized: "Transcribing — Ask will be available shortly.") }
+        if segmentCount == 0 { return String(localized: "There is no transcript for this meeting to ask about.") }
         return nil
     }
 }

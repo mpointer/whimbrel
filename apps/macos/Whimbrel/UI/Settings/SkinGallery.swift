@@ -181,7 +181,7 @@ struct SkinGallery: View {
             skins.reloadUserSkins()
         } catch {
             Self.log.error("skin import failed: \(String(describing: error), privacy: .public)")
-            importFailure = "Whimbrel couldn't import that file. It needs to be a skin exported from Whimbrel."
+            importFailure = String(localized: "Whimbrel couldn't import that file. It needs to be a skin exported from Whimbrel.")
         }
     }
 }
@@ -333,7 +333,7 @@ private struct SkinCard: View {
             try UserSkinStore.shared.rename(skinId: skin.id, to: name)
         } catch {
             Self.log.error("skin rename failed: \(String(describing: error), privacy: .public)")
-            failure = "Couldn't rename this skin."
+            failure = String(localized: "Couldn't rename this skin.")
         }
         newName = nil
         skins.scrollSettingsBack(to: SkinStore.galleryCardId(skin.id))
@@ -350,10 +350,10 @@ private struct SkinCard: View {
         do {
             try SkinPackage.export(skinId: skin.id, from: .shared, to: url)
         } catch SkinPackage.PackageError.tooLargeToExport {
-            failure = "This skin is too big to export (more than 64 MB or 200 files), so it couldn't be imported again."
+            failure = String(localized: "This skin is too big to export (more than 64 MB or 200 files), so it couldn't be imported again.")
         } catch {
             Self.log.error("skin export failed: \(String(describing: error), privacy: .public)")
-            failure = "Couldn't export this skin."
+            failure = String(localized: "Couldn't export this skin.")
         }
     }
 
@@ -362,7 +362,7 @@ private struct SkinCard: View {
             try UserSkinStore.shared.delete(skinId: skin.id)
         } catch {
             Self.log.error("skin delete failed: \(String(describing: error), privacy: .public)")
-            failure = "Couldn't delete this skin."
+            failure = String(localized: "Couldn't delete this skin.")
         }
         confirmingDelete = false
         skins.scrollSettingsBack(to: SkinChatView.scrollId)

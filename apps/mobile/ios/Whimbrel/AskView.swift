@@ -51,9 +51,9 @@ struct AskView: View {
     @ViewBuilder private var content: some View {
         switch route {
         case .noHostedKey:
-            empty("Ask on iPhone needs a hosted model. Add an Anthropic, OpenAI, Google or OpenRouter key on your Mac and turn on \"Sync this key\", then pull to refresh.")
+            empty(String(localized: "Ask on iPhone needs a hosted model. Add an Anthropic, OpenAI, Google or OpenRouter key on your Mac and turn on \"Sync this key\", then pull to refresh."))
         case .localOnly:
-            empty("Local-only mode is on, so Ask stays on your Mac.")
+            empty(String(localized: "Local-only mode is on, so Ask stays on your Mac."))
         case .ready:
             ScrollViewReader { proxy in
                 ScrollView {
@@ -214,9 +214,9 @@ private struct TurnView: View {
             case .streaming where turn.answer.isEmpty:
                 ProgressView().accessibilityLabel("Thinking")
             case .streaming, .done: EmptyView()
-            case .stopped: note("Stopped")
-            case .spendCap: note("Daily spend cap reached on this iPhone")
-            case .failed: note("Couldn't get an answer. Try again.", isError: true)
+            case .stopped: note(String(localized: "Stopped"))
+            case .spendCap: note(String(localized: "Daily spend cap reached on this iPhone"))
+            case .failed: note(String(localized: "Couldn't get an answer. Try again."), isError: true)
             }
             if !turn.citations.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {

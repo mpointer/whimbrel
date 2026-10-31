@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
-  MCP_INTRO,
-  MCP_TOKEN_ONCE,
-  SCOPES,
   canCreate,
   clientLine,
   connectHelp,
+  mcpIntro,
+  mcpTokenOnce,
   revokeQuestion,
+  scopes,
   serverLine,
   toggleScope,
 } from "./mcpModel";
+
+const SCOPES = scopes();
+const MCP_INTRO = mcpIntro();
+const MCP_TOKEN_ONCE = mcpTokenOnce();
 
 describe("what each permission says it opens", () => {
   const by = (id: string) => SCOPES.find((s) => s.id === id)!;
@@ -90,12 +94,12 @@ describe("making a client", () => {
 
 describe("the client list", () => {
   it("lists what it may read and when it was made", () => {
-    const line = clientLine({ id: 1, name: "a", scopes: ["memory", "meetings"], createdUnixMs: new Date(2026, 9, 16, 9, 0).getTime(), revokedUnixMs: null });
+    const line = clientLine({ id: 1, name: "a", scopes: ["memory", "meetings"], createdUnixMs: new Date(2026, 9, 16, 9, 0).getTime(), revokedUnixMs: null }, "en");
     expect(line).toMatch(/^Can read: memory, meetings · made /);
   });
 
   it("says when access was revoked", () => {
-    const line = clientLine({ id: 1, name: "a", scopes: ["memory"], createdUnixMs: 1, revokedUnixMs: new Date(2026, 9, 16, 9, 0).getTime() });
+    const line = clientLine({ id: 1, name: "a", scopes: ["memory"], createdUnixMs: 1, revokedUnixMs: new Date(2026, 9, 16, 9, 0).getTime() }, "en");
     expect(line).toMatch(/^Revoked /);
   });
 });

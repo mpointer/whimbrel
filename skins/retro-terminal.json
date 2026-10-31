@@ -1,25 +1,124 @@
 {
-  "id": "retro-terminal",
-  "name": "Retro Terminal",
   "author": "Whimbrel",
-  "palettes": ["phosphor", "amber"],
-  "typography": { "display": "SF Mono/bold", "body": "SF Mono/regular", "numerals": "SF Mono/regular", "label": "SF Mono/semibold", "caps": "upper" },
-  "shape": { "radius": 0, "border": "solid", "borderWidth": 1, "density": "compact" },
-  "icons": { "today": "terminal", "meetings": "person.2", "routines": "bolt", "settings": "gearshape", "ask": "return", "person": "person", "time": "clock", "prep": "doc.text", "recap": "text.alignleft" },
-  "decoration": { "headerBand": "none", "dividers": "dotted", "texture": "none", "imagery": [] },
+  "decoration": {
+    "dividers": "dotted",
+    "headerBand": "none",
+    "imagery": [],
+    "texture": "none"
+  },
+  "icons": {
+    "ask": "return",
+    "meetings": "person.2",
+    "person": "person",
+    "prep": "doc.text",
+    "recap": "text.alignleft",
+    "routines": "bolt",
+    "settings": "gearshape",
+    "time": "clock",
+    "today": "terminal"
+  },
+  "id": "retro-terminal",
+  "motion": "subtle",
+  "name": "Retro Terminal",
+  "palettes": [
+    "phosphor",
+    "amber"
+  ],
+  "shape": {
+    "border": "solid",
+    "borderWidth": 1,
+    "density": "compact",
+    "radius": 0
+  },
+  "today": {
+    "archetype": "terminal",
+    "options": {}
+  },
+  "typography": {
+    "body": "SF Mono/regular",
+    "caps": "upper",
+    "display": "SF Mono/bold",
+    "label": "SF Mono/semibold",
+    "numerals": "SF Mono/regular"
+  },
   "voice": {
-    "greetingMorning": "good morning, {name}",
-    "greetingAfternoon": "good afternoon, {name}",
-    "greetingEvening": "good evening, {name}",
-    "upNextHeader": "Next",
-    "upcomingHeader": "Schedule",
+    "askPlaceholder": "ask about your meetings",
     "earlierHeader": "History",
-    "recapHeader": "Recap",
     "emptyDay": "no meetings scheduled",
     "emptyEarlier": "nothing logged yet",
-    "askPlaceholder": "ask about your meetings",
-    "tagline": "Your day, one prompt away."
+    "greetingAfternoon": "good afternoon, {name}",
+    "greetingEvening": "good evening, {name}",
+    "greetingMorning": "good morning, {name}",
+    "recapHeader": "Recap",
+    "tagline": "Your day, one prompt away.",
+    "upNextHeader": "Next",
+    "upcomingHeader": "Schedule"
   },
-  "today": { "archetype": "terminal", "options": {} },
-  "motion": "subtle"
+  "voiceLocalized": {
+    "de": {
+      "askPlaceholder": "Meetings abfragen",
+      "earlierHeader": "Verlauf",
+      "emptyDay": "keine Meetings geplant",
+      "emptyEarlier": "noch nichts erfasst",
+      "greetingAfternoon": "guten Nachmittag, {name}",
+      "greetingEvening": "guten Abend, {name}",
+      "greetingMorning": "guten Morgen, {name}",
+      "recapHeader": "Recap",
+      "tagline": "Ihr Tag, einen Prompt entfernt.",
+      "upNextHeader": "Als Nächstes",
+      "upcomingHeader": "Termine"
+    },
+    "es": {
+      "askPlaceholder": "pregunta sobre tus reuniones",
+      "earlierHeader": "historial",
+      "emptyDay": "sin reuniones programadas",
+      "emptyEarlier": "nada registrado aún",
+      "greetingAfternoon": "buenas tardes, {name}",
+      "greetingEvening": "buenas noches, {name}",
+      "greetingMorning": "buenos días, {name}",
+      "recapHeader": "Recap",
+      "tagline": "Tu día, a un prompt de distancia.",
+      "upNextHeader": "Siguiente",
+      "upcomingHeader": "agenda"
+    },
+    "fr": {
+      "askPlaceholder": "posez une question sur vos réunions",
+      "earlierHeader": "Historique",
+      "emptyDay": "aucune réunion prévue",
+      "emptyEarlier": "rien d'enregistré pour l'instant",
+      "greetingAfternoon": "bon après-midi, {name}",
+      "greetingEvening": "bonsoir, {name}",
+      "greetingMorning": "bonjour, {name}",
+      "recapHeader": "Recap",
+      "tagline": "Votre journée, à portée de commande.",
+      "upNextHeader": "Suivant",
+      "upcomingHeader": "Agenda"
+    },
+    "fr-CA": {
+      "askPlaceholder": "posez une question sur vos réunions",
+      "earlierHeader": "Historique",
+      "emptyDay": "aucune réunion prévue",
+      "emptyEarlier": "rien d'enregistré",
+      "greetingAfternoon": "bon après-midi, {name}",
+      "greetingEvening": "bonsoir, {name}",
+      "greetingMorning": "bonjour, {name}",
+      "recapHeader": "Recap",
+      "tagline": "Votre journée, à une commande près.",
+      "upNextHeader": "suivant",
+      "upcomingHeader": "horaire"
+    },
+    "pt": {
+      "askPlaceholder": "pergunte sobre suas reuniões",
+      "earlierHeader": "Histórico",
+      "emptyDay": "nenhuma reunião agendada",
+      "emptyEarlier": "nada registrado ainda",
+      "greetingAfternoon": "boa tarde, {name}",
+      "greetingEvening": "boa noite, {name}",
+      "greetingMorning": "bom dia, {name}",
+      "recapHeader": "Recap",
+      "tagline": "Seu dia, a um prompt de distância.",
+      "upNextHeader": "Próximo",
+      "upcomingHeader": "Agenda"
+    }
+  }
 }

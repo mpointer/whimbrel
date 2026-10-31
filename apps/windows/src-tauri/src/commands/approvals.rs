@@ -170,7 +170,8 @@ pub async fn approval_approve(app: AppHandle, run_id: i64, account: Option<Strin
         let state = app.state::<AppState>();
         let store = state.store()?.clone();
         let connectors = write::Real::new(state.secrets.clone(), state.paths.root.clone());
-        let executed = write::execute(&store, run_id, account.as_deref(), &connectors as &dyn Connectors)?;
+        let lang = state.settings.lock().unwrap().routing().output_language;
+        let executed = write::execute(&store, run_id, account.as_deref(), &lang, &connectors as &dyn Connectors)?;
         let approvals = store.call_blocking(|s| pending(s))??;
         Ok(ApproveResult { approvals, message: message_for(&executed) })
     })

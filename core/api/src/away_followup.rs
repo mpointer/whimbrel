@@ -4,7 +4,8 @@
 //! approves it through the existing `write_action` path.
 
 use agent::WriteActionPayload;
-use chrono::TimeZone;
+use chrono::{NaiveDate, TimeZone};
+use memory::l10n::{keys, text, text_static};
 use memory::{NewPendingRoutineRun, RoutineTemplate, Store};
 use serde::{Deserialize, Serialize};
 
@@ -34,18 +35,19 @@ pub struct AwayFollowupResult {
 /// `Ok` the to-do exists, with `routine_run_id` set only if the draft was filed and linked.
 /// ponytail: returns `rusqlite::Result`, not `ApiError`, which only models spend-cap and provider
 /// failures; the FFI maps an error to NULL as `meeting_prep_run` does.
-pub fn record_away_followup(store: &Store, req: &AwayFollowupRequest) -> rusqlite::Result<AwayFollowupResult> {
+/// `lang` is the output-language tag the to-do and email are written in ("" is English).
+pub fn record_away_followup(store: &Store, req: &AwayFollowupRequest, lang: &str) -> rusqlite::Result<AwayFollowupResult> {
     let title = &req.meeting_title;
     let non_blank = |v: &Option<String>| v.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
     let name = non_blank(&req.organizer_name);
     let email = non_blank(&req.organizer_email);
-    let organizer = name.as_deref().or(email.as_deref()).unwrap_or("the organizer");
-    let todo = format!("Ask {organizer} for the recording of {title}");
+    let organizer = name.as_deref().or(email.as_deref()).unwrap_or(text_static(lang, keys::AWAY_THE_ORGANIZER));
+    let todo = text(lang, keys::AWAY_TODO, &[("organizer", organizer), ("title", title)]);
     let followup_id = store.insert_meeting_followup(req.meeting_id, &todo, None, req.now_unix_ms)?;
 
     let routine_run_id = match email.as_deref().filter(|_| !req.self_is_organizer) {
         None => None,
-        Some(to) => match file_draft(store, req, to, name.as_deref(), followup_id) {
+        Some(to) => match file_draft(store, req, to, name.as_deref(), followup_id, lang) {
             Ok(id) => Some(id),
             Err(e) => {
                 eprintln!("away follow-up: organizer draft not filed: {e}");
@@ -58,28 +60,29 @@ pub fn record_away_followup(store: &Store, req: &AwayFollowupRequest) -> rusqlit
 
 /// Files the pending organizer email and links it to the to-do. If linking fails the run is
 /// rejected so no approval is left without a to-do pointing at it.
-fn file_draft(store: &Store, req: &AwayFollowupRequest, to: &str, name: Option<&str>, followup_id: i64) -> rusqlite::Result<i64> {
+fn file_draft(store: &Store, req: &AwayFollowupRequest, to: &str, name: Option<&str>, followup_id: i64, lang: &str) -> rusqlite::Result<i64> {
     let title = &req.meeting_title;
     let routine_id = store.ensure_away_routine()?;
-    let first_name = name.and_then(|n| n.split_whitespace().next()).unwrap_or("there");
+    let first_name = name.and_then(|n| n.split_whitespace().next()).unwrap_or(text_static(lang, keys::AWAY_GREETING_FALLBACK));
     let day = chrono::Local
         .timestamp_millis_opt(req.meeting_start_unix_ms)
         .single()
-        .map(|d| d.format("%A, %B %-d").to_string())
+        .map(|d| format_day(d.date_naive(), lang))
         .unwrap_or_default();
     let payload = WriteActionPayload::SendEmail {
         to: to.to_string(),
-        subject: format!("Recording of {title}"),
-        body: format!(
-            "Hi {first_name},\n\nI couldn't join {title} on {day}. Could you share the recording or transcript when you have a moment?\n\nThanks,\n{}",
-            req.profile_name
+        subject: text(lang, keys::AWAY_EMAIL_SUBJECT, &[("title", title)]),
+        body: text(
+            lang,
+            keys::AWAY_EMAIL_BODY,
+            &[("first_name", first_name), ("title", title), ("day", &day), ("signature", &req.profile_name)],
         ),
     };
     let pending_action_json = serde_json::to_string(&payload).expect("payload serializes");
     let run_id = store.insert_pending_routine_run(&NewPendingRoutineRun {
         routine_id,
         ran_at_unix_ms: req.now_unix_ms,
-        output_summary: format!("Email {to} asking for the recording of {title}"),
+        output_summary: text(lang, keys::AWAY_RUN_SUMMARY, &[("to", to), ("title", title)]),
         pending_action_json,
     })?;
     if let Err(e) = store.link_meeting_followup_run(followup_id, run_id) {
@@ -87,6 +90,29 @@ fn file_draft(store: &Store, req: &AwayFollowupRequest, to: &str, name: Option<&
         return Err(e);
     }
     Ok(run_id)
+}
+
+/// "Friday, October 30" in `lang`: the pattern is the catalog's `keys::DAY_LONG`, the names come
+/// from chrono's locale for the exact tag, then its base language, then `en_US`. chrono's locales
+/// all carry a region, so the base language means its home region (`fr` → `fr_FR`).
+pub fn format_day(date: NaiveDate, lang: &str) -> String {
+    format_day_with(date, lang, text_static(lang, keys::DAY_LONG))
+}
+
+fn format_day_with(date: NaiveDate, lang: &str, pattern: &str) -> String {
+    use std::fmt::Write;
+    let tag = lang.replace('-', "_");
+    let base = tag.split('_').next().unwrap_or_default();
+    let locale = chrono::Locale::try_from(tag.as_str())
+        .or_else(|_| chrono::Locale::try_from(format!("{base}_{}", base.to_uppercase()).as_str()))
+        .unwrap_or(chrono::Locale::en_US);
+    // A broken translated pattern makes chrono's Display fail; fall back to the English one.
+    let mut out = String::new();
+    if write!(out, "{}", date.format_localized(pattern, locale)).is_err() {
+        out.clear();
+        let _ = write!(out, "{}", date.format_localized(keys::DAY_LONG, locale));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -127,9 +153,43 @@ mod tests {
     }
 
     #[test]
+    fn format_day_en_us_matches_today() {
+        let d = chrono::NaiveDate::from_ymd_opt(2026, 10, 30).unwrap();
+        assert_eq!(format_day(d, ""), "Friday, October 30");
+        assert_eq!(format_day(d, "en-US"), "Friday, October 30");
+        assert_eq!(format_day(d, "es-US"), "viernes, 30 de octubre");
+        assert_eq!(format_day(d, "xx"), "Friday, October 30");
+        assert_eq!(format_day(d, "fr"), "vendredi 30 octobre");
+        assert_eq!(format_day(d, "es-ZZ"), "viernes, 30 de octubre");
+    }
+
+    #[test]
+    fn format_day_reads_the_pattern_from_the_catalog() {
+        let c = memory::l10n::Catalog::parse(
+            r#"{"sourceLanguage":"en","strings":{"%A, %B %-d":{"localizations":{"es":{"stringUnit":{"state":"translated","value":"%A, %-d de %B"}},"fr":{"stringUnit":{"state":"translated","value":"%A %-d %Q"}}}}}}"#,
+        )
+        .unwrap();
+        let d = chrono::NaiveDate::from_ymd_opt(2026, 10, 30).unwrap();
+        let day = |lang| format_day_with(d, lang, c.lookup(lang, keys::DAY_LONG, None).unwrap_or(keys::DAY_LONG));
+        assert_eq!(day("es-US"), "viernes, 30 de octubre");
+        assert_eq!(day(""), "Friday, October 30");
+        assert_eq!(day("fr-CA"), "vendredi, octobre 30", "a broken translated pattern falls back to the English one");
+    }
+
+    #[test]
+    fn persisted_strings_render_english_for_empty_lang() {
+        let s = store();
+        let res = record_away_followup(&s, &req(Some("a@x.com"), Some("Ana Lopez"), false), "").unwrap();
+        let pending = s.pending_routine_runs().unwrap();
+        assert_eq!(pending[0].output_summary, "Email a@x.com asking for the recording of Standup");
+        assert_eq!(s.open_meeting_followups().unwrap()[0].text, "Ask Ana Lopez for the recording of Standup");
+        assert!(res.routine_run_id.is_some());
+    }
+
+    #[test]
     fn followup_with_draft() {
         let s = store();
-        let res = record_away_followup(&s, &req(Some("a@x.com"), Some("Ana Lopez"), false)).unwrap();
+        let res = record_away_followup(&s, &req(Some("a@x.com"), Some("Ana Lopez"), false), "").unwrap();
         let run_id = res.routine_run_id.expect("draft");
         let json = s.pending_action_for_run(run_id).unwrap().unwrap();
         match serde_json::from_str::<WriteActionPayload>(&json).unwrap() {
@@ -153,7 +213,7 @@ mod tests {
     #[test]
     fn no_name_says_there_and_todo_falls_back_to_email() {
         let s = store();
-        let res = record_away_followup(&s, &req(Some("a@x.com"), None, false)).unwrap();
+        let res = record_away_followup(&s, &req(Some("a@x.com"), None, false), "").unwrap();
         let json = s.pending_action_for_run(res.routine_run_id.unwrap()).unwrap().unwrap();
         assert!(json.contains("Hi there,"), "{json}");
         assert_eq!(s.open_meeting_followups().unwrap()[0].text, "Ask a@x.com for the recording of Standup");
@@ -162,7 +222,7 @@ mod tests {
     #[test]
     fn organizer_is_self_no_draft() {
         let s = store();
-        let res = record_away_followup(&s, &req(Some("me@x.com"), Some("Me"), true)).unwrap();
+        let res = record_away_followup(&s, &req(Some("me@x.com"), Some("Me"), true), "").unwrap();
         assert_eq!(res.routine_run_id, None);
         assert_eq!(s.open_meeting_followups().unwrap().len(), 1);
         assert!(s.pending_routine_runs().unwrap().is_empty());
@@ -171,7 +231,7 @@ mod tests {
     #[test]
     fn no_email_no_draft() {
         let s = store();
-        let res = record_away_followup(&s, &req(None, None, false)).unwrap();
+        let res = record_away_followup(&s, &req(None, None, false), "").unwrap();
         assert_eq!(res.routine_run_id, None);
         let open = s.open_meeting_followups().unwrap();
         assert_eq!(open.len(), 1);
@@ -181,7 +241,7 @@ mod tests {
     #[test]
     fn pending_away_run_is_listed_and_approvable_though_its_routine_is_disabled() {
         let s = store();
-        let res = record_away_followup(&s, &req(Some("a@x.com"), Some("Ana"), false)).unwrap();
+        let res = record_away_followup(&s, &req(Some("a@x.com"), Some("Ana"), false), "").unwrap();
         let run_id = res.routine_run_id.unwrap();
         let routine = s.list_routines().unwrap().into_iter().find(|r| r.template == memory::RoutineTemplate::AwayFollowUp).unwrap();
         assert!(!routine.enabled);
@@ -191,7 +251,7 @@ mod tests {
         assert_eq!(pending[0].id, run_id);
         assert_eq!(pending[0].routine_name, "Away Mode");
         // The approve path: plan claims it and builds the Gmail call.
-        match crate::write_action::plan(&s, run_id).unwrap() {
+        match crate::write_action::plan(&s, run_id, "").unwrap() {
             crate::write_action::PlanResult::Planned { plan } => {
                 assert_eq!(plan.connector, "gmail");
                 assert_eq!(plan.tool, "send_email");
@@ -204,7 +264,7 @@ mod tests {
     fn blank_email_no_draft() {
         for blank in ["", "   "] {
             let s = store();
-            let res = record_away_followup(&s, &req(Some(blank), Some("Ana"), false)).unwrap();
+            let res = record_away_followup(&s, &req(Some(blank), Some("Ana"), false), "").unwrap();
             assert_eq!(res.routine_run_id, None);
             assert!(s.pending_routine_runs().unwrap().is_empty());
             assert_eq!(s.open_meeting_followups().unwrap()[0].text, "Ask Ana for the recording of Standup");
@@ -214,12 +274,12 @@ mod tests {
     #[test]
     fn blank_name_falls_back_to_email() {
         let s = store();
-        let res = record_away_followup(&s, &req(Some("a@x.com"), Some("  "), false)).unwrap();
+        let res = record_away_followup(&s, &req(Some("a@x.com"), Some("  "), false), "").unwrap();
         assert_eq!(s.open_meeting_followups().unwrap()[0].text, "Ask a@x.com for the recording of Standup");
         let json = s.pending_action_for_run(res.routine_run_id.unwrap()).unwrap().unwrap();
         assert!(json.contains("Hi there,"), "{json}");
         let both = store();
-        record_away_followup(&both, &req(None, Some(""), false)).unwrap();
+        record_away_followup(&both, &req(None, Some(""), false), "").unwrap();
         assert_eq!(both.open_meeting_followups().unwrap()[0].text, "Ask the organizer for the recording of Standup");
     }
 
@@ -228,7 +288,7 @@ mod tests {
         let s = store();
         // Make filing the draft fail: the pending run cannot be inserted without its table.
         s.drop_routine_run_table_for_test();
-        let res = record_away_followup(&s, &req(Some("a@x.com"), Some("Ana"), false)).unwrap();
+        let res = record_away_followup(&s, &req(Some("a@x.com"), Some("Ana"), false), "").unwrap();
         assert_eq!(res.routine_run_id, None);
         let open = s.open_meeting_followups().unwrap();
         assert_eq!(open.len(), 1);
@@ -238,7 +298,7 @@ mod tests {
     #[test]
     fn followup_and_run_are_linked() {
         let s = store();
-        let res = record_away_followup(&s, &req(Some("a@x.com"), Some("Ana"), false)).unwrap();
+        let res = record_away_followup(&s, &req(Some("a@x.com"), Some("Ana"), false), "").unwrap();
         let run_id = res.routine_run_id.unwrap();
         assert_eq!(s.open_meeting_followups().unwrap()[0].routine_run_id, Some(run_id));
         assert_eq!(s.pending_routine_runs().unwrap()[0].id, run_id);

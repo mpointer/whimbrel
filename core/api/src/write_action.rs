@@ -6,6 +6,7 @@
 //! timer, token resolution, the `McpHost` call and notifications stay in the shell.
 
 use agent::WriteActionPayload;
+use memory::l10n::{keys, text};
 use memory::{RunStatus, Store};
 
 /// Everything the shell needs to make one connector call, plus the strings the
@@ -48,6 +49,18 @@ pub enum ToolOutcome {
     NoToken,
 }
 
+impl ToolOutcome {
+    /// The stable code and params a shell localizes `Settled::user_message` from;
+    /// `None` when there is no message. `connector` is the plan's (`"gmail"`, `"google-calendar"`).
+    pub fn user_code(&self, connector: &str) -> Option<(&'static str, serde_json::Value)> {
+        match self {
+            ToolOutcome::RetryableFailure { reason } => Some(("action_retryable", serde_json::json!({ "reason": reason }))),
+            ToolOutcome::NoToken => Some(("connector_not_connected", serde_json::json!({ "connector": connector }))),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Settled {
     pub finalized: bool,
@@ -58,19 +71,20 @@ pub struct Settled {
 
 /// Atomically claims `run_id`'s drafted action (only one caller wins, so a
 /// double-tapped Approve or an overlapping auto-approve can never send twice) and
-/// builds the connector call from the payload.
-pub fn plan(store: &Store, run_id: i64) -> rusqlite::Result<PlanResult> {
+/// builds the connector call from the payload. `lang` is the output-language tag the
+/// run's stored summaries are written in ("" is English).
+pub fn plan(store: &Store, run_id: i64, lang: &str) -> rusqlite::Result<PlanResult> {
     let Some(payload_json) = store.claim_pending_action(run_id)? else {
         return Ok(PlanResult::NotClaimable);
     };
     let Ok(payload) = serde_json::from_str::<WriteActionPayload>(&payload_json) else {
-        store.finalize_routine_run(run_id, RunStatus::Failed, "Couldn't read the drafted action.".into(), "{}".into())?;
+        store.finalize_routine_run(run_id, RunStatus::Failed, text(lang, keys::ACTION_UNDECODABLE, &[]), "{}".into())?;
         return Ok(PlanResult::Undecodable);
     };
-    Ok(PlanResult::Planned { plan: build_plan(run_id, &payload) })
+    Ok(PlanResult::Planned { plan: build_plan(run_id, &payload, lang) })
 }
 
-fn build_plan(run_id: i64, payload: &WriteActionPayload) -> PlannedAction {
+fn build_plan(run_id: i64, payload: &WriteActionPayload, lang: &str) -> PlannedAction {
     match payload {
         WriteActionPayload::CreateCalendarEvent { title, start_unix_ms, end_unix_ms } => PlannedAction {
             run_id,
@@ -80,9 +94,9 @@ fn build_plan(run_id: i64, payload: &WriteActionPayload) -> PlannedAction {
             // timezone (mcp-servers/google-calendar/src/index.ts).
             args_json: serde_json::json!({ "title": title, "start_iso": iso8601(*start_unix_ms), "end_iso": iso8601(*end_unix_ms) }).to_string(),
             token_env: "GOOGLE_CALENDAR_ACCESS_TOKEN".into(),
-            no_token_message: "Calendar isn't connected, or needs to be reconnected. Check Settings → Connectors, then try Approve again.".into(),
-            success_summary: format!("Added \"{title}\" to your calendar."),
-            terminal_failure_summary: "Google rejected the calendar event request.".into(),
+            no_token_message: text("", keys::CALENDAR_NOT_CONNECTED, &[]),
+            success_summary: text(lang, keys::CALENDAR_ADDED, &[("title", title)]),
+            terminal_failure_summary: text(lang, keys::CALENDAR_REJECTED, &[]),
         },
         WriteActionPayload::SendEmail { to, subject, body } => PlannedAction {
             run_id,
@@ -90,9 +104,9 @@ fn build_plan(run_id: i64, payload: &WriteActionPayload) -> PlannedAction {
             tool: "send_email".into(),
             args_json: serde_json::json!({ "to": to, "subject": subject, "body": body }).to_string(),
             token_env: "GMAIL_ACCESS_TOKEN".into(),
-            no_token_message: "Gmail isn't connected, or needs to be reconnected. Check Settings → Connectors, then try Approve again.".into(),
-            success_summary: format!("Sent \"{subject}\" to {to}."),
-            terminal_failure_summary: "Google rejected the email send request.".into(),
+            no_token_message: text("", keys::GMAIL_NOT_CONNECTED, &[]),
+            success_summary: text(lang, keys::EMAIL_SENT, &[("subject", subject), ("to", to)]),
+            terminal_failure_summary: text(lang, keys::EMAIL_REJECTED, &[]),
         },
     }
 }
@@ -119,7 +133,7 @@ pub fn settle(store: &Store, plan: &PlannedAction, outcome: &ToolOutcome) -> rus
             store.release_claimed_routine_run(plan.run_id)?;
             Ok(Settled {
                 finalized: false,
-                user_message: Some(format!("Couldn't complete this action just now ({reason}). It's still pending -- try Approve again in a bit.")),
+                user_message: Some(text("", keys::ACTION_RETRYABLE, &[("reason", reason)])),
             })
         }
         ToolOutcome::NoToken => {
@@ -162,7 +176,7 @@ mod tests {
     fn plan_claims_and_maps_a_calendar_payload_to_create_event() {
         let store = Store::open_in_memory().unwrap();
         let run_id = seed_pending_run(&store, r#"{"kind":"create_calendar_event","title":"Sync \"quotes\"","start_unix_ms":1780000000000,"end_unix_ms":1780003600000}"#);
-        let plan = planned(plan(&store, run_id).unwrap());
+        let plan = planned(plan(&store, run_id, "").unwrap());
         assert_eq!(status(&store, run_id), RunStatus::Executing, "claimed");
         assert_eq!(plan.connector, "google-calendar");
         assert_eq!(plan.tool, "create_event");
@@ -173,14 +187,25 @@ mod tests {
         assert_eq!(args["end_iso"], "2026-05-28T21:26:40Z");
         assert_eq!(plan.success_summary, "Added \"Sync \"quotes\"\" to your calendar.");
         assert!(plan.no_token_message.starts_with("Calendar isn't connected"));
-        assert!(matches!(super::plan(&store, run_id).unwrap(), PlanResult::NotClaimable), "second claim loses");
+        assert!(matches!(super::plan(&store, run_id, "").unwrap(), PlanResult::NotClaimable), "second claim loses");
+    }
+
+    #[test]
+    fn persisted_strings_render_english_for_empty_lang() {
+        let store = Store::open_in_memory().unwrap();
+        let cal = planned(plan(&store, seed_pending_run(&store, r#"{"kind":"create_calendar_event","title":"{to}","start_unix_ms":0,"end_unix_ms":1000}"#), "").unwrap());
+        assert_eq!(cal.success_summary, "Added \"{to}\" to your calendar.");
+        assert_eq!(cal.terminal_failure_summary, "Google rejected the calendar event request.");
+        assert_eq!(cal.no_token_message, "Calendar isn't connected, or needs to be reconnected. Check Settings → Connectors, then try Approve again.");
+        let mail = planned(plan(&store, seed_pending_run(&store, r#"{"kind":"send_email","to":"a@x.com","subject":"S","body":"B"}"#), "").unwrap());
+        assert_eq!(mail.no_token_message, "Gmail isn't connected, or needs to be reconnected. Check Settings → Connectors, then try Approve again.");
     }
 
     #[test]
     fn plan_maps_an_email_payload_to_send_email() {
         let store = Store::open_in_memory().unwrap();
         let run_id = seed_pending_run(&store, r#"{"kind":"send_email","to":"a@x.com","subject":"Hi\nthere","body":"line1\nline2"}"#);
-        let plan = planned(plan(&store, run_id).unwrap());
+        let plan = planned(plan(&store, run_id, "").unwrap());
         assert_eq!((plan.connector.as_str(), plan.tool.as_str(), plan.token_env.as_str()), ("gmail", "send_email", "GMAIL_ACCESS_TOKEN"));
         let args: serde_json::Value = serde_json::from_str(&plan.args_json).unwrap();
         assert_eq!(args, serde_json::json!({"to":"a@x.com","subject":"Hi\nthere","body":"line1\nline2"}));
@@ -192,7 +217,7 @@ mod tests {
     fn plan_finalizes_an_undecodable_draft_as_failed() {
         let store = Store::open_in_memory().unwrap();
         let run_id = seed_pending_run(&store, r#"{"kind":"teleport"}"#);
-        assert!(matches!(plan(&store, run_id).unwrap(), PlanResult::Undecodable));
+        assert!(matches!(plan(&store, run_id, "").unwrap(), PlanResult::Undecodable));
         let run = fetch_run(&store, run_id);
         assert_eq!(run.status, RunStatus::Failed);
         assert_eq!(run.output_summary, "Couldn't read the drafted action.");
@@ -203,14 +228,14 @@ mod tests {
     fn settle_success_and_terminal_failure_finalize() {
         let store = Store::open_in_memory().unwrap();
         let a = seed_pending_run(&store, r#"{"kind":"send_email","to":"a@x.com","subject":"S","body":"B"}"#);
-        let plan_a = planned(plan(&store, a).unwrap());
+        let plan_a = planned(plan(&store, a, "").unwrap());
         let settled = settle(&store, &plan_a, &ToolOutcome::Success { result_json: r#"{"id":"m1"}"#.into() }).unwrap();
         assert_eq!(settled, Settled { finalized: true, user_message: None });
         let run = fetch_run(&store, a);
         assert_eq!((run.status, run.output_summary.as_str(), run.output_json.as_str()), (RunStatus::Success, "Sent \"S\" to a@x.com.", r#"{"id":"m1"}"#));
 
         let b = seed_pending_run(&store, r#"{"kind":"send_email","to":"a@x.com","subject":"S","body":"B"}"#);
-        let plan_b = planned(plan(&store, b).unwrap());
+        let plan_b = planned(plan(&store, b, "").unwrap());
         assert!(settle(&store, &plan_b, &ToolOutcome::TerminalFailure).unwrap().finalized);
         let run_b = fetch_run(&store, b);
         assert_eq!((run_b.status, run_b.output_summary.as_str()), (RunStatus::Failed, "Google rejected the email send request."));
@@ -220,17 +245,25 @@ mod tests {
     fn settle_retryable_failure_and_no_token_release_the_draft_with_a_message() {
         let store = Store::open_in_memory().unwrap();
         let run_id = seed_pending_run(&store, r#"{"kind":"create_calendar_event","title":"T","start_unix_ms":0,"end_unix_ms":1000}"#);
-        let plan = planned(plan(&store, run_id).unwrap());
+        let plan = planned(plan(&store, run_id, "").unwrap());
         let settled = settle(&store, &plan, &ToolOutcome::RetryableFailure { reason: "Node.js isn't installed on this Mac.".into() }).unwrap();
         assert!(!settled.finalized);
         assert_eq!(settled.user_message.as_deref(), Some("Couldn't complete this action just now (Node.js isn't installed on this Mac.). It's still pending -- try Approve again in a bit."));
         assert_eq!(status(&store, run_id), RunStatus::PendingApproval);
         // Still approvable: claim again, then a missing token releases it again.
-        let plan = planned(super::plan(&store, run_id).unwrap());
+        let plan = planned(super::plan(&store, run_id, "").unwrap());
         let settled = settle(&store, &plan, &ToolOutcome::NoToken).unwrap();
         assert_eq!(settled.user_message.as_deref(), Some(plan.no_token_message.as_str()));
         assert_eq!(status(&store, run_id), RunStatus::PendingApproval);
         assert_eq!(store.pending_routine_runs().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn write_action_retryable_has_code_and_reason() {
+        let outcome = ToolOutcome::RetryableFailure { reason: "Node.js isn't installed on this Mac.".into() };
+        assert_eq!(outcome.user_code("gmail"), Some(("action_retryable", serde_json::json!({"reason": "Node.js isn't installed on this Mac."}))));
+        assert_eq!(ToolOutcome::NoToken.user_code("gmail"), Some(("connector_not_connected", serde_json::json!({"connector": "gmail"}))));
+        assert_eq!(ToolOutcome::TerminalFailure.user_code("gmail"), None);
     }
 
     #[test]

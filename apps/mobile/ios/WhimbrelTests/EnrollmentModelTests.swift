@@ -693,4 +693,12 @@ final class EnrollmentModelTests: XCTestCase {
         XCTAssertNotEqual(try storedPublicKey(), oldKey)
         model.enterBackground()
     }
+
+    func test_device_limit_code_renders_catalog_text() {
+        let error = SyncAPIError.httpError(status: 409, body: #"{"error":"device_limit"}"#)
+        XCTAssertEqual(EnrollmentModel.userMessage(for: error),
+                       String(localized: "Your free sync plan includes one computer and one phone, and they're already in use."))
+        XCTAssertEqual(EnrollmentModel.userMessage(for: URLError(.notConnectedToInternet)),
+                       String(localized: "Couldn't reach the server. Check your connection and try again."))
+    }
 }

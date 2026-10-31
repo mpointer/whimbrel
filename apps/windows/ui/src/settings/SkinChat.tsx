@@ -15,6 +15,7 @@ import {
 } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { ImageCandidateView, SkinLine, SkinSources } from "../generated/types";
+import { useL10n } from "../l10n";
 import { chooseSkin, currentSelection, installedSkins, reloadSkins, skinRevision, subscribeSkin } from "../skin";
 import { chatReducer, composer, initialChat, LOCAL_ONLY_LINE, placeholder, providerLine, runTurn, type ChatEvent, type SkinChatApi } from "./skinChatModel";
 import { pickCard } from "./skinGalleryModel";
@@ -36,6 +37,7 @@ const SOURCES_POLL_MS = 5000;
 /** Settings → Appearance: make or change a skin by talking to Whimbrel, below the gallery as on the Mac. One
  *  chat per skin; the shell saves each turn's skin and keeps its chat. Replies are plain text. */
 export function SkinChat(props: { onRunning?: (running: boolean) => void } = {}) {
+  const { t } = useL10n();
   useSyncExternalStore(subscribeSkin, skinRevision, skinRevision);
   const selected = currentSelection().skinId;
   const [state, dispatch] = useReducer(chatReducer, selected, (id: string) => initialChat(id));
@@ -141,7 +143,7 @@ export function SkinChat(props: { onRunning?: (running: boolean) => void } = {})
 
   return (
     <div className="skin-chat">
-      <h3 className="gallery-heading muted small">Make a skin</h3>
+      <h3 className="gallery-heading muted small">{t("Make a skin")}</h3>
       {state.turns.length > 0 && (
         <ol className="skin-chat__turns">
           {state.turns.map((turn, i) => (
@@ -152,7 +154,7 @@ export function SkinChat(props: { onRunning?: (running: boolean) => void } = {})
         </ol>
       )}
       {state.status.length > 0 && (
-        <div className="skin-chat__status" role="status" aria-label="Progress">
+        <div className="skin-chat__status" role="status" aria-label={t("Progress")}>
           {state.status.map((line, i) => (
             <p key={i} className="muted small">
               {state.running && i === state.status.length - 1 && <span className="skin-chat__spinner" aria-hidden="true" />}
@@ -161,14 +163,14 @@ export function SkinChat(props: { onRunning?: (running: boolean) => void } = {})
           ))}
           {state.running && (
             <button type="button" className="mode" onClick={stop}>
-              Stop
+              {t("Stop")}
             </button>
           )}
         </div>
       )}
       {state.candidates.length > 0 && (
         <div className="skin-chat__found">
-          <p className="small skin-chat__found-heading">Found these</p>
+          <p className="small skin-chat__found-heading">{t("Found these")}</p>
           <div className="skin-chat__strip">
             {state.candidates.map((c) => (
               <Candidate key={c.url} candidate={c} onApprove={() => approve(c)} onReject={() => reject(c)} onBroken={() => dispatch({ type: "forget", url: c.url })} />
@@ -184,22 +186,22 @@ export function SkinChat(props: { onRunning?: (running: boolean) => void } = {})
             void send();
           }}
         >
-          <input className="input grow" aria-label="Message to Whimbrel about this skin" placeholder={placeholder(selected)} value={draft} onChange={(e) => setDraft(e.target.value)} />
+          <input className="input grow" aria-label={t("Message to Whimbrel about this skin")} placeholder={placeholder(selected)} value={draft} onChange={(e) => setDraft(e.target.value)} />
           <button type="submit" className="skin-chat__send mode mode--active" disabled={state.running || !draft.trim() || composer(sources) === "loading"}>
-            Send
+            {t("Send")}
           </button>
         </form>
       ) : (
         <button type="button" className="skin-chat__set-up" onClick={setUp}>
-          Set up an AI provider <span aria-hidden="true">↗</span>
+          {t("Set up an AI provider")} <span aria-hidden="true">↗</span>
         </button>
       )}
       <div className="field-row">
         <button type="button" className="mode" onClick={() => void addImage()}>
-          Add your own image…
+          {t("Add your own image…")}
         </button>
         <button type="button" className="mode" disabled={state.running} onClick={() => void undo()}>
-          Undo
+          {t("Undo")}
         </button>
       </div>
     </div>
@@ -209,6 +211,7 @@ export function SkinChat(props: { onRunning?: (running: boolean) => void } = {})
 /** A found or made image with Approve and Reject. Its thumbnail comes from the shell's guarded fetch; one that
  *  won't load leaves the strip. */
 function Candidate(props: { candidate: ImageCandidateView; onApprove: () => void; onReject: () => void; onBroken: () => void }) {
+  const { t } = useL10n();
   const { candidate, onBroken } = props;
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
@@ -233,10 +236,10 @@ function Candidate(props: { candidate: ImageCandidateView; onApprove: () => void
       <figcaption className="muted small">{candidate.title}</figcaption>
       <div className="field-row">
         <button type="button" className="mode mode--active" onClick={props.onApprove}>
-          Approve
+          {t("Approve")}
         </button>
         <button type="button" className="mode" onClick={props.onReject}>
-          Reject
+          {t("Reject")}
         </button>
       </div>
     </figure>

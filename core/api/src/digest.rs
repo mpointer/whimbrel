@@ -30,7 +30,7 @@ pub fn daily_digest(
 
     if items.is_empty() {
         return Ok(llm::DailyDigest {
-            summary: "No activity captured today.".to_string(),
+            summary: crate::l10n::text(&routing.output_language, crate::l10n::keys::NO_ACTIVITY_TODAY, &[]),
             open_loops: Vec::new(),
             token_usage: llm::TokenUsage::default(),
         });
@@ -44,7 +44,7 @@ pub fn daily_digest(
         llm::generate_daily_digest_from_context(
             entry.client.as_ref(),
             &items,
-            &llm::profile::compose_instructions(&routing.daily_digest_instructions, &routing.profile),
+            &llm::profile::compose_instructions(&routing.daily_digest_instructions, &routing.profile, &routing.output_language),
             start_unix_ms,
         )
     }) else {

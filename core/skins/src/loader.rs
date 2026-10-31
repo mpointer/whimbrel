@@ -232,6 +232,31 @@ pub fn parse_skin(bytes: &[u8], base: &Skin) -> Option<(Skin, Vec<String>)> {
         }
     }
 
+    skin.voice_localized.clear();
+    for (lang, value) in obj("voiceLocalized").into_iter().flatten() {
+        let Some(voice) = value.as_object() else {
+            repairs.push(format!("voiceLocalized {lang} is not an object, ignored"));
+            continue;
+        };
+        let mut out = Voice(Default::default());
+        for key in VoiceKey::ALL {
+            match voice.get(key.name()).map(Value::as_str) {
+                None => {}
+                Some(Some(s)) if key.fits(s) => {
+                    out.0.insert(key, s.to_string());
+                }
+                Some(_) => repairs.push(format!(
+                    "voiceLocalized {lang} {} is empty, not text or over {} characters, using the Whimbrel wording",
+                    key.name(),
+                    key.limit()
+                )),
+            }
+        }
+        if !out.0.is_empty() {
+            skin.voice_localized.insert(lang.clone(), out);
+        }
+    }
+
     let today = obj("today");
     skin.today.archetype = pick(today, "archetype", base.today.archetype, &mut repairs);
     skin.today.options = today

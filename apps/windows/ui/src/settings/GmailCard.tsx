@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { gmailAccounts, gmailConnect, gmailDeleteStoredMail, gmailDisconnect } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { GmailAccounts } from "../generated/types";
-import { GMAIL_INTRO, deleteMailQuestion, GMAIL_MAIL_NOTE, GMAIL_PERMISSIONS, accountNote, canConnect, connectLabel, readStatus } from "./gmailModel";
+import { useL10n } from "../l10n";
+import { accountNote, canConnect, connectLabel, deleteMailQuestion, gmailIntro, gmailMailNote, gmailPermissions, readStatus } from "./gmailModel";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -10,6 +11,7 @@ function message(e: unknown): string {
 
 /** Settings → Gmail (M3.4 Task 3): the account Whimbrel sends approved routine emails from. */
 export function GmailCard() {
+  const { t, locale } = useL10n();
   const [state, setState] = useState<GmailAccounts | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,15 +39,15 @@ export function GmailCard() {
       .finally(() => setBusy(false));
   };
 
-  if (!state) return <section className="card about">{error ? <p role="alert">{error}</p> : "Loading…"}</section>;
+  if (!state) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
 
   return (
     <section className="card about" aria-labelledby="gmail-heading">
       <h2 id="gmail-heading" className="section-label">
-        Gmail
+        {"Gmail"}
       </h2>
       {state.blocked && <p role="alert">{state.blocked}</p>}
-      <p className="muted">{GMAIL_INTRO}</p>
+      <p className="muted">{gmailIntro()}</p>
       {state.accounts.length > 0 && (
         <ul className="rows">
           {state.accounts.map((account) => (
@@ -53,35 +55,35 @@ export function GmailCard() {
               <span>{account.email}</span>
               {account.needsReconnect ? (
                 <button className="mode mode--active" disabled={busy || !canConnect(state)} onClick={() => run(gmailConnect)}>
-                  Reconnect
+                  {t("Reconnect")}
                 </button>
               ) : null}
               <button className="mode" disabled={busy} onClick={() => run(() => gmailDisconnect(account.email))}>
-                Disconnect
+                {t("Disconnect")}
               </button>
               <button className="mode" disabled={busy} onClick={() => setConfirmDelete(account.email)}>
-                Delete stored mail�
+                {t("Delete stored mail…")}
               </button>
               {confirmDelete === account.email && (
-                <span role="group" aria-label="Confirm deleting stored mail">
+                <span role="group" aria-label={t("Confirm deleting stored mail")}>
                   <span className="muted small">{deleteMailQuestion(account.email)}</span>
                   <button className="mode mode--active" disabled={busy} onClick={() => run(() => gmailDeleteStoredMail(account.email))}>
-                    Delete mail
+                    {t("Delete mail")}
                   </button>
                   <button
                     className="mode"
                     disabled={busy}
                     onClick={() => run(() => gmailDeleteStoredMail(account.email).then(() => gmailDisconnect(account.email)))}
                   >
-                    Delete mail and disconnect
+                    {t("Delete mail and disconnect")}
                   </button>
                   <button className="mode" onClick={() => setConfirmDelete(null)}>
-                    Cancel
+                    {t("Cancel")}
                   </button>
                 </span>
               )}
               {accountNote(account) && <span className="muted small">{accountNote(account)}</span>}
-              <span className="muted small">{readStatus(account)}</span>
+              <span className="muted small">{readStatus(account, locale)}</span>
             </li>
           ))}
         </ul>
@@ -91,8 +93,8 @@ export function GmailCard() {
           {connectLabel(state.accounts.length)}
         </button>
       </div>
-      <p className="muted small">{GMAIL_MAIL_NOTE}</p>
-      <p className="muted small">{GMAIL_PERMISSIONS}</p>
+      <p className="muted small">{gmailMailNote()}</p>
+      <p className="muted small">{gmailPermissions()}</p>
       {error && <p role="alert">{error}</p>}
     </section>
   );

@@ -1,3 +1,4 @@
+import { t } from "../l10n";
 import { DEFAULT_SELECTION, resolveSelection, type Selection, type SkinDto, type SkinPalette } from "../skin";
 import type { Mode } from "../theme";
 import { voiceText } from "../today/layoutModel";
@@ -6,7 +7,7 @@ import { voiceText } from "../today/layoutModel";
 export const SWATCH_TOKENS = ["backgroundPage", "backgroundCard", "accentPrimary", "accentSecondary", "textPrimary"] as const;
 
 /** The footnote under the gallery (the Mac's, for this device). */
-export const GALLERY_FOOTNOTE = "Each PC keeps its own skin.";
+export const galleryFootnote = (): string => t("Each PC keeps its own skin.");
 
 export interface PaletteChoice {
   id: string;
@@ -40,7 +41,7 @@ export function orderedSkins(skins: readonly SkinDto[]): SkinDto[] {
 /** Shown under the picker when the palette in force overrides it; null when the picker is live. */
 export function lockedCaption(palette: SkinPalette): string | null {
   if (palette.light && palette.dark) return null;
-  return palette.dark ? "This palette is dark only, so it always uses Dark." : "This palette is light only, so it always uses Light.";
+  return palette.dark ? t("This palette is dark only, so it always uses Dark.") : t("This palette is light only, so it always uses Light.");
 }
 
 export function galleryState(skins: readonly SkinDto[], selection: Selection): Card[] {
@@ -88,10 +89,10 @@ export const afterImport = (selection: Selection, importedId: string): { selecti
   scrollTo: cardElementId(importedId),
 });
 
-export const deletePrompt = (name: string): string => `Delete \u201C${name}\u201D? Its chat and earlier versions go too.`;
+export const deletePrompt = (name: string): string => t("Delete “{name}”? Its chat and earlier versions go too.", { name });
 
 /** The colours of one palette row in `mode`; a single-variant palette shows the variant it has. */
 export function swatchColors(palette: SkinPalette, mode: Mode): string[] {
   const variant = palette[mode] ?? palette.light ?? palette.dark;
-  return variant ? SWATCH_TOKENS.map((t) => variant[t]) : [];
+  return variant ? SWATCH_TOKENS.map((token) => variant[token]) : [];
 }

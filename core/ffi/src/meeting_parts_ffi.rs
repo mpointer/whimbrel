@@ -227,6 +227,16 @@ pub extern "C" fn whimbrel_meeting_split(
     json_out(unsafe { &(*handle).0 }.split_meeting(meeting_id, from_part_index))
 }
 
+/// "Keep together": moves `from`'s snapshot rows (and continue key) to `into`. JSON array of
+/// the moved file paths, oldest first.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meeting_absorb_split(handle: *mut StoreHandle, into: i64, from: i64) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    json_out(unsafe { &(*handle).0 }.absorb_split_meeting(into, from))
+}
+
 /// `moves_json` is `[[old_path,new_path],...]`. False, with nothing changed, when any old
 /// path matches no snapshot row of this meeting.
 #[unsafe(no_mangle)]
@@ -445,6 +455,8 @@ mod tests {
             "{split}"
         );
         assert!(whimbrel_meeting_split(h, id, 9).is_null());
+        assert_eq!(take(whimbrel_meeting_absorb_split(h, id, id + 1000)), "[]");
+        assert!(whimbrel_meeting_absorb_split(ptr::null_mut(), id, 1).is_null());
         assert!(whimbrel_meeting_set_snapshot_paths(h, id, c("[]").as_ptr(), c("/d").as_ptr()));
         // No snapshot row is at /a: nothing may be repointed (the caller keeps its files).
         assert!(!whimbrel_meeting_set_snapshot_paths(

@@ -7,6 +7,15 @@ enum MeetingProvider: String, Codable {
     case googleMeet
     case teams
     case webex
+
+    var displayName: String {
+        switch self {
+        case .googleMeet: "Google Meet"
+        case .teams: "Microsoft Teams"
+        case .zoom: "Zoom"
+        case .webex: "Webex"
+        }
+    }
 }
 
 struct DetectedConferenceLink: Equatable, Codable {

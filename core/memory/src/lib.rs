@@ -18,8 +18,12 @@ use rusqlite::{params, Connection, OptionalExtension};
 mod embedding;
 pub use embedding::{
     Embedder, EmbeddingError, EmbeddingModel, LazyModelEmbedder, EMBEDDING_OUTPUT_DIM,
+    embedding_model_dir, prune_stale_embedding_models, EMBEDDING_MODEL_FILES, EMBEDDING_MODEL_ID,
+    EMBEDDING_MODEL_REPO, EMBEDDING_MODEL_REVISION,
 };
 
+pub mod keywords;
+pub mod l10n;
 pub mod live;
 pub mod meeting_parts;
 pub mod profile;
@@ -117,7 +121,7 @@ pub use sync_outbox::{
 };
 
 const EMBEDDING_DIM: usize = embedding::EMBEDDING_OUTPUT_DIM;
-const EMBEDDING_MODEL_VERSION: &str = "minilm-l6-v2-v1";
+const EMBEDDING_MODEL_VERSION: &str = "paraphrase-multilingual-minilm-l12-v2-v1";
 
 /// sqlite-vec's `vec0` hard-rejects any KNN query with `k` above this (confirmed against
 /// the real ~85k-row production database: "k value in knn query too large, provided
@@ -1208,9 +1212,10 @@ impl Store {
         ensure_vec_extension_registered();
         let conn = Connection::open(path)?;
         Self::init(&conn)?;
+        embedding::prune_stale_embedding_models(models_dir);
         Ok(Store {
             conn,
-            embedder: std::sync::Arc::new(LazyModelEmbedder::new(models_dir.to_path_buf())),
+            embedder: std::sync::Arc::new(LazyModelEmbedder::new(embedding::embedding_model_dir(models_dir))),
             own_device_id: Default::default(),
         })
     }
@@ -2061,6 +2066,8 @@ impl Store {
             ("summary_provider", "TEXT"),
             ("summary_model", "TEXT"),
             ("keep_media", "INTEGER NOT NULL DEFAULT 0"),
+            // Device-local: the language the audio was transcribed in (Task 20).
+            ("spoken_language", "TEXT"),
         ];
         for (name, sql_type) in columns_to_add {
             if !existing_columns.iter().any(|c| c == name) {
@@ -2757,6 +2764,32 @@ impl Store {
         Ok(id)
     }
 
+    /// This database's random sync epoch (32 hex chars), created on first use and never
+    /// changed while the database exists. It prefixes every compaction identity, so a
+    /// wiped or new database (which keeps the Keychain `device_id` but restarts `local_seq`
+    /// and meeting ids) can never compact rows an earlier database left on the relay.
+    pub fn sync_entity_epoch(&self) -> rusqlite::Result<String> {
+        // Read first: once the key exists, every round is a read, never a write a busy
+        // database could refuse (which would push that round untagged).
+        let existing: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM kv_meta WHERE key = 'sync_entity_epoch'", [], |row| row.get(0))
+            .optional()?;
+        if let Some(epoch) = existing {
+            return Ok(epoch);
+        }
+        self.conn.execute(
+            "INSERT INTO kv_meta (key, value) VALUES ('sync_entity_epoch', lower(hex(randomblob(16)))) \
+             ON CONFLICT(key) DO NOTHING",
+            [],
+        )?;
+        self.conn.query_row(
+            "SELECT value FROM kv_meta WHERE key = 'sync_entity_epoch'",
+            [],
+            |row| row.get(0),
+        )
+    }
+
     /// How far this device has pushed its own rows — 0 if never pushed before.
     pub fn get_sync_push_cursor(&self) -> rusqlite::Result<i64> {
         self.conn.query_row(
@@ -3372,11 +3405,18 @@ impl Store {
     /// `IS NOT`, not `!=`, so NULL-vs-NULL counts as unchanged. `next_local_seq()` is
     /// still drawn unconditionally; the counter is only required to be monotonic, not
     /// gapless, so a value that the `WHERE` discards is harmless.
+    ///
+    /// Within one batch only the first entry per `(source, external_id)` is applied
+    /// (#458: the first account's copy always wins), so two copies can't flip-flop a row.
     pub fn upsert_calendar_event_items(
         &self,
         items: &[NewCalendarEventItem],
     ) -> rusqlite::Result<()> {
+        let mut seen = std::collections::HashSet::new();
         for it in items {
+            if !seen.insert((it.source.as_str(), it.external_id.as_str())) {
+                continue;
+            }
             let actors_json =
                 serde_json::to_string(&it.actors).unwrap_or_else(|_| "[]".to_string());
             let local_seq = self.next_local_seq()?;
@@ -6741,7 +6781,22 @@ impl Store {
 
     /// Sets the meeting's "Keep media" flag, stamping `local_seq` and enqueueing the
     /// meeting for sync like `set_meeting_title`. Returns whether a row changed.
-    pub fn set_keep_media(&self, id: i64, keep: bool) -> rusqlite::Result<bool> {
+    /// The language a meeting's audio was transcribed in (a whisper code), local to this
+    /// device and not synced; `None` clears it.
+    pub fn set_meeting_spoken_language(&self, id: i64, lang: Option<&str>) -> rusqlite::Result<()> {
+        self.conn.execute("UPDATE meeting SET spoken_language = ?1 WHERE id = ?2", params![lang, id])?;
+        Ok(())
+    }
+
+    pub fn meeting_spoken_language(&self, id: i64) -> rusqlite::Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT spoken_language FROM meeting WHERE id = ?1", [id], |r| r.get::<_, Option<String>>(0))
+            .optional()?
+            .flatten())
+    }
+
+        pub fn set_keep_media(&self, id: i64, keep: bool) -> rusqlite::Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
         let local_seq = Self::next_local_seq_tx(&tx)?;
         let rows_affected = tx.execute(
@@ -8410,6 +8465,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn embedding_version_bump_resets_reindex_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("w.db");
+        {
+            let store = Store::open(&path, dir.path()).unwrap();
+            store.conn.execute("UPDATE kv_meta SET value = 'minilm-l6-v2-v1' WHERE key = 'embedding_model_version'", []).unwrap();
+            store.conn.execute("UPDATE kv_meta SET value = 'items:62508186' WHERE key = 'embedding_reindex_cursor'", []).unwrap();
+        }
+        let store = Store::open(&path, dir.path()).unwrap();
+        let get = |k: &str| -> String { store.conn.query_row("SELECT value FROM kv_meta WHERE key = ?1", [k], |r| r.get(0)).unwrap() };
+        assert_eq!(get("embedding_model_version"), "paraphrase-multilingual-minilm-l12-v2-v1");
+        assert_eq!(get("embedding_reindex_cursor"), "0");
+    }
+
     fn models_dir_for_tests() -> std::path::PathBuf {
         std::path::PathBuf::from("models")
     }
@@ -9234,6 +9304,25 @@ mod tests {
         assert!(outbox_rows(&store).is_empty(), "a non-terminal status is not pushable yet");
         store.update_meeting_status(scheduled, MeetingStatus::Cancelled).unwrap();
         assert_eq!(outbox_rows(&store).len(), 1, "cancelled is the other terminal status");
+    }
+
+    #[test]
+    fn spoken_language_column_added_once_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("w.db");
+        let id = {
+            let store = Store::open(&path, dir.path()).unwrap();
+            store.set_own_device_id("test-device");
+            let id = recording_meeting(&store, "test-device");
+            assert_eq!(store.meeting_spoken_language(id).unwrap(), None);
+            store.set_meeting_spoken_language(id, Some("es")).unwrap();
+            id
+        };
+        let store = Store::open(&path, dir.path()).unwrap();
+        assert_eq!(store.meeting_spoken_language(id).unwrap(), Some("es".to_string()));
+        store.set_meeting_spoken_language(id, None).unwrap();
+        assert_eq!(store.meeting_spoken_language(id).unwrap(), None);
+        assert_eq!(store.meeting_spoken_language(id + 999).unwrap(), None);
     }
 
     #[test]
@@ -12005,6 +12094,32 @@ mod tests {
             SyncableRow::CaptureItem { item, .. } => assert_eq!(item.text, "second"),
             other => panic!("expected CaptureItem, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn sync_entity_epoch_is_created_once_and_survives_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.db");
+        let store = Store::open(&path, &models_dir_for_tests()).unwrap();
+        let epoch = store.sync_entity_epoch().unwrap();
+        assert_eq!(epoch.len(), 32);
+        assert!(epoch.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(store.sync_entity_epoch().unwrap(), epoch, "never regenerated");
+        drop(store);
+
+        let reopened = Store::open(&path, &models_dir_for_tests()).unwrap();
+        assert_eq!(reopened.sync_entity_epoch().unwrap(), epoch);
+        assert_ne!(Store::open_in_memory().unwrap().sync_entity_epoch().unwrap(), epoch, "a new database, a new epoch");
+    }
+
+    /// A busy database refuses writes; reading an existing epoch must not need one, or
+    /// that sync round would push untagged.
+    #[test]
+    fn an_existing_sync_entity_epoch_is_read_without_a_write() {
+        let store = Store::open_in_memory().unwrap();
+        let epoch = store.sync_entity_epoch().unwrap();
+        store.conn.execute_batch("PRAGMA query_only = ON").unwrap();
+        assert_eq!(store.sync_entity_epoch().unwrap(), epoch);
     }
 
     #[test]
@@ -14844,6 +14959,36 @@ mod tests {
             second_seq, first_seq,
             "an identical re-poll must not burn a new local_seq"
         );
+    }
+
+    #[test]
+    fn upsert_calendar_event_items_keeps_the_first_of_a_repeated_key_in_one_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("t.sqlite"), &models_dir_for_tests()).unwrap();
+        let first = NewCalendarEventItem {
+            device_id: "dev-1".to_string(),
+            source: "google_calendar".to_string(),
+            ts_unix_ms: 1000,
+            actors: vec![],
+            title: "From account one".to_string(),
+            external_id: "evt-1".to_string(),
+        };
+        let mut second = first.clone();
+        second.title = "From account two".to_string();
+        let batch = [first, second];
+
+        store.upsert_calendar_event_items(&batch).unwrap();
+        let read = |store: &Store| -> (i64, String, Option<i64>) {
+            store.conn.query_row(
+                "SELECT COUNT(*), MAX(title), MAX(local_seq) FROM items WHERE external_id = 'evt-1'",
+                [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).unwrap()
+        };
+        let (count, title, seq) = read(&store);
+        assert_eq!((count, title.as_str()), (1, "From account one"));
+
+        store.upsert_calendar_event_items(&batch).unwrap();
+        assert_eq!(read(&store).2, seq, "a repeated batch must not re-stamp: no relay row per poll");
     }
 
     #[test]

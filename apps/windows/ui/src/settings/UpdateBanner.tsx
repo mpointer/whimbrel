@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { installUpdate, updateReady } from "../api";
 import { describeError, isCommandError } from "../errors";
+import { t } from "../l10n";
 
 // The shell downloads at launch and then daily, so a slow poll is enough.
 const POLL_MS = 10 * 60 * 1000;
@@ -20,10 +21,12 @@ export function UpdateBanner() {
 
   if (!version) return null;
   return (
-    <section className="card notice" role="region" aria-label="Update ready">
+    <section className="card notice" role="region" aria-label={t("Update ready")}>
       <p>
-        Whimbrel {version} is ready. Restarting installs it and reopens Whimbrel; a meeting being recorded is stopped and
-        saved first.
+        {t(
+          "Whimbrel {version} is ready. Restarting installs it and reopens Whimbrel; a meeting being recorded is stopped and saved first.",
+          { version },
+        )}
       </p>
       {error && <p role="alert">{error}</p>}
       <div className="toolbar">
@@ -39,7 +42,7 @@ export function UpdateBanner() {
             });
           }}
         >
-          {busy ? "Restarting…" : "Restart now"}
+          {busy ? t("Restarting…") : t("Restart now")}
         </button>
       </div>
     </section>

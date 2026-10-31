@@ -187,7 +187,7 @@ final class RoutineScheduler: ObservableObject {
         // (Daily Brief, Focus Time, EOD Recap), so a fixed "Daily Brief" title mislabels
         // two of them, including the approval prompts this feature exists to surface.
         content.title = routineName ?? "Routines"
-        content.body = needsApproval ? "Needs your approval" : run.outputSummary
+        content.body = needsApproval ? String(localized: "Needs your approval") : run.outputSummary
         content.sound = .default
         let request = UNNotificationRequest(identifier: "routine-run-\(run.id)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { [weak self] error in
@@ -324,7 +324,7 @@ final class RoutineScheduler: ObservableObject {
             }
             let scriptPath = plan.connector == "google-calendar" ? McpNodeLocator.calendarConnectorScriptPath() : McpNodeLocator.gmailConnectorScriptPath()
             guard let scriptPath else {
-                return .retryableFailure(reason: "The \(connectorLabel) connector's files weren't found in this build.")
+                return .retryableFailure(reason: String(localized: "The \(connectorLabel) connector's files weren't found in this build."))
             }
             guard let host = McpHost() else {
                 return .retryableFailure(reason: "Couldn't start the connector host.")

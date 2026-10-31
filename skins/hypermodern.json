@@ -1,25 +1,124 @@
 {
-  "id": "hypermodern",
-  "name": "Hypermodern",
   "author": "Whimbrel",
-  "palettes": ["violet-night", "ice"],
-  "typography": { "display": "SF Pro/thin", "body": "SF Pro/regular", "numerals": "SF Pro/light", "label": "SF Pro/medium", "caps": "none" },
-  "shape": { "radius": 24, "border": "solid", "borderWidth": 1, "density": "airy" },
-  "icons": { "today": "sparkles", "meetings": "person.2", "routines": "bolt", "settings": "gearshape", "ask": "arrow.up", "person": "person", "time": "clock", "prep": "doc.text", "recap": "text.alignleft" },
-  "decoration": { "headerBand": "none", "dividers": "none", "texture": "none", "imagery": [] },
+  "decoration": {
+    "dividers": "none",
+    "headerBand": "none",
+    "imagery": [],
+    "texture": "none"
+  },
+  "icons": {
+    "ask": "arrow.up",
+    "meetings": "person.2",
+    "person": "person",
+    "prep": "doc.text",
+    "recap": "text.alignleft",
+    "routines": "bolt",
+    "settings": "gearshape",
+    "time": "clock",
+    "today": "sparkles"
+  },
+  "id": "hypermodern",
+  "motion": "none",
+  "name": "Hypermodern",
+  "palettes": [
+    "violet-night",
+    "ice"
+  ],
+  "shape": {
+    "border": "solid",
+    "borderWidth": 1,
+    "density": "airy",
+    "radius": 24
+  },
+  "today": {
+    "archetype": "glass",
+    "options": {}
+  },
+  "typography": {
+    "body": "SF Pro/regular",
+    "caps": "none",
+    "display": "SF Pro/thin",
+    "label": "SF Pro/medium",
+    "numerals": "SF Pro/light"
+  },
   "voice": {
-    "greetingMorning": "Good morning, {name}",
-    "greetingAfternoon": "Good afternoon, {name}",
-    "greetingEvening": "Good evening, {name}",
-    "upNextHeader": "Up next",
-    "upcomingHeader": "Later today",
+    "askPlaceholder": "Ask about your meetings",
     "earlierHeader": "Earlier",
-    "recapHeader": "Recap",
     "emptyDay": "A clear day",
     "emptyEarlier": "Nothing logged yet",
-    "askPlaceholder": "Ask about your meetings",
-    "tagline": "Your day, in focus."
+    "greetingAfternoon": "Good afternoon, {name}",
+    "greetingEvening": "Good evening, {name}",
+    "greetingMorning": "Good morning, {name}",
+    "recapHeader": "Recap",
+    "tagline": "Your day, in focus.",
+    "upNextHeader": "Up next",
+    "upcomingHeader": "Later today"
   },
-  "today": { "archetype": "glass", "options": {} },
-  "motion": "none"
+  "voiceLocalized": {
+    "de": {
+      "askPlaceholder": "Fragen zu Ihren Meetings stellen",
+      "earlierHeader": "Früher",
+      "emptyDay": "Ein freier Tag",
+      "emptyEarlier": "Noch nichts erfasst",
+      "greetingAfternoon": "Guten Tag, {name}",
+      "greetingEvening": "Guten Abend, {name}",
+      "greetingMorning": "Guten Morgen, {name}",
+      "recapHeader": "Recap",
+      "tagline": "Ihr Tag im Fokus.",
+      "upNextHeader": "Als Nächstes",
+      "upcomingHeader": "Später heute"
+    },
+    "es": {
+      "askPlaceholder": "Pregunta sobre tus reuniones",
+      "earlierHeader": "Antes",
+      "emptyDay": "Un día despejado",
+      "emptyEarlier": "Nada registrado aún",
+      "greetingAfternoon": "Buenas tardes, {name}",
+      "greetingEvening": "Buenas noches, {name}",
+      "greetingMorning": "Buenos días, {name}",
+      "recapHeader": "Recap",
+      "tagline": "Tu día, en foco.",
+      "upNextHeader": "A continuación",
+      "upcomingHeader": "Más tarde hoy"
+    },
+    "fr": {
+      "askPlaceholder": "Posez une question sur vos réunions",
+      "earlierHeader": "Plus tôt",
+      "emptyDay": "Journée libre",
+      "emptyEarlier": "Rien d'enregistré pour l'instant",
+      "greetingAfternoon": "Bon après-midi, {name}",
+      "greetingEvening": "Bonsoir, {name}",
+      "greetingMorning": "Bonjour, {name}",
+      "recapHeader": "Recap",
+      "tagline": "Votre journée, en pleine clarté.",
+      "upNextHeader": "À suivre",
+      "upcomingHeader": "Plus tard aujourd'hui"
+    },
+    "fr-CA": {
+      "askPlaceholder": "Questions sur vos réunions",
+      "earlierHeader": "Plus tôt",
+      "emptyDay": "Journée libre",
+      "emptyEarlier": "Rien d'enregistré pour l'instant",
+      "greetingAfternoon": "Bon après-midi, {name}",
+      "greetingEvening": "Bonsoir, {name}",
+      "greetingMorning": "Bonjour, {name}",
+      "recapHeader": "Recap",
+      "tagline": "Votre journée, bien cadrée.",
+      "upNextHeader": "À suivre",
+      "upcomingHeader": "Plus tard aujourd'hui"
+    },
+    "pt": {
+      "askPlaceholder": "Pergunte sobre suas reuniões",
+      "earlierHeader": "Anteriores",
+      "emptyDay": "Dia livre",
+      "emptyEarlier": "Nada registrado ainda",
+      "greetingAfternoon": "Boa tarde, {name}",
+      "greetingEvening": "Boa noite, {name}",
+      "greetingMorning": "Bom dia, {name}",
+      "recapHeader": "Recap",
+      "tagline": "Seu dia, em foco.",
+      "upNextHeader": "A seguir",
+      "upcomingHeader": "Mais tarde hoje"
+    }
+  }
 }

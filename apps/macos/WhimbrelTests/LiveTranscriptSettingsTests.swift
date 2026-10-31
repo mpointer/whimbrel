@@ -18,4 +18,14 @@ final class LiveTranscriptSettingsTests: XCTestCase {
         settings.enabled = true
         XCTAssertTrue(LiveTranscriptSettings(defaults: d).enabled)
     }
+
+    func test_multilingual_default_follows_ui_language() {
+        let d = defaults()
+        XCTAssertTrue(AppLanguage.multilingual(defaults: d, uiTag: "es-MX"))
+        XCTAssertFalse(AppLanguage.multilingual(defaults: d, uiTag: "en-US"))
+        d.set(false, forKey: AppLanguage.multilingualKey)
+        XCTAssertFalse(AppLanguage.multilingual(defaults: d, uiTag: "es-MX"), "an explicit choice wins")
+        d.set(true, forKey: AppLanguage.multilingualKey)
+        XCTAssertTrue(AppLanguage.multilingual(defaults: d, uiTag: "en-US"))
+    }
 }

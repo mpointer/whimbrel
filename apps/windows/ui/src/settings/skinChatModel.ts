@@ -4,15 +4,17 @@
 
 import { isCommandError } from "../errors";
 import type { ChatLine, ImageCandidateView, SkinLine, SkinSources, SkinTurnResult } from "../generated/types";
+import { t } from "../l10n";
 import { providerLabel } from "./aiModel";
 import { isUserSkin } from "./skinGalleryModel";
 
 /** At most this many found images are offered for one turn. */
 export const SEARCH_LIMIT = 6;
-export const SPEND_CAP_LINE = "Today's AI spending limit is reached.";
-export const SET_UP_LINE = "Set up an AI provider in Settings to make skins.";
-export const FAILED_LINE = "Whimbrel couldn't make that skin, so nothing changed. Try again or say it another way.";
-/** The shell's answer to an approval in local-only mode (skin_maker.rs); the image stays in the strip. */
+export const spendCapLine = (): string => t("Today's AI spending limit is reached.");
+export const setUpLine = (): string => t("Set up an AI provider in Settings to make skins.");
+export const failedLine = (): string => t("Whimbrel couldn't make that skin, so nothing changed. Try again or say it another way.");
+/** The shell's answer to an approval in local-only mode (skin_maker.rs); the image stays in the strip.
+ *  Compared with the shell's English text, so it stays untranslated here. */
 export const LOCAL_ONLY_LINE = "Local-only mode is on, so Whimbrel didn't download that image.";
 
 export interface ChatState {
@@ -53,15 +55,15 @@ export function chatReducer(state: ChatState, event: ChatEvent): ChatState {
     case "show":
       if (event.skinId === state.skinId) return { ...state, turns: event.turns };
       // Another skin: a running turn stops there, so its late reply changes nothing.
-      if (state.running) return { ...state, skinId: event.skinId, turns: event.turns, candidates: [], running: false, run: state.run + 1, status: [...state.status, "Stopped."] };
+      if (state.running) return { ...state, skinId: event.skinId, turns: event.turns, candidates: [], running: false, run: state.run + 1, status: [...state.status, t("Stopped.")] };
       return { ...state, skinId: event.skinId, turns: event.turns, candidates: [], status: [] };
     case "send": {
-      const status = ["Reading your request…", ...(event.providerLine ? [event.providerLine] : [])];
+      const status = [t("Reading your request…"), ...(event.providerLine ? [event.providerLine] : [])];
       return { ...state, run: state.run + 1, running: true, status, turns: [...state.turns, line("user", event.text)] };
     }
     case "stop":
       if (!state.running) return state;
-      return { ...state, run: state.run + 1, running: false, status: [...state.status, "Stopped."] };
+      return { ...state, run: state.run + 1, running: false, status: [...state.status, t("Stopped.")] };
     case "replied": {
       if (!current(event.run)) return state;
       const { result } = event;
@@ -95,10 +97,10 @@ export function chatReducer(state: ChatState, event: ChatEvent): ChatState {
 /** The status line naming where the request goes; none for Ollama, which stays on this PC. */
 export function providerLine(sources: SkinSources): string | null {
   if (sources.provider === "ollama") return null;
-  return `Sent to ${providerLabel(sources.provider)}: your request, this skin's chat, its design and the list of allowed values`;
+  return t("Sent to {provider}: your request, this skin's chat, its design and the list of allowed values", { provider: providerLabel(sources.provider) });
 }
 
-export const placeholder = (skinId: string): string => (isUserSkin(skinId) ? "Ask for a change…" : "Describe a skin…");
+export const placeholder = (skinId: string): string => (isUserSkin(skinId) ? t("Ask for a change…") : t("Describe a skin…"));
 
 /** What the chat offers below its turns: the composer, a way to set up a provider, or (until the shell has
  *  said which) the composer, disabled, so opening Settings doesn't flash the set-up button. */
@@ -135,7 +137,7 @@ export async function runTurn(api: SkinChatApi, turn: Turn, dispatch: (e: ChatEv
   try {
     result = await api.turn(turn.skinId, turn.request, turn.runId);
   } catch (e) {
-    dispatch({ type: "line", skinId: turn.skinId, text: isSpendCap(e) ? SPEND_CAP_LINE : FAILED_LINE, run });
+    dispatch({ type: "line", skinId: turn.skinId, text: isSpendCap(e) ? spendCapLine() : failedLine(), run });
     return null;
   }
   if (!live() || result.intent === null) return null;
@@ -144,14 +146,15 @@ export async function runTurn(api: SkinChatApi, turn: Turn, dispatch: (e: ChatEv
   const skinId = result.chatSkinId;
   const stopOnCap = async (e: unknown): Promise<boolean> => {
     if (!isSpendCap(e)) return false;
-    const posted = await api.post(skinId, SPEND_CAP_LINE).catch(() => ({ text: SPEND_CAP_LINE, stored: false }));
+    const capLine = spendCapLine();
+    const posted = await api.post(skinId, capLine).catch(() => ({ text: capLine, stored: false }));
     dispatch({ type: "line", skinId, text: posted.text, run });
     return true;
   };
   let found = 0;
   for (const query of result.imageQueries) {
     if (!live() || found >= SEARCH_LIMIT) break;
-    dispatch({ type: "status", run, line: `Searching the web for '${query}'…` });
+    dispatch({ type: "status", run, line: t("Searching the web for '{query}'…", { query }) });
     try {
       const results = (await api.search(query)).slice(0, SEARCH_LIMIT - found);
       found += results.length;
@@ -162,7 +165,7 @@ export async function runTurn(api: SkinChatApi, turn: Turn, dispatch: (e: ChatEv
   }
   for (const prompt of result.imagePrompts) {
     if (!live()) break;
-    dispatch({ type: "status", run, line: `Making an image: '${prompt}'…` });
+    dispatch({ type: "status", run, line: t("Making an image: '{prompt}'…", { prompt }) });
     try {
       dispatch({ type: "found", run, candidates: [await api.generate(prompt)] });
     } catch (e) {

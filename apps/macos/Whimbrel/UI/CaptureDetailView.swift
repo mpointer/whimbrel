@@ -28,7 +28,7 @@ struct CaptureDetailView: View {
             }
         }
         .frame(minWidth: 480, idealWidth: 560, minHeight: 400, idealHeight: 560)
-        .navigationTitle(loadedItem?.windowTitle ?? "Capture")
+        .navigationTitle(loadedItem?.windowTitle ?? String(localized: "Capture"))
         .background(Color.whimbrelBackgroundPage)
         .overlay(alignment: .topTrailing) {
             Button {

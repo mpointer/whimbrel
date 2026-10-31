@@ -143,7 +143,7 @@ final class SyncState: ObservableObject {
             // Missing Secrets.xcconfig (e.g. a fresh checkout that hasn't
             // copied Secrets.xcconfig.example yet) is expected and should
             // degrade gracefully — sync is simply unavailable, not a crash.
-            self.init(signIn: nil, worker: nil, configError: "Sync isn't configured in this build. See apps/macos/README.md to set up Secrets.xcconfig.")
+            self.init(signIn: nil, worker: nil, configError: String(localized: "Sync isn't configured in this build. See apps/macos/README.md to set up Secrets.xcconfig."))
         }
     }
 
@@ -164,7 +164,7 @@ final class SyncState: ObservableObject {
     /// wait for the next poll tick.
     func enableSync(presentationContextProvider: ASWebAuthenticationPresentationContextProviding) async {
         guard let signIn, let syncClient else {
-            setStatus(.error(configError ?? "Sync is not configured"))
+            setStatus(.error(configError ?? String(localized: "Sync is not configured")))
             return
         }
         setStatus(.signingIn)
@@ -380,7 +380,7 @@ final class SyncState: ObservableObject {
                 recipientPublicKeyBase64: device.publicKey,
                 groupKeyBase64: groupKeyBase64
             ) else {
-                actionError = "Failed to wrap the group key for the new device."
+                actionError = String(localized: "Failed to wrap the group key for the new device.")
                 return
             }
             let idToken = try await signIn.validIdToken()
@@ -602,7 +602,7 @@ final class SyncState: ObservableObject {
             let idToken = try await signIn.validIdToken()
             _ = try await syncClient.listDevices(idToken: idToken, devicePublicKey: devicePublicKeyBase64)
             deletePending = false
-            actionError = "Your sync account wasn't deleted. Try again."
+            actionError = String(localized: "Your sync account wasn't deleted. Try again.")
             return .exists
         } catch let SyncAPIError.httpError(403, body) where body.contains("device not approved") {
             // The Worker's answer for an account (or device) that no longer exists.
@@ -767,11 +767,11 @@ final class SyncState: ObservableObject {
         case GoogleOAuthError.timedOut:
             return "Sign-in timed out. Try again."
         case let GoogleOAuthError.authorizationDenied(reason):
-            return "Google sign-in was denied (\(reason))."
+            return String(localized: "Google sign-in was denied (\(reason)).")
         case GoogleOAuthError.tokenExchangeFailed, GoogleOAuthError.tokenRefreshFailed:
             return "Couldn't complete Google sign-in. Try again."
         case GoogleOAuthError.noRefreshTokenReturned, GoogleOAuthError.noIdTokenReturned:
-            return "Google didn't return the credentials sync needs. Try signing in again."
+            return String(localized: "Google didn't return the credentials sync needs. Try signing in again.")
         case GoogleOAuthError.keychainReadFailed, GoogleOAuthError.keychainWriteFailed:
             return "Couldn't access the Keychain. Check Keychain access for Whimbrel and try again."
         case GoogleOAuthError.loopbackListenerFailed:
@@ -785,13 +785,13 @@ final class SyncState: ObservableObject {
         case SyncStateError.cryptoFailed:
             return "A local encryption operation failed. Try again."
         case SyncStateError.noDeviceKeypair, SyncStateError.noGroupKey:
-            return "This device isn't fully set up for sync yet. Try Enable Sync again."
+            return String(localized: "This device isn't fully set up for sync yet. Try Enable Sync again.")
         case SyncKeychainError.readFailed, SyncKeychainError.writeFailed:
             return "Couldn't access the Keychain. Check Keychain access for Whimbrel and try again."
         case is URLError:
             return "Couldn't reach the sync server. Check your connection and try again."
         default:
-            return "Something went wrong. Try again."
+            return String(localized: "Something went wrong. Try again.")
         }
     }
 

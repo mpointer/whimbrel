@@ -201,7 +201,7 @@ pub fn summarize_meeting(
     custom_instructions: &str,
 ) -> ApiResult<MeetingSummaryData> {
     let custom_instructions =
-        llm::profile::compose_instructions(custom_instructions.trim(), &routing.profile);
+        llm::profile::compose_instructions(custom_instructions.trim(), &routing.profile, &routing.output_language);
     let custom_instructions = custom_instructions.as_str();
     let cap_config = routing.spend_cap_config();
     if let Err(cap_err) = llm::check_spend_cap(

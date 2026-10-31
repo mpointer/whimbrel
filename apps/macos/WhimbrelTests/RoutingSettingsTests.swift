@@ -55,7 +55,9 @@ final class RoutingSettingsTests: XCTestCase {
 
         var priced = defaults
         priced.openrouterPrices = ["v/m": .init(in: 0.1, out: 0.5)]
-        let pricedJSON = try XCTUnwrap(String(data: JSONEncoder().encode(priced), encoding: .utf8))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .withoutEscapingSlashes  // "v\/m" is valid JSON too; keep the probe readable
+        let pricedJSON = try XCTUnwrap(String(data: encoder.encode(priced), encoding: .utf8))
         XCTAssertTrue(pricedJSON.contains(#""openrouter_prices":{"v/m":{"#), "core reads {model: {in, out}}: \(pricedJSON)")
         XCTAssertTrue(pricedJSON.contains(#""in":0.1"#) && pricedJSON.contains(#""out":0.5"#), pricedJSON)
     }
@@ -181,5 +183,48 @@ final class RoutingSettingsTests: XCTestCase {
 
         let reloaded = RoutingSettings()
         XCTAssertEqual(reloaded.anthropicDefaultModel, "claude-opus-4", "an explicit pick must persist and override the fallback")
+    }
+}
+
+extension RoutingSettingsTests {
+    func test_routing_json_carries_output_language() throws {
+        var config = CoreRoutingConfig(
+            anthropicKey: nil, openaiKey: nil, googleKey: nil, typesafeKey: nil,
+            userDailyCapCents: nil, globalDailyCapCents: nil, sensitive: false,
+            preferredProvider: "ollama", preferredModel: "m",
+            customInstructions: "", dailyDigestInstructions: "", weeklyDigestInstructions: ""
+        )
+        config.outputLanguage = "es-US"
+        let json = try XCTUnwrap(String(data: JSONEncoder().encode(config.withTypesafeKey("k")), encoding: .utf8))
+        XCTAssertTrue(json.contains(#""output_language":"es-US""#), json)
+    }
+}
+
+final class AppLanguageTests: XCTestCase {
+    func test_write_in_lists_the_wave_2_languages() {
+        XCTAssertEqual(AppLanguage.writeInOptions, ["en-US", "en-GB", "en-CA", "en-AU", "es-US", "fr-CA", "fr-FR", "de-DE", "pt-BR"])
+    }
+    func test_uiTag_joins_region() { XCTAssertEqual(AppLanguage.uiTag(preferred: "es", region: "MX"), "es-MX") }
+    func test_uiTag_bare_en_is_en_US() {
+        XCTAssertEqual(AppLanguage.uiTag(preferred: "en", region: nil), "en-US")
+        XCTAssertEqual(AppLanguage.uiTag(preferred: "en", region: "US"), "en-US")
+    }
+    func test_en_GB_keeps_variant() { XCTAssertEqual(AppLanguage.uiTag(preferred: "en", region: "GB"), "en-GB") }
+    func test_outputTag_en_US_english_model_is_empty() {
+        XCTAssertEqual(AppLanguage.outputTag(uiTag: "en-US", writeIn: "", multilingual: false), "")
+    }
+    func test_outputTag_en_US_multilingual_is_en_US() {
+        XCTAssertEqual(AppLanguage.outputTag(uiTag: "en-US", writeIn: "", multilingual: true), "en-US")
+    }
+    func test_outputTag_writeIn_wins() {
+        XCTAssertEqual(AppLanguage.outputTag(uiTag: "en-US", writeIn: "es-US", multilingual: false), "es-US")
+    }
+    func test_outputTag_explicit_en_US_writeIn_is_still_empty() {
+        XCTAssertEqual(AppLanguage.outputTag(uiTag: "fr-CA", writeIn: "en-US", multilingual: false), "")
+    }
+    func test_unsupported_ui_language_gives_english() {
+        let ui = AppLanguage.uiTag(preferred: "en", region: "IT")
+        XCTAssertEqual(ui, "en-US")
+        XCTAssertEqual(AppLanguage.outputTag(uiTag: ui, writeIn: "", multilingual: false), "")
     }
 }

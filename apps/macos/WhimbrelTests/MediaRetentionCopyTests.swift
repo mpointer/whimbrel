@@ -68,4 +68,14 @@ final class MediaRetentionCopyTests: XCTestCase {
         XCTAssertEqual(MediaRetentionCopy.progress(step: .moveSnapshots, done: 1, total: 2), "Moving files… 1 of 2")
         XCTAssertEqual(MediaRetentionCopy.progress(step: nil, done: 0, total: 4), "Working… 0 of 4")
     }
+
+    func test_retentionDays_singular_plural() {
+        XCTAssertEqual(SettingsCopy.retentionDays(1), "1 day")
+        XCTAssertEqual(SettingsCopy.retentionDays(30), "30 days")
+    }
+
+    func test_eventsFound_singular_plural() {
+        XCTAssertEqual(SettingsCopy.eventsFound(1), "1 event found in the next 7 days.")
+        XCTAssertEqual(SettingsCopy.eventsFound(12), "12 events found in the next 7 days.")
+    }
 }

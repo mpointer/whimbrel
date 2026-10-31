@@ -130,6 +130,9 @@ fn whimbrel_json_mirrors_the_default() {
     )
     .unwrap();
     assert!(repairs.is_empty());
+    assert!(skin.voice_localized.contains_key("es"), "the shipped translations load");
+    // Translations live in the manifest only; the built-in default is English.
+    let skin = skins::Skin { voice_localized: base.voice_localized.clone(), ..skin };
     assert_eq!(skin, base);
 }
 
@@ -276,4 +279,19 @@ fn a_skin_round_trips_through_serde() {
     let (again, repairs) = parse_skin(text.as_bytes(), &base).unwrap();
     assert!(repairs.is_empty());
     assert_eq!(again, base);
+}
+
+#[test]
+fn voice_localized_parses_and_over_limit_is_dropped() {
+    let long = "x".repeat(VoiceKey::UpNextHeader.limit() + 1);
+    let m = serde_json::json!({
+        "id": "v", "name": "V", "palettes": ["default"],
+        "voiceLocalized": {"es": {"upNextHeader": "A continuación", "recapHeader": long}, "fr-CA": {"tagline": ""}}
+    });
+    let (skin, repairs) = parse_skin(&serde_json::to_vec(&m).unwrap(), &whimbrel_default()).unwrap();
+    assert_eq!(skin.voice_localized["es"].0[&VoiceKey::UpNextHeader], "A continuación");
+    assert!(!skin.voice_localized["es"].0.contains_key(&VoiceKey::RecapHeader));
+    assert!(skin.voice_localized.get("fr-CA").is_none_or(|v| v.0.is_empty()));
+    assert_eq!(repairs.len(), 2, "{repairs:?}");
+    assert!(whimbrel_default().voice_localized.is_empty());
 }

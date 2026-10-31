@@ -197,6 +197,7 @@ final class AskModel: ObservableObject {
             "preferred_model": model,
             "custom_instructions": prefs.customInstructions,
             "use_local_model": false,
+            "output_language": AppLanguage.currentOutputTag(),
         ]
         switch provider {
         case .anthropic: routing["anthropic_key"] = key

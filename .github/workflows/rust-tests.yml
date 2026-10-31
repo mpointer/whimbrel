@@ -68,7 +68,16 @@ jobs:
           fi
           # The iOS app (apps/mobile/ios) builds core/ffi and references the Mac app's shared
           # Support/ sources and themes/, so any of those runs the ios job.
-          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE '^(apps/mobile/ios/|apps/macos/Whimbrel/Support/|themes/|core/|\.github/workflows/)' <<<"$changed"; }; then
+          # This job runs on a HOSTED macOS runner, which bills at 10x a Linux minute. On a
+          # pull request it therefore runs only when a file the iOS app itself owns changed
+          # (core/ is left out: test-linux, android and windows already build and test it on
+          # every core/ PR). On a push to main it also runs for core/, so a core/ change that
+          # breaks the iOS build is still caught, one merge later instead of on the PR.
+          ios_paths='^(apps/mobile/ios/|apps/macos/Whimbrel/Support/|themes/|scripts/l10n/|l10n/|\.github/workflows/)'
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            ios_paths='^(apps/mobile/ios/|apps/macos/Whimbrel/Support/|themes/|scripts/l10n/|l10n/|core/|\.github/workflows/)'
+          fi
+          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE "$ios_paths" <<<"$changed"; }; then
             echo "run_ios=true" >> "$GITHUB_OUTPUT"
           else
             echo "run_ios=false" >> "$GITHUB_OUTPUT"
@@ -194,10 +203,14 @@ jobs:
         run: cargo test --workspace
       - name: Download pinned embedding model (real-model integration only)
         working-directory: core/memory
+        # The folder and revision match memory::EMBEDDING_MODEL_ID / _REVISION; a versioned
+        # folder, so an existing file is always this model's and can be kept.
         run: |
-          mkdir -p models
+          dir=models/paraphrase-multilingual-minilm-l12-v2
+          rev=e8f8c211226b894fcb81acc59f3b34ba3efd5f42
+          mkdir -p "$dir"
           for f in config.json tokenizer.json model.safetensors; do
-            curl -fL --retry 3 -o "models/$f" "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/$f"
+            [ -f "$dir/$f" ] || curl -fL --retry 3 -o "$dir/$f" "https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2/resolve/$rev/$f"
           done
       - name: Run real-model integration tests
         working-directory: core
@@ -393,6 +406,13 @@ jobs:
         run: |
           xcodebuild build -project apps/mobile/ios/Whimbrel.xcodeproj -scheme Whimbrel \
             -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
+      # Every Swift string must already be in the committed catalog (export-apple.sh restores the
+      # catalogs after -exportLocalizations rewrites them, so this compares against the committed files).
+      - name: Check the string catalogs match the Swift source
+        run: |
+          scripts/l10n/export-apple.sh ios /tmp/loc
+          python3 -I scripts/l10n/translate.py check --apple /tmp/loc/en.xcloc apps/mobile/ios/Whimbrel/Localizable.xcstrings
+          python3 -I scripts/l10n/translate.py check --apple /tmp/loc/en.xcloc apps/mobile/ios/Whimbrel/InfoPlist.xcstrings
       # Unit tests (WhimbrelTests: the enrollment model, with a fake backend and the
       # in-memory Keychain, so no signing is needed). Simulator names change with each
       # runner image, so pick an iPhone on the newest iOS runtime >= 17 instead of

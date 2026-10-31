@@ -199,16 +199,16 @@ struct PrepSheet: View {
                     if let brief = prep?.brief {
                         Text(brief.summary.text).foregroundStyle(Color.theme(.textPrimary))
                         if !brief.attendees.isEmpty {
-                            group("Attendees", brief.attendees.map { "\($0.who): \($0.note)" })
+                            group(String(localized: "Attendees"), brief.attendees.map { "\($0.who): \($0.note)" })
                         }
-                        if !brief.openItems.isEmpty { group("Open items", brief.openItems.map(\.text)) }
-                        if !brief.openQuestions.isEmpty { group("Open questions", brief.openQuestions.map(\.text)) }
+                        if !brief.openItems.isEmpty { group(String(localized: "Open items"), brief.openItems.map(\.text)) }
+                        if !brief.openQuestions.isEmpty { group(String(localized: "Open questions"), brief.openQuestions.map(\.text)) }
                     }
                 }
                 .padding(16)
             }
             .background(Color.theme(.backgroundPage).ignoresSafeArea())
-            .navigationTitle(prep?.title ?? "Prep")
+            .navigationTitle(prep?.title ?? String(localized: "Prep"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }

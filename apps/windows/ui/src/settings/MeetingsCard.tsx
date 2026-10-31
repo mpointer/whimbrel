@@ -9,6 +9,7 @@ import {
 } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { MeetingSettings, SnapshotSettings } from "../generated/types";
+import { t } from "../l10n";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -49,12 +50,12 @@ export function MeetingsCard() {
       .catch((e: unknown) => setError(message(e)));
   };
 
-  if (!settings) return <section className="card about">{error ? <p role="alert">{error}</p> : "Loading…"}</section>;
+  if (!settings) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
 
   return (
     <section className="card about" aria-labelledby="meetings-heading">
       <h2 id="meetings-heading" className="section-label">
-        Meetings
+        {t("Meetings")}
       </h2>
       <label className="toggle">
         <input
@@ -62,14 +63,14 @@ export function MeetingsCard() {
           checked={settings.heuristicDetection}
           onChange={(e) => save({ ...settings, heuristicDetection: e.target.checked })}
         />
-        Notice calls in Zoom, Teams, Slack, Webex and the browser
+        {t("Notice calls in Zoom, Teams, Slack, Webex and the browser")}
       </label>
       <label className="toggle">
         <input type="checkbox" checked={settings.autoStart} onChange={(e) => save({ ...settings, autoStart: e.target.checked })} />
-        Start recording automatically after a 10-second countdown
+        {t("Start recording automatically after a 10-second countdown")}
       </label>
       <label className="field-row">
-        <span>Ask this many minutes before a calendar meeting</span>
+        <span>{t("Ask this many minutes before a calendar meeting")}</span>
         <input
           className="input short"
           type="number"
@@ -80,7 +81,7 @@ export function MeetingsCard() {
         />
       </label>
       <label className="field-row">
-        <span>Prepare a Meeting Prep brief this many minutes before a meeting</span>
+        <span>{t("Prepare a Meeting Prep brief this many minutes before a meeting")}</span>
         <input
           className="input short"
           type="number"
@@ -90,7 +91,9 @@ export function MeetingsCard() {
           onChange={(e) => save({ ...settings, prepLeadMinutes: Number(e.target.value) })}
         />
       </label>
-      <p className="muted small">Detection watches which app holds your microphone and speakers. Nothing is recorded until you accept.</p>
+      <p className="muted small">
+        {t("Detection watches which app holds your microphone and speakers. Nothing is recorded until you accept.")}
+      </p>
       {snapshots && (
         <>
           <label className="toggle">
@@ -103,22 +106,22 @@ export function MeetingsCard() {
                 saveSnapshots(() => setMeetingSnapshotsEnabled(enabled));
               }}
             />
-            Save slides and shared screens
+            {t("Save slides and shared screens")}
           </label>
-          <p className="muted small">Saves one image per slide shown in recorded meetings to a folder you can browse.</p>
+          <p className="muted small">{t("Saves one image per slide shown in recorded meetings to a folder you can browse.")}</p>
           <div className="field-row">
-            <span>Snapshots folder</span>
+            <span>{t("Snapshots folder")}</span>
             <code className="small grow" title={snapshots.folder}>
               {snapshots.folder}
             </code>
             <button className="mode" disabled={choosing} onClick={chooseFolder}>
-              Choose…
+              {t("Choose…")}
             </button>
             <button className="mode" disabled={snapshots.isDefault} onClick={() => saveSnapshots(resetMeetingSnapshotsFolder)}>
-              Reset
+              {t("Reset")}
             </button>
           </div>
-          <p className="muted small">A new folder applies to meetings recorded from now on. Earlier meetings keep theirs.</p>
+          <p className="muted small">{t("A new folder applies to meetings recorded from now on. Earlier meetings keep theirs.")}</p>
         </>
       )}
       {error && <p role="alert">{error}</p>}

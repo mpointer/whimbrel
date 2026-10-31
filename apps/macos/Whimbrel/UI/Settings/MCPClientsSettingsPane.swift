@@ -214,7 +214,7 @@ struct MCPClientsSettingsPane: View {
 
     private func addClient() {
         guard let store = appState.coreStore else {
-            errorMessage = "Add failed: store unavailable."
+            errorMessage = String(localized: "Add failed: store unavailable.")
             return
         }
         let name = newClientName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -224,7 +224,7 @@ struct MCPClientsSettingsPane: View {
             let result = store.generateMcpClientToken(name: name, scopes: scopes)
             DispatchQueue.main.async {
                 guard let result else {
-                    errorMessage = "Failed to create client token."
+                    errorMessage = String(localized: "Failed to create client token.")
                     return
                 }
                 errorMessage = nil

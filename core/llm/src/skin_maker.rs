@@ -24,6 +24,9 @@ pub struct SkinTurnInput {
     #[serde(default)]
     pub current_manifest: Option<serde_json::Value>,
     pub catalogue: serde_json::Value,
+    /// BCP 47 tag the reply and skin wording are written in; "" (or absent) adds no line.
+    #[serde(default)]
+    pub output_language: String,
 }
 
 /// One earlier message in this skin's chat. `role` is `"user"` or `"whimbrel"`.
@@ -116,7 +119,8 @@ pub fn build_skin_prompt(input: &SkinTurnInput) -> String {
         .collect();
     let history = if history.is_empty() { "(none)\n".to_string() } else { history };
     format!(
-        "{INSTRUCTIONS}\n\nCatalogue of allowed values:\n{catalogue}\n\nCurrent skin manifest:\n{manifest}\n\nEarlier chat for this skin:\n{history}\nUser's latest message:\n{}\n",
+        "{}{INSTRUCTIONS}\n\nCatalogue of allowed values:\n{catalogue}\n\nCurrent skin manifest:\n{manifest}\n\nEarlier chat for this skin:\n{history}\nUser's latest message:\n{}\n",
+        crate::profile::language_prefix(&input.output_language),
         input.request
     )
 }

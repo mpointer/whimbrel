@@ -1,14 +1,13 @@
-//! Settings → Search model (plan Task 7, Decision 12): the MiniLM embedding model is
-//! downloaded, not bundled, into `%LOCALAPPDATA%\Whimbrel\data\models\minilm`, the store's
-//! `models_dir`.
+//! Settings → Search model (plan Task 7, Decision 12): the multilingual embedding model is
+//! downloaded, not bundled, into its own folder under `%LOCALAPPDATA%\Whimbrel\data\models\minilm`,
+//! the store's `models_dir` (`memory::embedding_model_dir`).
 //!
 //! Settings → Meeting models (M3.3 Task 2, Decision 11): whisper and the two diarization
 //! models, from core's manifest, into `models\`. Each meeting loads them fresh, so no
 //! restart is needed. Downloads of both kinds share the poll and cancel commands.
 //!
-//! `memory`'s loader caches a failed load for the life of the process, so a store that
-//! opened before the download keeps reporting "no model". The UI therefore offers a
-//! restart once the download finishes.
+//! `memory`'s loader doesn't remember a missing model, so the first search or embed after
+//! the download loads it: no restart.
 
 use std::path::Path;
 
@@ -19,14 +18,12 @@ use tauri::{AppHandle, State};
 use crate::error::CommandError;
 use crate::state::AppState;
 
-const MODEL_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
-
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelStatus {
-    /// All three files are on disk.
+    /// Every file in core's embedding manifest is on disk.
     pub installed: bool,
-    /// The running store has the model loaded (false until a restart after install).
+    /// The running store has the model loaded (it loads on the first search or embed after install).
     pub loaded: bool,
     pub dir: String,
 }
@@ -57,6 +54,7 @@ fn meeting_destinations(paths: &crate::paths::Paths) -> api::models::ModelDestin
         whisper_model_path: paths.whisper_model(),
         segmentation_model_path: paths.segmentation_model(),
         embedding_model_path: paths.speaker_embedding_model(),
+        whisper_multilingual_path: None,
     }
 }
 
@@ -78,8 +76,9 @@ pub fn meeting_models_download_start(state: State<'_, AppState>) -> String {
     api::models::download_all_start(&meeting_destinations(&state.paths))
 }
 
+/// From core's manifest, so the files and their folder follow the model version.
 pub fn model_installed(dir: &Path) -> bool {
-    MODEL_FILES.iter().all(|f| dir.join(f).is_file())
+    api::models::embedding_manifest(dir).iter().all(|spec| spec.destination.is_file())
 }
 
 #[tauri::command]
@@ -146,15 +145,20 @@ mod tests {
     }
 
     #[test]
-    fn installed_needs_all_three_files() {
+    fn installed_needs_every_manifest_file_in_the_model_folder() {
         let dir = std::env::temp_dir().join(format!("whimbrel-minilm-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        assert!(!model_installed(&dir));
-        for f in &MODEL_FILES[..2] {
+        let model = memory::embedding_model_dir(&dir);
+        std::fs::create_dir_all(&model).unwrap();
+        // The pre-multilingual layout, loose in models_dir, doesn't count.
+        for f in memory::EMBEDDING_MODEL_FILES {
             std::fs::write(dir.join(f), b"x").unwrap();
         }
+        assert!(!model_installed(&dir));
+        for f in &memory::EMBEDDING_MODEL_FILES[..2] {
+            std::fs::write(model.join(f), b"x").unwrap();
+        }
         assert!(!model_installed(&dir), "the weights are missing");
-        std::fs::write(dir.join("model.safetensors"), b"x").unwrap();
+        std::fs::write(model.join("model.safetensors"), b"x").unwrap();
         assert!(model_installed(&dir));
         std::fs::remove_dir_all(&dir).unwrap();
     }

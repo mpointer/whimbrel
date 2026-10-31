@@ -11,10 +11,10 @@ struct EpisodeOptionsMenu: View {
     let onHidden: () -> Void
     let onForgotten: () -> Void
 
-    static let regenerateLabel = "Regenerate summary"
-    static let hideLabel = "Hide episode"
-    static let unhideLabel = "Unhide episode"
-    static let forgetLabel = "Forget this activity range…"
+    static var regenerateLabel: String { String(localized: "Regenerate summary") }
+    static var hideLabel: String { String(localized: "Hide episode") }
+    static var unhideLabel: String { String(localized: "Unhide episode") }
+    static var forgetLabel: String { String(localized: "Forget this activity range…") }
 
     @State private var showForgetConfirmation = false
     @State private var isBusy = false

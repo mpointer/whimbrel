@@ -1,6 +1,7 @@
 // Settings → General's "Check for Updates" (the Mac's wording; src-tauri/src/app/update.rs follows the check).
 
 import type { UpdateCheck } from "../generated/types";
+import { t } from "../l10n";
 
 /** How often the line follows a check that is still going. */
 export const FOLLOW_MS = 1000;
@@ -11,15 +12,15 @@ export function updateLine(check: UpdateCheck): string | null {
     case "idle":
       return null;
     case "checking":
-      return "Checking…";
+      return t("Checking…");
     case "upToDate":
-      return `Whimbrel is up to date (v${check.version}).`;
+      return t("Whimbrel is up to date (v{version}).", { version: check.version });
     case "downloading":
-      return `Downloading v${check.version}…`;
+      return t("Downloading v{version}…", { version: check.version });
     case "ready":
-      return `v${check.version} is ready.`;
+      return t("v{version} is ready.", { version: check.version });
     case "failed":
-      return "Couldn't check for updates. Try again later.";
+      return t("Couldn't check for updates. Try again later.");
   }
 }
 

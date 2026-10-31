@@ -19,7 +19,7 @@ struct RecordingCheckInView: View {
                         Text("Still recording?")
                             .font(.whimbrelBody(.callout).bold())
                             .foregroundStyle(Color.whimbrelTextPrimary)
-                        Text(String(format: "Stopping in %d:%02d", seconds / 60, seconds % 60))
+                        Text("Stopping in \(Duration.seconds(seconds).formatted(.time(pattern: .minuteSecond)))")
                             .font(.whimbrelBody(.caption))
                             .foregroundStyle(Color.whimbrelTextSecondary)
                             .monospacedDigit()

@@ -522,6 +522,9 @@ final class RoutingSettings: ObservableObject {
     /// The user's Profile text, filled by `AppState` from `ProfileSettings` (empty when off).
     var profileProvider: () -> String = { "" }
 
+    /// The output-language tag for each request (Settings → General).
+    var outputLanguageProvider: () -> String = { AppLanguage.currentOutputTag() }
+
     func routingConfig(
         preferredProvider: Provider,
         preferredModel: String,
@@ -548,7 +551,8 @@ final class RoutingSettings: ObservableObject {
             useLocalModel: useLocalModel,
             openrouterKey: KeychainService.load(for: .openrouter),
             openrouterModel: openrouterDefaultModel,
-            openrouterPrices: openrouterPrices
+            openrouterPrices: openrouterPrices,
+            outputLanguage: outputLanguageProvider()
         )
     }
 }

@@ -197,11 +197,13 @@ struct AwayFollowupRequest: Encodable {
     let selfIsOrganizer: Bool
     let profileName: String
     let nowUnixMs: Int64
+    /// The tag the to-do and organizer email are written in ("" is English).
+    var outputLanguage: String = AppLanguage.currentOutputTag()
 
     enum CodingKeys: String, CodingKey {
         case meetingId = "meeting_id", meetingTitle = "meeting_title", meetingStartUnixMs = "meeting_start_unix_ms"
         case organizerEmail = "organizer_email", organizerName = "organizer_name", selfIsOrganizer = "self_is_organizer"
-        case profileName = "profile_name", nowUnixMs = "now_unix_ms"
+        case profileName = "profile_name", nowUnixMs = "now_unix_ms", outputLanguage = "output_language"
     }
 }
 
@@ -600,8 +602,20 @@ struct CoreWriteActionSettled: Decodable {
     let userMessage: String?
 
     enum CodingKeys: String, CodingKey {
-        case finalized
+        case finalized, code, params
         case userMessage = "user_message"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        finalized = try c.decode(Bool.self, forKey: .finalized)
+        userMessage = try c.decodeIfPresent(String.self, forKey: .userMessage).map {
+            CoreUserMessage(
+                code: try c.decodeIfPresent(String.self, forKey: .code),
+                params: try c.decodeIfPresent([String: CoreParam].self, forKey: .params),
+                message: $0
+            ).localized()
+        }
     }
 }
 
@@ -703,6 +717,8 @@ struct CoreRoutingConfig: Encodable {
     var openrouterModel: String = ""
     /// Cents per 1K input and output per OpenRouter model id, cached from the catalogue.
     var openrouterPrices: [String: Price] = [:]
+    /// BCP 47 tag notes and summaries are written in; "" adds no language line (AppLanguage.outputTag).
+    var outputLanguage: String = ""
 
     /// Cents per 1K tokens, in and out, as core's price table counts.
     struct Price: Codable, Equatable {
@@ -719,7 +735,8 @@ struct CoreRoutingConfig: Encodable {
             customInstructions: customInstructions, dailyDigestInstructions: dailyDigestInstructions,
             weeklyDigestInstructions: weeklyDigestInstructions, profile: profile,
             cheapFirst: cheapFirst, useLocalModel: useLocalModel,
-            openrouterKey: openrouterKey, openrouterModel: openrouterModel, openrouterPrices: openrouterPrices
+            openrouterKey: openrouterKey, openrouterModel: openrouterModel, openrouterPrices: openrouterPrices,
+            outputLanguage: outputLanguage
         )
     }
 
@@ -736,6 +753,7 @@ struct CoreRoutingConfig: Encodable {
         case customInstructions = "custom_instructions"
         case dailyDigestInstructions = "daily_digest_instructions"
         case weeklyDigestInstructions = "weekly_digest_instructions"
+        case outputLanguage = "output_language"
         case profile
         case cheapFirst = "cheap_first"
         case useLocalModel = "use_local_model"
@@ -811,9 +829,17 @@ struct CoreUsageRow: Codable, Identifiable, Equatable {
 /// One row of the key on-ramp table (`whimbrel_providers`, core/api::providers).
 struct CoreProviderInfo: Codable, Identifiable, Equatable {
     struct DataTerms: Codable, Equatable {
+        let noteId: String?
         let text: String
+        /// `text` from the String Catalog by `note_id`.
+        var localizedText: String { CoreUserMessage(code: noteId, params: nil, message: text).localized() }
         /// ISO date the policy page was last read.
         let checked: String
+
+        enum CodingKeys: String, CodingKey {
+            case noteId = "note_id"
+            case text, checked
+        }
     }
 
     let id: String
@@ -847,7 +873,7 @@ enum CoreKeyCheck: Equatable {
     var message: String {
         switch self {
         case let .valid(models, _):
-            return "Saved. \(models.count) model\(models.count == 1 ? "" : "s") available."
+            return String(localized: "Saved. \(models.count) models available.")
         case let .refused(message), let .unreachable(message), let .other(message):
             return message
         }
@@ -863,7 +889,7 @@ enum CoreKeyCheck: Equatable {
 }
 
 extension CoreKeyCheck: Decodable {
-    private enum CodingKeys: String, CodingKey { case status, models, prices, message }
+    private enum CodingKeys: String, CodingKey { case status, models, prices, message, code, params }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -874,12 +900,15 @@ extension CoreKeyCheck: Decodable {
                 models: try container.decodeIfPresent([String].self, forKey: .models) ?? [],
                 prices: try container.decodeIfPresent([CoreOpenRouterModel].self, forKey: .prices) ?? []
             )
-        case "refused":
-            self = .refused(message: try container.decode(String.self, forKey: .message))
-        case "unreachable":
-            self = .unreachable(message: try container.decode(String.self, forKey: .message))
+        case "refused", "unreachable":
+            let message = CoreUserMessage(
+                code: try container.decodeIfPresent(String.self, forKey: .code),
+                params: try container.decodeIfPresent([String: CoreParam].self, forKey: .params),
+                message: try container.decode(String.self, forKey: .message)
+            ).localized()
+            self = status == "refused" ? .refused(message: message) : .unreachable(message: message)
         default:
-            self = .other(message: try container.decodeIfPresent(String.self, forKey: .message) ?? "Couldn't check the key.")
+            self = .other(message: try container.decodeIfPresent(String.self, forKey: .message) ?? String(localized: "Couldn't check the key."))
         }
     }
 }
@@ -945,13 +974,13 @@ enum CoreLLMError: Error, Equatable, Decodable {
     var userFacingMessage: String {
         switch self {
         case .spendCap(.user, let spentCents, let capCents):
-            return "Daily spend cap reached (\(spentCents)¢/\(capCents)¢). Try again after it resets, or raise the cap in Settings."
+            return String(localized: "Daily spend cap reached (\(String(spentCents))¢/\(String(capCents))¢). Try again after it resets, or raise the cap in Settings.")
         case .spendCap(.global, let spentCents, let capCents):
-            return "The app-wide daily spend limit was reached (\(spentCents)¢/\(capCents)¢). This isn't specific to you — try again later."
+            return String(localized: "The app-wide daily spend limit was reached (\(String(spentCents))¢/\(String(capCents))¢). This isn't specific to you — try again later.")
         case .providerFailure:
-            return "Couldn't reach the AI provider. Try again."
+            return String(localized: "Couldn't reach the AI provider. Try again.")
         case .noTranscript:
-            return "There is no transcript for this meeting to ask about."
+            return String(localized: "There is no transcript for this meeting to ask about.")
         }
     }
 }
@@ -1521,7 +1550,7 @@ final class CoreMemoryStore {
     func runEpisodeSummarizeBatch(model: String, maxJobs: Int, customInstructions: String) -> Int64 {
         model.withCString { modelPtr in
             customInstructions.withCString { instructionsPtr in
-                whimbrel_episodes_run_summarize_batch(handle, modelPtr, UInt64(maxJobs), instructionsPtr)
+                whimbrel_episodes_run_summarize_batch(handle, modelPtr, UInt64(maxJobs), instructionsPtr, AppLanguage.currentOutputTag())
             }
         }
     }
@@ -1532,7 +1561,7 @@ final class CoreMemoryStore {
     func runThreadSummarizeBatch(model: String, maxJobs: Int, customInstructions: String) -> Int64 {
         model.withCString { modelPtr in
             customInstructions.withCString { instructionsPtr in
-                whimbrel_threads_run_summarize_batch(handle, modelPtr, UInt64(maxJobs), instructionsPtr)
+                whimbrel_threads_run_summarize_batch(handle, modelPtr, UInt64(maxJobs), instructionsPtr, AppLanguage.currentOutputTag())
             }
         }
     }
@@ -1838,7 +1867,7 @@ final class CoreMemoryStore {
     /// call (core/api::write_action::plan). Make the connector call yourself, off the
     /// store queue, then `settleWriteAction`. Nil on a null handle or DB error.
     func planWriteAction(runId: Int64) -> CoreWriteActionPlanResult? {
-        guard let json = whimbrel_routines_plan_write_action(handle, runId) else { return nil }
+        guard let json = whimbrel_routines_plan_write_action(handle, runId, AppLanguage.currentOutputTag()) else { return nil }
         defer { whimbrel_core_free_string(json) }
         struct Envelope: Decodable {
             let status: String
@@ -2195,6 +2224,14 @@ final class CoreMemoryStore {
 
     /// After moving snapshot files on disk: repoints the meeting's snapshot rows and records their folder.
     @discardableResult
+    /// "Keep together": moves `from`'s snapshot rows (and continue key) to `into`; the moved
+    /// file paths, oldest first. nil on error.
+    func absorbSplitMeeting(into: Int64, from: Int64) -> [String]? {
+        guard let json = whimbrel_meeting_absorb_split(handle, into, from) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
     func setMeetingSnapshotPaths(meetingId: Int64, moves: [(old: String, new: String)], snapshotsDir: String) -> Bool {
         guard let data = try? JSONEncoder().encode(moves.map { [$0.old, $0.new] }) else { return false }
         return String(decoding: data, as: UTF8.self).withCString { movesPtr in
@@ -2310,6 +2347,18 @@ final class CoreMemoryStore {
     }
 
     /// Sets the synced "Keep media" flag. Returns whether a row changed.
+    /// The language this meeting's audio was transcribed in (device-local), nil when unknown.
+    func meetingSpokenLanguage(meetingId: Int64) -> String? {
+        guard let s = whimbrel_memory_meeting_spoken_language(handle, meetingId) else { return nil }
+        defer { whimbrel_core_free_string(s) }
+        return String(cString: s)
+    }
+
+    @discardableResult
+    func setMeetingSpokenLanguage(meetingId: Int64, language: String?) -> Bool {
+        Self.withOptionalCString(language) { whimbrel_memory_set_meeting_spoken_language(handle, meetingId, $0) }
+    }
+
     func setKeepMedia(meetingId: Int64, keep: Bool) -> Bool {
         whimbrel_memory_set_keep_media(handle, meetingId, keep)
     }
@@ -3051,6 +3100,19 @@ final class CoreMemoryStore {
     /// store handle, so this is a static function rather than an instance method.
     /// `wavPath` must already be 16kHz PCM (see AudioConversion.swift). Returns nil on
     /// a missing/bad model, non-16kHz WAV, or any other whisper.cpp failure.
+    /// `transcribeWav` in `language` (a whisper code; nil detects), with the language used.
+    static func transcribeWavLang(modelPath: URL, wavPath: URL, language: String?) -> (segments: [CoreTranscriptSegment], language: String?)? {
+        struct Result: Decodable { let segments: [CoreTranscriptSegment]; let language: String? }
+        guard let json = modelPath.path.withCString({ model in
+            wavPath.path.withCString { wav in
+                withOptionalCString(language) { whimbrel_transcribe_wav_lang(model, wav, $0) }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        guard let r = try? JSONDecoder().decode(Result.self, from: Data(String(cString: json).utf8)) else { return nil }
+        return (r.segments, r.language)
+    }
+
     static func transcribeWav(modelPath: URL, wavPath: URL) -> [CoreTranscriptSegment]? {
         guard let json = modelPath.path.withCString({ model in
             wavPath.path.withCString { wav in
@@ -3162,18 +3224,35 @@ final class CoreMemoryStore {
     /// (core/api::models). Returns the job id to poll, or nil if the bridge rejected the
     /// request. The work runs on the core's own thread; poll from a `Task`, never from
     /// `accessQueue`.
-    static func startModelDownload(whisperModelPath: URL, segmentationModelPath: URL, embeddingModelPath: URL) -> String? {
-        let destinations: [String: String] = [
+    static func startModelDownload(whisperModelPath: URL, segmentationModelPath: URL, embeddingModelPath: URL, multilingualModelPath: URL? = nil) -> String? {
+        var destinations: [String: String] = [
             "whisper_model_path": whisperModelPath.path,
             "segmentation_model_path": segmentationModelPath.path,
             "embedding_model_path": embeddingModelPath.path,
         ]
+        destinations["whisper_multilingual_path"] = multilingualModelPath?.path
         guard let data = try? JSONEncoder().encode(destinations),
               let json = String(decoding: data, as: UTF8.self).withCString({ whimbrel_models_download_start($0) })
         else { return nil }
         defer { whimbrel_core_free_string(json) }
         struct Started: Decodable { let jobId: String; enum CodingKeys: String, CodingKey { case jobId = "job_id" } }
         return (try? JSONDecoder().decode(Started.self, from: Data(String(cString: json).utf8)))?.jobId
+    }
+
+    /// Starts downloading the embedding model into its folder under `modelsDir`; the job id to
+    /// poll with `pollModelDownload`, or nil if the bridge rejected the request.
+    static func startEmbeddingDownload(modelsDir: URL) -> String? {
+        guard let json = modelsDir.path.withCString({ whimbrel_embedding_download_start($0) }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        struct Started: Decodable { let jobId: String; enum CodingKeys: String, CodingKey { case jobId = "job_id" } }
+        return (try? JSONDecoder().decode(Started.self, from: Data(String(cString: json).utf8)))?.jobId
+    }
+
+    /// The folder the current embedding model lives in under `modelsDir`.
+    static func embeddingModelDir(modelsDir: URL) -> URL? {
+        guard let s = modelsDir.path.withCString({ whimbrel_embedding_model_dir($0) }) else { return nil }
+        defer { whimbrel_core_free_string(s) }
+        return URL(fileURLWithPath: String(cString: s), isDirectory: true)
     }
 
     /// Latest progress for a model-download job, or nil if the job is unknown.
@@ -3216,8 +3295,8 @@ final class CoreMemoryStore {
     }
 
     /// M3.0 Task 5: the built-in Ask starter prompts (core/api::prompts).
-    static func starterPrompts() -> [LibraryPrompt] {
-        guard let json = whimbrel_prompts_starters() else { return [] }
+    static func starterPrompts(lang: String = SkinVoice.currentLang) -> [LibraryPrompt] {
+        guard let json = whimbrel_prompts_starters(lang) else { return [] }
         defer { whimbrel_core_free_string(json) }
         return (try? JSONDecoder().decode([LibraryPrompt].self, from: Data(String(cString: json).utf8))) ?? []
     }
@@ -3238,13 +3317,13 @@ final class CoreMemoryStore {
             withOptionalCString(apiKey) { k in
                 withOptionalCString(baseURLOverride) { b in whimbrel_hosted_models_fetch(p, k, b) }
             }
-        }) else { return .failure(HostedModelsService.FetchError(message: "Unknown model provider \(provider).")) }
+        }) else { return .failure(HostedModelsService.FetchError(message: String(localized: "Unknown model provider \(provider)."))) }
         defer { whimbrel_core_free_string(json) }
         guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(String(cString: json).utf8)) else {
-            return .failure(HostedModelsService.FetchError(message: "Model list response could not be decoded."))
+            return .failure(HostedModelsService.FetchError(message: String(localized: "Model list response could not be decoded.")))
         }
         if let models = reply.models { return .success(models) }
-        return .failure(HostedModelsService.FetchError(message: reply.error ?? "Model list request failed."))
+        return .failure(HostedModelsService.FetchError(message: reply.error ?? String(localized: "Model list request failed.")))
     }
 
     /// Validates a pasted key against the provider's model list (core/api::hosted_models::
@@ -3734,6 +3813,12 @@ final class CoreLiveTranscriber {
     }
 
     deinit { whimbrel_live_transcriber_free(handle) }
+
+    /// A whisper code forces the language; nil detects it from the next chunk with speech.
+    func setLanguage(_ code: String?) {
+        if let code { code.withCString { whimbrel_live_transcriber_set_language(handle, $0) } }
+        else { whimbrel_live_transcriber_set_language(handle, nil) }
+    }
 
     /// The segments JSON (timestamps offset by `startOffsetCs`), or nil on failure.
     func transcribe(samples: [Float], startOffsetCs: Int64, threads: Int32) -> String? {

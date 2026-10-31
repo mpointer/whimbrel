@@ -46,7 +46,7 @@ final class StreamingAskViewModel: ObservableObject {
         usage = InferenceEvent.TokenUsage()
         phase = .connecting
         guard let runId = InferenceStreamClient.start(prompt: prompt, model: model, provider: provider, apiKey: apiKey, baseURLOverride: baseURLOverride) else {
-            phase = .failed(message: "Could not start — invalid prompt, model, or missing API key.")
+            phase = .failed(message: String(localized: "Could not start — invalid prompt, model, or missing API key."))
             return
         }
         activeRunId = runId

@@ -981,14 +981,18 @@ pub enum QueryDateScope {
     Yesterday,
 }
 
+// Phase 4 appends the `de` and `pt` rows. Accented forms are literal; both apostrophes match.
+const KEYWORDS_YESTERDAY: &[(&str, &[&str])] = &[("en", &["yesterday"]), ("es", &["ayer"]), ("fr", &["hier"])];
+const KEYWORDS_TODAY: &[(&str, &[&str])] = &[("en", &["today"]), ("es", &["hoy"]), ("fr", &["aujourd'hui"])];
+
 /// `None` means no date scope was named -- caller keeps using the unbounded, generic
 /// retrieval. Checks "yesterday" first so "today vs yesterday" (naming both) resolves to
 /// the less-ambiguous, explicitly-named-second word rather than silently picking one.
 pub fn detect_date_scope(query: &str) -> Option<QueryDateScope> {
-    let q = query.to_lowercase();
-    if q.contains("yesterday") {
+    use memory::keywords::any_keyword;
+    if any_keyword(query, KEYWORDS_YESTERDAY) {
         Some(QueryDateScope::Yesterday)
-    } else if q.contains("today") {
+    } else if any_keyword(query, KEYWORDS_TODAY) {
         Some(QueryDateScope::Today)
     } else {
         None
@@ -1523,7 +1527,7 @@ pub fn generate_daily_digest(
 ) -> Result<DailyDigest, LlmError> {
     if items.is_empty() {
         return Ok(DailyDigest {
-            summary: "No activity captured today.".to_string(),
+            summary: memory::l10n::text("", memory::l10n::keys::NO_ACTIVITY_TODAY, &[]),
             open_loops: Vec::new(),
             token_usage: TokenUsage::default(),
         });
@@ -1561,11 +1565,13 @@ pub fn generate_conversation_title(
     client: &dyn LlmClient,
     query: &str,
     answer: &str,
+    lang: &str,
 ) -> Result<(String, TokenUsage), LlmError> {
     let prompt = format!(
-        "Generate a short title (5-8 words, no ending punctuation, no surrounding quotes) \
+        "{}Generate a short title (5-8 words, no ending punctuation, no surrounding quotes) \
          summarizing this exchange:\n\nQ: {query}\nA: {answer}\n\n\
-         Respond with ONLY the title text, nothing else."
+         Respond with ONLY the title text, nothing else.",
+        profile::language_prefix(lang)
     );
     let completion = client.complete(&prompt)?;
     let title = completion.text.trim().trim_matches('"').to_string();
@@ -1594,9 +1600,22 @@ pub fn generate_daily_digest_from_context(
     custom_instructions: &str,
     window_start_unix_ms: i64,
 ) -> Result<DailyDigest, LlmError> {
+    generate_daily_digest_from_context_in(client, items, custom_instructions, window_start_unix_ms, "")
+}
+
+/// [`generate_daily_digest_from_context`] whose empty-day placeholder is written in `lang`
+/// (an output-language tag; "" is English). The prompt itself does not depend on `lang`:
+/// the language line arrives inside `custom_instructions`.
+pub fn generate_daily_digest_from_context_in(
+    client: &dyn LlmClient,
+    items: &[ContextItem],
+    custom_instructions: &str,
+    window_start_unix_ms: i64,
+    lang: &str,
+) -> Result<DailyDigest, LlmError> {
     if items.is_empty() {
         return Ok(DailyDigest {
-            summary: "No activity captured today.".to_string(),
+            summary: memory::l10n::text(lang, memory::l10n::keys::NO_ACTIVITY_TODAY, &[]),
             open_loops: Vec::new(),
             token_usage: TokenUsage::default(),
         });
@@ -1764,12 +1783,23 @@ pub fn summarize_episode(
     items: &[CaptureItem],
     custom_instructions: &str,
 ) -> Result<EpisodeSummary, LlmError> {
+    summarize_episode_in(client, items, custom_instructions, "")
+}
+
+/// [`summarize_episode`] written in `lang`'s language: the language line leads the prompt.
+pub fn summarize_episode_in(
+    client: &dyn LlmClient,
+    items: &[CaptureItem],
+    custom_instructions: &str,
+    lang: &str,
+) -> Result<EpisodeSummary, LlmError> {
     let instructions_block = if custom_instructions.is_empty() {
         String::new()
     } else {
         format!("Additional instructions: {custom_instructions}\n\n")
     };
-    let mut prompt = String::from(
+    let mut prompt = profile::language_prefix(lang);
+    prompt.push_str(
         "Below is a chronological log of screen activity from one continuous working \
          session (same app, no long gaps). Write a brief summary of what was being \
          done, and extract any URLs or file/document references mentioned. \
@@ -1853,12 +1883,25 @@ pub fn summarize_thread_incrementally(
     new_messages: &[ThreadEmailMessage],
     custom_instructions: &str,
 ) -> Result<ThreadSummary, LlmError> {
+    summarize_thread_incrementally_in(client, prior_summary, new_messages, custom_instructions, "")
+}
+
+/// [`summarize_thread_incrementally`] written in `lang`'s language: the language line leads
+/// the prompt.
+pub fn summarize_thread_incrementally_in(
+    client: &dyn LlmClient,
+    prior_summary: Option<&str>,
+    new_messages: &[ThreadEmailMessage],
+    custom_instructions: &str,
+    lang: &str,
+) -> Result<ThreadSummary, LlmError> {
     let instructions_block = if custom_instructions.is_empty() {
         String::new()
     } else {
         format!("Additional instructions: {custom_instructions}\n\n")
     };
-    let mut prompt = String::from(
+    let mut prompt = profile::language_prefix(lang);
+    prompt.push_str(
         "You maintain a running summary of an email thread. Respond with ONLY a JSON \
          object, no markdown fences, no other text, matching exactly:\n\
          {\"summary\": \"...\"}\n\n",
@@ -3356,6 +3399,14 @@ mod tests {
     }
 
     #[test]
+    fn empty_day_line_renders_english_for_empty_lang() {
+        let digest = generate_daily_digest_from_context_in(&MockClient::default(), &[], "", 1_000, "").unwrap();
+        assert_eq!(digest.summary, "No activity captured today.");
+        let digest = generate_daily_digest_from_context_in(&MockClient::default(), &[], "", 1_000, "en-US").unwrap();
+        assert_eq!(digest.summary, "No activity captured today.");
+    }
+
+    #[test]
     fn generate_daily_digest_from_context_uses_mock_client() {
         let client = MockClient {
             response: "{\"summary\": \"Worked on the capture spike and reviewed PRs.\", \"open_loops\": [\"waiting on notarization\"]}"
@@ -3690,6 +3741,63 @@ mod tests {
          Here are the messages in a new email thread. Write a short summary:\n\n\
          - (alice@example.com) Can you send the report?\n";
         assert_eq!(client.last_prompt(), expected, "empty custom_instructions must reproduce today's exact wording");
+    }
+
+    fn assert_line_first(prompt: &str, first_sentence: &str) {
+        let line = crate::profile::language_line("es-US");
+        let at = prompt.find(&line).expect("language line present");
+        assert!(at < prompt.find(first_sentence).expect("instruction present"), "{prompt}");
+    }
+
+    fn one_thread_message() -> Vec<ThreadEmailMessage> {
+        vec![ThreadEmailMessage { item_id: 1, from: "a@x.com".into(), ts_unix_ms: 1, body_text: "hi".into() }]
+    }
+
+    #[test]
+    fn summarize_episode_es_us_adds_language_line_first() {
+        let client = MockClient::responding_with(r#"{"summary": "ok", "refs": []}"#);
+        summarize_episode_in(&client, &[item(1, "com.x", "t")], "be terse", "es-US").unwrap();
+        assert_line_first(&client.last_prompt(), "Below is a chronological log");
+        assert!(client.last_prompt().contains("Keep JSON field names"));
+    }
+
+    #[test]
+    fn summarize_episode_empty_lang_has_no_language_line() {
+        let client = MockClient::responding_with(r#"{"summary": "ok", "refs": []}"#);
+        summarize_episode_in(&client, &[item(1, "com.x", "t")], "", "").unwrap();
+        assert!(!client.last_prompt().contains("Language:"));
+    }
+
+    #[test]
+    fn summarize_thread_es_us_adds_language_line_first() {
+        let client = MockClient::responding_with(r#"{"summary": "ok"}"#);
+        summarize_thread_incrementally_in(&client, None, &one_thread_message(), "", "es-US").unwrap();
+        assert_line_first(&client.last_prompt(), "You maintain a running summary");
+        assert!(client.last_prompt().contains("Keep JSON field names"));
+    }
+
+    #[test]
+    fn summarize_thread_empty_lang_has_no_language_line() {
+        let client = MockClient::responding_with(r#"{"summary": "ok"}"#);
+        summarize_thread_incrementally_in(&client, None, &one_thread_message(), "", "").unwrap();
+        assert!(!client.last_prompt().contains("Language:"));
+    }
+
+    #[test]
+    fn conversation_title_es_us_adds_language_line_first() {
+        let client = MockClient::responding_with("Plan de lanzamiento");
+        generate_conversation_title(&client, "q", "a", "es-US").unwrap();
+        assert_line_first(&client.last_prompt(), "Generate a short title");
+    }
+
+    #[test]
+    fn conversation_title_empty_lang_has_no_language_line() {
+        let client = MockClient::responding_with("Launch plan");
+        generate_conversation_title(&client, "q", "a", "").unwrap();
+        let expected = "Generate a short title (5-8 words, no ending punctuation, no surrounding quotes) \
+         summarizing this exchange:\n\nQ: q\nA: a\n\n\
+         Respond with ONLY the title text, nothing else.";
+        assert_eq!(client.last_prompt(), expected);
     }
 
     #[test]
@@ -4444,6 +4552,24 @@ mod tests {
             .prompt
             .borrow()
             .contains("Additional instructions: Keep it terse.\n\n"));
+    }
+
+    #[test]
+    fn detect_date_scope_spanish_and_french() {
+        assert_eq!(detect_date_scope("¿Qué pasó hoy?"), Some(QueryDateScope::Today));
+        assert_eq!(detect_date_scope("Qu'est-ce qui s'est passé hier ?"), Some(QueryDateScope::Yesterday));
+        assert_eq!(detect_date_scope("Qu\u{2019}est-ce qui s\u{2019}est passé hier ?"), Some(QueryDateScope::Yesterday));
+        assert_eq!(detect_date_scope("ayer"), Some(QueryDateScope::Yesterday));
+        assert_eq!(detect_date_scope("Résumé d'aujourd'hui"), Some(QueryDateScope::Today));
+        assert_eq!(detect_date_scope("Résumé d\u{2019}AUJOURD\u{2019}HUI"), Some(QueryDateScope::Today));
+        assert_eq!(detect_date_scope("hoy y ayer"), Some(QueryDateScope::Yesterday));
+    }
+
+    #[test]
+    fn detect_date_scope_foreign_words_do_not_match_inside_english() {
+        for q in ["the layer hierarchy", "player prayer", "a hoyo of shier", "hoyle"] {
+            assert_eq!(detect_date_scope(q), None, "{q}");
+        }
     }
 
     #[test]

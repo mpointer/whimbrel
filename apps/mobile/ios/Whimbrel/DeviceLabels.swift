@@ -17,7 +17,7 @@ struct DeviceLabels: Equatable {
 
     func label(for deviceId: String) -> String {
         if let name = names[deviceId] { return name }
-        if deviceId == ownDeviceId { return "This iPhone" }
-        return "Device \(deviceId.prefix(6))"
+        if deviceId == ownDeviceId { return String(localized: "This iPhone") }
+        return String(localized: "Device \(deviceId.prefix(6))")
     }
 }

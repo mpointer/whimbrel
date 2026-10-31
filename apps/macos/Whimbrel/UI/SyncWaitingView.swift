@@ -80,20 +80,20 @@ struct SyncWaitingView: View {
 
     private var title: String {
         switch syncState.status {
-        case .waitingForGroupKey: "Waiting for a device to finish setting this one up"
-        default: "Waiting for approval on another device"
+        case .waitingForGroupKey: String(localized: "Waiting for a device to finish setting this one up")
+        default: String(localized: "Waiting for approval on another device")
         }
     }
 
     private var message: String {
         switch syncState.status {
         case .waitingForGroupKey:
-            "This device was approved, but the handoff to send it the sync key expired before it could be delivered. Open Whimbrel on an already-signed-in device, go to Settings → Devices, and approve this device again."
+            String(localized: "This device was approved, but the handoff to send it the sync key expired before it could be delivered. Open Whimbrel on an already-signed-in device, go to Settings → Devices, and approve this device again.")
         default:
             if let holder = syncState.swapHolderName {
                 SyncState.swapWaitingMessage(holderName: holder)
             } else {
-                "Open Whimbrel on a device that's already signed in, go to Settings → Devices, and approve this one — it'll be picked up automatically within a few seconds."
+                String(localized: "Open Whimbrel on a device that's already signed in, go to Settings → Devices, and approve this one — it'll be picked up automatically within a few seconds.")
             }
         }
     }

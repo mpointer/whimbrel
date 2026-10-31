@@ -1,4 +1,5 @@
 import type { DeviceView, SyncState, SyncView } from "../generated/types";
+import { t } from "../l10n";
 
 export type SyncAction = "signIn" | "cancel" | "checkAgain" | "none";
 
@@ -22,29 +23,29 @@ export function primaryAction(state: SyncState): SyncAction {
 export function stateLabel(state: SyncState): string {
   switch (state) {
     case "notConfigured":
-      return "Not configured";
+      return t("Not configured");
     case "notSignedIn":
-      return "Off";
+      return t("Off");
     case "signingIn":
-      return "Signing in…";
+      return t("Signing in…");
     case "waitingForApproval":
-      return "Waiting for approval";
+      return t("Waiting for approval");
     case "waitingForGroupKey":
-      return "Waiting for the account key";
+      return t("Waiting for the account key");
     case "ready":
-      return "On";
+      return t("On");
     case "error":
-      return "Needs attention";
+      return t("Needs attention");
   }
 }
 
 /** The content-sync line under a Ready status, or null when not enrolled. */
-export function contentLine(view: SyncView): string | null {
+export function contentLine(view: SyncView, locale: string): string | null {
   if (view.state !== "ready") return null;
-  if (view.contentError) return `Content sync failed: ${view.contentError}. Will retry automatically.`;
-  if (view.contentLastSyncedMs == null) return "Content hasn't synced yet this session; the first round runs within a minute.";
-  const at = new Date(view.contentLastSyncedMs).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  return `Content synced at ${at}. It syncs every minute.`;
+  if (view.contentError) return t("Content sync failed: {error}. Will retry automatically.", { error: view.contentError });
+  if (view.contentLastSyncedMs == null) return t("Content hasn't synced yet this session; the first round runs within a minute.");
+  const time = new Date(view.contentLastSyncedMs).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
+  return t("Content synced at {time}. It syncs every minute.", { time });
 }
 
 export type DeviceAction = "approve" | "resendKey" | "revoke";
@@ -70,5 +71,5 @@ export function collidingPendingIds(devices: DeviceView[]): Set<string> {
 export function deviceTitle(device: DeviceView): string {
   const name = device.name?.trim();
   if (name) return name;
-  return device.thisDevice ? "This PC (unnamed)" : "Unnamed device";
+  return device.thisDevice ? t("This PC (unnamed)") : t("Unnamed device");
 }

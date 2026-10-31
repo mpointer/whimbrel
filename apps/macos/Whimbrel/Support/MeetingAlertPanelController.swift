@@ -15,6 +15,8 @@ final class MeetingAlertPanelController: ObservableObject {
     /// `nil` means "no countdown — wait indefinitely" (auto-start off). Read by
     /// `MeetingAlertView` to show (or hide) the "Auto-starting in Ns…" caption.
     @Published fileprivate(set) var secondsRemaining: Int?
+    /// Set when the panel reports a split (`showKeepTogether`): the earlier meeting's title.
+    @Published fileprivate(set) var earlierTitle: String?
 
     private static let countdownSeconds = 10
     private static let panelSize = NSSize(width: 380, height: 132)
@@ -38,6 +40,7 @@ final class MeetingAlertPanelController: ObservableObject {
         onDismiss: @escaping () -> Void
     ) {
         self.meeting = meeting
+        earlierTitle = nil
         self.onAccept = onAccept
         self.onAcceptAndOpenTimeline = onAcceptAndOpenTimeline
         self.onDismiss = onDismiss
@@ -62,6 +65,24 @@ final class MeetingAlertPanelController: ObservableObject {
         panel.orderFrontRegardless()
     }
 
+    /// After a back-to-back split (`MeetingSplit`): `meeting` is recording as a new meeting;
+    /// "Keep together" (`onAccept`) undoes that. No countdown.
+    func showKeepTogether(for meeting: QualifyingMeeting, earlierTitle: String, onKeepTogether: @escaping () -> Void) {
+        show(for: meeting, autoStart: false, onAccept: onKeepTogether, onAcceptAndOpenTimeline: onKeepTogether, onDismiss: {})
+        self.earlierTitle = earlierTitle
+    }
+
+    /// Hides the panel only when it is showing a split (for `meetingId`, when given).
+    func hideKeepTogether(for meetingId: String? = nil) {
+        guard earlierTitle != nil, meetingId == nil || meeting?.id == meetingId else { return }
+        hide()
+    }
+
+    /// Hides a prompt, leaving a showing "Keep together" pop-up alone.
+    func hidePrompt() {
+        if earlierTitle == nil { hide() }
+    }
+
     /// Clears the panel's own local state (timer, published properties, window
     /// visibility) without invoking any of the action closures — used both when an
     /// action closure itself dismisses (see `acceptTapped()` etc.) and when `AppState`
@@ -71,6 +92,7 @@ final class MeetingAlertPanelController: ObservableObject {
         countdownTimer = nil
         meeting = nil
         secondsRemaining = nil
+        earlierTitle = nil
         onAccept = nil
         onAcceptAndOpenTimeline = nil
         onDismiss = nil
@@ -90,6 +112,19 @@ final class MeetingAlertPanelController: ObservableObject {
         let action = onAcceptAndOpenTimeline
         hide()
         action?()
+    }
+
+    /// The Join button's target — calendar meetings only (a detected meeting is one
+    /// the user is already in). Nil hides the button.
+    var joinTarget: JoinTarget? {
+        guard let meeting, meeting.source != .detected else { return nil }
+        return JoinTarget.make(from: meeting.conferenceLink)
+    }
+
+    /// Opens the meeting; deliberately leaves the panel and its Record choice alone.
+    func joinTapped() {
+        guard let target = joinTarget else { return }
+        NSWorkspace.shared.open(target.urlToOpen { NSWorkspace.shared.urlForApplication(toOpen: $0) != nil })
     }
 
     func dismissTapped() {

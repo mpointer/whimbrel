@@ -231,10 +231,10 @@ struct RetentionSettingsPane: View {
     }
 
     @ViewBuilder
-    private func retentionRow(label: String, days: Binding<Int>, keepForever: Binding<Bool>, foreverLabel: String) -> some View {
+    private func retentionRow(label: LocalizedStringKey, days: Binding<Int>, keepForever: Binding<Bool>, foreverLabel: LocalizedStringKey) -> some View {
         HStack {
             Text(label).frame(width: 220, alignment: .leading)
-            Stepper("\(days.wrappedValue) days", value: days, in: 1...3650)
+            Stepper(SettingsCopy.retentionDays(days.wrappedValue), value: days, in: 1...3650)
                 .disabled(keepForever.wrappedValue)
             Toggle(foreverLabel, isOn: keepForever)
                 .toggleStyle(.checkbox)
@@ -244,10 +244,10 @@ struct RetentionSettingsPane: View {
     private func applyRetentionNow() {
         appState.retention.applyNow(store: appState.coreStore) { result in
             guard let result else {
-                retentionStatus = "Retention run failed (store unavailable or DB error)."
+                retentionStatus = String(localized: "Retention run failed (store unavailable or DB error).")
                 return
             }
-            retentionStatus = "Deleted \(result.captureItemsDeleted) capture item(s), \(result.meetingsDeleted) meeting(s), \(result.conversationsDeleted) conversation(s)."
+            retentionStatus = String(localized: "Deleted \(result.captureItemsDeleted) capture item(s), \(result.meetingsDeleted) meeting(s), \(result.conversationsDeleted) conversation(s).")
         }
     }
 
@@ -278,20 +278,20 @@ struct RetentionSettingsPane: View {
         let liveWriteURLs = Set([appState.audio.systemAudioFileURL, appState.audio.micAudioFileURL].compactMap { $0 })
         let mediaAudioDir = appState.mediaSettings.audioURL(deviceId: appState.deviceId)
         guard let store = appState.coreStore else {
-            orphanStatus = "Scan failed: store unavailable."
+            orphanStatus = String(localized: "Scan failed: store unavailable.")
             return
         }
         CoreMemoryStore.accessQueue.async {
             guard let result = store.scanOrphanedRecordings(recordingsDir: SpikePaths.root, mediaAudioDir: mediaAudioDir, excluding: liveWriteURLs) else {
                 DispatchQueue.main.async {
-                    orphanStatus = "Scan failed: could not read referenced file paths from the database."
+                    orphanStatus = String(localized: "Scan failed: could not read referenced file paths from the database.")
                 }
                 return
             }
             DispatchQueue.main.async {
                 orphanScanResult = result
                 if result.orphaned.isEmpty {
-                    orphanStatus = "No orphaned files found."
+                    orphanStatus = String(localized: "No orphaned files found.")
                 } else {
                     orphanStatus = "\(result.orphaned.count) orphaned file(s) found, \(formattedByteCount(result.totalBytes)) total."
                 }
@@ -305,7 +305,7 @@ struct RetentionSettingsPane: View {
         CoreMemoryStore.accessQueue.async {
             let deleted = CoreMemoryStore.deleteOrphanedRecordings(pathsToDelete)
             DispatchQueue.main.async {
-                orphanStatus = "Deleted \(deleted) file(s)."
+                orphanStatus = String(localized: "Deleted \(deleted) file(s).")
                 orphanScanResult = nil
             }
         }
@@ -313,14 +313,14 @@ struct RetentionSettingsPane: View {
 
     private func scanForDuplicateMeetings() {
         guard let store = appState.coreStore else {
-            duplicateStatus = "Scan failed: store unavailable."
+            duplicateStatus = String(localized: "Scan failed: store unavailable.")
             return
         }
         let ownDeviceId = appState.deviceId
         CoreMemoryStore.accessQueue.async {
             guard let groups = store.findDuplicateMeetingGroups(ownDeviceId: ownDeviceId) else {
                 DispatchQueue.main.async {
-                    duplicateStatus = "Scan failed: could not read meetings from the database."
+                    duplicateStatus = String(localized: "Scan failed: could not read meetings from the database.")
                 }
                 return
             }
@@ -328,7 +328,7 @@ struct RetentionSettingsPane: View {
                 duplicateScanResult = groups
                 let extraCount = groups.reduce(0) { $0 + ($1.meetingIds.count - 1) }
                 if groups.isEmpty {
-                    duplicateStatus = "No duplicate meetings found."
+                    duplicateStatus = String(localized: "No duplicate meetings found.")
                 } else {
                     duplicateStatus = "\(groups.count) duplicate set(s) found, \(extraCount) extra copy/copies."
                 }
@@ -359,7 +359,7 @@ struct RetentionSettingsPane: View {
                 }
             }
             DispatchQueue.main.async {
-                duplicateStatus = "Deleted \(deletedCount) duplicate meeting(s)."
+                duplicateStatus = String(localized: "Deleted \(deletedCount) duplicate meeting(s).")
                 duplicateScanResult = nil
             }
         }
@@ -367,14 +367,14 @@ struct RetentionSettingsPane: View {
 
     private func scanForMeetingsWithoutAudio() {
         guard let store = appState.coreStore else {
-            noAudioStatus = "Scan failed: store unavailable."
+            noAudioStatus = String(localized: "Scan failed: store unavailable.")
             return
         }
         let ownDeviceId = appState.deviceId
         CoreMemoryStore.accessQueue.async {
             guard let results = store.findMeetingsWithoutAudio(ownDeviceId: ownDeviceId) else {
                 DispatchQueue.main.async {
-                    noAudioStatus = "Scan failed: could not read meetings from the database."
+                    noAudioStatus = String(localized: "Scan failed: could not read meetings from the database.")
                 }
                 return
             }
@@ -401,7 +401,7 @@ struct RetentionSettingsPane: View {
                 }
             }
             DispatchQueue.main.async {
-                noAudioStatus = "Deleted \(deletedCount) meeting(s)."
+                noAudioStatus = String(localized: "Deleted \(deletedCount) meeting(s).")
                 noAudioScanResult = nil
             }
         }
@@ -461,5 +461,16 @@ enum MediaRetentionCopy {
         }
         if p.disconnectedMeetings > 0 { text += " \(meetings(p.disconnectedMeetings)) on a disconnected drive." }
         return text
+    }
+}
+
+/// Settings copy with counts: plural forms come from the String Catalog.
+enum SettingsCopy {
+    static func retentionDays(_ n: Int) -> String {
+        String(localized: "\(n) days")
+    }
+
+    static func eventsFound(_ n: Int) -> String {
+        String(localized: "\(n) events found in the next 7 days.")
     }
 }

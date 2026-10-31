@@ -94,7 +94,7 @@ struct MeetingsListView: View {
                 if groups.isEmpty, !hasLoaded {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 240)
                 } else if groups.isEmpty {
-                    WhimbrelEmptyState(systemImage: SkinStore.shared.selected.icons[.meetings], title: searchText.isEmpty ? "No meetings yet" : "No matches", message: searchText.isEmpty ? "Recorded meetings appear here." : "Try a different search.")
+                    WhimbrelEmptyState(systemImage: SkinStore.shared.selected.icons[.meetings], title: searchText.isEmpty ? String(localized: "No meetings yet") : String(localized: "No matches"), message: searchText.isEmpty ? String(localized: "Recorded meetings appear here.") : String(localized: "Try a different search."))
                 }
             }
             .padding(.vertical, Spacing.lg)

@@ -91,8 +91,8 @@ struct RoutineRunDetailView: View {
 
     private var subtitle: String {
         var parts = [Date(timeIntervalSince1970: Double(run.ranAtUnixMs) / 1000).formatted(.dateTime.weekday(.wide).month(.abbreviated).day().hour().minute())]
-        if let origin = run.originDeviceId { parts.append("Ran on \(labels.label(for: origin))") }
-        if !run.succeeded { parts.append("Failed") }
+        if let origin = run.originDeviceId { parts.append(String(localized: "Ran on \(labels.label(for: origin))")) }
+        if !run.succeeded { parts.append(String(localized: "Failed")) }
         return parts.joined(separator: " · ")
     }
 }

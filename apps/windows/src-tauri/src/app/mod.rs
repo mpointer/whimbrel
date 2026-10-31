@@ -62,6 +62,9 @@ pub fn run() {
             // Identity, then the store (which learns its own device id before anything
             // else can touch it), then settings. Failures land in `startup_errors`.
             let mut state = AppState::start(paths, Arc::new(CredentialManager));
+            // Before anything renders text or writes a summary: the tray, the jobs and every window read it.
+            let language = crate::l10n::apply_ui_language(&state.settings.lock().unwrap().app_language());
+            tracing::info!(language, "UI language");
             state.start_capture();
             state.start_jobs();
             state.start_sync();
@@ -234,6 +237,9 @@ pub fn run() {
             crate::tray::popup_quit,
             commands::general::general_settings,
             commands::general::set_autostart,
+            commands::language::language_settings,
+            commands::language::set_language,
+            commands::language::set_write_in,
             commands::get_routing_settings,
             commands::set_routing_settings,
             update::update_ready,

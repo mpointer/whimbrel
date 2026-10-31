@@ -24,7 +24,7 @@ fn db(_: rusqlite::Error) -> ApiError {
     ApiError::ProviderFailure
 }
 
-fn build_prompt(t: &TopicNameInput) -> String {
+fn build_prompt(t: &TopicNameInput, lang: &str) -> String {
     let list = |v: &[String]| {
         v.iter()
             .map(|s| format!("- {s}"))
@@ -32,9 +32,10 @@ fn build_prompt(t: &TopicNameInput) -> String {
             .join("\n")
     };
     let prompt = format!(
-        "Name this group of related emails, meetings and activity.\n\
+        "{}Name this group of related emails, meetings and activity.\n\
          Key people and topics:\n{}\n\nRecent items:\n{}\n\n\
          Reply with only JSON: {{\"name\": \"<=6 words\", \"status\": \"<=14 words on where things stand\"}}",
+        llm::profile::language_prefix(lang),
         list(&t.top_entities),
         list(&t.sample_titles),
     );
@@ -106,11 +107,12 @@ fn fallback_name(t: &TopicNameInput) -> String {
 pub fn run_naming_batch_with_complete(
     store: &memory::Store,
     limit: usize,
+    lang: &str,
     complete: impl Fn(&str) -> Result<String, String>,
 ) -> ApiResult<NamingReport> {
     let mut report = NamingReport::default();
     for t in store.topics_needing_names(limit).map_err(db)? {
-        let parsed = complete(&build_prompt(&t))
+        let parsed = complete(&build_prompt(&t, lang))
             .ok()
             .and_then(|r| parse_reply(&r));
         let (name, status) = match parsed {
@@ -146,7 +148,7 @@ pub fn run_naming_batch(
 ) -> ApiResult<NamingReport> {
     let cap = routing.spend_cap_config();
     let chain = chain_for(routing, ollama_model);
-    run_naming_batch_with_complete(store, limit, |prompt| {
+    run_naming_batch_with_complete(store, limit, &routing.output_language, |prompt| {
         llm::check_spend_cap(store, &cap, None, Some("topic_name"), now_ms)
             .map_err(|e| format!("{e:?}"))?;
         let (completion, link) = llm::try_chain(&chain, |l| l.client.complete(prompt))
@@ -219,7 +221,7 @@ mod tests {
     #[test]
     fn naming_uses_model_json() {
         let (_d, s, c, t) = seeded(&["Pricing call", "Quote follow-up"]);
-        let r = run_naming_batch_with_complete(&s, 5, |_| {
+        let r = run_naming_batch_with_complete(&s, 5, "", |_| {
             Ok("Sure!\n```json\n{\"name\": \"Acme pricing\", \"status\": \"Waiting on legal sign-off\"}\n```".into())
         })
         .unwrap();
@@ -248,7 +250,7 @@ mod tests {
             Err("spend cap".to_string()),
         ] {
             let (_d, s, c, t) = seeded(&["a", "b"]);
-            let r = run_naming_batch_with_complete(&s, 5, |_| reply.clone()).unwrap();
+            let r = run_naming_batch_with_complete(&s, 5, "", |_| reply.clone()).unwrap();
             assert_eq!(
                 r,
                 NamingReport {
@@ -265,7 +267,7 @@ mod tests {
         let (_d, s, c, t) = seeded(&["a", "b"]);
         s.rename_topic(t, "Mine").unwrap();
         let calls = RefCell::new(0);
-        let r = run_naming_batch_with_complete(&s, 5, |_| {
+        let r = run_naming_batch_with_complete(&s, 5, "", |_| {
             *calls.borrow_mut() += 1;
             Ok("{\"name\": \"Auto\"}".into())
         })
@@ -280,7 +282,7 @@ mod tests {
     #[test]
     fn reversed_braces_do_not_panic() {
         let (_d, s, _c, _t) = seeded(&["a", "b"]);
-        let r = run_naming_batch_with_complete(&s, 5, |_| Ok("} x {".into())).unwrap();
+        let r = run_naming_batch_with_complete(&s, 5, "", |_| Ok("} x {".into())).unwrap();
         assert_eq!(
             r,
             NamingReport {
@@ -297,7 +299,7 @@ mod tests {
         let reply = format!(
             "{{\"name\": \"\\u001b[31m# Acme\u{200d} \u{202e}[click](http://evil) `p`|<b>\", \"status\": \"{long}\"}}"
         );
-        run_naming_batch_with_complete(&s, 5, |_| Ok(reply.clone())).unwrap();
+        run_naming_batch_with_complete(&s, 5, "", |_| Ok(reply.clone())).unwrap();
         let (name, status, _) = row(&c, t);
         for bad in [
             '\u{1b}', '\u{200d}', '\u{202e}', '[', ']', '(', ')', '`', '|', '<', '>',
@@ -312,7 +314,7 @@ mod tests {
         // Only junk left: fallback.
         let (_d, s, c, t) = seeded(&["a", "b"]);
         let r =
-            run_naming_batch_with_complete(&s, 5, |_| Ok("{\"name\": \"#`|[]\"}".into())).unwrap();
+            run_naming_batch_with_complete(&s, 5, "", |_| Ok("{\"name\": \"#`|[]\"}".into())).unwrap();
         assert_eq!(r.fallback, 1);
         assert_eq!(row(&c, t).0, "Ann · Acme · Bob");
     }
@@ -347,7 +349,7 @@ mod tests {
             [&hostile],
         )
         .unwrap();
-        run_naming_batch_with_complete(&s, 5, |_| Err("x".into())).unwrap();
+        run_naming_batch_with_complete(&s, 5, "", |_| Err("x".into())).unwrap();
         let name = row(&c, t).0;
         assert!(
             name.chars().count() <= 60 && name.starts_with("x http://evil"),
@@ -359,8 +361,27 @@ mod tests {
         let (_d, s, c, t) = seeded(&["a", "b"]);
         c.execute("UPDATE entity SET display = '#`|[]'", [])
             .unwrap();
-        run_naming_batch_with_complete(&s, 5, |_| Err("x".into())).unwrap();
+        run_naming_batch_with_complete(&s, 5, "", |_| Err("x".into())).unwrap();
         assert_eq!(row(&c, t).0, "Untitled topic");
+    }
+
+    fn name_input() -> TopicNameInput {
+        TopicNameInput { id: 1, top_entities: vec!["Acme".into()], sample_titles: vec!["Re: pricing".into()] }
+    }
+
+    #[test]
+    fn topic_names_es_us_adds_language_line_first() {
+        let p = build_prompt(&name_input(), "es-US");
+        let at = p.find(&llm::profile::language_line("es-US")).expect("language line present");
+        assert!(at < p.find("Name this group").unwrap());
+        assert!(p.contains("Keep JSON field names"));
+    }
+
+    #[test]
+    fn topic_names_empty_lang_has_no_language_line() {
+        let p = build_prompt(&name_input(), "");
+        assert!(!p.contains("Language:"));
+        assert!(p.starts_with("Name this group"));
     }
 
     #[test]
@@ -368,7 +389,7 @@ mod tests {
         let secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
         let (_d, s, _c, _t) = seeded(&[&format!("key {secret} leaked"), "b"]);
         let seen = RefCell::new(String::new());
-        run_naming_batch_with_complete(&s, 5, |p| {
+        run_naming_batch_with_complete(&s, 5, "", |p| {
             seen.borrow_mut().push_str(p);
             Err("x".into())
         })

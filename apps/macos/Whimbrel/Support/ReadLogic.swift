@@ -15,16 +15,20 @@ enum ReadLogic {
         guard let first = name.split(whereSeparator: \.isWhitespace).first.map(String.init), !first.contains("@") else {
             return nil
         }
-        return "Good \(daypart(now: now, calendar: calendar)), \(first)"
+        switch daypart(now: now, calendar: calendar) {
+        case "morning": return String(localized: "Good morning, \(first)")
+        case "afternoon": return String(localized: "Good afternoon, \(first)")
+        default: return String(localized: "Good evening, \(first)")
+        }
     }
 
     /// "Now" while the event is running, "In 9m" / "In 2h" up to 12 hours ahead, nil otherwise.
     static func relativeStart(_ start: Date, end: Date, now: Date) -> String? {
-        if start <= now { return now < end ? "Now" : nil }
+        if start <= now { return now < end ? String(localized: "Now") : nil }
         let seconds = start.timeIntervalSince(now)
         guard seconds <= 12 * 3600 else { return nil }
         let minutes = Int((seconds / 60).rounded(.up))
-        return minutes >= 60 ? "In \(minutes / 60)h" : "In \(minutes)m"
+        return minutes >= 60 ? String(localized: "In \(minutes / 60)h") : String(localized: "In \(minutes)m")
     }
 
     /// "A, B +3": the first two names, then how many more.
@@ -44,10 +48,10 @@ enum ReadLogic {
     static func syncLine(lastSyncedAt: Date?, now: Date, isSyncing: Bool, error: String?) -> String {
         if let error { return error }
         if isSyncing { return "Syncing…" }
-        guard let lastSyncedAt else { return "Not synced yet" }
+        guard let lastSyncedAt else { return String(localized: "Not synced yet") }
         let seconds = max(0, now.timeIntervalSince(lastSyncedAt))
-        if seconds < 60 { return "Synced just now" }
-        if seconds < 3600 { return "Synced \(Int(seconds / 60)) min ago" }
-        return "Synced \(Int(seconds / 3600)) h ago"
+        if seconds < 60 { return String(localized: "Synced just now") }
+        if seconds < 3600 { return String(localized: "Synced \(Int(seconds / 60)) min ago") }
+        return String(localized: "Synced \(Int(seconds / 3600)) h ago")
     }
 }

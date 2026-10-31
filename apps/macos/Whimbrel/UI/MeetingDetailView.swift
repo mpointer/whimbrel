@@ -4,6 +4,7 @@ enum MeetingPageTab: String, CaseIterable, Identifiable {
     case notes = "Notes"
     case transcript = "Transcript"
     var id: String { rawValue }
+    var title: String { self == .notes ? String(localized: "Notes") : String(localized: "Transcript") }
 }
 
 /// Next `order_index` for a newly-inserted action item. `list_meeting_action_items`
@@ -309,9 +310,9 @@ struct MeetingDetailContentView: View {
             guard !items.isEmpty else { return nil }
             return "\(title):\n" + items.map { "• \($0)" }.joined(separator: "\n")
         }
-        if let block = bulletBlock(title: "Decisions", items: noteModel.displayDecisions) { parts.append(block) }
-        if let block = bulletBlock(title: "Action items", items: actionItems.map(\.text)) { parts.append(block) }
-        if let block = bulletBlock(title: "Open questions", items: noteModel.displayOpenQuestions) { parts.append(block) }
+        if let block = bulletBlock(title: String(localized: "Decisions"), items: noteModel.displayDecisions) { parts.append(block) }
+        if let block = bulletBlock(title: String(localized: "Action items"), items: actionItems.map(\.text)) { parts.append(block) }
+        if let block = bulletBlock(title: String(localized: "Open questions"), items: noteModel.displayOpenQuestions) { parts.append(block) }
         return parts.joined(separator: "\n\n")
     }
 
@@ -339,7 +340,7 @@ struct MeetingDetailContentView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.lg) {
-                    Text(meeting.title)
+                    Text(verbatim: MeetingDetailLogic.displayTitle(meeting.title))
                         .font(.whimbrelDisplay(.largeTitle))
                         .foregroundStyle(Color.whimbrelTextPrimary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -355,7 +356,7 @@ struct MeetingDetailContentView: View {
                             Task { await snapshotsModel.reload() }
                         }
                     Picker("", selection: $tab) {
-                        ForEach(MeetingPageTab.allCases) { Text($0.rawValue).tag($0) }
+                        ForEach(MeetingPageTab.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -494,7 +495,7 @@ struct MeetingDetailContentView: View {
     }
 
     @ViewBuilder
-    private func readingBlock(_ title: String, _ items: [String], bullet: Bool = true) -> some View {
+    private func readingBlock(_ title: LocalizedStringKey, _ items: [String], bullet: Bool = true) -> some View {
         let items = items.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: Spacing.sm) {
@@ -561,7 +562,7 @@ struct MeetingDetailContentView: View {
                     if let label = dividerAt[index] { rejoinedDivider(label) }
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                         HStack(spacing: Spacing.xs) {
-                            Text(segment.speakerLabel).font(.whimbrelBody(.caption).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+                            Text(verbatim: MeetingDetailLogic.displaySpeaker(segment.speakerLabel)).font(.whimbrelBody(.caption).bold()).foregroundStyle(Color.whimbrelTextPrimary)
                             Text(Self.clock(segment.startCs)).font(.whimbrelBody(.caption2)).foregroundStyle(Color.whimbrelTextSecondary)
                         }
                         Text(segment.text)
@@ -587,7 +588,7 @@ struct MeetingDetailContentView: View {
     }
 
     private func rejoinedDivider(_ label: String) -> some View {
-        Text(label)
+        Text(verbatim: MeetingDetailLogic.renderedDivider(label))
             .font(.whimbrelBody(.caption))
             .foregroundStyle(Color.whimbrelTextSecondary)
             .frame(maxWidth: .infinity)
@@ -611,16 +612,16 @@ struct MeetingDetailContentView: View {
     /// than hiding the editor, so an empty summary never takes decisions/action items/
     /// open questions down with it -- see Important #1 in the final review.
     private var summaryPlaceholderText: String {
-        appState.processingMeetingId == meeting.id ? "Transcribing meeting audio — summary will follow." : "No summary yet."
+        appState.processingMeetingId == meeting.id ? String(localized: "Transcribing meeting audio — summary will follow.") : String(localized: "No summary yet.")
     }
 
     private var completedWithoutTranscriptText: String {
         if appState.processingMeetingId == meeting.id {
-            return "Transcribing in the background — check back shortly."
+            return String(localized: "Transcribing in the background — check back shortly.")
         }
         return appState.canTranscribeAgain(meeting)
-            ? "No transcript. The recording is still here: choose Meeting options › Transcribe again."
-            : "No transcript for this meeting."
+            ? String(localized: "No transcript. The recording is still here: choose Meeting options › Transcribe again.")
+            : String(localized: "No transcript for this meeting.")
     }
 
     @ViewBuilder
@@ -663,9 +664,9 @@ struct MeetingDetailContentView: View {
                             scheduleSummarySave()
                         }
                 }
-                editableList(title: "Decisions", items: $decisionsDraftItems, onChange: scheduleDecisionsSave)
+                editableList(title: String(localized: "Decisions"), items: $decisionsDraftItems, onChange: scheduleDecisionsSave)
                 actionItemsSection
-                editableList(title: "Open questions", items: $openQuestionsDraftItems, onChange: scheduleOpenQuestionsSave)
+                editableList(title: String(localized: "Open questions"), items: $openQuestionsDraftItems, onChange: scheduleOpenQuestionsSave)
                 provenanceChips
             }
             .whimbrelCard()
@@ -680,11 +681,11 @@ struct MeetingDetailContentView: View {
     private var provenanceChips: some View {
         HStack(spacing: Spacing.xs) {
             if let currentProvider, let currentModel {
-                WhimbrelMetadataChip(text: "Generated by \(currentModel) (\(currentProvider))")
+                WhimbrelMetadataChip(text: String(localized: "Generated by \(currentModel) (\(currentProvider))"))
                     .accessibilityIdentifier("meeting-note-provenance-chip")
             }
             if noteModel.summaryIsUserEdited {
-                WhimbrelMetadataChip(text: "Edited by you")
+                WhimbrelMetadataChip(text: String(localized: "Edited by you"))
             }
         }
     }
@@ -891,7 +892,7 @@ struct MeetingDetailContentView: View {
                         ForEach(Array(parsed[index].enumerated()), id: \.offset) { _, turn in
                             VStack(alignment: .leading, spacing: Spacing.xs) {
                                 HStack(spacing: Spacing.xs) {
-                                    Text(turn.speaker).font(.whimbrelBody(.caption).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+                                    Text(verbatim: MeetingDetailLogic.displaySpeaker(turn.speaker)).font(.whimbrelBody(.caption).bold()).foregroundStyle(Color.whimbrelTextPrimary)
                                     Text(turn.timestamp).font(.whimbrelBody(.caption2)).foregroundStyle(Color.whimbrelTextSecondary)
                                 }
                                 Text(turn.text)
@@ -1047,7 +1048,7 @@ struct MeetingDetailContentView: View {
                 // happen in practice; falls back to a generic message rather than
                 // showing nothing, since this path (unlike Ask-chat) already has a
                 // visible error slot in the UI.
-                regenerateError = "Couldn't generate a summary. Try again."
+                regenerateError = String(localized: "Couldn't generate a summary. Try again.")
             }
         }
     }
@@ -1282,7 +1283,7 @@ struct MeetingDetailContentView: View {
         guard let endUnixMs else { return startText }
         let end = Date(timeIntervalSince1970: TimeInterval(endUnixMs) / 1000)
         let minutes = Int((end.timeIntervalSince1970 - start.timeIntervalSince1970) / 60)
-        return "\(startText) · \(minutes) min"
+        return String(localized: "\(startText) · \(minutes) min")
     }
 }
 
@@ -1327,6 +1328,32 @@ enum MeetingDetailLogic {
         }
         return pieces.isEmpty ? nil : pieces.joined(separator: "\n")
     }
+
+    /// The stored divider (English, `HH:mm`) as shown: the time in the user's format, "rejoined" translated.
+    static func renderedDivider(_ label: String) -> String {
+        guard label.hasPrefix(dividerPrefix), label.hasSuffix(dividerSuffix) else { return label }
+        let hhmm = label.dropFirst(dividerPrefix.count).dropLast(dividerSuffix.count).split(separator: ":")
+        guard hhmm.count == 2, let h = Int(hhmm[0]), let m = Int(hhmm[1]),
+              let date = Calendar.current.date(bySettingHour: h, minute: m, second: 0, of: Date()) else { return label }
+        let time = date.formatted(date: .omitted, time: .shortened)
+        return "\u{2014} " + String(localized: "rejoined \(time)") + " \u{2014}"
+    }
+
+    /// Stored speaker labels ("Me", "Others", "Speaker N") translated for display; names pass through.
+    static func displaySpeaker(_ stored: String) -> String {
+        switch stored {
+        case "Me": return String(localized: "Me")
+        case "Others": return String(localized: "Others")
+        default:
+            if stored.hasPrefix("Speaker "), let n = Int(stored.dropFirst("Speaker ".count)) {
+                return String(localized: "Speaker \(n)")
+            }
+            return stored
+        }
+    }
+
+    /// A meeting's title is shown as stored: the "Meeting" placeholder is a sentinel, never translated.
+    static func displayTitle(_ title: String) -> String { title }
 
     /// Splits transcript text at its divider lines: each chunk's label is the divider above it.
     static func splitAtDividers(_ text: String) -> [(label: String?, body: String)] {

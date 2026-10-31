@@ -310,8 +310,8 @@ enum LibraryDayGrouping {
         let days = calendar.dateComponents(
             [.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)
         ).day ?? 0
-        if days == 0 { return "Today" }
-        if days == 1 { return "Yesterday" }
+        if days == 0 { return String(localized: "Today") }
+        if days == 1 { return String(localized: "Yesterday") }
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.timeZone = calendar.timeZone
@@ -380,6 +380,17 @@ struct TimelineView: View {
         case ask = "Ask"
         case digest = "Digest"
         var id: String { rawValue }
+        /// Shown in the mode picker; Ask is a feature name and stays English.
+        var title: String {
+            switch self {
+            case .recent: String(localized: "Recent")
+            case .episodes: String(localized: "Episodes")
+            case .keyword: String(localized: "Keyword")
+            case .semantic: String(localized: "Semantic")
+            case .ask: "Ask"
+            case .digest: String(localized: "Digest")
+            }
+        }
     }
 
     var isBusy: Bool { isAsking || isGeneratingDigest }
@@ -408,7 +419,7 @@ struct TimelineView: View {
         DispatchQueue.main.async { searchFieldFocused = true }
     }
 
-    static let storeUnavailableMessage = "Whimbrel's local database didn't open. Try restarting Whimbrel."
+    static var storeUnavailableMessage: String { String(localized: "Whimbrel's local database didn't open. Try restarting Whimbrel.") }
 
     /// Recent reads newest-first under day headings. Keyword and Semantic keep their
     /// relevance order, with screen hits and transcript hits under separate labels.
@@ -422,9 +433,9 @@ struct TimelineView: View {
                 if case .snapshot = $0 { return true } else { return false }
             }
             return [
-                LibrarySection(label: "Screen activity", items: entries.filter { !isTranscript($0) && !isSnapshot($0) }),
-                LibrarySection(label: "Transcript matches", items: entries.filter(isTranscript)),
-                LibrarySection(label: "Slide matches", items: entries.filter(isSnapshot)),
+                LibrarySection(label: String(localized: "Screen activity"), items: entries.filter { !isTranscript($0) && !isSnapshot($0) }),
+                LibrarySection(label: String(localized: "Transcript matches"), items: entries.filter(isTranscript)),
+                LibrarySection(label: String(localized: "Slide matches"), items: entries.filter(isSnapshot)),
             ].filter { !$0.items.isEmpty }
         default:
             return LibraryDayGrouping.groupedByDay(entries, timestamp: \.sortTimestamp)
@@ -435,11 +446,11 @@ struct TimelineView: View {
         if appState.coreStore == nil { return Self.storeUnavailableMessage }
         switch mode {
         case .keyword, .semantic:
-            return query.isEmpty ? "Type something to search for." : "No matches for “\(query)”."
+            return query.isEmpty ? String(localized: "Type something to search for.") : String(localized: "No matches for “\(query)”.")
         default:
             return appState.showScreenCaptures
-                ? "Nothing yet. Meetings and screen activity appear here as you work."
-                : "No meetings yet. Turn on “Show screen captures in Library” in Settings → Capture to see screen activity here too."
+                ? String(localized: "Nothing yet. Meetings and screen activity appear here as you work.")
+                : String(localized: "No meetings yet. Turn on “Show screen captures in Library” in Settings → Capture to see screen activity here too.")
         }
     }
 
@@ -464,7 +475,7 @@ struct TimelineView: View {
             captureStatusHeader
 
             Picker("Mode", selection: $mode) {
-                ForEach(SearchMode.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(SearchMode.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
             .disabled(isBusy)

@@ -36,3 +36,4 @@ website/.wrangler/
 apps/windows/ui/e2e/.generated/
 apps/windows/ui/test-results/
 apps/windows/ui/playwright-report/
+__pycache__/

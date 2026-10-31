@@ -1,0 +1,1 @@
+{"do_not_translate": ["Whimbrel","Ask","Away Mode","Today","Recap","Routines","skin","Ollama","OpenRouter","Anthropic","OpenAI","Google","Zoom","Turso","MCP","Almanac","Game Day","High Contrast","Hypermodern","Reference","Retro Terminal"],"fixed": {},"not_when": {"Ask": "\\bAsk (a|about|for|if|the|this|Whimbrel|\\{)"}}

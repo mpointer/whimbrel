@@ -1,0 +1,30 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "%lld meetings" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : { "stringUnit" : { "state" : "new", "value" : "%lld meeting" } },
+              "other" : { "stringUnit" : { "state" : "new", "value" : "%lld meetings" } }
+            }
+          }
+        }
+      }
+    },
+    "Hello, %@" : {
+
+    },
+    "Kept" : {
+      "comment" : "A kept string",
+      "localizations" : {
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Gardé" } }
+      }
+    },
+    "Orphan" : {
+
+    }
+  },
+  "version" : "1.0"
+}

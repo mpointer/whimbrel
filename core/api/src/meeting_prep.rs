@@ -31,9 +31,10 @@ pub fn run(
     now_unix_ms: i64,
     lead_minutes: f64,
     profile: &str,
+    lang: &str,
     complete: &mut dyn FnMut(&str) -> Option<Completed>,
 ) -> rusqlite::Result<Vec<memory::RoutineRun>> {
-    run_gated(store, meetings, now_unix_ms, lead_minutes, profile, RunGate::Full, complete)
+    run_gated(store, meetings, now_unix_ms, lead_minutes, profile, lang, RunGate::Full, complete)
 }
 
 /// [`run`] under a gate: `Off` does nothing; `Failover` (another device is the primary) acts only
@@ -45,6 +46,7 @@ pub fn run_gated(
     now_unix_ms: i64,
     lead_minutes: f64,
     profile: &str,
+    lang: &str,
     gate: impl Into<RunGate>,
     complete: &mut dyn FnMut(&str) -> Option<Completed>,
 ) -> rusqlite::Result<Vec<memory::RoutineRun>> {
@@ -76,7 +78,7 @@ pub fn run_gated(
         let (brief, provider, model) = if context.sources.is_empty() {
             (llm::meeting_prep::deterministic_brief(&meeting.attendees, &context), "none".to_string(), String::new())
         } else {
-            let prompt = llm::meeting_prep::build_prompt(&meeting.title, &meeting.attendees, &context, profile);
+            let prompt = llm::meeting_prep::build_prompt(&meeting.title, &meeting.attendees, &context, profile, lang);
             let Some(answer) = complete(&prompt) else {
                 store.record_summarize_error("meeting_prep", "no model was available to write the brief", now_unix_ms);
                 continue;
@@ -146,7 +148,7 @@ pub fn run_with_chain(
         crate::util::log_usage_for(store, link.provider, &link.model, "routine", completion.token_usage);
         Some(Completed { text: completion.text, provider: link.provider.as_str().to_string(), model: link.model.clone() })
     };
-    run_gated(store, meetings, now_unix_ms, lead_minutes, &routing.profile, gate, &mut complete)
+    run_gated(store, meetings, now_unix_ms, lead_minutes, &routing.profile, &routing.output_language, gate, &mut complete)
 }
 
 #[cfg(test)]
@@ -227,7 +229,7 @@ mod tests {
             Some(good_answer())
         };
 
-        let runs = run(&store, &meetings, 80 * MIN, 30.0, "", &mut model).unwrap();
+        let runs = run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut model).unwrap();
 
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].output_summary, "Prep ready for evt-1 sync");
@@ -238,7 +240,7 @@ mod tests {
         assert!(stored.brief_json.contains("Follow up."));
 
         // The next tick finds it prepared: no second brief, no model call, no run.
-        let again = run(&store, &meetings, 85 * MIN, 30.0, "", &mut never).unwrap();
+        let again = run(&store, &meetings, 85 * MIN, 30.0, "", "", &mut never).unwrap();
         assert!(again.is_empty());
         assert_eq!(calls, 1);
     }
@@ -254,7 +256,7 @@ mod tests {
                 seen = prompt.to_string();
                 Some(good_answer())
             };
-            run(&store, &meetings, 80 * MIN, 30.0, profile, &mut model).unwrap();
+            run(&store, &meetings, 80 * MIN, 30.0, profile, "", &mut model).unwrap();
             assert_eq!(seen.contains("About the user") && seen.contains("Role: CFO"), expect, "{seen}");
             assert_eq!(seen.contains("About the user"), expect);
         }
@@ -265,7 +267,7 @@ mod tests {
         let store = store(true);
         let meetings = [upcoming("evt-2", 100 * MIN, &["Stranger"])];
 
-        let runs = run(&store, &meetings, 80 * MIN, 30.0, "", &mut never).unwrap();
+        let runs = run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut never).unwrap();
 
         assert_eq!(runs.len(), 1);
         let stored = store.get_meeting_prep("evt-2").unwrap().unwrap();
@@ -279,7 +281,7 @@ mod tests {
         earlier_meeting_with(&store, "Ben Lawrick");
         let meetings = [upcoming("evt-3", 100 * MIN, &["Ben Lawrick"])];
 
-        let runs = run(&store, &meetings, 80 * MIN, 30.0, "", &mut never).unwrap();
+        let runs = run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut never).unwrap();
 
         assert!(runs.is_empty());
         assert!(store.get_meeting_prep("evt-3").unwrap().is_none());
@@ -289,7 +291,7 @@ mod tests {
     fn with_no_routine_row_at_all_nothing_happens() {
         let store = memory::Store::open_in_memory().unwrap();
         let meetings = [upcoming("evt-4", 100 * MIN, &["Ben"])];
-        assert!(run(&store, &meetings, 80 * MIN, 30.0, "", &mut never).unwrap().is_empty());
+        assert!(run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut never).unwrap().is_empty());
     }
 
     #[test]
@@ -299,11 +301,11 @@ mod tests {
         let meetings = [upcoming("evt-5", 100 * MIN, &["Ben Lawrick"])];
 
         let mut none = |_: &str| -> Option<Completed> { None };
-        assert!(run(&store, &meetings, 80 * MIN, 30.0, "", &mut none).unwrap().is_empty());
+        assert!(run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut none).unwrap().is_empty());
         assert!(store.get_meeting_prep("evt-5").unwrap().is_none(), "nothing stored: it will retry");
 
         let mut ok = |_: &str| Some(good_answer());
-        assert_eq!(run(&store, &meetings, 81 * MIN, 30.0, "", &mut ok).unwrap().len(), 1, "prepared on the next tick");
+        assert_eq!(run(&store, &meetings, 81 * MIN, 30.0, "", "", &mut ok).unwrap().len(), 1, "prepared on the next tick");
     }
 
     #[test]
@@ -313,7 +315,7 @@ mod tests {
         let meetings = [upcoming("evt-6", 100 * MIN, &["Ben Lawrick"])];
         let mut garbled = |_: &str| Some(Completed { text: "sorry".into(), provider: "ollama".into(), model: "m".into() });
 
-        assert!(run(&store, &meetings, 80 * MIN, 30.0, "", &mut garbled).unwrap().is_empty());
+        assert!(run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut garbled).unwrap().is_empty());
         assert!(store.get_meeting_prep("evt-6").unwrap().is_none());
     }
 
@@ -332,7 +334,7 @@ mod tests {
             })
             .unwrap();
         let now = 30 * 24 * 60 * MIN;
-        run(&store, &[], now, 30.0, "", &mut never).unwrap();
+        run(&store, &[], now, 30.0, "", "", &mut never).unwrap();
         assert!(store.get_meeting_prep("old").unwrap().is_none());
     }
 
@@ -343,8 +345,8 @@ mod tests {
         let meetings = [upcoming("evt-f", 100 * MIN, &["Ben Lawrick"])];
         let mut model = |_: &str| Some(good_answer());
         // Window opens at 70; a secondary with the same lead still waits for the primary.
-        assert!(run_gated(&store, &meetings, 89 * MIN, 30.0, "", RunGate::Failover, &mut model).unwrap().is_empty());
-        assert_eq!(run_gated(&store, &meetings, 90 * MIN, 30.0, "", RunGate::Failover, &mut model).unwrap().len(), 1);
+        assert!(run_gated(&store, &meetings, 89 * MIN, 30.0, "", "", RunGate::Failover, &mut model).unwrap().is_empty());
+        assert_eq!(run_gated(&store, &meetings, 90 * MIN, 30.0, "", "", RunGate::Failover, &mut model).unwrap().len(), 1);
     }
 
     #[test]
@@ -354,10 +356,10 @@ mod tests {
         let meetings = [upcoming("evt-l", 100 * MIN, &["Ben Lawrick"])];
         let mut model = |_: &str| Some(good_answer());
         // This device's lead is 60 (window open since 40): still not before minute 90.
-        assert!(run_gated(&store, &meetings, 50 * MIN, 60.0, "", RunGate::Failover, &mut model).unwrap().is_empty());
+        assert!(run_gated(&store, &meetings, 50 * MIN, 60.0, "", "", RunGate::Failover, &mut model).unwrap().is_empty());
         // A 5-minute lead opens at 95 and bounds it from below.
-        assert!(run_gated(&store, &meetings, 94 * MIN, 5.0, "", RunGate::Failover, &mut model).unwrap().is_empty());
-        assert_eq!(run_gated(&store, &meetings, 95 * MIN, 5.0, "", RunGate::Failover, &mut model).unwrap().len(), 1);
+        assert!(run_gated(&store, &meetings, 94 * MIN, 5.0, "", "", RunGate::Failover, &mut model).unwrap().is_empty());
+        assert_eq!(run_gated(&store, &meetings, 95 * MIN, 5.0, "", "", RunGate::Failover, &mut model).unwrap().len(), 1);
     }
 
     #[test]
@@ -373,7 +375,7 @@ mod tests {
             })
             .unwrap();
         for gate in [RunGate::Full, RunGate::Failover] {
-            assert!(run_gated(&store, &meetings, 95 * MIN, 30.0, "", gate, &mut never).unwrap().is_empty());
+            assert!(run_gated(&store, &meetings, 95 * MIN, 30.0, "", "", gate, &mut never).unwrap().is_empty());
         }
         assert!(store.get_meeting_prep("evt-i").unwrap().is_some(), "Today looks the brief up by the local id");
         assert!(store.list_outbox_operations().unwrap().is_empty());
@@ -384,9 +386,9 @@ mod tests {
         let store = store(true);
         earlier_meeting_with(&store, "Ben Lawrick");
         let meetings = [upcoming("evt-g", 100 * MIN, &["Ben Lawrick"])];
-        assert!(run_gated(&store, &meetings, 71 * MIN, 30.0, "", RunGate::Off, &mut never).unwrap().is_empty());
+        assert!(run_gated(&store, &meetings, 71 * MIN, 30.0, "", "", RunGate::Off, &mut never).unwrap().is_empty());
         let mut model = |_: &str| Some(good_answer());
-        assert_eq!(run_gated(&store, &meetings, 71 * MIN, 30.0, "", RunGate::Full, &mut model).unwrap().len(), 1);
+        assert_eq!(run_gated(&store, &meetings, 71 * MIN, 30.0, "", "", RunGate::Full, &mut model).unwrap().len(), 1);
     }
 
     #[test]
@@ -400,6 +402,6 @@ mod tests {
                 brief_json: "{}".into(), provider: "p".into(), model: "m".into(),
             })
             .unwrap();
-        assert!(run_gated(&store, &meetings, 95 * MIN, 30.0, "", RunGate::Failover, &mut never).unwrap().is_empty());
+        assert!(run_gated(&store, &meetings, 95 * MIN, 30.0, "", "", RunGate::Failover, &mut never).unwrap().is_empty());
     }
 }

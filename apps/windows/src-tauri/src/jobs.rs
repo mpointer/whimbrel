@@ -102,8 +102,10 @@ fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-fn ollama_model(settings: &Mutex<SettingsFile>) -> String {
-    settings.lock().unwrap().routing().ollama_model
+/// The Ollama model the background summaries use, and the language they're written in.
+fn summarize_with(settings: &Mutex<SettingsFile>) -> (String, String) {
+    let routing = settings.lock().unwrap().routing();
+    (routing.ollama_model, routing.output_language)
 }
 
 /// Starts both loops. They run for the life of the process and stop when the store
@@ -120,12 +122,12 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>) {
                     delay = IDLE_DELAY;
                     continue;
                 }
-                let summarize = probe.reachable().then(|| ollama_model(&settings));
+                let summarize = probe.reachable().then(|| summarize_with(&settings));
                 let turn = store.call_blocking(move |s| {
                     let started = Instant::now();
                     let jobs = s.run_jobs_batch(1, now_ms()).unwrap_or(0);
                     let jobs_ms = started.elapsed().as_millis() as u64;
-                    let threads = summarize.map_or(0, |model| api::jobs::run_thread_summarize_batch(s, &model, 1, "").unwrap_or(0));
+                    let threads = summarize.map_or(0, |(model, lang)| api::jobs::run_thread_summarize_batch(s, &model, 1, "", &lang).unwrap_or(0));
                     if started.elapsed() >= SLOW_TURN {
                         tracing::info!(jobs, jobs_ms, threads, total_ms = started.elapsed().as_millis() as u64, "slow jobs turn");
                     }
@@ -143,12 +145,12 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>) {
         let mut delay = BUSY_DELAY;
         loop {
             std::thread::sleep(delay);
-            let summarize = probe.reachable().then(|| ollama_model(&settings));
+            let summarize = probe.reachable().then(|| summarize_with(&settings));
             let turn = store.call_blocking(move |s| {
                 let started = Instant::now();
                 let segmented = s.run_episode_segment_batch(1, now_ms()).unwrap_or(0);
                 let segment_ms = started.elapsed().as_millis() as u64;
-                let summarized = summarize.map_or(0, |model| api::jobs::run_episode_summarize_batch(s, &model, 1, "").unwrap_or(0));
+                let summarized = summarize.map_or(0, |(model, lang)| api::jobs::run_episode_summarize_batch(s, &model, 1, "", &lang).unwrap_or(0));
                 if started.elapsed() >= SLOW_TURN {
                     tracing::info!(segmented, segment_ms, summarized, total_ms = started.elapsed().as_millis() as u64, "slow episode turn");
                 }

@@ -1,0 +1,25 @@
+name: Localization
+
+# translate.py's unit tests (a fake model client; no network, no key) and the offline catalog
+# check: every shipped language has every key (deltas-only variants exempt), placeholders and
+# plural forms match the English. The Apple source-vs-catalog check needs xcodebuild, so it runs
+# in release-integrity.yml (macOS) and rust-tests.yml (iOS).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  l10n:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: translate.py unit tests
+        run: python3 -I -m unittest discover -s scripts/l10n -v
+      - name: Catalog check
+        run: python3 -I scripts/l10n/translate.py check

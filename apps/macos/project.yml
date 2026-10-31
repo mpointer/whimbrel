@@ -4,6 +4,7 @@ options:
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
+  developmentLanguage: en
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -13,6 +14,9 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
     ENABLE_APP_SANDBOX: NO
     COMBINE_HIDPI_IMAGES: YES
+    # String Catalogs (Localizable.xcstrings, InfoPlist.xcstrings under Whimbrel/).
+    SWIFT_EMIT_LOC_STRINGS: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
     # arm64-only: core/ffi's Rust static lib is only built for the host arch (Cargo's
     # default, no cross-compilation set up), which is fine for Debug (Xcode only builds
     # the active arch there) but breaks Release/Archive, which otherwise defaults to a
@@ -108,9 +112,6 @@ targets:
           copyFiles:
             destination: resources
             subpath: outlook365
-      - path: ../../core/memory/models
-        type: folder
-        buildPhase: resources
       # The real, compiled whimbrel-mcp-server binary (Task 4, core/mcp-server/src/bin/
       # whimbrel-mcp-server.rs), bundled the same way the Google Calendar connector's
       # dist/node_modules are bundled above: an XcodeGen resource entry copied into
@@ -185,6 +186,10 @@ targets:
           fi
           codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$BIN"
         basedOnDependencyAnalysis: false
+      - name: Strip pseudo-locale in Release
+        script: |
+          [ "$CONFIGURATION" = Release ] && rm -rf "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/en-XA.lproj" || true
+        basedOnDependencyAnalysis: false
     configFiles:
       Debug: Base.xcconfig
       Release: Base.xcconfig
@@ -202,7 +207,7 @@ targets:
         # library name (core/ffi) — unrelated to the app's own product name.
         OTHER_LDFLAGS: -lwhimbrel_core -lc++
         INFOPLIST_FILE: Whimbrel/Info.plist
-        MARKETING_VERSION: "0.9.42"
+        MARKETING_VERSION: "0.9.43"
         CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   WhimbrelTests:

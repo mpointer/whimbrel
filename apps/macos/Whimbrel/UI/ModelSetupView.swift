@@ -11,7 +11,7 @@ struct ModelSetupView: View {
 
     @State private var isDownloading = false
     @State private var progress: Double = 0
-    @State private var statusText = "Whimbrel needs a few model files for transcription and speaker detection."
+    @State private var statusText = String(localized: "Whimbrel needs a few model files for transcription and speaker detection.")
     @State private var errorText: String?
     @State private var downloadTask: Task<Void, Never>?
 
@@ -70,7 +70,7 @@ struct ModelSetupView: View {
                 // download) — in either case the sheet is already being
                 // dismissed, so don't paint a bogus failure message over it.
                 guard !Task.isCancelled, !(error is CancellationError) else { return }
-                statusText = "Setup couldn't finish."
+                statusText = String(localized: "Setup couldn't finish.")
                 errorText = String(describing: error)
             }
         }

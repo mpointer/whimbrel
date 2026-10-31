@@ -14,6 +14,16 @@ enum WhimbrelTab: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    var title: String {
+        switch self {
+        case .today: String(localized: "Today")
+        case .meetings: String(localized: "Meetings")
+        case .library: String(localized: "Library")
+        case .automations: String(localized: "Automations")
+        case .settings: String(localized: "Settings")
+        }
+    }
+
     /// The skin's icon for the tab; Library has no skin role.
     var icon: Image {
         switch self {
@@ -60,7 +70,7 @@ struct WhimbrelShellView: View {
             NavigationSplitView {
                 List(WhimbrelTab.allCases, selection: $appState.selectedTab) { tab in
                     Label {
-                        Text(tab.rawValue)
+                        Text(tab.title)
                             .foregroundStyle(Color.whimbrelTextPrimary)
                     } icon: {
                         tab.icon
@@ -153,12 +163,12 @@ struct WhimbrelShellView: View {
 
     private var syncLabel: String {
         switch appState.syncState.status {
-        case .ready: return "Synced"
-        case .notSignedIn: return "Sync off"
-        case .error, .rateLimited: return "Sync error"
-        case .deviceLimit: return "Sync limit reached"
-        case .waitingForGroupKey: return "Approve this Mac"
-        case .signingIn, .waitingForApproval: return "Setting up sync"
+        case .ready: return String(localized: "Synced")
+        case .notSignedIn: return String(localized: "Sync off")
+        case .error, .rateLimited: return String(localized: "Sync error")
+        case .deviceLimit: return String(localized: "Sync limit reached")
+        case .waitingForGroupKey: return String(localized: "Approve this Mac")
+        case .signingIn, .waitingForApproval: return String(localized: "Setting up sync")
         }
     }
 

@@ -10,12 +10,13 @@ use crate::{cstr_to_string, json_to_c_string, StoreHandle};
 /// See `whimbrel_core.h`. Returns `{"status":"not_claimable"|"undecodable"}` or
 /// `{"status":"planned","plan":{…}}`; null on a null handle or DB error.
 #[unsafe(no_mangle)]
-pub extern "C" fn whimbrel_routines_plan_write_action(handle: *mut StoreHandle, run_id: i64) -> *mut c_char {
+pub extern "C" fn whimbrel_routines_plan_write_action(handle: *mut StoreHandle, run_id: i64, lang: *const c_char) -> *mut c_char {
     if handle.is_null() {
         return ptr::null_mut();
     }
     let store = unsafe { &(*handle).0 };
-    let Ok(result) = api::write_action::plan(store, run_id) else {
+    let lang = cstr_to_string(lang).unwrap_or_default();
+    let Ok(result) = api::write_action::plan(store, run_id, &lang) else {
         return ptr::null_mut();
     };
     match serde_json::to_string(&result) {
@@ -24,7 +25,8 @@ pub extern "C" fn whimbrel_routines_plan_write_action(handle: *mut StoreHandle, 
     }
 }
 
-/// See `whimbrel_core.h`. Returns `{"finalized":bool,"user_message":string-or-null}`;
+/// See `whimbrel_core.h`. Returns `{"finalized":bool,"user_message":string-or-null}`, plus
+/// `"code"` and `"params"` when the message has one (`ToolOutcome::user_code`);
 /// null on a null handle, malformed JSON, or DB error.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_routines_settle_write_action(
@@ -50,10 +52,14 @@ pub extern "C" fn whimbrel_routines_settle_write_action(
     let Ok(settled) = api::write_action::settle(store, &plan, &outcome) else {
         return ptr::null_mut();
     };
-    match serde_json::to_string(&settled) {
-        Ok(json) => json_to_c_string(json),
-        Err(_) => ptr::null_mut(),
+    let Ok(mut json) = serde_json::to_value(&settled) else {
+        return ptr::null_mut();
+    };
+    if let Some((code, params)) = outcome.user_code(&plan.connector) {
+        json["code"] = code.into();
+        json["params"] = params;
     }
+    json_to_c_string(json.to_string())
 }
 
 #[cfg(test)]
@@ -82,7 +88,7 @@ mod tests {
             .insert_pending_routine_run(&memory::NewPendingRoutineRun { routine_id, ran_at_unix_ms: 1, output_summary: "d".into(), pending_action_json: r#"{"kind":"send_email","to":"a@x.com","subject":"S","body":"B"}"#.into() })
             .unwrap();
 
-        let v: serde_json::Value = serde_json::from_str(&take(whimbrel_routines_plan_write_action(handle, run_id))).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&take(whimbrel_routines_plan_write_action(handle, run_id, ptr::null()))).unwrap();
         assert_eq!(v["status"], "planned");
         assert_eq!(v["plan"]["tool"], "send_email");
         let plan_c = CString::new(v["plan"].to_string()).unwrap();
@@ -90,17 +96,26 @@ mod tests {
         let s: serde_json::Value = serde_json::from_str(&take(whimbrel_routines_settle_write_action(handle, run_id, plan_c.as_ptr(), outcome_c.as_ptr()))).unwrap();
         assert_eq!(s["finalized"], false);
         assert!(s["user_message"].as_str().unwrap().starts_with("Couldn't complete this action just now"));
-        let again: serde_json::Value = serde_json::from_str(&take(whimbrel_routines_plan_write_action(handle, run_id))).unwrap();
+        assert_eq!(s["code"], "action_retryable");
+        assert_eq!(s["params"], serde_json::json!({"reason": "Node.js isn't installed on this Mac."}));
+        let again: serde_json::Value = serde_json::from_str(&take(whimbrel_routines_plan_write_action(handle, run_id, ptr::null()))).unwrap();
         assert_eq!(again["status"], "planned", "released draft is claimable again");
+        let no_token_c = CString::new(r#"{"kind":"no_token"}"#).unwrap();
+        let s: serde_json::Value = serde_json::from_str(&take(whimbrel_routines_settle_write_action(handle, run_id, plan_c.as_ptr(), no_token_c.as_ptr()))).unwrap();
+        assert!(s["user_message"].as_str().unwrap().starts_with("Gmail isn't connected"));
+        assert_eq!(s["code"], "connector_not_connected");
+        assert_eq!(s["params"], serde_json::json!({"connector": "gmail"}));
+        let again: serde_json::Value = serde_json::from_str(&take(whimbrel_routines_plan_write_action(handle, run_id, ptr::null()))).unwrap();
+        assert_eq!(again["status"], "planned");
         let ok_c = CString::new(r#"{"kind":"success","result_json":"{\"id\":\"m1\"}"}"#).unwrap();
         let s: serde_json::Value = serde_json::from_str(&take(whimbrel_routines_settle_write_action(handle, run_id, plan_c.as_ptr(), ok_c.as_ptr()))).unwrap();
         assert_eq!(s, serde_json::json!({"finalized": true, "user_message": null}));
-        let gone: serde_json::Value = serde_json::from_str(&take(whimbrel_routines_plan_write_action(handle, run_id))).unwrap();
+        let gone: serde_json::Value = serde_json::from_str(&take(whimbrel_routines_plan_write_action(handle, run_id, ptr::null()))).unwrap();
         assert_eq!(gone["status"], "not_claimable");
 
         let bad = CString::new("nope").unwrap();
         assert!(whimbrel_routines_settle_write_action(handle, run_id, bad.as_ptr(), ok_c.as_ptr()).is_null());
-        assert!(whimbrel_routines_plan_write_action(ptr::null_mut(), run_id).is_null());
+        assert!(whimbrel_routines_plan_write_action(ptr::null_mut(), run_id, ptr::null()).is_null());
         crate::whimbrel_memory_close(handle);
     }
 }

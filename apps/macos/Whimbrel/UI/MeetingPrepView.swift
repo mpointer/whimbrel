@@ -23,7 +23,7 @@ struct MeetingPrepView: View {
                     if !brief.attendees.isEmpty {
                         Divider().overlay(Color.whimbrelBorder)
                         VStack(alignment: .leading, spacing: Spacing.md) {
-                            WhimbrelSectionLabel(text: "People")
+                            WhimbrelSectionLabel(text: String(localized: "People"))
                             ForEach(Array(brief.attendees.enumerated()), id: \.offset) { _, note in
                                 attendeeRow(note, in: brief)
                             }

@@ -6,7 +6,7 @@
 //! same convention `Store::timeline_range` already uses.
 
 use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveTime, Timelike, Weekday};
-use memory::Routine;
+use memory::{l10n, Routine};
 
 /// `WeeklyDigest` fires on this local weekday only -- no per-routine day-of-week config
 /// exists (or is planned; see this crate's existing FocusTime day-of-week deferral), so
@@ -147,6 +147,7 @@ pub fn run_daily_brief(
     today_events: &[CalendarEventSummary],
     ran_at_unix_ms: i64,
     custom_instructions: &str,
+    lang: &str,
 ) -> Result<RoutineRunOutcome, llm::LlmError> {
     let items = llm::gather_and_assemble_context_for_window(
         store,
@@ -157,18 +158,19 @@ pub fn run_daily_brief(
         20,
         true,
     );
-    let digest = llm::generate_daily_digest_from_context(
+    let digest = llm::generate_daily_digest_from_context_in(
         llm_client,
         &items,
         custom_instructions,
         yesterday_start_unix_ms,
+        lang,
     )?;
 
     let events_line = if today_events.is_empty() {
-        "No events on today's calendar.".to_string()
+        l10n::text(lang, l10n::keys::NO_EVENTS_TODAY, &[])
     } else {
         let titles: Vec<&str> = today_events.iter().map(|e| e.title.as_str()).collect();
-        format!("Today: {}.", titles.join(", "))
+        l10n::text(lang, l10n::keys::TODAY_EVENTS, &[("titles", &titles.join(", "))])
     };
     let output_summary = format!("{} {}", digest.summary, events_line);
 
@@ -236,6 +238,7 @@ pub fn run_eod_recap(
     gmail_connected: bool,
     recipient_email: Option<&str>,
     custom_instructions: &str,
+    lang: &str,
 ) -> Result<EodRecapOutcome, llm::LlmError> {
     let items = llm::gather_and_assemble_context_for_window(
         store,
@@ -246,11 +249,12 @@ pub fn run_eod_recap(
         20,
         true,
     );
-    let digest = llm::generate_daily_digest_from_context(
+    let digest = llm::generate_daily_digest_from_context_in(
         llm_client,
         &items,
         custom_instructions,
         today_start_unix_ms,
+        lang,
     )?;
 
     let output_json = serde_json::to_string(&digest).unwrap_or_else(|_| "{}".to_string());
@@ -376,18 +380,18 @@ const REPLY_PRIORITIES_LIMIT: usize = 10;
 /// Deterministic, no model call: lists the scored threads waiting on the user, highest
 /// priority first. Core cannot see the app's on/off toggle, so "off" and "nothing scored
 /// yet" share one message.
-pub fn run_reply_priorities(store: &memory::Store, ran_at_unix_ms: i64) -> memory::NewRoutineRun {
+pub fn run_reply_priorities(store: &memory::Store, ran_at_unix_ms: i64, lang: &str) -> memory::NewRoutineRun {
     let scored = store.scored_waiting_threads(REPLY_PRIORITIES_LIMIT).unwrap_or_default();
     let (output_summary, threads_json) = if scored.is_empty() {
         (
-            "Nothing to rank yet. Turn on Rank email by reply priority in AI & Routing settings.".to_string(),
+            l10n::text(lang, l10n::keys::NOTHING_TO_RANK, &[]),
             Vec::new(),
         )
     } else {
         let names: Vec<String> = scored
             .iter()
             .map(|(t, _)| {
-                let subject = t.subject.clone().unwrap_or_else(|| "(no subject)".to_string());
+                let subject = t.subject.as_deref().unwrap_or(l10n::text_static(lang, l10n::keys::NO_SUBJECT));
                 format!("{subject} ({})", t.last_message_from)
             })
             .collect();
@@ -403,7 +407,7 @@ pub fn run_reply_priorities(store: &memory::Store, ran_at_unix_ms: i64) -> memor
             })
             .collect();
         (
-            format!("{} threads look like they need a reply, most likely first: {}.", scored.len(), names.join("; ")),
+            l10n::text_plural(lang, l10n::keys::THREADS_NEED_REPLY, scored.len() as i64, &[("names", &names.join("; "))]),
             json,
         )
     };
@@ -554,7 +558,7 @@ mod tests {
             last_prompt: std::cell::RefCell::new(String::new()),
         };
 
-        run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "").unwrap();
+        run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "", "").unwrap();
 
         let prompt = client.last_prompt.borrow();
         assert!(
@@ -587,7 +591,7 @@ mod tests {
         }];
 
         let outcome =
-            run_daily_brief(&store, &client, 0, 2_000, &today_events, 50_000, "").unwrap();
+            run_daily_brief(&store, &client, 0, 2_000, &today_events, 50_000, "", "").unwrap();
 
         assert_eq!(outcome.new_run.routine_id, 0); // caller fills in the real routine_id before persisting -- see Task 4
         assert_eq!(outcome.new_run.ran_at_unix_ms, 50_000);
@@ -603,10 +607,30 @@ mod tests {
     }
 
     #[test]
+    fn persisted_strings_render_english_for_empty_lang() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let client = StubLlmClient { response: "unused" };
+        let none = run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "", "").unwrap();
+        assert_eq!(none.new_run.output_summary, "No activity captured today. No events on today's calendar.");
+        let events = [("Standup", 1), ("{titles}", 2)].map(|(t, s)| CalendarEventSummary { title: t.to_string(), start_unix_ms: s });
+        let with = run_daily_brief(&store, &client, 0, 2_000, &events, 50_000, "", "").unwrap();
+        assert_eq!(with.new_run.output_summary, "No activity captured today. Today: Standup, {titles}.");
+        assert_eq!(
+            run_reply_priorities(&store, 9_000, "").output_summary,
+            "Nothing to rank yet. Turn on Rank email by reply priority in AI & Routing settings."
+        );
+        let one = store_with_scored_threads(&[("High", 0.9)]);
+        assert_eq!(
+            run_reply_priorities(&one, 9_000, "").output_summary,
+            "1 threads look like they need a reply, most likely first: High (Ben <ben@alphasights.com>)."
+        );
+    }
+
+    #[test]
     fn run_daily_brief_handles_no_events_today_and_no_activity_yesterday() {
         let store = memory::Store::open_in_memory().unwrap();
         let client = StubLlmClient { response: "unused" }; // generate_daily_digest_from_context short-circuits on empty items, never calls this
-        let outcome = run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "").unwrap();
+        let outcome = run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "", "").unwrap();
         assert_eq!(outcome.new_run.status, memory::RunStatus::Success);
         assert!(outcome
             .new_run
@@ -647,6 +671,7 @@ mod tests {
             &[],
             50_000,
             "Always answer in bullet points.",
+            "",
         )
         .unwrap();
 
@@ -678,7 +703,7 @@ mod tests {
             last_prompt: std::cell::RefCell::new(String::new()),
         };
 
-        run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "").unwrap();
+        run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "", "").unwrap();
 
         let prompt = client.last_prompt.borrow();
         assert!(
@@ -821,7 +846,7 @@ mod tests {
             response: r#"{"summary":"Wrapped up the EOD recap template.","open_loops":[]}"#,
         };
 
-        let outcome = run_eod_recap(&store, &client, 0, 2_000, 50_000, false, None, "").unwrap();
+        let outcome = run_eod_recap(&store, &client, 0, 2_000, 50_000, false, None, "", "").unwrap();
 
         assert_eq!(outcome.new_run.status, memory::RunStatus::Success);
         assert!(outcome
@@ -858,6 +883,7 @@ mod tests {
             50_000,
             true,
             Some("me@example.com"),
+            "",
             "",
         )
         .unwrap();
@@ -906,6 +932,7 @@ mod tests {
             true,
             Some("me@example.com"),
             "",
+            "",
         )
         .unwrap();
 
@@ -952,6 +979,7 @@ mod tests {
             false,
             None,
             "Always answer in bullet points.",
+            "",
         )
         .unwrap();
 
@@ -1082,7 +1110,7 @@ mod tests {
     #[test]
     fn reply_priorities_lists_the_highest_scored_threads_first() {
         let store = store_with_scored_threads(&[("Low", 0.2), ("High", 0.9), ("Mid", 0.5)]);
-        let run = run_reply_priorities(&store, 9_000);
+        let run = run_reply_priorities(&store, 9_000, "");
 
         assert_eq!(run.status, memory::RunStatus::Success);
         assert!(run.output_summary.starts_with("3 threads"), "{}", run.output_summary);
@@ -1097,7 +1125,7 @@ mod tests {
     #[test]
     fn reply_priorities_with_nothing_scored_says_how_to_turn_it_on() {
         let store = memory::Store::open_in_memory().unwrap();
-        let run = run_reply_priorities(&store, 9_000);
+        let run = run_reply_priorities(&store, 9_000, "");
         assert_eq!(run.status, memory::RunStatus::Success);
         assert!(run.output_summary.contains("Nothing to rank yet"), "{}", run.output_summary);
         assert!(run.output_summary.contains("Rank email by reply priority"));

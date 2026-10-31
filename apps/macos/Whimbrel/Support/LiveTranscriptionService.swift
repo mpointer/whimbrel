@@ -196,7 +196,9 @@ final class LiveTranscriptionService: ObservableObject {
             if paused { return .paused }
             if transcriber == nil {
                 transcriber = CoreLiveTranscriber(modelPath: model)
-                if transcriber == nil { return .failed("Live transcript could not load the transcription model.") }
+                if transcriber == nil { return .failed(String(localized: "Live transcript could not load the transcription model.")) }
+                // The multilingual model detects the meeting's language from the first speech.
+                if model == TranscriptionService.multilingualModelPath.path { transcriber?.setLanguage(nil) }
             }
             var wrote = false
             var slowest: (chunkSeconds: Double, tookSeconds: Double)?

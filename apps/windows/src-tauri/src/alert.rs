@@ -47,7 +47,7 @@ pub fn hide(app: &AppHandle) {
 fn open(app: &AppHandle) -> tauri::Result<()> {
     let (w, h) = SIZE;
     let alert = WebviewWindowBuilder::new(app, ALERT, WebviewUrl::App("index.html".into()))
-        .title("Meeting detected")
+        .title(crate::l10n::tr("Meeting detected", &[]))
         .inner_size(w, h)
         .decorations(false)
         .resizable(false)

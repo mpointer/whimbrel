@@ -96,7 +96,7 @@ fn bind_failure_message(addr: &str, error: &std::io::Error) -> String {
 }
 
 fn resolve_models_dir(flag: Option<String>) -> PathBuf {
-    // The Windows app passes its own models directory; the Mac finds it next to the executable.
+    // The apps pass their models directory (--models); a bare run falls back to a bundled or repo copy.
     if let Some(dir) = flag.filter(|d| !d.is_empty()) {
         return PathBuf::from(dir);
     }

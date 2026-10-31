@@ -242,7 +242,7 @@ pub fn start(
             }
             // Anything waiting whose routine is on and opted in to acting without a click, including
             // a draft left from before the user turned that on. Everything else waits for Approve.
-            write::auto_approve(&store, &*connectors);
+            write::auto_approve(&store, &routing.output_language, &*connectors);
         }
     });
     if let Err(e) = spawned {

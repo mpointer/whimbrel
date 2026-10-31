@@ -5,12 +5,12 @@ import { collidingPendingIds, contentLine, deviceActions, deviceTitle, primaryAc
 describe("contentLine", () => {
   const ready = { state: "ready" as const, message: null, deviceId: "k" };
   it("is silent until enrolled", () => {
-    expect(contentLine({ ...ready, state: "waitingForApproval" })).toBeNull();
+    expect(contentLine({ ...ready, state: "waitingForApproval" }, "en")).toBeNull();
   });
   it("reports first-round, success and failure", () => {
-    expect(contentLine(ready)).toMatch(/hasn't synced yet/);
-    expect(contentLine({ ...ready, contentLastSyncedMs: Date.now() })).toMatch(/^Content synced at /);
-    expect(contentLine({ ...ready, contentLastSyncedMs: Date.now(), contentError: "timed out after 30s" })).toBe(
+    expect(contentLine(ready, "en")).toMatch(/hasn't synced yet/);
+    expect(contentLine({ ...ready, contentLastSyncedMs: Date.now() }, "en")).toMatch(/^Content synced at /);
+    expect(contentLine({ ...ready, contentLastSyncedMs: Date.now(), contentError: "timed out after 30s" }, "en")).toBe(
       "Content sync failed: timed out after 30s. Will retry automatically.",
     );
   });

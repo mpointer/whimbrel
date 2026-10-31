@@ -1,25 +1,123 @@
 {
-  "id": "almanac",
-  "name": "Almanac",
   "author": "Whimbrel",
-  "palettes": ["parchment"],
-  "typography": { "display": "Georgia/bold", "body": "Georgia/regular", "numerals": "Georgia/regular", "label": "New York/semibold", "caps": "small" },
-  "shape": { "radius": 2, "border": "double", "borderWidth": 1, "density": "airy" },
-  "icons": { "today": "book.closed", "meetings": "person.2", "routines": "bolt", "settings": "gearshape", "ask": "pencil", "person": "person", "time": "clock", "prep": "doc.text", "recap": "text.alignleft" },
-  "decoration": { "headerBand": "rule", "dividers": "double", "texture": "none", "imagery": [] },
+  "decoration": {
+    "dividers": "double",
+    "headerBand": "rule",
+    "imagery": [],
+    "texture": "none"
+  },
+  "icons": {
+    "ask": "pencil",
+    "meetings": "person.2",
+    "person": "person",
+    "prep": "doc.text",
+    "recap": "text.alignleft",
+    "routines": "bolt",
+    "settings": "gearshape",
+    "time": "clock",
+    "today": "book.closed"
+  },
+  "id": "almanac",
+  "motion": "none",
+  "name": "Almanac",
+  "palettes": [
+    "parchment"
+  ],
+  "shape": {
+    "border": "double",
+    "borderWidth": 1,
+    "density": "airy",
+    "radius": 2
+  },
+  "today": {
+    "archetype": "almanac",
+    "options": {}
+  },
+  "typography": {
+    "body": "Georgia/regular",
+    "caps": "small",
+    "display": "Georgia/bold",
+    "label": "New York/semibold",
+    "numerals": "Georgia/regular"
+  },
   "voice": {
-    "greetingMorning": "Good morrow, {name}",
-    "greetingAfternoon": "Good day to you, {name}",
-    "greetingEvening": "Good even, {name}",
-    "upNextHeader": "Next appointment",
-    "upcomingHeader": "The day's order",
+    "askPlaceholder": "Put a question to the almanac",
     "earlierHeader": "Entered earlier",
-    "recapHeader": "The day in review",
     "emptyDay": "A quiet day is set down",
     "emptyEarlier": "Nothing yet entered",
-    "askPlaceholder": "Put a question to the almanac",
-    "tagline": "Your days, set down in good order."
+    "greetingAfternoon": "Good day to you, {name}",
+    "greetingEvening": "Good even, {name}",
+    "greetingMorning": "Good morrow, {name}",
+    "recapHeader": "The day in review",
+    "tagline": "Your days, set down in good order.",
+    "upNextHeader": "Next appointment",
+    "upcomingHeader": "The day's order"
   },
-  "today": { "archetype": "almanac", "options": {} },
-  "motion": "none"
+  "voiceLocalized": {
+    "de": {
+      "askPlaceholder": "Eine Frage ans Jahrbuch",
+      "earlierHeader": "Früher verzeichnet",
+      "emptyDay": "Ein stiller Tag ist verzeichnet",
+      "emptyEarlier": "Noch nichts verzeichnet",
+      "greetingAfternoon": "Einen guten Tag, {name}",
+      "greetingEvening": "Guten Abend, {name}",
+      "greetingMorning": "Guten Morgen, {name}",
+      "recapHeader": "Der Tag im Rückblick",
+      "tagline": "Ihre Tage, in guter Ordnung verzeichnet.",
+      "upNextHeader": "Nächster Termin",
+      "upcomingHeader": "Des Tages Ordnung"
+    },
+    "es": {
+      "askPlaceholder": "Formula tu pregunta al almanaque",
+      "earlierHeader": "Asentado antes",
+      "emptyDay": "Se asienta un día tranquilo",
+      "emptyEarlier": "Aún nada asentado",
+      "greetingAfternoon": "Muy buena tarde, {name}",
+      "greetingEvening": "Buena noche, {name}",
+      "greetingMorning": "Dichosa mañana, {name}",
+      "recapHeader": "El día en revista",
+      "tagline": "Tus días, asentados en buen orden.",
+      "upNextHeader": "Próxima cita",
+      "upcomingHeader": "Orden del día"
+    },
+    "fr": {
+      "askPlaceholder": "Interrogez l’almanach",
+      "earlierHeader": "Inscrit plus tôt",
+      "emptyDay": "Un jour paisible est consigné",
+      "emptyEarlier": "Rien n’est encore consigné",
+      "greetingAfternoon": "Bien le bonjour, {name}",
+      "greetingEvening": "Bonsoir à vous, {name}",
+      "greetingMorning": "Bon matin, {name}",
+      "recapHeader": "Le jour en revue",
+      "tagline": "Vos jours, consignés en bon ordre.",
+      "upNextHeader": "Prochain rendez-vous",
+      "upcomingHeader": "L'ordre du jour"
+    },
+    "fr-CA": {
+      "askPlaceholder": "Posez une question à l’almanach",
+      "earlierHeader": "Inscrit plus tôt",
+      "emptyDay": "Une journée paisible est consignée",
+      "emptyEarlier": "Rien n’est encore inscrit",
+      "greetingAfternoon": "Bel après-midi, {name}",
+      "greetingEvening": "Bonsoir à vous, {name}",
+      "greetingMorning": "Bon matin, {name}",
+      "recapHeader": "Le jour en revue",
+      "tagline": "Vos jours, consignés en bon ordre.",
+      "upNextHeader": "Prochain rendez-vous",
+      "upcomingHeader": "L'ordre du jour"
+    },
+    "pt": {
+      "askPlaceholder": "Faça uma pergunta ao almanaque",
+      "earlierHeader": "Anotado anteriormente",
+      "emptyDay": "Um dia tranquilo é registrado",
+      "emptyEarlier": "Nada registrado ainda",
+      "greetingAfternoon": "Muito boa tarde, {name}",
+      "greetingEvening": "Uma boa noite, {name}",
+      "greetingMorning": "Venturoso dia, {name}",
+      "recapHeader": "O dia em revista",
+      "tagline": "Seus dias, registrados em boa ordem.",
+      "upNextHeader": "Próximo compromisso",
+      "upcomingHeader": "A ordem do dia"
+    }
+  }
 }

@@ -13,10 +13,9 @@ import {
   usageRows,
 } from "../api";
 import { describeError, isCommandError } from "../errors";
+import { t, useL10n } from "../l10n";
 import type { AiSettings, PromptSurface, Provider, ProviderInfoView, RoutingSettings, UsageRowView, UsageView } from "../generated/types";
 import {
-  PROVIDERS,
-  SURFACES,
   capToDollars,
   costLine,
   dataTermsLine,
@@ -29,7 +28,9 @@ import {
   modelOptions,
   parseCapDollars,
   providerLabel,
+  providers,
   showsOnRamp,
+  surfaces,
   usageCost,
   usageTime,
   usageTokens,
@@ -56,7 +57,7 @@ export function AiCard() {
     );
   }, []);
 
-  if (!settings) return <section className="card about">{error ? <p role="alert">{error}</p> : "Loading…"}</section>;
+  if (!settings) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
 
   const saveRouting = (routing: RoutingSettings) => {
     setSettings({ ...settings, routing });
@@ -70,7 +71,7 @@ export function AiCard() {
   return (
     <section className="card about" aria-labelledby="ai-heading">
       <h2 id="ai-heading" className="section-label">
-        AI &amp; routing
+        {t("AI & routing")}
       </h2>
       {showsOnRamp(settings.routing, settings.keys, ollamaUp) && <OnRamp google={info("google")} />}
       <Routing
@@ -79,8 +80,8 @@ export function AiCard() {
         notice={hostedNotice(settings.routing, settings.keys)}
         onError={setError}
       />
-      <h3 className="section-label">API keys</h3>
-      <p className="muted small">Stored in Windows Credential Manager under the same names the Mac's Keychain uses.</p>
+      <h3 className="section-label">{t("API keys")}</h3>
+      <p className="muted small">{t("Stored in Windows Credential Manager under the same names the Mac's Keychain uses.")}</p>
       {settings.keys.map((k) => (
         <KeyRow
           key={k.provider}
@@ -88,6 +89,7 @@ export function AiCard() {
           info={info(k.provider)}
           usage={settings.usage}
           line={keyLine(k)}
+          saved={!!k.masked}
           onSave={(key) =>
             setApiKey(k.provider, key)
               .then((keys) => {
@@ -100,6 +102,7 @@ export function AiCard() {
       ))}
       <ImageSearchKeyRow
         line={keyLine({ masked: settings.imageSearchKey })}
+        saved={!!settings.imageSearchKey}
         onSave={(key) =>
           setImageSearchKey(key)
             .then((imageSearchKey) => {
@@ -109,14 +112,16 @@ export function AiCard() {
             .catch((e: unknown) => setError(message(e)))
         }
       />
-      <h3 className="section-label">Instructions</h3>
+      <h3 className="section-label">{t("Instructions")}</h3>
       <Instructions settings={settings} onError={setError} />
       {settings.spend && (
         <p className="muted small">
-          Spent today: {formatCents(settings.spend.globalCents)} across hosted providers (resets at midnight UTC).
+          {t("Spent today: {amount} across hosted providers (resets at midnight UTC).", {
+            amount: formatCents(settings.spend.globalCents),
+          })}
         </p>
       )}
-      <h3 className="section-label">Model usage</h3>
+      <h3 className="section-label">{t("Model usage")}</h3>
       <Usage usage={settings.usage} onError={setError} />
       {error && <p role="alert">{error}</p>}
     </section>
@@ -129,20 +134,21 @@ function OnRamp(props: { google: ProviderInfoView | undefined }) {
   return (
     <div className="stack-sm" data-testid="ai-on-ramp">
       <p>
-        <strong>Pick where AI runs.</strong> Whimbrel works without any AI model: capture, transcripts and search still work. Chat,
-        summaries and routines need one.
+        <strong>{t("Pick where AI runs.")}</strong>{" "}
+        {t("Whimbrel works without any AI model: capture, transcripts and search still work. Chat, summaries and routines need one.")}
       </p>
       <span className="field-row">
         <button type="button" className="mode" onClick={() => openUrl("https://ollama.com/download")}>
-          Install Ollama
+          {t("Install Ollama")}
         </button>
         <button type="button" className="mode" onClick={() => openUrl(props.google?.keyPageUrl)}>
-          Get a free Gemini key
+          {t("Get a free Gemini key")}
         </button>
       </span>
       <p className="muted small">
-        Ollama is free, runs on this PC and nothing leaves it. Gemini's free tier is free, and Google may use prompts to improve its
-        products. Or paste any Anthropic, OpenAI, Google or OpenRouter key below.
+        {t(
+          "Ollama is free, runs on this PC and nothing leaves it. Gemini's free tier is free, and Google may use prompts to improve its products. Or paste any Anthropic, OpenAI, Google or OpenRouter key below.",
+        )}
       </p>
     </div>
   );
@@ -186,7 +192,7 @@ function Routing(props: {
 
   const saveCap = (which: "user" | "global") => {
     const cents = parseCapDollars(caps[which]);
-    if (cents === undefined) return onError("A daily cap is a dollar amount, like 2.50. Leave it blank for the default; 0 turns it off.");
+    if (cents === undefined) return onError(t("A daily cap is a dollar amount, like 2.50. Leave it blank for the default; 0 turns it off."));
     onError(null);
     onChange({ ...routing, [which === "user" ? "userDailyCapCents" : "globalDailyCapCents"]: cents });
   };
@@ -194,13 +200,13 @@ function Routing(props: {
   return (
     <div className="stack-sm">
       <label className="field">
-        <span>Preferred provider</span>
+        <span>{t("Preferred provider")}</span>
         <select
           className="input"
           value={provider}
           onChange={(e) => onChange({ ...routing, preferredProvider: e.target.value as Provider })}
         >
-          {PROVIDERS.map((p) => (
+          {providers().map((p) => (
             <option key={p.id} value={p.id}>
               {p.label}
             </option>
@@ -208,7 +214,7 @@ function Routing(props: {
         </select>
       </label>
       <div className="field">
-        <label htmlFor="model-input">{providerLabel(provider)} model</label>
+        <label htmlFor="model-input">{t("{provider} model", { provider: providerLabel(provider) })}</label>
         <span className="field-row">
           {list ? (
             <select
@@ -220,7 +226,7 @@ function Routing(props: {
                 saveModel(e.target.value);
               }}
             >
-              {provider === "openrouter" && <option value="">Not picked</option>}
+              {provider === "openrouter" && <option value="">{t("Not picked")}</option>}
               {modelOptions(list, model).map((m) => (
                 <option key={m} value={m}>
                   {m}
@@ -231,25 +237,26 @@ function Routing(props: {
             <input
               id="model-input"
               className="input grow"
-              placeholder={provider === "openrouter" ? "vendor/model or vendor/model:free" : undefined}
+              placeholder={provider === "openrouter" ? t("vendor/model or vendor/model:free") : undefined}
               value={model}
               onChange={(e) => setModel(e.target.value)}
               onBlur={(e) => saveModel(e.target.value)}
             />
           )}
           <button type="button" className="mode" disabled={loading} onClick={loadModels}>
-            {loading ? "Loading…" : list ? "Reload" : "Load models"}
+            {loading ? t("Loading…") : list ? t("Reload") : t("Load models")}
           </button>
         </span>
         {list && (
           <span className="muted small">
-            {list.length} models from {providerLabel(provider)}.
+            {t("{count} models from {provider}.", { count: list.length, provider: providerLabel(provider) })}
           </span>
         )}
         {provider === "openrouter" && (
           <span className="muted small">
-            One key for any model on OpenRouter's catalogue, free ones included. Until you pick one, OpenRouter is left out of every
-            chain, because their catalogue changes weekly and there is no fallback model to substitute.
+            {t(
+              "One key for any model on OpenRouter's catalogue, free ones included. Until you pick one, OpenRouter is left out of every chain, because their catalogue changes weekly and there is no fallback model to substitute.",
+            )}
           </span>
         )}
         {listError && (
@@ -260,34 +267,35 @@ function Routing(props: {
       </div>
       <label className="toggle">
         <input type="checkbox" checked={routing.localOnly} onChange={(e) => onChange({ ...routing, localOnly: e.target.checked })} />
-        Local-only mode (send nothing to hosted providers)
+        {t("Local-only mode (send nothing to hosted providers)")}
       </label>
       <label className="toggle">
         <input type="checkbox" checked={routing.useLocalModel} onChange={(e) => onChange({ ...routing, useLocalModel: e.target.checked })} />
-        Use local model (Ollama)
+        {t("Use local model (Ollama)")}
       </label>
       <p className="muted small">
         {routing.localOnly
-          ? "Local-only mode is on, so the local model is always used."
-          : "Off skips Ollama entirely. Turn it off on a PC that does not run Ollama, so calls stop trying to reach it first."}
+          ? t("Local-only mode is on, so the local model is always used.")
+          : t("Off skips Ollama entirely. Turn it off on a PC that does not run Ollama, so calls stop trying to reach it first.")}
       </p>
       <label className="toggle">
         <input type="checkbox" checked={routing.cheapFirst} onChange={(e) => onChange({ ...routing, cheapFirst: e.target.checked })} />
-        Use the cheapest model for small tasks
+        {t("Use the cheapest model for small tasks")}
       </label>
       <p className="muted small">
-        Conversation titles, topic names and profile suggestions go to the local model first, then to the cheapest model you have a key
-        for. Chat, summaries and digests keep using your preferred provider. Each routine picks its own model in Automations.
+        {t(
+          "Conversation titles, topic names and profile suggestions go to the local model first, then to the cheapest model you have a key for. Chat, summaries and digests keep using your preferred provider. Each routine picks its own model in Automations.",
+        )}
       </p>
       {notice && <p className="muted small">{notice}</p>}
       <div className="field-row">
         {(["user", "global"] as const).map((which) => (
           <label key={which} className="field">
-            <span>{which === "user" ? "Your daily cap ($)" : "App-wide daily cap ($)"}</span>
+            <span>{which === "user" ? t("Your daily cap ($)") : t("App-wide daily cap ($)")}</span>
             <input
               className="input"
               inputMode="decimal"
-              placeholder="default"
+              placeholder={t("default")}
               value={caps[which]}
               onChange={(e) => setCaps({ ...caps, [which]: e.target.value })}
               onBlur={() => saveCap(which)}
@@ -295,7 +303,7 @@ function Routing(props: {
           </label>
         ))}
       </div>
-      <p className="muted small">Blank uses the built-in cap; 0 turns the cap off.</p>
+      <p className="muted small">{t("Blank uses the built-in cap; 0 turns the cap off.")}</p>
     </div>
   );
 }
@@ -305,14 +313,13 @@ function KeyRow(props: {
   info: ProviderInfoView | undefined;
   usage: UsageView | null | undefined;
   line: string;
+  saved: boolean;
   onSave: (key: string | null) => Promise<void>;
 }) {
-  const { info, provider } = props;
+  const { info, provider, saved } = props;
   const [draft, setDraft] = useState("");
   const [hint, setHint] = useState<string | null>(null);
   const [check, setCheck] = useState<{ text: string; isError: boolean } | null>(null);
-  const saved = props.line !== "Not set";
-
   // The format hint is advisory: prefixes change, so the key saves either way.
   const updateDraft = (value: string) => {
     setDraft(value);
@@ -322,7 +329,7 @@ function KeyRow(props: {
 
   const save = () => {
     if (!draft.trim()) return;
-    setCheck({ text: "Saved. Checking the key…", isError: false });
+    setCheck({ text: t("Saved. Checking the key…"), isError: false });
     props
       .onSave(draft)
       .then(() => {
@@ -353,13 +360,13 @@ function KeyRow(props: {
           className="input grow"
           type="password"
           autoComplete="off"
-          placeholder={saved ? "Replace key" : "Paste key"}
-          aria-label={`${providerLabel(provider)} API key`}
+          placeholder={saved ? t("Replace key") : t("Paste key")}
+          aria-label={t("{provider} API key", { provider: providerLabel(provider) })}
           value={draft}
           onChange={(e) => updateDraft(e.target.value)}
         />
         <button type="submit" className="mode" disabled={!draft.trim()}>
-          Save
+          {t("Save")}
         </button>
         {saved && (
           <button
@@ -370,7 +377,7 @@ function KeyRow(props: {
               void props.onSave(null);
             }}
           >
-            Remove
+            {t("Remove")}
           </button>
         )}
       </form>
@@ -378,12 +385,12 @@ function KeyRow(props: {
         <span className="field-row">
           {info.keyPageUrl && (
             <button type="button" className="link small" onClick={() => openUrl(info.keyPageUrl)}>
-              Get a {info.name} key
+              {t("Get a {provider} key", { provider: info.name })}
             </button>
           )}
           {info.policyUrl && (
             <button type="button" className="link small" onClick={() => openUrl(info.policyUrl)}>
-              Data policy
+              {t("Data policy")}
             </button>
           )}
         </span>
@@ -404,6 +411,7 @@ function KeyRow(props: {
 function Usage(props: { usage: UsageView | null | undefined; onError: (e: string | null) => void }) {
   const [rows, setRows] = useState<UsageRowView[]>([]);
   const [days, setDays] = useState(7);
+  const { locale } = useL10n();
 
   useEffect(() => {
     usageRows(days).then(setRows, (e: unknown) => props.onError(message(e)));
@@ -414,9 +422,9 @@ function Usage(props: { usage: UsageView | null | undefined; onError: (e: string
     <div className="stack-sm">
       {props.usage && <p className="muted small">{usageTotalsLine(props.usage)}</p>}
       {rows.length === 0 ? (
-        <p className="muted small">No model calls yet.</p>
+        <p className="muted small">{t("No model calls yet.")}</p>
       ) : (
-        groupUsageByDay(rows).map((group) => (
+        groupUsageByDay(rows, locale).map((group) => (
           <div key={group.day} className="stack-sm">
             <p className="small">
               <strong>{group.day}</strong>
@@ -424,7 +432,7 @@ function Usage(props: { usage: UsageView | null | undefined; onError: (e: string
             <ul className="usage-list">
               {group.rows.map((row) => (
                 <li key={`${row.tsUnixMs}-${row.provider}-${row.model}-${row.task}`} className="usage-row muted small mono">
-                  <span>{usageTime(row.tsUnixMs)}</span>
+                  <span>{usageTime(row.tsUnixMs, locale)}</span>
                   <span>{row.task}</span>
                   <span>
                     {row.provider} {row.model}
@@ -438,16 +446,16 @@ function Usage(props: { usage: UsageView | null | undefined; onError: (e: string
         ))
       )}
       <button type="button" className="mode" onClick={() => setDays(days === 7 ? 30 : 7)}>
-        {days === 7 ? "Show last 30 days" : "Show last 7 days"}
+        {days === 7 ? t("Show last 30 days") : t("Show last 7 days")}
       </button>
     </div>
   );
 }
 
 /** The skin maker's web image search key. Not a provider: no model list to check it against. */
-function ImageSearchKeyRow(props: { line: string; onSave: (key: string | null) => Promise<void> }) {
+function ImageSearchKeyRow(props: { line: string; saved: boolean; onSave: (key: string | null) => Promise<void> }) {
   const [draft, setDraft] = useState("");
-  const saved = props.line !== "Not set";
+  const { saved } = props;
   return (
     <div className="stack-sm key-block">
       <form
@@ -457,27 +465,27 @@ function ImageSearchKeyRow(props: { line: string; onSave: (key: string | null) =
           if (draft.trim()) props.onSave(draft).then(() => setDraft(""));
         }}
       >
-        <span className="key-name">Image Search Key (Brave Search)</span>
+        <span className="key-name">{t("Image Search Key (Brave Search)")}</span>
         <span className="muted small mono key-line">{props.line}</span>
         <input
           className="input grow"
           type="password"
           autoComplete="off"
-          placeholder={saved ? "Replace key" : "Brave Search API key"}
-          aria-label="Brave Search API key"
+          placeholder={saved ? t("Replace key") : t("Brave Search API key")}
+          aria-label={t("Brave Search API key")}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
         />
         <button type="submit" className="mode" disabled={!draft.trim()}>
-          Save
+          {t("Save")}
         </button>
         {saved && (
           <button type="button" className="mode" onClick={() => props.onSave(null)}>
-            Remove
+            {t("Remove")}
           </button>
         )}
       </form>
-      <p className="muted small">The skin maker uses it to find images on the web. It stays on this PC.</p>
+      <p className="muted small">{t("The skin maker uses it to find images on the web. It stays on this PC.")}</p>
     </div>
   );
 }
@@ -492,19 +500,19 @@ function Instructions(props: { settings: AiSettings; onError: (e: string | null)
   return (
     <div className="stack-sm">
       <label className="field">
-        <span>Every summary</span>
+        <span>{t("Every summary")}</span>
         <textarea
           className="input"
           rows={2}
-          placeholder="e.g. Use bullet points. Call out decisions and owners."
+          placeholder={t("e.g. Use bullet points. Call out decisions and owners.")}
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
           onBlur={() => done(setSummaryInstructions(summary))}
         />
       </label>
       <details>
-        <summary className="small">Per-feature instructions</summary>
-        {SURFACES.map((s) => (
+        <summary className="small">{t("Per-feature instructions")}</summary>
+        {surfaces().map((s) => (
           <label key={s.id} className="field">
             <span>{s.label}</span>
             <textarea

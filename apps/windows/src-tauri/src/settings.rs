@@ -84,6 +84,12 @@ pub mod keys {
     /// Which device runs routines: that device's public key, or absent for "any device". The Mac's
     /// settings-sync field key; on Windows it stays on this PC until a settings-sync coordinator exists.
     pub const ROUTINES_PRIMARY_DEVICE: &str = "routines.primaryDeviceId";
+    /// Device-local, never synced: the Language picker's choice, absent for Automatic. The Mac keeps
+    /// its equivalent in `AppleLanguages`.
+    pub const APP_LANGUAGE: &str = "app.language";
+    /// Device-local, never synced: "Write notes and summaries in", absent for "Same as app language"
+    /// (the Mac's `AppLanguage.writeInKey`).
+    pub const OUTPUT_LANGUAGE_OVERRIDE: &str = "app.outputLanguageOverride";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -140,6 +146,11 @@ pub struct RoutingSettings {
     #[serde(skip)]
     #[schemars(skip)]
     pub openrouter_prices: BTreeMap<String, (f64, f64)>,
+    /// The tag notes, summaries and drafts are written in (`l10n::output_language`); `""` is English
+    /// with byte-identical prompts. Device-local, from the language settings, never part of the DTO.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub output_language: String,
 }
 
 impl Default for RoutingSettings {
@@ -158,6 +169,7 @@ impl Default for RoutingSettings {
             cheap_first: true,
             use_local_model: true,
             openrouter_prices: BTreeMap::new(),
+            output_language: String::new(),
         }
     }
 }
@@ -209,6 +221,7 @@ impl RoutingSettings {
             openrouter_key: keys.openrouter.clone(),
             openrouter_model: self.openrouter_model.clone(),
             openrouter_prices: self.openrouter_prices.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+            output_language: self.output_language.clone(),
         }
     }
 }
@@ -400,6 +413,7 @@ impl SettingsFile {
             cheap_first: self.get(keys::CHEAP_FIRST).unwrap_or(d.cheap_first),
             use_local_model: self.get(keys::USE_LOCAL_MODEL).unwrap_or(d.use_local_model),
             openrouter_prices: self.openrouter_prices(),
+            output_language: crate::l10n::output_language(&self.output_language_override()),
         }
     }
 
@@ -657,6 +671,53 @@ impl SettingsFile {
 
     pub fn set_autostart(&mut self, enabled: bool) {
         self.set(keys::GENERAL_AUTOSTART, Some(enabled));
+    }
+
+    /// The Language picker's choice; `""` is Automatic.
+    pub fn app_language(&self) -> String {
+        self.get(keys::APP_LANGUAGE).unwrap_or_default()
+    }
+
+    /// `""` goes back to Automatic.
+    pub fn set_app_language(&mut self, tag: &str) {
+        self.set(keys::APP_LANGUAGE, (!tag.is_empty()).then_some(tag));
+    }
+
+    /// "Write notes and summaries in"; `""` is "Same as app language".
+    pub fn output_language_override(&self) -> String {
+        self.get(keys::OUTPUT_LANGUAGE_OVERRIDE).unwrap_or_default()
+    }
+
+    pub fn set_output_language_override(&mut self, tag: &str) {
+        self.set(keys::OUTPUT_LANGUAGE_OVERRIDE, (!tag.is_empty()).then_some(tag));
+    }
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn language_keys_are_the_macs_device_local_keys() {
+        // Windows has no settings sync yet; these are the names the Mac keeps out of it.
+        assert_eq!(keys::OUTPUT_LANGUAGE_OVERRIDE, "app.outputLanguageOverride");
+        assert_eq!(keys::APP_LANGUAGE, "app.language");
+    }
+
+    #[test]
+    fn the_language_choices_round_trip_and_blank_clears() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-lang-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = SettingsFile::load(&dir.join("settings.json"));
+        assert_eq!((s.app_language(), s.output_language_override()), (String::new(), String::new()));
+        s.set_app_language("en-GB");
+        s.set_output_language_override("es-US");
+        assert_eq!((s.app_language(), s.output_language_override()), ("en-GB".to_string(), "es-US".to_string()));
+        assert_eq!(s.routing().output_language, "es-US", "the write-in reaches every routing config");
+        s.set_app_language("");
+        s.set_output_language_override("");
+        assert!(s.get::<String>(keys::APP_LANGUAGE).is_none() && s.get::<String>(keys::OUTPUT_LANGUAGE_OVERRIDE).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
 

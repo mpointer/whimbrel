@@ -185,6 +185,37 @@ pub fn unwrap_group_key(
 
 const PAYLOAD_FORMAT_VERSION: u8 = 1;
 
+/// An opaque per-record tag the relay can use to compact superseded rows:
+/// HMAC-SHA256, keyed with an HKDF subkey of the group key, over
+/// `u32_be(len(device_id)) || device_id || u32_be(len(identity)) || identity`
+/// (the `content_row_aad` length-prefix style), truncated to 16 bytes and
+/// base64-encoded (always 24 characters).
+///
+/// - The tag is not part of the AEAD AAD (spec D4); it is a separate column.
+/// - The server learns version linkage only: which of one device's rows are
+///   versions of the same record. It never learns the identity itself, and
+///   the device id in the input keeps two devices' rows unlinkable.
+/// - A group-key change gives new tags, so compaction stops matching the old
+///   rows. It never deletes the wrong row.
+pub fn entity_tag(group_key: &GroupKey, device_id: &str, identity: &str) -> String {
+    use base64::Engine;
+    use hkdf::hmac::{Hmac, Mac};
+
+    let ikm = Zeroizing::new(group_key.to_bytes());
+    let mut k_tag = Zeroizing::new([0u8; 32]);
+    Hkdf::<Sha256>::new(None, &*ikm)
+        .expand(b"whimbrel sync entity_tag v1", &mut *k_tag)
+        .expect("32 bytes is a valid HKDF-SHA256 output length");
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&*k_tag)
+        .expect("HMAC-SHA256 accepts a key of any length");
+    for field in [device_id.as_bytes(), identity.as_bytes()] {
+        mac.update(&(field.len() as u32).to_be_bytes());
+        mac.update(field);
+    }
+    let digest = mac.finalize().into_bytes();
+    base64::engine::general_purpose::STANDARD.encode(&digest[..16])
+}
+
 /// Encrypts arbitrary payload bytes (a serialized `capture_item`, `meeting`,
 /// `transcript_segment`, or `summary` row) under the group key. `aad`
 /// (additional authenticated data — e.g. `account_id || device_id ||
@@ -250,6 +281,47 @@ pub fn decrypt_payload(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn entity_tag_matches_the_known_answer_vectors() {
+        let key = crate::GroupKey::from_bytes([7; 32]);
+        assert_eq!(
+            crate::entity_tag(&key, "device-a", "meeting:42"),
+            "0MzjDaeQ2jfh4Ssy3uhzMQ=="
+        );
+        assert_eq!(
+            crate::entity_tag(&key, "device-b", "meeting:42"),
+            "Qd56Fq7z33m7YIxDx9PL7Q=="
+        );
+        assert_eq!(
+            crate::entity_tag(
+                &key,
+                "device-a",
+                "items:calendar_event:google_calendar:evt-1"
+            ),
+            "Mk3P7jrG+h980ku2zjCo1g=="
+        );
+        let other = crate::GroupKey::from_bytes([8; 32]);
+        assert_eq!(
+            crate::entity_tag(&other, "device-a", "meeting:42"),
+            "wRkur9z90F4SWJmbfz2twA=="
+        );
+    }
+
+    #[test]
+    fn entity_tag_separates_devices_and_field_boundaries() {
+        let key = crate::GroupKey::from_bytes([7; 32]);
+        // #458: one calendar event on two devices must not link on the server.
+        assert_ne!(
+            crate::entity_tag(&key, "device-a", "x"),
+            crate::entity_tag(&key, "device-b", "x")
+        );
+        // Length prefixes: moving a byte across the field boundary changes the tag.
+        assert_ne!(
+            crate::entity_tag(&key, "ab", "c"),
+            crate::entity_tag(&key, "a", "bc")
+        );
+    }
+
     #[test]
     fn device_keypair_round_trips_through_bytes() {
         let original = crate::DeviceKeypair::generate();

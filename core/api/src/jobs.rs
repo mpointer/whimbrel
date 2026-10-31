@@ -8,13 +8,15 @@
 use crate::util::now_unix_ms;
 
 /// Runs up to `max_jobs` pending `episode_summarize` jobs. `custom_instructions` is
-/// trimmed; whitespace-only means "no instructions". Returns the count actually
+/// trimmed; whitespace-only means "no instructions". `output_language` is a BCP 47 tag
+/// for the summary's language; "" adds no language line. Returns the count actually
 /// processed (`0` means nothing was eligible); `Err` only if the claim itself failed.
 pub fn run_episode_summarize_batch(
     store: &memory::Store,
     ollama_model: &str,
     max_jobs: usize,
     custom_instructions: &str,
+    output_language: &str,
 ) -> rusqlite::Result<usize> {
     let custom_instructions = custom_instructions.trim();
     let jobs = store.claim_episode_summarize_jobs(max_jobs, now_unix_ms())?;
@@ -23,7 +25,7 @@ pub fn run_episode_summarize_batch(
     for job in jobs {
         // No model for episodes with nothing to summarize: their captures are gone
         // (retention, dedupe), or it was one glance.
-        match skip_reason(&job.items) {
+        match skip_reason(&job.items, output_language) {
             Some(Skip::Empty) => {
                 let _ = store.forget_episode_activity(job.episode_id);
                 processed += 1;
@@ -40,7 +42,7 @@ pub fn run_episode_summarize_batch(
         // the batch-start time (fine for the one-shot eligibility check) would shorten
         // the intended backoff for later jobs in the same batch.
         let now = now_unix_ms();
-        match llm::summarize_episode(&client, &job.items, custom_instructions) {
+        match llm::summarize_episode_in(&client, &job.items, custom_instructions, output_language) {
             Ok(summary) => {
                 let refs_json =
                     serde_json::to_string(&summary.refs).unwrap_or_else(|_| "[]".to_string());
@@ -88,17 +90,18 @@ enum Skip {
 /// Why an episode needs no model call, if it doesn't. On real data, 1,015 of 1,501
 /// failed summaries had no captures left, and nearly every "no meaningful activity"
 /// summary came from an empty or one-capture episode.
-fn skip_reason(items: &[memory::CaptureItem]) -> Option<Skip> {
+fn skip_reason(items: &[memory::CaptureItem], lang: &str) -> Option<Skip> {
     let (Some(first), Some(last)) = (items.first(), items.last()) else {
         return Some(Skip::Empty);
     };
     if items.len() <= 1 && last.ts_unix_ms - first.ts_unix_ms < GLANCE_MAX_MS {
         let app = first.app_bundle_id.rsplit('.').next().unwrap_or(&first.app_bundle_id);
         let title = first.window_title.trim();
+        use crate::l10n::{keys, text};
         return Some(Skip::Glance(if title.is_empty() {
-            format!("Briefly viewed {app}.")
+            text(lang, keys::BRIEFLY_VIEWED_APP, &[("app", app)])
         } else {
-            format!("Briefly viewed \"{title}\" in {app}.")
+            text(lang, keys::BRIEFLY_VIEWED_TITLE_IN_APP, &[("title", title), ("app", app)])
         }));
     }
     None
@@ -111,6 +114,7 @@ pub fn run_thread_summarize_batch(
     ollama_model: &str,
     max_jobs: usize,
     custom_instructions: &str,
+    output_language: &str,
 ) -> rusqlite::Result<usize> {
     let custom_instructions = custom_instructions.trim();
     let jobs = store.claim_thread_summarize_jobs(max_jobs, now_unix_ms())?;
@@ -118,11 +122,12 @@ pub fn run_thread_summarize_batch(
     let mut processed = 0;
     for job in jobs {
         let now = now_unix_ms();
-        match llm::summarize_thread_incrementally(
+        match llm::summarize_thread_incrementally_in(
             &client,
             job.prior_summary.as_deref(),
             &job.new_messages,
             custom_instructions,
+            output_language,
         ) {
             Ok(summary) => {
                 // Cursor is compared against items.id, not timestamp order -- new_messages
@@ -297,13 +302,25 @@ mod tests {
     }
 
     #[test]
+    fn persisted_strings_render_english_for_empty_lang() {
+        match skip_reason(&[capture(1_000, "  ")], "") {
+            Some(Skip::Glance(s)) => assert_eq!(s, "Briefly viewed Terminal."),
+            _ => panic!("one capture is a glance"),
+        }
+        match skip_reason(&[capture(1_000, "{app}")], "") {
+            Some(Skip::Glance(s)) => assert_eq!(s, "Briefly viewed \"{app}\" in Terminal."),
+            _ => panic!("one capture is a glance"),
+        }
+    }
+
+    #[test]
     fn empty_and_glance_episodes_skip_the_model_and_real_ones_do_not() {
-        assert!(matches!(skip_reason(&[]), Some(Skip::Empty)));
-        match skip_reason(&[capture(1_000, "zsh")]) {
+        assert!(matches!(skip_reason(&[], ""), Some(Skip::Empty)));
+        match skip_reason(&[capture(1_000, "zsh")], "") {
             Some(Skip::Glance(s)) => assert_eq!(s, "Briefly viewed \"zsh\" in Terminal."),
             _ => panic!("one capture is a glance"),
         }
-        assert!(skip_reason(&[capture(1_000, "a"), capture(2_000, "b")]).is_none(), "two captures get a real summary");
+        assert!(skip_reason(&[capture(1_000, "a"), capture(2_000, "b")], "").is_none(), "two captures get a real summary");
     }
 
     /// Mirrors `core/ffi`'s `*_returns_zero_when_nothing_pending` tests: no jobs means
@@ -312,11 +329,11 @@ mod tests {
     fn both_batches_return_zero_when_nothing_is_pending() {
         let store = memory::Store::open_in_memory().unwrap();
         assert_eq!(
-            run_episode_summarize_batch(&store, "gemma4:12b", 5, "   ").unwrap(),
+            run_episode_summarize_batch(&store, "gemma4:12b", 5, "   ", "").unwrap(),
             0
         );
         assert_eq!(
-            run_thread_summarize_batch(&store, "gemma4:12b", 5, "   ").unwrap(),
+            run_thread_summarize_batch(&store, "gemma4:12b", 5, "   ", "").unwrap(),
             0
         );
     }

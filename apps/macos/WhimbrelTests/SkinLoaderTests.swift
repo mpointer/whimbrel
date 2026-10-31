@@ -170,8 +170,11 @@ final class SkinLoaderTests: XCTestCase {
     }
 
     func test_bundled_whimbrel_json_equals_SkinDefaults_whimbrel() throws {
-        let (skin, repairs) = try XCTUnwrap(SkinLoader.parse(try load("whimbrel.json"), base: base))
+        var (skin, repairs) = try XCTUnwrap(SkinLoader.parse(try load("whimbrel.json"), base: base))
         XCTAssertEqual(repairs, [])
+        XCTAssertNotNil(skin.voice.localized["es"], "the shipped translations load")
+        // Translations live in the manifest only; the built-in default is English.
+        skin.voice.localized = [:]
         XCTAssertEqual(skin, SkinDefaults.whimbrel)
         XCTAssertEqual(SkinDefaults.whimbrel.shape.controlRadius, 8)
         for role in SkinIconRole.allCases {
@@ -180,5 +183,18 @@ final class SkinLoaderTests: XCTestCase {
         for key in SkinVoiceKey.allCases {
             XCTAssertTrue(key.fits(SkinDefaults.whimbrel.voice.values[key] ?? ""), "\(key)")
         }
+    }
+
+    func test_voiceText_falls_back_exact_base_english() throws {
+        let json = #"{"id": "v", "name": "V", "palettes": ["default"], "voice": {"upNextHeader": "Next up"}, "voiceLocalized": {"fr": {"upNextHeader": "À suivre"}, "fr-CA": {"upNextHeader": "Prochaine"}, "es": {"recapHeader": "\#(String(repeating: "x", count: 30))"}}}"#
+        let (skin, repairs) = try XCTUnwrap(parse(json))
+        XCTAssertEqual(skin.voiceText(.upNextHeader, lang: "fr-CA"), "Prochaine")
+        XCTAssertEqual(skin.voiceText(.upNextHeader, lang: "fr-FR"), "À suivre")
+        XCTAssertEqual(skin.voiceText(.upNextHeader, lang: "de"), "Next up")
+        XCTAssertEqual(skin.voiceText(.upNextHeader, lang: "en"), "Next up")
+        XCTAssertNil(skin.voice.localized["es"]?[.recapHeader])
+        XCTAssertEqual(repairs.count, 1, "\(repairs)")
+        // The Whimbrel wording comes from the String Catalog; English stays English.
+        XCTAssertEqual(SkinDefaults.whimbrel.voiceText(.upNextHeader, lang: "en"), "Up next")
     }
 }

@@ -29,7 +29,7 @@ struct EpisodeDetailView: View {
             }
         }
         .frame(minWidth: 480, idealWidth: 560, minHeight: 400, idealHeight: 560)
-        .navigationTitle(loadedEpisode?.windowTitle ?? "Episode")
+        .navigationTitle(loadedEpisode?.windowTitle ?? String(localized: "Episode"))
         .background(Color.whimbrelBackgroundPage)
         .overlay(alignment: .topTrailing) {
             HStack(spacing: Spacing.sm) {
@@ -108,7 +108,7 @@ private struct EpisodeDetailContentView: View {
                 Text("Summary").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
                 switch episode.status {
                 case "summarized":
-                    Text(episode.summary ?? "Summary unavailable")
+                    Text(episode.summary ?? String(localized: "Summary unavailable"))
                         .font(.whimbrelBody(.callout))
                         .foregroundStyle(Color.whimbrelTextPrimary)
                         .textSelection(.enabled)

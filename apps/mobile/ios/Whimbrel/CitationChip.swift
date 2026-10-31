@@ -24,7 +24,7 @@ enum CitationChipLabel {
     /// "<subtitle> · <device name> · <title> · <short date>", leaving out what is empty
     /// ("Screen · MacBook · Pricing.xlsx"). A card that wasn't found keeps its kind ("Screen · Not on this iPhone").
     static func text(for card: CitationCard, deviceName: String?, now: Date = Date(), calendar: Calendar = .current, locale: Locale = .current) -> String {
-        guard card.found else { return [card.subtitle, "Not on this iPhone"].filter { !$0.isEmpty }.joined(separator: " · ") }
+        guard card.found else { return [card.subtitle, String(localized: "Not on this iPhone")].filter { !$0.isEmpty }.joined(separator: " · ") }
         var parts = [card.subtitle, deviceName ?? "", card.title]
         if let ms = card.tsUnixMs { parts.append(shortDate(Date(timeIntervalSince1970: Double(ms) / 1000), now: now, calendar: calendar, locale: locale)) }
         return parts.filter { !$0.isEmpty }.joined(separator: " · ")

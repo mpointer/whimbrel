@@ -16,11 +16,11 @@ enum PromptSurface: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .ask: return "Ask"
-        case .meetingSummary: return "Meeting Summary"
-        case .dailyDigest: return "Daily Digest"
-        case .weeklyDigest: return "Weekly Digest"
-        case .episodeSummary: return "Episode Summary"
-        case .threadSummary: return "Thread Summary"
+        case .meetingSummary: return String(localized: "Meeting Summary")
+        case .dailyDigest: return String(localized: "Daily Digest")
+        case .weeklyDigest: return String(localized: "Weekly Digest")
+        case .episodeSummary: return String(localized: "Episode Summary")
+        case .threadSummary: return String(localized: "Thread Summary")
         }
     }
 

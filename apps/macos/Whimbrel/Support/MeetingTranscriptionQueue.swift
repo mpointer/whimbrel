@@ -14,7 +14,9 @@ final class MeetingTranscriptionQueue {
         let notes: String
     }
 
-    typealias Transcriber = (_ audioPath: String, _ expectedSpeakerCount: Int?) throws -> (url: URL, lines: [TranscriptionService.Line])
+    /// `language` is a whisper code to force, nil to detect; the result carries the language used.
+    typealias Transcriber = (_ audioPath: String, _ expectedSpeakerCount: Int?, _ language: String?) throws
+        -> (url: URL, lines: [TranscriptionService.Line], language: String?)
 
     private let store: CoreMemoryStore
     private let transcribe: Transcriber
@@ -22,6 +24,8 @@ final class MeetingTranscriptionQueue {
     private let summarize: (Int64, String, String) -> Void
     /// Called on main: "Transcribing…" when a job starts, nil when it ends without a summary.
     private let onStage: (Int64, String?) -> Void
+    /// Off: every part is forced to English with the English model, as before.
+    private let multilingual: () -> Bool
     private let queue: OperationQueue = {
         let q = OperationQueue()
         q.maxConcurrentOperationCount = 1
@@ -38,12 +42,21 @@ final class MeetingTranscriptionQueue {
     init(store: CoreMemoryStore,
          transcribe: @escaping Transcriber = TranscriptionService.transcribe,
          summarize: @escaping (Int64, String, String) -> Void,
-         onStage: @escaping (Int64, String?) -> Void) {
+         onStage: @escaping (Int64, String?) -> Void,
+         multilingual: @escaping () -> Bool = {
+             usesMultilingual(enabled: AppLanguage.multilingual(),
+                              modelPresent: FileManager.default.fileExists(atPath: TranscriptionService.multilingualModelPath.path))
+         }) {
         self.store = store
         self.transcribe = transcribe
         self.summarize = summarize
         self.onStage = onStage
+        self.multilingual = multilingual
     }
+
+    /// Multilingual mode takes effect once its model is on disk; until then meetings are
+    /// transcribed in English rather than failing.
+    static func usesMultilingual(enabled: Bool, modelPresent: Bool) -> Bool { enabled && modelPresent }
 
     /// Meetings with a job queued or running.
     var pendingMeetingIds: Set<Int64> { lock.withLock { Set(outstanding.keys) } }
@@ -53,9 +66,11 @@ final class MeetingTranscriptionQueue {
         queue.addOperation { [self] in run(job) }
     }
 
-    /// Re-transcribes every part of the meeting whose audio is still on disk.
-    func transcribeAgain(meetingId: Int64, notes: String) {
+    /// Re-transcribes every part of the meeting whose audio is still on disk. With `language`,
+    /// the meeting's stored language is replaced first (`.some(nil)` is Automatic: detect again).
+    func transcribeAgain(meetingId: Int64, notes: String, language: String?? = .none) {
         CoreMemoryStore.accessQueue.async { [self] in
+            if case let .some(lang) = language { store.setMeetingSpokenLanguage(meetingId: meetingId, language: lang) }
             for part in Self.partsWithAudio(store.meetingParts(meetingId: meetingId) ?? []) {
                 enqueue(.init(meetingId: meetingId, partIndex: part.partIndex, audioPath: part.audioPath, notes: notes))
             }
@@ -92,14 +107,19 @@ final class MeetingTranscriptionQueue {
         let stored = CoreMemoryStore.accessQueue.sync { store.getMeeting(id: id) }
         let attendeeCount = stored?.attendees.count ?? 0
         let expectedSpeakerCount = attendeeCount > 0 ? attendeeCount : stored?.estimatedSpeakerCount.map { Int($0) }
-        let result = job.audioPath.flatMap { try? transcribe($0, expectedSpeakerCount) }
+        let multilingual = multilingual()
+        let language = multilingual ? CoreMemoryStore.accessQueue.sync { store.meetingSpokenLanguage(meetingId: id) } : "en"
+        let result = job.audioPath.flatMap { try? transcribe($0, expectedSpeakerCount, language) }
 
         let transcript: String? = CoreMemoryStore.accessQueue.sync {
             // A failure leaves the part's existing segments and `transcribed` untouched.
             let notes = job.notes.isEmpty ? nil : job.notes
             store.setMeetingNotes(meetingId: id, notes: notes)
             if let result {
-                let (url, lines) = result
+                let (url, lines, used) = result
+                if multilingual, language == nil, let used, !lines.isEmpty {
+                    store.setMeetingSpokenLanguage(meetingId: id, language: used)
+                }
                 let segments = lines.map { NewTranscriptSegmentInput(startCs: $0.startCs, speakerLabel: $0.speakerLabel, text: $0.text) }
                 _ = store.replacePartTranscriptSegments(meetingId: id, partIndex: job.partIndex, segments: segments)
                 store.setMeetingPartTranscript(meetingId: id, partIndex: job.partIndex, transcriptPath: url.path)
