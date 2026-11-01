@@ -12,7 +12,8 @@ import { NextMeetingCard } from "./NextMeetingCard";
 import { ScheduleCard } from "./ScheduleCard";
 import { TodayComposer } from "./TodayComposer";
 import { SkinImage, type TodayActions } from "./archetypes/parts";
-import { earlierMeetings, greetingFor, recapModel, voiceText, type TodayModel } from "./layoutModel";
+import { earlierMeetings, greetingFor, localizedVoice, recapModel, voiceText, type TodayModel } from "./layoutModel";
+import { useL10n } from "../l10n";
 import { TodayLayout } from "./TodayLayout";
 import { useSchedule } from "./useSchedule";
 import { useSkin } from "../useSkin";
@@ -34,7 +35,8 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
   // Meetings from earlier days, for the skinned layouts' Earlier section.
   const [earlier, setEarlier] = useState<MeetingRow[]>([]);
   const skin = useSkin();
-  const voice = skin.skin.voice;
+  const { lang, locale, t } = useL10n();
+  const voice = localizedVoice(skin.skin, lang);
   // The next meeting's full brief, opened from its schedule row.
   const [briefOpen, setBriefOpen] = useState(false);
   /// Which meeting Today shows: the shell picks it (recording, else today's next, else latest).
@@ -101,11 +103,11 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
         {error}
       </div>
     ) : (
-      <p className="muted">Loading…</p>
+      <p className="muted">{t("Loading…")}</p>
     );
   }
 
-  const heading = greetingFor(profileName, new Date(), voice);
+  const heading = greetingFor(profileName, new Date(), voice, locale);
   const openMeeting = (id: number) => setSelected({ kind: "meeting", id });
   const composer = <TodayComposer onAsk={onAsk} onOpenSettings={onOpenSettings} placeholder={voiceText(voice, "askPlaceholder")} />;
   const card = <NextMeetingCard onOpenMeeting={openMeeting} />;
@@ -118,15 +120,18 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
     ) : (
       <section className="card" aria-labelledby="meeting-heading">
         <h2 id="meeting-heading" className="section-label">
-          Meeting
+          {t("Meeting")}
         </h2>
-        <p className="muted">{voiceText(voice, "emptyDay")}. Record one in the Meetings tab, or they arrive from your Mac through sync.</p>
+        <p className="muted">
+          {voiceText(voice, "emptyDay")}. {t("Record one in the Meetings tab, or they arrive from your Mac through sync.")}
+        </p>
       </section>
     );
 
   if (skin.archetype !== "standard") {
     const model: TodayModel = {
       now: sched.now,
+      locale,
       name: profileName,
       schedule: sched.schedule,
       next: sched.next,
@@ -194,7 +199,7 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
           </h2>
           {!overview.briefRecap && (
             <button className="mode" onClick={() => generate(true)} disabled={writing}>
-              {writing ? "Writing…" : "Refresh"}
+              {writing ? t("Writing…") : t("Refresh")}
             </button>
           )}
         </div>
@@ -204,7 +209,7 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
           <RecapBody recap={recap} />
         ) : writing ? (
           <p className="muted" role="status">
-            Writing today's recap…
+            {t("Writing today's recap…")}
           </p>
         ) : null}
         {recapError && <p role="alert">{recapError}</p>}
@@ -212,23 +217,22 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
 
       <section className="card" aria-labelledby="loops-heading">
         <h2 id="loops-heading" className="section-label">
-          Open loops
+          {t("Open loops")}
         </h2>
         {overview.openLoops.length === 0 ? (
           <p className="muted">
-            No threads need you right now. Email threads arrive with Gmail on Windows (M3.4), or from your other devices through
-            sync.
+            {t("No threads need you right now. Email threads arrive with Gmail on Windows (M3.4), or from your other devices through sync.")}
           </p>
         ) : (
           <ul className="rows">
-            {overview.openLoops.map((t) => (
-              <li key={t.id} className="row-card static">
+            {overview.openLoops.map((loop) => (
+              <li key={loop.id} className="row-card static">
                 <span className="row-top">
-                  <span className="row-title">{t.subject || "(no subject)"}</span>
-                  <time className="muted small">{dateTimeLabel(t.lastActivityTsUnixMs)}</time>
+                  <span className="row-title">{loop.subject || t("(no subject)")}</span>
+                  <time className="muted small">{dateTimeLabel(loop.lastActivityTsUnixMs, new Date(), locale)}</time>
                 </span>
-                <span className="row-meta muted small">{threadLine(t)}</span>
-                {t.summary && <span className="row-snippet">{t.summary}</span>}
+                <span className="row-meta muted small">{threadLine(loop)}</span>
+                {loop.summary && <span className="row-snippet">{loop.summary}</span>}
               </li>
             ))}
           </ul>
@@ -239,13 +243,13 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
 
       <section className="card" aria-labelledby="devices-heading">
         <h2 id="devices-heading" className="section-label">
-          Across your devices today
+          {t("Across your devices today")}
         </h2>
         <ul className="device-counts">
           {overview.devices.map((d) => (
             <li key={d.device.deviceId}>
               <DeviceChip device={d.device} />
-              <span className="small">{deviceLine(d)}</span>
+              <span className="small">{deviceLine(d, locale)}</span>
             </li>
           ))}
         </ul>

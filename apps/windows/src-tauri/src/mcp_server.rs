@@ -18,6 +18,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use crate::l10n::tr;
 
 /// The address clients use; the server binds this itself.
 pub const ADDRESS: &str = "http://127.0.0.1:4319/mcp";
@@ -81,11 +82,11 @@ impl McpServer {
             return Status::Running;
         }
         if !spec.db.is_file() {
-            *state = State::Failed("Whimbrel's database isn't open yet, so the server was not started.".into());
+            *state = State::Failed(tr("Whimbrel's database isn't open yet, so the server was not started.", &[]));
         } else {
             match self.spawner.spawn(spec) {
                 Ok(child) => *state = State::Running(child),
-                Err(e) => *state = State::Failed(format!("The MCP server did not start: {e}")),
+                Err(e) => *state = State::Failed(tr("The MCP server did not start: {error}", &[("error", &e.to_string())])),
             }
         }
         Self::describe(&state)
@@ -114,12 +115,12 @@ impl McpServer {
             Ok(None) => {}
             Ok(Some(code)) => {
                 let why = match child.last_stderr_line() {
-                    Some(line) => format!("The MCP server stopped (exit code {code}): {line}"),
-                    None => format!("The MCP server stopped unexpectedly (exit code {code})."),
+                    Some(line) => tr("The MCP server stopped (exit code {code}): {error}", &[("code", &code.to_string()), ("error", &line)]),
+                    None => tr("The MCP server stopped unexpectedly (exit code {code}).", &[("code", &code.to_string())]),
                 };
                 *state = State::Failed(why);
             }
-            Err(e) => *state = State::Failed(format!("Could not check the MCP server: {e}")),
+            Err(e) => *state = State::Failed(tr("Could not check the MCP server: {error}", &[("error", &e.to_string())])),
         }
     }
 
@@ -149,7 +150,7 @@ pub fn locate(app_dir: &Path, data_root: &Path) -> Result<PathBuf, String> {
     if staged.is_file() {
         return Ok(staged);
     }
-    Err(format!("The MCP server program ({EXE_NAME}) isn't installed. Run apps\\windows\\scripts\\prepare-sidecar.ps1."))
+    Err(tr("The MCP server program ({program}) isn't installed. Run {script}.", &[("program", EXE_NAME), ("script", "apps\\windows\\scripts\\prepare-sidecar.ps1")]))
 }
 
 // --- the real spawner ---------------------------------------------------------------------------

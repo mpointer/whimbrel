@@ -94,10 +94,10 @@ pub fn output_tag(ui: &str, write_in: &str, multilingual: bool) -> String {
     }
 }
 
-/// The tag notes, summaries and drafts are written in, from this PC's settings. Multilingual
-/// transcription comes with W7; until then Windows only transcribes English.
-pub fn output_language(write_in: &str) -> String {
-    output_tag(&ui_language(), write_in, false)
+/// The tag notes, summaries and drafts are written in, from this PC's settings: the write-in
+/// choice and "I have meetings in other languages".
+pub fn output_language(write_in: &str, multilingual: bool) -> String {
+    output_tag(&ui_language(), write_in, multilingual)
 }
 
 /// Windows' display languages, in the user's order (Settings → Time & language).
@@ -112,7 +112,9 @@ fn home_region() -> Option<String> {
     GlobalizationPreferences::HomeGeographicRegion().ok().map(|r| r.to_string()).filter(|r| r.len() == 2)
 }
 
-/// `key` in the shell's language, with its `{name}` placeholders filled from `params`.
+/// `key` in the shell's language, with its `{name}` placeholders filled from `params`. A `count`
+/// param chooses the plural form, as in the UI's `t()`: the key is the English "other" form
+/// (`"{count} models"`), and its "one" form lives in the catalog.
 pub fn tr(key: &str, params: &[(&str, &str)]) -> String {
     tr_in(&CATALOG, &ui_language(), key, params)
 }
@@ -120,7 +122,8 @@ pub fn tr(key: &str, params: &[(&str, &str)]) -> String {
 /// The exact tag, then the base language (both in `Catalog::lookup`), then English, then the key
 /// itself, which is the English source: never empty.
 fn tr_in(catalog: &Catalog, lang: &str, key: &str, params: &[(&str, &str)]) -> String {
-    let text = catalog.lookup(lang, key, None).or_else(|| catalog.lookup("en", key, None)).unwrap_or(key);
+    let count = params.iter().find(|(name, _)| *name == "count").and_then(|(_, n)| n.parse::<i64>().ok());
+    let text = catalog.lookup(lang, key, count).or_else(|| catalog.lookup("en", key, count)).unwrap_or(key);
     api::l10n::interpolate(text, params)
 }
 
@@ -159,7 +162,10 @@ mod tests {
 
     const CATALOG_JSON: &str = r#"{"sourceLanguage":"en","strings":{
         "Quit Whimbrel":{"localizations":{"fr":{"stringUnit":{"state":"translated","value":"Quitter Whimbrel"}}}},
-        "Synced {time}":{"localizations":{"es":{"stringUnit":{"state":"translated","value":"Sincronizado {time}"}}}}
+        "Synced {time}":{"localizations":{"es":{"stringUnit":{"state":"translated","value":"Sincronizado {time}"}}}},
+        "{count} models":{"localizations":{"en":{"variations":{"plural":{
+            "one":{"stringUnit":{"state":"translated","value":"{count} model"}},
+            "other":{"stringUnit":{"state":"translated","value":"{count} models"}}}}}}}
     }}"#;
 
     #[test]
@@ -170,6 +176,16 @@ mod tests {
         assert_eq!(tr_in(&c, "fr", "Not in the catalog", &[]), "Not in the catalog");
         assert_eq!(tr_in(&c, "es-US", "Synced {time}", &[("time", "14:05")]), "Sincronizado 14:05");
         assert_eq!(tr_in(&c, "en", "Synced {time}", &[("time", "2:05 PM")]), "Synced 2:05 PM");
+    }
+
+    #[test]
+    fn a_count_chooses_the_plural_form() {
+        let c = Catalog::parse(CATALOG_JSON).unwrap();
+        let key = "{count} models";
+        assert_eq!(tr_in(&c, "en-US", key, &[("count", "1")]), "1 model");
+        assert_eq!(tr_in(&c, "en-US", key, &[("count", "2")]), "2 models");
+        // No Spanish yet: the English plural, not the key.
+        assert_eq!(tr_in(&c, "es", key, &[("count", "1")]), "1 model");
     }
 
     #[test]

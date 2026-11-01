@@ -12,6 +12,7 @@ use crate::routines::{capabilities, unavailable, valid_schedule, writes, Capabil
 use crate::settings::{ApiKeys, Provider, RoutingSettings, SettingsFile};
 use crate::syncing::controller::DeviceView;
 use crate::state::AppState;
+use crate::l10n::tr;
 
 /// The built-in routines, as the UI names them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -129,8 +130,8 @@ pub fn model_options(routing: &RoutingSettings, keys: &ApiKeys) -> Vec<ModelOpti
         Provider::Openrouter => "OpenRouter",
     };
     let mut options = vec![
-        ModelOptionView { value: "default".into(), label: format!("Default ({})", label(routing.preferred_provider)) },
-        ModelOptionView { value: "cheapest".into(), label: "Cheapest model you have".into() },
+        ModelOptionView { value: "default".into(), label: tr("Default ({provider})", &[("provider", label(routing.preferred_provider))]) },
+        ModelOptionView { value: "cheapest".into(), label: tr("Cheapest model you have", &[]) },
     ];
     for provider in [Provider::Ollama, Provider::Anthropic, Provider::Openai, Provider::Google, Provider::Openrouter] {
         let model = routing.model_for(provider).trim();
@@ -147,14 +148,14 @@ pub fn model_options(routing: &RoutingSettings, keys: &ApiKeys) -> Vec<ModelOpti
 pub fn set_model_pref(store: &Store, id: i64, pref: &str) -> Result<(), CommandError> {
     let routine = find(store, id)?;
     if !calls_model(&routine.template) {
-        return Err(CommandError::invalid_input("This routine doesn't call a model."));
+        return Err(CommandError::invalid_input(tr("This routine doesn't call a model.", &[])));
     }
     let pref = pref.trim();
     let known = pref == "default"
         || pref == "cheapest"
         || pref.split_once('/').is_some_and(|(p, m)| ["ollama", "anthropic", "openai", "google", "openrouter"].contains(&p) && !m.is_empty());
     if !known {
-        return Err(CommandError::invalid_input("Pick a model from the list."));
+        return Err(CommandError::invalid_input(tr("Pick a model from the list.", &[])));
     }
     store.set_routine_model_pref(id, pref).map_err(store_error)
 }
@@ -181,7 +182,7 @@ fn routine_view(r: &Routine, last: Option<&RoutineRun>, can: Capabilities) -> Ro
         enabled: r.enabled,
         writes: writes(&r.template),
         auto_approve: r.auto_approve_write_actions,
-        unavailable: unavailable(&r.template, can).map(str::to_string),
+        unavailable: unavailable(&r.template, can),
         last_run: last.map(|run| run_view(run, &r.name)),
         model_pref: r.model_pref.clone(),
         calls_model: calls_model(&r.template),
@@ -208,7 +209,7 @@ fn find(store: &Store, id: i64) -> Result<Routine, CommandError> {
         .map_err(store_error)?
         .into_iter()
         .find(|r| r.id == id)
-        .ok_or_else(|| CommandError::invalid_input("That routine no longer exists."))
+        .ok_or_else(|| CommandError::invalid_input(tr("That routine no longer exists.", &[])))
 }
 
 /// Switching one **on** is refused while it cannot run here, so a stray call can never arm a
@@ -229,7 +230,7 @@ pub fn set_enabled(store: &Store, id: i64, enabled: bool, can: Capabilities) -> 
 pub fn set_auto_approve(store: &Store, id: i64, enabled: bool, can: Capabilities) -> Result<(), CommandError> {
     let routine = find(store, id)?;
     if !writes(&routine.template) {
-        return Err(CommandError::invalid_input("This routine doesn't write anything, so there is nothing to approve."));
+        return Err(CommandError::invalid_input(tr("This routine doesn't write anything, so there is nothing to approve.", &[])));
     }
     if enabled {
         if let Some(why) = unavailable(&routine.template, can) {
@@ -242,9 +243,9 @@ pub fn set_auto_approve(store: &Store, id: i64, enabled: bool, can: Capabilities
 pub fn set_schedule(store: &Store, id: i64, text: &str) -> Result<(), CommandError> {
     let routine = find(store, id)?;
     if routine.template == RoutineTemplate::MeetingPrep {
-        return Err(CommandError::invalid_input("This routine runs before each meeting and has no time of day."));
+        return Err(CommandError::invalid_input(tr("This routine runs before each meeting and has no time of day.", &[])));
     }
-    let schedule = valid_schedule(text).ok_or_else(|| CommandError::invalid_input("Use a time like 08:30."))?;
+    let schedule = valid_schedule(text).ok_or_else(|| CommandError::invalid_input(tr("Use a time like 08:30.", &[])))?;
     store.update_routine_schedule(id, &schedule).map_err(store_error)
 }
 
@@ -375,14 +376,17 @@ pub async fn routine_runs(state: State<'_, AppState>, limit: Option<usize>) -> R
 // --- which device runs routines ---------------------------------------------------------------------
 
 /// The Mac's caption for "no choice yet", shown once there is more than one device to choose from.
-pub const CAPTION_ANY_DEVICE: &str = "Each device runs its own routines until you choose one.";
+pub fn caption_any_device() -> String {
+    tr("Each device runs its own routines until you choose one.", &[])
+}
 
 /// The caption when another device was chosen. The Mac's also says the routines' on/off and time
 /// sync between devices, which is not true on Windows (no settings sync), and names Reply Priorities,
 /// which Windows cannot run yet, so this one says neither.
 pub fn caption_other_device(label: &str) -> String {
-    format!(
-        "Routines run on {label}. If it has not run the Daily Brief 3 hours after its time, this PC runs it (devices in different time zones may then both run). Results sync to every device."
+    tr(
+        "Routines run on {label}. If it has not run the Daily Brief 3 hours after its time, this PC runs it (devices in different time zones may then both run). Results sync to every device.",
+        &[("label", label)],
     )
 }
 
@@ -418,7 +422,7 @@ pub fn host_view(stored: &str, devices: &[DeviceView], own: Option<&str>, labele
     options.sort_by(|a, b| (Some(a.id.as_str()) != own, &a.label).cmp(&(Some(b.id.as_str()) != own, &b.label)));
     let chosen = options.iter().find(|o| o.id == stored);
     let caption = match chosen {
-        None if stored.is_empty() && options.len() >= 2 => Some(CAPTION_ANY_DEVICE.to_string()),
+        None if stored.is_empty() && options.len() >= 2 => Some(caption_any_device()),
         Some(o) if Some(o.id.as_str()) != own => Some(caption_other_device(&o.label)),
         _ => None,
     };
@@ -430,7 +434,7 @@ pub fn host_view(stored: &str, devices: &[DeviceView], own: Option<&str>, labele
 pub fn set_host(settings: &mut SettingsFile, id: &str, devices: &[DeviceView]) -> Result<(), CommandError> {
     let id = id.trim();
     if !id.is_empty() && !devices.iter().any(|d| d.status == "approved" && d.public_key == id) {
-        return Err(CommandError::invalid_input("That isn't one of your approved devices."));
+        return Err(CommandError::invalid_input(tr("That isn't one of your approved devices.", &[])));
     }
     settings.set_primary_device_id(id);
     Ok(())
@@ -453,7 +457,7 @@ pub fn routines_set_host(state: State<'_, AppState>, id: String) -> Result<HostV
     {
         let mut file = state.settings.lock().unwrap();
         set_host(&mut file, &id, &devices)?;
-        file.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+        file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
     Ok(routines_host(state))
 }

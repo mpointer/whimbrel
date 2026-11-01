@@ -78,8 +78,8 @@ final class SkinStore: ObservableObject {
     }
 
     /// Replaces the installed skins. Whimbrel is always first and always present.
-    func install(_ skins: [Skin]) {
-        installed = [SkinDefaults.whimbrel] + skins.filter { $0.id != SkinDefaults.whimbrel.id }
+    func install(_ skins: [Skin], base: Skin = SkinDefaults.whimbrel) {
+        installed = [base] + skins.filter { $0.id != base.id }
         SkinImageResolver.invalidate()
         applyPalette()
         revision += 1
@@ -92,7 +92,8 @@ final class SkinStore: ObservableObject {
         var palettes = ThemeStore.bundledThemesDirectory.map { ThemeLoader.loadDirectory($0) } ?? []
         if let dir = Self.bundledSkinsDirectory?.appendingPathComponent("palettes") { palettes += ThemeLoader.loadDirectory(dir) }
         themes.install(palettes + user.palettes)
-        install((Self.bundledSkinsDirectory.map { SkinLoader.loadDirectory($0) } ?? []) + user.skins)
+        let bundled = Self.bundledSkinsDirectory.map { SkinLoader.loadDirectory($0) } ?? []
+        install(bundled + user.skins, base: bundled.first ?? SkinDefaults.whimbrel)
     }
 
     /// Re-installs bundled and user skins after a user skin changed; keeps the selection when it

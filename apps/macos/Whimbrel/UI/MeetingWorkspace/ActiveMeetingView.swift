@@ -82,19 +82,21 @@ struct ActiveMeetingView: View {
     /// The live transcript pane and Ask bar, when live transcription is on (built by the host,
     /// which has `appState` in the environment). Nil leaves the notes editor alone.
     let liveSection: AnyView?
+    let noticeSection: AnyView?
 
     @StateObject private var autosave: ActiveNoteAutosaveController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         model: ActiveMeetingModel, initialNotes: String, onSaveNotes: @escaping (String, Int64) -> Bool,
-        onStop: @escaping () -> Void, liveSection: AnyView? = nil
+        onStop: @escaping () -> Void, liveSection: AnyView? = nil, noticeSection: AnyView? = nil
     ) {
         self.model = model
         self.initialNotes = initialNotes
         self.onSaveNotes = onSaveNotes
         self.onStop = onStop
         self.liveSection = liveSection
+        self.noticeSection = noticeSection
         _autosave = StateObject(wrappedValue: ActiveNoteAutosaveController(onSave: onSaveNotes))
     }
 
@@ -102,6 +104,7 @@ struct ActiveMeetingView: View {
         VStack(spacing: 0) {
             header
             Divider().overlay(Color.whimbrelBorder)
+            if let noticeSection { noticeSection.padding(Spacing.md) }
             if let liveSection { liveSection }
             TextEditor(text: $autosave.noteText)
                 .font(.whimbrelBody(.body))

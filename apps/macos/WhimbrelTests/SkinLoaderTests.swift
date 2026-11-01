@@ -185,6 +185,20 @@ final class SkinLoaderTests: XCTestCase {
         }
     }
 
+    func test_theDefaultSkinLoadsWithItsTranslatedVoice() throws {
+        let loaded = try XCTUnwrap(SkinLoader.loadDirectory(skins).first)
+        XCTAssertEqual(loaded.id, SkinDefaults.whimbrel.id)
+        XCTAssertEqual(Set(loaded.voice.localized.keys), ["de", "es", "fr", "fr-CA", "pt"])
+    }
+
+    func test_installKeepsTheDefaultSkinsTranslatedVoice() throws {
+        let store = SkinStore(defaults: UserDefaults(suiteName: "SkinVoiceTest")!)
+        var base = SkinDefaults.whimbrel
+        base.voice.localized = ["es": [.upNextHeader: "A continuación"]]
+        store.install([base], base: base)
+        XCTAssertEqual(store.skins.first?.voice.localized["es"]?[.upNextHeader], "A continuación")
+    }
+
     func test_voiceText_falls_back_exact_base_english() throws {
         let json = #"{"id": "v", "name": "V", "palettes": ["default"], "voice": {"upNextHeader": "Next up"}, "voiceLocalized": {"fr": {"upNextHeader": "À suivre"}, "fr-CA": {"upNextHeader": "Prochaine"}, "es": {"recapHeader": "\#(String(repeating: "x", count: 30))"}}}"#
         let (skin, repairs) = try XCTUnwrap(parse(json))

@@ -57,6 +57,7 @@ struct TodayView: View {
             openThread: { openWindow(id: "thread-detail", value: $0) },
             ask: { appState.requestNewConversation(prompt: $0) },
             openSettings: { openSettings() },
+            requestCalendar: { appState.permissions.requestCalendarOrOpenSettings { openSettings() } },
             generateDigest: { generateDigest() },
             reviewApprovals: { appState.selectedTab = .automations },
             startMeeting: { event in
@@ -88,7 +89,10 @@ struct TodayView: View {
                 onStop: { appState.endActiveMeetingIfNeeded() },
                 liveSection: appState.liveTranscriptSettings.enabled
                     ? AnyView(LiveMeetingSection(live: appState.liveTranscript, meeting: meeting))
-                    : nil
+                    : nil,
+                noticeSection: AnyView(RecordingNoticeCard(
+                    settings: appState.recordingNoticeSettings, meetingId: meetingId, chat: appState.recordingNoticeChat
+                ))
             )
             .id(meetingId)
         )

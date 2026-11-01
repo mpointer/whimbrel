@@ -25,7 +25,8 @@ final class LiveTranscriptionService: ObservableObject {
     private static let baseInterval = 5.0
 
     private let store: () -> CoreMemoryStore?
-    private let modelPath: () -> String
+    private let engine: () -> TranscriptionEngine
+    private let detectLanguage: () -> Bool
     private let systemURL: () -> URL?
     private let micURL: () -> URL?
     private let work = DispatchQueue(label: "com.mpointer.kestrel.live-transcription", qos: .utility)
@@ -37,26 +38,29 @@ final class LiveTranscriptionService: ObservableObject {
 
     init(
         store: @escaping () -> CoreMemoryStore?,
-        modelPath: @escaping () -> String,
+        engine: @escaping () -> TranscriptionEngine,
+        detectLanguage: @escaping () -> Bool,
         systemURL: @escaping () -> URL?,
         micURL: @escaping () -> URL?
     ) {
         self.store = store
-        self.modelPath = modelPath
+        self.engine = engine
+        self.detectLanguage = detectLanguage
         self.systemURL = systemURL
         self.micURL = micURL
     }
 
     func start(meetingId: Int64) {
         stop()
-        guard FileManager.default.fileExists(atPath: modelPath()) else {
+        let engine = engine()
+        guard engine.isReady else {
             status = .unavailable("Live transcript needs the transcription model.")
             return
         }
         generation += 1
         segments = []
         status = .listening
-        runner = Runner(meetingId: meetingId, model: modelPath(), store: store())
+        runner = Runner(meetingId: meetingId, engine: engine, detectLanguage: detectLanguage(), store: store())
         interval = Self.baseInterval
         schedule()
     }
@@ -145,7 +149,8 @@ final class LiveTranscriptionService: ObservableObject {
         }
 
         private let meetingId: Int64
-        private let model: String
+        private let engine: TranscriptionEngine
+        private let detectLanguage: Bool
         private let store: CoreMemoryStore?
         private var channels: [String: Channel] = [:]
         private var buffers: [String: LiveChannelBuffer] = [:]
@@ -153,7 +158,7 @@ final class LiveTranscriptionService: ObservableObject {
         /// Absolute centisecond where the previous chunk of a channel ended, when that chunk
         /// ended with an overlap (the next chunk re-reads a little, and that text is dropped).
         private var keepFromCs: [String: Int64] = [:]
-        private var transcriber: CoreLiveTranscriber?
+        private var prepared = false
         private var failures = 0
         private let cancelLock = NSLock()
         private var cancelled = false
@@ -171,9 +176,10 @@ final class LiveTranscriptionService: ObservableObject {
             return cancelled
         }
 
-        init(meetingId: Int64, model: String, store: CoreMemoryStore?) {
+        init(meetingId: Int64, engine: TranscriptionEngine, detectLanguage: Bool, store: CoreMemoryStore?) {
             self.meetingId = meetingId
-            self.model = model
+            self.engine = engine
+            self.detectLanguage = detectLanguage
             self.store = store
         }
 
@@ -194,11 +200,10 @@ final class LiveTranscriptionService: ObservableObject {
                 }
             }
             if paused { return .paused }
-            if transcriber == nil {
-                transcriber = CoreLiveTranscriber(modelPath: model)
-                if transcriber == nil { return .failed(String(localized: "Live transcript could not load the transcription model.")) }
+            if !prepared {
                 // The multilingual model detects the meeting's language from the first speech.
-                if model == TranscriptionService.multilingualModelPath.path { transcriber?.setLanguage(nil) }
+                prepared = engine.prepareLive(detectLanguage: detectLanguage)
+                if !prepared { return .failed(String(localized: "Live transcript could not load the transcription model.")) }
             }
             var wrote = false
             var slowest: (chunkSeconds: Double, tookSeconds: Double)?
@@ -209,7 +214,7 @@ final class LiveTranscriptionService: ObservableObject {
                 buffers[channel.name] = buffer
                 let startCs = LiveChannelBuffer.centiseconds(forSample: taken.startSample)
                 let started = Date()
-                guard let json = transcriber?.transcribe(
+                guard let json = engine.transcribe(
                     samples: taken.samples, startOffsetCs: startCs,
                     threads: LiveCadence.threads(forCores: ProcessInfo.processInfo.activeProcessorCount)
                 ) else {

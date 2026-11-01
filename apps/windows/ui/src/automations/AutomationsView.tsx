@@ -15,14 +15,8 @@ import {
 } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { ApprovalView, HostView, ModelOptionView, RoutineView, RunView } from "../generated/types";
+import { useL10n } from "../l10n";
 import {
-  DESCRIPTIONS,
-  HOST_ANY,
-  MODEL_PICKER_NOTE,
-  NO_APPROVALS,
-  NO_OTHER_DEVICES,
-  NO_ROUTINES,
-  NO_RUNS,
   accountLine,
   actionDetail,
   actionHeadline,
@@ -30,11 +24,18 @@ import {
   canApprove,
   canChooseHost,
   canToggle,
+  description,
   hasModelPicker,
   hasSchedule,
+  hostAny,
   lastRunLine,
+  modelPickerNote,
   modelPrefValue,
   needsAccountPicker,
+  noApprovals,
+  noOtherDevices,
+  noRoutines,
+  noRuns,
   outcomeLabel,
   runHeading,
   scheduleChanged,
@@ -51,6 +52,7 @@ const REFRESH_MS = 30_000;
 /** The Automations tab (M3.4): what is waiting for approval, the routines, and what they have done. */
 export function AutomationsView(props: { onWaiting?: (count: number) => void }) {
   const { onWaiting } = props;
+  const { t, locale } = useL10n();
   const [routines, setRoutines] = useState<RoutineView[] | null>(null);
   const [runs, setRuns] = useState<RunView[]>([]);
   const [approvals, setApprovals] = useState<ApprovalView[]>([]);
@@ -140,10 +142,10 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
     <div className="stack">
       <section className="card about" aria-labelledby="approvals-heading">
         <h2 id="approvals-heading" className="section-label">
-          Needs your approval
+          {t("Needs your approval")}
         </h2>
         {approvals.length === 0 ? (
-          <p className="muted small">{NO_APPROVALS}</p>
+          <p className="muted small">{noApprovals()}</p>
         ) : (
           <ul className="approval-list">
             {approvals.map((a) => (
@@ -156,18 +158,17 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
 
       <section className="card about" aria-labelledby="routines-heading">
         <h2 id="routines-heading" className="section-label">
-          Routines
+          {t("Routines")}
         </h2>
         <p className="muted small">
-          Routines run on this PC while Whimbrel is running. A routine that would send or add something waits for your approval first, unless you
-          turn on approving it automatically for that routine.
+          {t("Routines run on this PC while Whimbrel is running. A routine that would send or add something waits for your approval first, unless you turn on approving it automatically for that routine.")}
         </p>
         {host && (
           <div className="stack-sm">
             <label className="field">
-              <span>Routines run on</span>
+              <span>{t("Routines run on")}</span>
               <select className="input" value={host.selected} disabled={!canChooseHost(host)} onChange={(e) => void chooseHost(e.target.value)}>
-                <option value="">{HOST_ANY}</option>
+                <option value="">{hostAny()}</option>
                 {host.options.map((o) => (
                   <option key={o.id} value={o.id}>
                     {o.label}
@@ -175,13 +176,13 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
                 ))}
               </select>
             </label>
-            {host.caption ? <p className="muted small">{host.caption}</p> : !canChooseHost(host) && <p className="muted small">{NO_OTHER_DEVICES}</p>}
+            {host.caption ? <p className="muted small">{host.caption}</p> : !canChooseHost(host) && <p className="muted small">{noOtherDevices()}</p>}
           </div>
         )}
         {routines === null ? (
-          <p className="muted small">{error ? "" : "Loading…"}</p>
+          <p className="muted small">{error ? "" : t("Loading…")}</p>
         ) : routines.length === 0 ? (
-          <p className="muted small">{NO_ROUTINES}</p>
+          <p className="muted small">{noRoutines()}</p>
         ) : (
           <ul className="routine-list">
             {routines.map((r) => (
@@ -202,17 +203,17 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
 
       <section className="card about" aria-labelledby="history-heading">
         <h2 id="history-heading" className="section-label">
-          History
+          {t("History")}
         </h2>
-        <p className="muted small">What your routines produced, most recent first.</p>
+        <p className="muted small">{t("What your routines produced, most recent first.")}</p>
         {runs.length === 0 ? (
-          <p className="muted small">{NO_RUNS}</p>
+          <p className="muted small">{noRuns()}</p>
         ) : (
           <ul className="run-list">
             {runs.map((run) => (
               <li key={run.id} className="run-item">
                 <button className="run-head" aria-expanded={open === run.id} onClick={() => setOpen(open === run.id ? null : run.id)}>
-                  <span>{runHeading(run)}</span>
+                  <span>{runHeading(run, locale)}</span>
                   <span className={`run-outcome run-outcome--${run.outcome}`}>{outcomeLabel(run.outcome)}</span>
                 </button>
                 <p className={open === run.id ? "run-summary" : "run-summary run-summary--clamped"}>{run.summary}</p>
@@ -227,6 +228,7 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
 
 function ApprovalRow(props: { approval: ApprovalView; busy: boolean; onApprove: (account: string | undefined) => void; onReject: () => void }) {
   const { approval } = props;
+  const { t, locale } = useL10n();
   const [account, setAccount] = useState(approval.account ?? "");
   useEffect(() => setAccount(approval.account ?? ""), [approval.account]);
   const line = accountLine(approval);
@@ -240,14 +242,14 @@ function ApprovalRow(props: { approval: ApprovalView; busy: boolean; onApprove: 
             <p>
               <strong>{actionHeadline(approval.action)}</strong>
             </p>
-            <p className="approval-detail">{actionDetail(approval.action)}</p>
+            <p className="approval-detail">{actionDetail(approval.action, locale)}</p>
           </>
         ) : (
           <p>{approval.summary}</p>
         )}
         {needsAccountPicker(approval) ? (
           <label className="field">
-            <span>Use account</span>
+            <span>{t("Use account")}</span>
             <select className="input" value={account} onChange={(e) => setAccount(e.target.value)}>
               {approval.accounts.map((email) => (
                 <option key={email} value={email}>
@@ -262,10 +264,10 @@ function ApprovalRow(props: { approval: ApprovalView; busy: boolean; onApprove: 
       </div>
       <div className="approval-actions">
         <button className="mode mode--active" disabled={!canApprove(approval) || props.busy} onClick={() => props.onApprove(account || undefined)}>
-          {props.busy ? "Working…" : "Approve"}
+          {props.busy ? t("Working…") : t("Approve")}
         </button>
         <button className="mode" disabled={props.busy} onClick={props.onReject}>
-          Reject
+          {t("Reject")}
         </button>
       </div>
     </li>
@@ -281,6 +283,7 @@ function RoutineRow(props: {
   onModelPref: (pref: string) => void;
 }) {
   const { routine, modelOptions } = props;
+  const { t, locale } = useL10n();
   const [time, setTime] = useState(routine.schedule);
   useEffect(() => setTime(routine.schedule), [routine.schedule]);
   const note = unavailableNote(routine);
@@ -292,24 +295,24 @@ function RoutineRow(props: {
           <input type="checkbox" checked={routine.enabled} disabled={!canToggle(routine)} onChange={(e) => props.onToggle(e.target.checked)} />
           <strong>{routine.name}</strong>
         </label>
-        <p className="muted small">{DESCRIPTIONS[routine.kind]}</p>
+        <p className="muted small">{description(routine.kind)}</p>
         {note && <p className="small routine-unavailable">{note}</p>}
         {routine.writes && note === null && (
           <>
             <label className="toggle">
               <input type="checkbox" checked={routine.autoApprove} onChange={(e) => props.onAutoApprove(e.target.checked)} />
-              Approve automatically
+              {t("Approve automatically")}
             </label>
             <p className="muted small">{autoApproveNote(routine.kind)}</p>
           </>
         )}
-        <p className="muted small">{lastRunLine(routine)}</p>
+        <p className="muted small">{lastRunLine(routine, locale)}</p>
         {hasModelPicker(routine) && modelOptions.length > 0 && (
           <label className="field">
-            <span>Model</span>
+            <span>{t("Model")}</span>
             <select
               className="input"
-              aria-label={`${routine.name} model`}
+              aria-label={t("{name} model", { name: routine.name })}
               value={modelPrefValue(routine, modelOptions)}
               onChange={(e) => props.onModelPref(e.target.value)}
             >
@@ -319,13 +322,13 @@ function RoutineRow(props: {
                 </option>
               ))}
             </select>
-            <span className="muted small">{MODEL_PICKER_NOTE}</span>
+            <span className="muted small">{modelPickerNote()}</span>
           </label>
         )}
       </div>
       {hasSchedule(routine) && (
         <label className="field routine-time">
-          <span>Time</span>
+          <span>{t("Time")}</span>
           <input
             className="input"
             type="time"

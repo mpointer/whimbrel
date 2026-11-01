@@ -94,3 +94,7 @@ To re-render after editing the sources (needs Playwright with Chromium, plus ffm
 node scripts/render-demo-video.mjs
 node scripts/render-og-image.mjs
 ```
+
+## Translated site
+
+Spanish lives at `/es/` and Canadian French at `/fr/`. Translated pages are in `site/pages/<locale>/`, partials in `site/partials/<locale>/`, layouts and strings in `site/i18n/`. Links go to a page's translation when there is one; privacy, terms, compare and the changelog stay English. The build warns when a translated page is behind its English page. To refresh, run `ANTHROPIC_API_KEY=... python3 website/scripts/translate-site.py --model claude-sonnet-5-5`; it re-translates only the pages that changed. A changed partial or layout needs its translated file deleted first.

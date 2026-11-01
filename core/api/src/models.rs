@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use sha2::Digest;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -39,14 +40,19 @@ pub struct ModelSpec {
     /// Share of the overall progress fraction this step represents.
     pub weight: f64,
     pub archive_member: Option<&'static str>,
+    /// SHA-256 of the downloaded file (the archive, for an archive), checked before it is
+    /// unpacked or moved into place. Every production spec has one.
+    pub sha256: Option<&'static str>,
     /// Whole-request timeout, the same role `URLSessionConfiguration.timeoutIntervalForResource` had.
     pub timeout: Duration,
 }
 
 const WHISPER_MODEL_URL: &str =
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin";
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en.bin";
 pub const WHISPER_MULTILINGUAL_URL: &str =
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin";
+const WHISPER_TURBO_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin";
 const SEGMENTATION_ARCHIVE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2";
 const EMBEDDING_MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx";
 const SEGMENTATION_ARCHIVE_MEMBER: &str = "sherpa-onnx-pyannote-segmentation-3-0/model.onnx";
@@ -62,6 +68,7 @@ pub fn manifest(destinations: &ModelDestinations) -> Vec<ModelSpec> {
             min_bytes: 10_000_000,
             weight: 0.6,
             archive_member: None,
+            sha256: Some("921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f"),
             timeout: DOWNLOAD_TIMEOUT,
         },
         ModelSpec {
@@ -71,6 +78,7 @@ pub fn manifest(destinations: &ModelDestinations) -> Vec<ModelSpec> {
             min_bytes: 1_000_000,
             weight: 0.1,
             archive_member: Some(SEGMENTATION_ARCHIVE_MEMBER),
+            sha256: Some("24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488"),
             timeout: DOWNLOAD_TIMEOUT,
         },
         ModelSpec {
@@ -80,6 +88,7 @@ pub fn manifest(destinations: &ModelDestinations) -> Vec<ModelSpec> {
             min_bytes: 5_000_000,
             weight: 0.3,
             archive_member: None,
+            sha256: Some("e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012"),
             timeout: DOWNLOAD_TIMEOUT,
         },
     ];
@@ -91,6 +100,7 @@ pub fn manifest(destinations: &ModelDestinations) -> Vec<ModelSpec> {
             min_bytes: 100_000_000,
             weight: 1.2,
             archive_member: None,
+            sha256: Some("60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
             timeout: DOWNLOAD_TIMEOUT,
         });
     }
@@ -107,12 +117,12 @@ pub fn manifest(destinations: &ModelDestinations) -> Vec<ModelSpec> {
 pub fn embedding_manifest(dir: &Path) -> Vec<ModelSpec> {
     let target = memory::embedding_model_dir(dir);
     [
-        ("Search model configuration", "config.json", 200, 0.01),
-        ("Search model tokenizer", "tokenizer.json", 5_000_000, 0.04),
-        ("Search model weights", "model.safetensors", 300_000_000, 0.95),
+        ("Search model configuration", "config.json", 200, 0.01, "6300193cb75e01cf80c96decef7187dfb33094d97cc1490b7ead6ff134476e4e"),
+        ("Search model tokenizer", "tokenizer.json", 5_000_000, 0.04, "2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8"),
+        ("Search model weights", "model.safetensors", 300_000_000, 0.95, "eaa086f0ffee582aeb45b36e34cdd1fe2d6de2bef61f8a559a1bbc9bd955917b"),
     ]
     .into_iter()
-    .map(|(name, file, min_bytes, weight)| ModelSpec {
+    .map(|(name, file, min_bytes, weight, sha256)| ModelSpec {
         name,
         url: format!(
             "https://huggingface.co/{}/resolve/{}/{file}",
@@ -123,9 +133,25 @@ pub fn embedding_manifest(dir: &Path) -> Vec<ModelSpec> {
         min_bytes,
         weight,
         archive_member: None,
+        sha256: Some(sha256),
         timeout: Duration::from_secs(900),
     })
     .collect()
+}
+
+/// large-v3-turbo, the better whisper model. Never part of [`manifest`]: it is large, so it
+/// downloads only when someone asks for it.
+pub fn turbo_spec(destination: PathBuf) -> ModelSpec {
+    ModelSpec {
+        name: "Better transcription model",
+        url: WHISPER_TURBO_URL.to_string(),
+        destination,
+        min_bytes: 500_000_000,
+        weight: 1.0,
+        archive_member: None,
+        sha256: Some("394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"),
+        timeout: Duration::from_secs(1800),
+    }
 }
 
 /// A snapshot of a job, as [`download_poll`] returns it. `status` is display-ready.
@@ -274,7 +300,7 @@ fn install_if_missing(spec: &ModelSpec, cancel: &AtomicBool) -> Result<(), Strin
     }
 }
 
-/// Downloads to a `.partial` sibling first, verifies the size floor, then moves it
+/// Downloads to a `.partial` sibling first, verifies the size floor and hash, then moves it
 /// into place, so a killed or interrupted download never leaves a file at the real
 /// destination that an existence check would treat as complete.
 fn download_file(spec: &ModelSpec, destination: &Path, cancel: &AtomicBool) -> Result<(), String> {
@@ -295,6 +321,7 @@ fn download_file(spec: &ModelSpec, destination: &Path, cancel: &AtomicBool) -> R
         let mut file = std::fs::File::create(&partial).map_err(|e| format!("Failed to download {name}: {e}"))?;
         let mut buf = [0u8; 64 * 1024];
         let mut size: u64 = 0;
+        let mut hasher = sha2::Sha256::new();
         loop {
             if cancel.load(Ordering::Relaxed) {
                 return Err("cancelled".to_string());
@@ -304,6 +331,7 @@ fn download_file(spec: &ModelSpec, destination: &Path, cancel: &AtomicBool) -> R
                 break;
             }
             file.write_all(&buf[..n]).map_err(|e| format!("Failed to download {name}: {e}"))?;
+            hasher.update(&buf[..n]);
             size += n as u64;
         }
         file.flush().map_err(|e| format!("Failed to download {name}: {e}"))?;
@@ -312,6 +340,11 @@ fn download_file(spec: &ModelSpec, destination: &Path, cancel: &AtomicBool) -> R
             return Err(format!(
                 "{name} downloaded but is unexpectedly small ({size} bytes) — likely a truncated download or an error page instead of the real file."
             ));
+        }
+        if let Some(expected) = spec.sha256 {
+            if hex::encode(hasher.finalize()) != expected {
+                return Err(format!("{name} failed its integrity check, so it wasn't installed. Try again."));
+            }
         }
         move_into_place(&partial, destination).map_err(|e| format!("Failed to download {name}: {e}"))
     })();
@@ -383,7 +416,7 @@ mod tests {
     }
 
     fn spec(name: &'static str, url: String, destination: PathBuf, min_bytes: u64, weight: f64) -> ModelSpec {
-        ModelSpec { name, url, destination, min_bytes, weight, archive_member: None, timeout: Duration::from_secs(2) }
+        ModelSpec { name, url, destination, min_bytes, weight, archive_member: None, sha256: None, timeout: Duration::from_secs(2) }
     }
 
     fn wait_done(job_id: &str) -> DownloadProgress {
@@ -535,6 +568,7 @@ mod tests {
                     None => "http://127.0.0.1:9/closed".to_string(),
                 },
                 min_bytes: 4,
+                sha256: None,
                 timeout: Duration::from_secs(2),
                 ..spec
             })
@@ -598,6 +632,40 @@ mod tests {
             embedding_model_path: "/m/e.onnx".into(),
             whisper_multilingual_path: multilingual.map(PathBuf::from),
         }
+    }
+
+    #[test]
+    fn every_production_download_is_pinned() {
+        let dir = Path::new("/m");
+        for spec in manifest(&destinations(Some("/m/ggml-base.bin"))).iter().chain(embedding_manifest(dir).iter()).chain([turbo_spec("/m/t.bin".into())].iter()) {
+            let hash = spec.sha256.unwrap_or_else(|| panic!("{} has no SHA-256", spec.name));
+            assert_eq!(hash.len(), 64, "{}", spec.name);
+            assert!(!spec.url.contains("/resolve/main/"), "{} follows a moving branch", spec.name);
+        }
+    }
+
+    #[test]
+    fn a_download_with_the_wrong_hash_is_rejected_and_leaves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.bin");
+        let mut bad = spec("Transcription model", serve(vec![1u8; 100], None, false), dest.clone(), 10, 1.0);
+        bad.sha256 = Some("0000000000000000000000000000000000000000000000000000000000000000");
+        let p = wait_done(&start_with_manifest(vec![bad]));
+        assert!(p.error.unwrap().contains("integrity"));
+        assert!(!dest.exists() && !partial_path(&dest).exists());
+    }
+
+    #[test]
+    fn a_download_with_the_right_hash_installs() {
+        use sha2::{Digest, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.bin");
+        let body = vec![1u8; 100];
+        let hash: &'static str = Box::leak(hex::encode(Sha256::digest(&body)).into_boxed_str());
+        let mut good = spec("Transcription model", serve(body, None, false), dest.clone(), 10, 1.0);
+        good.sha256 = Some(hash);
+        assert_eq!(wait_done(&start_with_manifest(vec![good])).error, None);
+        assert!(dest.exists());
     }
 
     #[test]

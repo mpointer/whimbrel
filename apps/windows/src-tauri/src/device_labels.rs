@@ -7,6 +7,7 @@
 //! "Device xxxxxx" until its pane has been opened (plan optional Task B).
 
 use std::collections::HashMap;
+use crate::l10n::tr;
 
 /// The fallback id of Mac rows captured before sync identities existed.
 pub const LEGACY_SPIKE_DEVICE: &str = "spike-device";
@@ -27,9 +28,9 @@ impl DeviceLabeler {
             return name.to_string();
         }
         if device_id == LEGACY_SPIKE_DEVICE {
-            return "Unknown device".to_string();
+            return tr("Unknown device", &[]);
         }
-        format!("Device {}", device_id.chars().take(6).collect::<String>())
+        tr("Device {id}", &[("id", &device_id.chars().take(6).collect::<String>())])
     }
 
     pub fn is_this_device(&self, device_id: &str) -> bool {

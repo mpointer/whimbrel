@@ -5,19 +5,23 @@ import type { AskRequest } from "../chat/chatModel";
 import { DigestView } from "../today/DigestView";
 import { describeError, isCommandError } from "../errors";
 import type { DeviceTag, LibraryRow } from "../generated/types";
+import { t, useL10n } from "../l10n";
 import { Detail, type Selection } from "./Detail";
 import { fullDateTimeLabel, groupByDay, headline, rowKey, rowTs, rowWhen } from "./rows";
 
 type Mode = "recent" | "episodes" | "keyword" | "semantic" | "ask" | "digest";
 
-const MODES: { id: Mode; label: string; comingIn?: string }[] = [
-  { id: "recent", label: "Recent" },
-  { id: "episodes", label: "Episodes" },
-  { id: "keyword", label: "Keyword" },
-  { id: "semantic", label: "Semantic" },
-  { id: "ask", label: "Ask" },
-  { id: "digest", label: "Digest" },
-];
+/** The view picker's buttons; a function, so the labels follow the language. */
+function modes(): { id: Mode; label: string; comingIn?: string }[] {
+  return [
+    { id: "recent", label: t("Recent") },
+    { id: "episodes", label: t("Episodes") },
+    { id: "keyword", label: t("Keyword") },
+    { id: "semantic", label: t("Semantic") },
+    { id: "ask", label: t("Ask") },
+    { id: "digest", label: t("Digest") },
+  ];
+}
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -42,6 +46,7 @@ export function LibraryView({ askRequest, onAskHandled }: { askRequest?: AskRequ
   const [showCaptures, setShowCaptures] = useState(true);
   const [hiddenApps, setHiddenApps] = useState<string[]>([]);
   const [selected, setSelected] = useState<Selection | null>(null);
+  const { locale } = useL10n();
 
   const run = useCallback((load: () => Promise<LibraryRow[]>) => {
     setLoading(true);
@@ -98,15 +103,16 @@ export function LibraryView({ askRequest, onAskHandled }: { askRequest?: AskRequ
     run(() => librarySearch(query, mode === "semantic"));
   };
 
-  const current = MODES.find((m) => m.id === mode)!;
+  const all = modes();
+  const current = all.find((m) => m.id === mode)!;
 
   if (selected) return <Detail selection={selected} onBack={back} />;
 
   return (
     <div className="library">
       <div className="toolbar">
-        <div className="mode-picker" role="group" aria-label="Library view">
-          {MODES.map((m) => (
+        <div className="mode-picker" role="group" aria-label={t("Library view")}>
+          {all.map((m) => (
             <button key={m.id} className={m.id === mode ? "mode mode--active" : "mode"} aria-pressed={m.id === mode} onClick={() => setMode(m.id)}>
               {m.label}
             </button>
@@ -116,24 +122,24 @@ export function LibraryView({ askRequest, onAskHandled }: { askRequest?: AskRequ
           <>
             <label className="toggle">
               <input type="checkbox" checked={showCaptures} onChange={(e) => toggleCaptures(e.target.checked)} />
-              Show screen captures
+              {t("Show screen captures")}
             </label>
             <button className="mode" onClick={() => run(libraryRecent)}>
-              Refresh
+              {t("Refresh")}
             </button>
           </>
         )}
         {mode === "episodes" && (
           <label className="toggle">
             <input type="checkbox" checked={includeHidden} onChange={(e) => setIncludeHidden(e.target.checked)} />
-            Show hidden episodes
+            {t("Show hidden episodes")}
           </label>
         )}
         {mode === "episodes" && hiddenApps.length > 0 && (
-          <span className="row-meta small muted" aria-label="Hidden apps">
-            Hidden apps:
+          <span className="row-meta small muted" aria-label={t("Hidden apps")}>
+            {t("Hidden apps:")}
             {hiddenApps.map((app) => (
-              <button key={app} className="chip citation" title="Show this app's episodes again" onClick={() => unhideApp(app)}>
+              <button key={app} className="chip citation" title={t("Show this app's episodes again")} onClick={() => unhideApp(app)}>
                 {app} ×
               </button>
             ))}
@@ -147,21 +153,23 @@ export function LibraryView({ askRequest, onAskHandled }: { askRequest?: AskRequ
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={mode === "keyword" ? "Words that appear in a capture or transcript" : "Describe what you're looking for"}
-            aria-label={`${current.label} search`}
+            placeholder={mode === "keyword" ? t("Words that appear in a capture or transcript") : t("Describe what you're looking for")}
+            aria-label={mode === "keyword" ? t("Keyword search") : t("Semantic search")}
             autoFocus
           />
           <button type="submit" className="mode mode--active">
-            Search
+            {t("Search")}
           </button>
         </form>
       )}
       {mode === "semantic" && (
-        <p className="muted small">Semantic search needs the search model from Settings → Semantic search. Until it is downloaded it finds nothing.</p>
+        <p className="muted small">
+          {t("Semantic search needs the search model from Settings → Semantic search. Until it is downloaded it finds nothing.")}
+        </p>
       )}
 
       {current.comingIn ? (
-        <div className="card empty-state">Coming in {current.comingIn}.</div>
+        <div className="card empty-state">{t("Coming in {milestone}.", { milestone: current.comingIn })}</div>
       ) : mode === "ask" ? (
         <AskView request={askRequest} onRequestHandled={onAskHandled} />
       ) : mode === "digest" ? (
@@ -171,17 +179,17 @@ export function LibraryView({ askRequest, onAskHandled }: { askRequest?: AskRequ
           {error}
         </div>
       ) : loading ? (
-        <p className="muted">Loading…</p>
+        <p className="muted">{t("Loading…")}</p>
       ) : rows.length === 0 ? (
         <div className="card empty-state">
           {mode === "recent"
-            ? "Nothing captured yet. Captures appear here as you work, from this PC and, once sync is on, your other devices."
+            ? t("Nothing captured yet. Captures appear here as you work, from this PC and, once sync is on, your other devices.")
             : mode === "episodes"
-              ? "No episodes yet. They form from a few minutes of captures in one app."
-              : "No matches."}
+              ? t("No episodes yet. They form from a few minutes of captures in one app.")
+              : t("No matches.")}
         </div>
       ) : (
-        groupByDay(rows).map((group) => (
+        groupByDay(rows, new Date(), locale).map((group) => (
           <section key={group.day} aria-label={group.day}>
             <h3 className="day">{group.day}</h3>
             <ul className="rows">
@@ -201,8 +209,8 @@ export function LibraryView({ askRequest, onAskHandled }: { askRequest?: AskRequ
                       <span className="row-top">
                         <span className="row-title">{h.title}</span>
                         {ts !== null && (
-                          <time className="muted small" dateTime={new Date(ts).toISOString()} title={fullDateTimeLabel(ts)}>
-                            {rowWhen(row)}
+                          <time className="muted small" dateTime={new Date(ts).toISOString()} title={fullDateTimeLabel(ts, locale)}>
+                            {rowWhen(row, new Date(), locale)}
                           </time>
                         )}
                       </span>

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { meetingRecordStart, meetingRecordStop, meetingRecordingStatus } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { MeetingRecordingView } from "../generated/types";
+import { useL10n } from "../l10n";
 import { elapsedLabel, recordAction } from "./recordingModel";
 
 function message(e: unknown): string {
@@ -14,6 +15,7 @@ export function RecordingCard({ onChanged }: { onChanged?: () => void } = {}) {
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { t } = useL10n();
 
   useEffect(() => {
     const load = () =>
@@ -47,31 +49,33 @@ export function RecordingCard({ onChanged }: { onChanged?: () => void } = {}) {
   return (
     <section className="card" aria-labelledby="record-heading">
       <h2 id="record-heading" className="section-label">
-        Record a meeting
+        {t("Record a meeting")}
       </h2>
       {recording ? (
         <p role="status" className="recording-line">
-          <span className="recording-dot" aria-hidden="true" /> Recording · {elapsedLabel(view.startedUnixMs!, now)}
+          <span className="recording-dot" aria-hidden="true" />{" "}
+          {t("Recording · {elapsed}", { elapsed: elapsedLabel(view.startedUnixMs!, now) })}
         </p>
       ) : (
         <p className="muted">
-          Records everything this PC plays and your microphone. Audio stays on this PC.
+          {t("Records everything this PC plays and your microphone. Audio stays on this PC.")}
         </p>
       )}
       {view?.degraded && <p role="alert">{view.degraded}</p>}
       {view?.processing && (
         <p role="status" className="muted">
-          {view.processing.label} Its transcript and summary appear in Library → Recent when it's done.
+          {/* The label is core's status line; W5 translates it. */}
+          {t("{label} Its transcript and summary appear in Library → Recent when it's done.", { label: view.processing.label })}
         </p>
       )}
       {view?.failure && !view.processing && (
         <p role="alert">
-          The last meeting didn't finish processing: {view.failure.message}
+          {t("The last meeting didn't finish processing: {message}", { message: view.failure.message })}
         </p>
       )}
       <div className="toolbar">
         <button className="mode mode--active" onClick={press} disabled={busy || action === "wait"}>
-          {action === "stop" ? "Stop recording" : "Record now"}
+          {action === "stop" ? t("Stop recording") : t("Record now")}
         </button>
       </div>
       {error && <p role="alert">{error}</p>}

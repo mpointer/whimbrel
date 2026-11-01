@@ -90,6 +90,9 @@ pub mod keys {
     /// Device-local, never synced: "Write notes and summaries in", absent for "Same as app language"
     /// (the Mac's `AppLanguage.writeInKey`).
     pub const OUTPUT_LANGUAGE_OVERRIDE: &str = "app.outputLanguageOverride";
+    /// Device-local, never synced: "I have meetings in other languages" (the Mac's
+    /// `AppLanguage.multilingualKey`). Absent follows the UI language.
+    pub const TRANSCRIPTION_MULTILINGUAL: &str = "transcription.multilingual";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -413,7 +416,7 @@ impl SettingsFile {
             cheap_first: self.get(keys::CHEAP_FIRST).unwrap_or(d.cheap_first),
             use_local_model: self.get(keys::USE_LOCAL_MODEL).unwrap_or(d.use_local_model),
             openrouter_prices: self.openrouter_prices(),
-            output_language: crate::l10n::output_language(&self.output_language_override()),
+            output_language: crate::l10n::output_language(&self.output_language_override(), self.multilingual()),
         }
     }
 
@@ -691,6 +694,22 @@ impl SettingsFile {
     pub fn set_output_language_override(&mut self, tag: &str) {
         self.set(keys::OUTPUT_LANGUAGE_OVERRIDE, (!tag.is_empty()).then_some(tag));
     }
+
+    /// "I have meetings in other languages": the stored choice, else on when the app's language
+    /// isn't English.
+    pub fn multilingual(&self) -> bool {
+        multilingual_or_default(self.get(keys::TRANSCRIPTION_MULTILINGUAL), &crate::l10n::ui_language())
+    }
+
+    /// Written only when the user flips the toggle, so an unset choice keeps following the UI language.
+    pub fn set_multilingual(&mut self, on: bool) {
+        self.set(keys::TRANSCRIPTION_MULTILINGUAL, Some(on));
+    }
+}
+
+/// The Mac's `AppLanguage.multilingual`: the stored choice, else on for a UI language other than English.
+pub fn multilingual_or_default(stored: Option<bool>, ui_language: &str) -> bool {
+    stored.unwrap_or_else(|| !ui_language.to_ascii_lowercase().starts_with("en"))
 }
 
 #[cfg(test)]
@@ -702,6 +721,30 @@ mod language_tests {
         // Windows has no settings sync yet; these are the names the Mac keeps out of it.
         assert_eq!(keys::OUTPUT_LANGUAGE_OVERRIDE, "app.outputLanguageOverride");
         assert_eq!(keys::APP_LANGUAGE, "app.language");
+        assert_eq!(keys::TRANSCRIPTION_MULTILINGUAL, "transcription.multilingual");
+    }
+
+    #[test]
+    fn multilingual_default_follows_ui_language() {
+        assert!(!multilingual_or_default(None, "en-US"));
+        assert!(!multilingual_or_default(None, "en-GB"));
+        assert!(multilingual_or_default(None, "es-US"));
+        assert!(multilingual_or_default(None, "fr-CA"));
+        assert!(multilingual_or_default(Some(true), "en-US"), "the toggle wins");
+        assert!(!multilingual_or_default(Some(false), "fr-CA"));
+    }
+
+    #[test]
+    fn the_multilingual_toggle_round_trips() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-multilingual-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = SettingsFile::load(&dir.join("settings.json"));
+        assert!(s.get::<bool>(keys::TRANSCRIPTION_MULTILINGUAL).is_none(), "unset until the user flips it");
+        s.set_multilingual(true);
+        assert!(s.multilingual());
+        s.set_multilingual(false);
+        assert!(!s.multilingual());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -355,7 +355,7 @@ fn open_popup(app: &AppHandle, anchor: Rect) -> tauri::Result<()> {
 pub async fn tray_status(app: AppHandle) -> Result<TrayStatus, crate::error::CommandError> {
     tauri::async_runtime::spawn_blocking(move || refresh(&app))
         .await
-        .map_err(|e| crate::error::CommandError::store(format!("tray status failed: {e}")))
+        .map_err(|e| crate::error::CommandError::store(tr("Tray status failed: {error}", &[("error", &e.to_string())])))
 }
 
 /// Opens the main window; the popup closes as it loses focus.

@@ -17,6 +17,12 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const siteDir = join(root, "site");
 const outDir = join(root, "dist");
 const site = JSON.parse(readFileSync(join(siteDir, "config.json"), "utf8"));
+// Translated sites: pages live in site/pages/<locale>/, partials in site/partials/<locale>/ and
+// strings in site/i18n/ (written by scripts/translate-site.py). A page with no translation stays English.
+const locales = Object.fromEntries(
+  ["es", "fr"].map((l) => [l, JSON.parse(readFileSync(join(siteDir, "i18n", `${l}.json`), "utf8"))]),
+);
+const localeOf = (route) => route.match(/^\/(es|fr)\//)?.[1] ?? null;
 const siteUrl = site.url.replace(/\/$/, "");
 
 const errors = [];
@@ -71,8 +77,9 @@ function render(template, scope, depth = 0) {
   if (depth > 8) throw new Error("partials nested too deeply");
   return template
     .replace(/\{\{>\s*([\w/-]+)\s*\}\}/g, (_, name) => {
-      if (!(name in partials)) throw new Error(`unknown partial: ${name}`);
-      return render(partials[name], scope, depth + 1);
+      const key = scope.locale && `${scope.locale}/${name}` in partials ? `${scope.locale}/${name}` : name;
+      if (!(key in partials)) throw new Error(`unknown partial: ${name}`);
+      return render(partials[key], scope, depth + 1);
     })
     .replace(/\{\{\{\s*([\w.]+)\s*\}\}\}/g, (_, path) => String(lookup(path, scope) ?? "")) // raw
     .replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, path) => {
@@ -140,8 +147,8 @@ function faqPage(faq) {
   };
 }
 
-function breadcrumbList(crumbs) {
-  const items = [{ name: "Home", path: "/" }, ...crumbs];
+function breadcrumbList(crumbs, home = "Home") {
+  const items = [{ name: home, path: "/" }, ...crumbs];
   return {
     "@type": "BreadcrumbList",
     itemListElement: items.map((c, i) => ({ "@type": "ListItem", position: i + 1, name: c.name, item: `${siteUrl}${c.path}` })),
@@ -154,8 +161,8 @@ function renderFaq(faq) {
     .join("\n");
 }
 
-function renderCrumbs(crumbs) {
-  const items = [{ name: "Home", path: "/" }, ...crumbs];
+function renderCrumbs(crumbs, home = "Home") {
+  const items = [{ name: home, path: "/" }, ...crumbs];
   const lis = items
     .map((c, i) => (i === items.length - 1 ? `<li aria-current="page">${escapeHtml(c.name)}</li>` : `<li><a href="${c.path}">${escapeHtml(c.name)}</a></li>`))
     .join("");
@@ -230,9 +237,40 @@ const assetVersion = {
   js: fingerprint(join(siteDir, "assets", "site.js")),
 };
 
-const layout = readFileSync(join(siteDir, "layout.html"), "utf8");
+const layouts = {
+  en: readFileSync(join(siteDir, "layout.html"), "utf8"),
+  es: readFileSync(join(siteDir, "i18n", "layout.es.html"), "utf8"),
+  fr: readFileSync(join(siteDir, "i18n", "layout.fr.html"), "utf8"),
+};
 const pageFiles = walk(join(siteDir, "pages")).filter((f) => f.endsWith(".html"));
 const routes = new Set(pageFiles.map(routeFor));
+/** An internal link as this locale sees it: its translated page if there is one. */
+function localizePath(path, locale) {
+  const [, base, rest] = path.match(/^([^?#]*)(.*)$/);
+  return routes.has(`/${locale}${base}`) ? `/${locale}${base}${rest}` : path;
+}
+
+/** The hreflang links and the header's language picker for a page. */
+function languageLinks(route, locale, indexable) {
+  const enRoute = locale ? route.slice(locale.length + 1) : route;
+  const alternates = [
+    ["en", "English", enRoute, routes.has(enRoute)],
+    ...Object.entries(locales).map(([l, c]) => [c.hreflang, c.label, `/${l}${enRoute}`, routes.has(`/${l}${enRoute}`), l]),
+  ];
+  const current = locale ? locales[locale].hreflang : "en";
+  const links = alternates.map(([tag, label, path, exists, l]) => {
+    const href = exists ? path : l ? `/${l}/` : "/";
+    return `<a href="${href}" hreflang="${tag}" lang="${tag}"${tag === current ? ' aria-current="true"' : ""}>${label}</a>`;
+  });
+  const present = alternates.filter((a) => a[3]);
+  const tags =
+    indexable && present.length > 1
+      ? [...present.map(([tag, , path]) => `<link rel="alternate" hreflang="${tag}" href="${siteUrl}${path}">`),
+         `<link rel="alternate" hreflang="x-default" href="${siteUrl}${enRoute}">`].join("\n  ")
+      : "";
+  return { tags, picker: `<nav class="lang-switch" aria-label="Language">${links.join("")}</nav>` };
+}
+
 const seenTitles = new Map();
 const seenDescriptions = new Map();
 const sitemap = [];
@@ -247,10 +285,18 @@ for (const file of pageFiles) {
   }
   const meta = JSON.parse(m[1]);
   const body = raw.slice(m[0].length);
+  const locale = localeOf(route);
+  const home = locale ? locales[locale].home : "Home";
+  const pageSite = locale ? { ...site, ...locales[locale].site } : site;
+  if (locale) {
+    const source = join(siteDir, "pages", relative(join(siteDir, "pages", locale), file));
+    const hash = createHash("sha256").update(readFileSync(source)).digest("hex").slice(0, 12);
+    if (meta.sourceHash !== hash) console.warn(`warning: ${route} is behind its English page; run scripts/translate-site.py`);
+  }
   const indexable = !meta.noindex;
 
   // SEO checks. Limits follow what Google typically shows before truncating.
-  const fullTitle = route === "/" ? meta.title : `${meta.title} | ${site.name}`;
+  const fullTitle = route === "/" || route === `/${locale}/` ? meta.title : `${meta.title} | ${site.name}`;
   if (indexable) {
     if (fullTitle.length > 65) fail(route, `title is ${fullTitle.length} chars (max 65): "${fullTitle}"`);
     if (meta.description.length < 70 || meta.description.length > 160)
@@ -262,10 +308,11 @@ for (const file of pageFiles) {
   }
 
   const scope = {
-    site,
+    site: pageSite,
+    locale,
     page: { ...meta, route },
     faq: meta.faq ? renderFaq(meta.faq) : "",
-    crumbs: meta.crumbs ? renderCrumbs(meta.crumbs) : "",
+    crumbs: meta.crumbs ? renderCrumbs(meta.crumbs, home) : "",
     changelog: meta.changelog ? renderChangelog() : "",
   };
   if (meta.changelog && releases.length === 0) fail(route, "no releases in site/data/releases.json (run scripts/fetch-releases.mjs)");
@@ -286,15 +333,17 @@ for (const file of pageFiles) {
     else throw new Error(`${route}: unknown schema kind ${kind}`);
   }
   if (meta.faq) graph.push(faqPage(meta.faq.map(({ q, a }) => ({ q, a: stripTags(a) }))));
-  if (meta.crumbs) graph.push(breadcrumbList(meta.crumbs));
+  if (meta.crumbs) graph.push(breadcrumbList(locale ? meta.crumbs.map((c) => ({ ...c, path: localizePath(c.path, locale) })) : meta.crumbs, home));
   const jsonLd = graph.length
     ? `<script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", "@graph": graph }).replace(/</g, "\\u003c")}</script>`
     : "";
 
   const canonical = route === "/404.html" ? "" : `${siteUrl}${route}`;
-  const html = render(layout, {
-    site,
+  const languages = languageLinks(route, locale, indexable);
+  let html = render(layouts[locale ?? "en"], {
+    site: pageSite,
     page: {
+      lang: locale ? locales[locale].hreflang : "en",
       title: fullTitle,
       description: meta.description,
       canonical,
@@ -305,8 +354,12 @@ for (const file of pageFiles) {
     },
     assets: assetVersion,
     year: String(new Date().getFullYear()),
-    raw: { content, jsonLd, canonicalTag: canonical ? `<link rel="canonical" href="${canonical}">` : "" },
+    raw: { content, jsonLd, canonicalTag: canonical ? `<link rel="canonical" href="${canonical}">` : "", hreflang: languages.tags, langSwitch: "<!--lang-switch-->" },
   });
+  if (locale) {
+    html = html.replace(/href="(\/(?!assets\/|media\/|api\/)[^"]*)"/g, (_, href) => `href="${localizePath(href, locale)}"`);
+  }
+  html = html.replace("<!--lang-switch-->", languages.picker);
 
   for (const [, href] of html.matchAll(/href="(\/[^"#?]*)/g)) {
     if (href.startsWith("/assets/") || href.startsWith("/media/") || href.startsWith("/api/")) continue;
@@ -333,7 +386,7 @@ writeFileSync(
 );
 writeFileSync(
   join(outDir, "robots.txt"),
-  `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /download/thanks/\nDisallow: /download/unavailable/\n\nSitemap: ${siteUrl}/sitemap.xml\n`,
+  `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /download/thanks/\nDisallow: /download/unavailable/\nDisallow: /es/download/thanks/\nDisallow: /es/download/unavailable/\nDisallow: /fr/download/thanks/\nDisallow: /fr/download/unavailable/\n\nSitemap: ${siteUrl}/sitemap.xml\n`,
 );
 
 // Launch blockers that shouldn't break local builds or CI.

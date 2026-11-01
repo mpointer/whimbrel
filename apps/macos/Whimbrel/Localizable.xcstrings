@@ -2199,6 +2199,40 @@
         }
       }
     },
+    "Anything else, Whimbrel asks for when you first use it. Its models are downloading in the background." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alles Weitere fragt Whimbrel bei der ersten Nutzung ab. Die Modelle werden im Hintergrund geladen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel pedirá cualquier otra cosa cuando la uses por primera vez. Sus modelos se están descargando en segundo plano."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel demandera le reste à la première utilisation. Ses modèles se téléchargent en arrière-plan."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel demandera le reste à la première utilisation. Ses modèles se téléchargent en arrière-plan."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel pede o restante quando você usar pela primeira vez. Os modelos estão sendo baixados em segundo plano."
+          }
+        }
+      }
+    },
     "App version" : {
       "localizations" : {
         "de" : {
@@ -3157,6 +3191,74 @@
         }
       }
     },
+    "Better" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Besser"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mejor"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meilleure"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meilleure"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Melhor"
+          }
+        }
+      }
+    },
+    "Better transcripts are available." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bessere Transkripte sind verfügbar."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hay mejores transcripciones disponibles."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De meilleures transcriptions sont disponibles."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De meilleures transcriptions sont disponibles."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcrições melhores estão disponíveis."
+          }
+        }
+      }
+    },
     "Both meetings will be summarized again." : {
       "localizations" : {
         "de" : {
@@ -3849,6 +3951,40 @@
         }
       }
     },
+    "Choose a folder of Markdown notes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wähle einen Ordner mit Markdown-Notizen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige una carpeta de notas de Markdown"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Choisissez un dossier de notes Markdown"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Choisissez un dossier de notes Markdown"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escolha uma pasta de notas Markdown"
+          }
+        }
+      }
+    },
     "Choose the pyannote segmentation ONNX model" : {
       "localizations" : {
         "de" : {
@@ -3913,6 +4049,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Escolha o modelo ONNX de embedding de voz"
+          }
+        }
+      }
+    },
+    "Choose transcripts (.vtt, .srt, .txt) or a Granola CSV" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wähle Transkripte (.vtt, .srt, .txt) oder eine Granola-CSV"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elige transcripciones (.vtt, .srt, .txt) o un CSV de Granola"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Choisissez des transcriptions (.vtt, .srt, .txt) ou un CSV Granola"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Choisissez des transcriptions (.vtt, .srt, .txt) ou un CSV Granola"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escolha transcrições (.vtt, .srt, .txt) ou um CSV do Granola"
           }
         }
       }
@@ -4325,6 +4495,40 @@
         }
       }
     },
+    "Connect Calendar" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kalender verbinden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conectar calendario"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connecter le calendrier"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connecter le calendrier"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conectar calendário"
+          }
+        }
+      }
+    },
     "Connect a calendar in Settings to see upcoming meetings here." : {
       "localizations" : {
         "de" : {
@@ -4355,6 +4559,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Conecte um calendário em Configurações para ver as próximas reuniões aqui."
+          }
+        }
+      }
+    },
+    "Connect a calendar to see upcoming meetings here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verbinden Sie einen Kalender, um Ihre nächsten Meetings hier zu sehen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conecta un calendario para ver aquí tus próximas reuniones."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connectez un calendrier pour voir vos prochaines réunions ici."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connectez un calendrier pour voir vos prochaines réunions ici."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conecte um calendário para ver aqui suas próximas reuniões."
           }
         }
       }
@@ -4971,6 +5209,74 @@
         }
       }
     },
+    "Couldn't download models." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modelle konnten nicht geladen werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudieron descargar los modelos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Échec du téléchargement des modèles."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Échec du téléchargement des modèles."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível baixar os modelos."
+          }
+        }
+      }
+    },
+    "Couldn't download the better model. Try Again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das bessere Modell konnte nicht geladen werden. Erneut versuchen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo descargar el mejor modelo. Reintentar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de télécharger le meilleur modèle. Réessayer"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de télécharger le meilleur modèle. Réessayer"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível baixar o modelo melhor. Tentar novamente"
+          }
+        }
+      }
+    },
     "Couldn't export this skin." : {
       "localizations" : {
         "de" : {
@@ -5545,6 +5851,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Não foi possível acessar o servidor de sincronização. Verifique sua conexão e tente novamente."
+          }
+        }
+      }
+    },
+    "Couldn't read %lld files." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld Dateien konnten nicht gelesen werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudieron leer %lld archivos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de lire %lld fichiers."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de lire %lld fichiers."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível ler %lld arquivos."
           }
         }
       }
@@ -6921,6 +7261,40 @@
         }
       }
     },
+    "Download" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Descargar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Télécharger"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Télécharger"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baixar"
+          }
+        }
+      }
+    },
     "Download Models" : {
       "localizations" : {
         "de" : {
@@ -6951,6 +7325,108 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Baixar modelos"
+          }
+        }
+      }
+    },
+    "Download a larger model, about 574 MB. Your audio stays on this Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lade ein größeres Modell (etwa 574 MB). Dein Audio bleibt auf diesem Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Descarga un modelo más grande, de unos 574 MB. Tu audio se queda en este Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargez un modèle plus grand, d'environ 574 Mo. Votre audio reste sur ce Mac."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargez un modèle plus grand, d'environ 574 Mo. Votre audio reste sur ce Mac."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baixe um modelo maior, de cerca de 574 MB. Seu áudio fica neste Mac."
+          }
+        }
+      }
+    },
+    "Downloading models. Keyword search works now; search by meaning starts when this finishes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modelle werden geladen. Die Stichwortsuche funktioniert schon; die Suche nach Bedeutung folgt danach."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Descargando modelos. La búsqueda por palabras ya funciona; la búsqueda por significado empezará al terminar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargement des modèles. La recherche par mots-clés fonctionne déjà ; la recherche par sens démarrera ensuite."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargement des modèles. La recherche par mots-clés fonctionne déjà; la recherche par sens démarrera ensuite."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baixando modelos. A busca por palavras já funciona; a busca por significado começa ao terminar."
+          }
+        }
+      }
+    },
+    "Downloading the better transcription model…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Besseres Transkriptionsmodell wird geladen …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Descargando el mejor modelo de transcripción…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargement du meilleur modèle de transcription…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargement du meilleur modèle de transcription…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baixando o modelo de transcrição melhor…"
           }
         }
       }
@@ -7811,6 +8287,40 @@
         }
       }
     },
+    "Fast" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schnell"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rápido"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rapide"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rapide"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rápido"
+          }
+        }
+      }
+    },
     "Finish or stop the current recording before restarting to install the update." : {
       "localizations" : {
         "de" : {
@@ -8391,6 +8901,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Gerando resumo com %@…"
+          }
+        }
+      }
+    },
+    "Get Started" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los geht’s"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comenzar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Commencer"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Commencer"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Começar"
           }
         }
       }
@@ -9313,6 +9857,40 @@
         }
       }
     },
+    "I'm recording this meeting with Whimbrel, on my own computer, for my notes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ich zeichne diese Besprechung mit Whimbrel auf meinem eigenen Computer für meine Notizen auf."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Estoy grabando esta reunión con Whimbrel, en mi propio ordenador, para mis notas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "J'enregistre cette réunion avec Whimbrel, sur mon propre ordinateur, pour mes notes."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "J'enregistre cette réunion avec Whimbrel, sur mon propre ordinateur, pour mes notes."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Estou gravando esta reunião com o Whimbrel, no meu próprio computador, para minhas anotações."
+          }
+        }
+      }
+    },
     "Image Search Key (Brave Search)" : {
       "localizations" : {
         "de" : {
@@ -9347,6 +9925,40 @@
         }
       }
     },
+    "Import" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar"
+          }
+        }
+      }
+    },
     "Import Skin…" : {
       "localizations" : {
         "de" : {
@@ -9377,6 +9989,142 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Importar skin…"
+          }
+        }
+      }
+    },
+    "Import Transcripts…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transkripte importieren …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar transcripciones…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer des transcriptions…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importer des transcriptions…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importar transcrições…"
+          }
+        }
+      }
+    },
+    "Import failed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Import fehlgeschlagen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La importación falló."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L'importation a échoué."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L'importation a échoué."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A importação falhou."
+          }
+        }
+      }
+    },
+    "Imported %lld meetings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld Besprechungen importiert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se importaron %lld reuniones."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld réunions importées."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld réunions importées."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld reuniões importadas."
+          }
+        }
+      }
+    },
+    "Imported %lld notes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld Notizen importiert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se importaron %lld notas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld notes importées."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld notes importées."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld notas importadas."
           }
         }
       }
@@ -10197,6 +10945,40 @@
         }
       }
     },
+    "Let people know you're recording." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sag den anderen, dass du aufzeichnest."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avisa a los demás de que estás grabando."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prévenez les participants que vous enregistrez."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prévenez les participants que vous enregistrez."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avise as pessoas de que você está gravando."
+          }
+        }
+      }
+    },
     "Lets Whimbrel alert you when a detected meeting is about to start, even if the app isn't in front." : {
       "localizations" : {
         "de" : {
@@ -10975,6 +11757,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Criar um skin"
+          }
+        }
+      }
+    },
+    "Markdown Folder…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Markdown-Ordner …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Carpeta de Markdown…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dossier Markdown…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dossier Markdown…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pasta de Markdown…"
           }
         }
       }
@@ -13291,6 +14107,40 @@
         }
       }
     },
+    "Not Now" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht jetzt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ahora no"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pas maintenant"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pas maintenant"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Agora não"
+          }
+        }
+      }
+    },
     "Not available yet" : {
       "localizations" : {
         "de" : {
@@ -13529,6 +14379,40 @@
         }
       }
     },
+    "Nothing to import." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nichts zu importieren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nada que importar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rien à importer."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rien à importer."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nada para importar."
+          }
+        }
+      }
+    },
     "Nothing waiting on you." : {
       "localizations" : {
         "de" : {
@@ -13627,6 +14511,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Nada por enquanto. Reuniões e atividade da tela aparecem aqui enquanto você trabalha."
+          }
+        }
+      }
+    },
+    "Notice posted in the chat." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hinweis im Chat gepostet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aviso publicado en el chat."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avis publié dans le clavardage."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avis publié dans le clavardage."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aviso publicado no chat."
           }
         }
       }
@@ -15398,6 +16316,40 @@
         }
       }
     },
+    "Quality" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qualität"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Calidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qualité"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qualité"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qualidade"
+          }
+        }
+      }
+    },
     "Quit" : {
       "localizations" : {
         "de" : {
@@ -15632,6 +16584,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "As reuniões gravadas aparecem aqui."
+          }
+        }
+      }
+    },
+    "Recorded meetings appear here. You can also bring in transcripts from Granola, Otter or files." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aufgezeichnete Besprechungen erscheinen hier. Du kannst auch Transkripte aus Granola, Otter oder Dateien importieren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las reuniones grabadas aparecen aquí. También puedes traer transcripciones de Granola, Otter o archivos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les réunions enregistrées apparaissent ici. Vous pouvez aussi importer des transcriptions de Granola, d'Otter ou de fichiers."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les réunions enregistrées apparaissent ici. Vous pouvez aussi importer des transcriptions de Granola, d'Otter ou de fichiers."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As reuniões gravadas aparecem aqui. Você também pode trazer transcrições do Granola, do Otter ou de arquivos."
           }
         }
       }
@@ -16046,6 +17032,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Rejeitar"
+          }
+        }
+      }
+    },
+    "Remind me to tell people I'm recording" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mich erinnern, Bescheid zu sagen, dass ich aufzeichne"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recordarme avisar de que estoy grabando"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Me rappeler de prévenir que j'enregistre"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Me rappeler de prévenir que j'enregistre"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lembrar-me de avisar que estou gravando"
           }
         }
       }
@@ -18851,6 +19871,74 @@
         }
       }
     },
+    "Skipped %lld already here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld bereits vorhanden, übersprungen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se omitieron %lld que ya estaban."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld déjà présents ignorés."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld déjà présents ignorés."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld já existentes ignorados."
+          }
+        }
+      }
+    },
+    "Skipped %lld you recorded here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld hier aufgezeichnete übersprungen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se omitieron %lld que grabaste aquí."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld enregistrées ici, ignorées."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld enregistrées ici, ignorées."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld gravadas aqui ignoradas."
+          }
+        }
+      }
+    },
     "Slide %lld" : {
       "localizations" : {
         "de" : {
@@ -18949,6 +20037,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Slides (%lld)"
+          }
+        }
+      }
+    },
+    "Some places require everyone's consent before a meeting is recorded. Check the rules where you and the other people are." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "An manchen Orten müssen alle zustimmen, bevor eine Besprechung aufgezeichnet wird. Prüfe die Regeln dort, wo du und die anderen seid."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En algunos lugares se necesita el consentimiento de todos antes de grabar una reunión. Consulta las normas de donde estáis tú y los demás."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Certains endroits exigent le consentement de tous avant d'enregistrer une réunion. Vérifiez les règles là où vous et les autres participants vous trouvez."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Certains endroits exigent le consentement de tous avant d'enregistrer une réunion. Vérifiez les règles là où vous et les autres participants vous trouvez."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Em alguns lugares, é preciso o consentimento de todos antes de gravar uma reunião. Verifique as regras do lugar onde você e as outras pessoas estão."
           }
         }
       }
@@ -20087,6 +21209,40 @@
         }
       }
     },
+    "Summarizing the newest %lld." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die neuesten %lld werden zusammengefasst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resumiendo las %lld más recientes."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Résumé des %lld plus récentes."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Résumé des %lld plus récentes."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resumindo as %lld mais recentes."
+          }
+        }
+      }
+    },
     "Summarizing…" : {
       "localizations" : {
         "de" : {
@@ -21091,6 +22247,40 @@
         }
       }
     },
+    "The best engine this computer runs well." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die beste Engine, die auf diesem Computer gut läuft."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El mejor motor que este ordenador ejecuta bien."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le meilleur moteur que cet ordinateur fait bien fonctionner."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le meilleur moteur que cet ordinateur fait bien fonctionner."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O melhor mecanismo que este computador executa bem."
+          }
+        }
+      }
+    },
     "The brief could not be shown." : {
       "localizations" : {
         "de" : {
@@ -21257,6 +22447,74 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "O novo formato do microfone (%@) não pode ser convertido para o formato da gravação."
+          }
+        }
+      }
+    },
+    "The most accurate model, a download of about 574 MB. Slower on older computers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das genaueste Modell, ein Download von etwa 574 MB. Auf älteren Computern langsamer."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El modelo más preciso, una descarga de unos 574 MB. Más lento en ordenadores antiguos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le modèle le plus précis, un téléchargement d'environ 574 Mo. Plus lent sur les ordinateurs anciens."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le modèle le plus précis, un téléchargement d'environ 574 Mo. Plus lent sur les ordinateurs anciens."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O modelo mais preciso, um download de cerca de 574 MB. Mais lento em computadores antigos."
+          }
+        }
+      }
+    },
+    "The small model. Quickest, least accurate." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das kleine Modell. Am schnellsten, am wenigsten genau."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El modelo pequeño. El más rápido y el menos preciso."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le petit modèle. Le plus rapide, le moins précis."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le petit modèle. Le plus rapide, le moins précis."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O modelo pequeno. O mais rápido e o menos preciso."
           }
         }
       }
@@ -22892,6 +24150,40 @@
         }
       }
     },
+    "Transcripts…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transkripte …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcripciones…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcriptions…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcriptions…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcrições…"
+          }
+        }
+      }
+    },
     "Try Again" : {
       "localizations" : {
         "de" : {
@@ -23024,6 +24316,108 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Ajuste as instruções incorporadas ao prompt de cada superfície. Cada superfície é independente e sincroniza entre seus dispositivos."
+          }
+        }
+      }
+    },
+    "Turn On" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktivieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activer"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activer"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ativar"
+          }
+        }
+      }
+    },
+    "Turn on Apple's speech engine. Your audio stays on this Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktiviere die Sprach-Engine von Apple. Dein Audio bleibt auf diesem Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activa el motor de voz de Apple. Tu audio se queda en este Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activez le moteur vocal d'Apple. Votre audio reste sur ce Mac."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activez le moteur vocal d'Apple. Votre audio reste sur ce Mac."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ative o mecanismo de fala da Apple. Seu áudio fica neste Mac."
+          }
+        }
+      }
+    },
+    "Two permissions and you're ready for your first meeting. No bot joins the call, and your recordings stay on this Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zwei Berechtigungen, und Sie sind bereit für Ihr erstes Meeting. Kein Bot nimmt am Anruf teil, und Ihre Aufnahmen bleiben auf diesem Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dos permisos y estarás listo para tu primera reunión. Ningún bot se une a la llamada y tus grabaciones se quedan en este Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deux autorisations et vous êtes prêt pour votre première réunion. Aucun robot ne rejoint l’appel et vos enregistrements restent sur ce Mac."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Deux autorisations et vous êtes prêt pour votre première réunion. Aucun robot ne se joint à l’appel et vos enregistrements restent sur ce Mac."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Duas permissões e você está pronto para a primeira reunião. Nenhum bot entra na chamada, e suas gravações ficam neste Mac."
           }
         }
       }
@@ -23674,6 +25068,40 @@
         }
       }
     },
+    "Waiting for the transcription model…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Warten auf das Transkriptionsmodell …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esperando el modelo de transcripción…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En attente du modèle de transcription…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En attente du modèle de transcription…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aguardando o modelo de transcrição…"
+          }
+        }
+      }
+    },
     "Waiting on them" : {
       "localizations" : {
         "de" : {
@@ -23806,6 +25234,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Resumo semanal"
+          }
+        }
+      }
+    },
+    "Welcome to Whimbrel" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Willkommen bei Whimbrel"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bienvenidos a Whimbrel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bienvenue dans Whimbrel"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bienvenue dans Whimbrel"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Boas-vindas ao Whimbrel"
           }
         }
       }
@@ -24489,6 +25951,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Modelo GGML do Whisper.cpp usado para transcrever o áudio das reuniões capturadas."
+          }
+        }
+      }
+    },
+    "Whisper.cpp GGML model used to transcribe captured meeting audio. A file you choose here is used in place of the Quality setting." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whisper.cpp-GGML-Modell zum Transkribieren des Besprechungsaudios. Eine hier gewählte Datei ersetzt die Einstellung „Qualität“."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modelo GGML de Whisper.cpp usado para transcribir el audio de las reuniones. Un archivo elegido aquí sustituye al ajuste de Calidad."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modèle GGML de Whisper.cpp utilisé pour transcrire l'audio des réunions. Un fichier choisi ici remplace le réglage Qualité."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modèle GGML de Whisper.cpp utilisé pour transcrire l'audio des réunions. Un fichier choisi ici remplace le réglage Qualité."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modelo GGML do Whisper.cpp usado para transcrever o áudio das reuniões. Um arquivo escolhido aqui substitui o ajuste de Qualidade."
           }
         }
       }

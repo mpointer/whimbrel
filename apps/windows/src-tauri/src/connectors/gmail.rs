@@ -22,6 +22,7 @@ use crate::error::CommandError;
 use crate::secrets::SecretStore;
 use crate::store_actor::StoreHandle;
 use crate::syncing::config::SyncConfig;
+use crate::l10n::tr;
 
 /// The calendar's poll interval, so both connectors wake together.
 pub const POLL: Duration = super::calendar::POLL;
@@ -71,10 +72,10 @@ impl MailPoller {
                     tracing::info!(email, "the Gmail history id was rejected; recording a fresh baseline");
                     continue;
                 }
-                return Err(CommandError::network("Gmail asked for a full resync twice in a row"));
+                return Err(CommandError::network(tr("Gmail asked for a full resync twice in a row", &[])));
             }
             if !outcome.applied {
-                return Err(CommandError::store("could not store the mail that arrived; it will be read again next round"));
+                return Err(CommandError::store(tr("Could not store the mail that arrived; it will be read again next round", &[])));
             }
             return Ok(MailRound { upserted: outcome.upserted, deleted: outcome.deleted });
         }

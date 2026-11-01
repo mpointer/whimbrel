@@ -368,7 +368,6 @@ struct TimelineView: View {
     @State var spendTodayCents: Int64?
     @State var digest: CoreDailyDigest?
     @State var isGeneratingDigest = false
-    @State var showModelSetup = false
     @State var meetingPendingDeletion: CoreMeeting?
     @State var headphonesWarningDismissed = false
 
@@ -471,6 +470,9 @@ struct TimelineView: View {
             Text("Library")
                 .font(.whimbrelDisplay())
                 .foregroundStyle(Color.whimbrelTextPrimary)
+            // Screen memory asks here, where it's used (doc 17, item 1.1).
+            PermissionCard(kind: .accessibility).environmentObject(appState.permissions)
+            BetterTranscriptsCard(download: appState.turboDownload)
 
             captureStatusHeader
 
@@ -594,16 +596,6 @@ struct TimelineView: View {
         .onAppear {
             refresh()
             refreshSpendToday()
-            if !ModelDownloadService.allModelsPresent {
-                // Deferred to the next run-loop turn: setting this @State synchronously
-                // inside .onAppear can silently fail to present the sheet on macOS
-                // because the view isn't yet fully attached to its window hierarchy at
-                // that exact point in the lifecycle. Dispatching async (after this
-                // update transaction completes) reliably presents it.
-                DispatchQueue.main.async {
-                    showModelSetup = true
-                }
-            }
             let defaults = appState.routing.defaultSelection()
             selectedProvider = defaults.provider
             ollamaModel = defaults.ollamaModel
@@ -624,9 +616,6 @@ struct TimelineView: View {
             // just-hidden episode would keep showing (and hiddenEpisodeIds would go
             // stale) until the user manually flipped modes.
             if mode == .recent || mode == .episodes { refresh() }
-        }
-        .sheet(isPresented: $showModelSetup) {
-            ModelSetupView()
         }
         .alert("Forget this meeting?", isPresented: Binding(
             get: { meetingPendingDeletion != nil },

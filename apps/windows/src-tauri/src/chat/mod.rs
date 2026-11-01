@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CommandError;
 use crate::settings::{ApiKeys, Provider, RoutingSettings};
+use crate::l10n::tr;
 
 /// Items per search when gathering context, and the answer's retrieval limit (the
 /// Mac's `contextLimit: 5`).
@@ -186,7 +187,7 @@ fn capture_entry(c: &memory::CaptureItem) -> ContextEntry {
 fn transcript_entry(t: &memory::MeetingTranscriptSegment) -> ContextEntry {
     ContextEntry {
         item: ContextItemRef::Transcript { id: t.id },
-        label: format!("Meeting \"{}\", {}", t.meeting_title, t.speaker_label),
+        label: tr("Meeting \"{title}\", {speaker}", &[("title", &t.meeting_title), ("speaker", &t.speaker_label)]),
         ts_unix_ms: None,
         open: Some(LibraryTarget::Meeting { id: t.meeting_id }),
     }
@@ -195,7 +196,7 @@ fn transcript_entry(t: &memory::MeetingTranscriptSegment) -> ContextEntry {
 fn snapshot_entry(h: &memory::MeetingSnapshotHit) -> ContextEntry {
     ContextEntry {
         item: ContextItemRef::Snapshot { id: h.id },
-        label: format!("Slide in meeting \"{}\"", h.meeting_title),
+        label: tr("Slide in meeting \"{title}\"", &[("title", &h.meeting_title)]),
         ts_unix_ms: None,
         open: Some(LibraryTarget::Meeting { id: h.meeting_id }),
     }
@@ -235,7 +236,7 @@ pub fn fetch_context(store: &memory::Store, query: &str) -> Vec<ContextEntry> {
     }));
     out.extend(store.threads_needing_attention(10).unwrap_or_default().into_iter().map(|t| ContextEntry {
         item: ContextItemRef::Thread { id: t.id },
-        label: t.subject.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "(no subject)".to_string()),
+        label: t.subject.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| tr("(no subject)", &[])),
         ts_unix_ms: Some(t.last_activity_ts_unix_ms),
         open: None,
     }));

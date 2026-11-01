@@ -155,6 +155,12 @@ final class AppState: ObservableObject {
     }
     let meetingTrigger = MeetingTriggerService()
     /// "Away Mode": join Zoom meetings unattended. Owns the keep-awake assertion while on.
+    /// Downloads missing models at launch, with no prompt (doc 17, item 1.1).
+    let modelBootstrap = ModelBootstrap()
+    let turboDownload = ModelBootstrap(
+        present: { FileManager.default.fileExists(atPath: TranscriptionService.turboModelPath.path) },
+        download: { try await ModelDownloadService.downloadTurbo(progress: $0) }
+    )
     let awayMode = AwayModeSettings(keepAwake: KeepAwake(), available: AppState.awayZoomJoinEnabled)
     /// Away Mode's join logic. Eligible calendar prompts go here instead of the alert panel.
     private(set) lazy var awayCoordinator = AwayModeCoordinator(
@@ -178,6 +184,9 @@ final class AppState: ObservableObject {
     /// recording in chunks while it is being written
     /// (docs/superpowers/specs/2026-10-06-live-transcription-design.md).
     let liveTranscriptSettings = LiveTranscriptSettings()
+    let recordingNoticeSettings = RecordingNoticeSettings()
+    /// Nil until Task 7b's real Zoom chat poster: the notice is a reminder until then.
+    let recordingNoticeChat: ZoomChatPosting? = nil
     /// "Ask if I'm still recording after N hours" and its panel
     /// (docs/superpowers/specs/2026-10-24-recording-failsafes-design.md §2).
     let recordingCheckInSettings = RecordingCheckInSettings()
@@ -214,15 +223,16 @@ final class AppState: ObservableObject {
     lazy var skinChat = SkinChatSession(
         skinStore: .shared, userSkins: .shared, backend: CoreSkinTurnBackend(routing: routing), routing: routing
     )
+    /// Multilingual mode transcribes live with the multilingual model, detecting the language.
+    private static var liveDetectsLanguage: Bool {
+        MeetingTranscriptionQueue.usesMultilingual(
+            enabled: AppLanguage.multilingual(),
+            modelPresent: FileManager.default.fileExists(atPath: TranscriptionService.multilingualModelPath.path))
+    }
     lazy var liveTranscript = LiveTranscriptionService(
         store: { [weak self] in self?.coreStore },
-        // Multilingual mode transcribes live with the multilingual model, detecting the language.
-        modelPath: {
-            let multilingual = MeetingTranscriptionQueue.usesMultilingual(
-                enabled: AppLanguage.multilingual(),
-                modelPresent: FileManager.default.fileExists(atPath: TranscriptionService.multilingualModelPath.path))
-            return (multilingual ? TranscriptionService.multilingualModelPath : TranscriptionService.modelPath).path
-        },
+        engine: { TranscriptionEngines.live(detecting: AppState.liveDetectsLanguage) },
+        detectLanguage: { AppState.liveDetectsLanguage },
         systemURL: { [weak self] in self?.audio.systemAudioFileURL },
         micURL: { [weak self] in self?.audio.micAudioFileURL }
     )
@@ -876,6 +886,7 @@ final class AppState: ObservableObject {
     /// detected-app context to build one from.
     func startManualMeeting() {
         guard activeMeetingId == nil, !isStartingMeeting, hasRoomToRecord() else { return }
+        permissions.request(.notifications) // no-op once answered
         // Set immediately (synchronously, before the async insertMeeting round-trip
         // below) so a rapid second "Start Meeting" click during that gap is blocked —
         // `activeMeetingId` itself isn't set until the round-trip completes. Mirrors
@@ -1292,6 +1303,25 @@ final class AppState: ObservableObject {
         processingStage = "Transcribing…"
     }
 
+    /// The most summaries one import starts, newest first, so a long history can't run up a bill.
+    static let importSummaryLimit = 25
+
+    /// Imports off the main thread, then summarizes the newest new meetings.
+    func runImport(_ work: @escaping (CoreMemoryStore) -> CoreImportOutcome?, done: @escaping (CoreImportOutcome?) -> Void) {
+        guard let coreStore else { return done(nil) }
+        CoreMemoryStore.accessQueue.async { [weak self] in
+            let outcome = work(coreStore)
+            // The job writes its notes back, so it carries what the import stored.
+            let jobs = (outcome?.meetingIds.prefix(Self.importSummaryLimit) ?? []).map {
+                MeetingTranscriptionQueue.Job(meetingId: $0, partIndex: 1, audioPath: nil, notes: coreStore.getMeeting(id: $0)?.notes ?? "")
+            }
+            DispatchQueue.main.async {
+                jobs.forEach { self?.transcriptionQueue?.enqueue($0) }
+                done(outcome)
+            }
+        }
+    }
+
     /// Summaries run on the slow lane with the routing defaults read on main at that moment.
     private lazy var transcriptionQueue: MeetingTranscriptionQueue? = coreStore.map { store in
         MeetingTranscriptionQueue(
@@ -1321,6 +1351,12 @@ final class AppState: ObservableObject {
                 } else {
                     self.clearProcessingState(for: meetingId)
                     self.transcribeAgainAvailability?.refresh(meetingId)
+                }
+            },
+            modelsDownloading: { [weak self] in
+                DispatchQueue.main.sync {
+                    if case .downloading = self?.modelBootstrap.phase { return true }
+                    return false
                 }
             }
         )
@@ -1563,6 +1599,8 @@ final class AppState: ObservableObject {
     /// otherwise it follows the meeting's source (calendar or detected).
     func startCapture(for meeting: QualifyingMeeting, trigger: CoreMeetingTrigger = .calendar) {
         guard activeMeetingId == nil, !isStartingMeeting, hasRoomToRecord() else { return }
+        // The first thing Whimbrel may need to warn about, so this is when it asks. No-op once answered.
+        permissions.request(.notifications)
         // Set immediately (synchronously, before the async insertMeeting round-trip
         // below) so this guard still blocks a rapid second call during that gap —
         // `activeMeetingId` itself isn't set until the round-trip completes.

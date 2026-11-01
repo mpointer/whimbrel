@@ -136,12 +136,16 @@ export const captureSettings = () => invoke<CaptureSettings>("capture_settings")
 export const setExcludedApps = (excluded: string[]) => invoke<string[]>("set_excluded_apps", { excluded });
 
 export const modelStatus = () => invoke<ModelStatus>("model_status");
+/** "Skip for now" on the launch prompt to download the search model. */
+export const modelPromptSkip = () => invoke<void>("model_prompt_skip");
 export const modelDownloadStart = () => invoke<string>("model_download_start");
 export const modelDownloadPoll = (jobId: string) => invoke<DownloadView>("model_download_poll", { jobId });
 export const modelDownloadCancel = (jobId: string) => invoke<boolean>("model_download_cancel", { jobId });
 export const restartApp = () => invoke<void>("restart_app");
 export const meetingModelsStatus = () => invoke<MeetingModelsStatus>("meeting_models_status");
 export const meetingModelsDownloadStart = () => invoke<string>("meeting_models_download_start");
+/** "I have meetings in other languages": on adds the multilingual model to the missing list. */
+export const setMeetingMultilingual = (on: boolean) => invoke<MeetingModelsStatus>("set_meeting_multilingual", { on });
 
 export const meetingRecordStart = () => invoke<MeetingRecordingView>("meeting_record_start");
 export const meetingRecordStop = () => invoke<MeetingRecordingView>("meeting_record_stop");
@@ -206,6 +210,9 @@ export const meetingReorderActionItems = (id: number, orderedIds: number[]) =>
   invoke<ActionItemView[]>("meeting_reorder_action_items", { id, orderedIds });
 export const meetingResetOverrides = (id: number) => invoke<void>("meeting_reset_overrides", { id });
 export const meetingRegenerate = (id: number, keepEdits: boolean) => invoke<void>("meeting_regenerate", { id, keepEdits });
+/** The per-meeting "Transcript language": stores it (`null` is Automatic) and transcribes the meeting again. */
+export const meetingSetSpokenLanguage = (id: number, language: string | null) =>
+  invoke<void>("meeting_set_spoken_language", { id, language });
 export const meetingRegenerationConflict = (id: number) => invoke<boolean>("meeting_regeneration_conflict", { id });
 export const meetingForget = (id: number) => invoke<void>("meeting_forget", { id });
 export const meetingMostRelevant = () => invoke<number | null>("meeting_most_relevant");

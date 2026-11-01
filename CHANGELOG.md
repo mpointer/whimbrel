@@ -2,6 +2,24 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.44] - 2026-11-01
+
+### Mac
+- A new install opens on one screen asking for the microphone and system audio. Calendar, Accessibility and Notifications are now asked for when you first use what needs them.
+- Models download in the background instead of behind a prompt, with progress in the sidebar. Keyword search works meanwhile.
+- Every model download is now checked against a known hash before it is installed.
+- New installs get better transcripts. On macOS 26 or later Whimbrel uses Apple's on-device speech engine; on older Macs fast enough for it, Whimbrel offers a larger model, about 574 MB. Audio stays on the Mac with either one.
+- Existing installs keep their model and see one offer, which can be dismissed. Past transcripts don't change.
+- Settings → Transcription has a Quality setting: Automatic, Better or Fast. A model file you chose yourself still wins.
+- A new setting, off by default, reminds you to tell people you're recording, with wording you can edit and copy. A note about consent rules now appears on the first-run screen.
+- Bring in what you already have: `.vtt`, `.srt` and `.txt` transcripts, Otter text exports and a Granola CSV as meetings, and a folder of Markdown as searchable notes. One import summarizes its newest 25 meetings.
+- The default skin's greeting and section headers now follow your language, on Mac and Windows. They stayed in English before.
+- A meeting that ends while models are still downloading now waits for them and is transcribed, instead of failing.
+
+### Windows
+- The whole app now follows your language: Spanish, French, German, Brazilian Portuguese, and British, Canadian and Australian English. The translations are AI-generated and still being reviewed. Meetings in other languages are transcribed as spoken (#475, #476, #477, #485, #486).
+- Meeting and search models download in the background at first launch, with progress at the foot of the sidebar. Keyword search works meanwhile. Before, both waited for Settings → Meeting models and Settings → Semantic search.
+
 ## [0.9.43] - 2026-10-31
 
 ### Languages

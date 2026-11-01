@@ -59,6 +59,22 @@ impl ToolOutcome {
             _ => None,
         }
     }
+
+    /// `Settled::user_message` in `lang` (a UI language tag; `""` is English): the same text
+    /// `settle` returns, for a shell that shows it in the user's language. `connector` is the
+    /// plan's. `None` when there is no message.
+    pub fn user_message_in(&self, connector: &str, lang: &str) -> Option<String> {
+        match self {
+            ToolOutcome::RetryableFailure { reason } => Some(text(lang, keys::ACTION_RETRYABLE, &[("reason", reason)])),
+            ToolOutcome::NoToken => Some(text(lang, not_connected_key(connector), &[])),
+            _ => None,
+        }
+    }
+}
+
+/// The "not connected" line for `connector` (`"gmail"` or `"google-calendar"`).
+fn not_connected_key(connector: &str) -> &'static str {
+    if connector == "gmail" { keys::GMAIL_NOT_CONNECTED } else { keys::CALENDAR_NOT_CONNECTED }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -264,6 +280,32 @@ mod tests {
         assert_eq!(outcome.user_code("gmail"), Some(("action_retryable", serde_json::json!({"reason": "Node.js isn't installed on this Mac."}))));
         assert_eq!(ToolOutcome::NoToken.user_code("gmail"), Some(("connector_not_connected", serde_json::json!({"connector": "gmail"}))));
         assert_eq!(ToolOutcome::TerminalFailure.user_code("gmail"), None);
+    }
+
+    #[test]
+    fn outcome_message_in_spanish_differs_and_english_matches_settle() {
+        let retry = ToolOutcome::RetryableFailure { reason: "offline".into() };
+        let english = retry.user_message_in("gmail", "").unwrap();
+        assert_eq!(english, text("", keys::ACTION_RETRYABLE, &[("reason", "offline")]));
+        let spanish = retry.user_message_in("gmail", "es-US").unwrap();
+        assert_ne!(spanish, english);
+        assert!(spanish.contains("offline"), "{spanish}");
+        assert_eq!(ToolOutcome::NoToken.user_message_in("gmail", ""), Some(keys::GMAIL_NOT_CONNECTED.to_string()));
+        assert_eq!(ToolOutcome::NoToken.user_message_in("google-calendar", ""), Some(keys::CALENDAR_NOT_CONNECTED.to_string()));
+        assert_ne!(ToolOutcome::NoToken.user_message_in("gmail", "fr-CA"), ToolOutcome::NoToken.user_message_in("gmail", ""));
+        assert_eq!(ToolOutcome::TerminalFailure.user_message_in("gmail", "es"), None);
+    }
+
+    #[test]
+    fn settle_messages_match_user_message_in_english() {
+        let store = Store::open_in_memory().unwrap();
+        let run_id = seed_pending_run(&store, r#"{"kind":"send_email","to":"a@b.c","subject":"s","body":"b"}"#);
+        let PlanResult::Planned { plan } = super::plan(&store, run_id, "").unwrap() else { panic!("not planned") };
+        for outcome in [ToolOutcome::NoToken, ToolOutcome::RetryableFailure { reason: "r".into() }] {
+            let settled = settle(&store, &plan, &outcome).unwrap();
+            assert_eq!(settled.user_message, outcome.user_message_in(&plan.connector, ""));
+            store.claim_pending_action(run_id).unwrap();
+        }
     }
 
     #[test]

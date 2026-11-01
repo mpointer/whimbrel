@@ -10,6 +10,7 @@ import {
 } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { SnapshotsView, SnapshotView, Thumbnail } from "../generated/types";
+import { useL10n } from "../l10n";
 import { prunedThumbnails, slidesLabel, snapshotKey, thumbnailsToFetch, withoutSnapshot } from "./workspaceModel";
 
 /** How long "Copied" stays up. */
@@ -29,6 +30,7 @@ export function SlidesStrip({ meetingId, refresh }: { meetingId: number; refresh
   const [thumbnails, setThumbnails] = useState<Map<string, Thumbnail>>(new Map());
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { t } = useL10n();
   // Keys already fetched or on their way, so a slow thumbnail isn't asked for twice.
   const requested = useRef(new Set<string>());
 
@@ -89,15 +91,15 @@ export function SlidesStrip({ meetingId, refresh }: { meetingId: number; refresh
   };
 
   return (
-    <section className="slides" aria-label="Slides">
+    <section className="slides" aria-label={t("Slides")}>
       <div className="slides-header">
         <h4 className="section-label">{slidesLabel(view)}</h4>
         <label className="toggle small">
           <input type="checkbox" checked={view.keep} onChange={(e) => setKeep(e.target.checked)} />
-          Keep snapshots
+          {t("Keep snapshots")}
         </label>
         <button className="mode small" onClick={() => run(() => meetingSnapshotsShow(meetingId, null))}>
-          Show in Explorer
+          {t("Show in Explorer")}
         </button>
       </div>
       <ul className="slides-row">
@@ -108,7 +110,7 @@ export function SlidesStrip({ meetingId, refresh }: { meetingId: number; refresh
               <button
                 className="slide-image"
                 title={snapshot.text || snapshot.fileName}
-                aria-label={`Open slide ${snapshot.fileName}`}
+                aria-label={t("Open slide {name}", { name: snapshot.fileName })}
                 onClick={() => run(() => meetingSnapshotOpen(meetingId, snapshot.id))}
               >
                 {thumbnail ? (
@@ -120,20 +122,20 @@ export function SlidesStrip({ meetingId, refresh }: { meetingId: number; refresh
               <div className="slide-actions">
                 <button
                   className="mode small"
-                  aria-label={`Copy slide ${snapshot.fileName}`}
-                  onClick={() => run(() => meetingSnapshotCopy(meetingId, snapshot.id), "Copied")}
+                  aria-label={t("Copy slide {name}", { name: snapshot.fileName })}
+                  onClick={() => run(() => meetingSnapshotCopy(meetingId, snapshot.id), t("Copied"))}
                 >
-                  Copy image
+                  {t("Copy image")}
                 </button>
                 <button
                   className="mode small"
-                  aria-label={`Show slide ${snapshot.fileName} in Explorer`}
+                  aria-label={t("Show slide {name} in Explorer", { name: snapshot.fileName })}
                   onClick={() => run(() => meetingSnapshotsShow(meetingId, snapshot.id))}
                 >
-                  Show
+                  {t("Show")}
                 </button>
-                <button className="mode small" aria-label={`Delete slide ${snapshot.fileName}`} onClick={() => remove(snapshot)}>
-                  Delete
+                <button className="mode small" aria-label={t("Delete slide {name}", { name: snapshot.fileName })} onClick={() => remove(snapshot)}>
+                  {t("Delete")}
                 </button>
               </div>
             </li>

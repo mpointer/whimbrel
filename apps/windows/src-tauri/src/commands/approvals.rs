@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager};
 use crate::connectors::write::{self, Connectors, Executed};
 use crate::error::CommandError;
 use crate::state::AppState;
+use crate::l10n::tr;
 
 /// What a pending action would do, in the user's terms.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -79,10 +80,10 @@ fn store_error(e: impl std::fmt::Display) -> CommandError {
     CommandError::store(e.to_string())
 }
 
-fn blocked_reason(connector: &str) -> &'static str {
+fn blocked_reason(connector: &str) -> String {
     match connector {
-        "google-calendar" => "Connect a Google Calendar account in Settings to approve this.",
-        _ => "Connect Gmail in Settings to approve this.",
+        "google-calendar" => tr("Connect a Google Calendar account in Settings to approve this.", &[]),
+        _ => tr("Connect Gmail in Settings to approve this.", &[]),
     }
 }
 
@@ -106,7 +107,7 @@ pub fn pending(store: &Store) -> Result<Vec<ApprovalView>, CommandError> {
                 None => (Vec::new(), None),
             };
             let blocked = match connector {
-                Some(c) if account.is_none() => Some(blocked_reason(c).to_string()),
+                Some(c) if account.is_none() => Some(blocked_reason(c)),
                 _ => None,
             };
             Ok(ApprovalView {
@@ -135,8 +136,8 @@ pub fn reject(store: &Store, run_id: i64) -> Result<(), CommandError> {
 /// Turns what the round trip reported into what the user is told.
 pub fn message_for(executed: &Executed) -> Option<String> {
     match executed {
-        Executed::NotClaimable => Some("That was already handled.".to_string()),
-        Executed::Unreadable => Some("Couldn't read the drafted action, so it was marked as failed.".to_string()),
+        Executed::NotClaimable => Some(tr("That was already handled.", &[])),
+        Executed::Unreadable => Some(tr("Couldn't read the drafted action, so it was marked as failed.", &[])),
         Executed::Done { message, .. } => message.clone(),
     }
 }
@@ -176,7 +177,7 @@ pub async fn approval_approve(app: AppHandle, run_id: i64, account: Option<Strin
         Ok(ApproveResult { approvals, message: message_for(&executed) })
     })
     .await
-    .map_err(|e| CommandError::store(format!("the approval failed: {e}")))?
+    .map_err(|e| CommandError::store(tr("The approval failed: {error}", &[("error", &e.to_string())])))?
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ import type {
   TodayRecap,
 } from "../generated/types";
 import { timeLabel } from "../library/rows";
+import { t } from "../l10n";
 
 /**
  * Whether Today should generate a recap now. Generating holds the store for a model
@@ -33,31 +34,34 @@ export function recapFor(overview: TodayOverview, current: TodayRecap | null): T
 }
 
 /** Where a Daily Brief recap came from: another device by name, or this PC's own run with its time. */
-export function briefRecapNote(brief: BriefRecap): string {
-  return brief.from ? `From ${brief.from.label}` : `Daily Brief, written at ${timeLabel(brief.ranAtUnixMs)}.`;
+export function briefRecapNote(brief: BriefRecap, locale: string): string {
+  return brief.from
+    ? t("From {device}", { device: brief.from.label })
+    : t("Daily Brief, written at {time}.", { time: timeLabel(brief.ranAtUnixMs, locale) });
 }
 
 export function recapNote(recap: TodayRecap): string {
-  if (recap.emptyDay) return "Nothing captured yet today. The recap writes itself once there is something to summarize.";
-  return recap.cached ? "Written earlier today." : "Just written.";
+  if (recap.emptyDay) return t("Nothing captured yet today. The recap writes itself once there is something to summarize.");
+  return recap.cached ? t("Written earlier today.") : t("Just written.");
 }
 
 /** "1,204 captures · last 2:05 PM", or "Nothing yet today". */
-export function deviceLine(d: DeviceCount): string {
-  if (d.captures === 0 || d.lastTsUnixMs == null) return "Nothing yet today";
-  const n = d.captures.toLocaleString("en-US");
-  return `${n} capture${d.captures === 1 ? "" : "s"} · last ${timeLabel(d.lastTsUnixMs)}`;
+export function deviceLine(d: DeviceCount, locale: string): string {
+  if (d.captures === 0 || d.lastTsUnixMs == null) return t("Nothing yet today");
+  // t() writes the count as the language does ("1,204").
+  return t("{count} captures · last {time}", { count: d.captures, time: timeLabel(d.lastTsUnixMs, locale) });
 }
 
-export function threadLine(t: ThreadRow): string {
-  const who = t.status === "waiting_on_me" ? "Waiting on you" : "Waiting on them";
-  return t.lastMessageFrom ? `${who} · last from ${t.lastMessageFrom}` : who;
+export function threadLine(thread: ThreadRow): string {
+  const name = thread.lastMessageFrom;
+  if (thread.status === "waiting_on_me") return name ? t("Waiting on you · last from {name}", { name }) : t("Waiting on you");
+  return name ? t("Waiting on them · last from {name}", { name }) : t("Waiting on them");
 }
 
 /** What the next-meeting card says about its brief: when it was made, or why there is none yet. */
-export function prepStatus(brief: PrepBriefView | null | undefined): string {
-  if (!brief) return "No brief yet. Meeting Prep makes one shortly before the meeting once it is turned on in Automations.";
-  return `Prepared at ${timeLabel(brief.generatedAtUnixMs)}.`;
+export function prepStatus(brief: PrepBriefView | null | undefined, locale: string): string {
+  if (!brief) return t("No brief yet. Meeting Prep makes one shortly before the meeting once it is turned on in Automations.");
+  return t("Prepared at {time}.", { time: timeLabel(brief.generatedAtUnixMs, locale) });
 }
 
 /** The sources a claim cites, in the order cited; an id the brief does not list is dropped. */
@@ -65,19 +69,19 @@ export function citedSources(brief: PrepBriefView, ids: string[]): PrepSourceVie
   return ids.flatMap((id) => brief.sources.filter((s) => s.id === id));
 }
 
-const DATE_FORMAT = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" });
-
 /**
  * Today's heading (the Mac's TodayLogic.greeting): the date as a small line above "Good morning,
  * <first word of the Profile name>". With no usable name (empty, blank, or an email address, which
  * is what a sign-in can leave there) the weekday and date are the title and there is no extra line.
+ * The date is written for `locale`; the "Good morning" title is replaced by the skin's voice (greetingFor).
  */
-export function greeting(name: string, now: Date): { kicker: string | null; title: string } {
-  const date = DATE_FORMAT.format(now);
+export function greeting(name: string, now: Date, locale: string): { kicker: string | null; title: string } {
+  const date = new Intl.DateTimeFormat(locale, { weekday: "long", month: "long", day: "numeric" }).format(now);
   const first = name.trim().split(/\s+/)[0] ?? "";
   if (first === "" || name.includes("@")) return { kicker: null, title: date };
   const hour = now.getHours();
   const part = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
+  // l10n-ignore: never shown; greetingFor replaces the title with the skin's voice in the user's language.
   return { kicker: date, title: `Good ${part}, ${first}` };
 }
 
@@ -123,17 +127,17 @@ const MINUTE = 60_000;
  */
 export function relativeStart(startMs: number, endMs: number, nowMs: number): string | null {
   if (nowMs >= endMs) return null;
-  if (nowMs >= startMs) return "Now";
+  if (nowMs >= startMs) return t("Now");
   const minutes = Math.ceil((startMs - nowMs) / MINUTE);
   if (minutes > 12 * 60) return null;
-  return minutes < 60 ? `In ${minutes}m` : `In ${Math.floor(minutes / 60)}h`;
+  return minutes < 60 ? t("In {minutes}m", { minutes }) : t("In {hours}h", { hours: Math.floor(minutes / 60) });
 }
 
 /** Up to two invitees, then "+N" for the rest; nothing for an event with none. */
 export function attendeesLine(attendees: string[]): string | null {
   if (attendees.length === 0) return null;
   const shown = attendees.slice(0, 2).join(", ");
-  return attendees.length > 2 ? `${shown} +${attendees.length - 2}` : shown;
+  return attendees.length > 2 ? t("{names} +{others}", { names: shown, others: attendees.length - 2 }) : shown;
 }
 
 /**

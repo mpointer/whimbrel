@@ -14,6 +14,7 @@ import {
   type EventRow,
   type FieldMarker,
 } from "../layoutModel";
+import { t } from "../../l10n";
 import { HeldLine, PrepLine, ScheduleLines, SkinImage, SkinText, applyCaps, useWidth, type TodayLayoutProps } from "./parts";
 
 const PITCH_PADDING = 12;
@@ -103,7 +104,7 @@ function Scoreboard({ row, props, title }: { row: EventRow; props: TodayLayoutPr
 function EventAction({ row, props }: { row: EventRow; props: TodayLayoutProps }) {
   // The scoreboard has only its Start (up next is never recorded), so reuse the row's own button.
   if (row.action !== "start") return null;
-  const label = props.starting === row.id ? "Starting…" : "Start";
+  const label = props.starting === row.id ? t("Starting…") : t("Start");
   return (
     <button type="button" className="mode mode--active row-action" onClick={() => props.actions.start(row.id)} disabled={props.starting !== null}>
       {label}
@@ -170,7 +171,7 @@ function Pitch({ markers, props }: { markers: FieldMarker[]; props: TodayLayoutP
   const inner = Math.max(0, width - PITCH_PADDING * 2);
   const slots = useMemo(() => fieldSlots(markers.map((m) => m.startMs), inner), [markers, inner]);
   return (
-    <div ref={ref} className="field-pitch" style={{ height: PITCH_HEIGHT }} role="group" aria-label="Today's meetings, by start time">
+    <div ref={ref} className="field-pitch" style={{ height: PITCH_HEIGHT }} role="group" aria-label={t("Today's meetings, by start time")}>
       {width > 0 && <PitchLines width={width} height={PITCH_HEIGHT} />}
       {width > 0 &&
         markers.map((marker, i) => {

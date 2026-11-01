@@ -335,7 +335,8 @@ def jsx_violations(src_dir):
     pending = jsx_pending(src_dir)
     for path in sorted(Path(src_dir).rglob("*.tsx")):
         rel = path.relative_to(src_dir)
-        if any(rel == p or p in rel.parents for p in pending):
+        # Tests render fixtures and assert on markup; they aren't UI anyone reads.
+        if path.name.endswith(".test.tsx") or any(rel == p or p in rel.parents for p in pending):
             continue
         prev = ""
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):

@@ -23,6 +23,7 @@ const meeting = (id: number, minutes: number, title: string): MeetingRow => ({ d
 
 const rich: TodayModel = {
   now: NOW,
+  locale: "en-US",
   name: "Mike",
   schedule: { events: [event("a", 10), event("b", 40), event("c", 70, { recordedMeetingId: 5 })], earlierToday: [meeting(1, -60, "Held today")], recording: false },
   next: null,

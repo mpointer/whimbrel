@@ -22,10 +22,23 @@ body {
 }
 
 .sidebar {
+  display: flex;
+  flex-direction: column;
   width: 200px;
   flex-shrink: 0;
   padding: var(--space-lg) var(--space-sm);
   border-right: 1px solid var(--color-border);
+}
+
+/* The background model download's status, at the foot of the sidebar. */
+.sidebar-footer {
+  margin-top: auto;
+  padding: var(--space-md) var(--space-md) 0;
+  overflow-wrap: anywhere;
+}
+
+.sidebar-footer p {
+  margin: var(--space-xs) 0 0;
 }
 
 .sidebar ul {

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { earlierRows, nonEmptySections, schedule, scheduleItems, upNext, voiceText } from "../layoutModel";
+import { t } from "../../l10n";
 import { DevicesLine, EventLine, HeldLine, OpenLoopLines, RecapLines, ScheduleLines, SkinImage, SkinText, applyCaps, type TodayLayoutProps } from "./parts";
 
 /** A centred page inside a double-rule border: small-caps headers, a fleuron between sections, the skin's
@@ -45,7 +46,7 @@ export function Almanac(props: TodayLayoutProps) {
           voiceText(voice, "earlierHeader"),
           earlierRows(model).map((row) => <HeldLine key={row.id} row={row} props={props} shape="stack" />),
         )}
-      {present.includes("threads") && section("threads", "Open loops", <OpenLoopLines props={props} />)}
+      {present.includes("threads") && section("threads", t("Open loops"), <OpenLoopLines props={props} />)}
       {present.includes("recap") && model.recap && section("recap", voiceText(voice, "recapHeader"), <RecapLines recap={model.recap} props={props} tone="secondary" />)}
       <div className="alm-section">
         {divider}

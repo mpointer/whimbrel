@@ -1,0 +1,162 @@
+<!--
+{
+  "title": "Precios: gratis y de código abierto",
+  "description": "Whimbrel es gratis y de código abierto, con todas las funciones y tus propios modelos. Los planes de pago cubrirán servidores que operamos por ti.",
+  "schema": [
+    "software"
+  ],
+  "priority": 0.8,
+  "crumbs": [
+    {
+      "name": "Precios",
+      "path": "/pricing/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "¿Whimbrel es realmente gratis?",
+      "a": "Sí. Todas las funciones de la app son gratis y de código abierto bajo la licencia Apache 2.0: captura de reuniones, transcripción, memoria de pantalla, búsqueda, chat, Routines, conectores, el servidor MCP y la sincronización con cifrado de extremo a extremo. Nada de la app se reserva para un plan de pago."
+    },
+    {
+      "q": "¿Necesito una clave de API de IA?",
+      "a": "Tú eliges. Ejecuta modelos en tu computadora con Ollama sin costo, o usa tu propia clave de Anthropic, OpenAI, Google Gemini u OpenRouter y paga directamente a ese proveedor. Por defecto, las tareas pequeñas van al modelo más económico que tengas, así que la mayoría de las personas gasta menos de un dólar al mes en modelos alojados. Whimbrel nunca revende uso de IA: no hay modelo alojado, ni paquetes de tokens, ni recargo sobre tu factura de modelos, en ningún plan."
+    },
+    {
+      "q": "¿Cuánto cuesta la sincronización?",
+      "a": "Nada. La sincronización tiene cifrado de extremo a extremo. En un relay que tú mismo operas, es ilimitada. En el relay que alojamos nosotros, una cuenta gratuita sincroniza una computadora y un teléfono. Los planes Cloud planificados añaden dispositivos ilimitados en nuestro relay."
+    },
+    {
+      "q": "¿Qué incluirán los planes de pago?",
+      "a": "Solo lo que necesita un servidor operado por alguien, o una persona al otro lado: nuestro relay alojado para cualquier cantidad de dispositivos, con copias de seguridad, notificaciones push en tu teléfono y, como plan a futuro, Routines que siguen funcionando mientras tu laptop está cerrada. Los planes de equipo añaden memoria de reuniones compartida y una sola factura. Los detalles y los precios no son definitivos, y todavía no hay nada a la venta."
+    },
+    {
+      "q": "¿Puedo comprar un plan hoy?",
+      "a": "Todavía no. Los planes de pago solo saldrán a la venta cuando exista la facturación y los planes estén definidos. Mientras tanto, todo es gratis y no te pediremos una tarjeta."
+    },
+    {
+      "q": "¿Mi empresa puede obtener soporte o ejecutar sus propios servidores?",
+      "a": "Sí. El relay de sincronización y el feed de actualizaciones son de código abierto y están documentados para autoalojarlos. Si quieres que una persona se responsabilice de tu implementación, <a href=\"mailto:{{site.salesEmail}}?subject=Whimbrel%20support\">habla con nosotros</a> sobre un contrato de soporte."
+    }
+  ],
+  "sourceHash": "eb851c16c3ba"
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Precios</p>
+    <h1>Gratis y de código abierto. Paga solo por los servidores que operamos por ti.</h1>
+    <p class="lede">Whimbrel trabaja en tu computadora con los modelos de IA que elijas, así que toda la app es gratis. Los planes de pago planificados cubren lo que realmente necesita un servidor o una persona: sincronización alojada con copias de seguridad, notificaciones push en tu teléfono y funciones para equipos.</p>
+  </div>
+</section>
+
+<div class="container">
+  <div class="early-access-banner" role="note">
+    <strong>Todavía no hay nada a la venta.</strong>
+    <span>Hoy todas las funciones son gratis. Cloud y Team están planificados; anunciaremos sus funciones y precios cuando exista la facturación.</span>
+  </div>
+</div>
+
+<section class="pricing-section">
+  <div class="container">
+    <div class="pricing-grid">
+      <article class="card plan plan-featured">
+        <h2>Free</h2>
+        <p class="plan-for">Todo lo de la app, para todos.</p>
+        <p class="price"><span class="amount">$0</span></p>
+        <p class="price-note">Código abierto, Apache 2.0</p>
+        <a class="btn btn-primary btn-block" href="/download/#register">Descarga gratis</a>
+        <ul class="plan-features">
+          <li>Reuniones e historial ilimitados</li>
+          <li>Notas de reuniones sin bots, transcripción en tu dispositivo</li>
+          <li>Memoria de pantalla, búsqueda y chat con citas</li>
+          <li>Routines en tus dispositivos</li>
+          <li>Gmail, Google Calendar, Outlook 365</li>
+          <li>Servidor MCP local para tus otras herramientas de IA</li>
+          <li>Modelos locales (Ollama) o tu propia clave de IA, con el modelo más económico que uses para tareas pequeñas</li>
+          <li>Sincronización con cifrado de extremo a extremo: ilimitada en tu propio relay, una computadora y un teléfono en el nuestro</li>
+        </ul>
+      </article>
+
+      <article class="card plan">
+        <p class="plan-badge">Planificado</p>
+        <h2>Cloud</h2>
+        <p class="plan-for">Para una persona que quiere que nosotros operemos el servidor.</p>
+        <p class="price"><span class="amount amount-sm">Aún sin precio</span></p>
+        <p class="price-note">Tus modelos y claves, como en Free</p>
+        <a class="btn btn-ghost btn-block" href="/download/#register">Empieza gratis ahora</a>
+        <ul class="plan-features">
+          <li><strong>Todo lo de Free, más:</strong></li>
+          <li>Nuestro relay alojado para cualquier cantidad de dispositivos</li>
+          <li>Copias de seguridad diarias y restauración</li>
+          <li>Notificaciones push en tu teléfono</li>
+          <li>Routines que siguen funcionando mientras tu laptop está cerrada (en diseño)</li>
+        </ul>
+      </article>
+
+      <article class="card plan">
+        <p class="plan-badge">Planificado</p>
+        <h2>Team</h2>
+        <p class="plan-for">Para equipos pequeños que comparten la memoria de reuniones.</p>
+        <p class="price"><span class="amount amount-sm">Aún sin precio</span></p>
+        <p class="price-note">Por usuario, después de Cloud</p>
+        <a class="btn btn-ghost btn-block" href="mailto:{{site.salesEmail}}?subject=Whimbrel%20for%20teams">Cuéntanos sobre tu equipo</a>
+        <ul class="plan-features">
+          <li><strong>Todo lo de Cloud, más:</strong></li>
+          <li>Memoria de reuniones compartida, con el consentimiento de quien capturó cada elemento</li>
+          <li>Routines que pasan trabajo a un compañero</li>
+          <li>Una clave de IA de la organización para todos los usuarios</li>
+          <li>Administración básica y una sola factura</li>
+        </ul>
+      </article>
+
+      <article class="card plan">
+        <h2>Support</h2>
+        <p class="plan-for">Para empresas que operan Whimbrel por su cuenta.</p>
+        <p class="price"><span class="amount amount-sm">Contrato</span></p>
+        <p class="price-note">Relay autoalojado, una persona responsable</p>
+        <a class="btn btn-ghost btn-block" href="mailto:{{site.salesEmail}}?subject=Whimbrel%20support">Habla con nosotros</a>
+        <ul class="plan-features">
+          <li>Ayuda para implementar el relay de código abierto y el feed de actualizaciones en tu propia cuenta de Cloudflare</li>
+          <li>Incorporación para tu equipo</li>
+          <li>Las claves de IA propias de tu empresa, o solo modelos locales</li>
+          <li>Los datos de trabajo se quedan en los dispositivos de los empleados y en tu propia infraestructura</li>
+        </ul>
+      </article>
+    </div>
+    <p class="fine muted table-note center">Whimbrel nunca revende uso de IA: sin modelo alojado, sin paquetes de tokens, sin recargo sobre tu factura de modelos. <a href="/open-source/">Cómo funciona el modelo de código abierto</a>.</p>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="narrow">
+    <div class="section-head center">
+      <h2>Cómo se compara Whimbrel en precio</h2>
+      <p class="lede">Los planes de pago de esta categoría parten de $14 a $17 al mes, con el modelo de IA incluido. La app de Whimbrel es gratis; pagas directamente a tu proveedor de modelos, o nada si usas modelos locales.</p>
+    </div>
+    <div class="table-wrap">
+      <table class="compare">
+        <caption class="sr-only">Planes gratuitos y planes de pago de entrada de Whimbrel, Granola y Littlebird</caption>
+        <thead><tr><th scope="col">Producto</th><th scope="col">Plan gratuito</th><th scope="col">Plan de pago de entrada</th><th scope="col">Código abierto</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Whimbrel</th><td class="yes">Todas las funciones, historial ilimitado</td><td>No hace falta; Cloud planificado</td><td class="yes">Sí, Apache 2.0</td></tr>
+          <tr><th scope="row">Granola</th><td>Historial de reuniones de 30 días</td><td>Business, $14 por usuario al mes</td><td class="no">No</td></tr>
+          <tr><th scope="row">Littlebird</th><td>Créditos de uso diarios</td><td>Plus, $17 al mes facturado anualmente</td><td class="no">No</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine muted table-note">Precios de la competencia tomados de sus páginas públicas de precios, 16 de octubre de 2026. Consulta la <a href="/compare/">comparación completa</a>.</p>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="narrow">
+    <div class="section-head center">
+      <h2>Preguntas sobre precios</h2>
+    </div>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

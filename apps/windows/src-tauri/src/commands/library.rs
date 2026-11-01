@@ -14,6 +14,7 @@ use crate::device_labels::DeviceLabeler;
 use crate::error::CommandError;
 use crate::state::AppState;
 use crate::store_actor::StoreHandle;
+use crate::l10n::tr;
 
 pub const RECENT_CAPTURES: usize = 50;
 pub const RECENT_MEETINGS: usize = 20;
@@ -387,7 +388,7 @@ pub fn library_settings(state: State<'_, AppState>) -> LibrarySettings {
 pub fn set_show_screen_captures(state: State<'_, AppState>, show: bool) -> Result<LibrarySettings, CommandError> {
     let mut settings = state.settings.lock().unwrap();
     settings.set_show_screen_captures(show);
-    settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+    settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     Ok(LibrarySettings { show_screen_captures: show, hidden_episode_apps: settings.hidden_episode_apps() })
 }
 
@@ -395,11 +396,11 @@ pub fn set_show_screen_captures(state: State<'_, AppState>, show: bool) -> Resul
 #[tauri::command]
 pub fn set_episode_app_hidden(state: State<'_, AppState>, app: String, hidden: bool) -> Result<LibrarySettings, CommandError> {
     if app.trim().is_empty() {
-        return Err(CommandError::invalid_input("no app given"));
+        return Err(CommandError::invalid_input(tr("No app given", &[])));
     }
     let mut settings = state.settings.lock().unwrap();
     settings.set_episode_app_hidden(app.trim(), hidden);
-    settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+    settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     Ok(LibrarySettings { show_screen_captures: settings.show_screen_captures(), hidden_episode_apps: settings.hidden_episode_apps() })
 }
 

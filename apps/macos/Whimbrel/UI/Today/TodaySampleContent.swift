@@ -96,7 +96,7 @@ enum TodaySampleContent {
 
 extension TodayActions {
     static let noop = TodayActions(
-        openMeeting: { _ in }, openThread: { _ in }, ask: { _ in }, openSettings: {}, generateDigest: {},
+        openMeeting: { _ in }, openThread: { _ in }, ask: { _ in }, openSettings: {}, requestCalendar: {}, generateDigest: {},
         reviewApprovals: {}, startMeeting: { _ in }, startNote: {}, completeFollowup: { _ in }
     )
 }

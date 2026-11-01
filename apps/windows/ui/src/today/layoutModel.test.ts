@@ -5,7 +5,7 @@ import { WHIMBREL } from "../skin";
 import {
   ARCHETYPE_IDS,
   FIELD,
-  HELD_SEPARATOR,
+  heldSeparator,
   PLACED,
   REFERENCE_CONTENTS,
   REFERENCE_FLOAT_THRESHOLD,
@@ -29,6 +29,7 @@ import {
   thisDeviceLabel,
   upNext,
   voiceText,
+  localizedVoice,
   type TodayModel,
 } from "./layoutModel";
 
@@ -58,9 +59,13 @@ const meeting = (id: number, minutesFromNow: number, title = `Held ${id}`): Meet
   tsUnixMs: NOW + minutesFromNow * MIN,
 });
 
+/** The locale the models are given here, so times read the same on every machine. */
+const LOCALE = "en-US";
+
 function model(over: Partial<TodayModel> = {}): TodayModel {
   return {
     now: NOW,
+    locale: LOCALE,
     name: "Mike Pointer",
     schedule: { events: [], earlierToday: [], recording: false },
     next: null,
@@ -163,15 +168,42 @@ describe("voice", () => {
 
   it("words the greeting in the skin's voice and keeps the date line", () => {
     const voice = { ...WHIMBREL.skin.voice, greetingMorning: "Rise, {name}!", greetingAfternoon: "Afternoon {name}", greetingEvening: "Night {name}" };
-    expect(greetingFor("Mike Pointer", new Date(2026, 9, 22, 8), voice)).toEqual({ kicker: "Thursday, October 22", title: "Rise, Mike!" });
-    expect(greetingFor("Mike", new Date(2026, 9, 22, 12), voice).title).toBe("Afternoon Mike");
-    expect(greetingFor("Mike", new Date(2026, 9, 22, 17), voice).title).toBe("Night Mike");
-    expect(greetingFor("Mike", new Date(2026, 9, 22, 8), WHIMBREL.skin.voice).title).toBe("Good morning, Mike");
+    expect(greetingFor("Mike Pointer", new Date(2026, 9, 22, 8), voice, LOCALE)).toEqual({ kicker: "Thursday, October 22", title: "Rise, Mike!" });
+    expect(greetingFor("Mike", new Date(2026, 9, 22, 12), voice, LOCALE).title).toBe("Afternoon Mike");
+    expect(greetingFor("Mike", new Date(2026, 9, 22, 17), voice, LOCALE).title).toBe("Night Mike");
+    expect(greetingFor("Mike", new Date(2026, 9, 22, 8), WHIMBREL.skin.voice, LOCALE).title).toBe("Good morning, Mike");
   });
 
   it("makes the date the title when there is no usable name, whatever the voice", () => {
-    expect(greetingFor("", new Date(2026, 9, 22, 8), WHIMBREL.skin.voice)).toEqual({ kicker: null, title: "Thursday, October 22" });
-    expect(greetingFor("me@acme.test", new Date(2026, 9, 22, 8), WHIMBREL.skin.voice).kicker).toBeNull();
+    expect(greetingFor("", new Date(2026, 9, 22, 8), WHIMBREL.skin.voice, LOCALE)).toEqual({ kicker: null, title: "Thursday, October 22" });
+    expect(greetingFor("me@acme.test", new Date(2026, 9, 22, 8), WHIMBREL.skin.voice, LOCALE).kicker).toBeNull();
+  });
+});
+
+describe("the voice in the user's language", () => {
+  const skin = (voice: Record<string, string>, voiceLocalized?: Record<string, Record<string, string>>) => ({
+    ...WHIMBREL.skin,
+    voice,
+    voiceLocalized,
+  });
+
+  it("uses the skin's own wording for the exact language, then the base language, then its English", () => {
+    const own = skin({ upNextHeader: "Coming up" }, { "fr-CA": { upNextHeader: "À venir (CA)" }, fr: { upNextHeader: "À venir" } });
+    expect(localizedVoice(own, "fr-CA").upNextHeader).toBe("À venir (CA)");
+    expect(localizedVoice(own, "fr-FR").upNextHeader).toBe("À venir");
+    expect(localizedVoice(own, "de").upNextHeader).toBe("Coming up");
+  });
+
+  it("reads Whimbrel's own translation where a skin kept Whimbrel's English", () => {
+    const whimbrelEs = WHIMBREL.skin.voiceLocalized?.es?.greetingMorning;
+    expect(whimbrelEs).toBeTruthy();
+    expect(localizedVoice(skin({}), "es-US").greetingMorning).toBe(whimbrelEs);
+    // A skin's own English wording is its voice: it doesn't become Whimbrel's Spanish.
+    expect(localizedVoice(skin({ greetingMorning: "Morning, {name}" }), "es").greetingMorning).toBe("Morning, {name}");
+  });
+
+  it("is Whimbrel's English in English", () => {
+    expect(localizedVoice(WHIMBREL.skin, "en-US")).toEqual({ ...WHIMBREL.skin.voice });
   });
 });
 
@@ -216,7 +248,7 @@ describe("up next and the schedule", () => {
     expect(both.map((i) => i.kind)).toEqual(["event", "separator", "held"]);
     expect(scheduleItems(schedule(withSchedule([event("a", 10)]), false)).map((i) => i.kind)).toEqual(["event"]);
     expect(scheduleItems(schedule(withSchedule([], [meeting(1, -60)]), false)).map((i) => i.kind)).toEqual(["held"]);
-    expect(HELD_SEPARATOR).toBe("Earlier today");
+    expect(heldSeparator()).toBe("Earlier today");
   });
 
   it("offers Start for an event to come, Open once recorded, and no Start while recording", () => {
@@ -229,7 +261,7 @@ describe("up next and the schedule", () => {
 
   it("words the time, countdown and invitees like the schedule card", () => {
     const [row] = schedule(withSchedule([event("a", 9, { attendees: ["a@x", "b@x", "c@x"] })]), false).upcoming;
-    expect(row.timeText).toBe(timeLabel(NOW + 9 * MIN));
+    expect(row.timeText).toBe(timeLabel(NOW + 9 * MIN, LOCALE));
     expect(row.relative).toBe("In 9m");
     expect(row.attendees).toBe("a@x, b@x +1");
     expect(schedule(withSchedule([event("a", 5, { attendees: [] })]), false).upcoming[0].attendees).toBeNull();
@@ -289,10 +321,10 @@ describe("what has something to show", () => {
 
 describe("devices", () => {
   it("says this PC's activity and how many others reported", () => {
-    expect(devicesLine([pc, laptop])).toMatch(/^3 captures · last .+ · 1 other device$/);
-    expect(devicesLine([pc, laptop, { ...laptop, device: { ...laptop.device, deviceId: "T2" } }])).toMatch(/· 2 other devices$/);
-    expect(devicesLine([{ ...pc, captures: 0, lastTsUnixMs: null }])).toBe("Nothing yet today");
-    expect(devicesLine([])).toBe("Nothing yet today");
+    expect(devicesLine([pc, laptop], LOCALE)).toMatch(/^3 captures · last .+ · 1 other device$/);
+    expect(devicesLine([pc, laptop, { ...laptop, device: { ...laptop.device, deviceId: "T2" } }], LOCALE)).toMatch(/· 2 other devices$/);
+    expect(devicesLine([{ ...pc, captures: 0, lastTsUnixMs: null }], LOCALE)).toBe("Nothing yet today");
+    expect(devicesLine([], LOCALE)).toBe("Nothing yet today");
   });
 
   it("labels the chip with this PC", () => {
@@ -399,8 +431,8 @@ describe("the Field pitch", () => {
 
   it("says the verb, the meeting, the time and whether it is next", () => {
     const [m] = fieldDay(withSchedule([event("a", 10)])).markers;
-    expect(markerLabel(m)).toBe(`Start Meeting a, ${timeLabel(NOW + 10 * MIN)}, up next`);
-    expect(markerLabel({ ...m, action: null, isNext: false })).toBe(`Meeting a, ${timeLabel(NOW + 10 * MIN)}`);
+    expect(markerLabel(m)).toBe(`Start Meeting a, ${timeLabel(NOW + 10 * MIN, LOCALE)}, up next`);
+    expect(markerLabel({ ...m, action: null, isNext: false })).toBe(`Meeting a, ${timeLabel(NOW + 10 * MIN, LOCALE)}`);
     expect(markerLabel({ ...m, action: { kind: "open", meetingId: 1 }, isNext: false })).toMatch(/^Open Meeting a/);
   });
 });

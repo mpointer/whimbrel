@@ -18,9 +18,6 @@ use crate::error::CommandError;
 use crate::settings::{ApiKeys, PromptSurface};
 use crate::state::AppState;
 
-/// What `api::digest::daily_digest` returns for a window with nothing in it, without a
-/// model call or a spend check. Pinned by a test against the core.
-const EMPTY_DAY_SUMMARY: &str = "No activity captured today.";
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -145,9 +142,11 @@ fn recap_from_cache(day: &str, json: &str) -> Option<TodayRecap> {
     Some(TodayRecap { day: day.to_string(), summary: digest.summary, open_loops: digest.open_loops, cached: true, empty_day: false })
 }
 
-/// The core's answer for a window with nothing in it (no model was called).
-fn is_empty_day(digest: &llm::DailyDigest) -> bool {
-    digest.summary == EMPTY_DAY_SUMMARY && digest.open_loops.is_empty() && digest.token_usage == llm::TokenUsage::default()
+/// The core's answer for a window with nothing in it (no model was called). Its summary is
+/// written in the output language, `routing`'s, so it's compared in that language.
+fn is_empty_day(digest: &llm::DailyDigest, routing: &api::RoutingConfig) -> bool {
+    let placeholder = api::l10n::text(&routing.output_language, api::l10n::keys::NO_ACTIVITY_TODAY, &[]);
+    digest.summary == placeholder && digest.open_loops.is_empty() && digest.token_usage == llm::TokenUsage::default()
 }
 
 fn thread_row(t: memory::Thread) -> ThreadRow {
@@ -221,7 +220,7 @@ pub async fn today_recap(state: State<'_, AppState>, refresh: bool) -> Result<To
                 }
             }
             let digest = api::digest::daily_digest(s, &ollama_model, start, end, &routing)?;
-            if is_empty_day(&digest) {
+            if is_empty_day(&digest, &routing) {
                 return Ok(TodayRecap { day: key, summary: digest.summary, open_loops: Vec::new(), cached: false, empty_day: true });
             }
             // Stored verbatim: the MCP server reads these rows as `llm::DailyDigest`.
@@ -322,15 +321,21 @@ mod tests {
         assert!(recap_from_cache("d", "not json").is_none());
     }
 
-    /// Pins the coupling to the core's placeholder: if its wording changes, empty mornings
-    /// would start caching it again.
+    /// Pins the coupling to the core's placeholder, in English and in another output
+    /// language: if it isn't recognized, empty mornings would start caching it again.
     #[test]
     fn the_cores_empty_day_digest_is_recognized() {
         let store = memory::Store::open_in_memory().unwrap();
-        let digest = api::digest::daily_digest(&store, "gemma4:12b", 0, 1, &api::RoutingConfig::default()).unwrap();
-        assert!(is_empty_day(&digest), "the core's empty-day digest changed: {digest:?}");
+        let english = api::RoutingConfig::default();
+        let digest = api::digest::daily_digest(&store, "gemma4:12b", 0, 1, &english).unwrap();
+        assert!(is_empty_day(&digest, &english), "the core's empty-day digest changed: {digest:?}");
         let real = llm::DailyDigest { summary: "Wrote the plan.".into(), open_loops: vec![], token_usage: llm::TokenUsage::default() };
-        assert!(!is_empty_day(&real));
+        assert!(!is_empty_day(&real, &english));
+
+        let german = api::RoutingConfig { output_language: "de-DE".into(), ..api::RoutingConfig::default() };
+        let digest = api::digest::daily_digest(&store, "gemma4:12b", 0, 1, &german).unwrap();
+        assert_ne!(digest.summary, "No activity captured today.", "the core wrote the placeholder in English");
+        assert!(is_empty_day(&digest, &german), "a German empty day: {digest:?}");
     }
 
     // --- the Daily Brief as the recap ---

@@ -276,7 +276,7 @@ pub fn parse_skin(bytes: &[u8], base: &Skin) -> Option<(Skin, Vec<String>)> {
 /// the base first, then the rest by name. Broken files and duplicate ids are skipped; the first
 /// file name wins a duplicate id.
 pub fn load_bundled(dir: &Path) -> Vec<Skin> {
-    let base = whimbrel_default();
+    let mut base = whimbrel_default();
     let mut files: Vec<_> = std::fs::read_dir(dir)
         .map(|rd| rd.filter_map(Result::ok).map(|e| e.path()).collect())
         .unwrap_or_default();
@@ -292,7 +292,9 @@ pub fn load_bundled(dir: &Path) -> Vec<Skin> {
             continue;
         };
         if skin.id == base.id {
-            continue; // whimbrel.json mirrors the base
+            // whimbrel.json mirrors the base, and carries its translated voice.
+            base.voice_localized = skin.voice_localized;
+            continue;
         }
         if seen.insert(skin.id.clone()) {
             loaded.push(skin);

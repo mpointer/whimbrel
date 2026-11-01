@@ -16,6 +16,7 @@ use crate::error::CommandError;
 use crate::settings::{ApiKeys, Instructions, PromptSurface, RoutingSettings};
 use crate::state::AppState;
 use crate::store_actor::StoreHandle;
+use crate::l10n::tr;
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -95,7 +96,7 @@ struct Ask {
 pub fn chat_ask(state: State<'_, AppState>, query: String, conversation_id: Option<i64>, on_event: Channel<ChatEvent>) -> Result<(), CommandError> {
     let query = query.trim().to_string();
     if query.is_empty() {
-        return Err(CommandError::invalid_input("Type a question first."));
+        return Err(CommandError::invalid_input(tr("Type a question first.", &[])));
     }
     let store = state.store()?.clone();
     let slow = state.slow_store()?.clone();
@@ -114,7 +115,7 @@ pub fn chat_ask(state: State<'_, AppState>, query: String, conversation_id: Opti
             };
             run(&store, &ask, &send);
         })
-        .map_err(|e| CommandError::store(format!("could not start the question: {e}")))?;
+        .map_err(|e| CommandError::store(tr("Could not start the question: {error}", &[("error", &e.to_string())])))?;
     Ok(())
 }
 
@@ -327,7 +328,7 @@ pub async fn chat_conversation(state: State<'_, AppState>, id: i64) -> Result<Op
 pub async fn chat_rename_conversation(state: State<'_, AppState>, id: i64, title: String) -> Result<Vec<ConversationRow>, CommandError> {
     let title = title.trim().to_string();
     if title.is_empty() {
-        return Err(CommandError::invalid_input("A conversation needs a title."));
+        return Err(CommandError::invalid_input(tr("A conversation needs a title.", &[])));
     }
     let store = state.store()?;
     store.call(move |s| s.rename_conversation(id, &title).map_err(|e| e.to_string())).await?.map_err(CommandError::store)?;

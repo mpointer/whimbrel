@@ -129,6 +129,7 @@ enum SkinLoader {
     /// Every `*.json` directly inside `url` (not recursive, so `skins/invalid/` is never loaded),
     /// `base` first, then by name; broken files and duplicate ids are skipped.
     static func loadDirectory(_ url: URL, base: Skin = SkinDefaults.whimbrel) -> [Skin] {
+        var base = base
         let files = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
         var seen: Set<String> = [base.id]
         var loaded: [Skin] = []
@@ -137,7 +138,11 @@ enum SkinLoader {
                 log.error("skin file skipped: \(file.lastPathComponent, privacy: .public)")
                 continue
             }
-            if skin.id == base.id { continue }  // e.g. whimbrel.json mirrors the base
+            if skin.id == base.id {
+                // whimbrel.json mirrors the base, and carries its translated voice.
+                base.voice.localized = skin.voice.localized
+                continue
+            }
             guard seen.insert(skin.id).inserted else {
                 log.error("skin file skipped, duplicate id: \(file.lastPathComponent, privacy: .public)")
                 continue

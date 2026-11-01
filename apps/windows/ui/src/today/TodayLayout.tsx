@@ -6,6 +6,7 @@ import { Reference } from "./archetypes/Reference";
 import { Terminal } from "./archetypes/Terminal";
 import { DevicesLine, EventLine, HeldLine, OpenLoopLines, RecapLines, ScheduleLines, SkinImage, type TodayLayoutProps } from "./archetypes/parts";
 import { earlierRows, leftovers, schedule, scheduleItems, upNext, voiceText, type ArchetypeId } from "./layoutModel";
+import { t } from "../l10n";
 import "./archetypes.css";
 
 export type SkinnedArchetype = Exclude<ArchetypeId, "standard">;
@@ -38,7 +39,7 @@ function Leftovers({ archetype, props }: { archetype: SkinnedArchetype; props: T
       case "earlier":
         return [block(section, voiceText(voice, "earlierHeader"), earlierRows(model).map((row) => <HeldLine key={row.id} row={row} props={props} shape="grid" />))];
       case "threads":
-        return [block(section, "Open loops", <OpenLoopLines props={props} />)];
+        return [block(section, t("Open loops"), <OpenLoopLines props={props} />)];
       case "recap":
         return model.recap ? [block(section, voiceText(voice, "recapHeader"), <RecapLines recap={model.recap} props={props} tone="secondary" />)] : [];
       case "devices":

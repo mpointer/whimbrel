@@ -21,10 +21,13 @@ enum ModelDownloadService {
         }
     }
 
+    /// `base` backs multilingual mode, and it's the floor model for Automatic.
+    private static var needsBase: Bool { AppLanguage.multilingual() || TranscriptionQuality.current() == .automatic }
+
     static var allModelsPresent: Bool {
         FileManager.default.fileExists(atPath: TranscriptionService.modelPath.path)
             && DiarizationService.modelsAvailable
-            && (!AppLanguage.multilingual() || FileManager.default.fileExists(atPath: TranscriptionService.multilingualModelPath.path))
+            && (!needsBase || FileManager.default.fileExists(atPath: TranscriptionService.multilingualModelPath.path))
             && EmbeddingModelLocator.modelPresent
     }
 
@@ -39,7 +42,7 @@ enum ModelDownloadService {
             whisperModelPath: TranscriptionService.modelPath,
             segmentationModelPath: DiarizationService.segmentationModelPath,
             embeddingModelPath: DiarizationService.embeddingModelPath,
-            multilingualModelPath: AppLanguage.multilingual() ? TranscriptionService.multilingualModelPath : nil
+            multilingualModelPath: needsBase ? TranscriptionService.multilingualModelPath : nil
         ) else {
             throw DownloadError.bridgeUnavailable
         }
@@ -49,6 +52,16 @@ enum ModelDownloadService {
             throw DownloadError.bridgeUnavailable
         }
         try await poll(embeddingJob, progress: progress)
+        await SpeechAnalyzerEngine.installLanguageAsset()
+    }
+
+    /// large-v3-turbo, on request.
+    @MainActor
+    static func downloadTurbo(progress: @escaping (Double, String) -> Void) async throws {
+        guard let jobId = CoreMemoryStore.startTurboDownload(destination: TranscriptionService.turboModelPath) else {
+            throw DownloadError.bridgeUnavailable
+        }
+        try await poll(jobId, progress: progress)
     }
 
     @MainActor

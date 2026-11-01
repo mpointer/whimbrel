@@ -36,6 +36,33 @@ pub extern "C" fn whimbrel_embedding_download_start(models_dir: *const c_char) -
     json_to_c_string(serde_json::json!({ "job_id": job_id }).to_string())
 }
 
+/// Starts downloading large-v3-turbo to `destination`. Returns `{"job_id":…}` to poll like
+/// `whimbrel_models_download_start`'s; NULL on a NULL path.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_turbo_download_start(destination: *const c_char) -> *mut c_char {
+    let Some(destination) = cstr_to_string(destination) else {
+        return ptr::null_mut();
+    };
+    let job_id = api::models::start_with_manifest(vec![api::models::turbo_spec(destination.into())]);
+    json_to_c_string(serde_json::json!({ "job_id": job_id }).to_string())
+}
+
+/// Picks the engines for this machine from `transcribe::engine::Inputs` JSON. Returns
+/// `transcribe::engine::Choice` JSON; NULL on bad input.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_choose_engine(inputs_json: *const c_char) -> *mut c_char {
+    let Some(inputs) = cstr_to_string(inputs_json).and_then(|j| serde_json::from_str(&j).ok()) else {
+        return ptr::null_mut();
+    };
+    json_to_c_string(serde_json::to_string(&transcribe::engine::choose(inputs)).unwrap_or_default())
+}
+
+/// large-v3-turbo's estimated realtime speed from a timed run of a small model.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_estimated_turbo_speed(small_model_speed: f64, small_model_is_base: bool) -> f64 {
+    transcribe::engine::estimated_turbo_speed(small_model_speed, small_model_is_base)
+}
+
 /// The folder the current embedding model lives in under `models_dir`; NULL on a NULL path.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_embedding_model_dir(models_dir: *const c_char) -> *mut c_char {

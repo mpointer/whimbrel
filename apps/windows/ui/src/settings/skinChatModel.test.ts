@@ -5,6 +5,7 @@ import {
   composer,
   failedLine,
   initialChat,
+  keepsOffered,
   placeholder,
   providerLine,
   runTurn,
@@ -206,5 +207,15 @@ describe("the chat", () => {
   it("asks for a change on your skins and a skin on the built-ins", () => {
     expect(placeholder("user-a-1")).toBe("Ask for a change…");
     expect(placeholder("game-day")).toBe("Describe a skin…");
+  });
+});
+
+describe("an approval's line", () => {
+  it("keeps the image offered only when local-only mode refused it, whatever the text says", () => {
+    const text = "any language";
+    expect(keepsOffered({ text, stored: false, kind: "local_only" })).toBe(true);
+    expect(keepsOffered({ text, stored: true, kind: "placed" })).toBe(false);
+    expect(keepsOffered({ text, stored: false, kind: "note" })).toBe(false);
+    expect(keepsOffered({ text, stored: false })).toBe(false);
   });
 });

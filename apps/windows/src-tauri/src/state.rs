@@ -23,6 +23,7 @@ use crate::settings::SettingsFile;
 use crate::store_actor::StoreHandle;
 use crate::syncing::config::SyncConfig;
 use crate::syncing::controller::SyncController;
+use crate::l10n::tr;
 
 pub struct AppState {
     pub paths: Paths,
@@ -137,7 +138,10 @@ impl AppState {
                     store.clone(),
                     identity.device_id.clone(),
                     paths.recordings.clone(),
-                    WasapiRecording::starter(paths.recordings.clone(), live_transcribe_config(&paths)),
+                    WasapiRecording::starter(paths.recordings.clone(), {
+                        let (paths, settings) = (paths.clone(), settings.clone());
+                        Arc::new(move || live_transcribe_config(&paths, settings.lock().unwrap().multilingual()))
+                    }),
                     snapshots,
                     pipeline.clone(),
                 );
@@ -325,11 +329,11 @@ impl AppState {
     }
 
     pub fn meetings(&self) -> Result<&Arc<MeetingController>, CommandError> {
-        self.meetings.as_ref().ok_or_else(|| CommandError::store("meetings need the database and device identity; see Settings for the startup error"))
+        self.meetings.as_ref().ok_or_else(|| CommandError::store(tr("Meetings need the database and device identity; see Settings for the startup error", &[])))
     }
 
     pub fn store(&self) -> Result<&StoreHandle, CommandError> {
-        self.store.as_ref().ok_or_else(|| CommandError::store("the database is not open; see Settings for the startup error"))
+        self.store.as_ref().ok_or_else(|| CommandError::store(tr("The database is not open; see Settings for the startup error", &[])))
     }
 }
 
@@ -355,10 +359,13 @@ fn reroot_prefixes(paths: &Paths) -> Option<(String, String)> {
 
 /// How a recording transcribes itself while it runs. Half the pipeline's threads, because
 /// this competes with the capture threads and with whatever the user is doing in the
-/// meeting; the pipeline still gets everything at the end for the tail.
-fn live_transcribe_config(paths: &Paths) -> crate::meetings::live::Config {
+/// meeting; the pipeline still gets everything at the end for the tail. A new meeting has no
+/// language yet, so multilingual mode (once its model is on disk) detects it.
+fn live_transcribe_config(paths: &Paths, multilingual: bool) -> crate::meetings::live::Config {
+    let plan = crate::meetings::spoken::Plan::choose(multilingual, paths.whisper_multilingual_model().is_file(), None);
     crate::meetings::live::Config {
-        model: paths.whisper_model(),
+        model: plan.model(paths),
+        plan,
         slices: paths.live_slices(),
         threads: (crate::meetings::perf::pipeline_threads() / 2).max(1),
     }

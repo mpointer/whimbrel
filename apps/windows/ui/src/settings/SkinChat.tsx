@@ -17,7 +17,7 @@ import { describeError, isCommandError } from "../errors";
 import type { ImageCandidateView, SkinLine, SkinSources } from "../generated/types";
 import { useL10n } from "../l10n";
 import { chooseSkin, currentSelection, installedSkins, reloadSkins, skinRevision, subscribeSkin } from "../skin";
-import { chatReducer, composer, initialChat, LOCAL_ONLY_LINE, placeholder, providerLine, runTurn, type ChatEvent, type SkinChatApi } from "./skinChatModel";
+import { chatReducer, composer, initialChat, keepsOffered, placeholder, providerLine, runTurn, type ChatEvent, type SkinChatApi } from "./skinChatModel";
 import { pickCard } from "./skinGalleryModel";
 
 const api: SkinChatApi = {
@@ -127,7 +127,7 @@ export function SkinChat(props: { onRunning?: (running: boolean) => void } = {})
     const skinId = latest.current.skinId;
     skinImageApprove(skinId, candidate.url).then((line) => {
       // Refused in local-only mode, the image stays offered, as on the Mac.
-      if (line.text !== LOCAL_ONLY_LINE) dispatch({ type: "forget", url: candidate.url });
+      if (!keepsOffered(line)) dispatch({ type: "forget", url: candidate.url });
       posted(skinId, line);
     }, failed(skinId));
   };

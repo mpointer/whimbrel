@@ -8,7 +8,7 @@ final class LiveTranscriptLogicTests: XCTestCase {
     /// ending (`stop()`) is what tears it down.
     @MainActor
     func testLiveAskSurvivesAViewRebuildAndEndsWithTheMeeting() {
-        let live = LiveTranscriptionService(store: { nil }, modelPath: { "" }, systemURL: { nil }, micURL: { nil })
+        let live = LiveTranscriptionService(store: { nil }, engine: { WhisperEngine(model: URL(fileURLWithPath: "/missing")) }, detectLanguage: { false }, systemURL: { nil }, micURL: { nil })
         let session = live.askSession
         session.exchanges = [MeetingAskExchange(question: "What did we decide?")]
         session.pending = ("prep-1", 0, "model")

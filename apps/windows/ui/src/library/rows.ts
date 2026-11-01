@@ -1,4 +1,6 @@
 import type { EpisodeRow, LibraryRow } from "../generated/types";
+import { t } from "../l10n";
+import { meetingTitleLabel, speakerLabel } from "../meetings/sentinels";
 
 /**
  * An episode's summary, or why it has none. Episode summaries come only from Ollama on
@@ -6,10 +8,11 @@ import type { EpisodeRow, LibraryRow } from "../generated/types";
  */
 export function episodeSummaryText(e: Pick<EpisodeRow, "summary" | "status">): string {
   if (e.summary) return e.summary;
-  const why = "Episode summaries are written by Ollama on this PC, whichever AI provider you chose for Ask.";
   if (e.status === "summarize_failed")
-    return `Not summarized. ${why} Ollama isn't running, or it doesn't have the model set in Settings → AI & routing.`;
-  return `Not summarized yet. ${why}`;
+    return t(
+      "Not summarized. Episode summaries are written by Ollama on this PC, whichever AI provider you chose for Ask. Ollama isn't running, or it doesn't have the model set in Settings → AI & routing.",
+    );
+  return t("Not summarized yet. Episode summaries are written by Ollama on this PC, whichever AI provider you chose for Ask.");
 }
 
 export function rowKey(row: LibraryRow): string {
@@ -25,12 +28,12 @@ function startOfDay(d: Date): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
-export function dayLabel(ms: number, now: Date = new Date()): string {
+export function dayLabel(ms: number, now: Date = new Date(), locale?: string): string {
   const day = new Date(ms);
   const days = Math.round((startOfDay(now) - startOfDay(day)) / 86_400_000);
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
-  return day.toLocaleDateString(undefined, {
+  if (days === 0) return t("Today");
+  if (days === 1) return t("Yesterday");
+  return day.toLocaleDateString(locale, {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -80,10 +83,10 @@ export function fullDateTimeLabel(ms: number, locale?: string): string {
 /** "45 min", "1 h", "1 h 5 min". */
 export function durationLabel(ms: number): string {
   const minutes = Math.max(0, Math.round(ms / 60_000));
-  if (minutes < 60) return `${minutes} min`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return m ? `${h} h ${m} min` : `${h} h`;
+  if (minutes < 60) return t("{minutes} min", { minutes });
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? t("{hours} h {minutes} min", { hours, minutes: rest }) : t("{hours} h", { hours });
 }
 
 /**
@@ -138,18 +141,30 @@ export interface Headline {
 export function headline(row: LibraryRow): Headline {
   switch (row.kind) {
     case "capture":
-      return { title: row.title || row.app, meta: row.source === "ocr" ? `${row.app} · OCR` : row.app };
+      return { title: row.title || row.app, meta: row.source === "ocr" ? t("{app} · OCR", { app: row.app }) : row.app };
     case "meeting":
-      return { title: row.title || "Untitled meeting", meta: `Meeting · ${row.status}${row.hasSummary ? " · summary" : ""}` };
+      // The status is core's value ("completed", "recording"), shown as stored.
+      return {
+        title: row.title ? meetingTitleLabel(row.title) : t("Untitled meeting"),
+        meta: row.hasSummary
+          ? t("Meeting · {status} · summary", { status: row.status })
+          : t("Meeting · {status}", { status: row.status }),
+      };
     case "episode":
       return {
         title: row.title || row.app,
-        meta: `${row.app} · ${row.itemCount} capture${row.itemCount === 1 ? "" : "s"}${row.hidden || row.appHidden ? " · hidden" : ""}`,
+        meta:
+          row.hidden || row.appHidden
+            ? t("{app} · {count} captures · hidden", { app: row.app, count: row.itemCount })
+            : t("{app} · {count} captures", { app: row.app, count: row.itemCount }),
       };
     case "transcript":
-      return { title: row.meetingTitle || "Meeting transcript", meta: `${row.speaker} · ${formatOffset(row.startCs)}` };
+      return {
+        title: row.meetingTitle ? meetingTitleLabel(row.meetingTitle) : t("Meeting transcript"),
+        meta: `${speakerLabel(row.speaker)} · ${formatOffset(row.startCs)}`,
+      };
     case "snapshot":
-      return { title: row.meetingTitle || "Meeting slide", meta: "Slide" };
+      return { title: row.meetingTitle ? meetingTitleLabel(row.meetingTitle) : t("Meeting slide"), meta: t("Slide") };
   }
 }
 
@@ -160,11 +175,11 @@ export interface DayGroup {
 
 /** Consecutive rows grouped under a day heading, keeping their order. Transcript and
  *  slide hits, which have no time, go under "Transcript matches" and "Slide matches". */
-export function groupByDay(rows: LibraryRow[], now: Date = new Date()): DayGroup[] {
+export function groupByDay(rows: LibraryRow[], now: Date = new Date(), locale?: string): DayGroup[] {
   const groups: DayGroup[] = [];
   for (const row of rows) {
     const ts = rowTs(row);
-    const day = ts !== null ? dayLabel(ts, now) : row.kind === "snapshot" ? "Slide matches" : "Transcript matches";
+    const day = ts !== null ? dayLabel(ts, now, locale) : row.kind === "snapshot" ? t("Slide matches") : t("Transcript matches");
     const last = groups[groups.length - 1];
     if (last && last.day === day) last.rows.push(row);
     else groups.push({ day, rows: [row] });

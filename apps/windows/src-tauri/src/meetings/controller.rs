@@ -21,6 +21,7 @@ use super::recorder::{session_stamp, stranded_audio, ActiveAudio, AudioTarget, R
 use super::snapshots::service::{SnapshotHandle, SnapshotMeeting, StartSnapshots};
 use crate::error::CommandError;
 use crate::store_actor::StoreHandle;
+use crate::l10n::tr;
 
 /// A manual meeting's placeholder title; core retitles it from the summary (#65).
 pub const MANUAL_TITLE: &str = "Meeting";
@@ -266,7 +267,7 @@ impl MeetingController {
             .lock()
             .unwrap()
             .begin_start()
-            .ok_or_else(|| CommandError::invalid_input("A meeting is already recording."))?;
+            .ok_or_else(|| CommandError::invalid_input(tr("A meeting is already recording.", &[])))?;
         let now = now_ms();
         // A calendar meeting's row spans its event; everything else starts now. The
         // recording's own clock still runs from this moment.

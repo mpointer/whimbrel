@@ -10,6 +10,7 @@ use crate::error::CommandError;
 use crate::profile::{edit_fits, new_fact_id, Fact, FactError, Profile, MAX_CHARS, MAX_FACTS, MAX_FACT_CHARS};
 use crate::settings::SettingsFile;
 use crate::state::AppState;
+use crate::l10n::tr;
 
 /// Everything the pane shows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -92,7 +93,7 @@ fn apply(file: &mut SettingsFile, change: impl FnOnce(&mut Profile) -> Result<()
     let before = profile.composed_chars();
     change(&mut profile)?;
     if !edit_fits(before, profile.composed_chars()) {
-        return Err(CommandError::invalid_input(format!("That would push your Profile past {MAX_CHARS} characters. Shorten it first.")));
+        return Err(CommandError::invalid_input(tr("That would push your Profile past {max} characters. Shorten it first.", &[("max", &MAX_CHARS.to_string())])));
     }
     file.set_profile(&profile);
     Ok(view(&profile))
@@ -101,7 +102,7 @@ fn apply(file: &mut SettingsFile, change: impl FnOnce(&mut Profile) -> Result<()
 fn update(state: &AppState, change: impl FnOnce(&mut Profile) -> Result<(), CommandError>) -> Result<ProfileView, CommandError> {
     let mut file = state.settings.lock().unwrap();
     let shown = apply(&mut file, change)?;
-    file.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+    file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     Ok(shown)
 }
 
@@ -183,7 +184,7 @@ pub async fn profile_accept_suggestion(state: State<'_, AppState>, id: i64) -> R
         .map_err(CommandError::store)?
         .into_iter()
         .find(|x| x.id == id)
-        .ok_or_else(|| CommandError::invalid_input("That suggestion is no longer there."))?;
+        .ok_or_else(|| CommandError::invalid_input(tr("That suggestion is no longer there.", &[])))?;
     let shown = update(&state, |p| p.add_fact(new_fact_id(), &suggestion.text, suggestion.source_meeting_id).map_err(refused))?;
     if let Err(e) = store.call(move |s| s.delete_profile_suggestion(id)).await? {
         // The fact is saved; a leftover row would only show up as a duplicate the next time it is added.

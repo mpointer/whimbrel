@@ -9,6 +9,7 @@ use crate::capture::{app_id, window};
 use crate::error::CommandError;
 use crate::settings::keys;
 use crate::state::AppState;
+use crate::l10n::tr;
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -90,7 +91,7 @@ pub fn set_excluded_apps(state: State<'_, AppState>, excluded: Vec<String>) -> R
     {
         let mut settings = state.settings.lock().unwrap();
         settings.set(keys::EXCLUDED_BUNDLE_IDS, Some(&list));
-        settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+        settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
     if let Some(capture) = &state.capture {
         capture.set_user_exclusions(list.clone());

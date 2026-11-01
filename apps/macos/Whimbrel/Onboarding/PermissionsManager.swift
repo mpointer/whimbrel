@@ -119,6 +119,12 @@ final class PermissionsManager: ObservableObject {
         }
     }
 
+    /// Calendar from where it's needed: the system prompt once, then Settings, which is the
+    /// only place left once the user has answered.
+    func requestCalendarOrOpenSettings(fallback: () -> Void) {
+        if EKEventStore.authorizationStatus(for: .event) == .notDetermined { request(.calendar) } else { fallback() }
+    }
+
     func openSystemSettings(for kind: PermissionKind) {
         NSWorkspace.shared.open(kind.systemSettingsURL)
     }

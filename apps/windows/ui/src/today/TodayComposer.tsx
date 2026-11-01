@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { aiSettings } from "../api";
+import { t } from "../l10n";
 import { askAvailable, askModelLabel, composerPrompt } from "./todayModel";
 
 /**
@@ -9,7 +10,7 @@ import { askAvailable, askModelLabel, composerPrompt } from "./todayModel";
 export function TodayComposer({
   onAsk,
   onOpenSettings,
-  placeholder = "Ask Whimbrel about your meetings",
+  placeholder = t("Ask Whimbrel about your meetings"),
 }: {
   onAsk: (prompt: string) => void;
   onOpenSettings: () => void;
@@ -37,8 +38,8 @@ export function TodayComposer({
 
   if (!state.available) {
     return (
-      <button type="button" className="card today-setup" onClick={onOpenSettings} title="Add an API key or choose a local model in Settings">
-        <span className="muted">Set up an AI provider</span>
+      <button type="button" className="card today-setup" onClick={onOpenSettings} title={t("Add an API key or choose a local model in Settings")}>
+        <span className="muted">{t("Set up an AI provider")}</span>
         <span aria-hidden="true">&rarr;</span>
       </button>
     );
@@ -64,14 +65,14 @@ export function TodayComposer({
         type="text"
         value={text}
         placeholder={placeholder}
-        aria-label="Ask Whimbrel"
+        aria-label={t("Ask Whimbrel")}
         onChange={(e) => setText(e.target.value)}
       />
-      <span className="muted small today-composer-model" title="The default model for Ask">
+      <span className="muted small today-composer-model" title={t("The default model for Ask")}>
         {state.model}
       </span>
       <button type="submit" className="mode mode--active" disabled={!composerPrompt(text)}>
-        Ask
+        {t("Ask")}
       </button>
     </form>
   );

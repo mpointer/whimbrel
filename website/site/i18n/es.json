@@ -1,0 +1,13 @@
+{
+  "hreflang": "es",
+  "label": "Español",
+  "home": "Inicio",
+  "site": {
+    "tagline": "El asistente de IA privado que recuerda tu trabajo",
+    "pricingNote": "Gratis y de código abierto (Apache 2.0).",
+    "requirements": {
+      "mac": "macOS 14 Sonoma o posterior, Apple silicon (M1 o más reciente)",
+      "windows": "Windows 11 de 64 bits (x64)"
+    }
+  }
+}

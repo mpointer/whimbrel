@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { earlierRows, nonEmptySections, schedule, scheduleItems, upNext } from "../layoutModel";
 import { voiceText } from "../layoutModel";
+import { t } from "../../l10n";
 import { DevicesLine, EventLine, HeldLine, OpenLoopLines, RecapLines, ScheduleLines, SkinImage, SkinText, applyCaps, type TodayLayoutProps } from "./parts";
 
 /** One mono column: `[ SECTION ]` labels, dotted rules, and an Ask framed as a shell prompt (`>`, a block
@@ -43,7 +44,7 @@ export function Terminal(props: TodayLayoutProps) {
           voiceText(voice, "earlierHeader"),
           earlierRows(model).map((row) => <HeldLine key={row.id} row={row} props={props} shape="grid" />),
         )}
-      {present.includes("threads") && section("threads", "Open loops", <OpenLoopLines props={props} marker=">" />)}
+      {present.includes("threads") && section("threads", t("Open loops"), <OpenLoopLines props={props} marker=">" />)}
       {present.includes("recap") && model.recap && section("recap", voiceText(voice, "recapHeader"), <RecapLines recap={model.recap} props={props} tone="secondary" />)}
       <div className="term-footer">
         {rule}

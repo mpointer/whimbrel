@@ -259,6 +259,10 @@ class SourceTests(Tmp):
         self.assertEqual(len(hits), 1, hits)
         self.assertIn("App.tsx:9", hits[0])
 
+    def test_jsx_test_files_are_not_ui(self):
+        (self.dir / "Card.test.tsx").write_text('expect(html).toContain(">Open<");\n', encoding="utf-8")
+        self.assertEqual(translate.jsx_violations(self.dir), [])
+
     def test_jsx_arrow_type_is_not_text(self):
         (self.dir / "Card.tsx").write_text(
             "const run = (call: () => Promise<Accounts>) => {};\n<p>Bare text</p>\n", encoding="utf-8")

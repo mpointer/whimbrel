@@ -1,12 +1,32 @@
 import SwiftUI
 import AppKit
 
+private struct RecordingNoticeSettingsView: View {
+    @ObservedObject var settings: RecordingNoticeSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            Toggle("Remind me to tell people I'm recording", isOn: $settings.enabled)
+            if settings.enabled {
+                TextField(settings.text, text: $settings.customText, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+            }
+            Text("Some places require everyone's consent before a meeting is recorded. Check the rules where you and the other people are.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 struct MeetingsSettingsPane: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             Text("Meetings").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+
+            RecordingNoticeSettingsView(settings: appState.recordingNoticeSettings)
 
             Toggle("Auto-start recording for calendar meetings", isOn: Binding(
                 get: { appState.meetingTrigger.autoStartEnabled },

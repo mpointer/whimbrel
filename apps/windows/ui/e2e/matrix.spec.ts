@@ -1,15 +1,23 @@
 import { expect, test, type Page } from "@playwright/test";
 import { PNG } from "pngjs";
 import { composite, parseColor, ratio, type Rgb } from "./contrast";
-import { ARCHETYPES, BUILT_IN, installBridge, worstCase, type SkinDto } from "./fakeBridge";
+import { ARCHETYPES, BUILT_IN, catalogText, installBridge, worstCase, type SkinDto } from "./fakeBridge";
 
 // No skin may make Today overrun, overlap or become unreadable. Every installed skin × palette × light/dark,
 // and the spec's worst-case skin on every layout with and without imagery, at two window widths. A failure is
 // a layout bug to fix in src/today, not a check to relax (plan Task 9).
+//
+// No language may either (localization plan W6, W8). English and German, which runs longest, run every case.
+// French (France and Canada), Spanish and Portuguese run the worst-case skin at the narrow width, where long
+// words fail first. The tags are resolved
+// ones, as `language_settings` gives them. Overruns are looked for in the tab labels, the header and the
+// sidebar's model download line as well.
 
 const WIDTHS = [900, 1400];
 const HEIGHT = 2400; // tall enough that Today never scrolls inside the window
 const MIN_CONTRAST = 4.5;
+const FULL_LOCALES = ["en-US", "de-DE"];
+const SUBSET_LOCALES = ["fr-FR", "fr-CA", "es-ES", "pt-BR"];
 
 interface TextBox {
   text: string;
@@ -29,7 +37,8 @@ interface Measured {
   boxes: TextBox[];
 }
 
-/** Runs in the page: what overruns, what overlaps, which sections are there, and where every piece of text is. */
+/** Runs in the page: what overruns, what overlaps, which sections are there, and where every piece of text is.
+ *  Overruns are looked for in the whole window (the tab labels and the header too); the rest only in the content. */
 function measure(): Measured {
   const content = document.querySelector("main") as HTMLElement;
   const name = (el: Element) => `${el.tagName.toLowerCase()}.${String(el.getAttribute("class") ?? "").split(" ")[0]} "${(el.textContent ?? "").trim().slice(0, 40)}"`;
@@ -64,12 +73,13 @@ function measure(): Measured {
   const escapes: string[] = [];
   const boxes: TextBox[] = [];
   const sectionEls = [...content.querySelectorAll("[data-section]")];
-  for (const el of content.querySelectorAll("*")) {
+  for (const el of document.body.querySelectorAll("*")) {
     if (!hasOwnText(el) || hidden(el)) continue;
     const display = getComputedStyle(el).display;
     if (display !== "inline" && !clamps(el) && !scrolls(el)) {
       if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) overflows.push(`${name(el)} scroll ${el.scrollWidth}x${el.scrollHeight} in ${el.clientWidth}x${el.clientHeight}`);
     }
+    if (!content.contains(el)) continue;
     const section = el.closest("[data-section]");
     let opacity = 1;
     for (let e: Element | null = el; e; e = e.parentElement) opacity *= Number(getComputedStyle(e).opacity);
@@ -149,6 +159,9 @@ interface Case {
   mode: "light" | "dark";
   /** The layout the skin should draw (so the sections can be checked against it). */
   archetype: string;
+  /** The language the shell reports, a resolved tag. */
+  lang: string;
+  widths: number[];
 }
 
 /** The modes a palette really has: one that ships a single variant draws it whatever the appearance. */
@@ -157,23 +170,27 @@ function modesOf(palette: { light?: unknown; dark?: unknown }): ("light" | "dark
 }
 
 const cases: Case[] = [];
-for (const dto of BUILT_IN)
-  for (const palette of dto.palettes)
-    for (const mode of modesOf(palette)) cases.push({ title: `${dto.skin.id} / ${palette.id} / ${mode}`, skins: BUILT_IN, skinId: dto.skin.id, paletteId: palette.id, mode, archetype: dto.skin.today.archetype });
-for (const archetype of ARCHETYPES)
-  for (const imagery of [false, true])
-    for (const mode of ["light", "dark"] as const) {
-      const dto = worstCase(archetype, imagery);
-      if (!modesOf(dto.palettes[0]).includes(mode)) continue;
-      cases.push({ title: `worst case / ${archetype} / ${imagery ? "with" : "no"} imagery / ${mode}`, skins: [...BUILT_IN, dto], skinId: dto.skin.id, paletteId: dto.palettes[0].id, mode, archetype });
-    }
+for (const lang of FULL_LOCALES)
+  for (const dto of BUILT_IN)
+    for (const palette of dto.palettes)
+      for (const mode of modesOf(palette))
+        cases.push({ title: `${lang} / ${dto.skin.id} / ${palette.id} / ${mode}`, skins: BUILT_IN, skinId: dto.skin.id, paletteId: palette.id, mode, archetype: dto.skin.today.archetype, lang, widths: WIDTHS });
+for (const lang of [...FULL_LOCALES, ...SUBSET_LOCALES])
+  for (const archetype of ARCHETYPES)
+    for (const imagery of [false, true])
+      for (const mode of ["light", "dark"] as const) {
+        const dto = worstCase(archetype, imagery);
+        if (!modesOf(dto.palettes[0]).includes(mode)) continue;
+        const widths = FULL_LOCALES.includes(lang) ? WIDTHS : [WIDTHS[0]];
+        cases.push({ title: `${lang} / worst case / ${archetype} / ${imagery ? "with" : "no"} imagery / ${mode}`, skins: [...BUILT_IN, dto], skinId: dto.skin.id, paletteId: dto.palettes[0].id, mode, archetype, lang, widths });
+      }
 
 /** What the fixture day gives a layout to place, each once, wherever the layout puts it. Reference also lists the
  *  devices line among its Contents; the others draw it as an unlabelled footer. */
 const expectedSections = (archetype: string) => (archetype === "reference" ? ["devices"] : []).concat(["earlier", "recap", "schedule", "threads", "upNext"]).sort();
 
 for (const width of WIDTHS)
-  for (const c of cases)
+  for (const c of cases.filter((each) => each.widths.includes(width)))
     test(`${c.title} @${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: HEIGHT });
       await installBridge(page, c);
@@ -181,6 +198,12 @@ for (const width of WIDTHS)
       await page.locator(".today").first().waitFor();
       await page.locator("[data-skin]").first().waitFor();
       await expect(page.locator("html")).toHaveAttribute("data-archetype", c.archetype);
+      // The page is really in the language asked for, or a pass would say nothing about it.
+      const settingsLabel = catalogText("Settings", c.lang);
+      if (!c.lang.startsWith("en")) expect(settingsLabel, "the catalog translates the Settings tab").not.toBe("Settings");
+      await expect(page.locator("#tab-settings"), "the tabs are in the language asked for").toContainText(settingsLabel);
+      // The fixture is a first launch, so the sidebar's model download line is drawn and checked too.
+      await expect(page.locator(".sidebar-footer"), "the model download line is drawn").toBeVisible();
       await page.waitForTimeout(400); // images decoded, layout settled
 
       const m = await page.evaluate(measure);

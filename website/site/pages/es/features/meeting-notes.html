@@ -1,0 +1,81 @@
+<!--
+{
+  "title": "Notas de reuniones con IA sin bot: Zoom, Teams y Meet",
+  "description": "Whimbrel transcribe Zoom, Teams, Google Meet y huddles de Slack en tu computadora, sin bot, y redacta notas, decisiones y tareas.",
+  "schema": [
+    "software"
+  ],
+  "priority": 0.8,
+  "ogType": "article",
+  "crumbs": [
+    {
+      "name": "Funciones",
+      "path": "/#features"
+    },
+    {
+      "name": "Notas de reuniones",
+      "path": "/features/meeting-notes/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "¿Cómo puede Whimbrel transcribir una llamada sin unirse a ella?",
+      "a": "Graba dos flujos de audio en tu propia computadora: tu micrófono y el audio del sistema que reproduce tu app de reuniones. Como nada se une a la llamada, funciona con cualquier app de reuniones y también en persona."
+    },
+    {
+      "q": "¿La transcripción se hace en la nube?",
+      "a": "No. Whimbrel transcribe en tu computadora con un modelo de voz Whisper integrado en el dispositivo, así que el audio de tus reuniones no tiene que salir de tu equipo. Los resúmenes usan el modelo que elijas: local con Ollama o un proveedor externo con tu propia clave."
+    },
+    {
+      "q": "¿Sabe quién dijo qué?",
+      "a": "Sí. Whimbrel te distingue del otro lado de la llamada y etiqueta a cada participante en la transcripción."
+    },
+    {
+      "q": "¿Grabará reuniones que no quiero grabar?",
+      "a": "Tú decides. La grabación puede comenzar desde los eventos del calendario o al detectar audio de una reunión, y puedes detenerla, pausarla u omitir cualquier reunión. Cumple siempre las reglas de consentimiento para grabar que te correspondan."
+    }
+  ],
+  "sourceHash": "baa6c40f0239"
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="container split">
+    <div>
+      <p class="eyebrow">Notas de reuniones</p>
+      <h1>Notas de reuniones con IA, sin un bot en la llamada.</h1>
+      <p class="lede">Whimbrel escucha en tu propia computadora, así que nadie ve el mensaje "Un asistente de notas con IA se ha unido". Tú recibes la transcripción, las notas y los pendientes.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="/download/#register">Obtén Whimbrel gratis</a>
+      </div>
+    </div>
+    {{> app-mock}}
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="section-head">
+      <h2>Todas tus reuniones, capturadas de la misma forma.</h2>
+      <p class="lede">Zoom, Microsoft Teams, Google Meet, huddles de Slack, una llamada en altavoz, una conversación en tu escritorio. Si tu computadora lo puede oír, Whimbrel puede tomar notas.</p>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature"><h3>Empieza solo</h3><p>La grabación comienza desde tu calendario de Google o Outlook, o cuando Whimbrel detecta audio de una reunión que no estaba en el calendario.</p></article>
+      <article class="card feature"><h3>Transcripción en tu dispositivo</h3><p>Un modelo de voz Whisper se ejecuta de forma local. El audio no sale de tu computadora para transcribirse.</p></article>
+      <article class="card feature"><h3>Tus notas, mejoradas</h3><p>Escribe notas rápidas durante la llamada. Whimbrel las combina con la transcripción en notas limpias con decisiones y tareas pendientes.</p></article>
+      <article class="card feature"><h3>Listo antes de entrar</h3><p>La preparación de reuniones reúne en un resumen tus últimas conversaciones y preguntas abiertas con las mismas personas antes de que empiece la reunión.</p></article>
+      <article class="card feature"><h3>Pregunta sobre cualquier reunión</h3><p>"¿Qué dijeron sobre el calendario de entrega?" Las respuestas citan el momento exacto de la transcripción.</p></article>
+      <article class="card feature"><h3>Seguimientos redactados</h3><p>Whimbrel puede redactar el correo de seguimiento en Gmail para que lo revises y lo envíes.</p></article>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Preguntas frecuentes sobre las notas de reuniones</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

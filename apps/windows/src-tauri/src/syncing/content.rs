@@ -18,6 +18,7 @@ use crate::secrets::SecretStore;
 use crate::store_actor::StoreHandle;
 use crate::syncing::controller::SyncController;
 use crate::syncing::keys;
+use crate::l10n::tr;
 
 pub const INTERVAL: Duration = Duration::from_secs(60);
 const TICK: Duration = Duration::from_secs(5);
@@ -90,7 +91,7 @@ where
         .call_blocking(move |s| {
             let key = keys::load_group_key(&*secrets)
                 .map_err(|e| e.to_string())?
-                .ok_or_else(|| "This PC doesn't hold the account key yet.".to_string())?;
+                .ok_or_else(|| tr("This PC doesn't hold the account key yet.", &[]))?;
             sync(&key, s, &device_id)
         })
         .map_err(|e| e.to_string())?
