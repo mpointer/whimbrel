@@ -190,6 +190,9 @@ pub struct Accumulated {
     /// The language the meeting was transcribed in: forced, or locked by the first chunk with
     /// speech. `None` while still detecting. The pipeline stores it and forces it on the tail.
     pub language: Option<String>,
+    /// The model the worker transcribed with. The pipeline keeps the segments only when it
+    /// uses the same one (`quality::reuse_live`, W-1.2).
+    pub model: Option<PathBuf>,
 }
 
 /// One recording channel's progress.
@@ -228,7 +231,7 @@ impl Live {
     /// threads (plan Decision 5).
     pub fn start(system: Option<PathBuf>, mic: Option<PathBuf>, config: Config) -> Live {
         let stop = Arc::new(AtomicBool::new(false));
-        let state = Arc::new(Mutex::new(Accumulated::default()));
+        let state = Arc::new(Mutex::new(Accumulated { model: Some(config.model.clone()), ..Accumulated::default() }));
         let (flag, shared) = (stop.clone(), state.clone());
         if let Err(e) = std::thread::Builder::new()
             .name("whimbrel-live-transcribe".into())

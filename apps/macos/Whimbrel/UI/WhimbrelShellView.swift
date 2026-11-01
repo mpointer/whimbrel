@@ -146,6 +146,7 @@ struct WhimbrelShellView: View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             Divider().overlay(Color.whimbrelBorder)
             ModelStatusLine(bootstrap: appState.modelBootstrap)
+            StaleSyncLine(sync: appState.contentSyncCoordinator)
             HStack(spacing: Spacing.sm) {
                 DeviceChip(deviceId: appState.deviceId)
                 Text(syncLabel)
@@ -240,6 +241,24 @@ private struct HideWindowTitle: NSViewRepresentable {
 }
 
 /// Sidebar footer: what the background model download is doing. Nothing once it's done.
+/// Says so when content sync has gone quiet. Rechecks on a timer, because a stuck round
+/// publishes nothing.
+private struct StaleSyncLine: View {
+    @ObservedObject var sync: ContentSyncCoordinator
+
+    var body: some View {
+        SwiftUI.TimelineView(.periodic(from: .now, by: 300)) { context in
+            if sync.isStale(now: context.date), let last = sync.lastSuccess {
+                Text("Sync hasn't worked since \(last.formatted(date: .abbreviated, time: .shortened)). Whimbrel keeps trying.")
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(Color.whimbrelError)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, Spacing.md)
+            }
+        }
+    }
+}
+
 private struct ModelStatusLine: View {
     @ObservedObject var bootstrap: ModelBootstrap
 

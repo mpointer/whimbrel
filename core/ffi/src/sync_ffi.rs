@@ -435,6 +435,12 @@ pub extern "C" fn whimbrel_sync_content_pull_only(
 /// Why the most recent `whimbrel_sync_content` or `whimbrel_sync_content_pull_only` failed,
 /// and in which phase; NULL if it succeeded or has not run. Caller frees with
 /// `whimbrel_core_free_string`.
+/// Whether the last content sync left rows on the relay, so another round should follow soon.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_content_more_to_pull() -> bool {
+    sync_engine::more_to_pull()
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_sync_content_last_error() -> *mut c_char {
     sync_engine::last_content_sync_error().map_or(ptr::null_mut(), json_to_c_string)

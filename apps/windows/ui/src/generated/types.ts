@@ -208,6 +208,13 @@ export type Stage = "transcribing" | "summarizing" | "identifying_speakers";
  */
 export type RecordingState = "idle" | "starting" | "recording";
 /**
+ * The Quality picker, as the UI sees it (core's `transcribe::engine::Quality`).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "QualityChoice".
+ */
+export type QualityChoice = "automatic" | "better" | "fast";
+/**
  * The built-in routines, as the UI names them.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1789,6 +1796,23 @@ export interface TranscriptView {
    */
   source: string;
   turns: TranscriptTurn[];
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TranscriptionQualityStatus".
+ */
+export interface TranscriptionQualityStatus {
+  /**
+   * Show the one offer of better transcripts: this PC is fast enough for large-v3-turbo,
+   * which isn't downloaded, and the offer wasn't dismissed (the Mac's `shouldOffer`).
+   */
+  offer: boolean;
+  quality: QualityChoice;
+  turboInstalled: boolean;
+  /**
+   * large-v3-turbo's estimated realtime speed here; None until the benchmark has run.
+   */
+  turboSpeed?: number | null;
 }
 /**
  * The popup's view of the tray state.

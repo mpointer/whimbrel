@@ -3,15 +3,21 @@ name: Release integrity
 on:
   push:
     branches: [main]
+    tags: ["v*"]
+    paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore: ["docs/**", "**/*.md"]
+  workflow_dispatch:
 
-# A newer push to the same PR (or to main) cancels the run it supersedes.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Only a PR cancels what it supersedes; main and tags always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check-version:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -25,9 +31,11 @@ jobs:
   # never compiles src/, so a src change without a rebuilt dist/ ships nothing (0.9.11's
   # Gmail 404 fix did exactly that).
   connector-dist:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     strategy:
+      fail-fast: true
       matrix:
         connector: [gmail, google-calendar, outlook365]
     defaults:
@@ -38,6 +46,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "26"
+          cache: npm
+          cache-dependency-path: mcp-servers/${{ matrix.connector }}/package-lock.json
       - run: npm ci
       - run: npm run build
       - name: dist/ must match src/
@@ -47,6 +57,7 @@ jobs:
   # touches these 5 files -- no source changed, so the swift-tests macOS runner
   # below is redundant with the CI run the fix itself already had.
   changes:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -115,18 +126,26 @@ jobs:
   # user account, or a distinct CI bundle id) before this can self-host.
   swift-tests:
     needs: changes
-    if: needs.changes.outputs.run_macos == 'true'
-    runs-on: macos-latest
+    # On Mike's MacBook, so never on a PR. Run it on a branch with workflow_dispatch. The mirror
+    # has no runner, so the job would queue there forever.
+    if: needs.changes.outputs.run_macos == 'true' && github.event_name != 'pull_request' && github.repository == 'mpointer/kestrel'
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+      # Self-hosted runners use their preinstalled, isolated toolchain (CARGO_HOME and
+      # RUSTUP_HOME in the runner's .env) rather than a toolchain action.
+      - name: Rust toolchain (preinstalled on this runner)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+      # cache-bin: false keeps rustup alive on a self-hosted runner. This is the Mac cache's
+      # only saver, since checkout clears core/target: main saves it, `test` restores it.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: false
       - uses: actions/setup-node@v4
         with:
           node-version: "26"
@@ -158,9 +177,9 @@ jobs:
       # against the committed files (not against a catalog the export just synced).
       - name: Check the string catalogs match the Swift source
         run: |
-          scripts/l10n/export-apple.sh macos /tmp/loc
-          python3 -I scripts/l10n/translate.py check --apple /tmp/loc/en.xcloc apps/macos/Whimbrel/Localizable.xcstrings
-          python3 -I scripts/l10n/translate.py check --apple /tmp/loc/en.xcloc apps/macos/Whimbrel/InfoPlist.xcstrings
+          scripts/l10n/export-apple.sh macos "$RUNNER_TEMP/loc"
+          python3 -I scripts/l10n/translate.py check --apple "$RUNNER_TEMP/loc"/en.xcloc apps/macos/Whimbrel/Localizable.xcstrings
+          python3 -I scripts/l10n/translate.py check --apple "$RUNNER_TEMP/loc"/en.xcloc apps/macos/Whimbrel/InfoPlist.xcstrings
       - name: Run UpdateCheckerTests and the meeting detector tests (no signing credentials required)
         working-directory: apps/macos
         run: xcodebuild test -project Whimbrel.xcodeproj -scheme Whimbrel -destination 'platform=macOS' -only-testing:WhimbrelTests/UpdateCheckerTests -only-testing:WhimbrelTests/MeetingEndDetectorTests -only-testing:WhimbrelTests/MeetingHeuristicDetectorTests -only-testing:WhimbrelTests/RoutingSettingsTests -only-testing:WhimbrelTests/MediaRetentionCopyTests -only-testing:WhimbrelTests/MeetingDetailViewLogicTests -only-testing:WhimbrelTests/AwayOutcomeLabelTests -only-testing:WhimbrelTests/CoreLLMErrorDecodingTests -only-testing:WhimbrelTests/EpisodeOptionsMenuTests -only-testing:WhimbrelTests/ReadLogicTests -only-testing:WhimbrelTests/StatusMenuCopyTests -only-testing:WhimbrelTests/AppLanguageTests -only-testing:WhimbrelTests/FirstRunTests -only-testing:WhimbrelTests/RecordingNoticeTests -only-testing:WhimbrelTests/TranscriptionEngineTests -only-testing:WhimbrelTests/AwayModeSettingsTests -only-testing:WhimbrelTests/TextRecognizerTests -only-testing:WhimbrelTests/MeetingOptionsMenuTests -only-testing:WhimbrelTests/MeetingPartTranscriptionTests -only-testing:WhimbrelTests/StreamHealthTests -only-testing:WhimbrelTests/AccessQueueWaitProbeTests -only-testing:WhimbrelTests/ReplyPrioritySettingsTests -only-testing:WhimbrelTests/KeychainAccessTests -only-testing:WhimbrelTests/ThemeLoaderTests -only-testing:WhimbrelTests/ThemeStoreTests -only-testing:WhimbrelTests/ColorTokenUsageTests -only-testing:WhimbrelTests/ThemeBundleTests -only-testing:WhimbrelTests/SkinLoaderTests -only-testing:WhimbrelTests/SkinStoreTests -only-testing:WhimbrelTests/SkinGalleryTests -only-testing:WhimbrelTests/SkinDesignSystemTests -only-testing:WhimbrelTests/TodayLogicTests -only-testing:WhimbrelTests/TodayChromeTests -only-testing:WhimbrelTests/ArchetypeTerminalTests -only-testing:WhimbrelTests/ArchetypeGlassTests -only-testing:WhimbrelTests/ArchetypeFieldTests -only-testing:WhimbrelTests/ArchetypeAlmanacTests -only-testing:WhimbrelTests/ArchetypeReferenceTests -only-testing:WhimbrelTests/SkinImageryTests -only-testing:WhimbrelTests/SkinMatrixTests -only-testing:WhimbrelTests/TodayRowsTests -only-testing:WhimbrelTests/ActiveMeetingViewTests -only-testing:WhimbrelTests/ProfileSettingsTests -only-testing:WhimbrelTests/ProfileSuggestionsModelTests -only-testing:WhimbrelTests/RoutineHostTests -only-testing:WhimbrelTests/RoutineSyncFieldsTests -only-testing:WhimbrelTests/MeetingTitleCheckSettingsTests -only-testing:WhimbrelTests/MeetingPrepSettingsTests -only-testing:WhimbrelTests/MeetingPrepDecodeTests -only-testing:WhimbrelTests/MeetingPageLogicTests -only-testing:WhimbrelTests/LiveTranscriptLogicTests -only-testing:WhimbrelTests/LiveAudioReaderTests -only-testing:WhimbrelTests/LiveTranscriptSettingsTests -only-testing:WhimbrelTests/UserSkinStoreTests -only-testing:WhimbrelTests/PaletteRepairTests -only-testing:WhimbrelTests/SkinChatSessionTests -only-testing:WhimbrelTests/SkinChatViewTests -only-testing:WhimbrelTests/SkinImageryPlacementTests -only-testing:WhimbrelTests/SkinPackageTests -only-testing:WhimbrelTests/JoinTargetTests -only-testing:WhimbrelTests/ZoomJoinURLTests -only-testing:WhimbrelTests/MeetingSplitTests -only-testing:WhimbrelTests/MeetingContinuationTests CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -only-testing:WhimbrelTests/ImportTests

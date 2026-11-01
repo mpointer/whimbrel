@@ -7,6 +7,10 @@
 //! the multilingual whisper model too (localization W7). Each meeting loads them fresh, so no
 //! restart is needed. Downloads of both kinds share the poll and cancel commands.
 //!
+//! Settings → Meeting models → Quality (W-1.2): Automatic, Better or Fast, core's chooser with
+//! `speech_analyzer: false`. `base` joins the meeting models for Automatic, as the floor model;
+//! large-v3-turbo downloads only on request (Better, or the one offer).
+//!
 //! `memory`'s loader doesn't remember a missing model, so the first search or embed after
 //! the download loads it: no restart.
 
@@ -54,15 +58,20 @@ pub struct MeetingModelsStatus {
     pub multilingual: bool,
 }
 
-/// The multilingual model joins the manifest only while the setting is on (the Mac's
-/// `ModelDownloadService.downloadAll`); off, the three files are exactly as before.
-fn meeting_destinations(paths: &crate::paths::Paths, multilingual: bool) -> api::models::ModelDestinations {
+/// The multilingual model (`base`) joins the manifest while "I have meetings in other languages"
+/// is on or quality is Automatic, where it's the floor model (the Mac's
+/// `ModelDownloadService.needsBase`). Otherwise the three files are exactly as before.
+fn meeting_destinations(paths: &crate::paths::Paths, needs_base: bool) -> api::models::ModelDestinations {
     api::models::ModelDestinations {
         whisper_model_path: paths.whisper_model(),
         segmentation_model_path: paths.segmentation_model(),
         embedding_model_path: paths.speaker_embedding_model(),
-        whisper_multilingual_path: multilingual.then(|| paths.whisper_multilingual_model()),
+        whisper_multilingual_path: needs_base.then(|| paths.whisper_multilingual_model()),
     }
+}
+
+fn needs_base(settings: &crate::settings::SettingsFile) -> bool {
+    settings.multilingual() || settings.transcription_quality() == transcribe::engine::Quality::Automatic
 }
 
 /// The manifest's display names for the files not on disk. The downloader's own size
@@ -73,8 +82,11 @@ fn missing_models(specs: &[api::models::ModelSpec]) -> Vec<String> {
 
 #[tauri::command]
 pub fn meeting_models_status(state: State<'_, AppState>) -> MeetingModelsStatus {
-    let multilingual = state.settings.lock().unwrap().multilingual();
-    let missing = missing_models(&api::models::manifest(&meeting_destinations(&state.paths, multilingual)));
+    let (multilingual, base) = {
+        let settings = state.settings.lock().unwrap();
+        (settings.multilingual(), needs_base(&settings))
+    };
+    let missing = missing_models(&api::models::manifest(&meeting_destinations(&state.paths, base)));
     MeetingModelsStatus { installed: missing.is_empty(), missing, dir: state.paths.models.display().to_string(), multilingual }
 }
 
@@ -98,8 +110,112 @@ static MEETING_JOB: Mutex<Option<String>> = Mutex::new(None);
 /// start while one runs (the launch download and Settings) joins it.
 #[tauri::command]
 pub fn meeting_models_download_start(state: State<'_, AppState>) -> String {
-    let multilingual = state.settings.lock().unwrap().multilingual();
-    running_or_start(&MEETING_JOB, still_running, || api::models::download_all_start(&meeting_destinations(&state.paths, multilingual)))
+    let base = needs_base(&state.settings.lock().unwrap());
+    running_or_start(&MEETING_JOB, still_running, || api::models::download_all_start(&meeting_destinations(&state.paths, base)))
+}
+
+/// The Quality picker, as the UI sees it (core's `transcribe::engine::Quality`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum QualityChoice {
+    Automatic,
+    Better,
+    Fast,
+}
+
+impl From<transcribe::engine::Quality> for QualityChoice {
+    fn from(q: transcribe::engine::Quality) -> Self {
+        use transcribe::engine::Quality;
+        match q {
+            Quality::Automatic => QualityChoice::Automatic,
+            Quality::Better => QualityChoice::Better,
+            Quality::Fast => QualityChoice::Fast,
+        }
+    }
+}
+
+impl From<QualityChoice> for transcribe::engine::Quality {
+    fn from(q: QualityChoice) -> Self {
+        use transcribe::engine::Quality;
+        match q {
+            QualityChoice::Automatic => Quality::Automatic,
+            QualityChoice::Better => Quality::Better,
+            QualityChoice::Fast => Quality::Fast,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptionQualityStatus {
+    pub quality: QualityChoice,
+    /// Show the one offer of better transcripts: this PC is fast enough for large-v3-turbo,
+    /// which isn't downloaded, and the offer wasn't dismissed (the Mac's `shouldOffer`).
+    pub offer: bool,
+    pub turbo_installed: bool,
+    /// large-v3-turbo's estimated realtime speed here; None until the benchmark has run.
+    pub turbo_speed: Option<f64>,
+}
+
+fn quality_status(settings: &crate::settings::SettingsFile, paths: &crate::paths::Paths) -> TranscriptionQualityStatus {
+    let choice = crate::meetings::quality::choice(settings, paths, false);
+    TranscriptionQualityStatus {
+        quality: settings.transcription_quality().into(),
+        offer: !settings.better_offer_dismissed() && choice.offer_turbo,
+        turbo_installed: paths.whisper_turbo_model().is_file(),
+        turbo_speed: settings.turbo_speed(),
+    }
+}
+
+#[tauri::command]
+pub fn transcription_quality_status(state: State<'_, AppState>) -> TranscriptionQualityStatus {
+    quality_status(&state.settings.lock().unwrap(), &state.paths)
+}
+
+/// The picker. Better needs large-v3-turbo, which the UI downloads with `turbo_download_start`.
+#[tauri::command]
+pub fn set_transcription_quality(state: State<'_, AppState>, quality: QualityChoice) -> Result<TranscriptionQualityStatus, CommandError> {
+    let mut settings = state.settings.lock().unwrap();
+    settings.set_transcription_quality(quality.into());
+    settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+    Ok(quality_status(&settings, &state.paths))
+}
+
+/// "Not now", or accepting: either ends the offer for good.
+#[tauri::command]
+pub fn dismiss_better_offer(state: State<'_, AppState>) -> Result<TranscriptionQualityStatus, CommandError> {
+    let mut settings = state.settings.lock().unwrap();
+    settings.dismiss_better_offer();
+    settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+    Ok(quality_status(&settings, &state.paths))
+}
+
+/// large-v3-turbo's download, while one runs: the offer and Settings share it.
+static TURBO_JOB: Mutex<Option<String>> = Mutex::new(None);
+
+/// Downloads large-v3-turbo (about 574 MB); poll with `model_download_poll`.
+#[tauri::command]
+pub fn turbo_download_start(state: State<'_, AppState>) -> String {
+    running_or_start(&TURBO_JOB, still_running, || api::models::start_with_manifest(vec![api::models::turbo_spec(state.paths.whisper_turbo_model())]))
+}
+
+/// Times a small model once per PC to see whether it can run large-v3-turbo (`meetings::benchmark`).
+/// Does nothing once measured, with no small model on disk, or while a meeting records or is being
+/// transcribed, so it never competes with one; the launch download asks again next time.
+#[tauri::command]
+pub async fn transcription_benchmark(state: State<'_, AppState>) -> Result<TranscriptionQualityStatus, CommandError> {
+    let busy = state.meetings.as_ref().is_some_and(|m| m.is_recording()) || state.pipeline.as_ref().is_some_and(|p| p.processing().is_some());
+    if state.settings.lock().unwrap().turbo_speed().is_none() && !busy {
+        let paths = state.paths.clone();
+        if let Some(speed) = tauri::async_runtime::spawn_blocking(move || crate::meetings::benchmark::estimate(&paths)).await.ok().flatten() {
+            let mut settings = state.settings.lock().unwrap();
+            settings.set_turbo_speed(speed);
+            if let Err(e) = settings.save() {
+                tracing::warn!(error = %e, "could not save the benchmark");
+            }
+        }
+    }
+    Ok(quality_status(&state.settings.lock().unwrap(), &state.paths))
 }
 
 /// From core's manifest, so the files and their folder follow the model version.
@@ -209,6 +325,24 @@ mod tests {
         std::fs::write(paths.whisper_multilingual_model(), b"x").unwrap();
         assert!(missing_models(&specs).is_empty());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn base_is_fetched_for_automatic_or_other_languages_and_not_for_fast() {
+        use transcribe::engine::Quality;
+        let dir = std::env::temp_dir().join(format!("whimbrel-needs-base-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = crate::settings::SettingsFile::load(&dir.join("settings.json"));
+        s.set_multilingual(false);
+        s.set_transcription_quality(Quality::Fast);
+        assert!(!needs_base(&s), "an existing install on Fast downloads nothing new");
+        s.set_transcription_quality(Quality::Automatic);
+        assert!(needs_base(&s), "the floor model for Automatic");
+        s.set_transcription_quality(Quality::Better);
+        assert!(!needs_base(&s));
+        s.set_multilingual(true);
+        assert!(needs_base(&s));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

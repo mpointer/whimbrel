@@ -155,6 +155,12 @@ impl Paths {
         self.models.join("ggml-base.bin")
     }
 
+    /// large-v3-turbo (core's `turbo_spec`, the Mac's `TranscriptionService.turboModelPath`):
+    /// downloaded only on request, from Better or the offer (W-1.2).
+    pub fn whisper_turbo_model(&self) -> PathBuf {
+        self.models.join("ggml-large-v3-turbo-q5_0.bin")
+    }
+
     /// Diarization's pyannote segmentation model.
     pub fn segmentation_model(&self) -> PathBuf {
         self.models.join("pyannote-segmentation-3-0.onnx")

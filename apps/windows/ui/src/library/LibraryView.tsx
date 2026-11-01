@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { libraryEpisodes, libraryRecent, librarySearch, librarySettings, setEpisodeAppHidden, setShowScreenCaptures } from "../api";
 import { AskView } from "../chat/AskView";
 import type { AskRequest } from "../chat/chatModel";
+import { BetterTranscriptsCard } from "../settings/BetterTranscriptsCard";
 import { DigestView } from "../today/DigestView";
 import { describeError, isCommandError } from "../errors";
 import type { DeviceTag, LibraryRow } from "../generated/types";
@@ -110,6 +111,7 @@ export function LibraryView({ askRequest, onAskHandled }: { askRequest?: AskRequ
 
   return (
     <div className="library">
+      <BetterTranscriptsCard />
       <div className="toolbar">
         <div className="mode-picker" role="group" aria-label={t("Library view")}>
           {all.map((m) => (

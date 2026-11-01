@@ -2,6 +2,16 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.45] - 2026-11-01
+
+### Mac
+- If sync fails or sticks for two hours, the sidebar says so.
+- A device far behind now catches up about six times faster, with a short break between rounds so the app stays free.
+
+### Windows
+- New installs get better transcripts. Whisper now runs on the graphics card where there is one, which makes it several times faster, and a PC fast enough for it is offered a larger model, about 574 MB. Settings → Meeting models has the same Quality setting as the Mac: Automatic, Better or Fast. Audio stays on the PC.
+- Existing installs keep their model and see one offer in Library, which can be dismissed. Past transcripts don't change.
+
 ## [0.9.44] - 2026-11-01
 
 ### Mac

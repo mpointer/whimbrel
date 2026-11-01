@@ -24,7 +24,23 @@ final class ContentSyncCoordinator: ObservableObject {
 
     /// Rounds that have failed in a row. A failed round holds `CoreMemoryStore.accessQueue`
     /// for up to 30 s, so retrying a broken sync every minute froze every other read.
-    private var consecutiveFailures = 0
+    @Published private(set) var consecutiveFailures = 0
+    /// Set while a round runs, so a stuck round reads as stale.
+    private(set) var roundStartedAt: Date?
+    private var moreToPull = false
+    private static let lastSuccessKey = "com.mpointer.kestrel.contentSyncLastSuccess"
+    /// The last good round, surviving a relaunch. Starts at the first try, so a device that
+    /// has never synced still gets warned.
+    private(set) var lastSuccess: Date? = UserDefaults.standard.object(forKey: lastSuccessKey) as? Date
+
+    func isStale(now: Date = Date()) -> Bool {
+        SyncTiming.isStale(now: now, lastSuccess: lastSuccess, consecutiveFailures: consecutiveFailures, roundStartedAt: roundStartedAt)
+    }
+
+    private func recordSuccess(_ date: Date) {
+        lastSuccess = date
+        UserDefaults.standard.set(date, forKey: Self.lastSuccessKey)
+    }
 
     init(coreStore: CoreMemoryStore?, syncState: SyncState, deviceId: String) {
         self.coreStore = coreStore
@@ -52,7 +68,8 @@ final class ContentSyncCoordinator: ObservableObject {
             while !Task.isCancelled {
                 await self?.syncNow()
                 let failures = self?.consecutiveFailures ?? 0
-                try? await Task.sleep(nanoseconds: SyncTiming.nextDelaySeconds(consecutiveFailures: failures) * 1_000_000_000)
+                let more = self?.moreToPull ?? false
+                try? await Task.sleep(nanoseconds: SyncTiming.nextDelaySeconds(consecutiveFailures: failures, moreToPull: more) * 1_000_000_000)
             }
         }
     }
@@ -86,6 +103,9 @@ final class ContentSyncCoordinator: ObservableObject {
         }
 
         let deviceId = self.deviceId
+        if lastSuccess == nil { recordSuccess(Date()) }
+        roundStartedAt = Date()
+        defer { roundStartedAt = nil }
         // `CoreMemoryStore.accessQueue` serializes every background call against the
         // shared store handle (per its own doc comment, CoreBridge.swift:317-324) — a
         // bare `Task.detached` here would NOT provide that, since two concurrent
@@ -104,10 +124,12 @@ final class ContentSyncCoordinator: ObservableObject {
         }
 
         log.log("syncNow: whimbrel_sync_content returned success=\(success, privacy: .public)")
+        moreToPull = success && CoreMemoryStore.syncContentHasMoreToPull
         if success {
             consecutiveFailures = 0
             lastSyncError = nil
             lastSyncedAt = Date()
+            recordSuccess(Date())
             await SkinSync.round(store: coreStore, skins: .shared, skinStore: .shared, defaults: .standard)
         } else {
             consecutiveFailures += 1

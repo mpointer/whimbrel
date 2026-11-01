@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.44"
+version = "0.9.45"
 edition = "2021"
 publish = false
 # Two binaries (the app and the M3.1 capture-spike CLI); the Tauri CLI builds and
@@ -38,6 +38,11 @@ memory = { path = "../../../core/memory" }
 agent = { path = "../../../core/agent" }
 routines = { path = "../../../core/routines" }
 transcribe = { path = "../../../core/transcribe" }
+# Whisper on the GPU through Vulkan (W-1.2): core's whisper-rs, with its `vulkan` feature turned on
+# here so core is unchanged. large-v3-turbo runs at about 0.8x realtime on an i9-13900H's CPU and
+# 5.5x on its integrated Iris Xe. The runtime (vulkan-1.dll) ships with every GPU driver, and a PC
+# without one falls back to the CPU. Building needs the Vulkan SDK (VULKAN_SDK; scripts/dev-env.ps1).
+whisper-rs = { version = "0.16", features = ["vulkan"] }
 diarize = { path = "../../../core/diarize" }
 skins = { path = "../../../core/skins" }
 # Same version core/diarize pins. Only `capture-spike diarize-bench` uses it directly, to

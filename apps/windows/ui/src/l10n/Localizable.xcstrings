@@ -2370,6 +2370,74 @@
         }
       }
     },
+    "Better" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Besser"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mejor"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meilleure"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meilleure"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Melhor"
+          }
+        }
+      }
+    },
+    "Better transcripts are available." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bessere Transkripte sind verfügbar."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hay mejores transcripciones disponibles."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De meilleures transcriptions sont disponibles."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De meilleures transcriptions sont disponibles."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcrições melhores estão disponíveis."
+          }
+        }
+      }
+    },
     "Blank uses the built-in cap; 0 turns the cap off." : {
       "localizations" : {
         "de" : {
@@ -5500,6 +5568,40 @@
         }
       }
     },
+    "Couldn't download the better model. Try Again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das bessere Modell konnte nicht geladen werden. Erneut versuchen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo descargar el mejor modelo. Reintentar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de télécharger le meilleur modèle. Réessayer"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de télécharger le meilleur modèle. Réessayer"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível baixar o modelo melhor. Tentar novamente"
+          }
+        }
+      }
+    },
     "Couldn't export this skin." : {
       "localizations" : {
         "de" : {
@@ -6894,6 +6996,74 @@
         }
       }
     },
+    "Download" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Descargar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Télécharger"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Télécharger"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baixar"
+          }
+        }
+      }
+    },
+    "Download a larger model, about 574 MB. Your audio stays on this PC." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laden Sie ein größeres Modell herunter (ca. 574 MB). Ihr Audio bleibt auf diesem PC."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Descarga un modelo más grande, de unos 574 MB. Tu audio se queda en esta PC."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargez un modèle plus volumineux, d’environ 574 Mo. Votre audio reste sur ce PC."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargez un modèle plus volumineux, d’environ 574 Mo. Votre audio reste sur ce PC."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baixe um modelo maior, de cerca de 574 MB. Seu áudio permanece neste PC."
+          }
+        }
+      }
+    },
     "Download meeting models" : {
       "localizations" : {
         "de" : {
@@ -6992,6 +7162,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Baixando modelos. A busca por palavras já funciona; a busca por significado começa ao terminar."
+          }
+        }
+      }
+    },
+    "Downloading the better transcription model…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Besseres Transkriptionsmodell wird geladen …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Descargando el mejor modelo de transcripción…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargement du meilleur modèle de transcription…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargement du meilleur modèle de transcription…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baixando o modelo de transcrição melhor…"
           }
         }
       }
@@ -7638,6 +7842,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Falhou"
+          }
+        }
+      }
+    },
+    "Fast" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schnell"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rápido"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rapide"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rapide"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rápido"
           }
         }
       }
@@ -15030,6 +15268,40 @@
         }
       }
     },
+    "Quality" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qualität"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Calidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qualité"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qualité"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Qualidade"
+          }
+        }
+      }
+    },
     "Question" : {
       "localizations" : {
         "de" : {
@@ -15710,36 +15982,36 @@
         }
       }
     },
-    "Recording meetings needs {models} (about 110 MB in all), downloaded once. Meetings are transcribed on this PC; audio never leaves it." : {
+    "Recording meetings needs {models} (about {size} MB in all), downloaded once. Meetings are transcribed on this PC; audio never leaves it." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Für die Aufnahme von Meetings werden {models} benötigt (insgesamt etwa 110 MB), einmalig heruntergeladen. Meetings werden auf diesem PC transkribiert; Audio verlässt ihn nie."
+            "value" : "Für die Aufnahme von Meetings werden {models} benötigt (insgesamt ca. {size} MB), einmalig heruntergeladen. Meetings werden auf diesem PC transkribiert; das Audio verlässt ihn nie."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Para grabar reuniones se necesita {models} (unos 110 MB en total), que se descarga una sola vez. Las reuniones se transcriben en esta PC; el audio nunca sale de ella."
+            "value" : "Para grabar reuniones se necesita {models} (unos {size} MB en total), que se descarga una sola vez. Las reuniones se transcriben en esta PC; el audio nunca sale de ella."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "L'enregistrement des réunions nécessite {models} (environ 110 Mo au total), téléchargé une seule fois. Les réunions sont transcrites sur ce PC ; l'audio ne le quitte jamais."
+            "value" : "L’enregistrement des réunions nécessite {models} (environ {size} Mo au total), à télécharger une seule fois. Les réunions sont transcrites sur ce PC ; l’audio ne le quitte jamais."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "L'enregistrement des réunions nécessite {models} (environ 110 Mo au total), téléchargés une seule fois. Les réunions sont transcrites sur ce PC; l'audio ne le quitte jamais."
+            "value" : "L’enregistrement des réunions nécessite {models} (environ {size} Mo au total), téléchargé une seule fois. Les réunions sont transcrites sur ce PC; l’audio ne le quitte jamais."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Gravar reuniões exige {models} (cerca de 110 MB no total), baixados uma única vez. As reuniões são transcritas neste PC; o áudio nunca sai dele."
+            "value" : "Para gravar reuniões, é necessário {models} (cerca de {size} MB no total), baixado uma única vez. As reuniões são transcritas neste PC; o áudio nunca sai dele."
           }
         }
       }
@@ -21115,6 +21387,40 @@
         }
       }
     },
+    "The best engine this computer runs well." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die beste Engine, die auf diesem Computer gut läuft."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El mejor motor que este ordenador ejecuta bien."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le meilleur moteur que cet ordinateur fait bien fonctionner."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le meilleur moteur que cet ordinateur fait bien fonctionner."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O melhor mecanismo que este computador executa bem."
+          }
+        }
+      }
+    },
     "The connector didn't list its tools: {error}" : {
       "localizations" : {
         "de" : {
@@ -21489,6 +21795,40 @@
         }
       }
     },
+    "The most accurate model, a download of about 574 MB. Slower on older computers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das genaueste Modell, ein Download von etwa 574 MB. Auf älteren Computern langsamer."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El modelo más preciso, una descarga de unos 574 MB. Más lento en ordenadores antiguos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le modèle le plus précis, un téléchargement d'environ 574 Mo. Plus lent sur les ordinateurs anciens."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le modèle le plus précis, un téléchargement d'environ 574 Mo. Plus lent sur les ordinateurs anciens."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O modelo mais preciso, um download de cerca de 574 MB. Mais lento em computadores antigos."
+          }
+        }
+      }
+    },
     "The new colours didn't pass Whimbrel's checks, so this skin keeps its current colours." : {
       "localizations" : {
         "de" : {
@@ -21689,6 +22029,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "O criador de skins o usa para encontrar imagens na web. Ele fica neste PC."
+          }
+        }
+      }
+    },
+    "The small model. Quickest, least accurate." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das kleine Modell. Am schnellsten, am wenigsten genau."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El modelo pequeño. El más rápido y el menos preciso."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le petit modèle. Le plus rapide, le moins précis."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le petit modèle. Le plus rapide, le moins précis."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O modelo pequeno. O mais rápido e o menos preciso."
           }
         }
       }

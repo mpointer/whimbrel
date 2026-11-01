@@ -363,8 +363,13 @@ impl Pipeline {
                 None
             }
         };
-        let mut plan = Plan::choose(setting_on, multilingual_mode, stored.as_deref().or(transcribed.language.as_deref()));
+        let plan = Plan::choose(setting_on, multilingual_mode, stored.as_deref().or(transcribed.language.as_deref()));
+        // Better transcripts (W-1.2): core's chooser can move it onto base or large-v3-turbo.
+        let engine = super::quality::choice(&self.settings.lock().unwrap(), &self.paths, plan.language.is_none()).batch;
+        let mut plan = plan.with_engine(engine);
         let whisper_model = plan.model(&self.paths);
+        tracing::info!(meeting_id, model = %whisper_model.display(), "transcribing with");
+        let transcribed = super::quality::reuse_live(transcribed, &whisper_model);
         if !whisper_model.is_file() {
             return Err(tr("The transcription model isn't installed. Settings → Meeting models.", &[]));
         }
@@ -831,7 +836,7 @@ mod tests {
         let mut plan = Plan::choose(true, true, Some("es"));
         finish_channel(&speech, Some(&system), Vec::new(), 0, &dir, 1, &mut plan).unwrap();
         finish_channel(&speech, Some(&mic), Vec::new(), 0, &dir, 1, &mut plan).unwrap();
-        let asked: Vec<_> = speech.asked().into_iter().map(|p| (p.multilingual, p.language)).collect();
+        let asked: Vec<_> = speech.asked().into_iter().map(|p| (p.multilingual(), p.language)).collect();
         let es = (true, Some("es".to_string()));
         assert_eq!(asked, [es.clone(), es], "both channels forced, nothing detected");
         assert_eq!(spoken::language_to_store(true, Some("es"), plan.language.as_deref()), None, "already stored");

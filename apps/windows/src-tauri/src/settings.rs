@@ -93,6 +93,13 @@ pub mod keys {
     /// Device-local, never synced: "I have meetings in other languages" (the Mac's
     /// `AppLanguage.multilingualKey`). Absent follows the UI language.
     pub const TRANSCRIPTION_MULTILINGUAL: &str = "transcription.multilingual";
+    /// Device-local, as on the Mac (`TranscriptionQuality.key`): Automatic, Better or Fast (W-1.2).
+    /// Set once at launch by the migration, so an existing install starts on Fast.
+    pub const TRANSCRIPTION_QUALITY: &str = "transcription.quality";
+    /// Device-local: the one offer of better transcripts was dismissed or accepted.
+    pub const TRANSCRIPTION_OFFER_DISMISSED: &str = "transcription.offerDismissed";
+    /// Device-local: large-v3-turbo's estimated realtime speed on this PC, once the benchmark has run.
+    pub const TRANSCRIPTION_TURBO_SPEED: &str = "transcription.turboSpeed";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -705,6 +712,43 @@ impl SettingsFile {
     pub fn set_multilingual(&mut self, on: bool) {
         self.set(keys::TRANSCRIPTION_MULTILINGUAL, Some(on));
     }
+
+    /// Settings → Meeting models → Quality. Unset only before the launch migration has run.
+    pub fn transcription_quality(&self) -> transcribe::engine::Quality {
+        self.get(keys::TRANSCRIPTION_QUALITY).unwrap_or(transcribe::engine::Quality::Automatic)
+    }
+
+    pub fn set_transcription_quality(&mut self, quality: transcribe::engine::Quality) {
+        self.set(keys::TRANSCRIPTION_QUALITY, Some(quality));
+    }
+
+    /// The Mac's `TranscriptionQuality.migrate`, run at launch before the launch download can fetch
+    /// anything: a small model already on disk means an existing install, which keeps Fast until it
+    /// accepts the offer. Returns whether it stored a choice.
+    pub fn migrate_transcription_quality(&mut self, small_model_exists: bool) -> bool {
+        if self.get::<transcribe::engine::Quality>(keys::TRANSCRIPTION_QUALITY).is_some() {
+            return false;
+        }
+        use transcribe::engine::Quality;
+        self.set_transcription_quality(if small_model_exists { Quality::Fast } else { Quality::Automatic });
+        true
+    }
+
+    pub fn better_offer_dismissed(&self) -> bool {
+        self.get(keys::TRANSCRIPTION_OFFER_DISMISSED).unwrap_or(false)
+    }
+
+    pub fn dismiss_better_offer(&mut self) {
+        self.set(keys::TRANSCRIPTION_OFFER_DISMISSED, Some(true));
+    }
+
+    pub fn turbo_speed(&self) -> Option<f64> {
+        self.get(keys::TRANSCRIPTION_TURBO_SPEED)
+    }
+
+    pub fn set_turbo_speed(&mut self, speed: f64) {
+        self.set(keys::TRANSCRIPTION_TURBO_SPEED, Some(speed));
+    }
 }
 
 /// The Mac's `AppLanguage.multilingual`: the stored choice, else on for a UI language other than English.
@@ -722,6 +766,9 @@ mod language_tests {
         assert_eq!(keys::OUTPUT_LANGUAGE_OVERRIDE, "app.outputLanguageOverride");
         assert_eq!(keys::APP_LANGUAGE, "app.language");
         assert_eq!(keys::TRANSCRIPTION_MULTILINGUAL, "transcription.multilingual");
+        assert_eq!(keys::TRANSCRIPTION_QUALITY, "transcription.quality");
+        assert_eq!(keys::TRANSCRIPTION_OFFER_DISMISSED, "transcription.offerDismissed");
+        assert_eq!(keys::TRANSCRIPTION_TURBO_SPEED, "transcription.turboSpeed");
     }
 
     #[test]
@@ -732,6 +779,28 @@ mod language_tests {
         assert!(multilingual_or_default(None, "fr-CA"));
         assert!(multilingual_or_default(Some(true), "en-US"), "the toggle wins");
         assert!(!multilingual_or_default(Some(false), "fr-CA"));
+    }
+
+    #[test]
+    fn an_existing_install_migrates_to_fast_and_a_new_one_to_automatic_once() {
+        use transcribe::engine::Quality;
+        let dir = std::env::temp_dir().join(format!("whimbrel-quality-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = SettingsFile::load(&dir.join("settings.json"));
+        assert!(s.migrate_transcription_quality(true));
+        assert_eq!(s.transcription_quality(), Quality::Fast, "a model on disk is an existing install");
+        assert_eq!(s.get::<String>(keys::TRANSCRIPTION_QUALITY).as_deref(), Some("fast"), "the Mac's raw value");
+        assert!(!s.migrate_transcription_quality(false), "runs once");
+        assert_eq!(s.transcription_quality(), Quality::Fast);
+
+        let mut fresh = SettingsFile::load(&dir.join("fresh.json"));
+        assert!(fresh.migrate_transcription_quality(false));
+        assert_eq!(fresh.transcription_quality(), Quality::Automatic);
+        assert_eq!((fresh.better_offer_dismissed(), fresh.turbo_speed()), (false, None));
+        fresh.dismiss_better_offer();
+        fresh.set_turbo_speed(5.5);
+        assert_eq!((fresh.better_offer_dismissed(), fresh.turbo_speed()), (true, Some(5.5)));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

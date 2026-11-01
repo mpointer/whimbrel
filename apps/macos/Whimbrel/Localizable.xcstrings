@@ -21493,6 +21493,40 @@
         }
       }
     },
+    "Sync hasn't worked since %@. Whimbrel keeps trying." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Synchronisierung funktioniert seit %@ nicht. Whimbrel versucht es weiter."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La sincronización no funciona desde %@. Whimbrel sigue intentándolo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchronisation ne fonctionne plus depuis %@. Whimbrel continue d'essayer."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchronisation ne fonctionne plus depuis %@. Whimbrel continue d'essayer."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A sincronização não funciona desde %@. O Whimbrel continua tentando."
+          }
+        }
+      }
+    },
     "Sync is not configured" : {
       "localizations" : {
         "de" : {

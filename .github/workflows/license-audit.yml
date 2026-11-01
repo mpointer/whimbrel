@@ -5,6 +5,7 @@ name: License audit
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "core/**/Cargo.toml"
       - "core/Cargo.lock"
@@ -18,13 +19,19 @@ on:
       - "core/deny.toml"
       - ".github/workflows/license-audit.yml"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Only a PR cancels what it supersedes; main and tags always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
 jobs:
   cargo-deny:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
