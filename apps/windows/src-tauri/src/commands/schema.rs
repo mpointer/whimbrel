@@ -36,6 +36,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::models::ModelStatus>();
     generator.subschema_for::<super::models::DownloadView>();
     generator.subschema_for::<super::models::MeetingModelsStatus>();
+    generator.subschema_for::<super::models::TranscriptionQualityStatus>();
     generator.subschema_for::<crate::settings::PromptSurface>();
     generator.subschema_for::<crate::chat::ChatEvent>();
     generator.subschema_for::<super::chat::ConversationRow>();

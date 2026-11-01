@@ -3,7 +3,9 @@
     "externalBin": ["binaries/whimbrel-mcp-server"],
     "resources": {
       "bundle-resources/connectors": "connectors",
-      "bundle-resources/node": "node"
+      "bundle-resources/node": "node",
+      "bundle-resources/vulkan/vulkan-1.dll": "vulkan-1.dll",
+      "bundle-resources/vulkan/LICENSE.txt": "vulkan-LICENSE.txt"
     }
   }
 }

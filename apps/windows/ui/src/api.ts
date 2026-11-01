@@ -28,6 +28,8 @@ import type {
   LibrarySettings,
   MeetingDetail,
   MeetingModelsStatus,
+  QualityChoice,
+  TranscriptionQualityStatus,
   MeetingRecordingView,
   MeetingRow,
   ModelStatus,
@@ -137,7 +139,6 @@ export const setExcludedApps = (excluded: string[]) => invoke<string[]>("set_exc
 
 export const modelStatus = () => invoke<ModelStatus>("model_status");
 /** "Skip for now" on the launch prompt to download the search model. */
-export const modelPromptSkip = () => invoke<void>("model_prompt_skip");
 export const modelDownloadStart = () => invoke<string>("model_download_start");
 export const modelDownloadPoll = (jobId: string) => invoke<DownloadView>("model_download_poll", { jobId });
 export const modelDownloadCancel = (jobId: string) => invoke<boolean>("model_download_cancel", { jobId });
@@ -146,6 +147,12 @@ export const meetingModelsStatus = () => invoke<MeetingModelsStatus>("meeting_mo
 export const meetingModelsDownloadStart = () => invoke<string>("meeting_models_download_start");
 /** "I have meetings in other languages": on adds the multilingual model to the missing list. */
 export const setMeetingMultilingual = (on: boolean) => invoke<MeetingModelsStatus>("set_meeting_multilingual", { on });
+/** Better transcripts (W-1.2): the Quality picker, the one offer, large-v3-turbo and the benchmark. */
+export const transcriptionQualityStatus = () => invoke<TranscriptionQualityStatus>("transcription_quality_status");
+export const setTranscriptionQuality = (quality: QualityChoice) => invoke<TranscriptionQualityStatus>("set_transcription_quality", { quality });
+export const dismissBetterOffer = () => invoke<TranscriptionQualityStatus>("dismiss_better_offer");
+export const turboDownloadStart = () => invoke<string>("turbo_download_start");
+export const transcriptionBenchmark = () => invoke<TranscriptionQualityStatus>("transcription_benchmark");
 
 export const meetingRecordStart = () => invoke<MeetingRecordingView>("meeting_record_start");
 export const meetingRecordStop = () => invoke<MeetingRecordingView>("meeting_record_stop");

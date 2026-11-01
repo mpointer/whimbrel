@@ -6,6 +6,11 @@
 //! speech, and every later chunk of that meeting is forced to it. A silent chunk detects nothing
 //! worth keeping, so it never locks a language (core plan Review Focus 1).
 //!
+//! Better transcripts (W-1.2) then pick the model: core's chooser (`transcribe::engine::choose`)
+//! can move a meeting onto `base` or large-v3-turbo, both multilingual, which an English
+//! meeting forces to English. [`Plan::with_engine`] applies that choice; the language rule
+//! above is unchanged.
+//!
 //! The decisions here are pure, so they are tested without a whisper model; [`Speech`] is the
 //! seam the live worker and the pipeline transcribe through.
 
@@ -22,20 +27,30 @@ pub const ENGLISH: &str = "en";
 /// `MeetingOptionsMenu.transcriptLanguages`).
 pub const OVERRIDE_LANGUAGES: [&str; 3] = ["en", "es", "fr"];
 
+/// The whisper model a meeting loads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Model {
+    /// `tiny.en`, forced to English: today's path, byte for byte.
+    English,
+    /// `base`, multilingual: W7's model, and the floor model for Automatic (W-1.2).
+    Base,
+    /// large-v3-turbo, multilingual (W-1.2).
+    Turbo,
+}
+
 /// How one meeting is transcribed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
-    /// The multilingual model, transcribing in `language`. `false` is today's path: the
-    /// English model, forced to English.
-    pub multilingual: bool,
-    /// The language every chunk is forced to. `None` detects on the next chunk with speech.
+    pub model: Model,
+    /// The language every chunk is forced to. `None` detects on the next chunk with speech,
+    /// which only a multilingual model does.
     pub language: Option<String>,
 }
 
 impl Plan {
     /// Today's path, unchanged.
     pub fn english() -> Plan {
-        Plan { multilingual: false, language: Some(ENGLISH.to_string()) }
+        Plan { model: Model::English, language: Some(ENGLISH.to_string()) }
     }
 
     /// The Mac's rule. `setting_on` is "I have meetings in other languages"; it takes effect once
@@ -49,7 +64,24 @@ impl Plan {
         }
         match known {
             Some(ENGLISH) => Plan::english(),
-            known => Plan { multilingual: true, language: known.map(str::to_string) },
+            known => Plan { model: Model::Base, language: known.map(str::to_string) },
+        }
+    }
+
+    /// Not the English model: the language goes through whisper's `Lang`, and may be detected.
+    pub fn multilingual(&self) -> bool {
+        self.model != Model::English
+    }
+
+    /// Moves the plan onto the model core's chooser picked. The language stays as [`Plan::choose`]
+    /// set it: an English plan on `base` or turbo is forced to English, a detecting one still detects.
+    /// `Current` (and `SpeechAnalyzer`, which Windows never asks for) keeps the plan as it is.
+    pub fn with_engine(self, engine: transcribe::engine::Engine) -> Plan {
+        use transcribe::engine::Engine;
+        match engine {
+            Engine::Turbo => Plan { model: Model::Turbo, ..self },
+            Engine::Base => Plan { model: Model::Base, ..self },
+            Engine::Current | Engine::SpeechAnalyzer => self,
         }
     }
 
@@ -63,17 +95,17 @@ impl Plan {
 
     /// The model file this plan loads.
     pub fn model(&self, paths: &Paths) -> PathBuf {
-        if self.multilingual {
-            paths.whisper_multilingual_model()
-        } else {
-            paths.whisper_model()
+        match self.model {
+            Model::English => paths.whisper_model(),
+            Model::Base => paths.whisper_multilingual_model(),
+            Model::Turbo => paths.whisper_turbo_model(),
         }
     }
 
     /// Takes in one chunk's result: a plan still detecting locks to what this chunk found, but
     /// only when it produced segments. Returns the language when this chunk locked it.
     pub fn observe(&mut self, chunk: &Transcription) -> Option<String> {
-        if !self.multilingual || self.language.is_some() {
+        if !self.multilingual() || self.language.is_some() {
             return None;
         }
         self.language = transcribe::lock_language(None, chunk.segments.len(), chunk.language.as_deref());
@@ -100,7 +132,7 @@ pub trait Speech {
 
 impl Speech for transcribe::Transcriber {
     fn run(&self, wav: &Path, threads: i32, plan: &Plan) -> Result<Transcription, String> {
-        if !plan.multilingual {
+        if !plan.multilingual() {
             // Today's call, byte for byte.
             return self
                 .transcribe_wav_with_threads(wav, Some(threads))
@@ -192,6 +224,27 @@ pub(crate) mod tests {
         let paths = Paths::under(std::env::temp_dir().join("whimbrel-spoken-model"));
         assert_eq!(Plan::english().model(&paths), paths.whisper_model());
         assert_eq!(Plan::choose(true, true, None).model(&paths), paths.whisper_multilingual_model());
+    }
+
+    #[test]
+    fn an_engine_moves_the_model_and_keeps_the_language() {
+        use transcribe::engine::Engine;
+        let paths = Paths::under(std::env::temp_dir().join("whimbrel-spoken-engine"));
+        let english = Plan::english().with_engine(Engine::Turbo);
+        assert_eq!((english.model, english.lang()), (Model::Turbo, Lang::Force("en")), "an English meeting on turbo is forced to English");
+        assert!(english.multilingual(), "through whisper's Lang, not today's English call");
+        assert_eq!(english.model(&paths), paths.whisper_turbo_model());
+        assert_eq!(Plan::english().with_engine(Engine::Base).model(&paths), paths.whisper_multilingual_model());
+        assert_eq!(Plan::choose(true, true, None).with_engine(Engine::Turbo).lang(), Lang::Detect, "turbo detects too");
+        assert_eq!(Plan::english().with_engine(Engine::Current), Plan::english(), "Fast is today's path");
+        assert_eq!(Plan::choose(true, true, Some("es")).with_engine(Engine::Current).model, Model::Base);
+    }
+
+    #[test]
+    fn an_english_plan_on_a_multilingual_model_never_locks() {
+        let mut plan = Plan::english().with_engine(transcribe::engine::Engine::Base);
+        assert_eq!(plan.observe(&chunk(3, Some("es"))), None, "forced to English, so nothing to lock");
+        assert_eq!(plan.lang(), Lang::Force("en"));
     }
 
     #[test]

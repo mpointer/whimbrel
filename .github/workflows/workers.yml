@@ -4,20 +4,27 @@ name: workers
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths: ["server/**", "server-updates/**", ".github/workflows/workers.yml"]
   push:
     branches: [main]
     paths: ["server/**", "server-updates/**", ".github/workflows/workers.yml"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Only a PR cancels what it supersedes; main and tags always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   test:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         worker: [server, server-updates]
     defaults:
@@ -28,6 +35,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: ${{ matrix.worker }}/package-lock.json
       # npm 10 crashes resolving vitest's optional peers; npm 11 doesn't (same as website.yml).
       - run: npx --yes npm@11 ci
       - run: npm run typecheck --if-present

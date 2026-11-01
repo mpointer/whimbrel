@@ -1062,6 +1062,8 @@ bool whimbrel_sync_content_pull_only(StoreHandle *handle, const char *turso_url,
  * and in which phase; NULL if it succeeded or has not run. Caller frees with
  * whimbrel_core_free_string. */
 char *whimbrel_sync_content_last_error(void);
+/* Whether the last content sync left rows on the relay, so another round should follow soon. */
+bool whimbrel_sync_content_more_to_pull(void);
 
 typedef struct McpHostHandle McpHostHandle;
 

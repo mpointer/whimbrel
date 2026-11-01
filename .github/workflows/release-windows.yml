@@ -56,6 +56,14 @@ jobs:
         run: |
           if (-not $env:SECRETS_TOML) { throw "WINDOWS_SECRETS_TOML is not set" }
           Set-Content -NoNewline -Encoding utf8 apps/windows/src-tauri/Secrets.toml $env:SECRETS_TOML
+      # Whisper's Vulkan build needs the SDK (scripts/dev-env.ps1). The runner's service may have started
+      # before it was installed, so read the machine-wide value.
+      - name: Vulkan SDK (whisper's GPU build)
+        run: |
+          $sdk = [Environment]::GetEnvironmentVariable('VULKAN_SDK', 'Machine')
+          if (-not $sdk -or -not (Test-Path "$sdk\Bin\glslc.exe")) { throw "The Vulkan SDK isn't installed on this runner: winget install KhronosGroup.VulkanSDK" }
+          "VULKAN_SDK=$sdk" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$sdk\Bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       - name: Install
         run: |
           npm ci --prefix apps/windows

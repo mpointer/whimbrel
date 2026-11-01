@@ -3159,6 +3159,8 @@ final class CoreMemoryStore {
     }
 
     /// Why the most recent `syncContent` failed and in which phase; nil if it succeeded.
+    static var syncContentHasMoreToPull: Bool { whimbrel_sync_content_more_to_pull() }
+
     static func lastSyncContentError() -> String? {
         guard let msg = whimbrel_sync_content_last_error() else { return nil }
         defer { whimbrel_core_free_string(msg) }

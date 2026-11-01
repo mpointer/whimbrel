@@ -304,6 +304,8 @@ enum EngineBenchmark {
         let isBase = FileManager.default.fileExists(atPath: base.path)
         guard let live = CoreLiveTranscriber(modelPath: (isBase ? base : TranscriptionService.modelPath).path) else { return }
         let threads = LiveCadence.threads(forCores: ProcessInfo.processInfo.activeProcessorCount)
+        // The first run can be slow while the GPU compiles shaders, which isn't the speed being measured.
+        guard live.transcribe(samples: samples, startOffsetCs: 0, threads: threads) != nil else { return }
         let started = Date()
         guard live.transcribe(samples: samples, startOffsetCs: 0, threads: threads) != nil else { return }
         let speed = Double(samples.count) / 16_000 / max(Date().timeIntervalSince(started), 0.001)

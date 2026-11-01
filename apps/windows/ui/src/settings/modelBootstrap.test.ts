@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { DownloadView } from "../generated/types";
 
 vi.mock("../api", () => ({}));
+vi.mock("./turboDownload", () => ({ turboDownload: {} }));
 vi.mock("./meetingModelsDownload", () => ({ meetingModelsDownload: {} }));
 vi.mock("./searchModelDownload", () => ({ searchModelDownload: {} }));
 
@@ -35,6 +36,17 @@ describe("runSteps", () => {
     expect(meeting.start).toHaveBeenCalledOnce();
     expect(search.start).toHaveBeenCalledOnce();
     expect(meeting.start.mock.invocationCallOrder[0]).toBeLessThan(search.start.mock.invocationCallOrder[0]);
+  });
+
+  it("runs a step's follow-up once its models are there, downloaded or not, and not after a failure", async () => {
+    const after = vi.fn(async () => {});
+    const present = { ...step(false).s, after };
+    const downloaded = { ...step(true).s, after };
+    const failed = { ...step(true, job({ done: true, error: "timed out" })).s, after };
+    await runSteps([present, downloaded]);
+    expect(after).toHaveBeenCalledTimes(2);
+    await runSteps([failed]);
+    expect(after).toHaveBeenCalledTimes(2);
   });
 
   it("starts nothing when everything is on disk", async () => {

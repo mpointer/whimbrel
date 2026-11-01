@@ -809,6 +809,11 @@ pub(crate) fn is_missing_entity_tag_column(error: &str) -> bool {
     error.contains("no column named entity_tag")
 }
 
+const FETCH_ROWS_NO_SKINS_SQL: &str =
+    "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 AND row_type NOT IN ('skin', 'skin_image_chunk') ORDER BY local_seq ASC LIMIT ?3";
+const FETCH_ROWS_SQL: &str =
+    "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 ORDER BY local_seq ASC LIMIT ?3";
+
 /// `skip_skins` leaves out skin rows at the query, so a puller that never applies them (the phone)
 /// never downloads their images.
 async fn fetch_rows_since(
@@ -818,11 +823,7 @@ async fn fetch_rows_since(
     limit: i64,
     skip_skins: bool,
 ) -> Result<Vec<RowEnvelope>, SyncEngineError> {
-    let sql = if skip_skins {
-        "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 AND row_type NOT IN ('skin', 'skin_image_chunk') ORDER BY local_seq ASC LIMIT ?3"
-    } else {
-        "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 ORDER BY local_seq ASC LIMIT ?3"
-    };
+    let sql = if skip_skins { FETCH_ROWS_NO_SKINS_SQL } else { FETCH_ROWS_SQL };
     let rows = conn
         .query(sql, params![peer_device_id, since_local_seq, limit])
         .await
@@ -1064,7 +1065,9 @@ pub(crate) async fn pull_content_without_skins(
     own_device_id: &str,
     options: &PullOptions,
 ) -> Result<(), SyncEngineError> {
-    pull_content_with_budget(conn, group_key, store, own_device_id, PULL_PEER_TIME_BUDGET, options, true).await
+    pull_content_with_budget(conn, group_key, store, own_device_id, PULL_PEER_TIME_BUDGET, options, true)
+        .await
+        .map(|more| MORE_TO_PULL.store(more, std::sync::atomic::Ordering::Relaxed))
 }
 
 /// [`pull_content`] with [`PullOptions`] (the phone's capture window).
@@ -1075,7 +1078,17 @@ pub async fn pull_content_with_options(
     own_device_id: &str,
     options: &PullOptions,
 ) -> Result<(), SyncEngineError> {
-    pull_content_with_budget(conn, group_key, store, own_device_id, PULL_PEER_TIME_BUDGET, options, false).await
+    pull_content_with_budget(conn, group_key, store, own_device_id, PULL_PEER_TIME_BUDGET, options, false)
+        .await
+        .map(|more| MORE_TO_PULL.store(more, std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Set by each pull: it stopped with rows still waiting, so the shell can come back soon.
+static MORE_TO_PULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the last pull left rows on the relay.
+pub fn more_to_pull() -> bool {
+    MORE_TO_PULL.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// [`pull_content`] with the per-peer time budget as a parameter. Each peer's pass
@@ -1088,7 +1101,8 @@ async fn pull_content_with_budget(
     budget: std::time::Duration,
     options: &PullOptions,
     skip_skins: bool,
-) -> Result<(), SyncEngineError> {
+) -> Result<bool, SyncEngineError> {
+    let mut more = false;
     // Capture window (the phone's storage budget). Decided AFTER decrypting, on the
     // item's own `ts_unix_ms`: the remote row's `created_at_unix_ms` is push time, not
     // capture time, so a backlog pushed today would all look new, and an `items` row's
@@ -1131,6 +1145,7 @@ async fn pull_content_with_budget(
             .map_err(|e| SyncEngineError::Query(e.to_string()))?;
         let envelopes =
             fetch_rows_since(conn, &peer, cursor, MAX_ROWS_PER_PULL_PASS, skip_skins).await?;
+        more |= envelopes.len() as i64 >= MAX_ROWS_PER_PULL_PASS;
         let peer_started = std::time::Instant::now();
         let mut chunk_bytes = 0usize;
         // The highest local_seq this pass handled (applied, skipped, or deferred to the
@@ -1148,11 +1163,13 @@ async fn pull_content_with_budget(
         for env in &envelopes {
             // PULL_PEER_TIME_BUDGET: stop once it's spent, having handled at least one row.
             if processed_through > cursor && peer_started.elapsed() >= budget {
+                more = true;
                 break;
             }
             if env.row_type == ROW_TYPE_SKIN_IMAGE_CHUNK {
                 // The image budget: the rest of a large image follows next round (the skin stays held).
                 if processed_through > cursor && chunk_bytes >= MAX_SKIN_CHUNK_BYTES_PER_PASS {
+                    more = true;
                     break;
                 }
                 chunk_bytes += env.ciphertext_base64.len();
@@ -1299,7 +1316,7 @@ async fn pull_content_with_budget(
             resolve_segments(conn, group_key, store, &peer, pending).await?;
         }
     }
-    Ok(())
+    Ok(more)
 }
 
 /// A row that can't be applied until its parent meeting resolves. Both variants
@@ -2302,7 +2319,8 @@ pub(crate) mod tests {
         let found = |text: &str| store_b.search_keyword(text, 10).unwrap().len();
         let zero = std::time::Duration::ZERO;
 
-        pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
+        let more = pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
+        assert!(more, "a pass cut short says rows are waiting");
         assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), 1, "the cursor stops at the last row handled");
         assert_eq!(store_b.get_sync_cursor("device-c").unwrap(), 1, "the other peer progresses in the same call");
         assert_eq!((found("alpha row 1"), found("alpha row 2")), (1, 0));
@@ -2312,6 +2330,8 @@ pub(crate) mod tests {
         }
         assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), 3);
         assert_eq!(store_b.get_sync_cursor("device-c").unwrap(), 2);
+        let more = pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
+        assert!(!more, "a caught-up device has nothing waiting");
         for text in ["alpha row 2", "alpha row 3", "gamma row 1", "gamma row 2"] {
             assert_eq!(found(text), 1, "{text} applied exactly once");
         }
@@ -4432,5 +4452,55 @@ mod skin_tests {
         pull_content(&conn, &key, &b, "device-b").await.unwrap();
         let ready: Vec<String> = b.synced_skins_ready().unwrap().into_iter().map(|p| p.skin_id).collect();
         assert!(ready.contains(&"user-stadium-1".to_string()), "{ready:?}");
+    }
+}
+
+/// Turso bills rows read, so one query that scans `sync_row` costs real money on every round
+/// of every device. Each relay query in a sync round has to seek by primary key or index.
+#[cfg(test)]
+mod relay_query_tests {
+    use super::*;
+
+    async fn relay() -> (tempfile::TempDir, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let conn = db.connect().unwrap();
+        ensure_content_schema(&conn).await.unwrap();
+        ensure_entity_tag_column(&conn).await;
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_sync_row_entity ON sync_row(device_id, entity_tag, local_seq) WHERE entity_tag IS NOT NULL",
+        )
+        .await
+        .unwrap();
+        (dir, conn)
+    }
+
+    async fn assert_seeks(conn: &Connection, sql: &str) {
+        let mut rows = conn.query(&format!("EXPLAIN QUERY PLAN {sql}"), ()).await.unwrap();
+        let mut steps = 0;
+        while let Some(row) = rows.next().await.unwrap() {
+            let detail: String = row.get(3).unwrap();
+            assert!(!detail.starts_with("SCAN"), "{detail}\nin: {sql}");
+            steps += 1;
+        }
+        assert!(steps > 0, "no plan for: {sql}");
+    }
+
+    #[tokio::test]
+    async fn no_relay_query_scans_the_table() {
+        let (_dir, conn) = relay().await;
+        for sql in [NEXT_PEER_SQL, PEER_MARKER_SQL, FETCH_ROWS_SQL, FETCH_ROWS_NO_SKINS_SQL] {
+            assert_seeks(&conn, sql).await;
+        }
+        assert_seeks(&conn, &compaction_delete_sql(3)).await;
+        assert_seeks(&conn, "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq IN (?2, ?3)").await;
+    }
+
+    /// The test itself has to be able to fail.
+    #[tokio::test]
+    #[should_panic(expected = "SCAN")]
+    async fn the_old_full_scan_would_be_caught() {
+        let (_dir, conn) = relay().await;
+        assert_seeks(&conn, "SELECT row_type, COUNT(*) FROM sync_row GROUP BY 1").await;
     }
 }

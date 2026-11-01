@@ -28,7 +28,7 @@ use tokio::runtime::Runtime;
 
 mod content;
 mod outbox;
-pub use content::{ensure_content_schema, pull_content, push_content, PullOptions};
+pub use content::{ensure_content_schema, more_to_pull, pull_content, push_content, PullOptions};
 pub use outbox::{dispatch_outbox, OutboxDispatchSummary};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

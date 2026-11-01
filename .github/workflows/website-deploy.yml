@@ -32,6 +32,7 @@ jobs:
     # would otherwise fail here on every push.
     if: github.repository == 'mpointer/kestrel'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: website
@@ -66,10 +67,10 @@ jobs:
         run: |
           base="$(node -p "require('./site/config.json').url.replace(/\/$/, '')")"
           # A newly attached custom domain can take a few minutes to get its certificate.
-          retry="--retry 12 --retry-delay 15 --retry-all-errors"
-          curl -fsS $retry "$base/" -o /dev/null
-          curl -fsS $retry "$base/changelog/" -o /dev/null
-          curl -fsS $retry "$base/api/releases" | tee /dev/stderr | grep -q '"version"'
+          retry=(--retry 12 --retry-delay 15 --retry-all-errors)
+          curl -fsS "${retry[@]}" "$base/" -o /dev/null
+          curl -fsS "${retry[@]}" "$base/changelog/" -o /dev/null
+          curl -fsS "${retry[@]}" "$base/api/releases" | tee /dev/stderr | grep -q '"version"'
       - name: Tell IndexNow what changed
         # Bing, Yandex and the other IndexNow engines (not Google). Best effort.
         continue-on-error: true

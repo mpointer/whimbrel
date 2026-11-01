@@ -2659,6 +2659,15 @@
       ],
       "type": "object"
     },
+    "QualityChoice": {
+      "description": "The Quality picker, as the UI sees it (core's `transcribe::engine::Quality`).",
+      "enum": [
+        "automatic",
+        "better",
+        "fast"
+      ],
+      "type": "string"
+    },
     "QueueWaitStats": {
       "description": "How long jobs waited for the store, over the last 4,096 jobs.",
       "properties": {
@@ -3739,6 +3748,34 @@
         "turns",
         "source",
         "more"
+      ],
+      "type": "object"
+    },
+    "TranscriptionQualityStatus": {
+      "properties": {
+        "offer": {
+          "description": "Show the one offer of better transcripts: this PC is fast enough for large-v3-turbo,\nwhich isn't downloaded, and the offer wasn't dismissed (the Mac's `shouldOffer`).",
+          "type": "boolean"
+        },
+        "quality": {
+          "$ref": "#/definitions/QualityChoice"
+        },
+        "turboInstalled": {
+          "type": "boolean"
+        },
+        "turboSpeed": {
+          "description": "large-v3-turbo's estimated realtime speed here; None until the benchmark has run.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "quality",
+        "offer",
+        "turboInstalled"
       ],
       "type": "object"
     },

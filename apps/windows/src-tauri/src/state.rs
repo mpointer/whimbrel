@@ -119,7 +119,15 @@ impl AppState {
             }
         }
 
-        let settings = Arc::new(Mutex::new(SettingsFile::load(&paths.settings)));
+        let mut loaded = SettingsFile::load(&paths.settings);
+        // Better transcripts (W-1.2): before the launch download can fetch anything, a small model
+        // on disk marks an existing install, which keeps Fast until it accepts the offer.
+        if loaded.migrate_transcription_quality(paths.whisper_model().is_file()) {
+            if let Err(e) = loaded.save() {
+                tracing::warn!(error = %e, "could not save the transcription quality");
+            }
+        }
+        let settings = Arc::new(Mutex::new(loaded));
 
         let detected = Arc::new(Pending::default());
         let (meetings, pipeline) = match (&store, &slow_store, &identity) {
@@ -140,7 +148,7 @@ impl AppState {
                     paths.recordings.clone(),
                     WasapiRecording::starter(paths.recordings.clone(), {
                         let (paths, settings) = (paths.clone(), settings.clone());
-                        Arc::new(move || live_transcribe_config(&paths, settings.lock().unwrap().multilingual()))
+                        Arc::new(move || live_transcribe_config(&paths, &settings.lock().unwrap()))
                     }),
                     snapshots,
                     pipeline.clone(),
@@ -360,9 +368,12 @@ fn reroot_prefixes(paths: &Paths) -> Option<(String, String)> {
 /// How a recording transcribes itself while it runs. Half the pipeline's threads, because
 /// this competes with the capture threads and with whatever the user is doing in the
 /// meeting; the pipeline still gets everything at the end for the tail. A new meeting has no
-/// language yet, so multilingual mode (once its model is on disk) detects it.
-fn live_transcribe_config(paths: &Paths, multilingual: bool) -> crate::meetings::live::Config {
-    let plan = crate::meetings::spoken::Plan::choose(multilingual, paths.whisper_multilingual_model().is_file(), None);
+/// language yet, so multilingual mode (once its model is on disk) detects it. Better transcripts
+/// (W-1.2) pick the model through core's live floor, so a meeting never falls behind.
+fn live_transcribe_config(paths: &Paths, settings: &SettingsFile) -> crate::meetings::live::Config {
+    let plan = crate::meetings::spoken::Plan::choose(settings.multilingual(), paths.whisper_multilingual_model().is_file(), None);
+    let engine = crate::meetings::quality::choice(settings, paths, plan.language.is_none()).live;
+    let plan = plan.with_engine(engine);
     crate::meetings::live::Config {
         model: plan.model(paths),
         plan,

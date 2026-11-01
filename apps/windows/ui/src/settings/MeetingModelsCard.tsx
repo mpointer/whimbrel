@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
-import { setMeetingMultilingual } from "../api";
+import { setMeetingMultilingual, setTranscriptionQuality } from "../api";
 import { describeError, isCommandError } from "../errors";
 import { t } from "../l10n";
+import type { QualityChoice } from "../generated/types";
+import { TurboDownloadLine } from "./BetterTranscriptsCard";
 import { downloadSizeMb, meetingModelsState, missingList, MULTILINGUAL_MODEL } from "./meetingModels";
 import { meetingModelsDownload } from "./meetingModelsDownload";
 import { percent } from "./searchModel";
+import { needsTurboDownload, qualityChoices } from "./transcriptionQuality";
+import { turboDownload } from "./turboDownload";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -14,11 +18,13 @@ function message(e: unknown): string {
  *  shared with the launch download (`modelBootstrap.ts`). */
 export function MeetingModelsCard() {
   const { status, job, error: commandError } = meetingModelsDownload.use();
+  const { status: quality } = turboDownload.use();
   const [toggleError, setToggleError] = useState<string | null>(null);
   const error = toggleError ?? commandError;
 
   useEffect(() => {
     void meetingModelsDownload.refresh();
+    void turboDownload.refresh();
   }, []);
 
   if (!status) return <section className="card about">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
@@ -31,13 +37,42 @@ export function MeetingModelsCard() {
       .then(meetingModelsDownload.setStatus)
       .catch((e: unknown) => setToggleError(message(e)));
   };
-  const multilingualMissing = status.missing.includes(MULTILINGUAL_MODEL);
+  // "Meetings in other languages need…" only when that's why base is missing; Automatic needs it too (W-1.2).
+  const multilingualMissing = status.multilingual && status.missing.includes(MULTILINGUAL_MODEL);
+  // Better downloads large-v3-turbo; Automatic and other languages need base, which the list below offers.
+  const setQuality = (choice: QualityChoice) => {
+    setToggleError(null);
+    setTranscriptionQuality(choice)
+      .then((next) => {
+        turboDownload.setStatus(next);
+        if (needsTurboDownload(choice, next)) void turboDownload.start();
+        return meetingModelsDownload.refresh();
+      })
+      .catch((e: unknown) => setToggleError(message(e)));
+  };
+  const choices = qualityChoices();
 
   return (
     <section className="card about" aria-labelledby="meeting-models-heading">
       <h2 id="meeting-models-heading" className="section-label">
         {t("Meeting models")}
       </h2>
+      {quality && (
+        <>
+          <label className="field">
+            <span>{t("Quality")}</span>
+            <select className="input" value={quality.quality} onChange={(e) => setQuality(e.target.value as QualityChoice)}>
+              {choices.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="muted small">{choices.find((c) => c.id === quality.quality)?.detail}</p>
+          <TurboDownloadLine />
+        </>
+      )}
       <label className="toggle">
         <input
           type="checkbox"
@@ -62,8 +97,8 @@ export function MeetingModelsCard() {
                   { models: missingList(status.missing), size: downloadSizeMb(status.missing) },
                 )
               : t(
-                  "Recording meetings needs {models} (about 110 MB in all), downloaded once. Meetings are transcribed on this PC; audio never leaves it.",
-                  { models: missingList(status.missing) },
+                  "Recording meetings needs {models} (about {size} MB in all), downloaded once. Meetings are transcribed on this PC; audio never leaves it.",
+                  { models: missingList(status.missing), size: downloadSizeMb(status.missing) },
                 )}
           </p>
           {job?.error && <p role="alert">{job.error}</p>}
