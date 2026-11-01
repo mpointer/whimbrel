@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use crate::l10n::tr;
 
 /// The cap on the composed block, the one core applies again before it reaches a prompt.
 pub const MAX_CHARS: usize = llm::profile::PROFILE_MAX_CHARS;
@@ -38,13 +39,14 @@ pub enum FactError {
 }
 
 impl FactError {
-    pub fn message(self) -> &'static str {
+    /// In the shell's language.
+    pub fn message(self) -> String {
         match self {
-            FactError::Empty => "A fact can't be empty.",
-            FactError::TooLong => "A fact can be at most 200 characters.",
-            FactError::Duplicate => "That is already in your list.",
-            FactError::Full => "You can keep at most 30 facts. Remove one first.",
-            FactError::NotFound => "That fact no longer exists.",
+            FactError::Empty => tr("A fact can't be empty.", &[]),
+            FactError::TooLong => tr("A fact can be at most 200 characters.", &[]),
+            FactError::Duplicate => tr("That is already in your list.", &[]),
+            FactError::Full => tr("You can keep at most 30 facts. Remove one first.", &[]),
+            FactError::NotFound => tr("That fact no longer exists.", &[]),
         }
     }
 }

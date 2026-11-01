@@ -20,6 +20,7 @@ use crate::secrets::SecretStore;
 use crate::settings::{ApiKeys, PromptSurface, SettingsFile};
 use crate::store_actor::StoreHandle;
 use crate::syncing::controller::DeviceView;
+use crate::l10n::tr;
 
 /// How often the scheduler looks. Core decides what is due; the Mac ticks at the same pace.
 const TICK: Duration = Duration::from_secs(60);
@@ -76,22 +77,21 @@ pub fn writes(template: &RoutineTemplate) -> bool {
 }
 
 /// Why `template` cannot run here yet, in words the tab can show, or `None` when it can.
-pub fn unavailable(template: &RoutineTemplate, can: Capabilities) -> Option<&'static str> {
-    match template {
-        RoutineTemplate::DailyBrief => None,
+pub fn unavailable(template: &RoutineTemplate, can: Capabilities) -> Option<String> {
+    let why = match template {
+        RoutineTemplate::DailyBrief => return None,
         // Event-driven (`prep_tick`), and with no calendar there is no meeting to prepare for.
-        RoutineTemplate::MeetingPrep if !can.calendar => Some("Needs a Google Calendar account connected (Settings)."),
-        RoutineTemplate::FocusTime if !can.approvals => Some("Needs the approvals inbox, which Windows does not have yet."),
-        RoutineTemplate::FocusTime if !can.calendar => Some("Needs a Google Calendar account connected (Settings)."),
+        RoutineTemplate::MeetingPrep if !can.calendar => tr("Needs a Google Calendar account connected (Settings).", &[]),
+        RoutineTemplate::FocusTime if !can.approvals => tr("Needs the approvals inbox, which Windows does not have yet.", &[]),
+        RoutineTemplate::FocusTime if !can.calendar => tr("Needs a Google Calendar account connected (Settings).", &[]),
         RoutineTemplate::EodRecap | RoutineTemplate::WeeklyDigest if !can.approvals => {
-            Some("Needs the approvals inbox and Gmail, which Windows does not have yet.")
+            tr("Needs the approvals inbox and Gmail, which Windows does not have yet.", &[])
         }
-        RoutineTemplate::EodRecap | RoutineTemplate::WeeklyDigest if !can.gmail_send => {
-            Some("Needs Gmail connected (Settings).")
-        }
-        RoutineTemplate::ReplyPriorities if !can.gmail_mail => Some("Needs your Gmail mail, which Windows does not read yet."),
-        _ => None,
-    }
+        RoutineTemplate::EodRecap | RoutineTemplate::WeeklyDigest if !can.gmail_send => tr("Needs Gmail connected (Settings).", &[]),
+        RoutineTemplate::ReplyPriorities if !can.gmail_mail => tr("Needs your Gmail mail, which Windows does not read yet.", &[]),
+        _ => return None,
+    };
+    Some(why)
 }
 
 /// `HH:MM` on a 24-hour clock, or `None`. Returned in the canonical two-digit form core stores.
@@ -394,7 +394,7 @@ mod tests {
             assert!(unavailable(&t, now).is_some(), "{t:?} should wait for a later task");
         }
         let everything = Capabilities { approvals: true, calendar: true, gmail_send: true, gmail_mail: true };
-        assert_eq!(unavailable(&RoutineTemplate::MeetingPrep, now), Some("Needs a Google Calendar account connected (Settings)."));
+        assert_eq!(unavailable(&RoutineTemplate::MeetingPrep, now).as_deref(), Some("Needs a Google Calendar account connected (Settings)."));
         let calendar_only = Capabilities { calendar: true, ..Capabilities::NONE };
         assert_eq!(unavailable(&RoutineTemplate::MeetingPrep, calendar_only), None, "no approvals or Gmail needed");
         for t in [RoutineTemplate::DailyBrief, RoutineTemplate::FocusTime, RoutineTemplate::EodRecap, RoutineTemplate::WeeklyDigest, RoutineTemplate::ReplyPriorities, RoutineTemplate::MeetingPrep] {

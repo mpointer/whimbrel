@@ -65,12 +65,18 @@ enum TranscriptionService {
     /// The multilingual model (`ggml-base.bin`), downloaded only when multilingual transcription is on.
     static var multilingualModelPath: URL { SpikePaths.root.appendingPathComponent("models/ggml-base.bin") }
 
+    /// large-v3-turbo, downloaded only when asked for.
+    static var turboModelPath: URL { SpikePaths.root.appendingPathComponent("models/ggml-large-v3-turbo-q5_0.bin") }
+    private static var defaultModelPath: URL { SpikePaths.root.appendingPathComponent("models/ggml-tiny.en.bin") }
+    /// A model file chosen in Settings wins over every other engine choice.
+    static var usesCustomModel: Bool { modelPath.standardizedFileURL != defaultModelPath.standardizedFileURL }
+
     static var modelPath: URL {
         get {
             ModelPathDefaultsMigration.resolve(
                 newKey: modelPathDefaultsKey,
                 legacyKey: legacyModelPathDefaultsKey,
-                defaultPath: SpikePaths.root.appendingPathComponent("models/ggml-tiny.en.bin")
+                defaultPath: defaultModelPath
             )
         }
         set {
@@ -98,11 +104,13 @@ enum TranscriptionService {
         return try transcribeSession(system: tracks.system, mic: tracks.mic, stamp: stamp, expectedSpeakerCount: expectedSpeakerCount, language: language)
     }
 
-    /// Whisper on one converted WAV: "en" with the English model exactly as before, anything
-    /// else (or nil, detect) with the multilingual model.
-    private static func whisper(_ wav: URL, language: String?) -> (segments: [CoreTranscriptSegment], language: String?)? {
-        if language == "en" { return CoreMemoryStore.transcribeWav(modelPath: modelPath, wavPath: wav).map { ($0, "en") } }
-        return CoreMemoryStore.transcribeWavLang(modelPath: multilingualModelPath, wavPath: wav, language: language)
+    /// The chosen engine on one converted WAV. An engine that can't detect a language gets
+    /// it from `base` first.
+    private static func runEngine(_ wav: URL, language: String?) -> (segments: [CoreTranscriptSegment], language: String?)? {
+        let engine = TranscriptionEngines.batch(language: language)
+        var language = language
+        if language == nil, engine.needsLanguage { language = LanguageDetection.language(of: wav) }
+        return engine.transcribe(wav: wav, language: language)
     }
 
     /// Mirrors core `sibling_audio_paths`: the track pair lives beside the stored path,
@@ -120,9 +128,8 @@ enum TranscriptionService {
     }
 
     private static func transcribeSession(system systemURL: URL, mic micURL: URL, stamp: String, expectedSpeakerCount: Int?, language: String?) throws -> (url: URL, lines: [Line], language: String?) {
-        let model = language == "en" ? modelPath : multilingualModelPath
-        guard FileManager.default.fileExists(atPath: model.path) else {
-            throw TranscriptionError.modelMissing(model)
+        guard TranscriptionEngines.batch(language: language).isReady else {
+            throw TranscriptionError.modelMissing(language == "en" ? modelPath : multilingualModelPath)
         }
 
         let hasSystemAudio = FileManager.default.fileExists(atPath: systemURL.path) && AudioConversion.hasAudioContent(systemURL)
@@ -185,7 +192,7 @@ enum TranscriptionService {
 
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = whisper(wavURL, language: language)
+            let result = runEngine(wavURL, language: language)
             transcriptSegments = result?.segments
             detected = result?.language
             group.leave()
@@ -243,7 +250,7 @@ enum TranscriptionService {
             throw TranscriptionError.conversionFailed(String(describing: error))
         }
 
-        guard let result = whisper(wavURL, language: language) else {
+        guard let result = runEngine(wavURL, language: language) else {
             throw TranscriptionError.transcriptionFailed(source.lastPathComponent)
         }
         return (result.segments.map { Line(speakerLabel: speaker.rawValue, startCs: $0.startCs, endCs: $0.endCs, text: $0.text) }, result.language)

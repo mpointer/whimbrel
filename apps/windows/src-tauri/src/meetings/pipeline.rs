@@ -23,11 +23,13 @@ use transcribe::postprocess::Line;
 
 use super::perf::{pipeline_threads, FullSpeed};
 use super::recorder::RecordingFiles;
+use super::spoken::{self, Plan, Speech};
 use crate::paths::Paths;
 use crate::secrets::SecretStore;
 use crate::error::CommandError;
 use crate::settings::{ApiKeys, PromptSurface, SettingsFile};
 use crate::store_actor::StoreHandle;
+use crate::l10n::tr;
 
 /// The Mac's labels for the two channels (`TranscriptionService.Speaker`).
 pub const ME: &str = "Me";
@@ -45,11 +47,11 @@ pub enum Stage {
 
 impl Stage {
     /// What the workspace shows while this stage runs (the Mac's `processingStage`).
-    pub fn label(self) -> &'static str {
+    pub fn label(self) -> String {
         match self {
-            Stage::Transcribing => "Transcribing…",
-            Stage::Summarizing => "Summarizing…",
-            Stage::IdentifyingSpeakers => "Identifying speakers…",
+            Stage::Transcribing => tr("Transcribing…", &[]),
+            Stage::Summarizing => tr("Summarizing…", &[]),
+            Stage::IdentifyingSpeakers => tr("Identifying speakers…", &[]),
         }
     }
 }
@@ -98,10 +100,6 @@ pub fn stamp_of(audio_path: &Path) -> Option<String> {
     let stem = audio_path.file_stem()?.to_str()?;
     stem.strip_prefix("system-audio-").or_else(|| stem.strip_prefix("mic-audio-")).map(str::to_string)
 }
-
-/// What the pipeline says when neither channel had any speech. `run` reads the same text to
-/// remember the verdict (see [`no_speech_marker`]).
-pub const NOTHING_SAID: &str = "Nothing was said in this recording.";
 
 /// The marker the pipeline leaves next to a recording it found silent. The launch repair
 /// re-runs every finished meeting without a transcript, and a silent one never gets a
@@ -210,7 +208,7 @@ impl Pipeline {
 
     fn set_stage(&self, meeting_id: i64, stage: Stage) {
         tracing::info!(meeting_id, ?stage, "meeting pipeline");
-        self.state.lock().unwrap().0 = Some(Processing { meeting_id, stage, label: stage.label().to_string() });
+        self.state.lock().unwrap().0 = Some(Processing { meeting_id, stage, label: stage.label() });
     }
 
     fn finished(&self, meeting_id: i64, failure: Option<String>) {
@@ -254,6 +252,33 @@ impl Pipeline {
         }
     }
 
+    /// Transcribes a finished meeting again from its audio, then re-summarizes it (the Mac's
+    /// `transcribeAgain`), in its stored `spoken_language` or, with none, detecting again. The
+    /// per-meeting "Transcript language" choice runs this after storing the language.
+    pub fn transcribe_again(self: &Arc<Self>, meeting_id: i64) -> Result<(), CommandError> {
+        if self.processing().is_some() {
+            return Err(CommandError::invalid_input(crate::l10n::tr(
+                "Whimbrel is still working on a meeting. Try again when it's done.",
+                &[],
+            )));
+        }
+        let meeting = self
+            .store
+            .call_blocking(move |s| s.get_meeting(meeting_id).map_err(|e| e.to_string()))?
+            .map_err(CommandError::store)?
+            .ok_or_else(|| CommandError::invalid_input(crate::l10n::tr("That meeting is gone.", &[])))?;
+        let files = meeting
+            .audio_path
+            .as_deref()
+            .and_then(|audio| stamp_of(Path::new(audio)))
+            .map(|stamp| RecordingFiles::unfinished(&self.paths.recordings, &stamp, None))
+            .filter(|files| files.audio_path().is_some())
+            .ok_or_else(|| CommandError::invalid_input(crate::l10n::tr("This meeting's audio is no longer on this PC.", &[])))?;
+        tracing::info!(meeting_id, "transcribing the meeting again");
+        self.run_in_background(meeting_id, files, Default::default());
+        Ok(())
+    }
+
     /// Summarizes an existing transcript again (the workspace's Regenerate). `keep_edits`
     /// decides what happens to the user's overrides: keep them and mark this generation
     /// seen, or drop them and take the new summary's text and action items.
@@ -262,12 +287,12 @@ impl Pipeline {
             .store
             .call_blocking(move |s| s.get_meeting(meeting_id).map_err(|e| e.to_string()))?
             .map_err(CommandError::store)?
-            .ok_or_else(|| CommandError::invalid_input("That meeting is gone."))?;
+            .ok_or_else(|| CommandError::invalid_input(tr("That meeting is gone.", &[])))?;
         let path = meeting
             .transcript_path
             .clone()
-            .ok_or_else(|| CommandError::invalid_input("This meeting has no transcript to summarize."))?;
-        let transcript = std::fs::read_to_string(&path).map_err(|e| CommandError::invalid_input(format!("Its transcript didn't open: {e}")))?;
+            .ok_or_else(|| CommandError::invalid_input(tr("This meeting has no transcript to summarize.", &[])))?;
+        let transcript = std::fs::read_to_string(&path).map_err(|e| CommandError::invalid_input(tr("Its transcript didn't open: {error}", &[("error", &e.to_string())])))?;
 
         self.set_stage(meeting_id, Stage::Summarizing);
         let outcome = self.summarize(meeting_id, &transcript, meeting.notes.as_deref().unwrap_or_default());
@@ -317,14 +342,6 @@ impl Pipeline {
             }
             Err(e) => {
                 tracing::error!(meeting_id, error = %e, "meeting pipeline failed");
-                if e == NOTHING_SAID {
-                    // Remember it, so the launch repair doesn't transcribe this silence again.
-                    if let Some(marker) = files.audio_path().and_then(no_speech_marker) {
-                        if let Err(io) = std::fs::write(&marker, b"") {
-                            tracing::warn!(meeting_id, error = %io, "could not mark the recording as silent");
-                        }
-                    }
-                }
                 self.finished(meeting_id, Some(e));
             }
         }
@@ -332,12 +349,24 @@ impl Pipeline {
 
     fn transcribe_and_summarize(&self, meeting_id: i64, files: &RecordingFiles, transcribed: super::live::Accumulated) -> Result<f64, String> {
         let Some(audio) = files.audio_path() else {
-            return Err("This meeting has no audio to transcribe.".into());
+            return Err(tr("This meeting has no audio to transcribe.", &[]));
         };
-        let stamp = stamp_of(audio).ok_or("The recording's file name has no timestamp.")?;
-        let whisper_model = self.paths.whisper_model();
+        let stamp = stamp_of(audio).ok_or_else(|| tr("The recording's file name has no timestamp.", &[]))?;
+        // The meeting's language (W7): its stored one, else what transcription during the
+        // meeting locked, else detect in multilingual mode. English mode is today's path.
+        let setting_on = self.settings.lock().unwrap().multilingual();
+        let multilingual_mode = setting_on && self.paths.whisper_multilingual_model().is_file();
+        let stored = match self.store.call_blocking(move |s| s.meeting_spoken_language(meeting_id).map_err(|e| e.to_string())).map_err(|e| e.to_string()) {
+            Ok(Ok(stored)) => stored,
+            Ok(Err(e)) | Err(e) => {
+                tracing::warn!(meeting_id, error = %e, "could not read the meeting's language; detecting it");
+                None
+            }
+        };
+        let mut plan = Plan::choose(setting_on, multilingual_mode, stored.as_deref().or(transcribed.language.as_deref()));
+        let whisper_model = plan.model(&self.paths);
         if !whisper_model.is_file() {
-            return Err("The transcription model isn't installed. Settings → Meeting models.".into());
+            return Err(tr("The transcription model isn't installed. Settings → Meeting models.", &[]));
         }
 
         self.set_stage(meeting_id, Stage::Transcribing);
@@ -345,14 +374,16 @@ impl Pipeline {
             .store
             .call_blocking(move |s| s.get_meeting(meeting_id).map_err(|e| e.to_string()))
             .map_err(|e| e.to_string())??
-            .ok_or("That meeting is gone.")?;
+            .ok_or_else(|| tr("That meeting is gone.", &[]))?;
         let speakers = expected_speakers(&meeting);
 
         let _full_speed = FullSpeed::acquire();
         let threads = pipeline_threads();
         let transcribing = Instant::now();
-        let transcriber = transcribe::Transcriber::load(&whisper_model).map_err(|e| format!("The transcription model didn't load: {e}"))?;
+        let transcriber = transcribe::Transcriber::load(&whisper_model).map_err(|e| tr("The transcription model didn't load: {error}", &[("error", &e.to_string())]))?;
         let slices = self.paths.live_slices();
+        // System first: when it has speech it locks the language, and the mic is forced to it
+        // (the Mac's `transcribeSession`).
         let system_segments = finish_channel(
             &transcriber,
             files.system.as_deref(),
@@ -360,9 +391,17 @@ impl Pipeline {
             transcribed.system_cursor,
             &slices,
             threads,
+            &mut plan,
         )?;
-        let mic_segments =
-            finish_channel(&transcriber, files.mic.as_deref(), transcribed.mic, transcribed.mic_cursor, &slices, threads)?;
+        let mic_segments = finish_channel(
+            &transcriber,
+            files.mic.as_deref(),
+            transcribed.mic,
+            transcribed.mic_cursor,
+            &slices,
+            threads,
+            &mut plan,
+        )?;
         let _ = std::fs::remove_dir_all(&slices);
         drop(transcriber);
         let transcribe_ms = transcribing.elapsed().as_millis() as u64;
@@ -370,8 +409,24 @@ impl Pipeline {
             .iter()
             .filter_map(|segments| segments.last().map(|s: &transcribe::TranscriptSegment| s.end_cs as f64 / 100.0))
             .fold(0.0, f64::max);
+        if let Some(language) = spoken::language_to_store(multilingual_mode, stored.as_deref(), plan.language.as_deref()) {
+            tracing::info!(meeting_id, language, "the meeting's language");
+            let saved = self
+                .store
+                .call_blocking(move |s| s.set_meeting_spoken_language(meeting_id, Some(&language)).map_err(|e| e.to_string()))
+                .map_err(|e| e.to_string());
+            if let Err(e) | Ok(Err(e)) = saved {
+                tracing::warn!(meeting_id, error = %e, "could not store the meeting's language");
+            }
+        }
         if system_segments.is_empty() && mic_segments.is_empty() {
-            return Err(NOTHING_SAID.into());
+            // Remember it, so the launch repair doesn't transcribe this silence again.
+            if let Some(marker) = no_speech_marker(audio) {
+                if let Err(io) = std::fs::write(&marker, b"") {
+                    tracing::warn!(meeting_id, error = %io, "could not mark the recording as silent");
+                }
+            }
+            return Err(tr("Nothing was said in this recording.", &[]));
         }
 
         let mic_lines = lines_from(&mic_segments, |_| ME.to_string());
@@ -379,7 +434,7 @@ impl Pipeline {
         let (lines, _) = transcribe::postprocess::postprocess(&mic_lines, &system_lines);
         let started = started_at(&stamp).unwrap_or_else(chrono::Local::now);
         let path = transcript_path(&self.paths.recordings, &stamp);
-        std::fs::write(&path, transcript_text(&lines, started)).map_err(|e| format!("The transcript didn't save: {e}"))?;
+        std::fs::write(&path, transcript_text(&lines, started)).map_err(|e| tr("The transcript didn't save: {error}", &[("error", &e.to_string())]))?;
 
         let notes = self
             .store
@@ -424,7 +479,7 @@ impl Pipeline {
         let diarizing = Instant::now();
         let labelled = self.label_system_channel(&system_segments, files.system.as_deref(), speakers);
         let (final_lines, _) = transcribe::postprocess::postprocess(&mic_lines, &labelled);
-        std::fs::write(&path, transcript_text(&final_lines, started)).map_err(|e| format!("The transcript didn't save: {e}"))?;
+        std::fs::write(&path, transcript_text(&final_lines, started)).map_err(|e| tr("The transcript didn't save: {error}", &[("error", &e.to_string())]))?;
         let segments: Vec<NewTranscriptSegment> = final_lines
             .iter()
             .map(|line| NewTranscriptSegment {
@@ -435,8 +490,11 @@ impl Pipeline {
             })
             .collect();
         let count = segments.len();
+        // A replace, not an insert, so transcribing a meeting again doesn't add a second copy.
+        // A Windows meeting is one part (core synthesizes part 1 at offset 0), so on a first
+        // run this is the insert it always was.
         self.store
-            .call_blocking(move |s| s.insert_transcript_segments(&segments).map_err(|e| e.to_string()))
+            .call_blocking(move |s| s.replace_part_transcript_segments(meeting_id, 1, &segments).map_err(|e| e.to_string()))
             .map_err(|e| e.to_string())??;
 
         // A calendar recording where nothing came from the call (only this PC's own
@@ -551,30 +609,36 @@ pub fn remaining(path: Option<&Path>, cursor: u64) -> Remaining<'_> {
 /// One channel's segments: what transcription during the meeting already has, plus
 /// whatever came after its cursor.
 fn finish_channel(
-    transcriber: &transcribe::Transcriber,
+    speech: &dyn Speech,
     path: Option<&Path>,
     mut done: Vec<transcribe::TranscriptSegment>,
     cursor: u64,
     slices: &Path,
     threads: i32,
+    plan: &mut Plan,
 ) -> Result<Vec<transcribe::TranscriptSegment>, String> {
     match remaining(path, cursor) {
         Remaining::Nothing => Ok(Vec::new()),
-        Remaining::Whole(path) => transcribe_channel(transcriber, path, threads),
+        Remaining::Whole(path) => transcribe_channel(speech, path, threads, plan),
         Remaining::Tail(path, cursor) => {
-            super::live::finish_tail(transcriber, path, cursor, &mut done, slices, threads)?;
+            super::live::finish_tail(speech, path, cursor, &mut done, slices, threads, plan)?;
             Ok(done)
         }
     }
 }
 
-fn transcribe_channel(transcriber: &transcribe::Transcriber, path: &Path, threads: i32) -> Result<Vec<transcribe::TranscriptSegment>, String> {
+fn transcribe_channel(
+    speech: &dyn Speech,
+    path: &Path,
+    threads: i32,
+    plan: &mut Plan,
+) -> Result<Vec<transcribe::TranscriptSegment>, String> {
     if let Err(e) = repair_wav_header(path) {
         tracing::warn!(path = %path.display(), error = %e, "could not check the WAV header");
     }
-    transcriber
-        .transcribe_wav_with_threads(path, Some(threads))
-        .map_err(|e| format!("{} didn't transcribe: {e}", path.display()))
+    let transcribed = speech.run(path, threads, plan).map_err(|e| format!("{} didn't transcribe: {e}", path.display()))?;
+    plan.observe(&transcribed);
+    Ok(transcribed.segments)
 }
 
 #[cfg(test)]
@@ -737,6 +801,77 @@ mod tests {
         );
         assert_eq!(remaining(None, 0), Remaining::Nothing, "this stream recorded nothing");
         assert_eq!(remaining(None, 999), Remaining::Nothing, "and a cursor without a file means nothing either");
+    }
+
+    /// A finished recording: a canonical header and `seconds` of silence.
+    fn wav(path: &Path, seconds: u32) {
+        let spec = hound::WavSpec { channels: 1, sample_rate: 16_000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for _ in 0..seconds * 16_000 {
+            writer.write_sample(0i16).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+
+    fn batch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("whimbrel-batch-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn batch_forces_stored_language() {
+        use crate::meetings::spoken::tests::{chunk, FakeSpeech};
+        let dir = batch_dir("stored");
+        let (system, mic) = (dir.join("system-audio-S.wav"), dir.join("mic-audio-S.wav"));
+        wav(&system, 2);
+        wav(&mic, 2);
+        let speech = FakeSpeech::new(vec![chunk(2, Some("es")), chunk(1, Some("es"))]);
+        let mut plan = Plan::choose(true, true, Some("es"));
+        finish_channel(&speech, Some(&system), Vec::new(), 0, &dir, 1, &mut plan).unwrap();
+        finish_channel(&speech, Some(&mic), Vec::new(), 0, &dir, 1, &mut plan).unwrap();
+        let asked: Vec<_> = speech.asked().into_iter().map(|p| (p.multilingual, p.language)).collect();
+        let es = (true, Some("es".to_string()));
+        assert_eq!(asked, [es.clone(), es], "both channels forced, nothing detected");
+        assert_eq!(spoken::language_to_store(true, Some("es"), plan.language.as_deref()), None, "already stored");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn batch_detects_on_the_system_channel_and_forces_the_mic() {
+        use crate::meetings::spoken::tests::{chunk, FakeSpeech};
+        let dir = batch_dir("detect");
+        let (system, mic) = (dir.join("system-audio-S.wav"), dir.join("mic-audio-S.wav"));
+        wav(&system, 2);
+        wav(&mic, 2);
+        let speech = FakeSpeech::new(vec![chunk(3, Some("fr")), chunk(1, Some("en"))]);
+        let mut plan = Plan::choose(true, true, None);
+        finish_channel(&speech, Some(&system), Vec::new(), 0, &dir, 1, &mut plan).unwrap();
+        finish_channel(&speech, Some(&mic), Vec::new(), 0, &dir, 1, &mut plan).unwrap();
+        let asked: Vec<_> = speech.asked().into_iter().map(|p| p.language).collect();
+        assert_eq!(asked, [None, Some("fr".to_string())]);
+        assert_eq!(spoken::language_to_store(true, None, plan.language.as_deref()), Some("fr".to_string()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn english_mode_unchanged() {
+        use crate::meetings::spoken::tests::{chunk, FakeSpeech};
+        let dir = batch_dir("english");
+        let mic = dir.join("mic-audio-S.wav");
+        wav(&mic, 2);
+        let speech = FakeSpeech::new(vec![chunk(2, Some("en"))]);
+        // Off: whatever is stored, and whether or not the multilingual model is there.
+        for (model_present, stored) in [(false, None), (true, None), (true, Some("es"))] {
+            let mut plan = Plan::choose(false, model_present, stored);
+            assert_eq!(plan, Plan::english());
+            finish_channel(&speech, Some(&mic), Vec::new(), 0, &dir, 1, &mut plan).unwrap();
+            assert_eq!(plan, Plan::english(), "nothing locks");
+            assert_eq!(spoken::language_to_store(false, stored, plan.language.as_deref()), None, "nothing is written");
+        }
+        assert!(speech.asked().iter().all(|p| *p == Plan::english()), "the English model, forced to English, every time");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -15,6 +15,7 @@ use crate::error::CommandError;
 use crate::mcp_server::{self, McpServer, SpawnSpec, Status};
 use crate::settings::SettingsFile;
 use crate::state::AppState;
+use crate::l10n::tr;
 
 /// The scopes a client can hold, in the order the card lists them. Core checks each tool
 /// against these names; anything else would be a token that opens nothing.
@@ -69,7 +70,7 @@ pub fn apply_enabled(
     {
         let mut settings = settings.lock().unwrap();
         settings.set_mcp_server_enabled(enabled);
-        settings.save().map_err(|e| CommandError::store(format!("could not save the setting: {e}")))?;
+        settings.save().map_err(|e| CommandError::store(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
     let status = if enabled {
         match spec() {
@@ -86,18 +87,18 @@ pub fn apply_enabled(
 pub fn create_client(store: &memory::Store, name: &str, scopes: &[String]) -> Result<McpNewClient, CommandError> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(CommandError::invalid_input("Give the client a name."));
+        return Err(CommandError::invalid_input(tr("Give the client a name.", &[])));
     }
     if name.chars().count() > 60 {
-        return Err(CommandError::invalid_input("Keep the client name under 60 characters."));
+        return Err(CommandError::invalid_input(tr("Keep the client name under 60 characters.", &[])));
     }
     if let Some(unknown) = scopes.iter().find(|s| !SCOPES.contains(&s.as_str())) {
-        return Err(CommandError::invalid_input(format!("{unknown} is not something a client can be given access to.")));
+        return Err(CommandError::invalid_input(tr("{unknown} is not something a client can be given access to.", &[("unknown", &unknown.to_string())])));
     }
     // In the card's order, once each, whatever order the caller used.
     let granted: Vec<String> = SCOPES.iter().filter(|s| scopes.iter().any(|g| g == *s)).map(|s| s.to_string()).collect();
     if granted.is_empty() {
-        return Err(CommandError::invalid_input("Choose what this client may read."));
+        return Err(CommandError::invalid_input(tr("Choose what this client may read.", &[])));
     }
     let made = api::mcp::generate_client_token(store, name, granted).map_err(|e| CommandError::store(e.to_string()))?;
     Ok(McpNewClient { id: made.id, token: made.token })
@@ -133,7 +134,7 @@ fn current_view(state: &AppState) -> McpServerView {
     let enabled = state.settings.lock().unwrap().mcp_server_enabled();
     match &state.mcp_server {
         Some(server) => server_view(enabled, server.status()),
-        None => server_view(enabled, Status::Failed("The MCP server could not be set up on this PC.".into())),
+        None => server_view(enabled, Status::Failed(tr("The MCP server could not be set up on this PC.", &[]))),
     }
 }
 
@@ -162,15 +163,15 @@ pub async fn mcp_set_enabled(app: AppHandle, enabled: bool) -> Result<McpServerV
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let Some(server) = &state.mcp_server else {
-            return Err(CommandError::not_configured("The MCP server could not be set up on this PC."));
+            return Err(CommandError::not_configured(tr("The MCP server could not be set up on this PC.", &[])));
         };
         if enabled && state.store.is_none() {
-            return Err(CommandError::store("the database is not open; see Settings for the startup error"));
+            return Err(CommandError::store(tr("The database is not open; see Settings for the startup error", &[])));
         }
         apply_enabled(server, &state.settings, enabled, || spawn_spec(&state))
     })
     .await
-    .map_err(|e| CommandError::store(format!("switching the MCP server failed: {e}")))?
+    .map_err(|e| CommandError::store(tr("Switching the MCP server failed: {error}", &[("error", &e.to_string())])))?
 }
 
 #[tauri::command]

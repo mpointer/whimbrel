@@ -14,6 +14,7 @@ use crate::device_labels::DeviceLabeler;
 use crate::error::CommandError;
 use crate::meetings::controller::{MeetingRecordingView, RECONCILE_WINDOW};
 use crate::state::AppState;
+use crate::l10n::tr;
 
 /// A meeting recorded up to this long before its event's start still counts as that event's recording:
 /// Start can be pressed early, and the row then starts at the press, not at the event.
@@ -117,13 +118,13 @@ pub async fn meeting_record_start_event(app: AppHandle, event_id: String) -> Res
             .calendar
             .as_ref()
             .and_then(|c| c.upcoming(now).into_iter().find(|e| e.id == event_id))
-            .ok_or_else(|| CommandError::invalid_input("That meeting is no longer on the calendar."))?;
+            .ok_or_else(|| CommandError::invalid_input(tr("That meeting is no longer on the calendar.", &[])))?;
         let started = state.meetings()?.start_calendar(event.title, event.attendees, Some(event.start_unix_ms), state.detected.candidate_pid());
         crate::tray::refresh(&app);
         started
     })
     .await
-    .map_err(|e| CommandError::store(format!("the meeting command failed: {e}")))?
+    .map_err(|e| CommandError::store(tr("The meeting command failed: {error}", &[("error", &e.to_string())])))?
 }
 
 #[cfg(test)]

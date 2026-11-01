@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import { PNG } from "pngjs";
+import type { LanguageSettings } from "../src/generated/types";
 
 const ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 const readJson = (path: string) => JSON.parse(readFileSync(`${ROOT}${path}`, "utf8"));
@@ -84,9 +85,37 @@ function picture(): string {
 const MIN = 60_000;
 const LONG_WORD = "Supercalifragilisticexpialidocious-renegotiation";
 
+/** The shipped UI languages (l10n/languages.json), as the shell lists them for the Language picker. */
+const SHIPPED: string[] = ["en-US", ...readJson("l10n/languages.json").shipped];
+
+/** What the shell's `language_settings` answers when Windows (or the picker) gives `lang`: the app shows `lang`,
+ *  and notes are written in it too. */
+function languageSettings(lang: string): LanguageSettings {
+  return {
+    choice: lang,
+    languages: SHIPPED,
+    localModelNote: !lang.startsWith("en"),
+    outputLanguage: lang === "en-US" ? "" : lang,
+    uiLanguage: lang,
+    writeIn: "",
+    writeInOptions: ["en-US", "en-GB", "en-CA", "en-AU", "es-US", "fr-CA"],
+  };
+}
+
+const CATALOG: { strings: Record<string, { localizations?: Record<string, { stringUnit?: { value: string } }> }> } = readJson(
+  "apps/windows/ui/src/l10n/Localizable.xcstrings",
+);
+
+/** `key` as the catalog has it in `lang` (the exact tag, then the base language, then the English source), so
+ *  a test can tell the page is really showing that language. */
+export function catalogText(key: string, lang: string): string {
+  const forms = CATALOG.strings[key]?.localizations ?? {};
+  return forms[lang]?.stringUnit?.value ?? forms[lang.split("-")[0]]?.stringUnit?.value ?? key;
+}
+
 /** What the app asks for, answered with a busy day: long titles (one with no break to wrap at), many attendees,
  *  recorded and unrecorded events, earlier meetings, open loops and a recap. */
-function fixtures(skins: SkinDto[], now: number) {
+function fixtures(skins: SkinDto[], now: number, lang: string) {
   const dev = { deviceId: "PC", label: "A-Very-Long-Computer-Name", thisDevice: true };
   const meeting = (id: number, hours: number, title: string) => ({ id, device: dev, hasSummary: true, status: "done", title, trigger: "calendar", tsUnixMs: now - hours * 3_600_000 });
   const long = "Quarterly planning and renegotiation of the enterprise agreement with every stakeholder involved in it";
@@ -124,12 +153,19 @@ function fixtures(skins: SkinDto[], now: number) {
     meeting_list: [meeting(1, 26, long), meeting(2, 50, LONG_WORD), meeting(3, 75, "Customer call")],
     ai_settings: { routing: { preferredProvider: "ollama", localOnly: false, ollamaModel: "llama3", anthropicModel: "", openaiModel: "", googleModel: "" }, keys: [] },
     approvals_count: 0,
+    language_settings: languageSettings(lang),
+    // A first launch: the meeting models are downloading, so the sidebar footer's status line is drawn
+    // (and checked for overruns) in every language.
+    meeting_models_status: { installed: false, missing: ["Transcription model"], dir: "C:/m", multilingual: false },
+    meeting_models_download_start: "job-1",
+    model_download_poll: { jobId: "job-1", fraction: 0.4, status: "Downloading…", done: false, cancelled: false },
   };
 }
 
-/** Make `page` answer the app's Tauri calls, and choose the skin, palette and appearance it starts in. */
-export async function installBridge(page: Page, opts: { skins: SkinDto[]; skinId: string; paletteId: string; mode: "light" | "dark" }): Promise<void> {
-  const data = fixtures(opts.skins, Date.now());
+/** Make `page` answer the app's Tauri calls, and choose the skin, palette, appearance and language
+ *  (a resolved tag such as `de-DE`, as `language_settings` gives it) it starts in. */
+export async function installBridge(page: Page, opts: { skins: SkinDto[]; skinId: string; paletteId: string; mode: "light" | "dark"; lang: string }): Promise<void> {
+  const data = fixtures(opts.skins, Date.now(), opts.lang);
   const image = picture();
   await page.addInitScript(
     ({ data, image, skinId, paletteId, mode }) => {

@@ -11,6 +11,7 @@ use std::thread::JoinHandle;
 
 use super::live::{self, Accumulated};
 use crate::capture::audio::{self, Live, RecordOptions, Source, StreamStats};
+use crate::l10n::tr;
 
 /// How long Stop waits for the streams to finalize. A WASAPI call that never returns
 /// (seen once in Task 3's manual check) must not hold up the meeting: past this, the
@@ -163,7 +164,7 @@ impl WasapiRecording {
             .map_err(|e| tracing::error!(error = %e, "could not start the recorder thread"))
             .ok();
         if thread.is_none() {
-            live.set_degraded("Whimbrel couldn't start recording.".into());
+            live.set_degraded(tr("Whimbrel couldn't start recording.", &[]));
         }
         // The recorder names its files after the stamp, so the transcriber can find them
         // before they exist; a file that never appears is simply never sliced.
@@ -178,9 +179,10 @@ impl WasapiRecording {
         WasapiRecording { dir: dir.to_path_buf(), stamp: stamp.to_string(), stop, live, thread, transcribing }
     }
 
-    /// Starts real recordings in `dir`, each transcribing itself as it goes.
-    pub fn starter(dir: PathBuf, transcribe: live::Config) -> StartAudio {
-        Arc::new(move |target, stamp| Box::new(WasapiRecording::start(target, &dir, stamp, Some(transcribe.clone()))))
+    /// Starts real recordings in `dir`, each transcribing itself as it goes. `transcribe` is
+    /// asked at each start, so the model and language follow the settings of the moment.
+    pub fn starter(dir: PathBuf, transcribe: Arc<dyn Fn() -> live::Config + Send + Sync>) -> StartAudio {
+        Arc::new(move |target, stamp| Box::new(WasapiRecording::start(target, &dir, stamp, Some(transcribe()))))
     }
 }
 
@@ -198,7 +200,7 @@ impl ActiveAudio for WasapiRecording {
         }
         if self.thread.as_ref().is_some_and(|t| !t.is_finished()) {
             tracing::error!(stamp = %self.stamp, "a recording stream didn't stop within 5 s; keeping its files as they are");
-            self.live.set_degraded("Part of this recording didn't finish saving, so some audio may be missing.".into());
+            self.live.set_degraded(tr("Part of this recording didn't finish saving, so some audio may be missing.", &[]));
             self.thread = None;
             let files = RecordingFiles::unfinished(&self.dir, &self.stamp, self.live.degraded());
             return Stopped { files, transcribed: self.transcribed() };

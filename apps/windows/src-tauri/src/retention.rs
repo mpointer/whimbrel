@@ -22,6 +22,7 @@ use crate::error::CommandError;
 use crate::meetings::controller::MeetingController;
 use crate::settings::SettingsFile;
 use crate::store_actor::StoreHandle;
+use crate::l10n::tr;
 
 /// The Mac's schedule: a first run shortly after launch, then daily.
 pub const FIRST_RUN_AFTER: Duration = Duration::from_secs(30);
@@ -238,7 +239,7 @@ impl Retention {
             let mut file = self.settings.lock().unwrap();
             if !file.retention_acknowledged() {
                 file.set_retention_acknowledged(true);
-                file.save().map_err(|e| CommandError::store(format!("could not save settings: {e}")))?;
+                file.save().map_err(|e| CommandError::store(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
             }
         }
         let settings = self.settings();

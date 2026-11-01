@@ -18,6 +18,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::error::CommandError;
 use crate::meetings::snapshots::storage;
 use crate::state::AppState;
+use crate::l10n::tr;
 
 /// The longest side of a strip thumbnail, in pixels: the Mac's size, sharp at 2x for the
 /// strip's 120 px row.
@@ -113,7 +114,7 @@ fn snapshot_path(s: &Store, meeting_id: i64, id: i64) -> Result<PathBuf, String>
         .into_iter()
         .find(|snap| snap.id == id)
         .map(|snap| PathBuf::from(snap.file_path))
-        .ok_or_else(|| "That slide is no longer saved.".to_string())
+        .ok_or_else(|| tr("That slide is no longer saved.", &[]))
 }
 
 /// Deletes snapshot `id` of `meeting_id`: the row first, then its file, so a failed
@@ -182,7 +183,7 @@ fn set_clipboard_dib(owner: Option<windows::Win32::Foundation::HWND>, dib: &[u8]
         }
         unsafe { OpenClipboard(owner).is_ok() }
     }) {
-        return Err("Another app is using the clipboard. Try again in a moment.".into());
+        return Err(tr("Another app is using the clipboard. Try again in a moment.", &[]));
     }
     let result = unsafe {
         (|| {
@@ -221,7 +222,7 @@ fn shell_open(file: &str, params: Option<&str>) -> Result<(), String> {
     if result.0 as isize > 32 {
         Ok(())
     } else {
-        Err(format!("Windows couldn't open it (ShellExecute returned {})", result.0 as isize))
+        Err(tr("Windows couldn't open it (ShellExecute returned {code}).", &[("code", &(result.0 as isize).to_string())]))
     }
 }
 
@@ -301,7 +302,7 @@ fn read_settings(file: &crate::settings::SettingsFile, fallback: &Path) -> Snaps
 fn save(state: &AppState, change: impl FnOnce(&mut crate::settings::SettingsFile)) -> Result<SnapshotSettings, CommandError> {
     let mut file = state.settings.lock().unwrap();
     change(&mut file);
-    file.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+    file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     Ok(read_settings(&file, &fallback_root(state)))
 }
 
@@ -398,7 +399,7 @@ pub async fn meeting_snapshots_show(state: State<'_, AppState>, meeting_id: i64,
                 .map_err(|e| e.to_string())?
                 .first()
                 .map(|snap| Shown::File(PathBuf::from(&snap.file_path)))
-                .ok_or_else(|| "This meeting has no saved slides.".to_string())
+                .ok_or_else(|| tr("This meeting has no saved slides.", &[]))
         })
         .await?
         .map_err(CommandError::invalid_input)?;

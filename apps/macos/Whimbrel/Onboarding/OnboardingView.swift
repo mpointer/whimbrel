@@ -52,7 +52,65 @@ struct OnboardingView: View {
     }
 }
 
-private struct PermissionRow: View {
+/// FR-ONB-1 for a new Mac: the two permissions a first meeting needs, once, and nothing else.
+struct FirstRunView: View {
+    @EnvironmentObject var permissions: PermissionsManager
+    let done: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.lg) {
+            Text("Welcome to Whimbrel").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Two permissions and you're ready for your first meeting. No bot joins the call, and your recordings stay on this Mac.")
+                .font(.whimbrelBody(.callout))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(PermissionKind.firstRun) { kind in
+                PermissionRow(
+                    kind: kind,
+                    granted: permissions.granted(for: kind),
+                    onGrant: { permissions.request(kind) },
+                    onOpenSettings: { permissions.openSystemSettings(for: kind) }
+                )
+            }
+            Text("Some places require everyone's consent before a meeting is recorded. Check the rules where you and the other people are.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Anything else, Whimbrel asks for when you first use it. Its models are downloading in the background.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Get Started", action: done).buttonStyle(.whimbrelPrimary)
+            }
+        }
+        .padding(Spacing.xl)
+        .frame(width: 480)
+    }
+}
+
+/// A permission asked for from inside the feature that needs it.
+struct PermissionCard: View {
+    @EnvironmentObject var permissions: PermissionsManager
+    let kind: PermissionKind
+
+    var body: some View {
+        if !permissions.granted(for: kind) {
+            PermissionRow(
+                kind: kind,
+                granted: false,
+                onGrant: { permissions.request(kind) },
+                onOpenSettings: { permissions.openSystemSettings(for: kind) }
+            )
+            .padding(Spacing.md)
+            .background(Color.whimbrelBackgroundCard)
+            .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+        }
+    }
+}
+
+struct PermissionRow: View {
     let kind: PermissionKind
     let granted: Bool
     let onGrant: () -> Void

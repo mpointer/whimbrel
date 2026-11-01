@@ -1,0 +1,86 @@
+<!--
+{
+  "title": "Whimbrel pour Windows 11 – Notes de réunion IA",
+  "description": "Téléchargez Whimbrel pour Windows 11 : notes de réunion IA sans robot, mémoire d'écran et breffages. Aucun droit admin requis. Accès anticipé gratuit.",
+  "schema": [
+    "software-windows"
+  ],
+  "priority": 0.8,
+  "crumbs": [
+    {
+      "name": "Téléchargement",
+      "path": "/download/"
+    },
+    {
+      "name": "Windows",
+      "path": "/download/windows/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Pourquoi Windows affiche-t-il un avertissement SmartScreen ?",
+      "a": "Pendant l'accès anticipé, le programme d'installation n'est pas encore signé avec un certificat de signature de code Windows. Microsoft Defender SmartScreen peut donc afficher « Windows a protégé votre ordinateur ». Choisissez Informations complémentaires, puis Exécuter quand même. Les mises à jour reçues dans l'application sont vérifiées par signature avant leur installation."
+    },
+    {
+      "q": "Ai-je besoin de droits d'administrateur ?",
+      "a": "Non. Whimbrel s'installe uniquement pour votre compte utilisateur, dans votre profil, de sorte qu'un compte standard peut l'installer et le mettre à jour."
+    },
+    {
+      "q": "L'application Windows offre-t-elle toutes les fonctionnalités de la version Mac ?",
+      "a": "Pas encore. Whimbrel pour Windows est en accès anticipé et rattrape l'application Mac à chaque version. Les deux applications partagent le même noyau, et un Mac et un PC peuvent partager une seule chronologie."
+    }
+  ],
+  "sourceHash": "225788630ec0"
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="container split">
+    <div>
+      <p class="eyebrow">Windows 11 · Accès anticipé</p>
+      <h1>Whimbrel pour Windows</h1>
+      <p class="lede">La même mémoire privée et la même saisie de réunions sans robot que sur Mac, sur votre PC Windows, avec une seule chronologie partagée avec vos autres appareils.</p>
+      {{{site.renameNote}}}
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="/api/download/windows">Télécharger pour Windows</a>
+        <span class="version" data-version="windows"></span>
+      </div>
+      <p class="fine muted">Première visite ? Vous devrez vous inscrire avant le début du téléchargement.</p>
+    </div>
+    {{> app-mock}}
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container split">
+    <div>
+      <h2>Configuration requise</h2>
+      <ul class="checklist">
+        <li><strong>Windows 11, 64 bits (x64)</strong>Windows sur ARM n'est pas encore pris en charge.</li>
+        <li><strong>Microsoft Edge WebView2</strong>Déjà inclus dans Windows 11.</li>
+        <li><strong>Espace disque</strong>De la place pour l'application, le modèle de reconnaissance vocale sur l'appareil et votre historique grandissant.</li>
+        <li><strong>Facultatif : Ollama</strong>Pour exécuter des modèles de langage entièrement sur votre PC.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Installation en deux minutes</h2>
+      <ol class="install-steps">
+        <li>Lancez le fichier téléchargé <code>Whimbrel_x.y.z_x64-setup.exe</code>.</li>
+        <li>Si SmartScreen s'affiche, choisissez <strong>Informations complémentaires</strong> → <strong>Exécuter quand même</strong> (voir plus bas pourquoi).</li>
+        <li>L'installation se termine sans droits d'administrateur.</li>
+        <li>Whimbrel démarre dans la zone de notification. Ouvrez-le pour terminer la configuration.</li>
+        <li>Connectez votre calendrier pour que les enregistrements démarrent avec vos réunions.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Questions sur Windows</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

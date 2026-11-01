@@ -148,6 +148,13 @@ impl Paths {
         self.models.join("ggml-tiny.en.bin")
     }
 
+    /// The multilingual whisper model (core's `WHISPER_MULTILINGUAL_URL`, the Mac's
+    /// `TranscriptionService.multilingualModelPath`), downloaded only once "I have meetings in
+    /// other languages" is on.
+    pub fn whisper_multilingual_model(&self) -> PathBuf {
+        self.models.join("ggml-base.bin")
+    }
+
     /// Diarization's pyannote segmentation model.
     pub fn segmentation_model(&self) -> PathBuf {
         self.models.join("pyannote-segmentation-3-0.onnx")

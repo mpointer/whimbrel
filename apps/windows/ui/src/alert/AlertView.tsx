@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { alertAccept, alertDismiss, alertStatus } from "../api";
 import type { AlertView as AlertStatus } from "../generated/types";
+import { useL10n } from "../l10n";
 
 /**
  * The "meeting detected" window (M3.3 Task 6). It asks once; with auto-start on, the
@@ -8,6 +9,7 @@ import type { AlertView as AlertStatus } from "../generated/types";
  * you're in a call when it appears.
  */
 export function AlertView() {
+  const { t } = useL10n();
   const [status, setStatus] = useState<AlertStatus | null>(null);
 
   useEffect(() => {
@@ -30,24 +32,24 @@ export function AlertView() {
   if (!meeting) return <div className="alert" />;
   return (
     <div className="alert">
-      <span className="popup-brand">Meeting detected</span>
+      <span className="popup-brand">{t("Meeting detected")}</span>
       <p role="status" className="alert-title">
         {meeting.title}
       </p>
       <p className="muted small">
         {counting
-          ? `Recording starts in ${status!.countdownSeconds}s. Audio stays on this PC.`
-          : "Record it? Audio stays on this PC."}
+          ? t("Recording starts in {count}s. Audio stays on this PC.", { count: status!.countdownSeconds })
+          : t("Record it? Audio stays on this PC.")}
       </p>
       <div className="popup-actions">
         <button className="mode mode--active" onClick={() => void alertAccept(false)}>
-          Record
+          {t("Record")}
         </button>
         <button className="mode" onClick={() => void alertAccept(true)}>
-          Record &amp; open
+          {t("Record & open")}
         </button>
         <button className="mode" onClick={() => void alertDismiss()}>
-          Not now
+          {t("Not now")}
         </button>
       </div>
     </div>

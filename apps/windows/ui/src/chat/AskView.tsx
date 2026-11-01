@@ -14,6 +14,7 @@ import {
 } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { ChatSpend, ConversationRow, StarterPromptView } from "../generated/types";
+import { useL10n } from "../l10n";
 import { Detail, type Selection } from "../library/Detail";
 import {
   applyEvent,
@@ -48,6 +49,7 @@ const markdownComponents = {
 
 /** Library → Ask: grounded chat with saved conversations (plan Task 8). */
 export function AskView({ request, onRequestHandled }: { request?: AskRequest | null; onRequestHandled?: () => void }) {
+  const { t } = useL10n();
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -157,9 +159,9 @@ export function AskView({ request, onRequestHandled }: { request?: AskRequest | 
 
   return (
     <div className="ask">
-      <aside className="ask-sidebar" aria-label="Conversations">
+      <aside className="ask-sidebar" aria-label={t("Conversations")}>
         <button className="mode mode--active" onClick={() => open(null)} disabled={activeId === null && turns.length === 0}>
-          New conversation
+          {t("New conversation")}
         </button>
         <ul className="conversation-list">
           {conversations.map((c) => (
@@ -178,10 +180,10 @@ export function AskView({ request, onRequestHandled }: { request?: AskRequest | 
           ))}
         </ul>
       </aside>
-      <section className="ask-main" aria-label="Ask">
+      <section className="ask-main" aria-label={t("Ask")}>
         {turns.length === 0 && (
           <div className="starters">
-            <p className="muted">Ask about anything Whimbrel has captured, on this PC or your other devices.</p>
+            <p className="muted">{t("Ask about anything Whimbrel has captured, on this PC or your other devices.")}</p>
             <div className="chips">
               {starters.map((p) => (
                 <button key={p.id} className="mode starter" onClick={() => ask(p.query)} disabled={busy}>
@@ -208,8 +210,8 @@ export function AskView({ request, onRequestHandled }: { request?: AskRequest | 
             className="input grow"
             rows={2}
             value={composer}
-            placeholder="Ask about your meetings, captures and episodes"
-            aria-label="Question"
+            placeholder={t("Ask about your meetings, captures and episodes")}
+            aria-label={t("Question")}
             onChange={(e) => setComposer(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -220,18 +222,17 @@ export function AskView({ request, onRequestHandled }: { request?: AskRequest | 
           />
           {runId ? (
             <button type="button" className="mode" onClick={() => chatStop(runId)}>
-              Stop
+              {t("Stop")}
             </button>
           ) : (
             <button type="submit" className="mode mode--active" disabled={busy || !composer.trim()}>
-              Ask
+              {t("Ask")}
             </button>
           )}
         </form>
         {localOnly && (
           <p className="muted small">
-            Local-only mode is on, so every answer comes from Ollama on this PC. Turn it off in Settings → AI &amp; routing to use
-            a hosted provider.
+            {t("Local-only mode is on, so every answer comes from Ollama on this PC. Turn it off in Settings → AI & routing to use a hosted provider.")}
           </p>
         )}
         {spend && <p className="muted small">{spendLine(spend)}</p>}
@@ -241,6 +242,7 @@ export function AskView({ request, onRequestHandled }: { request?: AskRequest | 
 }
 
 function TurnView({ turn, onOpen }: { turn: Turn; onOpen: (s: Selection) => void }) {
+  const { t } = useL10n();
   const cited = citedEntries(turn.citations, turn.context);
   const status = statusLine(turn);
   return (
@@ -266,7 +268,7 @@ function TurnView({ turn, onOpen }: { turn: Turn; onOpen: (s: Selection) => void
         {turn.error && <p role="alert">{turn.error}</p>}
         {cited.length > 0 && (
           <div className="citations">
-            <span className="muted small">Sources</span>
+            <span className="muted small">{t("Sources")}</span>
             {cited.map((entry) => {
               const target = entry.open;
               const key = `${entry.item.kind}-${entry.item.id}`;
@@ -297,6 +299,7 @@ function ConversationItem(props: {
   onError: (e: string | null) => void;
 }) {
   const { row, active, onOpen, onChange, onDeleted, onError } = props;
+  const { t } = useL10n();
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(row.title);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -327,22 +330,22 @@ function ConversationItem(props: {
             });
           }}
         >
-          <input className="input grow" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Conversation title" autoFocus />
+          <input className="input grow" value={title} onChange={(e) => setTitle(e.target.value)} aria-label={t("Conversation title")} autoFocus />
           <button type="submit" className="mode">
-            Save
+            {t("Save")}
           </button>
           <button type="button" className="mode" onClick={() => setEditing(false)}>
-            Cancel
+            {t("Cancel")}
           </button>
         </form>
       ) : confirmDelete ? (
         <span className="field-row small">
-          Delete this conversation?
+          {t("Delete this conversation?")}
           <button className="mode" onClick={() => act(chatDeleteConversation(row.id), onDeleted)}>
-            Delete
+            {t("Delete")}
           </button>
           <button className="mode" onClick={() => setConfirmDelete(false)}>
-            Keep
+            {t("Keep")}
           </button>
         </span>
       ) : (
@@ -353,16 +356,16 @@ function ConversationItem(props: {
           <span className="conversation-actions">
             <button
               className={row.starred ? "icon icon--on" : "icon"}
-              aria-label={row.starred ? "Unstar" : "Star"}
+              aria-label={row.starred ? t("Unstar") : t("Star")}
               aria-pressed={row.starred}
               onClick={() => act(chatStarConversation(row.id, !row.starred), onChange)}
             >
               {row.starred ? "★" : "☆"}
             </button>
-            <button className="icon" aria-label="Rename" onClick={() => setEditing(true)}>
+            <button className="icon" aria-label={t("Rename")} onClick={() => setEditing(true)}>
               ✎
             </button>
-            <button className="icon" aria-label="Delete" onClick={() => setConfirmDelete(true)}>
+            <button className="icon" aria-label={t("Delete")} onClick={() => setConfirmDelete(true)}>
               ✕
             </button>
           </span>

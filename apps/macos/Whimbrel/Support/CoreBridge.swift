@@ -1011,6 +1011,60 @@ struct CoreLLMEnvelope<T: Decodable>: Decodable {
 
 /// JSON shape matching core/transcribe's `TranscriptSegment` (FR-MTG-4). Timestamps are
 /// centiseconds (10s of milliseconds), as whisper.cpp reports them.
+/// Matches core's `transcribe::engine::Inputs`.
+struct CoreEngineInputs: Encodable {
+    let quality: TranscriptionQuality
+    let customModel: Bool
+    let speechAnalyzer: Bool
+    let turboPresent: Bool
+    let basePresent: Bool
+    let detecting: Bool
+    let turboSpeed: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case quality
+        case customModel = "custom_model"
+        case speechAnalyzer = "speech_analyzer"
+        case turboPresent = "turbo_present"
+        case basePresent = "base_present"
+        case detecting
+        case turboSpeed = "turbo_speed"
+    }
+}
+
+enum CoreEngine: String, Decodable {
+    case speechAnalyzer = "speech_analyzer"
+    case turbo, base, current
+}
+
+/// Matches core's `transcribe::engine::Choice`.
+struct CoreEngineChoice: Decodable {
+    let batch: CoreEngine
+    let live: CoreEngine
+    let offerTurbo: Bool
+
+    static let current = CoreEngineChoice(batch: .current, live: .current, offerTurbo: false)
+
+    enum CodingKeys: String, CodingKey {
+        case batch, live
+        case offerTurbo = "offer_turbo"
+    }
+}
+
+/// Matches core's `api::import::ImportOutcome`.
+struct CoreImportOutcome: Decodable, Equatable {
+    let meetingIds: [Int64]
+    let notes: Int
+    let skipped: Int
+    let overlapping: Int
+    let failed: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case meetingIds = "meeting_ids"
+        case notes, skipped, overlapping, failed
+    }
+}
+
 struct CoreTranscriptSegment: Codable {
     let startCs: Int64
     let endCs: Int64
@@ -2084,6 +2138,21 @@ final class CoreMemoryStore {
 
     /// FR-MTG-1/2: records a meeting (a qualifying calendar event or a heuristically
     /// detected one). Returns the new row's id, or nil on failure.
+    func importFiles(_ urls: [URL], deviceId: String) -> CoreImportOutcome? {
+        guard let data = try? JSONEncoder().encode(urls.map(\.path)), let paths = String(data: data, encoding: .utf8),
+              let json = deviceId.withCString({ d in paths.withCString { p in whimbrel_import_files(handle, d, p, Self.nowUnixMs) } }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
+    func importMarkdownFolder(_ folder: URL, deviceId: String) -> CoreImportOutcome? {
+        guard let json = deviceId.withCString({ d in folder.path.withCString { f in whimbrel_import_markdown_folder(handle, d, f, Self.nowUnixMs) } }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
+    private static var nowUnixMs: Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+
     func insertMeeting(_ meeting: CoreNewMeeting) -> Int64? {
         guard let json = try? JSONEncoder().encode(meeting), let jsonString = String(data: json, encoding: .utf8) else {
             return nil
@@ -3241,6 +3310,24 @@ final class CoreMemoryStore {
 
     /// Starts downloading the embedding model into its folder under `modelsDir`; the job id to
     /// poll with `pollModelDownload`, or nil if the bridge rejected the request.
+    static func startTurboDownload(destination: URL) -> String? {
+        guard let json = destination.path.withCString({ whimbrel_turbo_download_start($0) }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        struct Started: Decodable { let jobId: String; enum CodingKeys: String, CodingKey { case jobId = "job_id" } }
+        return (try? JSONDecoder().decode(Started.self, from: Data(String(cString: json).utf8)))?.jobId
+    }
+
+    static func chooseEngine(_ inputs: CoreEngineInputs) -> CoreEngineChoice? {
+        guard let data = try? JSONEncoder().encode(inputs), let text = String(data: data, encoding: .utf8),
+              let json = text.withCString({ whimbrel_choose_engine($0) }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return try? JSONDecoder().decode(CoreEngineChoice.self, from: Data(String(cString: json).utf8))
+    }
+
+    static func estimatedTurboSpeed(smallModelSpeed: Double, smallModelIsBase: Bool) -> Double {
+        whimbrel_estimated_turbo_speed(smallModelSpeed, smallModelIsBase)
+    }
+
     static func startEmbeddingDownload(modelsDir: URL) -> String? {
         guard let json = modelsDir.path.withCString({ whimbrel_embedding_download_start($0) }) else { return nil }
         defer { whimbrel_core_free_string(json) }
@@ -3818,6 +3905,13 @@ final class CoreLiveTranscriber {
     func setLanguage(_ code: String?) {
         if let code { code.withCString { whimbrel_live_transcriber_set_language(handle, $0) } }
         else { whimbrel_live_transcriber_set_language(handle, nil) }
+    }
+
+    /// The locked language, or nil while it's still detecting.
+    var language: String? {
+        guard let code = whimbrel_live_transcriber_language(handle) else { return nil }
+        defer { whimbrel_core_free_string(code) }
+        return String(cString: code)
     }
 
     /// The segments JSON (timestamps offset by `startOffsetCs`), or nil on failure.

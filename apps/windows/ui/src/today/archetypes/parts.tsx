@@ -4,9 +4,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { skinImage } from "../../api";
 import { DeviceChip } from "../../library/LibraryView";
+import { t } from "../../l10n";
 import {
-  HELD_SEPARATOR,
   devicesLine,
+  heldSeparator,
   thisDeviceLabel,
   type EventRow,
   type HeldRow,
@@ -103,12 +104,12 @@ export function BracketLink({ label, onClick, disabled, primary }: { label: stri
 /** The next event's prep state: "No prep yet", or "Prep ready" with Open brief / Hide brief and the brief. */
 export function PrepLine({ prep, props, bracket }: { prep: "ready" | "none" | null; props: TodayLayoutProps; bracket?: boolean }) {
   if (prep === null) return null;
-  if (prep === "none") return <SkinText role="label" className="tone-secondary">No prep yet</SkinText>;
-  const label = props.brief.open ? "Hide brief" : "Open brief";
+  if (prep === "none") return <SkinText role="label" className="tone-secondary">{t("No prep yet")}</SkinText>;
+  const label = props.brief.open ? t("Hide brief") : t("Open brief");
   return (
     <>
       <span className="prep-line">
-        <SkinText role="label" className="tone-secondary">Prep ready</SkinText>
+        <SkinText role="label" className="tone-secondary">{t("Prep ready")}</SkinText>
         {bracket ? (
           <BracketLink label={label} onClick={props.actions.toggleBrief} />
         ) : (
@@ -129,7 +130,7 @@ export type RowShape = "grid" | "stack" | "inline";
 function StartOrOpen({ row, props, bracket }: { row: EventRow; props: TodayLayoutProps; bracket?: boolean }) {
   if (row.action === "start") {
     const busy = props.starting !== null;
-    const label = props.starting === row.id ? "Starting…" : "Start";
+    const label = props.starting === row.id ? t("Starting…") : t("Start");
     return bracket ? (
       <BracketLink label={label} primary onClick={() => props.actions.start(row.id)} disabled={busy} />
     ) : (
@@ -141,10 +142,10 @@ function StartOrOpen({ row, props, bracket }: { row: EventRow; props: TodayLayou
   if (row.action === "open" && row.recordedMeetingId != null) {
     const id = row.recordedMeetingId;
     return bracket ? (
-      <BracketLink label="Open" onClick={() => props.actions.openMeeting(id)} />
+      <BracketLink label={t("Open")} onClick={() => props.actions.openMeeting(id)} />
     ) : (
       <button type="button" className="mode row-action" onClick={() => props.actions.openMeeting(id)}>
-        Open
+        {t("Open")}
       </button>
     );
   }
@@ -217,10 +218,10 @@ export function HeldLine({ row, props, shape, bracket }: { row: HeldRow; props: 
   const title = <SkinText lines={2} className="tone-primary">{row.title}</SkinText>;
   const sub = row.subtitle ? <SkinText role="label" className="tone-secondary">{row.subtitle}</SkinText> : null;
   const action = bracket ? (
-    <BracketLink label="Open" onClick={() => props.actions.openMeeting(row.id)} />
+    <BracketLink label={t("Open")} onClick={() => props.actions.openMeeting(row.id)} />
   ) : (
     <button type="button" className="mode row-action" onClick={() => props.actions.openMeeting(row.id)}>
-      Open
+      {t("Open")}
     </button>
   );
   if (shape === "stack") {
@@ -282,7 +283,7 @@ export function ScheduleLines({
           case "separator":
             return (
               <SkinText key="sep" role="label" className="tone-secondary line-separator">
-                {HELD_SEPARATOR}
+                {heldSeparator()}
               </SkinText>
             );
           case "held":
@@ -302,7 +303,7 @@ export function RecapLines({ recap, props, bracket, tone }: { recap: RecapModel;
       return (
         <>
           <SkinText lines="max" className={`${toneClass} recap-text`}>{recap.text}</SkinText>
-          {recap.origin && <SkinText role="label" className="tone-secondary">{`From ${recap.origin}`}</SkinText>}
+          {recap.origin && <SkinText role="label" className="tone-secondary">{t("From {device}", { device: recap.origin })}</SkinText>}
         </>
       );
     case "digest":
@@ -310,7 +311,7 @@ export function RecapLines({ recap, props, bracket, tone }: { recap: RecapModel;
     case "writing":
       return (
         <SkinText role="label" className="tone-secondary">
-          <span role="status">Writing today&rsquo;s recap…</span>
+          <span role="status">{t("Writing today's recap…")}</span>
         </SkinText>
       );
     case "failed":
@@ -318,10 +319,10 @@ export function RecapLines({ recap, props, bracket, tone }: { recap: RecapModel;
         <>
           <SkinText lines={6} className="tone-error" as="p"><span role="alert">{recap.message}</span></SkinText>
           {bracket ? (
-            <BracketLink label="Try again" onClick={props.actions.retryRecap} disabled={!recap.retryEnabled} />
+            <BracketLink label={t("Try again")} onClick={props.actions.retryRecap} disabled={!recap.retryEnabled} />
           ) : (
             <button type="button" className="mode" onClick={props.actions.retryRecap} disabled={!recap.retryEnabled}>
-              Try again
+              {t("Try again")}
             </button>
           )}
         </>
@@ -332,10 +333,10 @@ export function RecapLines({ recap, props, bracket, tone }: { recap: RecapModel;
 export function OpenLoopLines({ props, marker, linkTone }: { props: TodayLayoutProps; marker?: string; linkTone?: boolean }) {
   return (
     <ul className="loops">
-      {props.model.openLoops.map((t) => (
-        <li key={t.id} className="loop">
+      {props.model.openLoops.map((loop) => (
+        <li key={loop.id} className="loop">
           {marker && <span className="loop-marker tone-accent" aria-hidden="true">{marker}</span>}
-          <SkinText lines={2} className={linkTone ? "tone-link" : "tone-primary"}>{t.subject || "(no subject)"}</SkinText>
+          <SkinText lines={2} className={linkTone ? "tone-link" : "tone-primary"}>{loop.subject || t("(no subject)")}</SkinText>
         </li>
       ))}
     </ul>
@@ -348,7 +349,7 @@ export function DevicesLine({ model, align }: { model: TodayModel; align?: "cent
   return (
     <div className={align === "center" ? "devices devices--center" : "devices"}>
       {device && label && <DeviceChip device={device.device} />}
-      <SkinText role="label" className="tone-secondary" lines={2}>{devicesLine(model.devices)}</SkinText>
+      <SkinText role="label" className="tone-secondary" lines={2}>{devicesLine(model.devices, model.locale)}</SkinText>
     </div>
   );
 }

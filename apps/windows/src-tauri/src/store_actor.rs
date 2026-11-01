@@ -26,6 +26,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::error::CommandError;
+use crate::l10n::tr;
 
 type Job = Box<dyn FnOnce(&Store) + Send + 'static>;
 
@@ -96,18 +97,18 @@ impl StoreHandle {
                 }
                 tracing::info!("store actor stopped");
             })
-            .map_err(|e| CommandError::store(format!("could not start the store thread: {e}")))?;
+            .map_err(|e| CommandError::store(tr("Could not start the store thread: {error}", &[("error", &e.to_string())])))?;
         match opened_rx.recv() {
             Ok(Ok(())) => Ok(StoreHandle { tx, stats }),
-            Ok(Err(e)) => Err(CommandError::store(format!("could not open the store: {e}"))),
-            Err(_) => Err(CommandError::store("the store thread exited while opening")),
+            Ok(Err(e)) => Err(CommandError::store(tr("Could not open the store: {error}", &[("error", &e.to_string())]))),
+            Err(_) => Err(CommandError::store(tr("The store thread exited while opening", &[]))),
         }
     }
 
     fn send(&self, job: Job) -> Result<(), CommandError> {
         self.tx
             .send(Envelope { job, enqueued: Instant::now() })
-            .map_err(|_| CommandError::store("the store actor has stopped"))
+            .map_err(|_| CommandError::store(tr("The store actor has stopped", &[])))
     }
 
     /// Runs `f` on the actor and awaits its result. Safe from async code: the caller's
@@ -122,8 +123,8 @@ impl StoreHandle {
         self.send(Box::new(move |store| {
             let _ = tx.send(panic::catch_unwind(AssertUnwindSafe(|| f(store))));
         }))?;
-        let result = rx.await.map_err(|_| CommandError::store("the store actor dropped the job"))?;
-        result.map_err(|panic| CommandError::store(format!("a store job panicked: {}", panic_message(&panic))))
+        let result = rx.await.map_err(|_| CommandError::store(tr("The store actor dropped the job", &[])))?;
+        result.map_err(|panic| CommandError::store(tr("A store job panicked: {error}", &[("error", &panic_message(&panic))])))
     }
 
     /// [`call`](Self::call) for callers on a plain thread (setup, timers that already
@@ -137,8 +138,8 @@ impl StoreHandle {
         self.send(Box::new(move |store| {
             let _ = tx.send(panic::catch_unwind(AssertUnwindSafe(|| f(store))));
         }))?;
-        let result = rx.recv().map_err(|_| CommandError::store("the store actor dropped the job"))?;
-        result.map_err(|panic| CommandError::store(format!("a store job panicked: {}", panic_message(&panic))))
+        let result = rx.recv().map_err(|_| CommandError::store(tr("The store actor dropped the job", &[])))?;
+        result.map_err(|panic| CommandError::store(tr("A store job panicked: {error}", &[("error", &panic_message(&panic))])))
     }
 
     pub fn queue_wait(&self) -> QueueWaitStats {
@@ -254,7 +255,7 @@ mod tests {
     fn a_panicking_job_is_an_error_and_the_actor_survives() {
         let store = in_memory();
         let err = store.call_blocking(|_| -> u8 { panic!("boom") }).unwrap_err();
-        assert_eq!(err, CommandError::store("a store job panicked: boom"));
+        assert_eq!(err, CommandError::store("A store job panicked: boom"));
         assert_eq!(store.call_blocking(|_| 7).unwrap(), 7);
     }
 
@@ -284,7 +285,7 @@ mod tests {
     #[test]
     fn an_open_failure_is_reported_by_spawn() {
         let err = StoreHandle::spawn(|| Err("disk on fire".into())).err().unwrap();
-        assert_eq!(err, CommandError::store("could not open the store: disk on fire"));
+        assert_eq!(err, CommandError::store("Could not open the store: disk on fire"));
     }
 
     #[test]

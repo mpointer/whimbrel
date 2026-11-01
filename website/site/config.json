@@ -18,7 +18,7 @@
     "mp4": "/media/whimbrel-tour.mp4",
     "webm": "/media/whimbrel-tour.webm",
     "poster": "/media/whimbrel-tour-poster.jpg",
-    "uploadDate": "2026-10-16",
+    "uploadDate": "2026-10-16T00:00:00-04:00",
     "duration": "PT48S"
   },
   "contactEmail": "hello@whimbrelapp.com",

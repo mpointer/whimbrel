@@ -1,0 +1,13 @@
+{
+  "hreflang": "fr-CA",
+  "label": "Français",
+  "home": "Accueil",
+  "site": {
+    "tagline": "L’assistant IA privé qui se souvient de votre travail",
+    "pricingNote": "Gratuit et à code source ouvert (Apache 2.0).",
+    "requirements": {
+      "mac": "macOS 14 Sonoma ou version ultérieure, puce Apple (M1 ou plus récente)",
+      "windows": "Windows 11, 64 bits (x64)"
+    }
+  }
+}

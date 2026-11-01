@@ -5,6 +5,8 @@
 //! `Secrets.toml.example` shows. Anything missing leaves sync "not configured": the rest
 //! of the app works, and Settings → Sync says which value is absent.
 
+use crate::l10n::tr;
+
 const EMBEDDED: &str = include_str!(concat!(env!("OUT_DIR"), "/secrets.toml"));
 
 pub const KEY_WORKER_URL: &str = "sync_worker_base_url";
@@ -69,9 +71,9 @@ pub fn parse(text: &str) -> Result<SyncConfig, String> {
         .map(|(k, _)| k)
         .collect();
     if !missing.is_empty() {
-        return Err(format!(
-            "Sync is not configured: apps/windows/src-tauri/Secrets.toml is missing {} (see Secrets.toml.example), then rebuild.",
-            missing.join(", ")
+        return Err(tr(
+            "Sync is not configured: apps/windows/src-tauri/Secrets.toml is missing {keys} (see Secrets.toml.example), then rebuild.",
+            &[("keys", &missing.join(", "))],
         ));
     }
     Ok(SyncConfig { worker_base_url: url.unwrap(), google_client_id: id.unwrap(), google_client_secret: secret.unwrap() })

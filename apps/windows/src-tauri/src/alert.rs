@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuild
 use crate::error::CommandError;
 use crate::meetings::service::{alert_view, AlertView};
 use crate::state::AppState;
+use crate::l10n::tr;
 
 /// The alert window's label (also listed in `capabilities/default.json`).
 pub const ALERT: &str = "alert";
@@ -102,7 +103,7 @@ pub async fn alert_accept(app: AppHandle, open_app: bool) -> Result<(), CommandE
         started.map(|_| ())
     })
     .await
-    .map_err(|e| CommandError::store(format!("accepting the meeting failed: {e}")))?
+    .map_err(|e| CommandError::store(tr("Accepting the meeting failed: {error}", &[("error", &e.to_string())])))?
 }
 
 /// Dismiss: nothing is written, as on the Mac. The detector won't offer the same app

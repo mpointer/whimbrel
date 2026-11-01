@@ -34,6 +34,7 @@ use crate::error::CommandError;
 use crate::settings::RoutingSettings;
 use crate::state::AppState;
 use crate::store_actor::QueueWaitStats;
+use crate::l10n::tr;
 
 /// What Settings → About shows.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -84,7 +85,7 @@ pub fn set_capture_enabled(state: State<'_, AppState>, enabled: bool) -> Result<
     {
         let mut settings = state.settings.lock().unwrap();
         settings.set_capture_enabled(enabled);
-        settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+        settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
     if let Some(capture) = &state.capture {
         capture.set_enabled(enabled);
@@ -101,5 +102,5 @@ pub fn get_routing_settings(state: State<'_, AppState>) -> RoutingSettings {
 pub fn set_routing_settings(state: State<'_, AppState>, routing: RoutingSettings) -> Result<(), CommandError> {
     let mut settings = state.settings.lock().unwrap();
     settings.set_routing(&routing);
-    settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))
+    settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))
 }

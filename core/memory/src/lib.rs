@@ -3134,6 +3134,15 @@ impl Store {
 
     /// The `hash` of the app's most recent capture item — what FR-CAP-6's consecutive
     /// dedupe compares against.
+    /// Whether any item from `app_bundle_id` has this hash, so a repeat import is skipped.
+    pub fn capture_hash_exists(&self, app_bundle_id: &str, hash: i64) -> rusqlite::Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM capture_item WHERE app_bundle_id = ?1 AND hash = ?2)",
+            params![app_bundle_id, hash],
+            |row| row.get(0),
+        )
+    }
+
     fn last_capture_hash(&self, app_bundle_id: &str) -> rusqlite::Result<Option<i64>> {
         self.conn
             .query_row(
@@ -6447,6 +6456,26 @@ impl Store {
     /// auto-started) or a heuristically-detected one. Called when the prompt fires
     /// (status `Scheduled`) or when capture actually starts (status `Recording`);
     /// `end_unix_ms`/`audio_path` are usually filled in later via [`Store::complete_meeting`].
+    /// A meeting that ran at `at_unix_ms`, or was about to start, so an import of the same
+    /// call skips it. Meetings with no length, like Granola imports, don't count.
+    pub fn meeting_overlaps(&self, at_unix_ms: i64, lead_ms: i64) -> rusqlite::Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meeting
+             WHERE end_unix_ms > start_unix_ms AND start_unix_ms - ?2 <= ?1 AND ?1 < end_unix_ms)",
+            params![at_unix_ms, lead_ms],
+            |row| row.get(0),
+        )
+    }
+
+    /// A meeting with this title and start is already here, so an import skips it.
+    pub fn meeting_exists(&self, title: &str, start_unix_ms: i64) -> rusqlite::Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meeting WHERE title = ?1 AND start_unix_ms = ?2)",
+            params![title, start_unix_ms],
+            |row| row.get(0),
+        )
+    }
+
     pub fn insert_meeting(&self, m: &NewMeeting) -> rusqlite::Result<i64> {
         let local_seq = self.next_local_seq()?;
         self.conn.execute(

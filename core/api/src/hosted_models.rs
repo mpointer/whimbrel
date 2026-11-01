@@ -137,6 +137,18 @@ impl KeyCheck {
         };
         Some((code, serde_json::json!({ "provider": provider.label() })))
     }
+
+    /// The `Refused` or `Unreachable` message in `lang` (a UI language tag; `""` is English).
+    /// `provider` is the one `validate_key` checked. `None` for `Valid` and `Other`, whose
+    /// text the shell already has.
+    pub fn user_message_in(&self, provider: HostedProvider, lang: &str) -> Option<String> {
+        let key = match self {
+            KeyCheck::Refused { .. } => crate::l10n::keys::KEY_REFUSED,
+            KeyCheck::Unreachable { .. } => crate::l10n::keys::KEY_UNREACHABLE,
+            KeyCheck::Valid { .. } | KeyCheck::Other { .. } => return None,
+        };
+        Some(crate::l10n::text(lang, key, &[("provider", provider.label())]))
+    }
 }
 
 /// Validates `api_key` by fetching `provider`'s model list, mapping the outcome to the
@@ -394,6 +406,20 @@ mod tests {
         assert_eq!(offline.user_code(HostedProvider::Google), Some(("key_unreachable", serde_json::json!({"provider": "Google"}))));
         assert_eq!(KeyCheck::Other { message: "m".into() }.user_code(HostedProvider::OpenAi), None);
         assert_eq!(KeyCheck::Valid { models: vec![], prices: vec![] }.user_code(HostedProvider::OpenAi), None);
+    }
+
+    #[test]
+    fn key_check_message_in_spanish_differs_and_english_is_unchanged() {
+        let refused = KeyCheck::Refused { message: "m".into() };
+        let english = refused.user_message_in(HostedProvider::Anthropic, "").unwrap();
+        assert_eq!(english, crate::l10n::text("", crate::l10n::keys::KEY_REFUSED, &[("provider", "Anthropic")]));
+        assert_eq!(english, "Anthropic refused this key. Check it on Anthropic's key page.");
+        let spanish = refused.user_message_in(HostedProvider::Anthropic, "es-US").unwrap();
+        assert_ne!(spanish, english);
+        assert!(spanish.contains("Anthropic"), "{spanish}");
+        let offline = KeyCheck::Unreachable { message: "m".into() };
+        assert_ne!(offline.user_message_in(HostedProvider::Google, "es").unwrap(), offline.user_message_in(HostedProvider::Google, "").unwrap());
+        assert_eq!(KeyCheck::Other { message: "m".into() }.user_message_in(HostedProvider::OpenAi, "es"), None);
     }
 
     #[test]

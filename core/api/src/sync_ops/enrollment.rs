@@ -148,6 +148,12 @@ pub fn is_permanent_failure(error: &WorkerError) -> bool {
 /// The user-facing message for a Worker failure (the OAuth/Keychain messages stay in
 /// the shell, whose error types they describe).
 pub fn user_message(error: &WorkerError) -> String {
+    user_message_in(error, "")
+}
+
+/// `user_message` in `lang` (a UI language tag; `""` is English), for a shell that renders
+/// the message itself rather than the code. The device list is still joined with " or ".
+pub fn user_message_in(error: &WorkerError, lang: &str) -> String {
     let (_, source, params) = error.classify();
     // `devices` is a list in `params`; English joins it with " or " (each shell uses its
     // own list formatter when it renders the code).
@@ -165,7 +171,7 @@ pub fn user_message(error: &WorkerError) -> String {
         })
         .collect();
     let pairs: Vec<(&str, &str)> = rendered.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    crate::l10n::text("", source, &pairs)
+    crate::l10n::text(lang, source, &pairs)
 }
 
 impl WorkerError {
@@ -609,6 +615,19 @@ mod tests {
         assert_eq!(user_message(&WorkerError::Http { status: 401, body: String::new() }), "Your Google sign-in expired. Try signing in again.");
         assert_eq!(user_message(&WorkerError::Network), "Couldn't reach the sync server. Check your connection and try again.");
         assert_eq!(user_message(&WorkerError::MalformedResponse), "The sync server returned an unexpected response. Try again.");
+    }
+
+    #[test]
+    fn user_message_in_spanish_differs_and_english_is_unchanged() {
+        let limit = WorkerError::Http { status: 409, body: r#"{"error":"device_limit"}"#.into() };
+        assert_eq!(user_message_in(&limit, ""), user_message(&limit));
+        assert_eq!(user_message(&limit), "Your free sync plan includes one computer and one phone, and they're already in use.");
+        assert_ne!(user_message_in(&limit, "es-US"), user_message(&limit));
+        // The device list is still joined with " or " in every language.
+        let other = WorkerError::Http { status: 403, body: r#"{"error":"other_device_active","devices":[{"name":"Studio Mac"},{"name":"iPhone"}]}"#.into() };
+        let spanish = user_message_in(&other, "es");
+        assert_ne!(spanish, user_message(&other));
+        assert!(spanish.contains("Studio Mac or iPhone"), "{spanish}");
     }
 
     #[test]

@@ -8,6 +8,7 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::error::CommandError;
 use crate::state::AppState;
+use crate::l10n::tr;
 
 /// Only release builds register themselves: a debug build would point Windows at the
 /// dev exe.
@@ -80,7 +81,7 @@ pub fn general_settings(app: AppHandle) -> GeneralSettings {
 #[tauri::command]
 pub fn set_autostart(app: AppHandle, state: State<'_, AppState>, enabled: bool) -> Result<GeneralSettings, CommandError> {
     if !AUTOSTART_AVAILABLE {
-        return Err(CommandError::invalid_input("Start at login is only available in release builds."));
+        return Err(CommandError::invalid_input(tr("Start at login is only available in release builds.", &[])));
     }
     let manager = app.autolaunch();
     let result = match launch_action(Some(enabled), manager.is_enabled().unwrap_or(false)) {
@@ -88,11 +89,11 @@ pub fn set_autostart(app: AppHandle, state: State<'_, AppState>, enabled: bool) 
         LaunchAction::Disable => manager.disable(),
         LaunchAction::Nothing => Ok(()),
     };
-    result.map_err(|e| CommandError::invalid_input(format!("could not change start at login: {e}")))?;
+    result.map_err(|e| CommandError::invalid_input(tr("Could not change start at login: {error}", &[("error", &e.to_string())])))?;
     {
         let mut settings = state.settings.lock().unwrap();
         settings.set_autostart(enabled);
-        settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+        settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
     Ok(general_settings(app))
 }

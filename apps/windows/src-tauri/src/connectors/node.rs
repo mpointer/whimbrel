@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 use mcp_host::McpHost;
 
 use crate::error::CommandError;
+use crate::l10n::tr;
 
 /// The connector's directory name and the environment variable it reads its token from.
 pub const GOOGLE_CALENDAR: (&str, &str) = ("google-calendar", "GOOGLE_CALENDAR_ACCESS_TOKEN");
@@ -19,13 +20,16 @@ pub const GMAIL: (&str, &str) = ("gmail", "GMAIL_ACCESS_TOKEN");
 
 /// Why a connector can't run, in words the Settings card can show.
 pub fn missing_node() -> CommandError {
-    CommandError::not_configured("Node.js wasn't found, so the Google connectors can't run (calendar syncing, sending approved emails). Whimbrel ships with it, so reinstall Whimbrel; if you build it from source, install Node LTS and restart.")
+    CommandError::not_configured(tr("Node.js wasn't found, so the Google connectors can't run (calendar syncing, sending approved emails). Whimbrel ships with it, so reinstall Whimbrel; if you build it from source, install Node LTS and restart.", &[]))
 }
 
+/// The script that stages the connectors in a source build (named in the "not installed" lines).
+pub const PREPARE_SCRIPT: &str = "apps\\windows\\scripts\\prepare-connectors.ps1";
+
 fn missing_script(path: &Path) -> CommandError {
-    CommandError::not_configured(format!(
-        "The connector isn't installed at {}. Reinstall Whimbrel, or if you build it from source run apps\\windows\\scripts\\prepare-connectors.ps1.",
-        path.display()
+    CommandError::not_configured(tr(
+        "The connector isn't installed at {path}. Reinstall Whimbrel, or if you build it from source run {script}.",
+        &[("path", &path.display().to_string()), ("script", PREPARE_SCRIPT)],
     ))
 }
 
@@ -115,13 +119,13 @@ pub fn call_connector(
             &[script.to_string_lossy().into_owned()],
             &[(token_env.to_string(), token.to_string())],
         )
-        .map_err(|e| CommandError::network(format!("the {label} connector didn't start: {e}")))?;
+        .map_err(|e| CommandError::network(tr("The {label} connector didn't start: {error}", &[("label", &label.to_string()), ("error", &e.to_string())])))?;
     let call = (|| {
-        let tools = host.list_tools(id).map_err(|e| format!("the connector didn't list its tools: {e}"))?;
+        let tools = host.list_tools(id).map_err(|e| tr("The connector didn't list its tools: {error}", &[("error", &e.to_string())]))?;
         if !tools.iter().any(|t| t.name == tool) {
-            return Err(format!("the connector has no {tool} tool"));
+            return Err(tr("The connector has no {tool} tool.", &[("tool", tool)]));
         }
-        host.call_tool(id, tool, args_json).map_err(|e| format!("{tool} failed: {e}"))
+        host.call_tool(id, tool, args_json).map_err(|e| tr("{tool} failed: {error}", &[("tool", tool), ("error", &e.to_string())]))
     })();
     let _ = host.disconnect(id);
     call.map_err(CommandError::network)

@@ -101,6 +101,8 @@ struct TodayActions {
     var openThread: (Int64) -> Void
     var ask: (String) -> Void
     var openSettings: () -> Void
+    /// The calendar permission from Today: the system prompt, or Settings once answered.
+    var requestCalendar: () -> Void
     var generateDigest: () -> Void
     var reviewApprovals: () -> Void
     var startMeeting: (TodayUpcoming) -> Void

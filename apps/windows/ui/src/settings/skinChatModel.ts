@@ -13,9 +13,9 @@ export const SEARCH_LIMIT = 6;
 export const spendCapLine = (): string => t("Today's AI spending limit is reached.");
 export const setUpLine = (): string => t("Set up an AI provider in Settings to make skins.");
 export const failedLine = (): string => t("Whimbrel couldn't make that skin, so nothing changed. Try again or say it another way.");
-/** The shell's answer to an approval in local-only mode (skin_maker.rs); the image stays in the strip.
- *  Compared with the shell's English text, so it stays untranslated here. */
-export const LOCAL_ONLY_LINE = "Local-only mode is on, so Whimbrel didn't download that image.";
+/** Whether the shell refused an approval in local-only mode (commands/skins.rs), so the image stays
+ *  in the strip. Read from the line's kind: its text is in the UI language. */
+export const keepsOffered = (line: SkinLine): boolean => line.kind === "local_only";
 
 export interface ChatState {
   /** The skin whose chat is shown, and the one `candidates` are for. */

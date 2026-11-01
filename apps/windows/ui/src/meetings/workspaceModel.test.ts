@@ -9,6 +9,7 @@ import {
   slidesLabel,
   snapshotKey,
   thumbnailsToFetch,
+  transcriptLanguageOptions,
   unsavedEditsWouldBeLost,
   withoutSnapshot,
 } from "./workspaceModel";
@@ -40,8 +41,25 @@ const view = (over: Partial<WorkspaceView> = {}): WorkspaceView =>
     actionItems: [],
     hasTranscript: true,
     readOnly: false,
+    spokenLanguage: null,
+    canChooseLanguage: false,
     ...over,
   }) as WorkspaceView;
+
+describe("transcriptLanguageOptions", () => {
+  const automatic = "Auto";
+
+  it("offers Automatic and the Mac's three languages", () => {
+    expect(transcriptLanguageOptions(null, automatic).map((o) => o.code)).toEqual(["", "en", "es", "fr"]);
+    expect(transcriptLanguageOptions("es", automatic)).toHaveLength(4);
+  });
+
+  it("lists a detected language outside them so the picker can show it", () => {
+    const options = transcriptLanguageOptions("de", automatic);
+    expect(options.map((o) => o.code)).toEqual(["", "en", "es", "fr", "de"]);
+    expect(options[4].label).toBe("Deutsch");
+  });
+});
 
 describe("unsavedEditsWouldBeLost", () => {
   it("is false while the fields still match what was generated", () => {

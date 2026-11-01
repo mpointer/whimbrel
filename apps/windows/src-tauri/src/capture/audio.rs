@@ -42,6 +42,7 @@ use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows::Win32::Media::KernelStreaming::WAVE_FORMAT_EXTENSIBLE;
 use windows::Win32::Media::Multimedia::{KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, WAVE_FORMAT_IEEE_FLOAT};
 use windows::Win32::System::Variant::VT_BLOB;
+use crate::l10n::tr;
 
 pub const SAMPLE_RATE: u32 = 16_000;
 /// Gaps shorter than this are jitter, not silence, and are not padded.
@@ -163,9 +164,9 @@ pub fn stream_failure(
 /// The degraded reason when a stream gives up.
 pub fn gave_up_reason(source: Source) -> String {
     if source.is_loopback() {
-        "System audio isn't reaching Whimbrel, so this meeting records your microphone only.".into()
+        tr("System audio isn't reaching Whimbrel, so this meeting records your microphone only.", &[])
     } else {
-        "The microphone isn't delivering audio, so this meeting records system audio only.".into()
+        tr("The microphone isn't delivering audio, so this meeting records system audio only.", &[])
     }
 }
 
@@ -592,7 +593,7 @@ fn capture_into(
         let end = match open_client(source) {
             Ok((client, wire)) => {
                 if options.supervise && source.is_loopback() && render_at_call_quality() {
-                    options.live.set_degraded("Your headset switched to call quality, so the meeting's audio may sound muffled.".into());
+                    options.live.set_degraded(tr("Your headset switched to call quality, so the meeting's audio may sound muffled.", &[]));
                 }
                 if options.supervise {
                     tracing::info!(?source, ?wire, "audio stream opened");

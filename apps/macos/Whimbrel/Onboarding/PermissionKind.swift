@@ -10,6 +10,9 @@ enum PermissionKind: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// What the first-run screen asks for. The rest are requested by the feature that needs them.
+    static let firstRun: [PermissionKind] = [.microphone, .screenRecording]
+
     var title: String {
         switch self {
         case .screenRecording: return String(localized: "Screen & System Audio Recording")

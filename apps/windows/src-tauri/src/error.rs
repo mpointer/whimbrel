@@ -92,12 +92,7 @@ impl From<api::ApiError> for CommandError {
 
 impl From<api::sync_ops::enrollment::WorkerError> for CommandError {
     fn from(err: api::sync_ops::enrollment::WorkerError) -> Self {
-        use api::sync_ops::enrollment::WorkerError;
-        CommandError::network(match err {
-            WorkerError::Http { status, .. } => format!("the sync server returned HTTP {status}"),
-            WorkerError::Network => "could not reach the sync server".to_string(),
-            WorkerError::MalformedResponse => "the sync server's response was malformed".to_string(),
-        })
+        CommandError::network(api::sync_ops::enrollment::user_message_in(&err, &crate::l10n::ui_language()))
     }
 }
 
@@ -153,8 +148,10 @@ mod tests {
     #[test]
     fn worker_errors_become_network_errors() {
         use api::sync_ops::enrollment::WorkerError;
-        let e: CommandError = WorkerError::Http { status: 403, body: String::new() }.into();
-        assert_eq!(e, CommandError::network("the sync server returned HTTP 403"));
+        let err = WorkerError::Http { status: 500, body: String::new() };
+        let e: CommandError = err.clone().into();
+        assert_eq!(e, CommandError::network(api::sync_ops::enrollment::user_message(&err)));
+        assert_eq!(e, CommandError::network("Sync is temporarily unavailable (server error 500)."));
         assert!(matches!(CommandError::from(WorkerError::Network), CommandError::Network { .. }));
     }
 }

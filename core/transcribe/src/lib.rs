@@ -6,6 +6,7 @@
 //! the caller's job — transcribe the mic and system-audio files separately and label
 //! accordingly; this crate only turns one 16kHz mono WAV into text.
 
+pub mod engine;
 pub mod live;
 pub mod postprocess;
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type MutableRefObject, useCallback, useEffect, useRef, useState } from "react";
 import {
   meetingForget,
   meetingRecordStart,
@@ -9,17 +9,20 @@ import {
   meetingSaveNotes,
   meetingSaveOverrides,
   meetingSeedActionItems,
+  meetingSetSpokenLanguage,
   meetingWorkspace,
 } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { ActionItemView, WorkspaceView } from "../generated/types";
+import { useL10n } from "../l10n";
 import { DeviceChip } from "../library/LibraryView";
 import { spanLabel } from "../library/rows";
 import { ActionItems } from "./ActionItems";
 import { elapsedLabel } from "./recordingModel";
+import { meetingTitleLabel } from "./sentinels";
 import { SlidesStrip } from "./SlidesStrip";
 import { TranscriptPanel } from "./TranscriptPanel";
-import { overrideOf, phaseTitle } from "./workspaceModel";
+import { overrideOf, phaseTitle, transcriptLanguageOptions } from "./workspaceModel";
 
 /** The Mac's autosave delay for the workspace's editors. */
 const AUTOSAVE_MS = 1_500;
@@ -29,18 +32,28 @@ function message(e: unknown): string {
 }
 
 /** Saves `value` once the user stops typing for `AUTOSAVE_MS`. A failed save is shown:
- *  silently losing an edit is worse than an error line. */
-function useAutosave(value: string | null, save: (value: string) => Promise<unknown>, onError: (message: string) => void) {
-  const first = useRef(true);
+ *  silently losing an edit is worse than an error line. Only the user's edits save: `stored`
+ *  is what the shell has (set by the workspace's load, and by each save), and a value equal to
+ *  it doesn't save. Nor does a new `save` alone, so a summary that changes underneath (a
+ *  transcription run finishing) never re-saves stale text over it. */
+function useAutosave(
+  value: string | null,
+  save: (value: string) => Promise<unknown>,
+  onError: (message: string) => void,
+  stored: MutableRefObject<string | null>,
+) {
+  const latestSave = useRef(save);
   useEffect(() => {
-    if (value == null) return;
-    if (first.current) {
-      first.current = false;
-      return;
-    }
-    const timer = setTimeout(() => void save(value).catch((e: unknown) => onError(message(e))), AUTOSAVE_MS);
+    latestSave.current = save;
+  }, [save]);
+  useEffect(() => {
+    if (value == null || value === stored.current) return;
+    const timer = setTimeout(() => {
+      stored.current = value;
+      void latestSave.current(value).catch((e: unknown) => onError(message(e)));
+    }, AUTOSAVE_MS);
     return () => clearTimeout(timer);
-  }, [value, save, onError]);
+  }, [value, onError, stored]);
 }
 
 export function Workspace({ meetingId, onChanged }: { meetingId: number; onChanged: () => void }) {
@@ -53,15 +66,36 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const { t, locale } = useL10n();
+  // Bumped when a transcription run on this meeting finishes, so the transcript reloads.
+  const [transcriptRound, setTranscriptRound] = useState(0);
+  const lastStage = useRef<string | null>(null);
+  const loadedNotes = useRef<string | null>(null);
+  const loadedSummary = useRef<string | null>(null);
 
   const load = useCallback(
     (reset: boolean) =>
       meetingWorkspace(meetingId)
         .then((next) => {
           setView(next);
+          // A run that just finished (a new transcript language, say) replaced the summary and
+          // the transcript. The new summary is shown unless the user has an unsaved edit; notes
+          // are the user's own, so they stay as typed.
+          const finished = lastStage.current != null && next?.processingStage == null;
+          lastStage.current = next?.processingStage ?? null;
+          if (finished) setTranscriptRound((n) => n + 1);
           if (next && reset) {
+            loadedNotes.current = next.personalNotes;
+            loadedSummary.current = next.summary ?? "";
             setNotes(next.personalNotes);
             setSummary(next.summary ?? "");
+          } else if (next && finished) {
+            const fresh = next.summary ?? "";
+            setSummary((current) => {
+              if (current !== loadedSummary.current) return current;
+              loadedSummary.current = fresh;
+              return fresh;
+            });
           }
         })
         .catch((e: unknown) => setError(message(e))),
@@ -90,7 +124,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
   }, [load]);
 
   const saveNotes = useCallback((value: string) => meetingSaveNotes(meetingId, value), [meetingId]);
-  useAutosave(notes, saveNotes, setError);
+  useAutosave(notes, saveNotes, setError, loadedNotes);
   // The generated summary this edit is measured against: core keeps an override until it
   // is reset, so "same as generated" means clear it rather than store a copy.
   const generated = view?.summaryIsEdited ? null : (view?.summary ?? null);
@@ -101,10 +135,10 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
     },
     [meetingId, generated],
   );
-  useAutosave(summary, saveSummary, setError);
+  useAutosave(summary, saveSummary, setError, loadedSummary);
 
   if (!view) {
-    return <section className="card">{error ? <p role="alert">{error}</p> : "Loading…"}</section>;
+    return <section className="card">{error ? <p role="alert">{error}</p> : t("Loading…")}</section>;
   }
 
   const act = (run: () => Promise<unknown>) => {
@@ -130,13 +164,15 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
       .finally(() => setBusy(false));
   };
 
+  // The stored title can be core's English placeholder; it's shown translated, never saved back.
+  const title = meetingTitleLabel(view.row.title);
   return (
-    <section className="card" aria-label={`${view.row.title} workspace`}>
+    <section className="card" aria-label={t("{title} workspace", { title })}>
       <header className="workspace-header">
         <h2 className="section-label">{phaseTitle(view)}</h2>
-        <h3 className="row-title">{view.row.title}</h3>
+        <h3 className="row-title">{title}</h3>
         <p className="row-meta">
-          {spanLabel(view.row.tsUnixMs, view.row.endUnixMs, { full: true })} <DeviceChip device={view.row.device} />
+          {spanLabel(view.row.tsUnixMs, view.row.endUnixMs, { full: true, locale })} <DeviceChip device={view.row.device} />
         </p>
         {view.attendees.length > 0 && <p className="muted small">{view.attendees.join(", ")}</p>}
         {view.conferenceLink && (
@@ -152,7 +188,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
       {view.phase === "before" && (
         <div className="toolbar">
           <button className="mode mode--active" disabled={busy || view.readOnly} onClick={() => act(meetingRecordStart)}>
-            Start recording
+            {t("Start recording")}
           </button>
         </div>
       )}
@@ -161,15 +197,15 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
         <>
           <p role="status" className="recording-line">
             <span className="recording-dot" aria-hidden="true" />
-            Recording · {elapsedLabel(view.row.tsUnixMs, now)}
+            {t("Recording · {elapsed}", { elapsed: elapsedLabel(view.row.tsUnixMs, now) })}
           </p>
           <label className="field">
-            <span>Notes</span>
+            <span>{t("Notes")}</span>
             <textarea className="input" rows={6} value={notes ?? ""} onChange={(e) => setNotes(e.target.value)} />
           </label>
           <div className="toolbar">
             <button className="mode" disabled={busy} onClick={() => act(meetingRecordStop)}>
-              Stop recording
+              {t("Stop recording")}
             </button>
           </div>
         </>
@@ -179,7 +215,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
         <>
           <label className="field">
             <span>
-              Summary {view.summaryIsEdited && <em className="muted small">(edited)</em>}
+              {t("Summary")} {view.summaryIsEdited && <em className="muted small">{t("(edited)")}</em>}
             </span>
             <textarea
               className="input"
@@ -192,7 +228,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
 
           {view.decisions.length > 0 && (
             <div className="field">
-              <span>Decisions</span>
+              <span>{t("Decisions")}</span>
               <ul className="bullets">
                 {view.decisions.map((d, i) => (
                   <li key={i}>{d}</li>
@@ -202,7 +238,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
           )}
           {view.openQuestions.length > 0 && (
             <div className="field">
-              <span>Open questions</span>
+              <span>{t("Open questions")}</span>
               <ul className="bullets">
                 {view.openQuestions.map((q, i) => (
                   <li key={i}>{q}</li>
@@ -214,7 +250,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
           <ActionItems meetingId={meetingId} items={items} onItems={setItems} readOnly={view.readOnly} />
 
           <label className="field">
-            <span>Your notes</span>
+            <span>{t("Your notes")}</span>
             <textarea
               className="input"
               rows={4}
@@ -224,48 +260,71 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
             />
           </label>
 
-          <TranscriptPanel meetingId={meetingId} hasTranscript={view.hasTranscript} />
+          <TranscriptPanel key={transcriptRound} meetingId={meetingId} hasTranscript={view.hasTranscript} />
+
+          {view.canChooseLanguage && (
+            <label className="field-row">
+              <span>{t("Transcript language")}</span>
+              <select
+                className="input"
+                value={view.spokenLanguage ?? ""}
+                disabled={busy || view.processingStage != null}
+                // A new choice transcribes the meeting again in it; Automatic detects again.
+                onChange={(e) => act(() => meetingSetSpokenLanguage(meetingId, e.target.value || null))}
+              >
+                {transcriptLanguageOptions(view.spokenLanguage ?? null, t("Automatic")).map((option) => (
+                  <option key={option.code} value={option.code}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           <div className="toolbar">
             {!view.readOnly && (
               <button className="mode" disabled={busy || !view.hasTranscript} onClick={askThenRegenerate}>
-                Regenerate summary
+                {t("Regenerate summary")}
               </button>
             )}
             <button className="mode" disabled={busy} onClick={() => setForgetting(true)}>
-              Forget meeting
+              {t("Forget meeting")}
             </button>
           </div>
-          {view.readOnly && <p className="muted small">Recorded on another device, so its audio and summary live there.</p>}
+          {view.readOnly && <p className="muted small">{t("Recorded on another device, so its audio and summary live there.")}</p>}
         </>
       )}
 
       {conflict && (
-        <div className="card confirm" role="alertdialog" aria-label="New summary">
-          <p>You've edited this meeting. What should happen to your edits?</p>
+        <div className="card confirm" role="alertdialog" aria-label={t("New summary")}>
+          <p>{t("You've edited this meeting. What should happen to your edits?")}</p>
           <div className="toolbar">
             <button className="mode" onClick={() => regenerate(true)}>
-              Keep my edits
+              {t("Keep my edits")}
             </button>
             <button className="mode mode--active" onClick={() => regenerate(false)}>
-              Replace with the new summary
+              {t("Replace with the new summary")}
             </button>
             <button className="mode" onClick={() => setConflict(false)}>
-              Cancel
+              {t("Cancel")}
             </button>
           </div>
         </div>
       )}
 
       {forgetting && (
-        <div className="card confirm" role="alertdialog" aria-label="Forget meeting">
-          <p>Forget this meeting? It removes the recording, transcript and summary from this PC. Copies already synced to other devices stay.</p>
+        <div className="card confirm" role="alertdialog" aria-label={t("Forget meeting")}>
+          <p>
+            {t(
+              "Forget this meeting? It removes the recording, transcript and summary from this PC. Copies already synced to other devices stay.",
+            )}
+          </p>
           <div className="toolbar">
             <button className="mode mode--active" disabled={busy} onClick={() => act(() => meetingForget(meetingId))}>
-              Forget it
+              {t("Forget it")}
             </button>
             <button className="mode" onClick={() => setForgetting(false)}>
-              Keep it
+              {t("Keep it")}
             </button>
           </div>
         </div>

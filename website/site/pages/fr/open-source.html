@@ -1,0 +1,86 @@
+<!--
+{
+  "title": "Notes de réunion IA et mémoire de travail open source",
+  "description": "Whimbrel est open source (Apache 2.0). Tout est gratuit, s'exécute sur votre ordinateur avec vos modèles, et vous pouvez héberger le relais.",
+  "priority": 0.8,
+  "crumbs": [
+    {
+      "name": "Open source",
+      "path": "/open-source/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Où trouver le code source ?",
+      "a": "Whimbrel est distribué sous licence Apache 2.0. Le dépôt public ouvre avec la première version publiée sous le nom Whimbrel, et cette page y renverra à ce moment-là."
+    },
+    {
+      "q": "Puis-je utiliser Whimbrel sans aucun de vos serveurs ?",
+      "a": "Oui. La capture, la transcription, la mémoire, la recherche, le clavardage et les Routines s'exécutent tous sur votre ordinateur, avec des modèles locaux ou votre propre clé d'IA. La synchronisation entre appareils passe par un petit relais que vous pouvez faire tourner dans votre propre compte Cloudflare; le guide l'explique étape par étape."
+    },
+    {
+      "q": "L'application envoie-t-elle de la télémétrie ?",
+      "a": "Non. L'application ne contient ni analyse d'usage ni télémétrie. Nos serveurs voient seulement une vérification de mise à jour (quelle version est la plus récente) et, si vous utilisez notre relais hébergé, votre compte et la liste de vos appareils. Le contenu synchronisé est chiffré de bout en bout, donc le relais ne le voit jamais."
+    },
+    {
+      "q": "Comment gagnez-vous de l'argent ?",
+      "a": "Avec ce qui nécessite un serveur que nous exploitons ou une personne au bout du fil : un forfait Cloud prévu (notre relais pour un nombre illimité d'appareils, des sauvegardes, des notifications sur votre téléphone), des forfaits Équipe prévus, et des contrats de soutien pour les entreprises qui s'auto-hébergent. Jamais en revendant de l'utilisation d'IA."
+    },
+    {
+      "q": "Existe-t-il une alternative open source à Granola ?",
+      "a": "Whimbrel en est une : il prend des notes de réunion sans robot, contrairement à Granola, ajoute une mémoire consultable de votre écran et des Routines, garde vos données sur votre ordinateur et est open source. Consultez <a href=\"/compare/granola-alternative/\">Whimbrel c. Granola</a>."
+    }
+  ],
+  "sourceHash": "34f8aeb0e012"
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow">
+    <p class="eyebrow">Open source</p>
+    <h1>Un assistant IA que vous pouvez lire, exécuter et garder.</h1>
+    <p class="lede">Un assistant qui se souvient de votre travail devrait pouvoir être examiné. Whimbrel est open source sous licence Apache 2.0, toutes les fonctions sont gratuites, et rien n'exige nos serveurs.</p>
+  </div>
+</section>
+
+<section>
+  <div class="narrow prose">
+    <h2>Ce qui est ouvert</h2>
+    <p>Tout : les applications Mac et Windows, le noyau commun qui assure la capture, la transcription, la mémoire, la recherche et le clavardage, les Routines et les connecteurs, le serveur MCP, le relais de synchronisation et le flux de mises à jour. Il n'y a pas d'« édition communautaire » dont des fonctions seraient réservées à une version payante.</p>
+    <p>Le dépôt public ouvre avec la première version publiée sous le nom Whimbrel. Cette page y renverra à ce moment-là.</p>
+
+    <h2>Vos modèles, votre facture</h2>
+    <p>Exécutez des modèles sur votre propre ordinateur avec Ollama, ou apportez une clé Anthropic, OpenAI, Google Gemini ou OpenRouter et payez directement ce fournisseur. Par défaut, les petites tâches vont au modèle le moins cher dont vous disposez, et l'application affiche le coût de chaque appel. Whimbrel n'a aucun modèle hébergé et ne revend jamais d'utilisation d'IA, quel que soit le forfait. Les équipes pourront remettre une clé d'organisation à chaque poste; c'est toujours la clé de l'organisation elle-même.</p>
+
+    <h2>Faites tourner votre propre relais</h2>
+    <p>La synchronisation entre vos appareils est chiffrée de bout en bout et passe par un petit relais : un Worker Cloudflare, plus une base de données Turso par compte. Vous pouvez utiliser le relais que nous hébergeons, qui synchronise gratuitement un ordinateur et un téléphone, ou faire tourner le vôtre dans votre compte Cloudflare, sans limite d'appareils. Les forfaits gratuits de Cloudflare et de Turso suffisent pour un usage personnel. Le guide d'auto-hébergement est inclus dans le dépôt.</p>
+
+    <h2>Ce que nous ferons payer</h2>
+    <p>Seulement ce qui nécessite un serveur exploité par quelqu'un, ou une personne au bout du fil :</p>
+    <ul>
+      <li><strong>Cloud</strong> (prévu) : notre relais pour un nombre illimité d'appareils, des sauvegardes quotidiennes, des notifications sur votre téléphone et des Routines qui continuent de s'exécuter pendant que votre portable est fermé.</li>
+      <li><strong>Équipe</strong> (prévu) : une mémoire de réunion partagée avec le consentement de la personne qui a capturé, des Routines qui confient du travail à un collègue, et une seule facture.</li>
+      <li><strong>Soutien</strong> : une personne responsable de votre déploiement auto-hébergé.</li>
+    </ul>
+    <p>Rien n'est encore en vente. Consultez les <a href="/pricing/">tarifs</a> pour voir ce qui est prévu.</p>
+
+    <h2>Nos engagements</h2>
+    <ul>
+      <li>Tout ce qui s'exécute sur votre appareil reste dans l'application gratuite et ouverte.</li>
+      <li>Nous ne revendons ni ne majorons jamais l'utilisation d'IA.</li>
+      <li>L'application n'inclut aucune télémétrie.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="section-alt" id="faq">
+  <div class="narrow">
+    <div class="section-head center">
+      <h2>Questions sur l'open source</h2>
+    </div>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

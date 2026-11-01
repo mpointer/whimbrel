@@ -9,6 +9,7 @@ use tauri::{AppHandle, Manager};
 use crate::error::CommandError;
 use crate::meetings::controller::{MeetingController, MeetingRecordingView};
 use crate::state::AppState;
+use crate::l10n::tr;
 
 async fn off_main<F>(app: AppHandle, f: F) -> Result<MeetingRecordingView, CommandError>
 where
@@ -20,7 +21,7 @@ where
         view
     })
     .await
-    .map_err(|e| CommandError::store(format!("the meeting command failed: {e}")))?
+    .map_err(|e| CommandError::store(tr("The meeting command failed: {error}", &[("error", &e.to_string())])))?
 }
 
 #[tauri::command]
@@ -37,7 +38,7 @@ pub async fn meeting_record_stop(app: AppHandle) -> Result<MeetingRecordingView,
 pub async fn meeting_recording_status(app: AppHandle) -> Result<MeetingRecordingView, CommandError> {
     tauri::async_runtime::spawn_blocking(move || Ok(app.state::<AppState>().meetings()?.status()))
         .await
-        .map_err(|e| CommandError::store(format!("the meeting command failed: {e}")))?
+        .map_err(|e| CommandError::store(tr("The meeting command failed: {error}", &[("error", &e.to_string())])))?
 }
 
 /// Settings → Meetings: how calls are detected and started.
@@ -78,7 +79,7 @@ pub fn set_meeting_settings(state: tauri::State<'_, AppState>, settings: Meeting
     {
         let mut file = state.settings.lock().unwrap();
         apply_settings(&mut file, settings);
-        file.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+        file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
     Ok(meeting_settings(state))
 }

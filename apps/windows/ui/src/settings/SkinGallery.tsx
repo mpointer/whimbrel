@@ -158,12 +158,12 @@ function Swatches({ colors }: { colors: string[] }) {
 /** Settings → Appearance: System / Light / Dark, and a card per installed skin; the selected one offers its
  *  palettes. Kept on this PC only. */
 export function SkinGallery() {
-  const { t } = useL10n();
+  const { t, lang } = useL10n();
   useSyncExternalStore(subscribeSkin, skinRevision, skinRevision);
   const systemDark = useSystemDark();
   const skins = installedSkins();
   const selection = currentSelection();
-  const cards = galleryState(skins, selection);
+  const cards = galleryState(skins, selection, lang);
   const { palette } = resolveSelection(skins, selection);
   const caption = lockedCaption(palette);
   const labels = appearanceLabels(t);

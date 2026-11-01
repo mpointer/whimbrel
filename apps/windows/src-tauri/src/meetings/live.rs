@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 
 use transcribe::TranscriptSegment;
 
+use super::spoken::{Plan, Speech};
+
 /// How often a slice is taken. The tail left at stop is what the gate pays for: at about
 /// 0.09× real time across two channels, 120 s of audio costs ~22 s after the meeting,
 /// inside NFR-PRF-5's 120 s with the summary. Shorter slices shrink that tail but cut
@@ -127,14 +129,15 @@ pub fn merge(into: &mut Vec<TranscriptSegment>, new: Vec<TranscriptSegment>, off
 /// channel that made progress.
 ///
 /// Full speed here: the meeting is over, and this is the only thing standing between the
-/// user and their summary.
+/// user and their summary. `plan` is the meeting's language, which this tail may lock.
 pub fn finish_tail(
-    transcriber: &transcribe::Transcriber,
+    speech: &dyn Speech,
     path: &Path,
     cursor: u64,
     done: &mut Vec<TranscriptSegment>,
     slices: &Path,
     threads: i32,
+    plan: &mut Plan,
 ) -> Result<(), String> {
     let len = std::fs::metadata(path).map_err(|e| format!("{} couldn't be read: {e}", path.display()))?.len();
     let Some(range) = tail_slice(len, cursor) else {
@@ -148,10 +151,11 @@ pub fn finish_tail(
     let dst = slices.join("tail.wav");
     write_slice(path, range, &dst).map_err(|e| format!("the last slice didn't write: {e}"))?;
     let started = Instant::now();
-    let transcribed = transcriber.transcribe_wav_with_threads(&dst, Some(threads));
+    let transcribed = speech.run(&dst, threads, plan);
     let _ = std::fs::remove_file(&dst);
-    let segments = transcribed.map_err(|e| format!("{} didn't transcribe: {e}", path.display()))?;
-    merge(done, segments, cs_at(at));
+    let transcribed = transcribed.map_err(|e| format!("{} didn't transcribe: {e}", path.display()))?;
+    plan.observe(&transcribed);
+    merge(done, transcribed.segments, cs_at(at));
     tracing::info!(
         path = %path.display(),
         audio_s,
@@ -170,6 +174,9 @@ pub struct Config {
     pub slices: PathBuf,
     /// Well under the pipeline's: this runs while the meeting does (plan Decision 5).
     pub threads: i32,
+    /// The meeting's language (W7): English as before, or the multilingual model detecting
+    /// on the first chunk with speech. `model` is the file this plan names.
+    pub plan: Plan,
 }
 
 /// What the worker transcribed before the meeting stopped, and how far into each file it
@@ -180,6 +187,9 @@ pub struct Accumulated {
     pub mic: Vec<TranscriptSegment>,
     pub system_cursor: u64,
     pub mic_cursor: u64,
+    /// The language the meeting was transcribed in: forced, or locked by the first chunk with
+    /// speech. `None` while still detecting. The pipeline stores it and forces it on the tail.
+    pub language: Option<String>,
 }
 
 /// One recording channel's progress.
@@ -275,7 +285,7 @@ fn run(
     stop: Arc<AtomicBool>,
     state: Arc<Mutex<Accumulated>>,
 ) {
-    let Config { model, slices, threads } = config;
+    let Config { model, slices, threads, mut plan } = config;
     // Anything left here is from a meeting that ended badly; it is scratch either way.
     let _ = std::fs::remove_dir_all(&slices);
     if let Err(e) = std::fs::create_dir_all(&slices) {
@@ -295,8 +305,9 @@ fn run(
     while !wait(&stop, SLICE_EVERY) {
         for (channel, which) in [(system.as_mut(), Which::System), (mic.as_mut(), Which::Mic)] {
             let Some(channel) = channel else { continue };
-            if slice_once(&transcriber, channel, &slices, threads) {
-                publish(&state, which, channel);
+            // One plan for both channels: whichever has speech first locks the meeting's language.
+            if slice_once(&transcriber, channel, &slices, threads, &mut plan) {
+                publish(&state, which, channel, &plan);
             }
             if stop.load(Ordering::Relaxed) {
                 break;
@@ -313,8 +324,9 @@ enum Which {
 }
 
 /// Copies a channel's progress where `Live::finish` can read it without waiting.
-fn publish(state: &Mutex<Accumulated>, which: Which, channel: &Channel) {
+fn publish(state: &Mutex<Accumulated>, which: Which, channel: &Channel, plan: &Plan) {
     let Ok(mut state) = state.lock() else { return };
+    state.language = plan.language.clone();
     match which {
         Which::System => {
             state.system = channel.segments.clone();
@@ -330,7 +342,7 @@ fn publish(state: &Mutex<Accumulated>, which: Which, channel: &Channel) {
 /// Takes one slice of a channel, if there is enough new audio. Every failure hands the
 /// channel back to the pipeline rather than risking a gap. Returns whether the channel's
 /// progress changed and should be published.
-fn slice_once(transcriber: &transcribe::Transcriber, channel: &mut Channel, slices: &Path, threads: i32) -> bool {
+fn slice_once(speech: &dyn Speech, channel: &mut Channel, slices: &Path, threads: i32, plan: &mut Plan) -> bool {
     if channel.cursor == 0 {
         return false; // already given up on
     }
@@ -356,11 +368,14 @@ fn slice_once(transcriber: &transcribe::Transcriber, channel: &mut Channel, slic
     }
 
     let started = Instant::now();
-    let transcribed = transcriber.transcribe_wav_with_threads(&dst, Some(threads));
+    let transcribed = speech.run(&dst, threads, plan);
     let _ = std::fs::remove_file(&dst);
     match transcribed {
-        Ok(segments) => {
-            merge(&mut channel.segments, segments, cs_at(at));
+        Ok(transcribed) => {
+            if let Some(language) = plan.observe(&transcribed) {
+                tracing::info!(language, "detected the meeting's language");
+            }
+            merge(&mut channel.segments, transcribed.segments, cs_at(at));
             channel.cursor = range.end;
             channel.slices += 1;
             tracing::info!(
@@ -485,16 +500,64 @@ mod tests {
         assert!(channel.segments.is_empty(), "and nothing is counted twice");
 
         let state = Mutex::new(Accumulated::default());
-        publish(&state, Which::System, &channel);
+        publish(&state, Which::System, &channel, &Plan::english());
         let published = state.lock().unwrap();
         assert_eq!(published.system_cursor, 0);
         assert!(published.system.is_empty());
     }
 
     #[test]
+    fn a_silent_first_slice_leaves_the_language_open_and_the_first_speech_locks_it() {
+        use crate::meetings::spoken::tests::{chunk, FakeSpeech};
+        let dir = std::env::temp_dir().join(format!("whimbrel-live-lang-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (system, mic, slices) = (dir.join("system-audio-T.wav"), dir.join("mic-audio-T.wav"), dir.join("slices"));
+        std::fs::create_dir_all(&slices).unwrap();
+        recording(&system, 2);
+        recording(&mic, 2);
+        let speech = FakeSpeech::new(vec![chunk(0, Some("en")), chunk(2, Some("es")), chunk(1, Some("fr"))]);
+        let mut plan = Plan::choose(true, true, None);
+        let state = Mutex::new(Accumulated::default());
+        let (mut system_channel, mut mic_channel) = (Channel::new(system.clone()), Channel::new(mic.clone()));
+
+        // Round one: the system slice is silent, so the mic slice still detects.
+        assert!(slice_once(&speech, &mut system_channel, &slices, 1, &mut plan));
+        publish(&state, Which::System, &system_channel, &plan);
+        assert_eq!(state.lock().unwrap().language, None, "a silent slice locks nothing");
+        assert!(slice_once(&speech, &mut mic_channel, &slices, 1, &mut plan));
+        publish(&state, Which::Mic, &mic_channel, &plan);
+        assert_eq!(state.lock().unwrap().language.as_deref(), Some("es"));
+
+        // Round two: forced, whatever whisper would have guessed.
+        recording(&system, 4);
+        assert!(slice_once(&speech, &mut system_channel, &slices, 1, &mut plan));
+        let asked: Vec<Option<String>> = speech.asked().into_iter().map(|p| p.language).collect();
+        assert_eq!(asked, [None, None, Some("es".to_string())]);
+        assert_eq!(plan.language.as_deref(), Some("es"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn english_slices_take_todays_path() {
+        use crate::meetings::spoken::tests::{chunk, FakeSpeech};
+        let dir = std::env::temp_dir().join(format!("whimbrel-live-en-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("slices")).unwrap();
+        recording(&dir.join("mic-audio-T.wav"), 2);
+        let speech = FakeSpeech::new(vec![chunk(2, Some("en"))]);
+        let mut plan = Plan::english();
+        let mut channel = Channel::new(dir.join("mic-audio-T.wav"));
+        assert!(slice_once(&speech, &mut channel, &dir.join("slices"), 1, &mut plan));
+        assert_eq!(speech.asked(), [Plan::english()], "the English model, forced to English");
+        assert_eq!(plan, Plan::english());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_worker_with_no_model_hands_back_nothing_and_stops() {
         let dir = std::env::temp_dir().join(format!("whimbrel-live-nomodel-{}", std::process::id()));
-        let config = Config { model: dir.join("no-such-model.bin"), slices: dir.join("slices"), threads: 1 };
+        let config = Config { model: dir.join("no-such-model.bin"), slices: dir.join("slices"), threads: 1, plan: Plan::english() };
         let live = Live::start(None, None, config);
         let accumulated = live.finish();
         assert!(accumulated.system.is_empty() && accumulated.mic.is_empty());

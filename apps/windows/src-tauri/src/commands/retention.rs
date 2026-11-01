@@ -7,6 +7,7 @@ use tauri::{AppHandle, Manager};
 use crate::error::CommandError;
 use crate::retention::{RetentionPreview, RetentionRun, RetentionSettings};
 use crate::state::AppState;
+use crate::l10n::tr;
 
 /// The windows, what the last sweep removed, and whether the first-run notice is behind
 /// us — until it is, the schedule counts but never deletes.
@@ -39,7 +40,7 @@ pub fn set_retention_settings(state: tauri::State<'_, AppState>, settings: Reten
     {
         let mut file = state.settings.lock().unwrap();
         file.set_retention(settings);
-        file.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+        file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
     Ok(view(&state))
 }
@@ -50,11 +51,11 @@ pub fn set_retention_settings(state: tauri::State<'_, AppState>, settings: Reten
 pub async fn retention_preview(app: AppHandle) -> Result<RetentionPreview, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let retention = state.retention.as_ref().ok_or_else(|| CommandError::store("retention isn't running"))?;
+        let retention = state.retention.as_ref().ok_or_else(|| CommandError::store(tr("Retention isn't running", &[])))?;
         retention.preview()
     })
     .await
-    .map_err(|e| CommandError::store(format!("the count failed: {e}")))?
+    .map_err(|e| CommandError::store(tr("The count failed: {error}", &[("error", &e.to_string())])))?
 }
 
 /// "Delete old data now", and the first-run notice's "Keep current settings": sweeps
@@ -64,10 +65,10 @@ pub async fn retention_preview(app: AppHandle) -> Result<RetentionPreview, Comma
 pub async fn retention_run_now(app: AppHandle) -> Result<RetentionView, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let retention = state.retention.as_ref().ok_or_else(|| CommandError::store("retention isn't running"))?;
+        let retention = state.retention.as_ref().ok_or_else(|| CommandError::store(tr("Retention isn't running", &[])))?;
         retention.run_now()?;
         Ok(view(&state))
     })
     .await
-    .map_err(|e| CommandError::store(format!("the sweep failed: {e}")))?
+    .map_err(|e| CommandError::store(tr("The sweep failed: {error}", &[("error", &e.to_string())])))?
 }

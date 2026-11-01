@@ -4,8 +4,9 @@
 
 import type { DeviceCount, MeetingRow, NextMeetingView, ScheduleEvent, ScheduleView, ThreadRow, TodayOverview, TodayRecap } from "../generated/types";
 import { dateTimeLabel, timeLabel } from "../library/rows";
-import { WHIMBREL } from "../skin";
+import { WHIMBREL, type SkinManifest } from "../skin";
 import { attendeesLine, deviceLine, greeting, relativeStart, rowAction } from "./todayModel";
+import { t } from "../l10n";
 
 // --- sections ---------------------------------------------------------------------------------
 
@@ -54,6 +55,38 @@ export type VoiceKey =
   | "askPlaceholder"
   | "tagline";
 
+const VOICE_KEYS: readonly VoiceKey[] = [
+  "greetingMorning",
+  "greetingAfternoon",
+  "greetingEvening",
+  "upNextHeader",
+  "upcomingHeader",
+  "earlierHeader",
+  "recapHeader",
+  "emptyDay",
+  "emptyEarlier",
+  "askPlaceholder",
+  "tagline",
+];
+
+/**
+ * The skin's voice in `lang` (the Mac's `SkinVoice.template`): the skin's own wording for the exact
+ * language, then its base language, then its English. English that is just Whimbrel's own default
+ * reads as Whimbrel's wording in `lang`, so a skin that never changed a line follows the language too.
+ */
+export function localizedVoice(skin: SkinManifest, lang: string): Record<string, string> {
+  const base = lang.split("-")[0];
+  const pick = (s: SkinManifest, key: VoiceKey) => s.voiceLocalized?.[lang]?.[key] ?? s.voiceLocalized?.[base]?.[key];
+  const out: Record<string, string> = {};
+  for (const key of VOICE_KEYS) {
+    const own = pick(skin, key);
+    const english = skin.voice[key] ?? WHIMBREL.skin.voice[key];
+    const text = own ?? (english === WHIMBREL.skin.voice[key] ? (pick(WHIMBREL.skin, key) ?? english) : english);
+    if (text !== undefined) out[key] = text;
+  }
+  return out;
+}
+
 /** A voice string with `{name}` filled in. A key the skin leaves out reads as Whimbrel's. */
 export function voiceText(voice: Record<string, string>, key: VoiceKey, name = ""): string {
   const text = voice[key] ?? WHIMBREL.skin.voice[key] ?? "";
@@ -61,9 +94,9 @@ export function voiceText(voice: Record<string, string>, key: VoiceKey, name = "
 }
 
 /** Today's heading in the skin's voice: the date over "Good morning, <first name>" worded by the skin. With
- *  no usable name the date is the title, as in `greeting`. */
-export function greetingFor(name: string, now: Date, voice: Record<string, string>): { kicker: string | null; title: string } {
-  const plain = greeting(name, now);
+ *  no usable name the date is the title, as in `greeting`. The date is written for `locale`. */
+export function greetingFor(name: string, now: Date, voice: Record<string, string>, locale: string): { kicker: string | null; title: string } {
+  const plain = greeting(name, now, locale);
   if (plain.kicker === null) return plain;
   const hour = now.getHours();
   const key = hour < 12 ? "greetingMorning" : hour < 17 ? "greetingAfternoon" : "greetingEvening";
@@ -90,6 +123,8 @@ export function recapModel(overview: Pick<TodayOverview, "briefRecap">, recap: T
 export interface TodayModel {
   /** Milliseconds; the clock the countdowns are measured against. */
   now: number;
+  /** The tag times and dates are written for (useL10n().locale). */
+  locale: string;
   /** The Profile name; empty when there is none. */
   name: string;
   schedule: ScheduleView | null;
@@ -129,14 +164,16 @@ export interface HeldRow {
 export type ScheduleItem = { kind: "event"; row: EventRow } | { kind: "separator" } | { kind: "held"; row: HeldRow };
 
 /** The label between the upcoming and the already-held meetings in a schedule (Standard's wording). */
-export const HELD_SEPARATOR = "Earlier today";
+export function heldSeparator(): string {
+  return t("Earlier today");
+}
 
 function eventRow(e: ScheduleEvent, model: TodayModel, recording: boolean, isUpNext: boolean): EventRow {
   const prep = isUpNext ? (model.next?.eventId === e.eventId && model.next.brief ? "ready" : "none") : null;
   return {
     id: e.eventId,
     startMs: e.startUnixMs,
-    timeText: timeLabel(e.startUnixMs),
+    timeText: timeLabel(e.startUnixMs, model.locale),
     title: e.title,
     relative: relativeStart(e.startUnixMs, e.endUnixMs, model.now),
     attendees: attendeesLine(e.attendees),
@@ -165,7 +202,7 @@ export function schedule(model: TodayModel, upNextPlaced: boolean): { upcoming: 
     .filter((e) => e.eventId !== skip)
     .map((e) => eventRow(e, model, s.recording, false))
     .sort((a, b) => a.startMs - b.startMs);
-  const held = s.earlierToday.map((m) => heldRow(m, timeLabel)).sort((a, b) => a.startMs - b.startMs);
+  const held = s.earlierToday.map((m) => heldRow(m, (ms) => timeLabel(ms, model.locale))).sort((a, b) => a.startMs - b.startMs);
   return { upcoming, held };
 }
 
@@ -180,7 +217,7 @@ export function scheduleItems(rows: { upcoming: EventRow[]; held: HeldRow[] }): 
 
 /** The meetings from earlier days, as they arrive (newest first), each with its date and time. */
 export function earlierRows(model: TodayModel, now: Date = new Date(model.now)): HeldRow[] {
-  return model.earlier.map((m) => heldRow(m, (ms) => dateTimeLabel(ms, now)));
+  return model.earlier.map((m) => heldRow(m, (ms) => dateTimeLabel(ms, now, model.locale)));
 }
 
 /** How many meetings from earlier days Today lists. */
@@ -196,12 +233,11 @@ export function earlierMeetings(rows: MeetingRow[], now: number): MeetingRow[] {
 }
 
 /** "capture line · N other devices": this PC's activity, then how many others reported. */
-export function devicesLine(devices: DeviceCount[]): string {
+export function devicesLine(devices: DeviceCount[], locale: string): string {
   const mine = devices.find((d) => d.device.thisDevice);
   const others = devices.filter((d) => !d.device.thisDevice).length;
-  let line = mine ? deviceLine(mine) : "Nothing yet today";
-  if (others > 0) line += ` · ${others} other device${others === 1 ? "" : "s"}`;
-  return line;
+  const line = mine ? deviceLine(mine, locale) : t("Nothing yet today");
+  return others > 0 ? t("{line} · {count} other devices", { line, count: others }) : line;
 }
 
 /** This PC's chip label, or the first device's when this one did not report. */
@@ -351,14 +387,20 @@ export function fieldDay(model: TodayModel): FieldDay {
   ].sort((a, b) => a.startMs - b.startMs);
   const overflow = { upcoming: rows.upcoming.slice(FIELD.maxMarkers), held: rows.held.slice(0, rows.held.length - held.length) };
   const hidden = overflow.upcoming.length + overflow.held.length;
-  return { markers, overflow, moreLabel: hidden > 0 ? `+${hidden} more` : null };
+  return { markers, overflow, moreLabel: hidden > 0 ? t("+{count} more", { count: hidden }) : null };
 }
 
 /** What a screen reader says for a marker: the verb its button carries, then the meeting. */
 export function markerLabel(m: FieldMarker): string {
-  const suffix = m.isNext ? ", up next" : "";
-  const verb = m.action?.kind === "start" ? "Start " : m.action?.kind === "open" ? "Open " : "";
-  return `${verb}${m.title}, ${m.timeText}${suffix}`;
+  const args = { title: m.title, time: m.timeText };
+  switch (m.action?.kind) {
+    case "start":
+      return m.isNext ? t("Start {title}, {time}, up next", args) : t("Start {title}, {time}", args);
+    case "open":
+      return m.isNext ? t("Open {title}, {time}, up next", args) : t("Open {title}, {time}", args);
+    default:
+      return m.isNext ? t("{title}, {time}, up next", args) : t("{title}, {time}", args);
+  }
 }
 
 // --- Reference --------------------------------------------------------------------------------

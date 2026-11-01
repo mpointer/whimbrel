@@ -1,0 +1,162 @@
+<!--
+{
+  "title": "Tarifs : gratuit et libre",
+  "description": "Whimbrel est gratuit et libre : toutes les fonctions, vos modèles, synchronisation illimitée sur votre relais. Forfaits payants prévus pour nos serveurs.",
+  "schema": [
+    "software"
+  ],
+  "priority": 0.8,
+  "crumbs": [
+    {
+      "name": "Tarifs",
+      "path": "/pricing/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Whimbrel est-il vraiment gratuit ?",
+      "a": "Oui. Toutes les fonctions de l'application sont gratuites et libres, sous licence Apache 2.0 : capture des réunions, transcription, mémoire d'écran, recherche, conversation, routines, connecteurs, serveur MCP et synchronisation chiffrée de bout en bout. Rien dans l'application n'est réservé à un forfait payant."
+    },
+    {
+      "q": "Ai-je besoin d'une clé d'API d'IA ?",
+      "a": "Vous choisissez. Exécutez des modèles sur votre ordinateur avec Ollama, gratuitement, ou utilisez votre propre clé Anthropic, OpenAI, Google Gemini ou OpenRouter et payez directement ce fournisseur. Par défaut, les petites tâches sont confiées au modèle le moins cher dont vous disposez : la plupart des gens dépensent donc moins d'un dollar par mois en modèles hébergés. Whimbrel ne revend jamais d'utilisation d'IA : aucun modèle hébergé, aucun bloc de jetons, aucune majoration sur votre facture de modèles, quel que soit le forfait."
+    },
+    {
+      "q": "Combien coûte la synchronisation ?",
+      "a": "Rien. La synchronisation est chiffrée de bout en bout. Sur un relais que vous gérez vous-même, elle est illimitée. Sur le relais que nous hébergeons, un compte gratuit synchronise un ordinateur et un téléphone. Les forfaits Cloud prévus ajouteront un nombre illimité d'appareils sur notre relais."
+    },
+    {
+      "q": "Que comprendront les forfaits payants ?",
+      "a": "Seulement ce qui exige un serveur exploité par quelqu'un, ou une personne à l'autre bout du fil : notre relais hébergé pour un nombre illimité d'appareils, avec sauvegardes, notifications push sur votre téléphone et, selon nos plans, des routines qui continuent de s'exécuter lorsque votre portable est fermé. Les forfaits Équipe ajouteront une mémoire de réunion partagée et une seule facture. Les détails et les prix ne sont pas définitifs, et rien n'est encore en vente."
+    },
+    {
+      "q": "Puis-je acheter un forfait dès aujourd'hui ?",
+      "a": "Pas encore. Les forfaits payants ne seront mis en vente que lorsque la facturation sera en place et que les forfaits seront arrêtés. D'ici là, tout est gratuit et on ne vous demandera pas de carte de crédit."
+    },
+    {
+      "q": "Mon entreprise peut-elle obtenir du soutien ou gérer ses propres serveurs ?",
+      "a": "Oui. Le relais de synchronisation et le flux de mises à jour sont libres et documentés pour l'auto-hébergement. Si vous voulez qu'une personne soit responsable de votre déploiement, <a href=\"mailto:{{site.salesEmail}}?subject=Whimbrel%20support\">parlez-nous</a> d'un contrat de soutien."
+    }
+  ],
+  "sourceHash": "eb851c16c3ba"
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Tarifs</p>
+    <h1>Gratuit et libre. Ne payez que pour les serveurs que nous gérons pour vous.</h1>
+    <p class="lede">Whimbrel fait son travail sur votre ordinateur, avec les modèles d'IA que vous choisissez : toute l'application est donc gratuite. Les forfaits payants prévus couvrent ce qui exige vraiment un serveur ou une personne : synchronisation hébergée avec sauvegardes, notifications push sur votre téléphone et fonctions d'équipe.</p>
+  </div>
+</section>
+
+<div class="container">
+  <div class="early-access-banner" role="note">
+    <strong>Rien n'est encore en vente.</strong>
+    <span>Toutes les fonctions sont gratuites aujourd'hui. Cloud et Équipe sont prévus; leurs fonctions et leurs prix seront annoncés lorsque la facturation sera en place.</span>
+  </div>
+</div>
+
+<section class="pricing-section">
+  <div class="container">
+    <div class="pricing-grid">
+      <article class="card plan plan-featured">
+        <h2>Gratuit</h2>
+        <p class="plan-for">Tout l'application, pour tout le monde.</p>
+        <p class="price"><span class="amount">0 $</span></p>
+        <p class="price-note">Libre, Apache 2.0</p>
+        <a class="btn btn-primary btn-block" href="/download/#register">Télécharger gratuitement</a>
+        <ul class="plan-features">
+          <li>Réunions et historique illimités</li>
+          <li>Notes de réunion sans robot, transcription sur l'appareil</li>
+          <li>Mémoire d'écran, recherche, conversation avec citations</li>
+          <li>Routines sur vos appareils</li>
+          <li>Gmail, Google Agenda, Outlook 365</li>
+          <li>Serveur MCP local pour vos autres outils d'IA</li>
+          <li>Modèles locaux (Ollama) ou votre propre clé d'IA, avec le modèle le moins cher que vous avez utilisé pour les petites tâches</li>
+          <li>Synchronisation chiffrée de bout en bout : illimitée sur votre propre relais, un ordinateur et un téléphone sur le nôtre</li>
+        </ul>
+      </article>
+
+      <article class="card plan">
+        <p class="plan-badge">Prévu</p>
+        <h2>Cloud</h2>
+        <p class="plan-for">Pour une personne qui veut que nous gérions le serveur.</p>
+        <p class="price"><span class="amount amount-sm">Prix à venir</span></p>
+        <p class="price-note">Vos modèles et vos clés, comme dans Gratuit</p>
+        <a class="btn btn-ghost btn-block" href="/download/#register">Commencer gratuitement</a>
+        <ul class="plan-features">
+          <li><strong>Tout ce qui est dans Gratuit, plus :</strong></li>
+          <li>Notre relais hébergé pour un nombre illimité d'appareils</li>
+          <li>Sauvegardes quotidiennes et restauration</li>
+          <li>Notifications push sur votre téléphone</li>
+          <li>Routines qui continuent de s'exécuter lorsque votre portable est fermé (en conception)</li>
+        </ul>
+      </article>
+
+      <article class="card plan">
+        <p class="plan-badge">Prévu</p>
+        <h2>Équipe</h2>
+        <p class="plan-for">Pour les petites équipes qui partagent leur mémoire de réunion.</p>
+        <p class="price"><span class="amount amount-sm">Prix à venir</span></p>
+        <p class="price-note">Par utilisateur, après Cloud</p>
+        <a class="btn btn-ghost btn-block" href="mailto:{{site.salesEmail}}?subject=Whimbrel%20for%20teams">Parlez-nous de votre équipe</a>
+        <ul class="plan-features">
+          <li><strong>Tout ce qui est dans Cloud, plus :</strong></li>
+          <li>Mémoire de réunion partagée, avec le consentement de la personne qui a capturé chaque élément</li>
+          <li>Routines qui confient du travail à un collègue</li>
+          <li>Une clé d'IA d'organisation pour tous les utilisateurs</li>
+          <li>Administration de base et une seule facture</li>
+        </ul>
+      </article>
+
+      <article class="card plan">
+        <h2>Soutien</h2>
+        <p class="plan-for">Pour les entreprises qui gèrent Whimbrel elles-mêmes.</p>
+        <p class="price"><span class="amount amount-sm">Contrat</span></p>
+        <p class="price-note">Relais auto-hébergé, une personne responsable</p>
+        <a class="btn btn-ghost btn-block" href="mailto:{{site.salesEmail}}?subject=Whimbrel%20support">Parlez-nous</a>
+        <ul class="plan-features">
+          <li>Aide au déploiement du relais libre et du flux de mises à jour dans votre propre compte Cloudflare</li>
+          <li>Intégration de votre équipe</li>
+          <li>Les clés d'IA de votre entreprise, ou des modèles exclusivement locaux</li>
+          <li>Les données de travail restent sur les appareils des employés et sur votre propre infrastructure</li>
+        </ul>
+      </article>
+    </div>
+    <p class="fine muted table-note center">Whimbrel ne revend jamais d'utilisation d'IA : aucun modèle hébergé, aucun bloc de jetons, aucune majoration sur votre facture de modèles. <a href="/open-source/">Comment fonctionne le modèle libre</a>.</p>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="narrow">
+    <div class="section-head center">
+      <h2>Comment Whimbrel se compare sur le prix</h2>
+      <p class="lede">Les forfaits payants de cette catégorie commencent à 14 $ à 17 $ par mois, avec le modèle d'IA inclus. L'application Whimbrel est gratuite : vous payez directement votre fournisseur de modèles, ou rien avec des modèles locaux.</p>
+    </div>
+    <div class="table-wrap">
+      <table class="compare">
+        <caption class="sr-only">Forfaits gratuits et forfaits payants d'entrée de Whimbrel, Granola et Littlebird</caption>
+        <thead><tr><th scope="col">Produit</th><th scope="col">Forfait gratuit</th><th scope="col">Forfait payant d'entrée</th><th scope="col">Libre</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Whimbrel</th><td class="yes">Toutes les fonctions, historique illimité</td><td>Aucun nécessaire; Cloud prévu</td><td class="yes">Oui, Apache 2.0</td></tr>
+          <tr><th scope="row">Granola</th><td>Historique des réunions de 30 jours</td><td>Business, 14 $ par utilisateur/mois</td><td class="no">Non</td></tr>
+          <tr><th scope="row">Littlebird</th><td>Crédits d'utilisation quotidiens</td><td>Plus, 17 $/mois facturé annuellement</td><td class="no">Non</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine muted table-note">Prix des concurrents tirés de leurs pages de tarifs publiques, 16 octobre 2026. Consultez la <a href="/compare/">comparaison complète</a>.</p>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="narrow">
+    <div class="section-head center">
+      <h2>Questions sur les tarifs</h2>
+    </div>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

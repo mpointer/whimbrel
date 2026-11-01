@@ -1,4 +1,5 @@
 import { timeLabel } from "../library/rows";
+import { useL10n } from "../l10n";
 import type { ScheduleState } from "./useSchedule";
 import { attendeesLine, prepLine, relativeStart, rowAction } from "./todayModel";
 
@@ -22,6 +23,7 @@ export function ScheduleCard({
   onOpenMeeting: (meetingId: number) => void;
 }) {
   const { schedule, next, now, starting, error, start } = state;
+  const { locale, t } = useL10n();
 
   if (!schedule) return error ? <p role="alert">{error}</p> : null;
   // No calendar, or nothing today: the card has nothing to say.
@@ -41,33 +43,33 @@ export function ScheduleCard({
             const invitees = attendeesLine(e.attendees);
             return (
               <li key={e.eventId} className="schedule-row">
-                <time className="schedule-time">{timeLabel(e.startUnixMs)}</time>
+                <time className="schedule-time">{timeLabel(e.startUnixMs, locale)}</time>
                 <span className="schedule-main">
                   <span className="schedule-title">{e.title}</span>
                   {invitees && <span className="muted small">{invitees}</span>}
                   {prep === "ready" && (
                     <span className="small">
-                      Prep ready{" "}
+                      {t("Prep ready")}{" "}
                       <button type="button" className="link" onClick={onToggleBrief} aria-expanded={briefOpen}>
-                        {briefOpen ? "Hide brief" : "Open brief"}
+                        {briefOpen ? t("Hide brief") : t("Open brief")}
                       </button>
                     </span>
                   )}
                   {prep === "none" && (
-                    <span className="muted small" title="Meeting Prep makes a brief shortly before the meeting once it is turned on in Automations.">
-                      No prep yet
+                    <span className="muted small" title={t("Meeting Prep makes a brief shortly before the meeting once it is turned on in Automations.")}>
+                      {t("No prep yet")}
                     </span>
                   )}
                 </span>
                 {countdown && <span className="muted small schedule-countdown">{countdown}</span>}
                 {action === "start" && (
                   <button type="button" className="mode" onClick={() => start(e.eventId)} disabled={starting !== null}>
-                    {starting === e.eventId ? "Starting…" : "Start"}
+                    {starting === e.eventId ? t("Starting…") : t("Start")}
                   </button>
                 )}
                 {action === "open" && (
                   <button type="button" className="mode" onClick={() => onOpenMeeting(e.recordedMeetingId as number)}>
-                    Open
+                    {t("Open")}
                   </button>
                 )}
               </li>
@@ -77,16 +79,16 @@ export function ScheduleCard({
       )}
       {schedule.earlierToday.length > 0 && (
         <>
-          <h3 className="schedule-sub">Earlier today</h3>
+          <h3 className="schedule-sub">{t("Earlier today")}</h3>
           <ul className="schedule-rows">
             {schedule.earlierToday.map((m) => (
               <li key={m.id} className="schedule-row">
-                <time className="schedule-time">{timeLabel(m.tsUnixMs)}</time>
+                <time className="schedule-time">{timeLabel(m.tsUnixMs, locale)}</time>
                 <span className="schedule-main">
                   <span className="schedule-title">{m.title}</span>
                 </span>
                 <button type="button" className="mode" onClick={() => onOpenMeeting(m.id)}>
-                  Open
+                  {t("Open")}
                 </button>
               </li>
             ))}

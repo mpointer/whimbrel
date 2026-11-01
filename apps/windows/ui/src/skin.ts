@@ -32,6 +32,8 @@ export interface SkinManifest {
     imagery: { asset: string; placement: string; textFree: boolean }[];
   };
   voice: Record<string, string>;
+  /** The skin's own wording per language (`es`, `fr-CA`), each key optional. */
+  voiceLocalized?: Record<string, Record<string, string>>;
   today: { archetype: string; options: Record<string, string> };
   motion: string;
 }

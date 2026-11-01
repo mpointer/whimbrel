@@ -1,4 +1,5 @@
 import type { ActionItemView, SnapshotsView, SnapshotView, WorkspaceView } from "../generated/types";
+import { t } from "../l10n";
 
 /**
  * Whether a regeneration would overwrite work the user did, so the workspace asks first.
@@ -32,6 +33,31 @@ export function overrideOf(edited: string, generated: string | null): string | n
   return edited.trim() === (generated ?? "").trim() ? null : edited;
 }
 
+/** The Mac's "Transcript language" choices, each in its own name as on the Mac. */
+export const TRANSCRIPT_LANGUAGES: { code: string; label: string }[] = [
+  { code: "en", label: "English" },
+  { code: "es", label: "Español" },
+  { code: "fr", label: "Français" },
+];
+
+/**
+ * The "Transcript language" options: Automatic (`""`, detect again), then the Mac's three.
+ * A detected language outside them is listed too, in its own name, so the picker can show it.
+ */
+export function transcriptLanguageOptions(current: string | null, automatic: string): { code: string; label: string }[] {
+  const options = [{ code: "", label: automatic }, ...TRANSCRIPT_LANGUAGES];
+  if (current && !options.some((o) => o.code === current)) {
+    let label = current;
+    try {
+      label = new Intl.DisplayNames([current], { type: "language" }).of(current) ?? current;
+    } catch {
+      // An unknown code shows as itself.
+    }
+    options.push({ code: current, label });
+  }
+  return options;
+}
+
 /** The list after moving one item, for the reorder buttons. Pure. */
 export function movedItem(items: ActionItemView[], id: number, direction: -1 | 1): ActionItemView[] {
   const at = items.findIndex((i) => i.id === id);
@@ -51,13 +77,13 @@ export function displayOrder(items: ActionItemView[]): ActionItemView[] {
 export function phaseTitle(view: WorkspaceView): string {
   switch (view.phase) {
     case "before":
-      return "Before the meeting";
+      return t("Before the meeting");
     case "during":
-      return "Recording";
+      return t("Recording");
     case "cancelled":
-      return "Cancelled";
+      return t("Cancelled");
     default:
-      return "After the meeting";
+      return t("After the meeting");
   }
 }
 
@@ -87,5 +113,5 @@ export function withoutSnapshot(view: SnapshotsView, id: number): SnapshotsView 
 
 /** The strip's heading, e.g. "Slides (3)". */
 export function slidesLabel(view: SnapshotsView): string {
-  return `Slides (${view.snapshots.length})`;
+  return t("Slides ({n})", { n: view.snapshots.length });
 }

@@ -26,7 +26,7 @@ use crate::error::CommandError;
 use crate::l10n::tr;
 use crate::secrets::{accounts, APP_SERVICE};
 use crate::settings::{ApiKeys, Instructions, Provider, RoutingSettings};
-use crate::skin_maker::{self, SkinLine, SkinSources, SkinTurnResult};
+use crate::skin_maker::{self, SkinLine, SkinLineKind, SkinSources, SkinTurnResult};
 use crate::state::AppState;
 
 /// One skin as the page needs it: the manifest as JSON (the shape `skins/*.json` has), the palettes it
@@ -188,11 +188,11 @@ pub fn list_skins(dirs: &BundledDirs, user: &UserSkinStore) -> Vec<SkinDto> {
 /// symlink and containment checks, so a name can never reach outside the skin's folder.
 pub fn read_skin_image(user: &UserSkinStore, id: &str, name: &str) -> Result<Vec<u8>, CommandError> {
     let path = user.image_path(id, name).map_err(|e| CommandError::invalid_input(e.to_string()))?;
-    std::fs::read(path).map_err(|e| CommandError::invalid_input(format!("could not read the image: {e}")))
+    std::fs::read(path).map_err(|e| CommandError::invalid_input(tr("Could not read the image: {error}", &[("error", &e.to_string())])))
 }
 
 fn bundled(app: &AppHandle) -> Result<BundledDirs, CommandError> {
-    let dir = app.path().resource_dir().map_err(|e| CommandError::not_configured(format!("no resource directory: {e}")))?;
+    let dir = app.path().resource_dir().map_err(|e| CommandError::not_configured(tr("No resource directory: {error}", &[("error", &e.to_string())])))?;
     Ok(BundledDirs::under(&dir))
 }
 
@@ -203,7 +203,7 @@ pub async fn skins_list(app: AppHandle, state: State<'_, AppState>) -> Result<Ve
     // File reads and contrast repair: off the async runtime's threads.
     tauri::async_runtime::spawn_blocking(move || list_skins(&dirs, &user))
         .await
-        .map_err(|e| CommandError::store(format!("skins list failed: {e}")))
+        .map_err(|e| CommandError::store(tr("Skins list failed: {error}", &[("error", &e.to_string())])))
 }
 
 /// An approved image of a user skin, as raw bytes (the page makes an object URL from them).
@@ -212,7 +212,7 @@ pub async fn skin_image(state: State<'_, AppState>, id: String, name: String) ->
     let user = UserSkinStore::new(state.paths.skins.clone());
     let bytes = tauri::async_runtime::spawn_blocking(move || read_skin_image(&user, &id, &name))
         .await
-        .map_err(|e| CommandError::store(format!("image read failed: {e}")))??;
+        .map_err(|e| CommandError::store(tr("Image read failed: {error}", &[("error", &e.to_string())])))??;
     Ok(Response::new(bytes))
 }
 
@@ -236,7 +236,9 @@ impl From<llm::images::ImageCandidate> for ImageCandidateView {
     }
 }
 
-const SET_UP_LINE: &str = "Set up an AI provider in Settings to make skins.";
+fn set_up_line() -> String {
+    tr("Set up an AI provider in Settings to make skins.", &[])
+}
 /// Made images not yet approved or rejected; the oldest go first past this many.
 const GENERATED_KEPT: usize = 12;
 
@@ -281,7 +283,7 @@ type Client = Box<dyn llm::LlmClient + Send>;
 /// The preferred provider's client and model, as the Mac's skin chat uses (`SkinChatAccess`).
 fn skin_client(routing: &RoutingSettings, keys: &ApiKeys) -> Result<(llm::Provider, String, Client), CommandError> {
     let model = routing.preferred_model().to_string();
-    let key = |k: &Option<String>| k.clone().ok_or_else(|| CommandError::not_configured(SET_UP_LINE));
+    let key = |k: &Option<String>| k.clone().ok_or_else(|| CommandError::not_configured(set_up_line()));
     let (provider, client): (llm::Provider, Client) = match routing.preferred_provider {
         Provider::Ollama => (llm::Provider::Ollama, Box::new(llm::OllamaClient::new(&model))),
         Provider::Anthropic => (llm::Provider::Anthropic, Box::new(llm::AnthropicClient::new(key(&keys.anthropic)?, &model))),
@@ -303,7 +305,7 @@ fn image_maker(routing: &RoutingSettings, keys: &ApiKeys) -> Option<(llm::Provid
 }
 
 fn blocking_failed(e: impl std::fmt::Display) -> CommandError {
-    CommandError::store(format!("the skin maker stopped unexpectedly: {e}"))
+    CommandError::store(tr("The skin maker stopped unexpectedly: {error}", &[("error", &e.to_string())]))
 }
 
 /// Queues `skin_id` for sync after a change on this PC (Task 15), on the store actor. A failure is
@@ -332,15 +334,15 @@ pub fn skin_sources(state: State<'_, AppState>) -> Result<SkinSources, CommandEr
 pub async fn skin_turn(app: AppHandle, state: State<'_, AppState>, skin_id: String, request: String, run_id: String) -> Result<SkinTurnResult, CommandError> {
     let request = request.trim().to_string();
     if request.is_empty() {
-        return Err(CommandError::invalid_input("Say what you'd like the skin to look like."));
+        return Err(CommandError::invalid_input(tr("Say what you'd like the skin to look like.", &[])));
     }
     let (sources, routing, keys) = sources(&state)?;
     if !sources.chat {
-        return Err(CommandError::not_configured(SET_UP_LINE));
+        return Err(CommandError::not_configured(set_up_line()));
     }
     let dirs = bundled(&app)?;
     let user = UserSkinStore::new(state.paths.skins.clone());
-    let origin = skin_maker::origin(&user, &dirs.skins, &skin_id).ok_or_else(|| CommandError::invalid_input(format!("no skin {skin_id}")))?;
+    let origin = skin_maker::origin(&user, &dirs.skins, &skin_id).ok_or_else(|| CommandError::invalid_input(tr("No skin {skin_id}", &[("skin_id", &skin_id.to_string())])))?;
     let (provider, model, client) = skin_client(&routing, &keys)?;
     let caps = caps(&routing, &keys);
     let input = skin_maker::turn_input(&user, &origin, &request, &routing.output_language);
@@ -429,7 +431,7 @@ pub async fn skin_export(app: AppHandle, state: State<'_, AppState>, skin_id: St
         // The id, not the name: it is always a valid file name, whatever the name holds.
         let picked = file_dialog(&app, &tr("Export skin", &[])).set_file_name(format!("{skin_id}.whimbrelskin")).blocking_save_file();
         let Some(picked) = picked else { return Ok(false) };
-        let path = picked.into_path().map_err(|e| CommandError::invalid_input(format!("not a file on this PC: {e}")))?;
+        let path = picked.into_path().map_err(|e| CommandError::invalid_input(tr("Not a file on this PC: {error}", &[("error", &e.to_string())])))?;
         skin_maker::export_to(&user, &skin_id, &path).map(|()| true).map_err(refused)
     })
     .await
@@ -442,7 +444,7 @@ pub async fn skin_import(app: AppHandle, state: State<'_, AppState>) -> Result<O
     let user = UserSkinStore::new(state.paths.skins.clone());
     let imported = tauri::async_runtime::spawn_blocking(move || {
         let Some(picked) = file_dialog(&app, &tr("Import skin", &[])).blocking_pick_file() else { return Ok(None) };
-        let path = picked.into_path().map_err(|e| CommandError::invalid_input(format!("not a file on this PC: {e}")))?;
+        let path = picked.into_path().map_err(|e| CommandError::invalid_input(tr("Not a file on this PC: {error}", &[("error", &e.to_string())])))?;
         skin_maker::import_from(&user, &path).map(Some).map_err(refused)
     })
     .await
@@ -463,7 +465,7 @@ pub async fn skin_image_search(state: State<'_, AppState>, query: String) -> Res
     let (sources, routing, keys) = sources(&state)?;
     let key = state.secrets.get_string(APP_SERVICE, accounts::IMAGE_SEARCH_API_KEY)?;
     let (true, Some(key)) = (sources.search, key) else {
-        return Err(CommandError::not_configured("Add an image search key in Settings to find images."));
+        return Err(CommandError::not_configured(tr("Add an image search key in Settings to find images.", &[])));
     };
     let caps = caps(&routing, &keys);
     state.store()?.call(move |s| skin_maker::charge(s, &caps, "skin-image-search", llm::images::IMAGE_SEARCH_CENTS)).await??;
@@ -476,7 +478,7 @@ pub async fn skin_image_search(state: State<'_, AppState>, query: String) -> Res
 pub async fn skin_image_generate(state: State<'_, AppState>, prompt: String) -> Result<ImageCandidateView, CommandError> {
     let (sources, routing, keys) = sources(&state)?;
     let (true, Some((provider, key))) = (sources.generate, image_maker(&routing, &keys)) else {
-        return Err(CommandError::not_configured("Add an OpenAI or Google key in Settings to make images."));
+        return Err(CommandError::not_configured(tr("Add an OpenAI or Google key in Settings to make images.", &[])));
     };
     let caps = caps(&routing, &keys);
     state.store()?.call(move |s| skin_maker::charge(s, &caps, "skin-image-generate", llm::images::IMAGE_GENERATE_CENTS)).await??;
@@ -499,7 +501,7 @@ pub async fn skin_image_thumbnail(state: State<'_, AppState>, url: String) -> Re
         return Ok(Response::new(bytes));
     }
     if state.settings.lock().unwrap().routing().local_only {
-        return Err(CommandError::invalid_input("Local-only mode is on, so nothing is downloaded."));
+        return Err(CommandError::invalid_input(tr("Local-only mode is on, so nothing is downloaded.", &[])));
     }
     let bytes = tauri::async_runtime::spawn_blocking(move || llm::images::fetch_image(&url)).await.map_err(blocking_failed)?;
     Ok(Response::new(bytes.map_err(|_| CommandError::ProviderFailure)?))
@@ -518,7 +520,7 @@ pub async fn skin_image_approve(state: State<'_, AppState>, skin_id: String, url
     let user = UserSkinStore::new(state.paths.skins.clone());
     let made = take_generated(&url);
     if made.is_none() && state.settings.lock().unwrap().routing().local_only {
-        return Ok(SkinLine { text: "Local-only mode is on, so Whimbrel didn't download that image.".into(), stored: false });
+        return Ok(SkinLine { kind: SkinLineKind::LocalOnly, ..skin_maker::unsaved(&tr("Local-only mode is on, so Whimbrel didn't download that image.", &[])) });
     }
     let id = skin_id.clone();
     let line = tauri::async_runtime::spawn_blocking(move || {
@@ -542,7 +544,7 @@ pub async fn skin_image_approve(state: State<'_, AppState>, skin_id: String, url
 pub async fn skin_image_add_file(app: AppHandle, state: State<'_, AppState>, skin_id: String) -> Result<Option<SkinLine>, CommandError> {
     let user = UserSkinStore::new(state.paths.skins.clone());
     if user.manifest(&skin_id).is_none() {
-        return Ok(Some(SkinLine { text: skin_maker::NOT_YOURS_LINE.into(), stored: false }));
+        return Ok(Some(skin_maker::unsaved(&skin_maker::not_yours_line())));
     }
     let id = skin_id.clone();
     let line = tauri::async_runtime::spawn_blocking(move || {
@@ -551,7 +553,7 @@ pub async fn skin_image_add_file(app: AppHandle, state: State<'_, AppState>, ski
             dialog = dialog.set_parent(&window);
         }
         let Some(picked) = dialog.blocking_pick_file() else { return Ok(None) };
-        let path = picked.into_path().map_err(|e| CommandError::invalid_input(format!("not a file on this PC: {e}")))?;
+        let path = picked.into_path().map_err(|e| CommandError::invalid_input(tr("Not a file on this PC: {error}", &[("error", &e.to_string())])))?;
         let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         skin_maker::add_own_image(&user, &id, size, || std::fs::read(&path)).map(Some)
     })

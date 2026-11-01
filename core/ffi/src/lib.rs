@@ -2185,6 +2185,49 @@ pub extern "C" fn whimbrel_memory_insert_meeting(
     json_to_c_string(format!("{{\"id\":{id}}}"))
 }
 
+/// Imports transcript files (`paths_json`, a string array) as meetings. Returns
+/// `api::import::ImportOutcome` JSON; NULL on a null handle or bad input.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_import_files(
+    handle: *mut StoreHandle,
+    device_id: *const c_char,
+    paths_json: *const c_char,
+    now_unix_ms: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(device_id) = cstr_to_string(device_id) else {
+        return ptr::null_mut();
+    };
+    let Some(paths) = cstr_to_string(paths_json).and_then(|j| serde_json::from_str::<Vec<std::path::PathBuf>>(&j).ok()) else {
+        return ptr::null_mut();
+    };
+    let store = unsafe { &(*handle).0 };
+    let outcome = api::import::import_files(store, &device_id, &paths, now_unix_ms);
+    json_to_c_string(serde_json::to_string(&outcome).unwrap_or_default())
+}
+
+/// Imports a folder of Markdown as searchable items. Returns `api::import::ImportOutcome`
+/// JSON; NULL on a null handle or bad input.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_import_markdown_folder(
+    handle: *mut StoreHandle,
+    device_id: *const c_char,
+    folder: *const c_char,
+    now_unix_ms: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let (Some(device_id), Some(folder)) = (cstr_to_string(device_id), cstr_to_string(folder)) else {
+        return ptr::null_mut();
+    };
+    let store = unsafe { &(*handle).0 };
+    let outcome = api::import::import_markdown_folder(store, &device_id, Path::new(&folder), now_unix_ms);
+    json_to_c_string(serde_json::to_string(&outcome).unwrap_or_default())
+}
+
 /// FR-CHAT-1 follow-on: inserts a batch of transcript segments for one meeting, called
 /// once after transcription completes (see `TranscriptionService.transcribeAndSummarize`
 /// on the Swift side). `segments_json` is a JSON array of

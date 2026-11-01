@@ -11,6 +11,9 @@ import type {
   TodayRecap,
 } from "../generated/types";
 import { timeLabel } from "../library/rows";
+
+/** The locale the models are given here, so times and dates read the same on every machine. */
+const LOCALE = "en-US";
 import {
   askAvailable,
   askModelLabel,
@@ -73,9 +76,9 @@ describe("shouldGenerate", () => {
 describe("briefRecapNote", () => {
   it("names the other device, or gives this PC's own run its time", () => {
     const mac = { deviceId: "MAC", label: "MacBook Pro", thisDevice: false };
-    expect(briefRecapNote({ summary: "s", ranAtUnixMs: 1, from: mac })).toBe("From MacBook Pro");
-    expect(briefRecapNote({ summary: "s", ranAtUnixMs: Date.UTC(2026, 9, 17, 12, 30), from: null })).toBe(
-      `Daily Brief, written at ${timeLabel(Date.UTC(2026, 9, 17, 12, 30))}.`,
+    expect(briefRecapNote({ summary: "s", ranAtUnixMs: 1, from: mac }, LOCALE)).toBe("From MacBook Pro");
+    expect(briefRecapNote({ summary: "s", ranAtUnixMs: Date.UTC(2026, 9, 17, 12, 30), from: null }, LOCALE)).toBe(
+      `Daily Brief, written at ${timeLabel(Date.UTC(2026, 9, 17, 12, 30), LOCALE)}.`,
     );
   });
 });
@@ -92,10 +95,10 @@ describe("recapFor", () => {
 
 describe("lines", () => {
   it("describes each device's day", () => {
-    expect(deviceLine(pc)).toBe("Nothing yet today");
+    expect(deviceLine(pc, LOCALE)).toBe("Nothing yet today");
     const mac: DeviceCount = { device: { deviceId: "M", label: "MacBook Pro", thisDevice: false }, captures: 1204, lastTsUnixMs: 1_757_613_900_000 };
-    expect(deviceLine(mac)).toBe(`1,204 captures · last ${timeLabel(1_757_613_900_000)}`);
-    expect(deviceLine({ ...mac, captures: 1 })).toMatch(/^1 capture · last /);
+    expect(deviceLine(mac, LOCALE)).toBe(`1,204 captures · last ${timeLabel(1_757_613_900_000, LOCALE)}`);
+    expect(deviceLine({ ...mac, captures: 1 }, LOCALE)).toMatch(/^1 capture · last /);
   });
 
   it("says who a thread is waiting on, and how a recap was made", () => {
@@ -124,9 +127,9 @@ describe("the next-meeting card", () => {
   };
 
   it("says when the brief was made, or why there is none", () => {
-    expect(prepStatus(brief)).toBe(`Prepared at ${timeLabel(brief.generatedAtUnixMs)}.`);
-    expect(prepStatus(null)).toMatch(/No brief yet/);
-    expect(prepStatus(undefined)).toMatch(/turned on in Automations/);
+    expect(prepStatus(brief, LOCALE)).toBe(`Prepared at ${timeLabel(brief.generatedAtUnixMs, LOCALE)}.`);
+    expect(prepStatus(null, LOCALE)).toMatch(/No brief yet/);
+    expect(prepStatus(undefined, LOCALE)).toMatch(/turned on in Automations/);
   });
 
   it("lists the sources a claim cites, in order, and skips ids the brief does not list", () => {
@@ -146,27 +149,27 @@ describe("greeting", () => {
   const at = (h: number, m = 0) => new Date(2026, 9, 6, h, m); // Tuesday 6 October 2026
 
   it("greets by the first word of the Profile name, by time of day, with the date above", () => {
-    expect(greeting("Mike Pointer", at(9))).toEqual({ kicker: "Tuesday, October 6", title: "Good morning, Mike" });
-    expect(greeting("Mike Pointer", at(13)).title).toBe("Good afternoon, Mike");
-    expect(greeting("Mike Pointer", at(19)).title).toBe("Good evening, Mike");
+    expect(greeting("Mike Pointer", at(9), LOCALE)).toEqual({ kicker: "Tuesday, October 6", title: "Good morning, Mike" });
+    expect(greeting("Mike Pointer", at(13), LOCALE).title).toBe("Good afternoon, Mike");
+    expect(greeting("Mike Pointer", at(19), LOCALE).title).toBe("Good evening, Mike");
   });
 
   it("switches at noon and at 5 pm", () => {
-    expect(greeting("Mike", at(11, 59)).title).toBe("Good morning, Mike");
-    expect(greeting("Mike", at(12, 0)).title).toBe("Good afternoon, Mike");
-    expect(greeting("Mike", at(16, 59)).title).toBe("Good afternoon, Mike");
-    expect(greeting("Mike", at(17, 0)).title).toBe("Good evening, Mike");
-    expect(greeting("Mike", at(0, 5)).title).toBe("Good morning, Mike");
+    expect(greeting("Mike", at(11, 59), LOCALE).title).toBe("Good morning, Mike");
+    expect(greeting("Mike", at(12, 0), LOCALE).title).toBe("Good afternoon, Mike");
+    expect(greeting("Mike", at(16, 59), LOCALE).title).toBe("Good afternoon, Mike");
+    expect(greeting("Mike", at(17, 0), LOCALE).title).toBe("Good evening, Mike");
+    expect(greeting("Mike", at(0, 5), LOCALE).title).toBe("Good morning, Mike");
   });
 
   it("uses a single-word name, and trims leading space", () => {
-    expect(greeting("Mike", at(9)).title).toBe("Good morning, Mike");
-    expect(greeting("   Mike   Pointer", at(9)).title).toBe("Good morning, Mike");
+    expect(greeting("Mike", at(9), LOCALE).title).toBe("Good morning, Mike");
+    expect(greeting("   Mike   Pointer", at(9), LOCALE).title).toBe("Good morning, Mike");
   });
 
   it("falls back to the weekday and date, with no extra line, for an empty, blank or email name", () => {
     for (const name of ["", "   ", "a@b.com", "Mike a@b.com"]) {
-      expect(greeting(name, at(9))).toEqual({ kicker: null, title: "Tuesday, October 6" });
+      expect(greeting(name, at(9), LOCALE)).toEqual({ kicker: null, title: "Tuesday, October 6" });
     }
   });
 });

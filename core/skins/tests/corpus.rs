@@ -122,6 +122,15 @@ fn bundled_skins_load_without_repairs() {
 }
 
 #[test]
+fn the_default_skin_loads_with_its_translated_voice() {
+    let default = load_bundled(&repo_skins()).remove(0);
+    assert_eq!(default.id, whimbrel_default().id);
+    for lang in ["de", "es", "fr", "fr-CA", "pt"] {
+        assert!(default.voice_localized.contains_key(lang), "{lang}");
+    }
+}
+
+#[test]
 fn whimbrel_json_mirrors_the_default() {
     let base = whimbrel_default();
     let (skin, repairs) = parse_skin(

@@ -22,6 +22,7 @@ use crate::error::CommandError;
 use crate::secrets::SecretStore;
 use crate::store_actor::StoreHandle;
 use crate::syncing::config::SyncConfig;
+use crate::l10n::tr;
 
 /// What a calendar write needs from the grant. Google lets a user untick a scope on the consent
 /// page, so a connected account can lack it even though Whimbrel asked.
@@ -68,11 +69,16 @@ impl Real {
         let label = if plan.connector == "google-calendar" { "Calendar" } else { "Gmail" };
         let retry = |reason: String| ToolOutcome::RetryableFailure { reason };
         let Some(node_path) = node::node_path() else {
-            return retry("Node.js wasn't found. Reinstall Whimbrel.".into());
+            return retry(tr("Node.js wasn't found. Reinstall Whimbrel.", &[]));
         };
         let script = match node::script(&self.root, &plan.connector) {
             Ok(script) => script,
-            Err(_) => return retry(format!("The {label} connector's files aren't installed. Reinstall Whimbrel, or if you build it from source run apps\\windows\\scripts\\prepare-connectors.ps1.")),
+            Err(_) => {
+                return retry(tr(
+                    "The {label} connector's files aren't installed. Reinstall Whimbrel, or if you build it from source run {script}.",
+                    &[("label", label), ("script", node::PREPARE_SCRIPT)],
+                ))
+            }
         };
         let id = match self.host.connect(
             &node_path.to_string_lossy(),
@@ -80,7 +86,7 @@ impl Real {
             &[(plan.token_env.clone(), token.to_string())],
         ) {
             Ok(id) => id,
-            Err(e) => return retry(format!("The {label} connector didn't start: {e}")),
+            Err(e) => return retry(tr("The {label} connector didn't start: {error}", &[("label", label), ("error", &e.to_string())])),
         };
         let outcome = match self.host.list_tools(id) {
             Ok(tools) if tools.iter().any(|t| t.name == plan.tool) => match self.host.call_tool(id, &plan.tool, &plan.args_json) {
@@ -91,8 +97,8 @@ impl Real {
                     ToolOutcome::TerminalFailure
                 }
             },
-            Ok(_) => retry(format!("The {label} connector doesn't offer {}.", plan.tool)),
-            Err(e) => retry(format!("The {label} connector didn't list its tools: {e}")),
+            Ok(_) => retry(tr("The {label} connector doesn't offer {tool}.", &[("label", label), ("tool", &plan.tool)])),
+            Err(e) => retry(tr("The {label} connector didn't list its tools: {error}", &[("label", label), ("error", &e.to_string())])),
         };
         let _ = self.host.disconnect(id);
         outcome
@@ -195,11 +201,14 @@ pub fn execute(store: &StoreHandle, run_id: i64, account: Option<&str>, lang: &s
         Some(token) => connectors.call(&plan, &token),
         None => ToolOutcome::NoToken,
     }));
-    let outcome = attempt.unwrap_or_else(|_| ToolOutcome::RetryableFailure { reason: "an unexpected error".into() });
+    let outcome = attempt.unwrap_or_else(|_| ToolOutcome::RetryableFailure { reason: tr("an unexpected error", &[]) });
 
     let for_settle = plan.clone();
+    let shown = outcome.clone();
     let settled = store.call_blocking(move |s| write_action::settle(s, &for_settle, &outcome))?.map_err(store_error)?;
-    Ok(Executed::Done { finalized: settled.finalized, message: settled.user_message })
+    // Core's message is English; the same line in the user's language.
+    let message = settled.user_message.map(|english| shown.user_message_in(&plan.connector, &crate::l10n::ui_language()).unwrap_or(english));
+    Ok(Executed::Done { finalized: settled.finalized, message })
 }
 
 /// After a tick: runs every pending write action whose routine is switched on **and** has

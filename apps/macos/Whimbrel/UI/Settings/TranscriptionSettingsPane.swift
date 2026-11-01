@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct TranscriptionSettingsPane: View {
+    @EnvironmentObject var appState: AppState
+    @AppStorage(TranscriptionQuality.key) private var quality = TranscriptionQuality.automatic
     @State private var modelPath: URL = TranscriptionService.modelPath
     @State private var statusMessage: String?
     @State private var segmentationModelPath: URL = DiarizationService.segmentationModelPath
@@ -16,7 +18,21 @@ struct TranscriptionSettingsPane: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             Text("Transcription").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
-            Text("Whisper.cpp GGML model used to transcribe captured meeting audio.")
+            Picker("Quality", selection: $quality) {
+                Text("Automatic").tag(TranscriptionQuality.automatic)
+                Text("Better").tag(TranscriptionQuality.better)
+                Text("Fast").tag(TranscriptionQuality.fast)
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: quality) { _, chosen in
+                if chosen == .better { Task { await appState.turboDownload.start() } }
+            }
+            Text(qualityDetail)
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+            TurboDownloadLine(download: appState.turboDownload)
+
+            Text("Whisper.cpp GGML model used to transcribe captured meeting audio. A file you choose here is used in place of the Quality setting.")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
 
@@ -75,6 +91,14 @@ struct TranscriptionSettingsPane: View {
                     .font(.whimbrelBody(.caption2))
                     .foregroundStyle(Color.whimbrelTextSecondary)
             }
+        }
+    }
+
+    private var qualityDetail: String {
+        switch quality {
+        case .automatic: return String(localized: "The best engine this computer runs well.")
+        case .better: return String(localized: "The most accurate model, a download of about 574 MB. Slower on older computers.")
+        case .fast: return String(localized: "The small model. Quickest, least accurate.")
         }
     }
 

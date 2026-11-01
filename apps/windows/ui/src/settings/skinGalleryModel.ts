@@ -1,7 +1,7 @@
 import { t } from "../l10n";
 import { DEFAULT_SELECTION, resolveSelection, type Selection, type SkinDto, type SkinPalette } from "../skin";
 import type { Mode } from "../theme";
-import { voiceText } from "../today/layoutModel";
+import { localizedVoice, voiceText } from "../today/layoutModel";
 
 /** The five colours a palette row previews, in the order the Mac draws them. */
 export const SWATCH_TOKENS = ["backgroundPage", "backgroundCard", "accentPrimary", "accentSecondary", "textPrimary"] as const;
@@ -44,7 +44,8 @@ export function lockedCaption(palette: SkinPalette): string | null {
   return palette.dark ? t("This palette is dark only, so it always uses Dark.") : t("This palette is light only, so it always uses Light.");
 }
 
-export function galleryState(skins: readonly SkinDto[], selection: Selection): Card[] {
+/** `lang` picks each skin's tagline wording (`localizedVoice`). */
+export function galleryState(skins: readonly SkinDto[], selection: Selection, lang = "en"): Card[] {
   const { dto: selectedDto, palette: selectedPalette } = resolveSelection(skins, selection);
   return orderedSkins(skins).map((dto) => {
     const selected = dto.skin.id === selectedDto.skin.id;
@@ -52,7 +53,7 @@ export function galleryState(skins: readonly SkinDto[], selection: Selection): C
     return {
       id: dto.skin.id,
       name: dto.skin.name,
-      tagline: voiceText(dto.skin.voice, "tagline"),
+      tagline: voiceText(localizedVoice(dto.skin, lang), "tagline"),
       yours: isUserSkin(dto.skin.id),
       selected,
       previewPalette,

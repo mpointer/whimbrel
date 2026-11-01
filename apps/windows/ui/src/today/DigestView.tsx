@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { todayRecap } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { TodayRecap } from "../generated/types";
+import { t } from "../l10n";
 import { recapNote } from "./todayModel";
 
 /** A recap's text, shared by Today and the Library's Digest mode. */
@@ -11,7 +12,7 @@ export function RecapBody({ recap }: { recap: TodayRecap }) {
       <p className="recap">{recap.summary}</p>
       {recap.openLoops.length > 0 && (
         <>
-          <h3 className="section-label">Still open from today</h3>
+          <h3 className="section-label">{t("Still open from today")}</h3>
           <ul className="recap-loops">
             {recap.openLoops.map((loop, i) => (
               <li key={i}>{loop}</li>
@@ -52,11 +53,11 @@ export function DigestView() {
     <div className="today stack-sm">
       <div className="field-row">
         <button className="mode mode--active" onClick={() => generate(false)} disabled={writing}>
-          {writing ? "Writing…" : "Generate today's digest"}
+          {writing ? t("Writing…") : t("Generate today's digest")}
         </button>
         {recap && !recap.emptyDay && (
           <button className="mode" onClick={() => generate(true)} disabled={writing}>
-            Regenerate
+            {t("Regenerate")}
           </button>
         )}
       </div>
@@ -66,7 +67,7 @@ export function DigestView() {
         </div>
       )}
       {recap && (
-        <section className="card" aria-label="Today's digest">
+        <section className="card" aria-label={t("Today's digest")}>
           <RecapBody recap={recap} />
         </section>
       )}

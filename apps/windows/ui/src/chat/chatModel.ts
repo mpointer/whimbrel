@@ -1,4 +1,5 @@
 import { describeError } from "../errors";
+import { t } from "../l10n";
 import type { ChatEvent, ChatSpend, ContextEntry, ContextItemRef, ExchangeView } from "../generated/types";
 
 export type TurnStatus = "starting" | "streaming" | "blocking" | "done" | "failed" | "cancelled";
@@ -86,19 +87,22 @@ export function citedEntries(citations: ContextItemRef[], context: ContextEntry[
 }
 
 export function spendLine(spend: ChatSpend): string {
-  return spend.capCents == null ? `${spend.userCents}¢ today · no cap` : `${spend.userCents}¢ / ${spend.capCents}¢ today`;
+  return spend.capCents == null
+    ? t("{used}¢ today · no cap", { used: String(spend.userCents) })
+    : t("{used}¢ / {cap}¢ today", { used: String(spend.userCents), cap: String(spend.capCents) });
 }
 
 /** The small line under an answer that isn't finished yet. */
 export function statusLine(turn: Turn): string | null {
-  const model = turn.model ?? "the model";
+  const model = turn.model;
   switch (turn.status) {
     case "starting":
-      return "Finding context…";
+      return t("Finding context…");
     case "blocking":
-      return `Asking ${model}…`;
+      return model ? t("Asking {model}…", { model }) : t("Asking the model…");
     case "streaming":
-      return turn.text ? turn.progress : (turn.progress ?? `Connecting to ${model}…`);
+      if (turn.text || turn.progress) return turn.progress;
+      return model ? t("Connecting to {model}…", { model }) : t("Connecting to the model…");
     default:
       return null;
   }

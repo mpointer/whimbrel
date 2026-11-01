@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { meetingRecordStop, popupOpenMain, popupQuit, setCaptureEnabled, trayStatus } from "../api";
 import { elapsedLabel } from "../meetings/recordingModel";
 import type { TrayStatus } from "../generated/types";
+import { useL10n } from "../l10n";
 
 /** The tray's quick-glance popup (plan Task 10), with a running meeting recording (M3.3). */
 export function PopupView() {
+  const { t } = useL10n();
   const [status, setStatus] = useState<TrayStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -40,30 +42,30 @@ export function PopupView() {
 
   return (
     <div className="popup">
-      <span className="popup-brand">Whimbrel</span>
+      <span className="popup-brand">{"Whimbrel"}</span>
       <p className="popup-status" role="status">
-        {status?.line ?? "Loading…"}
+        {status?.line ?? t("Loading…")}
       </p>
       {recordingSince != null && (
         <div className="popup-recording">
           <span role="status" className="recording-line">
-            <span className="recording-dot" aria-hidden="true" /> Recording · {elapsedLabel(recordingSince, now)}
+            <span className="recording-dot" aria-hidden="true" /> {t("Recording · {time}", { time: elapsedLabel(recordingSince, now) })}
           </span>
           <button className="mode" onClick={stopRecording} disabled={busy}>
-            Stop
+            {t("Stop")}
           </button>
         </div>
       )}
       <label className="toggle">
         <input type="checkbox" checked={status?.captureEnabled ?? false} disabled={!status || busy} onChange={toggle} />
-        Capture screen text
+        {t("Capture screen text")}
       </label>
       <div className="popup-actions">
         <button className="mode mode--active" onClick={() => void popupOpenMain()}>
-          Open Whimbrel
+          {t("Open Whimbrel")}
         </button>
         <button className="mode" onClick={() => void popupQuit()}>
-          Quit
+          {t("Quit")}
         </button>
       </div>
     </div>

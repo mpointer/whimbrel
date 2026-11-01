@@ -2,16 +2,28 @@ import { useCallback, useEffect, useState } from "react";
 import { meetingList } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { MeetingRow } from "../generated/types";
+import { t, useL10n } from "../l10n";
 import { DeviceChip } from "../library/LibraryView";
 import { spanLabel } from "../library/rows";
 import { RecordingCard } from "./RecordingCard";
+import { meetingTitleLabel } from "./sentinels";
 import { Workspace } from "./Workspace";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
 }
 
-const TRIGGER_LABEL: Record<string, string> = { calendar: "Calendar", detected: "Detected", manual: "Recorded" };
+/** How the meeting started, for its row; anything else (Away Mode's "away") reads as recorded. */
+function triggerLabel(trigger: string | null | undefined): string {
+  switch (trigger) {
+    case "calendar":
+      return t("Calendar");
+    case "detected":
+      return t("Detected");
+    default:
+      return t("Recorded");
+  }
+}
 
 /** The Meetings tab: record, the meeting list, and the selected meeting's workspace. */
 export function MeetingsView() {
@@ -19,6 +31,7 @@ export function MeetingsView() {
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { locale } = useL10n();
 
   const load = useCallback(
     (search: string) =>
@@ -43,16 +56,16 @@ export function MeetingsView() {
       <RecordingCard onChanged={() => load(filter)} />
       {error && <p role="alert">{error}</p>}
       <div className="meetings">
-        <section className="card meeting-list" aria-label="Meetings">
+        <section className="card meeting-list" aria-label={t("Meetings")}>
           <input
             className="input"
             type="search"
-            placeholder="Search meetings"
+            placeholder={t("Search meetings")}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
           {rows.length === 0 ? (
-            <p className="muted">No meetings yet. Record one, and it appears here.</p>
+            <p className="muted">{t("No meetings yet. Record one, and it appears here.")}</p>
           ) : (
             <ul className="rows">
               {rows.map((row) => (
@@ -62,11 +75,11 @@ export function MeetingsView() {
                     onClick={() => setSelected(row.id)}
                     aria-current={row.id === selected}
                   >
-                    <span className="row-title">{row.title}</span>
+                    <span className="row-title">{meetingTitleLabel(row.title)}</span>
                     <span className="row-meta">
-                      {spanLabel(row.tsUnixMs, row.endUnixMs)} · {TRIGGER_LABEL[row.trigger ?? "manual"] ?? "Recorded"}
-                      {row.status === "recording" ? " · Recording" : ""}
-                      {!row.hasSummary && row.status === "completed" ? " · No summary yet" : ""}
+                      {spanLabel(row.tsUnixMs, row.endUnixMs, { locale })} · {triggerLabel(row.trigger)}
+                      {row.status === "recording" ? ` · ${t("Recording")}` : ""}
+                      {!row.hasSummary && row.status === "completed" ? ` · ${t("No summary yet")}` : ""}
                     </span>
                     <DeviceChip device={row.device} />
                   </button>
@@ -77,7 +90,7 @@ export function MeetingsView() {
         </section>
         <div className="meeting-workspace">
           {selected == null ? (
-            <section className="card empty-state">Select a meeting to see its notes, summary and transcript.</section>
+            <section className="card empty-state">{t("Select a meeting to see its notes, summary and transcript.")}</section>
           ) : (
             <Workspace meetingId={selected} onChanged={() => load(filter)} />
           )}

@@ -1,0 +1,62 @@
+<form class="register card" id="register-form" action="/api/register" method="post" novalidate data-turnstile-sitekey="{{site.turnstileSiteKey}}">
+  <div class="form-alert" role="alert" hidden></div>
+  <div class="field-row">
+    <div class="field">
+      <label for="reg-name">Nombre completo</label>
+      <input id="reg-name" name="name" type="text" autocomplete="name" required maxlength="100">
+      <p class="field-error" data-for="name"></p>
+    </div>
+    <div class="field">
+      <label for="reg-email">Correo del trabajo</label>
+      <input id="reg-email" name="email" type="email" autocomplete="email" required maxlength="254" inputmode="email">
+      <p class="field-error" data-for="email"></p>
+    </div>
+  </div>
+  <div class="field-row">
+    <div class="field">
+      <label for="reg-company">Empresa <span class="optional">(opcional)</span></label>
+      <input id="reg-company" name="company" type="text" autocomplete="organization" maxlength="200">
+    </div>
+    <div class="field">
+      <label for="reg-role">Tu puesto <span class="optional">(opcional)</span></label>
+      <select id="reg-role" name="role">
+        <option value="">Elige una opción</option>
+        <option value="executive">Ejecutivo</option>
+        <option value="manager">Gerente / líder de equipo</option>
+        <option value="individual-contributor">Colaborador individual</option>
+        <option value="engineer">Ingeniero / desarrollador</option>
+        <option value="sales">Ventas / atención al cliente</option>
+        <option value="consultant">Consultor / agencia</option>
+        <option value="founder">Fundador</option>
+        <option value="other">Otro</option>
+      </select>
+    </div>
+  </div>
+  <div class="field-row">
+    <fieldset class="field platform-choice">
+      <legend>Descargar para</legend>
+      <label class="choice"><input type="radio" name="platform" value="mac" required> <span>Mac <small>Apple silicon</small></span></label>
+      <label class="choice"><input type="radio" name="platform" value="windows"> <span>Windows <small>64 bits</small></span></label>
+      <p class="field-error" data-for="platform"></p>
+    </fieldset>
+    <div class="field">
+      <label for="reg-team">Tamaño del equipo <span class="optional">(opcional)</span></label>
+      <select id="reg-team" name="teamSize">
+        <option value="">Elige una opción</option>
+        <option value="1">Solo yo</option>
+        <option value="2-10">2–10</option>
+        <option value="11-50">11–50</option>
+        <option value="51-200">51–200</option>
+        <option value="201-1000">201–1,000</option>
+        <option value="1000+">1,000+</option>
+      </select>
+    </div>
+  </div>
+  <label class="checkbox"><input type="checkbox" name="marketingOptIn" value="true"> Envíame por correo las notas de versión y las novedades del producto. Cancela la suscripción cuando quieras.</label>
+  <div class="hp" aria-hidden="true"><label for="reg-hp">Deja este campo vacío</label><input id="reg-hp" name="whimbrel_hp" type="text" tabindex="-1" autocomplete="off"></div>
+  <input type="hidden" name="utm_source"><input type="hidden" name="utm_medium"><input type="hidden" name="utm_campaign">
+  <input type="hidden" name="referrer"><input type="hidden" name="landing_page">
+  <div class="turnstile"></div>
+  <button class="btn btn-primary btn-lg btn-block" type="submit">Registrarme y descargar</button>
+  <p class="fine muted">Gratis y de código abierto. Usamos tus datos para enviarte la descarga y, si lo aceptas, novedades del producto. Consulta nuestra <a href="/privacy/">política de privacidad</a>.</p>
+</form>

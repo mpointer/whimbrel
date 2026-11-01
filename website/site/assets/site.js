@@ -83,6 +83,29 @@
     setTimeout(function () { location.href = "/api/download/" + platform; }, 900);
   }
 
+  // The form's messages on the translated sites (site/pages/es, site/pages/fr).
+  var lang = document.documentElement.lang;
+  var localePrefix = lang === "es" ? "/es" : lang === "fr-CA" ? "/fr" : "";
+  var messages = {
+    es: {
+      "Enter your name.": "Escribe tu nombre.",
+      "Enter a valid email address.": "Escribe un correo electrónico válido.",
+      "Choose Mac or Windows.": "Elige Mac o Windows.",
+      "Registering…": "Registrando…",
+      "Something went wrong. Please try again.": "Algo salió mal. Inténtalo de nuevo.",
+      "Network error. Check your connection and try again.": "Error de red. Revisa tu conexión e inténtalo de nuevo.",
+    },
+    "fr-CA": {
+      "Enter your name.": "Entrez votre nom.",
+      "Enter a valid email address.": "Entrez une adresse courriel valide.",
+      "Choose Mac or Windows.": "Choisissez Mac ou Windows.",
+      "Registering…": "Inscription…",
+      "Something went wrong. Please try again.": "Une erreur s’est produite. Veuillez réessayer.",
+      "Network error. Check your connection and try again.": "Erreur réseau. Vérifiez votre connexion et réessayez.",
+    },
+  };
+  function text(s) { return (messages[lang] && messages[lang][s]) || s; }
+
   var form = document.getElementById("register-form");
   if (!form) return;
 
@@ -131,9 +154,9 @@
 
   function validate(data) {
     var errors = {};
-    if (!String(data.name || "").trim()) errors.name = "Enter your name.";
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(data.email || "").trim())) errors.email = "Enter a valid email address.";
-    if (data.platform !== "mac" && data.platform !== "windows") errors.platform = "Choose Mac or Windows.";
+    if (!String(data.name || "").trim()) errors.name = text("Enter your name.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(data.email || "").trim())) errors.email = text("Enter a valid email address.");
+    if (data.platform !== "mac" && data.platform !== "windows") errors.platform = text("Choose Mac or Windows.");
     return errors;
   }
 
@@ -148,7 +171,7 @@
     var button = form.querySelector('button[type="submit"]');
     var label = button.textContent;
     button.setAttribute("aria-busy", "true");
-    button.textContent = "Registering…";
+    button.textContent = text("Registering…");
 
     fetch("/api/register", {
       method: "POST",
@@ -156,17 +179,17 @@
       body: JSON.stringify(data),
       credentials: "same-origin",
     })
-      .then(function (r) { return r.json().catch(function () { return { ok: false, errors: { form: "Something went wrong. Please try again." } }; }); })
+      .then(function (r) { return r.json().catch(function () { return { ok: false, errors: { form: text("Something went wrong. Please try again.") } }; }); })
       .then(function (res) {
         if (res.ok) {
           if (window.gtag) window.gtag("event", "generate_lead", { platform: data.platform });
-          location.href = res.next;
+          location.href = localePrefix + res.next;
           return;
         }
-        showErrors(res.errors || { form: "Something went wrong. Please try again." });
+        showErrors(res.errors || { form: text("Something went wrong. Please try again.") });
         if (window.turnstile) window.turnstile.reset();
       })
-      .catch(function () { showErrors({ form: "Network error. Check your connection and try again." }); })
+      .catch(function () { showErrors({ form: text("Network error. Check your connection and try again.") }); })
       .finally(function () {
         button.removeAttribute("aria-busy");
         button.textContent = label;

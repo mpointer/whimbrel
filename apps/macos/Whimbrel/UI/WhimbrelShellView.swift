@@ -42,7 +42,7 @@ struct WhimbrelShellView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
-    @State private var showModelSetup = false
+    @State private var showFirstRun = false
     @State private var showActiveRecordingWarning = false
     // "Later" just hides this banner instance for the version currently staged.
     // updateReadyBanner's `update.version != dismissedUpdateVersion` check below
@@ -121,25 +121,23 @@ struct WhimbrelShellView: View {
             // too so the meeting-alert panel's "Start Recording & Open Timeline" action
             // works from app launch, same target window either way.
             appState.openTimeline = { openWindow(id: "timeline") }
-            // Same first-run model-download prompt `TimelineView.onAppear` presents,
-            // replicated here since Today (not Library) is now the default landing tab —
-            // Today's own "Start note" CTA otherwise invites recording before required
-            // local models exist. `TimelineView`'s own copy is untouched and stays
-            // idempotent alongside this one: `allModelsPresent` reflects real file
-            // presence, so once either sheet completes setup, the other's check simply
-            // no-ops if it later runs too.
-            if !ModelDownloadService.allModelsPresent {
-                // Same next-run-loop-turn deferral `TimelineView` uses — setting this
-                // @State synchronously inside .onAppear can silently fail to present the
-                // sheet on macOS because the view isn't yet fully attached to its window
-                // hierarchy at that exact point in the lifecycle.
-                DispatchQueue.main.async {
-                    showModelSetup = true
-                }
-            }
+            showFirstRun = FirstRun.shouldShow(
+                done: UserDefaults.standard.bool(forKey: FirstRun.doneKey),
+                microphoneGranted: appState.permissions.microphoneGranted,
+                screenGranted: appState.permissions.screenRecordingGranted)
+            if !KeychainAccess.isTestHost {
+                TranscriptionQuality.migrate(modelExists: FileManager.default.fileExists(atPath: TranscriptionService.modelPath.path))
+                Task {
+                    await appState.modelBootstrap.start()
+                    DispatchQueue.global(qos: .utility).async { EngineBenchmark.runIfNeeded() }
+                } }
         }
-        .sheet(isPresented: $showModelSetup) {
-            ModelSetupView()
+        .sheet(isPresented: $showFirstRun) {
+            FirstRunView {
+                UserDefaults.standard.set(true, forKey: FirstRun.doneKey)
+                showFirstRun = false
+            }
+            .environmentObject(appState.permissions)
         }
     }
 
@@ -147,6 +145,7 @@ struct WhimbrelShellView: View {
     private var sidebarFooter: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             Divider().overlay(Color.whimbrelBorder)
+            ModelStatusLine(bootstrap: appState.modelBootstrap)
             HStack(spacing: Spacing.sm) {
                 DeviceChip(deviceId: appState.deviceId)
                 Text(syncLabel)
@@ -237,5 +236,36 @@ private struct HideWindowTitle: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async { view.window?.titleVisibility = .hidden }
+    }
+}
+
+/// Sidebar footer: what the background model download is doing. Nothing once it's done.
+private struct ModelStatusLine: View {
+    @ObservedObject var bootstrap: ModelBootstrap
+
+    var body: some View {
+        switch bootstrap.phase {
+        case .idle, .ready:
+            EmptyView()
+        case .downloading(let fraction, _):
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                ProgressView(value: fraction)
+                Text("Downloading models. Keyword search works now; search by meaning starts when this finishes.")
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, Spacing.md)
+        case .failed:
+            HStack(spacing: Spacing.sm) {
+                Text("Couldn't download models.")
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                Button("Try Again") { Task { await bootstrap.start() } }
+                    .font(.whimbrelBody(.caption2))
+                    .buttonStyle(.link)
+            }
+            .padding(.horizontal, Spacing.md)
+        }
     }
 }

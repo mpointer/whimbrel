@@ -9,6 +9,7 @@ use tauri::State;
 use crate::error::CommandError;
 use crate::secrets::{accounts, SecretStore, APP_SERVICE};
 use crate::settings::{keys, PromptSurface, Provider, RoutingSettings};
+use crate::l10n::tr;
 use crate::state::AppState;
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
@@ -160,15 +161,19 @@ fn usage_view(totals: api::usage::UsageTotals) -> UsageView {
     }
 }
 
-fn key_check_view(check: api::hosted_models::KeyCheck) -> (KeyCheckView, Vec<api::hosted_models::OpenRouterModel>) {
+fn key_check_view(check: api::hosted_models::KeyCheck, provider: Provider) -> (KeyCheckView, Vec<api::hosted_models::OpenRouterModel>) {
     use api::hosted_models::KeyCheck;
+    // Core renders Refused and Unreachable in English; the same lines in the user's language.
+    let localized = check.user_message_in(hosted(provider), &crate::l10n::ui_language());
     match check {
         KeyCheck::Valid { models, prices } => {
-            let message = format!("Saved. {} model{} available.", models.len(), if models.len() == 1 { "" } else { "s" });
+            let message = tr("Saved. {count} models available.", &[("count", &models.len().to_string())]);
             (KeyCheckView { status: KeyCheckStatus::Valid, message, models }, prices)
         }
-        KeyCheck::Refused { message } => (KeyCheckView { status: KeyCheckStatus::Refused, message, models: vec![] }, vec![]),
-        KeyCheck::Unreachable { message } => (KeyCheckView { status: KeyCheckStatus::Unreachable, message, models: vec![] }, vec![]),
+        KeyCheck::Refused { message } => (KeyCheckView { status: KeyCheckStatus::Refused, message: localized.unwrap_or(message), models: vec![] }, vec![]),
+        KeyCheck::Unreachable { message } => {
+            (KeyCheckView { status: KeyCheckStatus::Unreachable, message: localized.unwrap_or(message), models: vec![] }, vec![])
+        }
         KeyCheck::Other { message } => (KeyCheckView { status: KeyCheckStatus::Other, message, models: vec![] }, vec![]),
     }
 }
@@ -206,7 +211,7 @@ fn hosted(provider: Provider) -> api::hosted_models::HostedProvider {
 
 /// Saves `key` for a hosted provider, or removes it when `None` or blank.
 fn save_api_key(secrets: &dyn SecretStore, provider: Provider, key: Option<&str>) -> Result<Vec<ProviderKey>, CommandError> {
-    let account = key_account(provider).ok_or_else(|| CommandError::invalid_input("Ollama doesn't use an API key."))?;
+    let account = key_account(provider).ok_or_else(|| CommandError::invalid_input(tr("Ollama doesn't use an API key.", &[])))?;
     match key.map(str::trim).filter(|k| !k.is_empty()) {
         Some(k) => secrets.set_string(APP_SERVICE, account, k)?,
         None => secrets.delete(APP_SERVICE, account)?,
@@ -250,19 +255,19 @@ pub async fn ai_settings(state: State<'_, AppState>) -> Result<AiSettings, Comma
 /// key also refreshes the cached prices core bills from.
 #[tauri::command]
 pub async fn key_check(state: State<'_, AppState>, provider: Provider) -> Result<KeyCheckView, CommandError> {
-    let account = key_account(provider).ok_or_else(|| CommandError::invalid_input("Ollama doesn't use an API key."))?;
+    let account = key_account(provider).ok_or_else(|| CommandError::invalid_input(tr("Ollama doesn't use an API key.", &[])))?;
     let key = state
         .secrets
         .get_string(APP_SERVICE, account)?
-        .ok_or_else(|| CommandError::not_configured(format!("Add a {} API key first.", provider.as_str())))?;
+        .ok_or_else(|| CommandError::not_configured(tr("Add a {provider} API key first.", &[("provider", provider.as_str())])))?;
     let check = tokio::task::spawn_blocking(move || api::hosted_models::validate_key(hosted(provider), &key, None))
         .await
         .map_err(|e| CommandError::network(e.to_string()))?;
-    let (view, prices) = key_check_view(check);
+    let (view, prices) = key_check_view(check, provider);
     if provider == Provider::Openrouter && !prices.is_empty() {
         let mut settings = state.settings.lock().unwrap();
         settings.set_openrouter_prices(&prices.into_iter().map(|m| (m.id, (m.in_cents_per_1k, m.out_cents_per_1k))).collect());
-        settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))?;
+        settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
     Ok(view)
 }
@@ -285,7 +290,7 @@ pub fn external_url_allowed(url: &str) -> bool {
 #[tauri::command]
 pub fn open_external(url: String) -> Result<(), CommandError> {
     if !external_url_allowed(&url) {
-        return Err(CommandError::invalid_input("That page is not one Whimbrel opens."));
+        return Err(CommandError::invalid_input(tr("That page is not one Whimbrel opens.", &[])));
     }
     crate::syncing::controller::open_in_browser(&url).map_err(CommandError::invalid_input)
 }
@@ -317,7 +322,7 @@ pub fn set_summary_instructions(state: State<'_, AppState>, text: String) -> Res
     let mut settings = state.settings.lock().unwrap();
     let text = text.trim();
     settings.set(keys::SUMMARY_CUSTOM_PROMPT, (!text.is_empty()).then_some(text));
-    settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))
+    settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))
 }
 
 /// Saves or (with `None` / blank) removes a hosted provider's key.
@@ -345,7 +350,7 @@ fn save_image_search_key(secrets: &dyn SecretStore, key: Option<&str>) -> Result
 pub fn set_prompt(state: State<'_, AppState>, surface: PromptSurface, text: String) -> Result<(), CommandError> {
     let mut settings = state.settings.lock().unwrap();
     settings.set_prompt(surface, &text);
-    settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))
+    settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))
 }
 
 /// The provider's model list (a network call; Ollama is asked on localhost).
@@ -355,7 +360,7 @@ pub async fn provider_models(state: State<'_, AppState>, provider: Provider) -> 
         Some(account) => state
             .secrets
             .get_string(APP_SERVICE, account)?
-            .ok_or_else(|| CommandError::not_configured(format!("Add a {} API key first.", provider.as_str())))?,
+            .ok_or_else(|| CommandError::not_configured(tr("Add a {provider} API key first.", &[("provider", provider.as_str())])))?,
         None => String::new(),
     };
     tokio::task::spawn_blocking(move || api::hosted_models::fetch_models(hosted(provider), &key, None))
@@ -446,17 +451,18 @@ mod tests {
     #[test]
     fn key_checks_map_to_their_status_and_line() {
         use api::hosted_models::{KeyCheck, OpenRouterModel};
-        let (view, prices) = key_check_view(KeyCheck::Valid { models: vec!["a".into()], prices: vec![] });
+        let (view, prices) = key_check_view(KeyCheck::Valid { models: vec!["a".into()], prices: vec![] }, Provider::Openai);
         assert_eq!((view.status, view.message.as_str(), prices.len()), (KeyCheckStatus::Valid, "Saved. 1 model available.", 0));
         let (view, prices) = key_check_view(KeyCheck::Valid {
             models: vec!["v/m".into(), "v/n".into()],
             prices: vec![OpenRouterModel { id: "v/m".into(), in_cents_per_1k: 0.1, out_cents_per_1k: 0.5 }],
-        });
+        }, Provider::Openrouter);
         assert_eq!(view.message, "Saved. 2 models available.");
         assert_eq!(prices[0].id, "v/m");
-        let (view, _) = key_check_view(KeyCheck::Refused { message: "no".into() });
-        assert_eq!((view.status, view.message.as_str()), (KeyCheckStatus::Refused, "no"));
-        let (view, _) = key_check_view(KeyCheck::Unreachable { message: "offline".into() });
+        // Core's line in the shell's language (English in tests), not the variant's text.
+        let (view, _) = key_check_view(KeyCheck::Refused { message: "no".into() }, Provider::Anthropic);
+        assert_eq!((view.status, view.message.as_str()), (KeyCheckStatus::Refused, "Anthropic refused this key. Check it on Anthropic's key page."));
+        let (view, _) = key_check_view(KeyCheck::Unreachable { message: "offline".into() }, Provider::Google);
         assert_eq!(view.status, KeyCheckStatus::Unreachable);
         assert_eq!(key_format_hint(Provider::Google, "sk-abc".into()).unwrap(), "This doesn't look like a Google Gemini key. Keys from Google Gemini start with \"AIza\".");
         assert_eq!(key_format_hint(Provider::Google, "AIza-abc".into()), None);

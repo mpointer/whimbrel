@@ -1,15 +1,16 @@
 # Whimbrel
 
-An ambient desktop assistant that builds a persistent, private memory of your work, and acts on it.
+An ambient desktop assistant that remembers your work, briefs you on it, drafts what comes next, and asks before it acts.
 
-It combines four capabilities that today live in separate products:
+It combines three capabilities that today live in separate products:
 
 1. **Bot-free meeting capture** (like [Granola](https://granola.ai)) — records system audio + microphone on your machine, no bot joins the call. Works with Zoom, Teams, Google Meet, Slack huddles, and in-person conversations. Triggered by calendar entries *and* by detecting meeting audio.
 2. **Always-on screen context** (like [Littlebird](https://littlebird.ai)) — reads the text of your active window (not screenshots) to build a searchable timeline of everything you worked on.
-3. **Agentic desktop automation** (like [Hermes Agent](https://hermes-agent.org) and [OpenClaw](https://openclaw.ai)) — planned, not built. Today `core/agent` defines approval-gated write actions for routines (create a calendar event, send an email). The computer-use driver, guardrails, audit log and skill format are milestone M2.3 in [docs/05-roadmap.md](docs/05-roadmap.md) and have not started.
-4. **Routines + MCP tool suite** — cron-scheduled, proactive briefings and automations (daily brief, end-of-day digest, inbox triage) over a generic MCP host. Connectors that ship today: Outlook 365, Gmail and Google Calendar (`mcp-servers/`). Slack, Linear, Todoist and Google Drive are on the list, not in the tree.
+3. **Routines + MCP tool suite** — cron-scheduled, proactive briefings and automations (daily brief, end-of-day digest, inbox triage) over a generic MCP host. Connectors that ship today: Outlook 365, Gmail and Google Calendar (`mcp-servers/`). Slack, Linear, Todoist and Google Drive are on the list, not in the tree. A routine can draft an email or a calendar event, and nothing goes out until you approve it.
 
 All of it aggregates **across devices and app instances** — Macs and Windows PCs today, phones next — into one consolidated, end-to-end-encrypted picture of your activity, meetings, and tasks.
+
+**Planned, not built:** desktop automation with guardrails (like [Hermes Agent](https://hermes-agent.org) and [OpenClaw](https://openclaw.ai)). The computer-use driver, audit log and skill format are milestone M2.3 in [docs/05-roadmap.md](docs/05-roadmap.md) and have not started.
 
 ## Platform strategy
 
@@ -35,6 +36,8 @@ All of it aggregates **across devices and app instances** — Macs and Windows P
 | [12 – Windows Desktop Client](docs/12-windows-app-design.md) | Phase 3 design: Tauri/Rust shell, UIA + WASAPI capture layer, the core consolidation it depends on |
 | [14 – Pricing Proposal](docs/14-pricing-proposal.md) | Proposed tiers vs. Granola and Littlebird, AI cost model, what billing needs built first |
 | [15 – Mobile App Design](docs/15-mobile-app-design.md) | Phone app vs. Littlebird's and Granola's: brief, ask, approve, record; phone as a sync peer, push, approvals, milestones |
+| [16 – Open Source and What People Pay For](docs/16-open-core-commercial-model.md) | The commercial model: everything local is free; Cloud and Team are the paid lines; decisions of 2026-10-29 |
+| [17 – Competitive Gaps, Roadmap, Monetization](docs/17-competitive-gaps-roadmap-monetization.md) | Gaps against Granola, Littlebird, Obsidian and the field at 2026-10-31; three adoption releases before billing; Cloud as a hosted routine runner |
 | [Self-hosting](docs/self-hosting.md) | Running the sync relay and the update feed under your own Cloudflare, Turso and Google accounts |
 
 The design plans and specs these documents refer to (`docs/superpowers/`) stay in the

@@ -1,0 +1,86 @@
+<!--
+{
+  "title": "IA de código abierto: notas de reuniones y memoria",
+  "description": "Whimbrel es de código abierto (Apache 2.0). Todo es gratis, corre en tu computadora con tus modelos y puedes alojar tu propio relay de sincronización.",
+  "priority": 0.8,
+  "crumbs": [
+    {
+      "name": "Código abierto",
+      "path": "/open-source/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "¿Dónde está el código fuente?",
+      "a": "Whimbrel tiene licencia Apache 2.0. El repositorio público se abre con la primera versión con el nombre Whimbrel, y esta página tendrá el enlace cuando eso ocurra."
+    },
+    {
+      "q": "¿Puedo usar Whimbrel sin ninguno de sus servidores?",
+      "a": "Sí. La captura, la transcripción, la memoria, la búsqueda, el chat y los Routines funcionan en tu computadora, con modelos locales o tu propia clave de IA. La sincronización entre dispositivos pasa por un relay pequeño que puedes ejecutar en tu propia cuenta de Cloudflare; la guía lo explica paso a paso."
+    },
+    {
+      "q": "¿La app envía telemetría?",
+      "a": "No. La app no tiene analíticas ni telemetría. Lo único que ven nuestros servidores es la comprobación de actualizaciones (cuál es la versión vigente) y, si usas nuestro relay alojado, tu cuenta y la lista de dispositivos. El contenido sincronizado está cifrado de extremo a extremo, así que el relay nunca lo ve."
+    },
+    {
+      "q": "¿Cómo ganan dinero?",
+      "a": "Con lo que requiere un servidor que operamos nosotros o una persona al otro lado: un plan Cloud previsto (nuestro relay para cualquier cantidad de dispositivos, copias de seguridad, notificaciones push a tu teléfono), planes Team previstos y contratos de soporte para empresas que alojan por su cuenta. Nunca revendiendo uso de IA."
+    },
+    {
+      "q": "¿Hay una alternativa de código abierto a Granola?",
+      "a": "Whimbrel es una: toma notas de reuniones sin un bot como el de Granola, suma una memoria con búsqueda de tu pantalla y Routines, mantiene tus datos en tu computadora y es de código abierto. Consulta <a href=\"/compare/granola-alternative/\">Whimbrel vs Granola</a>."
+    }
+  ],
+  "sourceHash": "34f8aeb0e012"
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow">
+    <p class="eyebrow">Código abierto</p>
+    <h1>Un asistente de IA que puedes leer, ejecutar y conservar.</h1>
+    <p class="lede">Un asistente que recuerda tu trabajo debería ser uno que puedas inspeccionar. Whimbrel es de código abierto con licencia Apache 2.0, todas sus funciones son gratis y nada de él requiere nuestros servidores.</p>
+  </div>
+</section>
+
+<section>
+  <div class="narrow prose">
+    <h2>Qué es abierto</h2>
+    <p>Todo: las apps para Mac y Windows, el núcleo compartido que se encarga de la captura, la transcripción, la memoria, la búsqueda y el chat, los Routines y los conectores, el servidor MCP, el relay de sincronización y el canal de actualizaciones. No hay una "edición comunitaria" con funciones reservadas para una versión de pago.</p>
+    <p>El repositorio público se abre con la primera versión con el nombre Whimbrel. Esta página tendrá el enlace cuando eso ocurra.</p>
+
+    <h2>Tus modelos, tu factura</h2>
+    <p>Ejecuta modelos en tu propia computadora con Ollama, o usa una clave de Anthropic, OpenAI, Google Gemini u OpenRouter y paga directamente a ese proveedor. Por defecto, las tareas pequeñas van al modelo más económico que tengas, y la app muestra cuánto costó cada llamada. Whimbrel no tiene un modelo alojado y nunca revende uso de IA, en ningún plan. Los equipos podrán dar una sola clave de la organización a cada usuario; sigue siendo la clave propia de la organización.</p>
+
+    <h2>Ejecuta tu propio relay</h2>
+    <p>La sincronización entre tus dispositivos está cifrada de extremo a extremo y pasa por un relay pequeño: un Cloudflare Worker, más una base de datos de Turso por cuenta. Puedes usar el relay que alojamos nosotros, que sincroniza gratis una computadora y un teléfono, o ejecutar el tuyo en tu cuenta de Cloudflare, sin límite de dispositivos. Los planes gratuitos de Cloudflare y Turso bastan para uso personal. La guía de autoalojamiento viene en el repositorio.</p>
+
+    <h2>Por qué cobraremos</h2>
+    <p>Solo por lo que necesita un servidor que alguien opera, o a una persona al otro lado:</p>
+    <ul>
+      <li><strong>Cloud</strong> (previsto): nuestro relay para cualquier cantidad de dispositivos, copias de seguridad diarias, notificaciones push a tu teléfono y Routines que siguen funcionando mientras tu laptop está cerrada.</li>
+      <li><strong>Team</strong> (previsto): memoria de reuniones compartida con el consentimiento de quien las capturó, Routines que pasan trabajo a un compañero y una sola factura.</li>
+      <li><strong>Soporte</strong>: una persona responsable de tu implementación autoalojada.</li>
+    </ul>
+    <p>Por ahora no se vende nada. Consulta los <a href="/pricing/">precios</a> para ver lo que está previsto.</p>
+
+    <h2>Nuestros compromisos</h2>
+    <ul>
+      <li>Todo lo que se ejecuta en tu dispositivo se queda en la app abierta y gratuita.</li>
+      <li>Nunca revendemos ni encarecemos el uso de IA.</li>
+      <li>La app no incluye telemetría.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="section-alt" id="faq">
+  <div class="narrow">
+    <div class="section-head center">
+      <h2>Preguntas sobre el código abierto</h2>
+    </div>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

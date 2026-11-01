@@ -1,0 +1,241 @@
+<!--
+{
+  "title": "Whimbrel – Notes de réunion et mémoire de travail par IA",
+  "description": "Whimbrel enregistre vos réunions sans robot, retient votre travail et répond à vos questions. IA de bureau privée pour Mac et Windows. Essai gratuit.",
+  "schema": [
+    "organization",
+    "website",
+    "software",
+    "video"
+  ],
+  "priority": 1.0,
+  "faq": [
+    {
+      "q": "Whimbrel est-elle l’application qui s’appelait Kestrel?",
+      "a": "Oui. Kestrel a été renommée Whimbrel en octobre 2026. Les copies installées se mettent à jour d’elles-mêmes avec le nouveau nom, et vos réunions, vos notes, vos paramètres et votre synchronisation restent exactement tels quels."
+    },
+    {
+      "q": "Un robot se joint-il à mes réunions?",
+      "a": "Non. Whimbrel enregistre l’audio du système et votre microphone directement sur votre ordinateur. Rien ne se joint à l’appel, et les autres participants ne voient aucun invité de plus. Elle fonctionne avec Zoom, Microsoft Teams, Google Meet, les huddles Slack et les conversations en personne."
+    },
+    {
+      "q": "Où mes données sont-elles stockées?",
+      "a": "Sur votre propre ordinateur, dans une base de données locale. Si vous activez la synchronisation entre vos appareils, les données sont chiffrées de bout en bout avant de quitter la machine; le service de synchronisation ne stocke donc que du texte chiffré. Consultez la <a href=\"/privacy/\">page sur la confidentialité</a> pour savoir ce que recueille le site Web lui-même."
+    },
+    {
+      "q": "Quels modèles d’IA Whimbrel utilise-t-elle?",
+      "a": "Ceux de votre choix. Exécutez des modèles entièrement sur votre machine avec Ollama, ou utilisez votre propre clé d’API Anthropic, OpenAI, Google Gemini ou OpenRouter. Par défaut, les petites tâches sont confiées au modèle le moins cher dont vous disposez; la plupart des gens dépensent donc moins de 1 $ par mois en modèles hébergés, ou rien avec un modèle local. Le routage vous permet de garder le travail sensible sur un modèle local tout en utilisant un modèle hébergé pour le reste. Chaque clé est la vôtre; Whimbrel ne revend jamais d’utilisation d’IA."
+    },
+    {
+      "q": "Whimbrel prend-elle des captures de mon écran?",
+      "a": "Non. La mémoire d’écran lit le texte de la fenêtre dans laquelle vous travaillez grâce aux interfaces d’accessibilité du système d’exploitation, ce qui est plus léger et plus privé que de stocker des images. Vous pouvez exclure n’importe quelle application de la capture."
+    },
+    {
+      "q": "Whimbrel est-elle gratuite?",
+      "a": "Oui, et à code source ouvert sous licence Apache 2.0. Toutes les fonctions de l’application sont gratuites, avec des modèles locaux ou votre propre clé d’IA. Les forfaits payants prévus ne couvrent que les serveurs que nous exploitons pour vous, comme la synchronisation hébergée pour un nombre illimité d’appareils; consultez les <a href=\"/pricing/\">tarifs</a> et la page <a href=\"/open-source/\">code source ouvert</a>."
+    },
+    {
+      "q": "Quels ordinateurs sont pris en charge?",
+      "a": "Les Mac à processeur Apple (M1 ou plus récent) sous macOS 14 Sonoma ou version ultérieure, et les PC 64 bits sous Windows 11. Les Mac Intel ne sont pas pris en charge."
+    },
+    {
+      "q": "Whimbrel fonctionne-t-elle dans d’autres langues?",
+      "a": "Oui. L’application est offerte en espagnol, en français, en allemand, en portugais brésilien et en anglais américain, britannique, canadien et australien. Les notes et les résumés peuvent être rédigés dans la langue de votre choix, et la recherche comprend plus de 50 langues."
+    },
+    {
+      "q": "Est-il légal d’enregistrer mes réunions?",
+      "a": "Les lois sur le consentement à l’enregistrement varient selon les pays et les provinces ou les États, et certaines exigent l’accord de tous les participants. Whimbrel indique quand elle enregistre, mais il vous incombe d’en informer les participants et d’obtenir leur consentement lorsque la loi l’exige."
+    }
+  ],
+  "sourceHash": "2e046a8f3f2e"
+}
+-->
+<section class="hero">
+  <div class="container hero-grid">
+    <div>
+      <p class="eyebrow">Assistant IA de bureau pour Mac &amp; Windows</p>
+      <h1>L’assistant IA qui <em>se souvient de votre travail.</em></h1>
+      <p class="lede">Whimbrel enregistre vos réunions sans robot, conserve une mémoire privée et consultable de votre travail, et la transforme en synthèses, en réponses et en suivis.</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="/download/?platform=mac#register" data-platform-link="mac">Télécharger pour Mac</a>
+        <a class="btn btn-ghost btn-lg" href="/download/?platform=windows#register" data-platform-link="windows">Télécharger pour Windows</a>
+      </div>
+      <ul class="hero-meta">
+        <li>Gratuit et à code source ouvert</li>
+        <li>Aucun robot de réunion</li>
+        <li>Modèles locaux pris en charge</li>
+      </ul>
+    </div>
+    {{> app-mock}}
+  </div>
+</section>
+
+<div class="container">
+  <div class="pillars">
+    <div><strong>Capture sans robot</strong><span>Zoom, Teams, Meet, huddles Slack et réunions en personne.</span></div>
+    <div><strong>Du texte, pas des captures</strong><span>Une mémoire de votre travail légère et consultable.</span></div>
+    <div><strong>Local d’abord</strong><span>Vos données restent sur votre machine. La synchronisation est chiffrée de bout en bout.</span></div>
+    <div><strong>Le modèle de votre choix</strong><span>Ollama sur l’appareil, ou votre propre clé Anthropic, OpenAI, Gemini ou OpenRouter.</span></div>
+  </div>
+</div>
+
+<section id="features">
+  <div class="container">
+    <div class="section-head">
+      <p class="eyebrow">Fonctions</p>
+      <h2>Un seul assistant qui voit l’ensemble de votre travail.</h2>
+      <p class="lede">Les outils de réunion n’entendent que vos appels. Les outils de recherche ne voient que vos fichiers. Whimbrel capte les deux, et tout ce qu’elle fait ensuite s’en trouve amélioré.</p>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
+        <h3>Des notes de réunion sans robot</h3>
+        <p>L’enregistrement démarre à partir de votre calendrier ou quand Whimbrel entend un appel commencer. À la fin de la réunion, vous obtenez une transcription avec les interlocuteurs, des notes fusionnées aux vôtres, ainsi que les décisions et les tâches à faire.</p>
+        <a class="more" href="/features/meeting-notes/">Comment fonctionne la capture des réunions →</a>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M7 9h6M7 12h10"/></svg></div>
+        <h3>La mémoire d’écran, en texte</h3>
+        <p>Whimbrel lit le texte de la fenêtre dans laquelle vous travaillez et construit une chronologie de tout ce que vous avez vu et écrit. Retrouvez ce chiffre, ce fil de discussion, ce document, sans avoir à vous rappeler où il se trouvait.</p>
+        <a class="more" href="/features/screen-memory/">Comment fonctionne la mémoire d’écran →</a>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/><path d="M8.5 10.5h7M8.5 13.5h4"/></svg></div>
+        <h3>Interrogez votre historique de travail</h3>
+        <p>« Qu’avons-nous décidé au sujet des prix avec Acme ? » Le clavardage répond à partir de vos propres réunions, de votre historique d’écran et de vos courriels, et cite le moment d’où vient chaque réponse.</p>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <h3>Des Routines qui vous préparent</h3>
+        <p>Les Routines planifiées vous préparent avant chaque réunion, résument votre journée à la fin, protègent vos plages de concentration dans votre calendrier et récapitulent votre semaine.</p>
+        <a class="more" href="/features/routines/">Découvrir les Routines →</a>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H6a3 3 0 0 0 0 6h3M15 7h3a3 3 0 0 1 0 6h-3M8 10h8"/><path d="M12 17v4"/></svg></div>
+        <h3>Reliée à vos outils</h3>
+        <p>Gmail, Google Agenda et Outlook 365 se connectent en un clic. Whimbrel repose sur le Model Context Protocol (MCP), et d’autres outils d’IA peuvent interroger votre mémoire Whimbrel grâce à son serveur MCP local.</p>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="13" height="10" rx="1.5"/><rect x="17" y="8" width="5" height="11" rx="1"/><path d="M6 19h6"/></svg></div>
+        <h3>Une chronologie, tous vos appareils</h3>
+        <p>Utilisez Whimbrel sur votre portable de travail et sur votre ordinateur de bureau, Mac ou Windows. Chaque appareil alimente une même chronologie chiffrée de bout en bout, avec l’indication de l’endroit où les choses se sont passées.</p>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.500 5.700 12 3z"/></svg></div>
+        <h3>Fonctionne dans votre langue</h3>
+        <p>Utilisez Whimbrel en espagnol, en français, en allemand, en portugais ou en anglais. Obtenez des notes et des résumés dans la langue de votre choix, et posez vos questions dans une langue pour retrouver ce qui a été dit dans une autre.</p>
+        <a class="more" href="/features/languages/">Voir les langues prises en charge →</a>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="4"/></svg></div>
+        <p class="badge">Bêta bientôt disponible</p>
+        <h3>Away Mode</h3>
+        <p>Vous ne pouvez pas assister à une réunion? Whimbrel se joindra à l’appel Zoom à votre place, l’enregistrera et vous rapportera les notes. Micro coupé, caméra éteinte, avec un court message dans le clavardage pour que tout le monde soit au courant.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt" id="how-it-works">
+  <div class="container">
+    <div class="section-head center">
+      <p class="eyebrow">Comment ça marche</p>
+      <h2>Installez-la une fois. Ensuite, travaillez simplement.</h2>
+    </div>
+    <ol class="steps">
+      <li><h3>Installez et accordez l’accès</h3><p>Une configuration guidée vous accompagne à travers chaque autorisation dont Whimbrel a besoin, comme le microphone et le texte à l’écran, et en explique la raison.</p></li>
+      <li><h3>Travaillez comme vous le faites déjà</h3><p>Whimbrel capte les réunions et le texte à l’écran en arrière-plan. Mettez-la en pause depuis la barre des menus ou la zone de notification quand bon vous semble.</p></li>
+      <li><h3>Posez vos questions, préparez-vous, relancez</h3><p>Cherchez dans votre historique, posez des questions avec citations à l’appui, et laissez les Routines rédiger le résumé et le courriel de suivi.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section id="demo">
+  <div class="container">
+    <div class="section-head center">
+      <p class="eyebrow">Visite du produit</p>
+      <h2>Découvrez Whimbrel en moins d’une minute.</h2>
+    </div>
+    <div class="narrow video-wrap">
+      {{> demo-video}}
+    </div>
+  </div>
+</section>
+
+<section class="ink" id="privacy">
+  <div class="container split">
+    <div>
+      <p class="eyebrow">La confidentialité par conception</p>
+      <h2>Votre mémoire a sa place sur votre machine.</h2>
+      <p>Un assistant qui se souvient de tout doit être un assistant à qui vous pouvez tout confier. Whimbrel est conçue pour que cette confiance ne repose pas sur une simple promesse.</p>
+    </div>
+    <ul class="checklist">
+      <li><strong>Stockage local</strong>Les réunions, les transcriptions et l’historique d’écran résident dans une base de données sur votre propre ordinateur.</li>
+      <li><strong>Synchronisation chiffrée de bout en bout</strong>Les clés des appareils ne les quittent jamais. Le service de synchronisation ne stocke que du texte chiffré.</li>
+      <li><strong>Vous choisissez où l’IA s’exécute</strong>Gardez tout sur l’appareil avec Ollama, ou dirigez certaines tâches vers le modèle hébergé de votre choix.</li>
+      <li><strong>Exclusions et conservation</strong>Excluez des applications de la capture et définissez la durée de conservation de l’historique.</li>
+      <li><strong>Code source ouvert</strong>Apache 2.0, sans télémétrie. <a href="/open-source/">Découvrez comment ça fonctionne</a>, ou exploitez votre propre relais de synchronisation.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="platforms">
+  <div class="container">
+    <div class="section-head center">
+      <p class="eyebrow">Téléchargement</p>
+      <h2>Offerte pour Mac et Windows.</h2>
+    </div>
+    <div class="platforms">
+      <article class="card platform">
+        <h3>Whimbrel pour Mac</h3>
+        <span class="version" data-version="mac"></span>
+        <dl>
+          <dt>Configuration requise</dt><dd>{{site.requirements.mac}}</dd>
+          <dt>Installation</dt><dd>Signée et notariée par Apple</dd>
+          <dt>Mises à jour</dt><dd>Automatiques, en arrière-plan</dd>
+        </dl>
+        <a class="btn btn-primary" href="/download/?platform=mac#register">Télécharger pour Mac</a>
+        <a class="btn btn-ghost" href="/download/mac/">Détails</a>
+      </article>
+      <article class="card platform">
+        <h3>Whimbrel pour Windows <span class="tag">Accès anticipé</span></h3>
+        <span class="version" data-version="windows"></span>
+        <dl>
+          <dt>Configuration requise</dt><dd>{{site.requirements.windows}}</dd>
+          <dt>Installation</dt><dd>Programme d’installation par utilisateur, sans droits d’administrateur</dd>
+          <dt>Mises à jour</dt><dd>Automatiques, avec vérification de la signature</dd>
+        </dl>
+        <a class="btn btn-primary" href="/download/?platform=windows#register">Télécharger pour Windows</a>
+        <a class="btn btn-ghost" href="/download/windows/">Détails</a>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt" id="register">
+  <div class="container register-grid">
+    <div>
+      <p class="eyebrow">Obtenez l’accès anticipé</p>
+      <h2>Inscrivez-vous pour télécharger Whimbrel.</h2>
+      <p class="lede">Dites-nous quelques mots sur vous et votre téléchargement commence aussitôt. Les utilisateurs de l’accès anticipé ont une ligne directe avec l’équipe qui la conçoit.</p>
+      <ul class="trust-list">
+        <li>Gratuit et à code source ouvert</li>
+        <li>Aucune carte de crédit</li>
+        <li>Nous ne vendons ni ne partageons jamais vos renseignements</li>
+      </ul>
+    </div>
+    {{> register-form}}
+  </div>
+</section>
+
+<section id="faq">
+  <div class="narrow">
+    <div class="section-head center">
+      <p class="eyebrow">FAQ</p>
+      <h2>Vos questions, nos réponses.</h2>
+    </div>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>

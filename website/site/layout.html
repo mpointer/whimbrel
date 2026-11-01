@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{page.lang}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,6 +7,7 @@
   <meta name="description" content="{{page.description}}">
   <meta name="robots" content="{{page.robots}}">
   {{{raw.canonicalTag}}}
+  {{{raw.hreflang}}}
   <meta name="theme-color" content="#F7F2E7" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1C1712" media="(prefers-color-scheme: dark)">
   <meta property="og:site_name" content="{{site.name}}">
@@ -46,6 +47,7 @@
         <a href="/pricing/">Pricing</a>
         <a href="/open-source/">Open source</a>
         <a href="/privacy/">Privacy</a>
+        {{{raw.langSwitch}}}
         <a class="btn btn-primary btn-sm" href="/download/">Download</a>
       </nav>
     </div>
@@ -66,6 +68,7 @@
         <a href="/features/meeting-notes/">Bot-free meeting notes</a>
         <a href="/features/screen-memory/">Screen memory</a>
         <a href="/features/routines/">Routines &amp; connectors</a>
+        <a href="/features/languages/">Languages</a>
         <a href="/compare/">Whimbrel vs. Littlebird vs. Granola</a>
         <a href="/compare/granola-alternative/">Whimbrel vs. Granola</a>
       </nav>

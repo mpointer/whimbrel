@@ -1152,6 +1152,19 @@ char *whimbrel_models_download_start(const char *destinations_json);
  * models_dir (the store's models directory). Returns {"job_id":...}, polled with
  * whimbrel_models_download_poll; NULL on a NULL path. */
 char *whimbrel_embedding_download_start(const char *models_dir);
+/* Imports transcript files (paths_json, a string array) as meetings. Returns
+ * {"meeting_ids":[...],"notes":n,"skipped":n,"failed":[...]}; NULL on bad input. */
+char *whimbrel_import_files(StoreHandle *handle, const char *device_id, const char *paths_json, int64_t now_unix_ms);
+/* Imports a folder of Markdown as searchable items. Same result as whimbrel_import_files. */
+char *whimbrel_import_markdown_folder(StoreHandle *handle, const char *device_id, const char *folder, int64_t now_unix_ms);
+/* Starts downloading large-v3-turbo to destination. Returns {"job_id":...}, polled with
+ * whimbrel_models_download_poll; NULL on a NULL path. */
+char *whimbrel_turbo_download_start(const char *destination);
+/* Picks the engines for this machine. Takes and returns JSON (transcribe::engine::Inputs and
+ * Choice); NULL on bad input. */
+char *whimbrel_choose_engine(const char *inputs_json);
+/* large-v3-turbo's estimated realtime speed from a timed run of a small model. */
+double whimbrel_estimated_turbo_speed(double small_model_speed, bool small_model_is_base);
 /* The folder the current embedding model lives in under models_dir; NULL on a NULL path. */
 char *whimbrel_embedding_model_dir(const char *models_dir);
 

@@ -14,6 +14,7 @@ use api::oauth::{self, StoredTokens};
 use crate::error::CommandError;
 use crate::secrets::{SecretStore, GOOGLE_OAUTH_SERVICE};
 use crate::syncing::config::SyncConfig;
+use crate::l10n::tr;
 
 /// The connector id core's account registry uses.
 pub const CALENDAR: &str = "calendar";
@@ -89,8 +90,8 @@ pub fn tokens_for(kind: Kind, secrets: &dyn SecretStore, email: &str) -> Result<
     let raw = secrets
         .get_string(GOOGLE_OAUTH_SERVICE, &account_name_for(kind, email))
         .map_err(|e| CommandError::secrets(e.to_string()))?
-        .ok_or_else(|| CommandError::not_configured(format!("{email} isn't connected any more.")))?;
-    serde_json::from_str(&raw).map_err(|e| CommandError::secrets(format!("stored tokens for {email} are unreadable: {e}")))
+        .ok_or_else(|| CommandError::not_configured(tr("{email} isn't connected any more.", &[("email", &email.to_string())])))?;
+    serde_json::from_str(&raw).map_err(|e| CommandError::secrets(tr("Stored tokens for {email} are unreadable: {error}", &[("email", &email.to_string()), ("error", &e.to_string())])))
 }
 
 pub fn save_tokens_for(kind: Kind, secrets: &dyn SecretStore, email: &str, tokens: &StoredTokens) -> Result<(), CommandError> {
@@ -137,7 +138,7 @@ pub fn connect_for(
         .id_token
         .as_deref()
         .and_then(oauth::jwt_email_claim)
-        .ok_or_else(|| CommandError::network("Google didn't say which account signed in."))?;
+        .ok_or_else(|| CommandError::network(tr("Google didn't say which account signed in.", &[])))?;
     secrets
         .set_string(GOOGLE_OAUTH_SERVICE, &account_name_for(kind, &email), &json)
         .map_err(|e| CommandError::secrets(e.to_string()))?;

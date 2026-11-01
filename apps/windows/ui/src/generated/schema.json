@@ -2021,12 +2021,17 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "multilingual": {
+          "description": "\"I have meetings in other languages\" (`transcription.multilingual`), device-local.",
+          "type": "boolean"
         }
       },
       "required": [
         "installed",
         "missing",
-        "dir"
+        "dir",
+        "multilingual"
       ],
       "type": "object"
     },
@@ -3123,10 +3128,21 @@
     "SkinLine": {
       "description": "A chat line from an image action, and whether it was stored in the skin's chat.",
       "properties": {
+        "kind": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/SkinLineKind"
+            },
+            {
+              "default": "note"
+            }
+          ]
+        },
         "stored": {
           "type": "boolean"
         },
         "text": {
+          "description": "In the shell's language, so callers compare `kind`, never the text.",
           "type": "string"
         }
       },
@@ -3135,6 +3151,26 @@
         "stored"
       ],
       "type": "object"
+    },
+    "SkinLineKind": {
+      "description": "What a `SkinLine` reports, for the callers that act on it.",
+      "oneOf": [
+        {
+          "const": "note",
+          "description": "Anything else: a refusal, a failure, an undo.",
+          "type": "string"
+        },
+        {
+          "const": "placed",
+          "description": "The image was placed, so the skin changed (and syncs).",
+          "type": "string"
+        },
+        {
+          "const": "local_only",
+          "description": "Refused in local-only mode: the image stays offered.",
+          "type": "string"
+        }
+      ]
     },
     "SkinSources": {
       "description": "What the skin chat may use on this device. Chat follows Ask's rule on the preferred provider\n(`TodayComposer.askAvailable` on the Mac, so local-only mode blocks a hosted one); search and\nimage generation are hosted, so local-only mode turns them off too. `provider` is the preferred\nprovider, which the chat sends to (the page names it in its status line).",
@@ -3927,6 +3963,10 @@
           },
           "type": "array"
         },
+        "canChooseLanguage": {
+          "description": "\"Transcript language\" is offered: multilingual mode is on, and this PC still has the\nmeeting's audio to transcribe again (the Mac's `MeetingOptionsMenu`).",
+          "type": "boolean"
+        },
         "conferenceLink": {
           "description": "The meeting app or conference link, when the row has one.",
           "type": [
@@ -3983,6 +4023,13 @@
         "row": {
           "$ref": "#/definitions/MeetingRow"
         },
+        "spokenLanguage": {
+          "description": "The language the meeting was transcribed in (`meeting.spoken_language`), once known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "summary": {
           "type": [
             "string",
@@ -4009,7 +4056,8 @@
         "personalNotes",
         "actionItems",
         "hasTranscript",
-        "readOnly"
+        "readOnly",
+        "canChooseLanguage"
       ],
       "type": "object"
     }

@@ -3,6 +3,7 @@
 //! Mac's Help → "Send Feedback…" (`WhimbrelApp.feedbackMailURL`) does the same.
 
 use crate::error::CommandError;
+use crate::l10n::tr;
 
 pub const ADDRESS: &str = "hello@whimbrelapp.com";
 
@@ -88,7 +89,7 @@ pub fn open() -> Result<(), String> {
 pub fn send_feedback() -> Result<(), CommandError> {
     open().map_err(|e| {
         tracing::warn!(error = %e, "send feedback");
-        CommandError::not_configured(format!("Couldn't open your mail app. Email {ADDRESS} instead."))
+        CommandError::not_configured(tr("Couldn't open your mail app. Email {address} instead.", &[("address", &ADDRESS.to_string())]))
     })
 }
 

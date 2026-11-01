@@ -1,6 +1,21 @@
 import AppKit
 import OSLog
 import SwiftUI
+import UniformTypeIdentifiers
+
+/// What an import did, for one line under the Meetings list.
+enum ImportSummary {
+    static func text(_ o: CoreImportOutcome, limit: Int) -> String {
+        var parts: [String] = []
+        if !o.meetingIds.isEmpty { parts.append(String(localized: "Imported \(o.meetingIds.count) meetings.")) }
+        if o.notes > 0 { parts.append(String(localized: "Imported \(o.notes) notes.")) }
+        if o.skipped > 0 { parts.append(String(localized: "Skipped \(o.skipped) already here.")) }
+        if o.overlapping > 0 { parts.append(String(localized: "Skipped \(o.overlapping) you recorded here.")) }
+        if !o.failed.isEmpty { parts.append(String(localized: "Couldn't read \(o.failed.count) files.")) }
+        if o.meetingIds.count > limit { parts.append(String(localized: "Summarizing the newest \(limit).")) }
+        return parts.isEmpty ? String(localized: "Nothing to import.") : parts.joined(separator: " ")
+    }
+}
 
 /// A calm searchable list of meetings, opening `MeetingDetailContentView` (After
 /// state) on selection. Preserves the existing meeting-detail window (opened from
@@ -35,6 +50,33 @@ struct MeetingsListView: View {
     private var filteredMeetings: [CoreMeeting] {
         guard !searchText.isEmpty else { return meetings }
         return meetings.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    @State private var importMessage: String?
+
+    private func importTranscripts() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = ["vtt", "srt", "txt", "csv"].compactMap { UTType(filenameExtension: $0) }
+        panel.message = String(localized: "Choose transcripts (.vtt, .srt, .txt) or a Granola CSV")
+        guard panel.runModal() == .OK else { return }
+        let urls = panel.urls, deviceId = appState.deviceId
+        appState.runImport({ $0.importFiles(urls, deviceId: deviceId) }, done: finishImport)
+    }
+
+    private func importMarkdownFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.message = String(localized: "Choose a folder of Markdown notes")
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        let deviceId = appState.deviceId
+        appState.runImport({ $0.importMarkdownFolder(folder, deviceId: deviceId) }, done: finishImport)
+    }
+
+    private func finishImport(_ outcome: CoreImportOutcome?) {
+        importMessage = outcome.map { ImportSummary.text($0, limit: AppState.importSummaryLimit) } ?? String(localized: "Import failed.")
+        refresh()
     }
 
     private var groups: [MeetingDayGroup] {
@@ -78,6 +120,20 @@ struct MeetingsListView: View {
     private var meetingList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: Spacing.lg, pinnedViews: []) {
+                HStack {
+                    if let importMessage {
+                        Text(importMessage)
+                            .font(.whimbrelBody(.caption))
+                            .foregroundStyle(Color.whimbrelTextSecondary)
+                    }
+                    Spacer()
+                    Menu("Import") {
+                        Button("Transcripts…", action: importTranscripts)
+                        Button("Markdown Folder…", action: importMarkdownFolder)
+                    }
+                    .fixedSize()
+                }
+                .padding(.horizontal, Spacing.md)
                 ForEach(groups, id: \.title) { group in
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                         Text(group.title)
@@ -94,7 +150,7 @@ struct MeetingsListView: View {
                 if groups.isEmpty, !hasLoaded {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 240)
                 } else if groups.isEmpty {
-                    WhimbrelEmptyState(systemImage: SkinStore.shared.selected.icons[.meetings], title: searchText.isEmpty ? String(localized: "No meetings yet") : String(localized: "No matches"), message: searchText.isEmpty ? String(localized: "Recorded meetings appear here.") : String(localized: "Try a different search."))
+                    WhimbrelEmptyState(systemImage: SkinStore.shared.selected.icons[.meetings], title: searchText.isEmpty ? String(localized: "No meetings yet") : String(localized: "No matches"), message: searchText.isEmpty ? String(localized: "Recorded meetings appear here. You can also bring in transcripts from Granola, Otter or files.") : String(localized: "Try a different search."), actionTitle: searchText.isEmpty ? String(localized: "Import Transcripts…") : nil, action: searchText.isEmpty ? importTranscripts : nil)
                 }
             }
             .padding(.vertical, Spacing.lg)

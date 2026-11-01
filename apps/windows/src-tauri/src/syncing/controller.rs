@@ -24,6 +24,7 @@ use crate::secrets::{accounts, SecretStore, GOOGLE_OAUTH_SERVICE};
 use crate::syncing::config::SyncConfig;
 use crate::syncing::enrollment::{self, WorkerApi, POLL_BASE};
 use crate::syncing::keys;
+use crate::l10n::tr;
 
 pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// The Worker's Turso token lasts one day (`DEVICE_TOKEN_EXPIRATION`); renew at half.
@@ -86,14 +87,14 @@ pub fn view_of(config_error: Option<&str>, status: &SyncStatus) -> (SyncState, O
     }
     match status {
         SyncStatus::NotSignedIn => (SyncState::NotSignedIn, None),
-        SyncStatus::SigningIn => (SyncState::SigningIn, Some("Finish signing in to Google in your browser.".into())),
+        SyncStatus::SigningIn => (SyncState::SigningIn, Some(tr("Finish signing in to Google in your browser.", &[]))),
         SyncStatus::WaitingForApproval => (
             SyncState::WaitingForApproval,
-            Some("Waiting for approval. On a device that already syncs, such as your Mac, open Settings → Devices and approve this PC.".into()),
+            Some(tr("Waiting for approval. On a device that already syncs, such as your Mac, open Settings → Devices and approve this PC.", &[])),
         ),
         SyncStatus::WaitingForGroupKey => (
             SyncState::WaitingForGroupKey,
-            Some("Approved, but the key handoff expired. On your Mac, open Settings → Devices, choose Re-send Key for this PC, then Check Again here.".into()),
+            Some(tr("Approved, but the key handoff expired. On your Mac, open Settings → Devices, choose Re-send Key for this PC, then Check Again here.", &[])),
         ),
         SyncStatus::Ready { .. } => (SyncState::Ready, None),
         SyncStatus::Error { message } => (SyncState::Error, Some(message.clone())),
@@ -101,22 +102,22 @@ pub fn view_of(config_error: Option<&str>, status: &SyncStatus) -> (SyncState, O
         // screens land, both show as a sync error with the Mac's wording.
         SyncStatus::DeviceLimit { .. } => (
             SyncState::Error,
-            Some("Whimbrel's free sync includes one computer and one phone. Use your Mac's Devices settings to manage devices.".into()),
+            Some(tr("Whimbrel's free sync includes one computer and one phone. Use your Mac's Devices settings to manage devices.", &[])),
         ),
-        SyncStatus::RateLimited => (SyncState::Error, Some("Too many attempts. Try again later.".into())),
+        SyncStatus::RateLimited => (SyncState::Error, Some(tr("Too many attempts. Try again later.", &[]))),
     }
 }
 
 pub fn oauth_message(e: &OAuthError) -> String {
     match e {
-        OAuthError::TimedOut => "Google sign-in timed out. Try again.".into(),
-        OAuthError::AuthorizationDenied { reason } => format!("Google sign-in was declined ({reason})."),
-        OAuthError::TokenRefreshFailed | OAuthError::RefreshTokenRevoked => "Your Google sign-in expired. Sign in again.".into(),
-        OAuthError::ListenerFailed => "Couldn't start the local sign-in listener.".into(),
+        OAuthError::TimedOut => tr("Google sign-in timed out. Try again.", &[]),
+        OAuthError::AuthorizationDenied { reason } => tr("Google sign-in was declined ({reason}).", &[("reason", reason)]),
+        OAuthError::TokenRefreshFailed | OAuthError::RefreshTokenRevoked => tr("Your Google sign-in expired. Sign in again.", &[]),
+        OAuthError::ListenerFailed => tr("Couldn't start the local sign-in listener.", &[]),
         OAuthError::NoRefreshTokenReturned => {
-            "Google didn't return a refresh token. Remove Whimbrel at myaccount.google.com/permissions, then sign in again.".into()
+            tr("Google didn't return a refresh token. Remove Whimbrel at myaccount.google.com/permissions, then sign in again.", &[])
         }
-        other => format!("Google sign-in failed ({other})."),
+        other => tr("Google sign-in failed ({error}).", &[("error", &other.to_string())]),
     }
 }
 
@@ -158,7 +159,7 @@ fn transition(status: &mut SyncStatus, event: &EnrollmentEvent) -> SyncStatus {
 /// refused: the only URL this opens is Google's consent page.
 pub fn open_in_browser(url: &str) -> Result<(), String> {
     if !url.starts_with("https://") {
-        return Err("refusing to open a non-https URL".into());
+        return Err(tr("Refusing to open a non-https URL.", &[]));
     }
     use windows::core::{w, HSTRING, PCWSTR};
     use windows::Win32::UI::Shell::ShellExecuteW;
@@ -167,7 +168,7 @@ pub fn open_in_browser(url: &str) -> Result<(), String> {
     if result.0 as isize > 32 {
         Ok(())
     } else {
-        Err(format!("couldn't open the browser (ShellExecute returned {})", result.0 as isize))
+        Err(tr("Couldn't open the browser (ShellExecute returned {code}).", &[("code", &(result.0 as isize).to_string())]))
     }
 }
 
@@ -340,7 +341,7 @@ impl SyncController {
     /// An unexpired Google ID token, refreshing the stored tokens if needed.
     fn fresh_id_token(&self) -> Result<String, String> {
         let config = self.config.as_ref().map_err(Clone::clone)?;
-        let stored = self.load_tokens()?.ok_or("Not signed in to Google.")?;
+        let stored = self.load_tokens()?.ok_or_else(|| tr("Not signed in to Google.", &[]))?;
         let now = now_ms();
         let tokens = if stored.is_fresh(now) && stored.id_token.is_some() {
             stored
@@ -349,7 +350,7 @@ impl SyncController {
             self.save_tokens(&refreshed)?;
             refreshed
         };
-        tokens.id_token.ok_or_else(|| "Google didn't return an ID token.".to_string())
+        tokens.id_token.ok_or_else(|| tr("Google didn't return an ID token.", &[]))
     }
 
     fn auth_once(&self) -> Result<EnrollmentEvent, StepError> {
@@ -399,7 +400,7 @@ impl SyncController {
                     break;
                 }
                 Err(StepError::Worker(e)) if en::is_permanent_failure(&e) => {
-                    self.apply_current(generation, &EnrollmentEvent::Failed { message: en::user_message(&e) });
+                    self.apply_current(generation, &EnrollmentEvent::Failed { message: en::user_message_in(&e, &crate::l10n::ui_language()) });
                     break;
                 }
                 Err(StepError::Worker(e)) => {
@@ -532,7 +533,7 @@ impl SyncController {
     /// Fetches the account's devices, refreshing the Library's peer names.
     pub fn refresh_devices(&self) -> Result<Vec<DeviceView>, String> {
         let id_token = self.fresh_id_token()?;
-        let records = self.worker()?.list_devices(&id_token, &self.identity.device_id).map_err(|e| en::user_message(&e))?;
+        let records = self.worker()?.list_devices(&id_token, &self.identity.device_id).map_err(|e| en::user_message_in(&e, &crate::l10n::ui_language()))?;
         *self.device_names.write().unwrap() = DeviceLabeler::names_from_records(&records);
         *self.last_devices.lock().unwrap() = Some(Instant::now());
         let views = device_views(&records, &self.identity.device_id);
@@ -552,7 +553,7 @@ impl SyncController {
             return Err("A device name is 1 to 64 characters.".into());
         }
         let id_token = self.fresh_id_token()?;
-        self.worker()?.set_device_name(&id_token, &self.identity.device_id, name).map_err(|e| en::user_message(&e))?;
+        self.worker()?.set_device_name(&id_token, &self.identity.device_id, name).map_err(|e| en::user_message_in(&e, &crate::l10n::ui_language()))?;
         self.refresh_devices()
     }
 
@@ -561,11 +562,11 @@ impl SyncController {
         let target = self.find_device(target_id)?;
         let key = keys::load_group_key(&*self.secrets)
             .map_err(|e| e.to_string())?
-            .ok_or("This PC doesn't hold the account key yet, so it can't approve other devices.")?;
+            .ok_or_else(|| tr("This PC doesn't hold the account key yet, so it can't approve other devices.", &[]))?;
         let wrapped = keys::wrap_for(&self.identity.keypair(), &target.public_key, &key)
-            .ok_or("That device's public key is malformed.")?;
+            .ok_or_else(|| tr("That device's public key is malformed.", &[]))?;
         let id_token = self.fresh_id_token()?;
-        self.worker()?.approve_device(&id_token, &self.identity.device_id, &target.id, &wrapped).map_err(|e| en::user_message(&e))?;
+        self.worker()?.approve_device(&id_token, &self.identity.device_id, &target.id, &wrapped).map_err(|e| en::user_message_in(&e, &crate::l10n::ui_language()))?;
         self.refresh_devices()
     }
 
@@ -574,7 +575,7 @@ impl SyncController {
     pub fn revoke(&self, target_id: &str) -> Result<Vec<DeviceView>, String> {
         let target = self.find_device(target_id)?;
         let id_token = self.fresh_id_token()?;
-        self.worker()?.revoke_device(&id_token, &self.identity.device_id, &target.id).map_err(|e| en::user_message(&e))?;
+        self.worker()?.revoke_device(&id_token, &self.identity.device_id, &target.id).map_err(|e| en::user_message_in(&e, &crate::l10n::ui_language()))?;
         self.refresh_devices()
     }
 
@@ -583,7 +584,7 @@ impl SyncController {
             return Ok(d);
         }
         self.refresh_devices()?;
-        self.devices.lock().unwrap().iter().find(|d| d.id == id).cloned().ok_or_else(|| "That device is no longer on this account.".to_string())
+        self.devices.lock().unwrap().iter().find(|d| d.id == id).cloned().ok_or_else(|| tr("That device is no longer on this account.", &[]))
     }
 }
 
@@ -637,7 +638,7 @@ mod tests {
         let (state, message) = view_of(None, &SyncStatus::DeviceLimit { kind: "computer".into(), holders: vec![] });
         assert_eq!(state, SyncState::Error);
         assert!(message.unwrap().contains("one computer and one phone"));
-        assert_eq!(view_of(None, &SyncStatus::RateLimited), (SyncState::Error, Some("Too many attempts. Try again later.".into())));
+        assert_eq!(view_of(None, &SyncStatus::RateLimited), (SyncState::Error, Some(tr("Too many attempts. Try again later.", &[]))));
         assert_eq!(view_of(Some("not configured"), &SyncStatus::NotSignedIn).0, SyncState::NotConfigured);
     }
 

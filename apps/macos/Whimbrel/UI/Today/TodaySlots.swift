@@ -47,9 +47,9 @@ struct TodaySlots: View {
             WhimbrelEmptyState(
                 systemImage: "calendar.badge.exclamationmark",
                 title: String(localized: "No calendar connected"),
-                message: String(localized: "Connect a calendar in Settings to see upcoming meetings here."),
-                actionTitle: String(localized: "Open Settings"),
-                action: { actions.openSettings() }
+                message: String(localized: "Connect a calendar to see upcoming meetings here."),
+                actionTitle: String(localized: "Connect Calendar"),
+                action: { actions.requestCalendar() }
             )
             .frame(maxWidth: .infinity, minHeight: 240)
         case .noMeetings:

@@ -11,6 +11,7 @@ use crate::connectors::{accounts, node};
 use crate::error::CommandError;
 use crate::secrets::SecretStore;
 use crate::state::AppState;
+use crate::l10n::tr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -31,7 +32,7 @@ pub struct CalendarAccounts {
 
 fn blocked_reason(state: &AppState) -> Option<String> {
     if state.calendar.is_none() {
-        return Some("Calendar syncing needs Secrets.toml's Google client. See the app README.".into());
+        return Some(tr("Calendar syncing needs Secrets.toml's Google client. See the app README.", &[]));
     }
     let (connector, _) = node::GOOGLE_CALENDAR;
     node::ready(&state.paths.root, connector).err().map(|e| e.to_string())
@@ -79,7 +80,7 @@ pub async fn calendar_connect(app: AppHandle) -> Result<CalendarAccounts, Comman
         calendar_accounts(state)
     })
     .await
-    .map_err(|e| CommandError::network(format!("connecting the account failed: {e}")))?
+    .map_err(|e| CommandError::network(tr("Connecting the account failed: {error}", &[("error", &e.to_string())])))?
 }
 
 #[tauri::command]
@@ -101,7 +102,7 @@ pub async fn calendar_disconnect(app: AppHandle, email: String) -> Result<Calend
         calendar_accounts(state)
     })
     .await
-    .map_err(|e| CommandError::network(format!("disconnecting the account failed: {e}")))?
+    .map_err(|e| CommandError::network(tr("Disconnecting the account failed: {error}", &[("error", &e.to_string())])))?
 }
 
 /// Syncs now rather than waiting for the five-minute timer.
@@ -115,7 +116,7 @@ pub async fn calendar_sync_now(app: AppHandle) -> Result<CalendarAccounts, Comma
         calendar_accounts(state)
     })
     .await
-    .map_err(|e| CommandError::network(format!("syncing failed: {e}")))?
+    .map_err(|e| CommandError::network(tr("Syncing failed: {error}", &[("error", &e.to_string())])))?
 }
 
 // --- Gmail (M3.4 Task 3) ----------------------------------------------------------------------------
@@ -174,7 +175,7 @@ pub fn gmail_view(
 
 fn gmail_blocked(state: &AppState) -> Option<String> {
     if crate::syncing::config::SyncConfig::embedded().is_err() {
-        return Some("Connecting Gmail needs Secrets.toml's Google client. See the app README.".into());
+        return Some(tr("Connecting Gmail needs Secrets.toml's Google client. See the app README.", &[]));
     }
     let (connector, _) = node::GMAIL;
     node::ready(&state.paths.root, connector).err().map(|e| e.to_string())
@@ -193,7 +194,7 @@ fn gmail_state(state: &AppState) -> Result<GmailAccounts, CommandError> {
 pub async fn gmail_accounts(app: AppHandle) -> Result<GmailAccounts, CommandError> {
     tauri::async_runtime::spawn_blocking(move || gmail_state(&app.state::<AppState>()))
         .await
-        .map_err(|e| CommandError::store(format!("reading the Gmail accounts failed: {e}")))?
+        .map_err(|e| CommandError::store(tr("Reading the Gmail accounts failed: {error}", &[("error", &e.to_string())])))?
 }
 
 /// Opens Google's consent page and waits for it. Connecting an address that is already there
@@ -219,7 +220,7 @@ pub async fn gmail_connect(app: AppHandle) -> Result<GmailAccounts, CommandError
         gmail_state(&state)
     })
     .await
-    .map_err(|e| CommandError::network(format!("connecting Gmail failed: {e}")))?
+    .map_err(|e| CommandError::network(tr("Connecting Gmail failed: {error}", &[("error", &e.to_string())])))?
 }
 
 /// Forgets the account's tokens and removes it. Routines are left as they are: with no Gmail
@@ -243,7 +244,7 @@ pub async fn gmail_disconnect(app: AppHandle, email: String) -> Result<GmailAcco
         gmail_state(&state)
     })
     .await
-    .map_err(|e| CommandError::network(format!("disconnecting Gmail failed: {e}")))?
+    .map_err(|e| CommandError::network(tr("Disconnecting Gmail failed: {error}", &[("error", &e.to_string())])))?
 }
 
 /// Deletes the mail Whimbrel stored from one account, with the summaries and scores built from
@@ -268,7 +269,7 @@ pub async fn gmail_delete_stored_mail(app: AppHandle, email: String) -> Result<G
         gmail_state(&state)
     })
     .await
-    .map_err(|e| CommandError::store(format!("deleting the stored mail failed: {e}")))?
+    .map_err(|e| CommandError::store(tr("Deleting the stored mail failed: {error}", &[("error", &e.to_string())])))?
 }
 
 #[cfg(test)]

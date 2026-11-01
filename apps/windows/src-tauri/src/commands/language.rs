@@ -11,6 +11,7 @@ use crate::error::CommandError;
 use crate::l10n;
 use crate::settings::{Provider, SettingsFile};
 use crate::state::AppState;
+use crate::l10n::tr;
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -50,7 +51,7 @@ fn view(settings: &SettingsFile) -> LanguageSettings {
 }
 
 fn save(settings: &SettingsFile) -> Result<(), CommandError> {
-    settings.save().map_err(|e| CommandError::invalid_input(format!("could not save settings: {e}")))
+    settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))
 }
 
 #[tauri::command]
@@ -62,7 +63,7 @@ pub fn language_settings(state: State<'_, AppState>) -> LanguageSettings {
 #[tauri::command]
 pub async fn set_language(app: AppHandle, state: State<'_, AppState>, choice: String) -> Result<LanguageSettings, CommandError> {
     if !choice.is_empty() && !l10n::shipped_languages().contains(&choice) {
-        return Err(CommandError::invalid_input(format!("not a language this build ships: {choice}")));
+        return Err(CommandError::invalid_input(tr("Not a language this build ships: {choice}", &[("choice", &choice.to_string())])));
     }
     {
         let mut settings = state.settings.lock().unwrap();
@@ -73,14 +74,14 @@ pub async fn set_language(app: AppHandle, state: State<'_, AppState>, choice: St
     let tray = app.clone();
     tauri::async_runtime::spawn_blocking(move || crate::tray::relabel(&tray))
         .await
-        .map_err(|e| CommandError::invalid_input(format!("could not relabel the tray: {e}")))?;
+        .map_err(|e| CommandError::invalid_input(tr("Could not relabel the tray: {error}", &[("error", &e.to_string())])))?;
     Ok(view(&state.settings.lock().unwrap()))
 }
 
 #[tauri::command]
 pub fn set_write_in(state: State<'_, AppState>, tag: String) -> Result<LanguageSettings, CommandError> {
     if !tag.is_empty() && !l10n::WRITE_IN_OPTIONS.contains(&tag.as_str()) {
-        return Err(CommandError::invalid_input(format!("not a writing language: {tag}")));
+        return Err(CommandError::invalid_input(tr("Not a writing language: {tag}", &[("tag", &tag.to_string())])));
     }
     let mut settings = state.settings.lock().unwrap();
     settings.set_output_language_override(&tag);

@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { DownloadView, MeetingModelsStatus } from "../generated/types";
-import { meetingModelsState, missingList } from "./meetingModels";
+import { downloadSizeMb, meetingModelsState, missingList, MULTILINGUAL_MODEL } from "./meetingModels";
 
-const status = (missing: string[]): MeetingModelsStatus => ({ installed: missing.length === 0, missing, dir: "C:\\m" });
+const status = (missing: string[]): MeetingModelsStatus => ({
+  installed: missing.length === 0,
+  missing,
+  dir: "C:\\m",
+  multilingual: false,
+});
 const job = (over: Partial<DownloadView>): DownloadView => ({
   jobId: "1",
   fraction: 0.5,
@@ -28,6 +33,15 @@ describe("meetingModelsState", () => {
 
   it("is missing after a cancel", () => {
     expect(meetingModelsState(status(["Transcription model"]), job({ done: true, cancelled: true }))).toBe("missing");
+  });
+});
+
+describe("downloadSizeMb", () => {
+  it("adds the multilingual model to the English set only when it's missing", () => {
+    expect(downloadSizeMb(["Transcription model", "Speaker embedding model"])).toBe(110);
+    expect(downloadSizeMb([MULTILINGUAL_MODEL])).toBe(150);
+    expect(downloadSizeMb(["Transcription model", MULTILINGUAL_MODEL])).toBe(260);
+    expect(downloadSizeMb([])).toBe(0);
   });
 });
 

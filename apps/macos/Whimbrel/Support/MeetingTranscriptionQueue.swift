@@ -26,6 +26,10 @@ final class MeetingTranscriptionQueue {
     private let onStage: (Int64, String?) -> Void
     /// Off: every part is forced to English with the English model, as before.
     private let multilingual: () -> Bool
+    /// Whether the model this meeting needs is on disk.
+    private let modelReady: () -> Bool
+    /// Whether setup is still downloading models.
+    private let modelsDownloading: () -> Bool
     private let queue: OperationQueue = {
         let q = OperationQueue()
         q.maxConcurrentOperationCount = 1
@@ -46,12 +50,29 @@ final class MeetingTranscriptionQueue {
          multilingual: @escaping () -> Bool = {
              usesMultilingual(enabled: AppLanguage.multilingual(),
                               modelPresent: FileManager.default.fileExists(atPath: TranscriptionService.multilingualModelPath.path))
-         }) {
+         },
+         modelReady: @escaping () -> Bool = { TranscriptionEngines.batch(language: "en").isReady },
+         modelsDownloading: @escaping () -> Bool = { false }) {
         self.store = store
         self.transcribe = transcribe
         self.summarize = summarize
         self.onStage = onStage
         self.multilingual = multilingual
+        self.modelReady = modelReady
+        self.modelsDownloading = modelsDownloading
+    }
+
+    /// A first meeting can end before setup's downloads do. Holds the queue until the model
+    /// lands, so the meeting is transcribed rather than failing. Returns once the model is
+    /// there, the download stops, or `limit` passes; a failed run then reports as it always did.
+    @discardableResult
+    static func waitForModel(ready: () -> Bool, downloading: () -> Bool, pause: () -> Void, limit: Int = 900) -> Bool {
+        var polls = 0
+        while !ready(), downloading(), polls < limit {
+            pause()
+            polls += 1
+        }
+        return ready()
     }
 
     /// Multilingual mode takes effect once its model is on disk; until then meetings are
@@ -103,6 +124,11 @@ final class MeetingTranscriptionQueue {
 
     private func run(_ job: Job) {
         let id = job.meetingId
+        if job.audioPath != nil, !modelReady(), modelsDownloading() {
+            let waiting = String(localized: "Waiting for the transcription model…")
+            DispatchQueue.main.async { [onStage] in onStage(id, waiting) }
+            Self.waitForModel(ready: modelReady, downloading: modelsDownloading, pause: { Thread.sleep(forTimeInterval: 2) })
+        }
         if job.audioPath != nil { DispatchQueue.main.async { [onStage] in onStage(id, "Transcribing…") } }
         let stored = CoreMemoryStore.accessQueue.sync { store.getMeeting(id: id) }
         let attendeeCount = stored?.attendees.count ?? 0

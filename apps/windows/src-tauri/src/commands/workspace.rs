@@ -15,6 +15,7 @@ use tauri::State;
 use super::library::{meeting_row, MeetingRow};
 use crate::error::CommandError;
 use crate::state::AppState;
+use crate::l10n::tr;
 
 /// The workspace's phase, matching core's `WorkspaceState`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -62,6 +63,11 @@ pub struct WorkspaceView {
     /// A meeting recorded on another device: its audio isn't here, so it can't be
     /// re-summarized, and Forget would only remove this device's copy.
     pub read_only: bool,
+    /// The language the meeting was transcribed in (`meeting.spoken_language`), once known.
+    pub spoken_language: Option<String>,
+    /// "Transcript language" is offered: multilingual mode is on, and this PC still has the
+    /// meeting's audio to transcribe again (the Mac's `MeetingOptionsMenu`).
+    pub can_choose_language: bool,
 }
 
 /// A meeting's transcript for display: turns from the file when it's on this device,
@@ -145,7 +151,33 @@ pub async fn meeting_workspace(state: State<'_, AppState>, id: i64) -> Result<Op
         .await?
         .map_err(CommandError::store)?;
     let Some(workspace) = state_and_items else { return Ok(None) };
-    Ok(Some(view_of(workspace, &labeler, own_device_id.as_deref())))
+    let spoken_language = state
+        .store()?
+        .call(move |s| s.meeting_spoken_language(id).map_err(|e| e.to_string()))
+        .await?
+        .map_err(CommandError::store)?;
+    let multilingual = state.settings.lock().unwrap().multilingual();
+    let audio = match &workspace {
+        api::meeting_workspace::WorkspaceState::After(note) => note.meeting.audio_path.clone(),
+        _ => None,
+    };
+    let mut view = view_of(workspace, &labeler, own_device_id.as_deref());
+    view.can_choose_language = can_choose_language(multilingual, &view, has_audio(&state.paths.recordings, audio.as_deref()));
+    view.spoken_language = spoken_language;
+    Ok(Some(view))
+}
+
+/// Whether this PC still has the recording `audio_path` names, in a form the pipeline reads.
+fn has_audio(recordings: &Path, audio_path: Option<&str>) -> bool {
+    audio_path
+        .and_then(|audio| crate::meetings::pipeline::stamp_of(Path::new(audio)))
+        .is_some_and(|stamp| crate::meetings::recorder::RecordingFiles::unfinished(recordings, &stamp, None).audio_path().is_some())
+}
+
+/// The Mac shows "Transcript language" only in multilingual mode, for a completed meeting
+/// with audio. A meeting from another device has its audio there.
+fn can_choose_language(multilingual: bool, view: &WorkspaceView, has_audio: bool) -> bool {
+    multilingual && view.phase == WorkspacePhase::After && !view.read_only && has_audio
 }
 
 fn view_of(
@@ -196,6 +228,8 @@ fn view_of(
         action_items,
         has_transcript: meeting.transcript_path.is_some(),
         read_only,
+        spoken_language: None,
+        can_choose_language: false,
     }
 }
 
@@ -370,10 +404,36 @@ pub async fn meeting_reorder_action_items(
 /// the new summary and its action items (the Mac's conflict sheet).
 #[tauri::command]
 pub async fn meeting_regenerate(state: State<'_, AppState>, id: i64, keep_edits: bool) -> Result<(), CommandError> {
-    let pipeline = state.pipeline.as_ref().ok_or_else(|| CommandError::store("the pipeline isn't running"))?.clone();
+    let pipeline = state.pipeline.as_ref().ok_or_else(|| CommandError::store(tr("The pipeline isn't running", &[])))?.clone();
     tauri::async_runtime::spawn_blocking(move || pipeline.regenerate(id, keep_edits))
         .await
-        .map_err(|e| CommandError::store(format!("regenerating failed: {e}")))?
+        .map_err(|e| CommandError::store(tr("Regenerating failed: {error}", &[("error", &e.to_string())])))?
+}
+
+/// The per-meeting "Transcript language" (the Mac's `MeetingOptionsMenu`): stores the choice
+/// (`None` is Automatic: detect again) and transcribes the meeting again in it.
+#[tauri::command]
+pub async fn meeting_set_spoken_language(state: State<'_, AppState>, id: i64, language: Option<String>) -> Result<(), CommandError> {
+    if let Some(code) = language.as_deref() {
+        if !crate::meetings::spoken::OVERRIDE_LANGUAGES.contains(&code) {
+            return Err(CommandError::invalid_input(format!("not a transcript language: {code}")));
+        }
+    }
+    let pipeline = state.pipeline.as_ref().ok_or_else(|| CommandError::store("the pipeline isn't running"))?.clone();
+    if pipeline.processing().is_some() {
+        return Err(CommandError::invalid_input(crate::l10n::tr(
+            "Whimbrel is still working on a meeting. Try again when it's done.",
+            &[],
+        )));
+    }
+    state
+        .store()?
+        .call(move |s| s.set_meeting_spoken_language(id, language.as_deref()).map_err(|e| e.to_string()))
+        .await?
+        .map_err(CommandError::store)?;
+    tauri::async_runtime::spawn_blocking(move || pipeline.transcribe_again(id))
+        .await
+        .map_err(|e| CommandError::store(format!("transcribing again failed: {e}")))?
 }
 
 /// Whether a regeneration would overwrite the user's edits, so the UI can ask first.
@@ -402,7 +462,7 @@ pub async fn meeting_regeneration_conflict(state: State<'_, AppState>, id: i64) 
 #[tauri::command]
 pub async fn meeting_forget(state: State<'_, AppState>, id: i64) -> Result<(), CommandError> {
     if state.meetings.as_ref().and_then(|m| m.status().meeting_id) == Some(id) {
-        return Err(CommandError::invalid_input("Stop the recording before forgetting this meeting."));
+        return Err(CommandError::invalid_input(tr("Stop the recording before forgetting this meeting.", &[])));
     }
     let recordings = state.paths.recordings.clone();
     // Files only after the row is gone, the Mac's order: a failed delete must never

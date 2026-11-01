@@ -12,6 +12,7 @@ import {
   type EventRow,
   type SectionId,
 } from "../layoutModel";
+import { t } from "../../l10n";
 import { BracketLink, DevicesLine, HeldLine, OpenLoopLines, PrepLine, RecapLines, ScheduleLines, SkinImage, SkinText, useWidth, type TodayLayoutProps } from "./parts";
 
 const anchor = (section: SectionId) => `today-${section}`;
@@ -32,7 +33,7 @@ export function Reference(props: TodayLayoutProps) {
     if (!present.includes(section)) return [];
     switch (section) {
       case "composer":
-        return [{ section, title: "Ask" }];
+        return [{ section, title: t("Ask") }];
       case "upNext":
         return next ? [{ section, title: voiceText(voice, "upNextHeader") }] : [];
       case "schedule":
@@ -40,11 +41,11 @@ export function Reference(props: TodayLayoutProps) {
       case "earlier":
         return [{ section, title: voiceText(voice, "earlierHeader") }];
       case "threads":
-        return [{ section, title: "Open loops" }];
+        return [{ section, title: t("Open loops") }];
       case "recap":
         return model.recap ? [{ section, title: voiceText(voice, "recapHeader") }] : [];
       case "devices":
-        return [{ section, title: "Devices" }];
+        return [{ section, title: t("Devices") }];
       default:
         return [];
     }
@@ -62,10 +63,10 @@ export function Reference(props: TodayLayoutProps) {
   );
 
   const contents = (
-    <nav className="ref-contents" aria-label="Contents">
-      <SkinText role="label" size={13} className="tone-primary">Contents</SkinText>
+    <nav className="ref-contents" aria-label={t("Contents")}>
+      <SkinText role="label" size={13} className="tone-primary">{t("Contents")}</SkinText>
       {entries.map((entry, index) => (
-        <button key={entry.section} type="button" className="ref-contents__entry" title={`Go to ${entry.title}`} onClick={() => document.getElementById(anchor(entry.section))?.scrollIntoView({ block: "start" })}>
+        <button key={entry.section} type="button" className="ref-contents__entry" title={t("Go to {section}", { section: entry.title })} onClick={() => document.getElementById(anchor(entry.section))?.scrollIntoView({ block: "start" })}>
           <span className="tone-secondary" aria-hidden="true">{index + 1}</span>
           <SkinText size={13} className="tone-link">{entry.title}</SkinText>
         </button>
@@ -101,9 +102,9 @@ export function Reference(props: TodayLayoutProps) {
           voiceText(voice, "earlierHeader"),
           earlierRows(model).map((row) => <HeldLine key={row.id} row={row} props={props} shape="inline" bracket />),
         )}
-      {present.includes("threads") && section("threads", "Open loops", <OpenLoopLines props={props} linkTone />)}
+      {present.includes("threads") && section("threads", t("Open loops"), <OpenLoopLines props={props} linkTone />)}
       {present.includes("recap") && model.recap && section("recap", voiceText(voice, "recapHeader"), <RecapLines recap={model.recap} props={props} tone="primary" bracket />)}
-      {present.includes("devices") && section("devices", "Devices", <DevicesLine model={model} />)}
+      {present.includes("devices") && section("devices", t("Devices"), <DevicesLine model={model} />)}
     </div>
   );
 }
@@ -118,7 +119,7 @@ function Infobox({ row, props, title }: { row: EventRow; props: TodayLayoutProps
         {row.relative && <SkinText role="label" className="tone-secondary">{row.relative}</SkinText>}
         {row.attendees && <SkinText role="label" lines={2} className="tone-secondary">{row.attendees}</SkinText>}
         <PrepLine prep={row.prep} props={props} bracket />
-        {row.action === "start" && <BracketLink label={props.starting === row.id ? "Starting…" : "Start"} primary disabled={props.starting !== null} onClick={() => props.actions.start(row.id)} />}
+        {row.action === "start" && <BracketLink label={props.starting === row.id ? t("Starting…") : t("Start")} primary disabled={props.starting !== null} onClick={() => props.actions.start(row.id)} />}
       </div>
     </aside>
   );

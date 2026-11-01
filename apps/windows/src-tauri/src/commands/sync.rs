@@ -9,12 +9,13 @@ use tauri::State;
 use crate::error::CommandError;
 use crate::state::AppState;
 use crate::syncing::controller::{DeviceView, SyncController, SyncState, SyncView};
+use crate::l10n::tr;
 
 fn controller(state: &AppState) -> Result<Arc<SyncController>, CommandError> {
     state
         .sync
         .clone()
-        .ok_or_else(|| CommandError::not_configured("Sync isn't available because this PC's device identity didn't load (see About)."))
+        .ok_or_else(|| CommandError::not_configured(tr("Sync isn't available because this PC's device identity didn't load (see About).", &[])))
 }
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, CommandError> {
@@ -30,7 +31,7 @@ pub fn sync_status(state: State<'_, AppState>) -> SyncView {
         Some(c) => c.view(),
         None => SyncView {
             state: SyncState::NotConfigured,
-            message: Some("Sync isn't available because this PC's device identity didn't load (see About).".into()),
+            message: Some(tr("Sync isn't available because this PC's device identity didn't load (see About).", &[])),
             device_id: String::new(),
             content_last_synced_ms: None,
             content_error: None,

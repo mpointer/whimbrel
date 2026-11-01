@@ -21,6 +21,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::error::CommandError;
 use crate::state::AppState;
+use crate::l10n::tr;
 
 const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// How long the installer waits for the MCP server to stop before going ahead without it.
@@ -224,7 +225,7 @@ pub fn update_ready(staged: State<'_, StagedUpdate>) -> Option<String> {
 #[tauri::command]
 pub fn install_update(staged: State<'_, StagedUpdate>, state: State<'_, AppState>) -> Result<(), CommandError> {
     let Some((update, bytes)) = staged.0.lock().unwrap().take() else {
-        return Err(CommandError::invalid_input("no update has been downloaded"));
+        return Err(CommandError::invalid_input(tr("No update has been downloaded", &[])));
     };
     // `install` exits the process directly, skipping `RunEvent::Exit`, so a recording is
     // stopped here the way Quit stops it.
@@ -251,7 +252,7 @@ pub fn install_update(staged: State<'_, StagedUpdate>, state: State<'_, AppState
     if supervised {
         crate::restart::rejoin_supervision();
     }
-    result.map_err(|e| CommandError::network(format!("could not start the installer: {e}")))
+    result.map_err(|e| CommandError::network(tr("Could not start the installer: {error}", &[("error", &e.to_string())])))
 }
 
 #[cfg(test)]

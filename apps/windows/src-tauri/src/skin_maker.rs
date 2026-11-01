@@ -21,13 +21,25 @@ use skins::{
 
 use crate::error::CommandError;
 use crate::settings::{ApiKeys, Provider, RoutingSettings};
+use crate::l10n::tr;
 
 pub const SPEND_CAP_LINE: &str = "Today's AI spending limit is reached.";
-const CLARIFY_LINE: &str = "Could you say a bit more about the skin you want?";
-const UNUSABLE_LINE: &str = "Whimbrel couldn't make a usable skin from that, so nothing changed. Try again or say it another way.";
-const DONE_LINE: &str = "Here's your skin.";
-const KEPT_COLOURS_LINE: &str = "The new colours didn't pass Whimbrel's checks, so this skin keeps its current colours.";
-const NO_PALETTE_LINE: &str = "I couldn't make a usable palette, so this skin uses Whimbrel's colours for now.";
+// The skin chat's own lines, in the shell's language. Stored in the skin's chat as written.
+fn clarify_line() -> String {
+    tr("Could you say a bit more about the skin you want?", &[])
+}
+fn unusable_line() -> String {
+    tr("Whimbrel couldn't make a usable skin from that, so nothing changed. Try again or say it another way.", &[])
+}
+fn done_line() -> String {
+    tr("Here's your skin.", &[])
+}
+fn kept_colours_line() -> String {
+    tr("The new colours didn't pass Whimbrel's checks, so this skin keeps its current colours.", &[])
+}
+fn no_palette_line() -> String {
+    tr("I couldn't make a usable palette, so this skin uses Whimbrel's colours for now.", &[])
+}
 /// The placement an approved image takes: one image per placement, the newest shown.
 const HEADER: &str = "header";
 
@@ -107,7 +119,7 @@ pub fn chat(user: &UserSkinStore, skin_id: &str) -> Vec<ChatLine> {
 /// Adds `lines` to the skin's chat. Refuses a skin that was never saved, so no folder ever holds only a chat.
 pub fn append_chat(user: &UserSkinStore, skin_id: &str, lines: &[ChatLine]) -> Result<(), CommandError> {
     if user.manifest(skin_id).is_none() {
-        return Err(CommandError::invalid_input(format!("{skin_id} isn't one of your skins")));
+        return Err(CommandError::invalid_input(tr("{skin_id} isn't one of your skins", &[("skin_id", &skin_id.to_string())])));
     }
     let dir = user.folder(skin_id).map_err(store_error)?;
     let mut all = chat(user, skin_id);
@@ -260,16 +272,16 @@ pub fn apply_reply(
     let asked = ChatLine::now("user", request);
     if !matches!(reply.intent, SkinIntent::New | SkinIntent::Refine) {
         // A question back or a decline: chat only.
-        let line = if reply.reply.is_empty() { CLARIFY_LINE.to_string() } else { reply.reply.clone() };
+        let line = if reply.reply.is_empty() { clarify_line() } else { reply.reply.clone() };
         result.stored = origin.saved && append_chat(user, &origin.id, &[asked, ChatLine::now("whimbrel", &line)]).is_ok();
         result.lines = vec![line];
         return result;
     }
     let Some((target, extra)) = save_reply(user, pool, origin, reply, sent_assets) else {
-        result.lines = vec![UNUSABLE_LINE.to_string()];
+        result.lines = vec![unusable_line()];
         return result;
     };
-    let mut lines = vec![if reply.reply.is_empty() { DONE_LINE.to_string() } else { reply.reply.clone() }];
+    let mut lines = vec![if reply.reply.is_empty() { done_line() } else { reply.reply.clone() }];
     lines.extend(extra);
     let turns: Vec<ChatLine> = std::iter::once(asked).chain(lines.iter().map(|l| ChatLine::now("whimbrel", l))).collect();
     result.stored = append_chat(user, &target, &turns).is_ok();
@@ -371,12 +383,12 @@ fn save_reply(user: &UserSkinStore, pool: &[Palette], origin: &Origin, reply: &S
         palettes = existing.clone();
         ids = if origin.saved { existing.iter().map(|p| p.id.clone()).collect() } else { origin.palette_ids.clone() };
         if all_rejected && !ids.is_empty() {
-            lines.push(KEPT_COLOURS_LINE.to_string());
+            lines.push(kept_colours_line());
         }
     }
     if ids.is_empty() {
         ids = vec![fallback.id.clone()];
-        lines.push(NO_PALETTE_LINE.to_string());
+        lines.push(no_palette_line());
     }
     manifest.insert("palettes".into(), ids.into());
 
@@ -524,16 +536,32 @@ fn now_ms() -> i64 {
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SkinLine {
+    /// In the shell's language, so callers compare `kind`, never the text.
     pub text: String,
     pub stored: bool,
+    #[serde(default)]
+    pub kind: SkinLineKind,
+}
+
+/// What a `SkinLine` reports, for the callers that act on it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SkinLineKind {
+    /// Anything else: a refusal, a failure, an undo.
+    #[default]
+    Note,
+    /// The image was placed, so the skin changed (and syncs).
+    Placed,
+    /// Refused in local-only mode: the image stays offered.
+    LocalOnly,
 }
 
 fn post(user: &UserSkinStore, skin_id: &str, text: &str) -> SkinLine {
-    SkinLine { text: text.to_string(), stored: append_chat(user, skin_id, &[ChatLine::now("whimbrel", text)]).is_ok() }
+    SkinLine { text: text.to_string(), stored: append_chat(user, skin_id, &[ChatLine::now("whimbrel", text)]).is_ok(), kind: SkinLineKind::Note }
 }
 
-fn unsaved(text: &str) -> SkinLine {
-    SkinLine { text: text.to_string(), stored: false }
+pub fn unsaved(text: &str) -> SkinLine {
+    SkinLine { text: text.to_string(), stored: false, kind: SkinLineKind::Note }
 }
 
 /// A Whimbrel line for the skin's chat, stored when the skin is one of yours (a built-in keeps no chat).
@@ -544,38 +572,37 @@ pub fn post_line(user: &UserSkinStore, skin_id: &str, text: &str) -> SkinLine {
 /// Undo on `skin_id`: back to its previous version. A built-in never changes, so it has none.
 pub fn undo(user: &UserSkinStore, skin_id: &str) -> SkinLine {
     if user.manifest(skin_id).is_none() {
-        return unsaved("Built-in skins never change, so there's nothing to undo.");
+        return unsaved(&tr("Built-in skins never change, so there's nothing to undo.", &[]));
     }
     let _saving = saving();
     match user.undo(skin_id) {
-        Ok(true) => post(user, skin_id, "Undone: this skin is back to its previous version."),
-        Ok(false) => unsaved("There's no earlier version to go back to."),
+        Ok(true) => post(user, skin_id, &tr("Undone: this skin is back to its previous version.", &[])),
+        Ok(false) => unsaved(&tr("There's no earlier version to go back to.", &[])),
         Err(e) => {
             tracing::error!(error = %e, "skin undo failed");
-            unsaved("Whimbrel couldn't undo that.")
+            unsaved(&tr("Whimbrel couldn't undo that.", &[]))
         }
     }
 }
 
-pub const ADDED_LINE: &str = "Added the image to the header.";
-pub const REPLACED_LINE: &str = "Replaced the header image with this one.";
-
 /// Whether an image action's line says the image was placed, so the skin changed (and syncs).
 pub fn placed(line: &SkinLine) -> bool {
-    line.text == ADDED_LINE || line.text == REPLACED_LINE
+    line.kind == SkinLineKind::Placed
 }
 
 /// The line for a skin that isn't one of yours yet, so it has nowhere to keep an image.
-pub const NOT_YOURS_LINE: &str = "Ask for a change first, so Whimbrel makes your own copy of this skin, then add the image.";
+pub fn not_yours_line() -> String {
+    tr("Ask for a change first, so Whimbrel makes your own copy of this skin, then add the image.", &[])
+}
 
 /// Stores `bytes` (downscaled to 1600 px) in the skin's folder and places it as the header image,
 /// replacing any earlier one, in a new version.
 pub fn place_image(user: &UserSkinStore, skin_id: &str, bytes: &[u8], preferred_name: &str) -> Result<SkinLine, CommandError> {
     let _saving = saving();
-    let unreadable = || CommandError::store(format!("the manifest of {skin_id} can't be read"));
+    let unreadable = || CommandError::store(tr("The manifest of {skin_id} can't be read", &[("skin_id", &skin_id.to_string())]));
     let saved = user.manifest(skin_id).ok_or_else(unreadable)?;
     let Ok(Value::Object(mut manifest)) = serde_json::from_slice::<Value>(&saved) else { return Err(unreadable()) };
-    let small = downscale(bytes, MAX_SIDE).map_err(|e| CommandError::invalid_input(format!("not an image Whimbrel can use: {e}")))?;
+    let small = downscale(bytes, MAX_SIDE).map_err(|e| CommandError::invalid_input(tr("Not an image Whimbrel can use: {error}", &[("error", &e.to_string())])))?;
     let name = user.add_image(skin_id, &small, preferred_name).map_err(store_error)?;
     let imagery = imagery_of(&manifest);
     let replaced = imagery.iter().any(|e| placement(e) == Some(HEADER));
@@ -584,20 +611,21 @@ pub fn place_image(user: &UserSkinStore, skin_id: &str, bytes: &[u8], preferred_
     decoration.insert("imagery".into(), Value::Array(placing(entry, imagery)));
     manifest.insert("decoration".into(), Value::Object(decoration));
     user.save_raw(skin_id, &pretty(&Value::Object(manifest)), &user.palette_files(skin_id)).map_err(store_error)?;
-    Ok(post(user, skin_id, if replaced { REPLACED_LINE } else { ADDED_LINE }))
+    let line = if replaced { tr("Replaced the header image with this one.", &[]) } else { tr("Added the image to the header.", &[]) };
+    Ok(SkinLine { kind: SkinLineKind::Placed, ..post(user, skin_id, &line) })
 }
 
 /// A found or made image the user approved: `bytes` is `None` when it couldn't be downloaded.
 pub fn approve(user: &UserSkinStore, skin_id: &str, bytes: Option<Vec<u8>>, preferred_name: &str) -> Result<SkinLine, CommandError> {
     if user.manifest(skin_id).is_none() {
-        return Ok(unsaved(NOT_YOURS_LINE));
+        return Ok(unsaved(&not_yours_line()));
     }
     match bytes {
         Some(bytes) if skins::package::is_usable_image(&bytes) => match place_image(user, skin_id, &bytes, preferred_name) {
-            Err(CommandError::InvalidInput { .. }) => Ok(post(user, skin_id, "That image couldn't be downloaded, so it was left out.")),
+            Err(CommandError::InvalidInput { .. }) => Ok(post(user, skin_id, &tr("That image couldn't be downloaded, so it was left out.", &[]))),
             other => other,
         },
-        _ => Ok(post(user, skin_id, "That image couldn't be downloaded, so it was left out.")),
+        _ => Ok(post(user, skin_id, &tr("That image couldn't be downloaded, so it was left out.", &[]))),
     }
 }
 
@@ -605,13 +633,13 @@ pub fn approve(user: &UserSkinStore, skin_id: &str, bytes: Option<Vec<u8>>, pref
 /// length, so a large file is refused before it is read.
 pub fn add_own_image(user: &UserSkinStore, skin_id: &str, size: u64, read: impl FnOnce() -> std::io::Result<Vec<u8>>) -> Result<SkinLine, CommandError> {
     if user.manifest(skin_id).is_none() {
-        return Ok(unsaved(NOT_YOURS_LINE));
+        return Ok(unsaved(&not_yours_line()));
     }
     if size > skins::package::IMAGE_BYTE_LIMIT as u64 {
-        return Ok(post(user, skin_id, "That image is over 10 MB, so Whimbrel left it out."));
+        return Ok(post(user, skin_id, &tr("That image is over 10 MB, so Whimbrel left it out.", &[])));
     }
-    let Ok(bytes) = read() else { return Ok(post(user, skin_id, "Whimbrel couldn't read that file.")) };
-    let not_an_image = || post(user, skin_id, "That file isn't an image Whimbrel can use.");
+    let Ok(bytes) = read() else { return Ok(post(user, skin_id, &tr("Whimbrel couldn't read that file.", &[]))) };
+    let not_an_image = || post(user, skin_id, &tr("That file isn't an image Whimbrel can use.", &[]));
     if !skins::package::is_usable_image(&bytes) {
         return Ok(not_an_image());
     }
@@ -637,23 +665,33 @@ fn extension(bytes: &[u8]) -> &'static str {
 
 // --- rename, delete, export, import (Task 12)
 
-pub const RENAME_FAILED_LINE: &str = "Couldn't rename this skin.";
-pub const DELETE_FAILED_LINE: &str = "Couldn't delete this skin.";
-pub const EXPORT_FAILED_LINE: &str = "Couldn't export this skin.";
-pub const TOO_BIG_TO_EXPORT_LINE: &str = "This skin is too big to export (more than 64 MB or 200 files), so it couldn't be imported again.";
-pub const IMPORT_FAILED_LINE: &str = "Whimbrel couldn't import that file. It needs to be a skin exported from Whimbrel.";
+fn rename_failed_line() -> String {
+    tr("Couldn't rename this skin.", &[])
+}
+fn delete_failed_line() -> String {
+    tr("Couldn't delete this skin.", &[])
+}
+fn export_failed_line() -> String {
+    tr("Couldn't export this skin.", &[])
+}
+fn too_big_to_export_line() -> String {
+    tr("This skin is too big to export (more than 64 MB or 200 files), so it couldn't be imported again.", &[])
+}
+fn import_failed_line() -> String {
+    tr("Whimbrel couldn't import that file. It needs to be a skin exported from Whimbrel.", &[])
+}
 /// The file types the pickers offer: the Mac's, and its name from before the rename.
 pub const PACKAGE_EXTENSIONS: [&str; 2] = ["whimbrelskin", "kestrelskin"]; // exported before the rename
 
 /// Renames one of your skins, as a new version (so Undo brings the old name back).
 pub fn rename(user: &UserSkinStore, skin_id: &str, name: &str) -> Result<(), String> {
     if name.trim().is_empty() || user.manifest(skin_id).is_none() {
-        return Err(RENAME_FAILED_LINE.to_string());
+        return Err(rename_failed_line());
     }
     let _saving = saving();
     user.rename(skin_id, name).map_err(|e| {
         tracing::error!(error = %e, "skin rename failed");
-        RENAME_FAILED_LINE.to_string()
+        rename_failed_line()
     })
 }
 
@@ -662,22 +700,22 @@ pub fn delete(user: &UserSkinStore, skin_id: &str) -> Result<(), String> {
     let _saving = saving();
     user.delete(skin_id).map_err(|e| {
         tracing::error!(error = %e, "skin delete failed");
-        DELETE_FAILED_LINE.to_string()
+        delete_failed_line()
     })
 }
 
 /// Writes one of your skins to `path` as a package. Refuses one too large to import again.
 pub fn export_to(user: &UserSkinStore, skin_id: &str, path: &Path) -> Result<(), String> {
     let bytes = skins::package::export(user, skin_id).map_err(|e| match e {
-        skins::package::PackageError::TooLargeToExport => TOO_BIG_TO_EXPORT_LINE.to_string(),
+        skins::package::PackageError::TooLargeToExport => too_big_to_export_line(),
         e => {
             tracing::error!(error = %e, "skin export failed");
-            EXPORT_FAILED_LINE.to_string()
+            export_failed_line()
         }
     })?;
     std::fs::write(path, bytes).map_err(|e| {
         tracing::error!(error = %e, "skin export write failed");
-        EXPORT_FAILED_LINE.to_string()
+        export_failed_line()
     })
 }
 
@@ -686,7 +724,7 @@ pub fn export_to(user: &UserSkinStore, skin_id: &str, path: &Path) -> Result<(),
 pub fn import_from(user: &UserSkinStore, path: &Path) -> Result<String, String> {
     let failed = |e: &dyn std::fmt::Display| {
         tracing::warn!(error = %e, "skin import failed");
-        IMPORT_FAILED_LINE.to_string()
+        import_failed_line()
     };
     // A file past the package limit is refused before it is read.
     let size = std::fs::metadata(path).map_err(|e| failed(&e))?.len();
@@ -878,7 +916,7 @@ mod tests {
         let bad = reply(serde_json::json!({ "intent": "new", "reply": "Done!", "skin": "not an object", "palettes": [] }));
         let result = apply_reply(&user, &pool(), &origin, &bad, "a skin", &HashSet::new(), ALL);
         assert_eq!(result.saved_skin_id, None);
-        assert_eq!(result.lines, [UNUSABLE_LINE]);
+        assert_eq!(result.lines, [unusable_line()]);
         assert!(!result.stored);
         assert!(user.skin_ids().is_empty());
         // A reply that is not JSON at all fails the turn (after one retry), before anything is saved.
@@ -969,7 +1007,7 @@ mod tests {
         let user = scratch.store();
         let id = apply_reply(&user, &pool(), &built_in(&user, "whimbrel"), &stadium("new"), "a stadium skin", &HashSet::new(), ALL).saved_skin_id.unwrap();
         let line = approve(&user, &id, Some(png(2400, 1200)), "https://example.com/lights.png?w=2400").unwrap();
-        assert_eq!(line, SkinLine { text: "Added the image to the header.".into(), stored: true });
+        assert_eq!(line, SkinLine { text: "Added the image to the header.".into(), stored: true, kind: SkinLineKind::Placed });
         let asset = header_asset(&user, &id);
         assert_eq!(asset, "lights.png");
         let bytes = std::fs::read(user.image_path(&id, &asset).unwrap()).unwrap();
@@ -986,7 +1024,7 @@ mod tests {
         assert_eq!(header_asset(&user, &id), "generated.png");
         // A download that failed, or a built-in, places nothing.
         assert_eq!(approve(&user, &id, None, "x.png").unwrap().text, "That image couldn't be downloaded, so it was left out.");
-        assert_eq!(approve(&user, "whimbrel", Some(png(4, 4)), "x.png").unwrap(), SkinLine { text: NOT_YOURS_LINE.into(), stored: false });
+        assert_eq!(approve(&user, "whimbrel", Some(png(4, 4)), "x.png").unwrap(), unsaved(&not_yours_line()));
     }
 
     use image::GenericImageView;
@@ -1022,7 +1060,7 @@ mod tests {
             "palettes": [{ "id": "x", "name": "X" }]
         }));
         let result = apply_reply(&user, &pool(), &built_in(&user, "whimbrel"), &empty, "plain", &HashSet::new(), ALL);
-        assert_eq!(result.lines, [DONE_LINE, NO_PALETTE_LINE]);
+        assert_eq!(result.lines, [done_line(), no_palette_line()]);
         assert_eq!(loaded(&user, "user-plain-1").0.palettes, ["default"]);
     }
 
@@ -1031,13 +1069,13 @@ mod tests {
         let scratch = Scratch::new("undo");
         let user = scratch.store();
         let id = apply_reply(&user, &pool(), &built_in(&user, "whimbrel"), &stadium("new"), "a stadium skin", &HashSet::new(), ALL).saved_skin_id.unwrap();
-        assert_eq!(undo(&user, &id), SkinLine { text: "There's no earlier version to go back to.".into(), stored: false });
+        assert_eq!(undo(&user, &id), unsaved("There's no earlier version to go back to."));
         let mine = origin(&user, &repo().join("skins"), &id).unwrap();
         let renamed = reply(serde_json::json!({ "intent": "refine", "reply": "", "skin": { "name": "Arena", "palettes": [] } }));
         apply_reply(&user, &pool(), &mine, &renamed, "call it Arena", &HashSet::new(), ALL);
         assert_eq!(loaded(&user, &id).0.name, "Arena");
         let line = undo(&user, &id);
-        assert_eq!(line, SkinLine { text: "Undone: this skin is back to its previous version.".into(), stored: true });
+        assert_eq!(line, SkinLine { text: "Undone: this skin is back to its previous version.".into(), stored: true, kind: SkinLineKind::Note });
         assert_eq!(loaded(&user, &id).0.name, "Stadium");
         assert_eq!(chat(&user, &id).last().unwrap().text, line.text);
         assert_eq!(undo(&user, "game-day").text, "Built-in skins never change, so there's nothing to undo.");
@@ -1056,12 +1094,12 @@ mod tests {
         // A rename is a version, so Undo brings the name back.
         undo(&user, &id);
         assert_eq!(loaded(&user, &id).0.name, "Stadium");
-        assert_eq!(rename(&user, &id, "   "), Err(RENAME_FAILED_LINE.into()));
-        assert_eq!(rename(&user, "game-day", "Mine"), Err(RENAME_FAILED_LINE.into()));
+        assert_eq!(rename(&user, &id, "   "), Err(rename_failed_line()));
+        assert_eq!(rename(&user, "game-day", "Mine"), Err(rename_failed_line()));
         delete(&user, &id).unwrap();
         assert!(user.skin_ids().is_empty());
         assert_eq!(user.deleted_ids(), std::slice::from_ref(&id));
-        assert_eq!(delete(&user, &id), Err(DELETE_FAILED_LINE.into()));
+        assert_eq!(delete(&user, &id), Err(delete_failed_line()));
     }
 
     #[test]
@@ -1090,10 +1128,10 @@ mod tests {
         // Anything else is refused with the Mac's line, and nothing is added.
         let junk = scratch.0.join("junk.whimbrelskin");
         std::fs::write(&junk, b"not a zip").unwrap();
-        assert_eq!(import_from(&user, &junk), Err(IMPORT_FAILED_LINE.into()));
-        assert_eq!(import_from(&user, &scratch.0.join("missing.whimbrelskin")), Err(IMPORT_FAILED_LINE.into()));
+        assert_eq!(import_from(&user, &junk), Err(import_failed_line()));
+        assert_eq!(import_from(&user, &scratch.0.join("missing.whimbrelskin")), Err(import_failed_line()));
         assert_eq!(user.skin_ids().len(), 2);
-        assert_eq!(export_to(&user, "game-day", &scratch.0.join("x.whimbrelskin")), Err(EXPORT_FAILED_LINE.into()));
+        assert_eq!(export_to(&user, "game-day", &scratch.0.join("x.whimbrelskin")), Err(export_failed_line()));
     }
 
     #[test]

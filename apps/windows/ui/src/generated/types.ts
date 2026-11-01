@@ -221,6 +221,13 @@ export type RoutineKind =
  */
 export type RunOutcome = ("success" | "failed" | "rejected") | "pending";
 /**
+ * What a `SkinLine` reports, for the callers that act on it.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SkinLineKind".
+ */
+export type SkinLineKind = "note" | "placed" | "local_only";
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "SyncState".
  */
@@ -1149,6 +1156,10 @@ export interface MeetingModelsStatus {
    * Display names of the models still missing.
    */
   missing: string[];
+  /**
+   * "I have meetings in other languages" (`transcription.multilingual`), device-local.
+   */
+  multilingual: boolean;
 }
 /**
  * What the UI and the tray show about meeting recording.
@@ -1522,7 +1533,11 @@ export interface ScheduleView {
  * via the `definition` "SkinLine".
  */
 export interface SkinLine {
+  kind?: SkinLineKind & string;
   stored: boolean;
+  /**
+   * In the shell's language, so callers compare `kind`, never the text.
+   */
   text: string;
 }
 /**
@@ -1821,6 +1836,11 @@ export interface WorkspaceView {
   actionItems: ActionItemView[];
   attendees: string[];
   /**
+   * "Transcript language" is offered: multilingual mode is on, and this PC still has the
+   * meeting's audio to transcribe again (the Mac's `MeetingOptionsMenu`).
+   */
+  canChooseLanguage: boolean;
+  /**
    * The meeting app or conference link, when the row has one.
    */
   conferenceLink?: string | null;
@@ -1845,6 +1865,10 @@ export interface WorkspaceView {
    */
   readOnly: boolean;
   row: MeetingRow;
+  /**
+   * The language the meeting was transcribed in (`meeting.spoken_language`), once known.
+   */
+  spokenLanguage?: string | null;
   summary?: string | null;
   summaryIsEdited: boolean;
   trigger: string;
