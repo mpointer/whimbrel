@@ -3,6 +3,7 @@ import {
   aiSettings,
   keyCheck,
   keyFormatHint,
+  localModelRemove,
   openExternal,
   providerModels,
   setApiKey,
@@ -12,6 +13,7 @@ import {
   setSummaryInstructions,
   usageRows,
 } from "../api";
+import { localModelDownload } from "../chat/localModel";
 import { describeError, isCommandError } from "../errors";
 import { t, useL10n } from "../l10n";
 import type { AiSettings, PromptSurface, Provider, ProviderInfoView, RoutingSettings, UsageRowView, UsageView } from "../generated/types";
@@ -45,6 +47,7 @@ export function AiCard() {
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ollamaUp, setOllamaUp] = useState(false);
+  const { status: local } = localModelDownload.use();
 
   useEffect(() => {
     aiSettings()
@@ -73,7 +76,14 @@ export function AiCard() {
       <h2 id="ai-heading" className="section-label">
         {t("AI & routing")}
       </h2>
-      {showsOnRamp(settings.routing, settings.keys, ollamaUp) && <OnRamp google={info("google")} />}
+      {showsOnRamp(settings.routing, settings.keys, ollamaUp, !!local?.installed) && <OnRamp google={info("google")} />}
+      {local?.installed && (
+        <div className="toolbar">
+          <button className="mode" onClick={() => void localModelRemove().then(localModelDownload.setStatus, (e: unknown) => setError(message(e)))}>
+            {t("Remove the Small Local Model")}
+          </button>
+        </div>
+      )}
       <Routing
         routing={settings.routing}
         onChange={saveRouting}

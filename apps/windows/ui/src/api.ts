@@ -55,6 +55,7 @@ import type {
   RetentionSettings,
   RetentionView,
   MeetingSettings,
+  LocalModelStatus,
   ImportView,
   RecordingNoticeSettings,
   NextMeetingView,
@@ -199,6 +200,10 @@ export const meetingRecordStartEvent = (eventId: string) => invoke<MeetingRecord
 export const meetingRecordingStatus = () => invoke<MeetingRecordingView>("meeting_recording_status");
 
 // The Meetings tab (M3.3 Task 5).
+/** The small local model behind Ask (W-1.3). */
+export const localModelStatus = () => invoke<LocalModelStatus>("local_model_status");
+export const localModelDownloadStart = () => invoke<string>("local_model_download_start");
+export const localModelRemove = () => invoke<LocalModelStatus>("local_model_remove");
 export const meetingList = (filter: string) => invoke<MeetingRow[]>("meeting_list", { filter });
 /** Import (W-1.6): each opens a picker and resolves null when it's cancelled. */
 export const importTranscripts = () => invoke<ImportView | null>("import_transcripts");

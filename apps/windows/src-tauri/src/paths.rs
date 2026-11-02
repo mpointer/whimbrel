@@ -161,6 +161,12 @@ impl Paths {
         self.models.join("ggml-large-v3-turbo-q5_0.bin")
     }
 
+    /// The small local model behind Ask (core's `local_model_spec`, the Mac's `LocalModel.modelPath`):
+    /// downloaded only from the button on the empty Ask screen (W-1.3).
+    pub fn local_model(&self) -> PathBuf {
+        self.models.join("SmolLM3-Q4_K_M.gguf")
+    }
+
     /// Diarization's pyannote segmentation model.
     pub fn segmentation_model(&self) -> PathBuf {
         self.models.join("pyannote-segmentation-3-0.onnx")

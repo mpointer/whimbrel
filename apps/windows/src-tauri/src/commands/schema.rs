@@ -38,6 +38,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::models::MeetingModelsStatus>();
     generator.subschema_for::<super::meetings::RecordingNoticeSettings>();
     generator.subschema_for::<super::models::TranscriptionQualityStatus>();
+    generator.subschema_for::<super::models::LocalModelStatus>();
     generator.subschema_for::<super::import::ImportView>();
     generator.subschema_for::<crate::settings::PromptSurface>();
     generator.subschema_for::<crate::chat::ChatEvent>();

@@ -134,5 +134,5 @@ export function groupUsageByDay(rows: UsageRowView[], locale: string): { day: st
  * Whether the on-ramp card shows: no hosted key is saved and Ollama did not answer (or
  * local is off), so chat, summaries and routines have nothing to call.
  */
-export const showsOnRamp = (routing: RoutingSettings, keys: ProviderKey[], ollamaUp: boolean): boolean =>
-  !(routing.useLocalModel && ollamaUp) && !keys.some((k) => k.masked);
+export const showsOnRamp = (routing: RoutingSettings, keys: ProviderKey[], ollamaUp: boolean, localModelInstalled = false): boolean =>
+  !(routing.useLocalModel && ollamaUp) && !keys.some((k) => k.masked) && !localModelInstalled;

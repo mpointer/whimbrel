@@ -128,7 +128,7 @@ pub fn chat_stop(run_id: String) -> bool {
 fn run(store: &StoreHandle, ask: &Ask, send: &dyn Fn(ChatEvent)) {
     let ollama_up = chat::ollama_serves(&ask.settings.ollama_model);
     let effective = chat::effective_routing(&ask.settings, &ask.query, ollama_up);
-    let route = chat::stream_route(&effective, &ask.keys);
+    let route = chat::local_instead(chat::stream_route(&effective, &ask.keys), ollama_up, api::local_model::is_configured());
     let (provider, model) = chat::answering(&effective);
     // Never the question itself: only how it was routed.
     tracing::info!(

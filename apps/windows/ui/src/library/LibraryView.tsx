@@ -36,7 +36,15 @@ export function DeviceChip({ device }: { device: DeviceTag }) {
   );
 }
 
-export function LibraryView({ askRequest, onAskHandled }: { askRequest?: AskRequest | null; onAskHandled?: () => void }) {
+export function LibraryView({
+  askRequest,
+  onAskHandled,
+  onOpenSettings,
+}: {
+  askRequest?: AskRequest | null;
+  onAskHandled?: () => void;
+  onOpenSettings?: () => void;
+}) {
   // Opens on Ask when Today handed it a question (this view mounts fresh when the tab is shown).
   const [mode, setMode] = useState<Mode>(askRequest ? "ask" : "recent");
   const [rows, setRows] = useState<LibraryRow[]>([]);
@@ -173,7 +181,7 @@ export function LibraryView({ askRequest, onAskHandled }: { askRequest?: AskRequ
       {current.comingIn ? (
         <div className="card empty-state">{t("Coming in {milestone}.", { milestone: current.comingIn })}</div>
       ) : mode === "ask" ? (
-        <AskView request={askRequest} onRequestHandled={onAskHandled} />
+        <AskView request={askRequest} onRequestHandled={onAskHandled} onOpenSettings={onOpenSettings} />
       ) : mode === "digest" ? (
         <DigestView />
       ) : error ? (

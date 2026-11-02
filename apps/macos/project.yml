@@ -151,6 +151,7 @@ targets:
           fi
           cargo build --release -p ffi
           cargo build --release -p mcp-server --bin whimbrel-mcp-server
+          "$SRCROOT/../../scripts/bundle-llama-server.sh"
         basedOnDependencyAnalysis: false
     postbuildScripts:
       # `cargo build` leaves `whimbrel-mcp-server` ad-hoc signed (confirmed empirically:
@@ -179,12 +180,14 @@ targets:
             echo "warning: CODE_SIGNING_ALLOWED=$CODE_SIGNING_ALLOWED / no signing identity resolved -- skipping whimbrel-mcp-server re-sign."
             exit 0
           fi
-          BIN="$CODESIGNING_FOLDER_PATH/Contents/Resources/whimbrel-mcp-server"
-          if [ ! -f "$BIN" ]; then
-            echo "warning: $BIN not found -- nothing to sign."
-            exit 0
-          fi
-          codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$BIN"
+          for NAME in whimbrel-mcp-server whimbrel-llama-server; do
+            BIN="$CODESIGNING_FOLDER_PATH/Contents/Resources/$NAME"
+            if [ ! -f "$BIN" ]; then
+              echo "warning: $BIN not found -- nothing to sign."
+              continue
+            fi
+            codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$BIN"
+          done
         basedOnDependencyAnalysis: false
       - name: Strip pseudo-locale in Release
         script: |
@@ -207,7 +210,7 @@ targets:
         # library name (core/ffi) — unrelated to the app's own product name.
         OTHER_LDFLAGS: -lwhimbrel_core -lc++
         INFOPLIST_FILE: Whimbrel/Info.plist
-        MARKETING_VERSION: "0.9.47"
+        MARKETING_VERSION: "0.9.48"
         CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   WhimbrelTests:

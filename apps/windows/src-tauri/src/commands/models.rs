@@ -218,6 +218,46 @@ pub async fn transcription_benchmark(state: State<'_, AppState>) -> Result<Trans
     Ok(quality_status(&state.settings.lock().unwrap(), &state.paths))
 }
 
+/// The small local model behind Ask (W-1.3).
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalModelStatus {
+    /// The helper and the model are both here, and every chain ends with it.
+    pub installed: bool,
+    /// The helper ships in this build and the PC has the memory and the disk for it.
+    pub can_offer: bool,
+}
+
+static LOCAL_MODEL_JOB: Mutex<Option<String>> = Mutex::new(None);
+
+#[tauri::command]
+pub async fn local_model_status(state: State<'_, AppState>) -> Result<LocalModelStatus, CommandError> {
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let installed = crate::local_model::is_installed(&paths);
+        // A download that just finished: core learns of it here, as the UI asks after each job.
+        if installed && !api::local_model::is_configured() {
+            crate::local_model::configure(&paths);
+        }
+        LocalModelStatus { installed, can_offer: crate::local_model::can_offer_here(&paths) }
+    })
+    .await
+    .map_err(|e| CommandError::store(e.to_string()))
+}
+
+/// Downloads the local model (about 1.9 GB); poll with `model_download_poll`. Never automatic.
+#[tauri::command]
+pub fn local_model_download_start(state: State<'_, AppState>) -> String {
+    running_or_start(&LOCAL_MODEL_JOB, still_running, || api::models::start_with_manifest(vec![api::models::local_model_spec(state.paths.local_model())]))
+}
+
+/// Settings → AI → "Remove the Small Local Model".
+#[tauri::command]
+pub async fn local_model_remove(state: State<'_, AppState>) -> Result<LocalModelStatus, CommandError> {
+    crate::local_model::remove(&state.paths).map_err(|e| CommandError::store(e.to_string()))?;
+    local_model_status(state).await
+}
+
 /// From core's manifest, so the files and their folder follow the model version.
 pub fn model_installed(dir: &Path) -> bool {
     api::models::embedding_manifest(dir).iter().all(|spec| spec.destination.is_file())

@@ -129,6 +129,9 @@ pub fn run() {
             commands::models::set_transcription_quality,
             commands::models::dismiss_better_offer,
             commands::models::turbo_download_start,
+            commands::models::local_model_status,
+            commands::models::local_model_download_start,
+            commands::models::local_model_remove,
             commands::models::transcription_benchmark,
             commands::meetings::meeting_record_start,
             commands::meetings::meeting_record_stop,
@@ -276,6 +279,7 @@ pub fn run() {
                     let _ = meetings.stop();
                 }
             }
+            api::local_model::stop();
             let code = crate::restart::requested_exit_code();
             if code != 0 {
                 tracing::info!(code, "exiting with a requested code");

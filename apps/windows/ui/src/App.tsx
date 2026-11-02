@@ -113,7 +113,7 @@ export function App() {
         ) : tab.id === "meetings" ? (
           <MeetingsView />
         ) : tab.id === "library" ? (
-          <LibraryView askRequest={askRequest} onAskHandled={() => setAskRequest(null)} />
+          <LibraryView askRequest={askRequest} onAskHandled={() => setAskRequest(null)} onOpenSettings={() => setActive("settings")} />
         ) : tab.id === "automations" ? (
           <AutomationsView onWaiting={setWaiting} />
         ) : (

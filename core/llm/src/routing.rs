@@ -11,12 +11,14 @@ pub enum Provider {
     /// One key, any model on OpenRouter's catalogue, through their OpenAI-compatible
     /// endpoint. Model ids are namespaced (`vendor/model`, `:free` for free ones).
     OpenRouter,
+    /// The small downloadable model, run by the bundled helper. The last link of a chain.
+    Local,
 }
 
 impl Provider {
-    /// NFR-PRV-1: local-first — only Ollama runs entirely on-device.
+    /// NFR-PRV-1: local-first — only Ollama and the bundled model run entirely on-device.
     pub fn is_local(&self) -> bool {
-        matches!(self, Provider::Ollama)
+        matches!(self, Provider::Ollama | Provider::Local)
     }
 
     /// Lowercase provider name for logging/persistence (e.g. `usage_log.provider`).
@@ -29,6 +31,7 @@ impl Provider {
             Provider::OpenAI => "openai",
             Provider::Google => "google",
             Provider::OpenRouter => "openrouter",
+            Provider::Local => "local",
         }
     }
 
@@ -40,6 +43,7 @@ impl Provider {
             "openai" => Some(Provider::OpenAI),
             "google" => Some(Provider::Google),
             "openrouter" => Some(Provider::OpenRouter),
+            "local" => Some(Provider::Local),
             _ => None,
         }
     }

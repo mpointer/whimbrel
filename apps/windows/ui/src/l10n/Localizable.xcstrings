@@ -633,6 +633,40 @@
         }
       }
     },
+    "A small model runs on this PC with no account. Answers are slower and plainer than a hosted model's. It needs about 1.9 GB." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein kleines Modell läuft ohne Konto auf diesem PC. Antworten sind langsamer und einfacher als bei einem gehosteten Modell. Es braucht etwa 1,9 GB."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un modelo pequeño funciona en este PC sin cuenta. Las respuestas son más lentas y sencillas que las de un modelo alojado. Necesita unos 1,9 GB."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un petit modèle fonctionne sur ce PC sans compte. Les réponses sont plus lentes et plus simples que celles d'un modèle hébergé. Il faut environ 1,9 Go."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un petit modèle fonctionne sur ce PC sans compte. Les réponses sont plus lentes et plus simples que celles d'un modèle hébergé. Il faut environ 1,9 Go."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Um modelo pequeno roda neste PC sem conta. As respostas são mais lentas e simples que as de um modelo hospedado. Ele precisa de cerca de 1,9 GB."
+          }
+        }
+      }
+    },
     "A store job panicked: {error}" : {
       "localizations" : {
         "de" : {
@@ -1992,6 +2026,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Peça uma alteração…"
+          }
+        }
+      }
+    },
+    "Ask needs a model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fragen braucht ein Modell."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preguntar necesita un modelo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La fonction Demander nécessite un modèle."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La fonction Demander nécessite un modèle."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Perguntar precisa de um modelo."
           }
         }
       }
@@ -7210,6 +7278,40 @@
         }
       }
     },
+    "Download a Small Local Model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kleines lokales Modell laden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Descargar un modelo local pequeño"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Télécharger un petit modèle local"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Télécharger un petit modèle local"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baixar um modelo local pequeno"
+          }
+        }
+      }
+    },
     "Download a larger model, about 574 MB. Your audio stays on this PC." : {
       "localizations" : {
         "de" : {
@@ -7376,6 +7478,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Baixando o modelo de transcrição melhor…"
+          }
+        }
+      }
+    },
+    "Downloading the local model…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lokales Modell wird geladen …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Descargando el modelo local…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargement du modèle local…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargement du modèle local…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baixando o modelo local…"
           }
         }
       }
@@ -17348,6 +17484,40 @@
         }
       }
     },
+    "Remove the Small Local Model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kleines lokales Modell entfernen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eliminar el modelo local pequeño"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Supprimer le petit modèle local"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Supprimer le petit modèle local"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Remover o modelo local pequeno"
+          }
+        }
+      }
+    },
     "Rename" : {
       "localizations" : {
         "de" : {
@@ -24812,6 +24982,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Falha no status da bandeja: {error}"
+          }
+        }
+      }
+    },
+    "Try Again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erneut versuchen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reintentar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Réessayer"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Réessayer"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tentar novamente"
           }
         }
       }

@@ -1173,6 +1173,15 @@ char *whimbrel_import_markdown_folder(StoreHandle *handle, const char *device_id
 /* Starts downloading large-v3-turbo to destination. Returns {"job_id":...}, polled with
  * whimbrel_models_download_poll; NULL on a NULL path. */
 char *whimbrel_turbo_download_start(const char *destination);
+/* Starts downloading the local model to destination. Returns {"job_id":...}, polled with
+ * whimbrel_models_download_poll; NULL on a NULL path. */
+char *whimbrel_local_model_download_start(const char *destination);
+/* Adds the local model to every chain. NULL paths remove it and stop the helper. */
+void whimbrel_local_model_configure(const char *server, const char *model);
+/* Starts the local model helper and waits for it. Blocks; false when it can't start. */
+bool whimbrel_local_model_ensure_running(void);
+/* Stops the local model helper. The next model call starts it again. */
+void whimbrel_local_model_stop(void);
 /* Picks the engines for this machine. Takes and returns JSON (transcribe::engine::Inputs and
  * Choice); NULL on bad input. */
 char *whimbrel_choose_engine(const char *inputs_json);

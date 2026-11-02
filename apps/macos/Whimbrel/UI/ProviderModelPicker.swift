@@ -136,7 +136,7 @@ struct ProviderModelPicker: View {
                 Text("No OpenRouter API key configured. Add one in Settings > AI & Routing.")
                     .font(.whimbrelBody(.caption2))
                     .foregroundStyle(Color.whimbrelWarning)
-            } else if let hostedModelsError, selectedProvider == .ollama {
+            } else if let hostedModelsError, selectedProvider == .ollama, !LocalModel.isInstalled {
                 Text("Couldn't reach Ollama: \(hostedModelsError) — enter a model name manually.")
                     .font(.whimbrelBody(.caption2))
                     .foregroundStyle(Color.whimbrelTextSecondary)

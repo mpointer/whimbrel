@@ -125,6 +125,8 @@ final class MeetingTranscriptionQueue {
 
     private func run(_ job: Job) {
         let id = job.meetingId
+        // Transcription gets the memory the local model holds; its next call starts it again.
+        if job.audioPath != nil { CoreMemoryStore.stopLocalModel() }
         if job.audioPath != nil, !modelReady(), modelsDownloading() {
             let waiting = String(localized: "Waiting for the transcription model…")
             DispatchQueue.main.async { [onStage] in onStage(id, waiting) }

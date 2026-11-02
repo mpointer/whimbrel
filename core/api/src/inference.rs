@@ -102,6 +102,12 @@ pub fn start(
             let client = OpenAIStreamingClient::new(hosted_key(api_key)?);
             (Provider::OpenAI, with_base(client, base_url_override, OpenAIStreamingClient::with_base_url))
         }
+        "local" => {
+            // Ready already: the shell waits for `local_model::ensure_running` off the main thread.
+            let endpoint = crate::local_model::ensure_running().ok()?;
+            let client = OpenAIStreamingClient::new(endpoint.api_key).with_base_url(endpoint.base_url);
+            (Provider::Local, Arc::new(client) as Arc<dyn StreamingLlmClient>)
+        }
         "openrouter" => {
             let client = OpenAIStreamingClient::openrouter(hosted_key(api_key)?);
             (Provider::OpenRouter, with_base(client, base_url_override, OpenAIStreamingClient::with_base_url))

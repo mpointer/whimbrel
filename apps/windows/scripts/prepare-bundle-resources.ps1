@@ -7,6 +7,17 @@
 #   connectors\<name>\{dist, package.json, package-lock.json, node_modules}   the two Google connectors
 #   node\{node.exe, LICENSE}                                                  a pinned Node.js
 #   vulkan\{vulkan-1.dll, LICENSE.txt}                                         the Khronos Vulkan loader
+#   llama\{whimbrel-llama-server.exe, *.dll, LICENSE, LICENSE-LLVM-OpenMP}     the local model helper
+#
+# The local model helper (W-1.3): llama.cpp's own Windows release at the tag the Mac builds from,
+# run by core's api::local_model behind Ask with nothing set up. Only what llama-server needs comes
+# out of the zip: the server and its DLLs, the CPU backends ggml picks between at run time, and the
+# Vulkan backend (it uses the GPU driver's vulkan-1.dll, else ggml runs on the CPU). It sits in its
+# own folder so its ggml DLLs stay apart from whisper's, and is renamed as on the Mac so the launch
+# sweep never stops someone's own llama-server. TO UPDATE IT: change $LlamaTag and both hashes,
+# from https://github.com/ggml-org/llama.cpp/releases/tag/<tag> (the zip's digest is listed there)
+# and https://raw.githubusercontent.com/ggml-org/llama.cpp/<tag>/LICENSE, and match the Mac's
+# scripts/bundle-llama-server.sh.
 #
 # The Vulkan loader (W-1.2): whisper runs on the GPU through Vulkan, which makes vulkan-1.dll a hard
 # import of whimbrel-windows.exe. GPU drivers install it, but a PC without one (a VM, a cloud desktop,
@@ -33,6 +44,11 @@ $VulkanRtVersion = '1.4.363.0'
 $VulkanRtZipSha256 = 'A25A927AA8B9F0371048F1861CF88AC3B9BC9B1FB332C42D897C8AB32695769A'
 $VulkanDllSha256 = 'E1FCFC9489BEEFA6A6D9D11D6C7517F6A2B7F16E0D3FB8F4103BEE0210F314A3'
 $VulkanLicenseSha256 = '404DEB98DABF3E54BF9070D59676B31D69A3DA2F9F6E56BDF09AD315C04C718C'
+$LlamaTag = 'b11877'
+$LlamaZipSha256 = '05EF0107993C7FCA52975B8692449B419EF041A7C72D0B6A1E98326436EFC4EB'
+$LlamaLicenseSha256 = '94F29BBED6A22C35B992C5C6EBF0E7C92F13B836B90F36F461C9CF2F0F1D010D'
+# What llama-server loads, found by running it from a folder holding only these (plus ggml-cpu-*.dll).
+$LlamaFiles = @('llama-server-impl.dll', 'llama-common.dll', 'llama.dll', 'mtmd.dll', 'ggml.dll', 'ggml-base.dll', 'ggml-vulkan.dll', 'libomp.dll', 'LICENSE-LLVM-OpenMP')
 
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..\..')
 $out = Join-Path $repo 'apps\windows\src-tauri\bundle-resources'
@@ -76,6 +92,11 @@ foreach ($f in @(@($vulkanDll, $VulkanDllSha256), @($vulkanLicense, $VulkanLicen
     $actual = (Get-FileHash $f[0] -Algorithm SHA256).Hash
     if ($actual -ne $f[1]) { throw "$($f[0]) has SHA-256 $actual, not the pinned $($f[1]). Nothing was staged." }
 }
+$llamaZip = Get-Verified "https://github.com/ggml-org/llama.cpp/releases/download/$LlamaTag/llama-$LlamaTag-bin-win-vulkan-x64.zip" 'llama-win-vulkan-x64.zip' $LlamaZipSha256 "llama-$LlamaTag"
+$llamaLicense = Get-Verified "https://raw.githubusercontent.com/ggml-org/llama.cpp/$LlamaTag/LICENSE" 'LICENSE' $LlamaLicenseSha256 "llama-$LlamaTag"
+$llamaExtract = Join-Path $cache "llama-$LlamaTag-extract"
+Remove-Item $llamaExtract -Recurse -Force -ErrorAction SilentlyContinue
+Expand-Archive -Path $llamaZip -DestinationPath $llamaExtract
 
 Remove-Item $out -Recurse -Force -ErrorAction SilentlyContinue
 & (Join-Path $PSScriptRoot 'prepare-connectors.ps1') -ForBundle
@@ -88,4 +109,10 @@ $vulkanDir = Join-Path $out 'vulkan'
 New-Item -ItemType Directory -Force $vulkanDir | Out-Null
 Copy-Item $vulkanDll (Join-Path $vulkanDir 'vulkan-1.dll') -Force
 Copy-Item $vulkanLicense (Join-Path $vulkanDir 'LICENSE.txt') -Force
-Write-Host "staged Node $NodeVersion, the Vulkan loader $VulkanRtVersion and the connectors in $out"
+$llamaDir = Join-Path $out 'llama'
+New-Item -ItemType Directory -Force $llamaDir | Out-Null
+Copy-Item (Join-Path $llamaExtract 'llama-server.exe') (Join-Path $llamaDir 'whimbrel-llama-server.exe') -Force
+foreach ($f in $LlamaFiles) { Copy-Item (Join-Path $llamaExtract $f) $llamaDir -Force }
+Copy-Item (Join-Path $llamaExtract 'ggml-cpu-*.dll') $llamaDir -Force
+Copy-Item $llamaLicense (Join-Path $llamaDir 'LICENSE') -Force
+Write-Host "staged Node $NodeVersion, the Vulkan loader $VulkanRtVersion, llama.cpp $LlamaTag and the connectors in $out"

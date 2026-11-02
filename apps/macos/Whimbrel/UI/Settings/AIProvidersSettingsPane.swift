@@ -40,6 +40,11 @@ struct AIProvidersSettingsPane: View {
                 onRamp
             }
 
+            if LocalModel.isInstalled {
+                Button("Remove the Small Local Model") { LocalModel.remove() }
+                    .buttonStyle(.whimbrelSecondary)
+            }
+
             providerLinks(for: "anthropic")
             keyRow(
                 title: "Anthropic API Key",
@@ -614,7 +619,7 @@ struct AIProvidersSettingsPane: View {
     @MainActor
     static func showsOnRamp(routing: RoutingSettings) -> Bool {
         let localAvailable = routing.useLocalModel && !routing.ollamaModels.isEmpty
-        return !localAvailable && !routing.hasAnyHostedKey
+        return !localAvailable && !routing.hasAnyHostedKey && !LocalModel.isInstalled
     }
 
     private var onRamp: some View {

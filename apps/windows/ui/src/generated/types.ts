@@ -1117,6 +1117,22 @@ export interface LibrarySettings {
   showScreenCaptures: boolean;
 }
 /**
+ * The small local model behind Ask (W-1.3).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LocalModelStatus".
+ */
+export interface LocalModelStatus {
+  /**
+   * The helper ships in this build and the PC has the memory and the disk for it.
+   */
+  canOffer: boolean;
+  /**
+   * The helper and the model are both here, and every chain ends with it.
+   */
+  installed: boolean;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "McpClientView".
  */
