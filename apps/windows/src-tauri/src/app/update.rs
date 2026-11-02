@@ -244,6 +244,8 @@ pub fn install_update(staged: State<'_, StagedUpdate>, state: State<'_, AppState
             tracing::warn!("the MCP server did not stop in time; installing anyway");
         }
     }
+    // An idle local model helper holds llama\*.dll open, which the installer has to replace.
+    api::local_model::stop();
     tracing::info!(version = %update.version, "installing update");
     // The installer inherits this process's environment and relaunches the app with it.
     let supervised = crate::restart::leave_supervision();

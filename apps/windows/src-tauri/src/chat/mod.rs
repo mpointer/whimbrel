@@ -123,6 +123,18 @@ pub fn stream_route(routing: &RoutingSettings, keys: &ApiKeys) -> Option<StreamR
     }
 }
 
+/// With no Ollama serving the model, a question bound for Ollama streams from the small local
+/// model instead, once it's installed (the Mac's `replacesOllama`, W-1.3). `api::inference`
+/// starts the helper and, if it can't, starts nothing, so the question takes the blocking path.
+pub fn local_instead(route: Option<StreamRoute>, ollama_up: bool, local_installed: bool) -> Option<StreamRoute> {
+    match route {
+        Some(r) if r.provider == "ollama" && !ollama_up && local_installed => {
+            Some(StreamRoute { provider: "local", model: api::local_model::MODEL_ID.to_string(), key: None })
+        }
+        other => other,
+    }
+}
+
 /// What to do once a stream ends (the Mac's `handleStreamingAskPhaseChange`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalAction {
@@ -333,6 +345,11 @@ mod tests {
 
     #[test]
     fn ollama_and_keyed_hosted_providers_stream_the_rest_block() {
+        let local = local_instead(stream_route(&routing(Provider::Ollama), &keys(None)), false, true).unwrap();
+        assert_eq!((local.provider, local.model.as_str(), local.key), ("local", "local", None), "no Ollama: the local model streams");
+        assert_eq!(local_instead(stream_route(&routing(Provider::Ollama), &keys(None)), true, true).unwrap().provider, "ollama", "Ollama up wins");
+        assert_eq!(local_instead(stream_route(&routing(Provider::Ollama), &keys(None)), false, false).unwrap().provider, "ollama", "not installed");
+        assert_eq!(local_instead(stream_route(&routing(Provider::Google), &keys(Some("g"))), false, true).unwrap().provider, "google", "a key wins");
         let ollama = stream_route(&routing(Provider::Ollama), &keys(None)).unwrap();
         assert_eq!((ollama.provider, ollama.model.as_str(), ollama.key.is_none()), ("ollama", "gemma4:12b", true));
         let google = stream_route(&routing(Provider::Google), &keys(Some("g"))).unwrap();

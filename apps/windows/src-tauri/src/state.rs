@@ -128,6 +128,9 @@ impl AppState {
             }
         }
         let settings = Arc::new(Mutex::new(loaded));
+        // Off the launch path: the sweep for a helper a crash left behind runs a process.
+        let local_paths = paths.clone();
+        std::thread::spawn(move || crate::local_model::configure(&local_paths));
 
         let detected = Arc::new(Pending::default());
         let (meetings, pipeline) = match (&store, &slow_store, &identity) {

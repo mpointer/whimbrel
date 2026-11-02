@@ -3336,6 +3336,23 @@ final class CoreMemoryStore {
         return (try? JSONDecoder().decode(Started.self, from: Data(String(cString: json).utf8)))?.jobId
     }
 
+    static func startLocalModelDownload(destination: URL) -> String? {
+        guard let json = destination.path.withCString({ whimbrel_local_model_download_start($0) }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        struct Started: Decodable { let jobId: String; enum CodingKeys: String, CodingKey { case jobId = "job_id" } }
+        return (try? JSONDecoder().decode(Started.self, from: Data(String(cString: json).utf8)))?.jobId
+    }
+
+    /// A nil helper takes the local model out of every chain and stops it.
+    static func configureLocalModel(helper: URL?, model: URL) {
+        guard let helper else { return whimbrel_local_model_configure(nil, nil) }
+        helper.path.withCString { h in model.path.withCString { m in whimbrel_local_model_configure(h, m) } }
+    }
+
+    static func ensureLocalModelRunning() -> Bool { whimbrel_local_model_ensure_running() }
+
+    static func stopLocalModel() { whimbrel_local_model_stop() }
+
     static func chooseEngine(_ inputs: CoreEngineInputs) -> CoreEngineChoice? {
         guard let data = try? JSONEncoder().encode(inputs), let text = String(data: data, encoding: .utf8),
               let json = text.withCString({ whimbrel_choose_engine($0) }) else { return nil }

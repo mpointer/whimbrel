@@ -338,7 +338,7 @@ extension TimelineView {
                 return (provider, key)
             }
             switch effective.provider {
-            case .ollama: return (.ollama, nil)
+            case .ollama: return (LocalModel.replacesOllama(appState.routing) ? .local : .ollama, nil)
             case .google: return hosted(.google, .google)
             case .anthropic: return hosted(.anthropic, .anthropic)
             case .openai: return hosted(.openai, .openai)

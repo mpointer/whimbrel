@@ -1891,6 +1891,24 @@
         }
       ]
     },
+    "LocalModelStatus": {
+      "description": "The small local model behind Ask (W-1.3).",
+      "properties": {
+        "canOffer": {
+          "description": "The helper ships in this build and the PC has the memory and the disk for it.",
+          "type": "boolean"
+        },
+        "installed": {
+          "description": "The helper and the model are both here, and every chain ends with it.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "installed",
+        "canOffer"
+      ],
+      "type": "object"
+    },
     "McpClientView": {
       "properties": {
         "createdUnixMs": {

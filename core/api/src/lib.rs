@@ -24,6 +24,7 @@
 //! dispatch queue on macOS, an actor task on Windows).
 
 pub mod ask;
+pub mod local_model;
 pub mod import;
 pub mod citations;
 pub mod away_followup;

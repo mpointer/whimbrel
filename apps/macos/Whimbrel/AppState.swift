@@ -157,6 +157,10 @@ final class AppState: ObservableObject {
     /// "Away Mode": join Zoom meetings unattended. Owns the keep-awake assertion while on.
     /// Downloads missing models at launch, with no prompt (doc 17, item 1.1).
     let modelBootstrap = ModelBootstrap()
+    let localModelDownload = ModelBootstrap(
+        present: { LocalModel.isInstalled },
+        download: { try await ModelDownloadService.downloadLocalModel(progress: $0) }
+    )
     let turboDownload = ModelBootstrap(
         present: { FileManager.default.fileExists(atPath: TranscriptionService.turboModelPath.path) },
         download: { try await ModelDownloadService.downloadTurbo(progress: $0) }
@@ -350,6 +354,7 @@ final class AppState: ObservableObject {
             forName: NSApplication.willTerminateNotification, object: nil, queue: nil
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.endMeetingForQuit() }
+            CoreMemoryStore.stopLocalModel()
         }
 
         permissions.objectWillChange

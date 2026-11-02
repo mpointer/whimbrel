@@ -220,7 +220,9 @@ impl RoutingConfig {
 pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
     let ollama_link = || ollama_link(ollama_model);
     if routing.sensitive {
-        return vec![ollama_link()];
+        let mut chain = vec![ollama_link()];
+        push_local_link(&mut chain);
+        return chain;
     }
 
     let anthropic_model = if routing.preferred_provider == "anthropic" {
@@ -297,6 +299,7 @@ pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Chai
     if let Some(link) = openrouter_slot.take() {
         chain.push(link);
     }
+    push_local_link(&mut chain);
     chain
 }
 
@@ -321,7 +324,7 @@ fn fallback_model(provider: llm::Provider) -> &'static str {
         llm::Provider::Anthropic => FALLBACK_ANTHROPIC_MODEL,
         llm::Provider::OpenAI => FALLBACK_OPENAI_MODEL,
         llm::Provider::Google => FALLBACK_GOOGLE_MODEL,
-        llm::Provider::Ollama | llm::Provider::OpenRouter => "",
+        llm::Provider::Ollama | llm::Provider::OpenRouter | llm::Provider::Local => "",
     }
 }
 
@@ -334,7 +337,7 @@ pub fn cheap_model_for(provider: llm::Provider, available: Option<&[String]>) ->
         llm::Provider::Anthropic => CHEAP_ANTHROPIC_MODEL,
         llm::Provider::OpenAI => CHEAP_OPENAI_MODEL,
         llm::Provider::Google => CHEAP_GOOGLE_MODEL,
-        llm::Provider::Ollama | llm::Provider::OpenRouter => return "",
+        llm::Provider::Ollama | llm::Provider::OpenRouter | llm::Provider::Local => return "",
     };
     match available {
         Some(list) if !list.iter().any(|m| m == cheap) => fallback_model(provider),
@@ -359,6 +362,21 @@ fn ollama_link(ollama_model: &str) -> llm::ChainLink {
     }
 }
 
+/// The bundled model, once it's installed. Always last: anything the user set up comes first.
+fn push_local_link(chain: &mut Vec<llm::ChainLink>) {
+    push_local_link_if(crate::local_model::is_configured(), chain)
+}
+
+fn push_local_link_if(installed: bool, chain: &mut Vec<llm::ChainLink>) {
+    if installed {
+        chain.push(llm::ChainLink {
+            provider: llm::Provider::Local,
+            model: crate::local_model::MODEL_ID.to_string(),
+            client: Box::new(crate::local_model::LocalClient),
+        });
+    }
+}
+
 /// A hosted link at `model`, or `None` when the user holds no key for `provider` or
 /// `model` is empty (OpenRouter before a pick).
 fn hosted_link(routing: &RoutingConfig, provider: llm::Provider, model: &str) -> Option<llm::ChainLink> {
@@ -370,7 +388,7 @@ fn hosted_link(routing: &RoutingConfig, provider: llm::Provider, model: &str) ->
         llm::Provider::OpenAI => Box::new(llm::OpenAIClient::new(routing.openai_key.clone()?, model)),
         llm::Provider::Google => Box::new(llm::GoogleClient::new(routing.google_key.clone()?, model)),
         llm::Provider::OpenRouter => Box::new(llm::OpenAIClient::openrouter(routing.openrouter_key.clone()?, model)),
-        llm::Provider::Ollama => return None,
+        llm::Provider::Ollama | llm::Provider::Local => return None,
     };
     Some(llm::ChainLink { provider, model: model.to_string(), client })
 }
@@ -388,6 +406,7 @@ fn build_light_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Ch
         chain.push(ollama_link(ollama_model));
     }
     chain.extend(hosted);
+    push_local_link(&mut chain);
     chain
 }
 
@@ -395,7 +414,7 @@ fn build_light_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Ch
 /// is on, otherwise [`build_chain`]. Sensitive mode is Ollama-only for every task.
 pub fn build_chain_for(task: llm::TaskKind, ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
     if routing.sensitive {
-        return vec![ollama_link(ollama_model)];
+        return build_chain(ollama_model, routing);
     }
     match task.tier() {
         llm::Tier::Light if routing.cheap_first => build_light_chain(ollama_model, routing),
@@ -471,6 +490,26 @@ pub fn build_chain_for_routine(pref: &RoutineModelPref, ollama_model: &str, rout
             chain.extend(build_chain(ollama_model, routing).into_iter().filter(|l| l.provider != *provider));
             chain
         }
+    }
+}
+
+#[cfg(test)]
+mod local_link_tests {
+    use super::*;
+
+    #[test]
+    fn the_local_model_goes_last_and_only_once_installed() {
+        let mut chain = vec![ollama_link("m")];
+        push_local_link_if(false, &mut chain);
+        assert_eq!(chain.len(), 1);
+        push_local_link_if(true, &mut chain);
+        assert_eq!(chain.iter().map(|l| l.provider).collect::<Vec<_>>(), [llm::Provider::Ollama, llm::Provider::Local]);
+    }
+
+    #[test]
+    fn the_local_model_is_on_device() {
+        assert!(llm::Provider::Local.is_local());
+        assert_eq!(llm::Provider::parse("local"), Some(llm::Provider::Local));
     }
 }
 

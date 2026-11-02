@@ -154,6 +154,20 @@ pub fn turbo_spec(destination: PathBuf) -> ModelSpec {
     }
 }
 
+/// The small local model, downloaded only from the button on the empty Ask screen.
+pub fn local_model_spec(destination: PathBuf) -> ModelSpec {
+    ModelSpec {
+        name: "Local model",
+        url: "https://huggingface.co/ggml-org/SmolLM3-3B-GGUF/resolve/4965cb60b150737b68a0408c36aeefb65078f894/SmolLM3-Q4_K_M.gguf".to_string(),
+        destination,
+        min_bytes: 1_800_000_000,
+        weight: 1.0,
+        archive_member: None,
+        sha256: Some("8334b850b7bd46238c16b0c550df2138f0889bf433809008cc17a8b05761863e"),
+        timeout: Duration::from_secs(3600),
+    }
+}
+
 /// A snapshot of a job, as [`download_poll`] returns it. `status` is display-ready.
 /// Exactly one of `done && error.is_none() && !cancelled` (success), `error.is_some()`
 /// (failure) or `cancelled` (stopped by [`download_cancel`]) holds once `done`.
@@ -637,7 +651,7 @@ mod tests {
     #[test]
     fn every_production_download_is_pinned() {
         let dir = Path::new("/m");
-        for spec in manifest(&destinations(Some("/m/ggml-base.bin"))).iter().chain(embedding_manifest(dir).iter()).chain([turbo_spec("/m/t.bin".into())].iter()) {
+        for spec in manifest(&destinations(Some("/m/ggml-base.bin"))).iter().chain(embedding_manifest(dir).iter()).chain([turbo_spec("/m/t.bin".into()), local_model_spec("/m/l.gguf".into())].iter()) {
             let hash = spec.sha256.unwrap_or_else(|| panic!("{} has no SHA-256", spec.name));
             assert_eq!(hash.len(), 64, "{}", spec.name);
             assert!(!spec.url.contains("/resolve/main/"), "{} follows a moving branch", spec.name);

@@ -2,6 +2,18 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.48] - 2026-11-02
+
+### Mac
+- Ask works with nothing set up. The empty Ask screen offers a small model, about 1.9 GB, that runs on this Mac with no account. Answers are slower and plainer than a hosted model's. Anything you've set up yourself comes first, and Settings → AI Providers can remove it.
+- Meeting summaries read about twice as much of a long meeting at a time, so they see more context and take fewer model calls. Local Ollama summaries now ask for the same larger context window as Ask.
+- Meeting Ask answers are formatted (headings, lists, bold) and selectable while the live transcript updates. Copy puts the answer on the clipboard as Markdown, or Copy as plain text without it.
+- New "Make me sound smart" button in the meeting Ask bar: a quick read of where the meeting is, the key points, where it touches your profile, and two or three things you could say next. Typing the phrase works too.
+
+### Windows
+- Ask works with nothing set up. The empty Ask screen offers a small model, about 1.9 GB, that runs on the PC with no account; a key or Ollama still comes first. It uses the graphics card where there is one, and Settings → AI & routing can remove it.
+- Meeting summaries read about twice as much of a long meeting at a time.
+
 ## [0.9.47] - 2026-11-02
 
 ### Mac

@@ -408,6 +408,8 @@ impl Pipeline {
 
     fn run(&self, meeting_id: i64, files: RecordingFiles, transcribed: super::live::Accumulated) {
         let _work = self.work.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Transcription gets the memory the local model holds; its next call starts it again.
+        api::local_model::stop();
         let started = Instant::now();
         match self.transcribe_and_summarize(meeting_id, &files, transcribed) {
             Ok(seconds) => {

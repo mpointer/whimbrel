@@ -126,6 +126,7 @@ struct WhimbrelShellView: View {
                 microphoneGranted: appState.permissions.microphoneGranted,
                 screenGranted: appState.permissions.screenRecordingGranted)
             if !KeychainAccess.isTestHost {
+                LocalModel.configure()
                 TranscriptionQuality.migrate(modelExists: FileManager.default.fileExists(atPath: TranscriptionService.modelPath.path))
                 Task {
                     await appState.modelBootstrap.start()

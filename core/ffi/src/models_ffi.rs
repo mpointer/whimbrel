@@ -47,6 +47,37 @@ pub extern "C" fn whimbrel_turbo_download_start(destination: *const c_char) -> *
     json_to_c_string(serde_json::json!({ "job_id": job_id }).to_string())
 }
 
+/// Starts downloading the local model to `destination`. Returns `{"job_id":…}` to poll like
+/// `whimbrel_models_download_start`'s; NULL on a NULL path.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_local_model_download_start(destination: *const c_char) -> *mut c_char {
+    let Some(destination) = cstr_to_string(destination) else {
+        return ptr::null_mut();
+    };
+    let job_id = api::models::start_with_manifest(vec![api::models::local_model_spec(destination.into())]);
+    json_to_c_string(serde_json::json!({ "job_id": job_id }).to_string())
+}
+
+/// Adds the local model to every chain. NULL paths remove it and stop the helper.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_local_model_configure(server: *const c_char, model: *const c_char) {
+    let paths = cstr_to_string(server).zip(cstr_to_string(model)).map(|(s, m)| (s.into(), m.into()));
+    api::local_model::configure(paths);
+}
+
+/// Starts the helper if needed and waits for its model to load, so call it off the main
+/// thread. False when it can't start.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_local_model_ensure_running() -> bool {
+    api::local_model::ensure_running().is_ok()
+}
+
+/// Stops the helper and frees its memory. The next model call starts it again.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_local_model_stop() {
+    api::local_model::stop();
+}
+
 /// Picks the engines for this machine from `transcribe::engine::Inputs` JSON. Returns
 /// `transcribe::engine::Choice` JSON; NULL on bad input.
 #[unsafe(no_mangle)]

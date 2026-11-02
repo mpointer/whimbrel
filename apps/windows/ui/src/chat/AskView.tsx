@@ -16,6 +16,7 @@ import { describeError, isCommandError } from "../errors";
 import type { ChatSpend, ConversationRow, StarterPromptView } from "../generated/types";
 import { useL10n } from "../l10n";
 import { Detail, type Selection } from "../library/Detail";
+import { LocalModelCard } from "./LocalModelCard";
 import {
   applyEvent,
   citedEntries,
@@ -48,7 +49,15 @@ const markdownComponents = {
 };
 
 /** Library → Ask: grounded chat with saved conversations (plan Task 8). */
-export function AskView({ request, onRequestHandled }: { request?: AskRequest | null; onRequestHandled?: () => void }) {
+export function AskView({
+  request,
+  onRequestHandled,
+  onOpenSettings,
+}: {
+  request?: AskRequest | null;
+  onRequestHandled?: () => void;
+  onOpenSettings?: () => void;
+}) {
   const { t } = useL10n();
   const [conversations, setConversations] = useState<ConversationRow[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -181,6 +190,7 @@ export function AskView({ request, onRequestHandled }: { request?: AskRequest | 
         </ul>
       </aside>
       <section className="ask-main" aria-label={t("Ask")}>
+        {turns.length === 0 && <LocalModelCard onOpenSettings={onOpenSettings} />}
         {turns.length === 0 && (
           <div className="starters">
             <p className="muted">{t("Ask about anything Whimbrel has captured, on this PC or your other devices.")}</p>

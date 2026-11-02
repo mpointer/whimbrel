@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import SwiftUI
 
@@ -5,6 +6,8 @@ import SwiftUI
 struct MeetingAskExchange: Identifiable {
     let id = UUID()
     let question: String
+    /// What the model was asked, when it isn't `question` (a preset shows its label).
+    var prompt: String?
     var answer: String = ""
     var citedSegmentIds: [Int64] = []
     var narrowed = false
@@ -41,7 +44,7 @@ final class MeetingAskSession: ObservableObject {
     private func history() -> [CoreChatTurn] {
         exchanges.flatMap { e -> [CoreChatTurn] in
             guard e.errorText == nil, !e.answer.isEmpty else { return [] }
-            return [CoreChatTurn(role: .user, text: e.question), CoreChatTurn(role: .assistant, text: e.answer)]
+            return [CoreChatTurn(role: .user, text: e.prompt ?? e.question), CoreChatTurn(role: .assistant, text: e.answer)]
         }
     }
 
@@ -53,12 +56,12 @@ final class MeetingAskSession: ObservableObject {
 
     /// `route` nil means no provider can stream; the exchange shows `noRouteMessage`.
     func submit(
-        _ text: String, meetingId: Int64, store: CoreMemoryStore, routing: CoreRoutingConfig, model: String,
+        _ text: String, prompt: String? = nil, meetingId: Int64, store: CoreMemoryStore, routing: CoreRoutingConfig, model: String,
         route: (provider: InferenceStreamClient.Provider, apiKey: String?)?, noRouteMessage: String
     ) {
         self.store = store
         let past = history()
-        exchanges.append(MeetingAskExchange(question: text))
+        exchanges.append(MeetingAskExchange(question: text, prompt: prompt))
         let index = exchanges.count - 1
         guard let route else {
             exchanges[index].errorText = noRouteMessage
@@ -68,7 +71,7 @@ final class MeetingAskSession: ObservableObject {
         let token = UUID()
         prepareToken = token
         CoreMemoryStore.accessQueue.async {
-            let prepared = store.prepareMeetingAsk(meetingId: meetingId, query: text, history: past, routing: routing)
+            let prepared = store.prepareMeetingAsk(meetingId: meetingId, query: prompt ?? text, history: past, routing: routing)
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.prepareToken == token else {
                     // Stopped (or torn down) while preparing: never stream, release the prepare.
@@ -184,6 +187,14 @@ struct MeetingAskBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             if !session.exchanges.isEmpty { answerPanel }
+            if disabledReason == nil {
+                HStack(spacing: Spacing.xs) {
+                    ForEach(AskPreset.allCases) { preset in
+                        Button(preset.label) { submit(preset.label) }
+                            .buttonStyle(.whimbrelSecondary).controlSize(.small).disabled(isBusy)
+                    }
+                }
+            }
             HStack(spacing: Spacing.sm) {
                 TextField(disabledReason ?? String(localized: "Ask about this meeting"), text: $question)
                     .textFieldStyle(.plain)
@@ -220,17 +231,20 @@ struct MeetingAskBar: View {
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                         Text(exchange.question).font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
                         if let error = exchange.errorText {
-                            if !exchange.partial.isEmpty {
-                                Text(exchange.partial).font(.whimbrelBody(.body)).foregroundStyle(Color.whimbrelTextPrimary)
-                                    .textSelection(.enabled)
-                            }
+                            if !exchange.partial.isEmpty { AskAnswerText(markdown: exchange.partial) }
                             Text(error).font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelError)
                             Button("Retry") { retry(index) }
                                 .buttonStyle(.whimbrelSecondary).controlSize(.small).disabled(isBusy)
                         } else {
-                            Text(session.pending?.index == index ? session.streaming.streamedText : exchange.answer)
-                                .font(.whimbrelBody(.body)).foregroundStyle(Color.whimbrelTextPrimary)
-                                .textSelection(.enabled)
+                            AskAnswerText(markdown: session.pending?.index == index ? session.streaming.streamedText : exchange.answer)
+                            if session.pending?.index != index, !exchange.answer.isEmpty {
+                                HStack(spacing: Spacing.xs) {
+                                    Button("Copy") { Self.copy(exchange.answer) }
+                                        .help("Copy the answer as Markdown")
+                                    Button("Copy as plain text") { Self.copy(AskMarkdown.plainText(exchange.answer)) }
+                                }
+                                .buttonStyle(.whimbrelSecondary).controlSize(.small)
+                            }
                         }
                         if exchange.narrowed {
                             Text("Answered from the most relevant parts of a long transcript.")
@@ -255,6 +269,11 @@ struct MeetingAskBar: View {
         .background(Color.whimbrelBackgroundCard)
         .clipShape(RoundedRectangle(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).stroke(Color.whimbrelBorder))
+    }
+
+    private static func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private func send() {
@@ -284,7 +303,7 @@ struct MeetingAskBar: View {
                 return (p, key)
             }
             switch defaults.provider {
-            case .ollama: return (.ollama, nil)
+            case .ollama: return (LocalModel.replacesOllama(appState.routing) ? .local : .ollama, nil)
             case .google: return hosted(.google, .google)
             case .anthropic: return hosted(.anthropic, .anthropic)
             case .openai: return hosted(.openai, .openai)
@@ -294,6 +313,7 @@ struct MeetingAskBar: View {
         let noRouteMessage = appState.routing.localOnlyMode
             ? String(localized: "Local-only mode is on, so Ask can't use a hosted model. Choose a local model in Settings.")
             : String(localized: "No API key is set for the selected provider. Choose a local model or add a key in Settings.")
-        session.submit(text, meetingId: meeting.id, store: store, routing: routing, model: model, route: route, noRouteMessage: noRouteMessage)
+        let preset = AskPreset.matching(text)
+        session.submit(preset?.label ?? text, prompt: preset?.prompt, meetingId: meeting.id, store: store, routing: routing, model: model, route: route, noRouteMessage: noRouteMessage)
     }
 }

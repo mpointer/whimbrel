@@ -55,6 +55,16 @@ enum ModelDownloadService {
         await SpeechAnalyzerEngine.installLanguageAsset()
     }
 
+    /// The small local model, from the button on the empty Ask screen.
+    @MainActor
+    static func downloadLocalModel(progress: @escaping (Double, String) -> Void) async throws {
+        guard let jobId = CoreMemoryStore.startLocalModelDownload(destination: LocalModel.modelPath) else {
+            throw DownloadError.bridgeUnavailable
+        }
+        try await poll(jobId, progress: progress)
+        LocalModel.configure()
+    }
+
     /// large-v3-turbo, on request.
     @MainActor
     static func downloadTurbo(progress: @escaping (Double, String) -> Void) async throws {

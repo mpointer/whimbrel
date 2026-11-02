@@ -45,6 +45,22 @@ final class StreamingAskViewModel: ObservableObject {
         streamedText = ""
         usage = InferenceEvent.TokenUsage()
         phase = .connecting
+        guard provider == .local else {
+            return begin(prompt: prompt, model: model, provider: provider, apiKey: apiKey, baseURLOverride: baseURLOverride)
+        }
+        // The helper may have to load its model first, which takes seconds.
+        pollTask = Task { [weak self] in
+            let ready = await Task.detached { CoreMemoryStore.ensureLocalModelRunning() }.value
+            guard !Task.isCancelled else { return }
+            if ready {
+                self?.begin(prompt: prompt, model: "local", provider: provider, apiKey: nil, baseURLOverride: nil)
+            } else {
+                self?.phase = .failed(message: String(localized: "The local model couldn't start."))
+            }
+        }
+    }
+
+    private func begin(prompt: String, model: String, provider: InferenceStreamClient.Provider, apiKey: String?, baseURLOverride: String?) {
         guard let runId = InferenceStreamClient.start(prompt: prompt, model: model, provider: provider, apiKey: apiKey, baseURLOverride: baseURLOverride) else {
             phase = .failed(message: String(localized: "Could not start — invalid prompt, model, or missing API key."))
             return

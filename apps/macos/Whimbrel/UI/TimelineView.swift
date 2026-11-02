@@ -508,6 +508,7 @@ struct TimelineView: View {
                     usageTodayLine
                 }
                 if mode == .ask && exchanges.isEmpty {
+                    LocalModelCard(download: appState.localModelDownload)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: Spacing.xs) {
                             ForEach(CoreMemoryStore.starterPrompts()) { prompt in

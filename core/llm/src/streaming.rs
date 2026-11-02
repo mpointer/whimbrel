@@ -437,9 +437,7 @@ impl Default for OllamaStreamingClient {
     }
 }
 
-/// Ollama's default context window is small enough to silently truncate a meeting prompt
-/// (about 7-10k tokens), so every request asks for a larger one.
-const OLLAMA_NUM_CTX: u32 = 16_384;
+use crate::OLLAMA_NUM_CTX;
 
 fn ollama_request_body(model: &str, prompt: &str) -> serde_json::Value {
     serde_json::json!({

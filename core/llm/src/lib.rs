@@ -164,11 +164,27 @@ pub trait LlmClient {
     fn complete(&self, prompt: &str) -> Result<Completion, LlmError>;
 }
 
+/// Ollama's default context window is small enough to silently truncate a meeting prompt
+/// (about 7-10k tokens), so every request, streaming or not, asks for a larger one.
+pub(crate) const OLLAMA_NUM_CTX: u32 = 16_384;
+
 #[derive(Debug, Serialize)]
 struct OllamaGenerateRequest<'a> {
     model: &'a str,
     prompt: &'a str,
     stream: bool,
+    options: OllamaOptions,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaOptions {
+    num_ctx: u32,
+}
+
+impl<'a> OllamaGenerateRequest<'a> {
+    fn new(model: &'a str, prompt: &'a str) -> Self {
+        Self { model, prompt, stream: false, options: OllamaOptions { num_ctx: OLLAMA_NUM_CTX } }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,11 +222,7 @@ impl OllamaClient {
 
 impl LlmClient for OllamaClient {
     fn complete(&self, prompt: &str) -> Result<Completion, LlmError> {
-        let request = OllamaGenerateRequest {
-            model: &self.model,
-            prompt,
-            stream: false,
-        };
+        let request = OllamaGenerateRequest::new(&self.model, prompt);
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(OLLAMA_CONNECT_TIMEOUT)
             .timeout_read(OLLAMA_READ_TIMEOUT)
@@ -1214,13 +1226,13 @@ pub struct MeetingSummary {
 /// Conservative token-budget constants for splitting a long transcript before sending
 /// it to the model. There is no way to get an exact token count without a
 /// provider/model-specific tokenizer, so this uses a conservative chars-per-token
-/// estimate and assumes a small (4096-token) context window as the safe universal
-/// floor — better to split more aggressively than necessary (a few extra, cheaper
+/// estimate and assumes an 8192-token context window as the safe universal floor (the
+/// bundled local model runs with 8192; Ollama requests ask for `OLLAMA_NUM_CTX`) — better to split more aggressively than necessary (a few extra, cheaper
 /// chunk calls) than to risk exceeding a real context window and getting an empty
 /// response back, which is exactly what happens when llama.cpp truncates a prompt and
 /// immediately hits its length limit before generating any output.
 const CHARS_PER_TOKEN_ESTIMATE: usize = 4;
-const MAX_CONTEXT_TOKENS_ESTIMATE: usize = 4096;
+const MAX_CONTEXT_TOKENS_ESTIMATE: usize = 8192;
 const RESPONSE_AND_OVERHEAD_TOKENS_ESTIMATE: usize = 900;
 
 /// assemble_context (docs/superpowers/specs/2026-08-15-assemble-context-design.md): the
@@ -1242,7 +1254,7 @@ const RECENCY_TAU_ROUTINE_RUN_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 /// Token budget for assemble_context's packed context output specifically -- not the
 /// whole prompt. Leaves roughly (MAX_CONTEXT_TOKENS_ESTIMATE - this) of the existing
-/// 4096-token conservative floor for the system prompt, conversation history, the
+/// 8192-token conservative floor for the system prompt, conversation history, the
 /// query, and the response.
 const CONTEXT_BUDGET_TOKENS: usize = 1500;
 
@@ -2088,6 +2100,20 @@ pub fn estimate_cost_cents(provider: Provider, model: &str, usage: TokenUsage) -
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn summary_chunks_fit_an_8k_window_not_4k() {
+        // The bundled local model runs with 8,192 tokens and Ollama gets 16,384 on every
+        // request, so 8,192 is the floor: (8192 - 900) tokens at 4 chars each.
+        assert_eq!(max_transcript_chars_per_chunk(), (8192 - 900) * 4);
+    }
+
+    #[test]
+    fn blocking_ollama_requests_ask_for_the_larger_context_window() {
+        let body = serde_json::to_value(OllamaGenerateRequest::new("gemma4:12b", "hi")).unwrap();
+        assert_eq!(body["options"]["num_ctx"], 16_384);
+        assert_eq!(body["stream"], false);
+    }
     use super::*;
 
     #[test]
@@ -2794,7 +2820,7 @@ mod tests {
         // prompt wording). The fix routes it through the map-reduce path instead: one
         // `summarize_chunk` call (with `chunk_count == 1`, so no "part N of M" framing)
         // followed by one extra, separately billed `reduce_chunk_summaries` call.
-        let one_giant_line = "word ".repeat(5000); // ~25,000 chars, well over any real budget
+        let one_giant_line = "word ".repeat(max_transcript_chars_per_chunk() / 5 * 2); // twice the budget, one line
         let client = MockClientWithCallCount {
             response: "{\"tldr\": \"ok\", \"decisions\": [], \"action_items\": [], \"open_questions\": []}".to_string(),
             calls: std::cell::Cell::new(0),
