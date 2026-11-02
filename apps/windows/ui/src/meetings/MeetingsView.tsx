@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { meetingList } from "../api";
+import { importMarkdownFolder, importTranscripts, meetingList } from "../api";
 import { describeError, isCommandError } from "../errors";
-import type { MeetingRow } from "../generated/types";
+import type { ImportView, MeetingRow } from "../generated/types";
 import { t, useL10n } from "../l10n";
 import { DeviceChip } from "../library/LibraryView";
 import { spanLabel } from "../library/rows";
+import { importSummary } from "./importSummary";
 import { RecordingCard } from "./RecordingCard";
 import { meetingTitleLabel } from "./sentinels";
 import { Workspace } from "./Workspace";
@@ -31,6 +32,9 @@ export function MeetingsView() {
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // What the last import did; the list itself refreshes as the summaries land.
+  const [imported, setImported] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
   const { locale } = useL10n();
 
   const load = useCallback(
@@ -51,6 +55,18 @@ export function MeetingsView() {
     return () => clearInterval(timer);
   }, [filter, load]);
 
+  const runImport = (pick: () => Promise<ImportView | null>) => {
+    setImporting(true);
+    setError(null);
+    pick()
+      .then((view) => {
+        if (view) setImported(importSummary(view));
+        return load(filter);
+      })
+      .catch((e: unknown) => setImported(isCommandError(e) ? describeError(e) : t("Import failed.")))
+      .finally(() => setImporting(false));
+  };
+
   return (
     <div className="stack">
       <RecordingCard onChanged={() => load(filter)} />
@@ -64,8 +80,34 @@ export function MeetingsView() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
-          {rows.length === 0 ? (
+          <details>
+            <summary className="small">{t("Import")}</summary>
+            <div className="toolbar">
+              <button className="mode" disabled={importing} onClick={() => runImport(importTranscripts)}>
+                {t("Transcripts…")}
+              </button>
+              <button className="mode" disabled={importing} onClick={() => runImport(importMarkdownFolder)}>
+                {t("Markdown Folder…")}
+              </button>
+            </div>
+          </details>
+          {imported && (
+            <p className="muted small" role="status">
+              {imported}
+            </p>
+          )}
+          {rows.length === 0 && filter !== "" ? (
             <p className="muted">{t("No meetings yet. Record one, and it appears here.")}</p>
+          ) : rows.length === 0 ? (
+            <div className="stack">
+              <p className="row-title">{t("No meetings yet")}</p>
+              <p className="muted">{t("Recorded meetings appear here. You can also bring in transcripts from Granola, Otter or files.")}</p>
+              <div className="toolbar">
+                <button className="mode" disabled={importing} onClick={() => runImport(importTranscripts)}>
+                  {t("Import Transcripts…")}
+                </button>
+              </div>
+            </div>
           ) : (
             <ul className="rows">
               {rows.map((row) => (

@@ -7,12 +7,14 @@ enum RoutineGate: UInt8 {
 
 enum RoutineHost {
     /// `.full` unless a DIFFERENT approved device was chosen; then `.failover`: this device runs
-    /// the read-only routines only when they are 3 hours overdue. An unset, unknown or revoked
-    /// choice behaves as "every device runs", so a stale setting can never silently stop routines.
+    /// the read-only routines only when they are 3 hours overdue. An unset choice, or one the
+    /// approved list doesn't name, behaves as "every device runs", so a stale setting can never
+    /// silently stop routines. An empty list hasn't loaded yet, so it says nothing about the
+    /// choice: this device waits as a failover rather than doubling up on the primary.
     static func gate(primaryId: String, ownId: String, approvedDeviceIds: Set<String>) -> RoutineGate {
         let primary = primaryId.trimmingCharacters(in: .whitespacesAndNewlines)
         if primary.isEmpty || primary == ownId || ownId == "spike-device" { return .full }
-        return approvedDeviceIds.contains(primary) ? .failover : .full
+        return approvedDeviceIds.isEmpty || approvedDeviceIds.contains(primary) ? .failover : .full
     }
 }
 

@@ -162,6 +162,13 @@ pub async fn meeting_workspace(state: State<'_, AppState>, id: i64) -> Result<Op
         _ => None,
     };
     let mut view = view_of(workspace, &labeler, own_device_id.as_deref());
+    // An imported or synced meeting has its transcript as stored segments, with no file here.
+    if !view.has_transcript {
+        view.has_transcript = state
+            .store()?
+            .call(move |s| s.get_transcript_segments_page(id, 0, 0).map(|(_, total)| total > 0).unwrap_or(false))
+            .await?;
+    }
     view.can_choose_language = can_choose_language(multilingual, &view, has_audio(&state.paths.recordings, audio.as_deref()));
     view.spoken_language = spoken_language;
     Ok(Some(view))

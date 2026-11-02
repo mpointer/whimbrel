@@ -101,13 +101,17 @@ struct TodayView: View {
     var body: some View {
         let content = content
         let actions = actions
-        TodayChrome(
-            content: content, actions: actions,
-            slots: TodaySlots(
-                live: liveView(content), decisionCount: content.pendingApprovalCount, actions: actions,
-                composer: AnyView(TodayComposer(placeholder: SkinStore.shared.selected.voice.text(.askPlaceholder, name: "")) { actions.ask($0) })
+        VStack(spacing: Spacing.md) {
+            BetterTranscriptsCard(download: appState.turboDownload)
+                .padding(.horizontal, Spacing.lg)
+            TodayChrome(
+                content: content, actions: actions,
+                slots: TodaySlots(
+                    live: liveView(content), decisionCount: content.pendingApprovalCount, actions: actions,
+                    composer: AnyView(TodayComposer(placeholder: SkinStore.shared.selected.voice.text(.askPlaceholder, name: "")) { actions.ask($0) })
+                )
             )
-        )
+        }
         .onAppear { refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             guard let window = notification.object as? NSWindow, window.title == "Whimbrel" else { return }

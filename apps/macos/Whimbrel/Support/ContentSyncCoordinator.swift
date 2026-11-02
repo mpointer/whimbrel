@@ -65,6 +65,8 @@ final class ContentSyncCoordinator: ObservableObject {
     func startPeriodicSync() {
         guard periodicTask == nil else { return }
         periodicTask = Task { [weak self] in
+            // The primary-device gate needs the approved list. Without it, every Mac runs routines.
+            await self?.syncState.refreshDevices()
             while !Task.isCancelled {
                 await self?.syncNow()
                 let failures = self?.consecutiveFailures ?? 0

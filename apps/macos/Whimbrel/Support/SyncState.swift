@@ -660,7 +660,7 @@ final class SyncState: ObservableObject {
         devicesPollTask = nil
     }
 
-    private func refreshDevices() async {
+    func refreshDevices() async {
         guard let signIn, let syncClient else { return }
         do {
             let devicePublicKeyBase64 = try loadOrThrowDevicePublicKey()

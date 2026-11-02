@@ -4,6 +4,7 @@ import { describeError, isCommandError } from "../errors";
 import type { MeetingRecordingView } from "../generated/types";
 import { useL10n } from "../l10n";
 import { elapsedLabel, recordAction } from "./recordingModel";
+import { RecordingNoticeCard } from "./RecordingNoticeCard";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -52,14 +53,23 @@ export function RecordingCard({ onChanged }: { onChanged?: () => void } = {}) {
         {t("Record a meeting")}
       </h2>
       {recording ? (
-        <p role="status" className="recording-line">
-          <span className="recording-dot" aria-hidden="true" />{" "}
-          {t("Recording · {elapsed}", { elapsed: elapsedLabel(view.startedUnixMs!, now) })}
-        </p>
+        <>
+          <p role="status" className="recording-line">
+            <span className="recording-dot" aria-hidden="true" />{" "}
+            {t("Recording · {elapsed}", { elapsed: elapsedLabel(view.startedUnixMs!, now) })}
+          </p>
+          <RecordingNoticeCard meetingId={view.meetingId} />
+        </>
       ) : (
-        <p className="muted">
-          {t("Records everything this PC plays and your microphone. Audio stays on this PC.")}
-        </p>
+        <>
+          <p className="muted">
+            {t("Records everything this PC plays and your microphone. Audio stays on this PC.")}
+          </p>
+          {/* Windows has no first-run screen, so the consent note goes where a recording starts by hand (W-1.7). */}
+          <p className="muted small">
+            {t("Some places require everyone's consent before a meeting is recorded. Check the rules where you and the other people are.")}
+          </p>
+        </>
       )}
       {view?.degraded && <p role="alert">{view.degraded}</p>}
       {view?.processing && (
