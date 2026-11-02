@@ -242,6 +242,18 @@ final class MeetingPartTranscriptionTests: XCTestCase {
         XCTAssertEqual(got.first?.notes, "my notes")
     }
 
+    /// The 10/30 "Quick Debrief": nobody spoke, no notes, no slides. Asking the model to
+    /// summarize nothing made it invent a meeting.
+    func test_silent_meeting_without_notes_or_slides_is_not_summarized() {
+        let m = makeTwoPartMeeting()
+        silent = [m.a, m.b]
+        let queue = makeQueue()
+        queue.enqueue(.init(meetingId: m.id, partIndex: 1, audioPath: m.a, notes: ""))
+        queue.enqueue(.init(meetingId: m.id, partIndex: 2, audioPath: m.b, notes: "  "))
+        queue.waitUntilIdle()
+        XCTAssertEqual(lock.withLock { summaries.count }, 0)
+    }
+
     func test_silent_meeting_with_slides_is_summarized() {
         let m = makeTwoPartMeeting()
         silent = [m.a, m.b]

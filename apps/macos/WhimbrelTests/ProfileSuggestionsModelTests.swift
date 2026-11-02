@@ -19,12 +19,19 @@ final class ProfileSuggestionsModelTests: XCTestCase {
         return ProfileSuggestionsModel(
             profile: profile,
             list: { log.listedOnMain.append(Thread.isMainThread); return rows.value },
-            dismiss: { id in log.dismissed.append(id); rows.value.removeAll { $0.id == id }; return true },
-            delete: { id in log.deleted.append(id); rows.value.removeAll { $0.id == id }; return true }
+            dismiss: { id in log.dismissed.append(id); rows.remove(id); return true },
+            delete: { id in log.deleted.append(id); rows.remove(id); return true }
         )
     }
 
-    final class Rows: @unchecked Sendable { var value: [CoreProfileSuggestion]; init(_ v: [CoreProfileSuggestion]) { value = v } }
+    /// Locked: Add and Dismiss can both remove a row from the store at the same time.
+    final class Rows: @unchecked Sendable {
+        private let lock = NSLock()
+        private var rows: [CoreProfileSuggestion]
+        init(_ v: [CoreProfileSuggestion]) { rows = v }
+        var value: [CoreProfileSuggestion] { lock.withLock { rows } }
+        func remove(_ id: Int64) { lock.withLock { rows.removeAll { $0.id == id } } }
+    }
     final class Log: @unchecked Sendable { var dismissed: [Int64] = []; var deleted: [Int64] = []; var listedOnMain: [Bool] = [] }
 
     /// Settings rebuilds its panes on a skin change, and the Profile pane reloads on appear. The
@@ -93,8 +100,8 @@ final class ProfileSuggestionsModelTests: XCTestCase {
         let m = ProfileSuggestionsModel(
             profile: profile(),
             list: { rows.value },
-            dismiss: { id in await gate.wait(); rows.value.removeAll { $0.id == id }; return true },
-            delete: { id in await gate.wait(); rows.value.removeAll { $0.id == id }; return true }
+            dismiss: { id in await gate.wait(); rows.remove(id); return true },
+            delete: { id in await gate.wait(); rows.remove(id); return true }
         )
         await m.reload()
         let first = m.pending[0], second = m.pending[1]

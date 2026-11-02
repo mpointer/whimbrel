@@ -20,6 +20,9 @@ struct MeetingOptionsMenu: View {
     /// copy, and `meeting` is the parent's snapshot). nil until loaded.
     @State private var ownKeepMedia: Bool?
     @State private var hasAudio = false
+    /// "Merge with previous meeting": this device's copy and the meeting it can join. nil until loaded.
+    @State private var mergeTarget: (ownId: Int64, previousId: Int64, title: String, start: Date, audioOnDisk: Bool)?
+    @State private var showMergeConfirmation = false
 
     @Environment(\.openWindow) private var openWindow
 
@@ -44,6 +47,15 @@ struct MeetingOptionsMenu: View {
         processingMeetingId != nil
     }
 
+    /// Merging re-transcribes and re-summarizes, so wait for any running job and for media
+    /// work on either meeting.
+    /// Both meetings need audio on disk: the merged meeting is transcribed again from it.
+    static func canOfferMerge(previousId: Int64?, ownId: Int64?, processingMeetingId: Int64?, mediaWorkingId: Int64?,
+                              audioOnDisk: Bool) -> Bool {
+        guard let previousId, let ownId, processingMeetingId == nil, audioOnDisk else { return false }
+        return mediaWorkingId != previousId && mediaWorkingId != ownId
+    }
+
     private func loadMenuState() {
         guard let store = appState.coreStore else { return }
         let id = meeting.id
@@ -54,7 +66,19 @@ struct MeetingOptionsMenu: View {
             let parts = stored ?? []
             let audio = parts.contains { $0.audioPath.map(FileManager.default.fileExists(atPath:)) ?? false }
             let keep = ownId.flatMap { store.getMeeting(id: $0)?.keepMedia }
-            DispatchQueue.main.async { partCount = n; ownKeepMedia = keep; hasAudio = audio }
+            let deviceId = appState.deviceId
+            let merge = ownId.flatMap { own -> (Int64, Int64, String, Date, Bool)? in
+                guard let prev = store.previousMergeableMeeting(meetingId: own, deviceId: deviceId),
+                      let m = store.getMeeting(id: prev) else { return nil }
+                let onDisk = [own, prev].allSatisfy { id in
+                    MeetingTranscriptionQueue.partsWithAudio(store.meetingParts(meetingId: id) ?? []).isEmpty == false
+                }
+                return (own, prev, m.title, Date(timeIntervalSince1970: TimeInterval(m.startUnixMs) / 1000), onDisk)
+            }
+            DispatchQueue.main.async {
+                partCount = n; ownKeepMedia = keep; hasAudio = audio
+                mergeTarget = merge.map { (ownId: $0.0, previousId: $0.1, title: $0.2, start: $0.3, audioOnDisk: $0.4) }
+            }
         }
     }
 
@@ -83,6 +107,15 @@ struct MeetingOptionsMenu: View {
                 }
                 .disabled(Self.isSplitDisabled(processingMeetingId: appState.processingMeetingId))
             }
+            if let target = mergeTarget {
+                Button("Merge with previous meeting") {
+                    showMergeConfirmation = true
+                }
+                .disabled(!Self.canOfferMerge(previousId: target.previousId, ownId: target.ownId,
+                                              processingMeetingId: appState.processingMeetingId,
+                                              mediaWorkingId: appState.mediaRetention.workingMeetingId,
+                                              audioOnDisk: target.audioOnDisk))
+            }
             if let keep = ownKeepMedia {
                 Toggle("Keep media", isOn: Binding(
                     get: { keep },
@@ -99,7 +132,7 @@ struct MeetingOptionsMenu: View {
         }
         .accessibilityLabel("Meeting options")
         .onAppear { loadMenuState() }
-        .onChange(of: meeting.id) { _, _ in ownKeepMedia = nil; loadMenuState() }
+        .onChange(of: meeting.id) { _, _ in ownKeepMedia = nil; mergeTarget = nil; loadMenuState() }
         .onChange(of: appState.processingMeetingId) { _, _ in loadMenuState() }
         .confirmationDialog(
             "Split the last part into its own meeting?",
@@ -110,6 +143,20 @@ struct MeetingOptionsMenu: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Both meetings will be summarized again.")
+        }
+        .confirmationDialog(
+            "Merge with the previous meeting?",
+            isPresented: $showMergeConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Merge") {
+                if let target = mergeTarget { appState.mergeWithPrevious(ownId: target.ownId, into: target.previousId) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let target = mergeTarget {
+                Text("This meeting's recording becomes the next part of “\(target.title)” at \(target.start.formatted(date: .omitted, time: .shortened)). Its slides and notes move too, and this meeting is removed from this Mac. The merged meeting is transcribed and summarized again. You can't undo this.")
+            }
         }
         .confirmationDialog(
             "Forget this meeting?",

@@ -25,6 +25,7 @@ pub use embedding::{
 pub mod keywords;
 pub mod l10n;
 pub mod live;
+pub mod copies;
 pub mod meeting_parts;
 pub mod profile;
 pub mod prep;
@@ -3768,7 +3769,7 @@ impl Store {
             params![sanitize_fts5_query(query), limit as i64],
             Self::row_to_transcript_segment,
         )?;
-        rows.collect()
+        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |h: &MeetingTranscriptSegment| h.meeting_id)
     }
 
     /// FR-CHAT-1 follow-on (semantic half): nearest-neighbor search over transcript
@@ -3798,7 +3799,7 @@ impl Store {
             params![embedding_to_json(&embedding), k, limit as i64],
             Self::row_to_transcript_segment,
         )?;
-        rows.collect()
+        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |h: &MeetingTranscriptSegment| h.meeting_id)
     }
 
     fn row_to_transcript_segment(
@@ -3838,7 +3839,7 @@ impl Store {
             params![sanitize_fts5_query(query), limit as i64],
             Self::row_to_transcript_segment_with_ts,
         )?;
-        rows.collect()
+        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |(h, _): &(MeetingTranscriptSegment, i64)| h.meeting_id)
     }
 
     /// Semantic-search counterpart to `search_transcript_keyword_with_meeting_ts` -- see its
@@ -3868,7 +3869,7 @@ impl Store {
             params![embedding_to_json(&embedding), k, limit as i64],
             Self::row_to_transcript_segment_with_ts,
         )?;
-        rows.collect()
+        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |(h, _): &(MeetingTranscriptSegment, i64)| h.meeting_id)
     }
 
     fn row_to_transcript_segment_with_ts(
@@ -3909,7 +3910,7 @@ impl Store {
             params![sanitize_fts5_query(query), limit as i64],
             Self::row_to_snapshot_hit,
         )?;
-        rows.collect()
+        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |(h, _): &(MeetingSnapshotHit, i64)| h.meeting_id)
     }
 
     /// Semantic counterpart to `search_snapshot_keyword_with_meeting_ts`.
@@ -3939,7 +3940,7 @@ impl Store {
             params![embedding_to_json(&embedding), k, limit as i64],
             Self::row_to_snapshot_hit,
         )?;
-        rows.collect()
+        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |(h, _): &(MeetingSnapshotHit, i64)| h.meeting_id)
     }
 
     fn row_to_snapshot_hit(row: &rusqlite::Row) -> rusqlite::Result<(MeetingSnapshotHit, i64)> {
@@ -5961,6 +5962,14 @@ impl Store {
         let Some((a, t, s)) = row else { return Ok(None) };
         let files = self.meeting_deleted_files(id, a, t, s)?;
         let tx = self.conn.unchecked_transaction()?;
+        let rows_affected = Self::delete_meeting_rows_tx(&tx, id)?;
+        tx.commit()?;
+        Ok((rows_affected > 0).then_some(files))
+    }
+
+    /// The rows [`Store::delete_meeting`] removes, inside the caller's transaction. Files
+    /// are the caller's. Returns how many `meeting` rows went (0 or 1).
+    pub(crate) fn delete_meeting_rows_tx(tx: &rusqlite::Transaction<'_>, id: i64) -> rusqlite::Result<usize> {
         tx.execute("DELETE FROM meeting_part WHERE meeting_id = ?1", params![id])?;
         tx.execute(
             "DELETE FROM items WHERE kind = 'transcript' AND thread_id = ?1",
@@ -5977,9 +5986,7 @@ impl Store {
         tx.execute("DELETE FROM meeting_action_item WHERE meeting_id = ?1", params![id])?;
         tx.execute("DELETE FROM items WHERE kind = 'snapshot' AND thread_id = ?1", params![id])?;
         tx.execute("DELETE FROM meeting_snapshot WHERE meeting_id = ?1", params![id])?;
-        let rows_affected = tx.execute("DELETE FROM meeting WHERE id = ?1", params![id])?;
-        tx.commit()?;
-        Ok((rows_affected > 0).then_some(files))
+        tx.execute("DELETE FROM meeting WHERE id = ?1", params![id])
     }
 
     // ---- Meeting snapshots (device-local slide images) ----
@@ -7351,6 +7358,48 @@ impl Store {
         }
         groups.retain(|g| g.meeting_ids.len() > 1);
         Ok(groups)
+    }
+
+    /// "Clean up duplicate meetings": deletes the copy `drop` after moving what only it
+    /// holds to `keep`. A peer's transcript is applied once, to whichever copy existed
+    /// then, so a plain delete of an older copy lost it (10/30). Transcript and slides
+    /// move only when `keep` has none (no doubled lines); action items, the note draft,
+    /// profile suggestions and the sync meeting map always move. One transaction. False,
+    /// with nothing changed, when either meeting is missing or they're the same.
+    pub fn fold_duplicate_meeting(&self, keep: i64, drop: i64) -> rusqlite::Result<bool> {
+        let tx = self.conn.unchecked_transaction()?;
+        let both: i64 =
+            tx.query_row("SELECT COUNT(*) FROM meeting WHERE id IN (?1, ?2)", params![keep, drop], |r| r.get(0))?;
+        if keep == drop || both != 2 {
+            return Ok(false);
+        }
+        let keep_has = |sql: &str| tx.query_row(sql, params![keep], |r| r.get::<_, bool>(0));
+        if !keep_has(
+            "SELECT EXISTS (SELECT 1 FROM transcript_segment WHERE meeting_id = ?1) \
+             OR EXISTS (SELECT 1 FROM items WHERE kind = 'transcript' AND thread_id = ?1)",
+        )? {
+            tx.execute("UPDATE items SET thread_id = ?1 WHERE kind = 'transcript' AND thread_id = ?2", params![keep, drop])?;
+            tx.execute("UPDATE transcript_segment SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
+        }
+        if !keep_has("SELECT EXISTS (SELECT 1 FROM meeting_snapshot WHERE meeting_id = ?1)")? {
+            tx.execute("UPDATE items SET thread_id = ?1 WHERE kind = 'snapshot' AND thread_id = ?2", params![keep, drop])?;
+            tx.execute("UPDATE meeting_snapshot SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
+        }
+        tx.execute("UPDATE meeting_action_item SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
+        tx.execute("UPDATE OR IGNORE meeting_note_draft SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
+        tx.execute("UPDATE profile_suggestion SET source_meeting_id = ?1 WHERE source_meeting_id = ?2", params![keep, drop])?;
+        tx.execute("UPDATE meeting_followup SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
+        tx.execute("UPDATE sync_meeting_map SET local_meeting_id = ?1 WHERE local_meeting_id = ?2", params![keep, drop])?;
+        // What's left is the copy's own: the same rows `delete_meeting` removes.
+        tx.execute("DELETE FROM meeting_part WHERE meeting_id = ?1", params![drop])?;
+        tx.execute("DELETE FROM items WHERE kind IN ('transcript', 'snapshot') AND thread_id = ?1", params![drop])?;
+        tx.execute("DELETE FROM transcript_segment WHERE meeting_id = ?1", params![drop])?;
+        tx.execute("DELETE FROM live_transcript_segment WHERE meeting_id = ?1", params![drop])?;
+        tx.execute("DELETE FROM meeting_note_draft WHERE meeting_id = ?1", params![drop])?;
+        tx.execute("DELETE FROM meeting_snapshot WHERE meeting_id = ?1", params![drop])?;
+        tx.execute("DELETE FROM meeting WHERE id = ?1", params![drop])?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// Meetings with no recorded audio at all (the user's own bulk-cleanup request —
@@ -14623,6 +14672,56 @@ mod tests {
             groups[0].meeting_ids, sorted_ids,
             "meeting_ids must be sorted ascending — the caller keeps the last one"
         );
+    }
+
+    /// 10/30: "Clean up duplicate meetings" kept the newest copy and deleted the older
+    /// one, which held the transcript (applied once, to the first copy). Folding moves it.
+    #[test]
+    fn fold_duplicate_meeting_moves_the_transcript_to_the_kept_copy() {
+        let store = Store::open_in_memory().unwrap();
+        let meeting = sample_applied_meeting_for_dup_test("Genesys", 1000);
+        let first = store.apply_synced_meeting("device-a", 5, None, &meeting).unwrap();
+        let second = store.apply_synced_meeting("device-a", 20, None, &meeting).unwrap();
+        store
+            .insert_transcript_segments(&[NewTranscriptSegment {
+                meeting_id: first,
+                start_cs: 0,
+                speaker_label: "Others".into(),
+                text: "the quarterly numbers".into(),
+            }])
+            .unwrap();
+
+        assert!(store.fold_duplicate_meeting(second, first).unwrap());
+
+        assert!(store.get_meeting(first).unwrap().is_none());
+        let hits = store.search_transcript_keyword("quarterly", 10).unwrap();
+        assert_eq!(hits.iter().map(|h| h.meeting_id).collect::<Vec<_>>(), [second]);
+        let segs: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM transcript_segment WHERE meeting_id = ?1", [second], |r| r.get(0))
+            .unwrap();
+        assert_eq!(segs, 1);
+    }
+
+    #[test]
+    fn fold_duplicate_meeting_drops_the_copy_when_the_kept_one_has_its_own_transcript() {
+        let store = Store::open_in_memory().unwrap();
+        let meeting = sample_applied_meeting_for_dup_test("Genesys", 1000);
+        let first = store.apply_synced_meeting("device-a", 5, None, &meeting).unwrap();
+        let second = store.apply_synced_meeting("device-a", 20, None, &meeting).unwrap();
+        for id in [first, second] {
+            store
+                .insert_transcript_segments(&[NewTranscriptSegment {
+                    meeting_id: id,
+                    start_cs: 0,
+                    speaker_label: "Others".into(),
+                    text: "the quarterly numbers".into(),
+                }])
+                .unwrap();
+        }
+        assert!(store.fold_duplicate_meeting(second, first).unwrap());
+        assert_eq!(store.search_transcript_keyword("quarterly", 10).unwrap().len(), 1, "no doubled lines");
+        assert!(!store.fold_duplicate_meeting(second, first).unwrap(), "already gone");
     }
 
     #[test]

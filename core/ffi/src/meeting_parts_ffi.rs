@@ -237,6 +237,30 @@ pub extern "C" fn whimbrel_meeting_absorb_split(handle: *mut StoreHandle, into: 
     json_out(unsafe { &(*handle).0 }.absorb_split_meeting(into, from))
 }
 
+/// "Merge with previous meeting": the earlier meeting `meeting_id` can merge into, or 0.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meeting_previous_mergeable(
+    handle: *mut StoreHandle,
+    meeting_id: i64,
+    device_id: *const c_char,
+) -> i64 {
+    let Some(device) = cstr_to_string(device_id) else { return 0 };
+    if handle.is_null() {
+        return 0;
+    }
+    unsafe { &(*handle).0 }.previous_mergeable_meeting(meeting_id, &device).ok().flatten().unwrap_or(0)
+}
+
+/// "Merge with previous meeting", after the slides moved: `from`'s parts join `into` and
+/// `from` is deleted (its audio files stay, `into` owns them). False when nothing changed.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meeting_merge_into_previous(handle: *mut StoreHandle, into: i64, from: i64) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    unsafe { &(*handle).0 }.merge_into_previous(into, from).is_ok()
+}
+
 /// `moves_json` is `[[old_path,new_path],...]`. False, with nothing changed, when any old
 /// path matches no snapshot row of this meeting.
 #[unsafe(no_mangle)]
@@ -457,6 +481,9 @@ mod tests {
         assert!(whimbrel_meeting_split(h, id, 9).is_null());
         assert_eq!(take(whimbrel_meeting_absorb_split(h, id, id + 1000)), "[]");
         assert!(whimbrel_meeting_absorb_split(ptr::null_mut(), id, 1).is_null());
+        assert_eq!(whimbrel_meeting_previous_mergeable(h, id, c("nobody").as_ptr()), 0);
+        assert_eq!(whimbrel_meeting_previous_mergeable(ptr::null_mut(), id, c("d").as_ptr()), 0);
+        assert!(!whimbrel_meeting_merge_into_previous(ptr::null_mut(), id, 1));
         assert!(whimbrel_meeting_set_snapshot_paths(h, id, c("[]").as_ptr(), c("/d").as_ptr()));
         // No snapshot row is at /a: nothing may be repointed (the caller keeps its files).
         assert!(!whimbrel_meeting_set_snapshot_paths(

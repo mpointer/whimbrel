@@ -2,6 +2,23 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.47] - 2026-11-02
+
+### Mac
+- A short "Room audio only" copy of a calendar meeting is now grouped with the recording from the Mac that was in the call, instead of showing as a second meeting.
+- Settings → Clean up duplicate meetings no longer loses transcripts. A meeting synced from another device could arrive twice, with its transcript on only the older copy, and the cleanup deleted that copy. It now moves the transcript, slides and action items to the copy it keeps.
+- A recording with no speech, notes or slides no longer gets a summary. The model was being asked to summarize nothing, and it wrote one from your profile instead (the 10/30 "Quick Debrief").
+- A calendar meeting now starts recording on its own only on a Mac that's in the call: its microphone is in use and it's playing audio. Another Mac in the room keeps the prompt without a countdown, and Start still works there. This now applies to Google Calendar events too.
+- Search and Ask leave out copies of a call recorded on more than one device, unless only a copy has the match.
+- A meeting split into two by a restart, crash or early stop can be merged back: Meeting options › Merge with previous meeting, when the earlier one has the same title and ended under 10 minutes before. The merged meeting is transcribed and summarized again.
+
+### iPhone
+- Search and Ask leave out copies of a call recorded on more than one device.
+
+### Windows
+- Search and Ask leave out copies of a call recorded on more than one device.
+- While the device list is loading, a PC that isn't the primary waits instead of running routines alongside the primary. The daily profile suggestions wait too.
+
 ## [0.9.46] - 2026-11-01
 
 ### Mac

@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{MeetingSnapshot, MeetingStatus, NewTranscriptSegment, Store};
 
+/// "Merge with previous meeting" is offered when the earlier meeting ended under this long before.
+const MERGE_GAP_MS: i64 = 10 * 60_000;
+
 /// How long after a meeting ends a new recording with the same key still continues it.
 pub const CONTINUE_WINDOW_MS: i64 = 600_000;
 
@@ -521,6 +524,76 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(paths)
+    }
+
+    /// "Merge with previous meeting": the meeting on `device_id` that ended last before
+    /// `meeting_id` started, when it has the same title, ended under 10 minutes before, and
+    /// both are completed meetings of `device_id`.
+    pub fn previous_mergeable_meeting(&self, meeting_id: i64, device_id: &str) -> rusqlite::Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT p.id, p.title = t.title AND p.status = 'completed' \
+                        AND p.end_unix_ms IS NOT NULL AND p.end_unix_ms <= t.start_unix_ms \
+                        AND t.start_unix_ms - p.end_unix_ms < ?3 \
+                 FROM meeting t JOIN meeting p ON p.device_id = t.device_id AND p.id != t.id \
+                 WHERE t.id = ?1 AND t.device_id = ?2 AND t.status = 'completed' AND p.start_unix_ms < t.start_unix_ms \
+                 ORDER BY p.start_unix_ms DESC LIMIT 1",
+                params![meeting_id, device_id, MERGE_GAP_MS],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, bool>(1)?)),
+            )
+            .optional()
+            .map(|row| row.and_then(|(id, ok)| ok.then_some(id)))
+    }
+
+    /// "Merge with previous meeting", after the caller moved `from`'s slides. An error, with
+    /// nothing changed, unless `into` is still [`Store::previous_mergeable_meeting`] of `from`
+    /// ([`Store::absorb_split_meeting`]): `from`'s parts become `into`'s next parts (a
+    /// meeting without parts counts as one part), every part is marked untranscribed for
+    /// "Transcribe again", `into` ends where `from` did with its summary cleared and `from`'s notes appended, and
+    /// `from`'s rows go as [`Store::delete_meeting`] removes them. Its audio files stay:
+    /// `into` owns them now. One transaction.
+    pub fn merge_into_previous(&self, into: i64, from: i64) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        // A menu loaded earlier can be stale: `into` forgotten, reopened or no longer the one before.
+        let device: Option<String> =
+            tx.query_row("SELECT device_id FROM meeting WHERE id = ?1", params![from], |r| r.get(0)).optional()?;
+        let previous = device.map(|d| self.previous_mergeable_meeting(from, &d)).transpose()?.flatten();
+        if previous != Some(into) {
+            return Err(bad("not the meeting before this one"));
+        }
+        for id in [into, from] {
+            tx.execute(
+                "INSERT INTO meeting_part (meeting_id, part_index, start_unix_ms, end_unix_ms, audio_path) \
+                 SELECT id, 1, start_unix_ms, end_unix_ms, audio_path FROM meeting \
+                 WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM meeting_part WHERE meeting_id = ?1)",
+                params![id],
+            )?;
+        }
+        let next: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(part_index), 0) FROM meeting_part WHERE meeting_id = ?1",
+            params![into],
+            |r| r.get(0),
+        )?;
+        tx.execute(
+            "INSERT INTO meeting_part (meeting_id, part_index, start_unix_ms, end_unix_ms, audio_path) \
+             SELECT ?1, ?3 + part_index, start_unix_ms, end_unix_ms, audio_path FROM meeting_part WHERE meeting_id = ?2",
+            params![into, from, next],
+        )?;
+        tx.execute("UPDATE meeting_part SET transcribed = 0 WHERE meeting_id = ?1", params![into])?;
+        let seq = Self::next_local_seq_tx(&tx)?;
+        tx.execute(
+            "UPDATE meeting SET end_unix_ms = MAX(COALESCE(end_unix_ms, 0), (SELECT COALESCE(end_unix_ms, 0) FROM meeting WHERE id = ?2)), \
+             summary_tldr = NULL, summary_decisions_json = NULL, summary_action_items_json = NULL, \
+             summary_open_questions_json = NULL, summary_provider = NULL, summary_model = NULL, local_seq = ?3, \
+             notes = (SELECT CASE WHEN COALESCE(f.notes, '') = '' THEN meeting.notes \
+                                  WHEN COALESCE(meeting.notes, '') = '' THEN f.notes \
+                                  ELSE meeting.notes || char(10) || f.notes END FROM meeting f WHERE f.id = ?2) \
+             WHERE id = ?1",
+            params![into, from, seq],
+        )?;
+        Self::delete_meeting_rows_tx(&tx, from)?;
+        self.enqueue_meeting_outbox(&tx, into, seq)?;
+        tx.commit()
     }
 
     /// After the caller moved or compressed audio on disk: rewrites `meeting.audio_path` and
@@ -1641,5 +1714,160 @@ mod tests {
         assert!(!by_id(legacy).all_transcribed);
         s.update_meeting_transcript_and_notes(legacy, "/r/t.txt", None).unwrap();
         assert!(by_id(legacy).all_transcribed);
+    }
+
+    mod merge {
+        use super::MIN;
+        use crate::{MeetingStatus, MeetingTrigger, NewMeeting, NewTranscriptSegment, Store};
+
+        /// A finished meeting on `device` from `start_min` to `end_min`, with `parts` parts
+        /// (0: a legacy meeting with only `meeting.audio_path`).
+        fn finished(store: &Store, device: &str, title: &str, start_min: i64, end_min: i64, parts: i64) -> i64 {
+            let id = store
+                .insert_meeting(&NewMeeting {
+                    device_id: device.into(),
+                    start_unix_ms: start_min * MIN,
+                    end_unix_ms: None,
+                    title: title.into(),
+                    attendees: vec![],
+                    trigger: MeetingTrigger::Calendar,
+                    audio_path: None,
+                    status: MeetingStatus::Recording,
+                })
+                .unwrap();
+            let step = (end_min - start_min) / parts.max(1);
+            for i in 0..parts {
+                let s = start_min + i * step;
+                let idx = store.begin_meeting_part(id, s * MIN, None).unwrap();
+                store.complete_meeting_part(id, idx, (s + step) * MIN, Some(&format!("/a/{id}-{idx}.m4a"))).unwrap();
+            }
+            let audio = (parts == 0).then(|| format!("/a/{id}.m4a"));
+            store.complete_meeting(id, end_min * MIN, audio.as_deref()).unwrap();
+            id
+        }
+
+        #[test]
+        fn previous_mergeable_same_title_under_10_min() {
+            let store = Store::open_in_memory().unwrap();
+            let a = finished(&store, "d", "Planning", 0, 30, 1);
+            let b = finished(&store, "d", "Planning", 39, 60, 1);
+            assert_eq!(store.previous_mergeable_meeting(b, "d").unwrap(), Some(a));
+            assert_eq!(store.previous_mergeable_meeting(a, "d").unwrap(), None);
+        }
+
+        #[test]
+        fn previous_not_mergeable_cases() {
+            let store = Store::open_in_memory().unwrap();
+            finished(&store, "d", "Planning", 0, 30, 1);
+            let other_title = finished(&store, "d", "Standup", 35, 40, 1);
+            assert_eq!(store.previous_mergeable_meeting(other_title, "d").unwrap(), None, "different title");
+
+            let store = Store::open_in_memory().unwrap();
+            finished(&store, "d", "Planning", 0, 30, 1);
+            let gap10 = finished(&store, "d", "Planning", 40, 60, 1);
+            assert_eq!(store.previous_mergeable_meeting(gap10, "d").unwrap(), None, "exactly 10 min apart");
+
+            let store = Store::open_in_memory().unwrap();
+            finished(&store, "other", "Planning", 0, 30, 1);
+            let b = finished(&store, "d", "Planning", 35, 60, 1);
+            assert_eq!(store.previous_mergeable_meeting(b, "d").unwrap(), None, "previous on another device");
+
+            let store = Store::open_in_memory().unwrap();
+            let a = finished(&store, "d", "Planning", 0, 30, 1);
+            let b = finished(&store, "d", "Planning", 35, 60, 1);
+            store.reopen_meeting(a).unwrap();
+            assert_eq!(store.previous_mergeable_meeting(b, "d").unwrap(), None, "previous still recording");
+            store.reopen_meeting(b).unwrap();
+            assert_eq!(store.previous_mergeable_meeting(b, "d").unwrap(), None, "this one still recording");
+        }
+
+        #[test]
+        fn merge_appends_parts_and_removes_later() {
+            let store = Store::open_in_memory().unwrap();
+            let a = finished(&store, "d", "Planning", 0, 30, 1);
+            let b = finished(&store, "d", "Planning", 35, 61, 2);
+            store
+                .conn
+                .execute("UPDATE meeting SET summary_tldr = 'old' WHERE id = ?1", [a])
+                .unwrap();
+            store.merge_into_previous(a, b).unwrap();
+            let parts = store.meeting_parts(a).unwrap();
+            assert_eq!(parts.iter().map(|p| p.part_index).collect::<Vec<_>>(), [1, 2, 3]);
+            assert_eq!(
+                parts.iter().map(|p| p.audio_path.clone().unwrap()).collect::<Vec<_>>(),
+                [format!("/a/{a}-1.m4a"), format!("/a/{b}-1.m4a"), format!("/a/{b}-2.m4a")]
+            );
+            assert!(parts.iter().all(|p| !p.transcribed));
+            assert_eq!(parts[1].start_unix_ms, 35 * MIN);
+            let merged = store.get_meeting(a).unwrap().unwrap();
+            assert_eq!(merged.end_unix_ms, Some(61 * MIN));
+            assert_eq!(merged.summary_tldr, None);
+            assert!(store.get_meeting(b).unwrap().is_none());
+        }
+
+        #[test]
+        fn merge_legacy_meetings_without_parts() {
+            let store = Store::open_in_memory().unwrap();
+            let a = finished(&store, "d", "Planning", 0, 30, 0);
+            let b = finished(&store, "d", "Planning", 35, 60, 0);
+            store.merge_into_previous(a, b).unwrap();
+            let parts = store.meeting_parts(a).unwrap();
+            assert_eq!(
+                parts.iter().map(|p| (p.part_index, p.start_unix_ms, p.audio_path.clone().unwrap())).collect::<Vec<_>>(),
+                [(1, 0, format!("/a/{a}.m4a")), (2, 35 * MIN, format!("/a/{b}.m4a"))]
+            );
+        }
+
+        #[test]
+        fn merge_removes_later_like_delete_meeting() {
+            let store = Store::open_in_memory().unwrap();
+            let a = finished(&store, "d", "Planning", 0, 30, 1);
+            let b = finished(&store, "d", "Planning", 35, 60, 1);
+            store
+                .insert_transcript_segments(&[NewTranscriptSegment {
+                    meeting_id: b,
+                    start_cs: 0,
+                    speaker_label: "Me".into(),
+                    text: "quarterly numbers".into(),
+                }])
+                .unwrap();
+            store.merge_into_previous(a, b).unwrap();
+            assert!(store.search_transcript_keyword("quarterly", 10).unwrap().is_empty(), "b's text left with b");
+            let rows: i64 = store
+                .conn
+                .query_row("SELECT COUNT(*) FROM meeting_part WHERE meeting_id = ?1", [b], |r| r.get(0))
+                .unwrap();
+            assert_eq!(rows, 0);
+        }
+
+        #[test]
+        fn merge_refuses_when_not_the_previous_meeting() {
+            let store = Store::open_in_memory().unwrap();
+            let a = finished(&store, "d", "Planning", 0, 30, 1);
+            let b = finished(&store, "d", "Planning", 35, 60, 1);
+            store.delete_meeting(a).unwrap();
+            assert!(store.merge_into_previous(a, b).is_err());
+            assert!(store.get_meeting(b).unwrap().is_some(), "b kept");
+            let other = finished(&store, "d", "Standup", 70, 80, 1);
+            assert!(store.merge_into_previous(b, other).is_err(), "different title");
+            assert!(store.get_meeting(other).unwrap().is_some());
+        }
+
+        #[test]
+        fn merge_keeps_the_later_meetings_notes() {
+            let store = Store::open_in_memory().unwrap();
+            let a = finished(&store, "d", "Planning", 0, 30, 1);
+            let b = finished(&store, "d", "Planning", 35, 60, 1);
+            store.set_meeting_notes(a, Some("first half")).unwrap();
+            store.set_meeting_notes(b, Some("second half")).unwrap();
+            store.merge_into_previous(a, b).unwrap();
+            assert_eq!(store.get_meeting(a).unwrap().unwrap().notes.as_deref(), Some("first half\nsecond half"));
+
+            let c = finished(&store, "d", "Planning", 65, 70, 1);
+            store.set_meeting_notes(c, Some("only later")).unwrap();
+            let d = finished(&store, "d", "Planning", 72, 80, 1);
+            store.merge_into_previous(c, d).unwrap();
+            assert_eq!(store.get_meeting(c).unwrap().unwrap().notes.as_deref(), Some("only later"), "no notes on d: unchanged");
+        }
     }
 }

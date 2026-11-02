@@ -2207,6 +2207,12 @@ final class CoreMemoryStore {
         whimbrel_memory_delete_meeting(handle, id)
     }
 
+    /// "Clean up duplicate meetings": deletes `drop` after moving its transcript, slides and
+    /// action items to `keep`.
+    func foldDuplicateMeeting(keep: Int64, drop: Int64) -> Bool {
+        whimbrel_memory_fold_duplicate_meeting(handle, keep, drop)
+    }
+
     // MARK: Meeting parts (continue a meeting within the window)
 
     /// Adds the next part and returns its 1-based index. The first part also sets the
@@ -2299,6 +2305,17 @@ final class CoreMemoryStore {
         guard let json = whimbrel_meeting_absorb_split(handle, into, from) else { return nil }
         defer { whimbrel_core_free_string(json) }
         return decode(json)
+    }
+
+    /// "Merge with previous meeting": the earlier meeting this one can merge into.
+    func previousMergeableMeeting(meetingId: Int64, deviceId: String) -> Int64? {
+        let id = deviceId.withCString { whimbrel_meeting_previous_mergeable(handle, meetingId, $0) }
+        return id == 0 ? nil : id
+    }
+
+    /// After `absorbSplitMeeting`: `from`'s parts join `into`, and `from` is deleted.
+    func mergeIntoPrevious(into: Int64, from: Int64) -> Bool {
+        whimbrel_meeting_merge_into_previous(handle, into, from)
     }
 
     func setMeetingSnapshotPaths(meetingId: Int64, moves: [(old: String, new: String)], snapshotsDir: String) -> Bool {

@@ -40,8 +40,6 @@ final class MeetingTranscriptionQueue {
     private let lock = NSLock()
     /// Queued-or-running jobs per meeting: only the last one summarizes.
     private var outstanding: [Int64: Int] = [:]
-    /// Meetings with a job in the current batch whose transcription succeeded (even silent).
-    private var succeeded: Set<Int64> = []
 
     init(store: CoreMemoryStore,
          transcribe: @escaping Transcriber = TranscriptionService.transcribe,
@@ -92,7 +90,10 @@ final class MeetingTranscriptionQueue {
     func transcribeAgain(meetingId: Int64, notes: String, language: String?? = .none) {
         CoreMemoryStore.accessQueue.async { [self] in
             if case let .some(lang) = language { store.setMeetingSpokenLanguage(meetingId: meetingId, language: lang) }
-            for part in Self.partsWithAudio(store.meetingParts(meetingId: meetingId) ?? []) {
+            let parts = Self.partsWithAudio(store.meetingParts(meetingId: meetingId) ?? [])
+            // Nothing to transcribe: release the caller's "processing" state.
+            if parts.isEmpty { DispatchQueue.main.async { [onStage] in onStage(meetingId, nil) } }
+            for part in parts {
                 enqueue(.init(meetingId: meetingId, partIndex: part.partIndex, audioPath: part.audioPath, notes: notes))
             }
         }
@@ -115,7 +116,7 @@ final class MeetingTranscriptionQueue {
         status == .completed && partsWithAudio(parts).contains { !$0.transcribed }
     }
 
-    private static func partsWithAudio(_ parts: [CoreMeetingPart]) -> [CoreMeetingPart] {
+    static func partsWithAudio(_ parts: [CoreMeetingPart]) -> [CoreMeetingPart] {
         parts.filter { $0.audioPath.map(FileManager.default.fileExists(atPath:)) ?? false }
     }
 
@@ -161,22 +162,22 @@ final class MeetingTranscriptionQueue {
                     }
                 }
             }
-            let (last, anySucceeded) = lock.withLock { () -> (Bool, Bool) in
-                if result != nil { succeeded.insert(id) }
+            let last = lock.withLock { () -> Bool in
                 outstanding[id, default: 1] -= 1
-                guard outstanding[id] == 0 else { return (false, false) }
+                guard outstanding[id] == 0 else { return false }
                 outstanding[id] = nil
-                return (true, succeeded.remove(id) != nil)
+                return true
             }
             let recording = store.getMeeting(id: id)?.status == .recording
             // A later part recording now owns the live rows.
             if result != nil, !recording { store.clearLiveSegments(meetingId: id) }
             guard last, !recording else { return nil }
             // Summarize whatever landed, even if a part failed. A silent meeting still has its
-            // notes and slides; only every part failing with neither has nothing to say.
+            // notes and slides. With no words, notes or slides there is nothing to summarize,
+            // and a model asked to anyway invents a meeting (10/30 "Quick Debrief").
             let text = store.meetingTranscriptText(meetingId: id) ?? ""
             let blank = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            guard !blank(text) || anySucceeded || !blank(job.notes)
+            guard !blank(text) || !blank(job.notes)
                     || !store.listMeetingSnapshots(meetingId: id).isEmpty else { return nil }
             return text
         }

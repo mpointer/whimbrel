@@ -131,6 +131,21 @@ enum MeetingSplit {
         }
     }
 
+    /// "Merge with previous meeting" (finished meetings): `from`'s slides move to `into` as
+    /// in "Keep together", then its parts join `into` and its row goes; its audio files
+    /// stay, now `into`'s parts. False when nothing merged. Call on
+    /// `CoreMemoryStore.accessQueue`.
+    static func merge(store: CoreMemoryStore, into: Int64, from: Int64,
+                      makeFolder: (_ start: Date, _ title: String) throws -> URL) -> Bool {
+        // A failed file move (false) still merges: the slide rows are already `into`'s and
+        // point at the kept originals.
+        // The menu may be stale: check before any slide moves (core checks again).
+        guard let device = store.getMeeting(id: from)?.deviceId,
+              store.previousMergeableMeeting(meetingId: from, deviceId: device) == into,
+              absorb(store: store, into: into, from: from, makeFolder: makeFolder) != nil else { return false }
+        return store.mergeIntoPrevious(into: into, from: from)
+    }
+
     /// "Keep together", step 3: deletes the split-off meeting and its snapshot files. It is
     /// still recording, so it has no audio path yet (written at completion) and was never
     /// synced. Call on `CoreMemoryStore.accessQueue`.
