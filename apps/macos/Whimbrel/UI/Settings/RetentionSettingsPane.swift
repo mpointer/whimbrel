@@ -342,18 +342,18 @@ struct RetentionSettingsPane: View {
             var deletedCount = 0
             for group in result {
                 // meetingIds is sorted ascending by id — keep the last (highest id,
-                // most recently applied), delete the rest.
+                // most recently applied), fold the rest into it.
+                guard let keep = group.meetingIds.last else { continue }
                 for id in group.meetingIds.dropLast() {
-                    // Plain row delete on purpose — do NOT route this through
-                    // MeetingLifecycle.forgetMeeting for file cleanup. Duplicate
-                    // groups are peer-sourced only (findDuplicateMeetingGroups
+                    // A row fold, never MeetingLifecycle.forgetMeeting's file cleanup:
+                    // duplicate groups are peer-sourced only (findDuplicateMeetingGroups
                     // filters `device_id != ownDeviceId`), and apply_synced_meeting
                     // always inserts audio_path as NULL, so there is no local audio
-                    // file to orphan here. transcript_path can be non-null, but every
-                    // member of a group is the same sync payload applied repeatedly —
-                    // they all share one path string, so deleting files for a dropped
-                    // duplicate would destroy the file the KEPT row still references.
-                    if store.deleteMeeting(id: id) {
+                    // file to orphan, while every copy shares one transcript_path string
+                    // that the kept row still references. The fold matters because the
+                    // copies are not identical: a peer's transcript lines were applied to
+                    // whichever copy existed then, so a plain delete lost them (10/30).
+                    if store.foldDuplicateMeeting(keep: keep, drop: id) {
                         deletedCount += 1
                     }
                 }

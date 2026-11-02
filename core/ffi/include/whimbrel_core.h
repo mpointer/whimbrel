@@ -635,6 +635,10 @@ bool whimbrel_memory_set_meeting_away_outcome(StoreHandle *handle, int64_t meeti
  * unknown id, or DB error. */
 bool whimbrel_memory_delete_meeting(StoreHandle *handle, int64_t id);
 
+/* "Clean up duplicate meetings": deletes the copy drop after moving what only it holds
+ * (its transcript, slides, action items) to keep. False when nothing changed. */
+bool whimbrel_memory_fold_duplicate_meeting(StoreHandle *handle, int64_t keep, int64_t drop);
+
 /* Meeting snapshots (slide images). insert takes JSON {meeting_id,captured_unix_ms,file_path,width,height,ocr_text}
  * and returns the new id, or -1 on failure/missing meeting. replace takes JSON {file_path,width,height,ocr_text}.
  * delete returns the removed row's file path (free with whimbrel_core_free_string) or NULL. list returns a JSON
@@ -912,6 +916,13 @@ char *whimbrel_meeting_split(StoreHandle *handle, int64_t meeting_id, int64_t fr
 /* "Keep together": moves from's snapshot rows and continue key to into. JSON array of the
  * moved file paths, oldest first. */
 char *whimbrel_meeting_absorb_split(StoreHandle *handle, int64_t into, int64_t from);
+
+/* "Merge with previous meeting": the earlier meeting meeting_id can merge into, or 0. */
+int64_t whimbrel_meeting_previous_mergeable(StoreHandle *handle, int64_t meeting_id, const char *device_id);
+
+/* "Merge with previous meeting", after the slides moved: from's parts join into and from is
+ * deleted (its audio files stay). False when nothing changed. */
+bool whimbrel_meeting_merge_into_previous(StoreHandle *handle, int64_t into, int64_t from);
 
 /* moves_json: [[old_path,new_path],...]. False, with nothing changed, when any old path
  * matches no snapshot row of this meeting. */

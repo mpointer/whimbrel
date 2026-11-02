@@ -12237,6 +12237,108 @@
         }
       }
     },
+    "Merge" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zusammenführen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Combinar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fusionner"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fusionner"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mesclar"
+          }
+        }
+      }
+    },
+    "Merge with previous meeting" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit vorheriger Besprechung zusammenführen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Combinar con la reunión anterior"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fusionner avec la réunion précédente"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fusionner avec la réunion précédente"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mesclar com a reunião anterior"
+          }
+        }
+      }
+    },
+    "Merge with the previous meeting?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mit der vorherigen Besprechung zusammenführen?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Combinar con la reunión anterior?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fusionner avec la réunion précédente ?"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fusionner avec la réunion précédente?"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mesclar com a reunião anterior?"
+          }
+        }
+      }
+    },
     "Microphone" : {
       "localizations" : {
         "de" : {
@@ -23127,6 +23229,86 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Esta reunião não está mais disponível."
+          }
+        }
+      }
+    },
+    "This meeting's recording becomes the next part of “%@” at %@. Its slides and notes move too, and this meeting is removed from this Mac. The merged meeting is transcribed and summarized again. You can't undo this." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Aufnahme dieser Besprechung wird zum nächsten Teil von „%@“ um %@. Ihre Folien und Notizen werden ebenfalls verschoben, und diese Besprechung wird von diesem Mac entfernt. Die zusammengeführte Besprechung wird erneut transkribiert und zusammengefasst. Das lässt sich nicht rückgängig machen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This meeting's recording becomes the next part of “%1$@” at %2$@. Its slides and notes move too, and this meeting is removed from this Mac. The merged meeting is transcribed and summarized again. You can't undo this."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La grabación de esta reunión pasa a ser la siguiente parte de «%@» a las %@. Sus diapositivas y notas también se mueven y esta reunión se elimina de este Mac. La reunión combinada se transcribe y se resume de nuevo. No se puede deshacer."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’enregistrement de cette réunion devient la partie suivante de « %@ » à %@. Ses diapositives et ses notes sont aussi déplacées et cette réunion est supprimée de ce Mac. La réunion fusionnée est de nouveau transcrite et résumée. Cette action est irréversible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’enregistrement de cette réunion devient la partie suivante de « %@ » à %@. Ses diapositives et ses notes sont aussi déplacées et cette réunion est supprimée de ce Mac. La réunion fusionnée est de nouveau transcrite et résumée. Cette action est irréversible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A gravação desta reunião passa a ser a próxima parte de “%@” às %@. Os slides e as notas também são movidos e esta reunião é removida deste Mac. A reunião mesclada é transcrita e resumida novamente. Não é possível desfazer."
+          }
+        }
+      }
+    },
+    "This meeting's recording becomes the next part of “%@” at %@. Its slides move too, and this meeting is removed. The merged meeting is transcribed and summarized again. You can't undo this." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Aufnahme dieser Besprechung wird zum nächsten Teil von „%@“ um %@. Ihre Folien werden ebenfalls verschoben, und diese Besprechung wird entfernt. Die zusammengeführte Besprechung wird erneut transkribiert und zusammengefasst. Das lässt sich nicht rückgängig machen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This meeting's recording becomes the next part of “%1$@” at %2$@. Its slides move too, and this meeting is removed. The merged meeting is transcribed and summarized again. You can't undo this."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La grabación de esta reunión pasa a ser la siguiente parte de «%@» a las %@. Sus diapositivas también se mueven y esta reunión se elimina. La reunión combinada se transcribe y se resume de nuevo. No se puede deshacer."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’enregistrement de cette réunion devient la partie suivante de « %@ » à %@. Ses diapositives sont aussi déplacées et cette réunion est supprimée. La réunion fusionnée est de nouveau transcrite et résumée. Cette action est irréversible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L’enregistrement de cette réunion devient la partie suivante de « %@ » à %@. Ses diapositives sont aussi déplacées et cette réunion est supprimée. La réunion fusionnée est de nouveau transcrite et résumée. Cette action est irréversible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A gravação desta reunião passa a ser a próxima parte de “%@” às %@. Os slides também são movidos e esta reunião é removida. A reunião mesclada é transcrita e resumida novamente. Não é possível desfazer."
           }
         }
       }

@@ -6,7 +6,7 @@
 //! switches it over. Nothing here reads a clock, a process list or an audio device: the
 //! shell observes, these functions decide.
 
-pub mod copies;
+pub use memory::copies;
 pub mod end_rule;
 pub mod heuristic;
 pub mod in_call;

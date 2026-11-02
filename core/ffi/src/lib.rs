@@ -2437,6 +2437,17 @@ pub extern "C" fn whimbrel_memory_delete_meeting(handle: *mut StoreHandle, id: i
     store.delete_meeting(id).unwrap_or(false)
 }
 
+/// "Clean up duplicate meetings": deletes the copy `drop` after moving what only it holds
+/// (its transcript, slides, action items) to `keep`. False when nothing changed.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_memory_fold_duplicate_meeting(handle: *mut StoreHandle, keep: i64, drop: i64) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let store = unsafe { &(*handle).0 };
+    store.fold_duplicate_meeting(keep, drop).unwrap_or(false)
+}
+
 /// Inserts one meeting snapshot (JSON: meeting_id, captured_unix_ms, file_path, width,
 /// height, ocr_text). Returns the new id, or -1 on a null handle, bad JSON, missing
 /// meeting or DB error.
@@ -6197,6 +6208,8 @@ mod tests {
 
         assert!(whimbrel_memory_delete_meeting(handle, id));
         assert!(!whimbrel_memory_delete_meeting(handle, id));
+        assert!(!whimbrel_memory_fold_duplicate_meeting(handle, id, id + 1), "both gone: nothing to fold");
+        assert!(!whimbrel_memory_fold_duplicate_meeting(ptr::null_mut(), 1, 2));
 
         whimbrel_memory_close(handle);
     }

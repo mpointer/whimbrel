@@ -589,21 +589,21 @@ final class AppState: ObservableObject {
             holdForSplit(prompt)
             return
         }
-        // A calendar event only auto-starts once this Mac is in the call: with
-        // several Macs in one room, an event on a Mac that isn't in it would
-        // otherwise record whatever its mic overhears. Until then the prompt waits,
-        // and the countdown starts if the call begins while it's showing.
-        let waitingForCall = self.meetingTrigger.autoStartEnabled && prompt.source == .calendar
-            && !MeetingHeuristicDetector.isMicrophoneInUse()
-        self.showMeetingAlert(for: prompt, autoStart: self.meetingTrigger.autoStartEnabled && !waitingForCall)
-        guard waitingForCall else { return }
+        // A calendar event only auto-starts once this Mac is in the call (mic and audio
+        // output both in use): with several Macs in one room, an event on a Mac that
+        // isn't in it would otherwise record whatever its mic overhears. Until then the
+        // prompt waits, and the countdown starts if the call begins while it's showing.
+        let decision = CallAutoStart.decide(autoStartEnabled: self.meetingTrigger.autoStartEnabled,
+                                            source: prompt.source, inCall: CallAutoStart.isInCall())
+        self.showMeetingAlert(for: prompt, autoStart: decision.autoStart)
+        guard decision.waitForCall else { return }
         self.callWaitTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] timer in
             Task { @MainActor in
                 guard let self, self.meetingTrigger.pendingPrompt?.id == prompt.id else {
                     timer.invalidate()
                     return
                 }
-                guard MeetingHeuristicDetector.isMicrophoneInUse() else { return }
+                guard CallAutoStart.isInCall() else { return }
                 timer.invalidate()
                 self.callWaitTimer = nil
                 self.showMeetingAlert(for: prompt, autoStart: true)
@@ -1294,6 +1294,33 @@ final class AppState: ObservableObject {
             if outcome.snapshotMoveFailed { onSnapshotMoveFailed() }
             self.pendingSplitSummary = outcome.newMeetingId
             transcriptionQueue.summarizeExisting(meetingId: meeting.id, notes: meeting.notes ?? "")
+        }
+    }
+
+    /// "Merge with previous meeting": `ownId` (this device's copy) joins `previousId` as its
+    /// next parts, then the merged meeting is transcribed and summarized again.
+    func mergeWithPrevious(ownId: Int64, into previousId: Int64) {
+        guard processingMeetingId == nil, let store = coreStore, let transcriptionQueue,
+              ![ownId, previousId].contains(mediaRetention.workingMeetingId) else { return }
+        markProcessing(previousId)
+        processingStage = "Merging…"
+        let storage = makeSnapshotStorage()
+        MediaMover.queue.async {
+            let notes: String? = CoreMemoryStore.accessQueue.sync {
+                guard MeetingSplit.merge(store: store, into: previousId, from: ownId,
+                                         makeFolder: { try storage.makeMeetingFolder(start: $0, title: $1) }) else { return nil }
+                return store.getMeeting(id: previousId)?.notes ?? ""
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                MeetingLifecycle.postMeetingsChanged([previousId, ownId])
+                guard let notes else {
+                    MeetingSplit.log.error("meeting \(ownId): merge into \(previousId) failed; left as is")
+                    self.clearProcessingState(for: previousId)
+                    return
+                }
+                transcriptionQueue.transcribeAgain(meetingId: previousId, notes: notes)
+            }
         }
     }
 

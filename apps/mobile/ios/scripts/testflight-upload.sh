@@ -89,17 +89,21 @@ cat > "$SCRATCH/ExportOptions.plist" << EOF
 </plist>
 EOF
 
-echo "==> Archiving (Release, generic iOS device)..."
+# Unsigned: signing an archive needs a development profile, and Apple only issues one to a
+# team with a registered device. The export below signs it for App Store distribution,
+# which needs no device. The app has no entitlements, so nothing is lost by signing late.
+echo "==> Archiving (Release, generic iOS device, unsigned)..."
 xcodebuild archive \
   -project Whimbrel.xcodeproj \
   -scheme Whimbrel \
   -configuration Release \
   -destination 'generic/platform=iOS' \
   -archivePath "$ARCHIVE_PATH" \
-  CODE_SIGN_STYLE=Automatic \
   DEVELOPMENT_TEAM="$TEAM_ID" \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-  "${AUTH[@]}"
+  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGN_IDENTITY=""
 
 APP_PLIST="$ARCHIVE_PATH/Products/Applications/Whimbrel.app/Info.plist"
 BUILT_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")
@@ -112,7 +116,9 @@ if [ "$BUILT_VERSION" != "$VERSION" ] || [ "$BUILT_BUILD" != "$BUILD_NUMBER" ] |
 fi
 
 echo "==> Exporting and uploading to App Store Connect..."
-xcodebuild -exportArchive \
+# System tools only: Xcode packages the IPA with /usr/bin/rsync, which starts a second rsync
+# by name, and Homebrew's rsync rejects its options ("Copy failed").
+PATH="/usr/bin:/bin:/usr/sbin:/sbin" xcodebuild -exportArchive \
   -archivePath "$ARCHIVE_PATH" \
   -exportPath "$SCRATCH/export" \
   -exportOptionsPlist "$SCRATCH/ExportOptions.plist" \

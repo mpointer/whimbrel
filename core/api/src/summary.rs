@@ -186,7 +186,8 @@ pub fn summary_json_with_attribution(
 /// governance pipeline (spend-cap check, provider chain with failover, per-call usage
 /// logging), then writes the summary onto the `meeting` row `meeting_id` and retitles a
 /// placeholder-titled meeting from the TL;DR (#65). On any failure the meeting row's
-/// summary fields are left untouched. `custom_instructions` is trimmed; whitespace-only
+/// summary fields are left untouched, and blank notes, transcript and slides fail without a
+/// provider call. `custom_instructions` is trimmed; whitespace-only
 /// means "no instructions". A `SpendCap` error can come either before the first provider
 /// is tried or mid-operation on a later chunk; both surface the same way.
 #[allow(clippy::too_many_arguments)]
@@ -200,6 +201,12 @@ pub fn summarize_meeting(
     routing: &RoutingConfig,
     custom_instructions: &str,
 ) -> ApiResult<MeetingSummaryData> {
+    // No words, notes or slides: there is nothing to summarize, and a model asked anyway
+    // writes one from the instructions alone (the profile included). Fails like a provider
+    // failure, so the row is untouched and callers already handle it.
+    if [notes, transcript, slides].iter().all(|s| s.trim().is_empty()) {
+        return Err(ApiError::ProviderFailure);
+    }
     let custom_instructions =
         llm::profile::compose_instructions(custom_instructions.trim(), &routing.profile, &routing.output_language);
     let custom_instructions = custom_instructions.as_str();
@@ -444,6 +451,32 @@ mod tests {
             "  ",
         );
         assert!(matches!(result, Err(ApiError::SpendCap(_))));
+        assert_eq!(store.count_usage_log_rows().unwrap(), 1);
+    }
+
+    /// The 10/30 "Quick Debrief": a silent recording with no notes or slides was sent to
+    /// the model, which summarized the user's profile instead. Nothing is asked then: the
+    /// spend-cap pre-check (which would reject this call) is never reached.
+    #[test]
+    fn summarize_meeting_with_nothing_to_summarize_never_asks_a_model() {
+        let store = memory::Store::open_in_memory().unwrap();
+        store
+            .log_usage(&memory::NewUsageLogEntry {
+                user_id: None,
+                provider: "anthropic".into(),
+                model: "claude-haiku-4-5".into(),
+                route: Some("ask".into()),
+                input_tokens: None,
+                output_tokens: None,
+                estimated_cost_cents: 10_000,
+                cache_hit: false,
+                trace_id: "t".into(),
+                ts_unix_ms: now_unix_ms(),
+            })
+            .unwrap();
+        let routing = RoutingConfig { global_daily_cap_cents: Some(1), ..RoutingConfig::default() };
+        let result = summarize_meeting(&store, 1, " ", "\n", "", "gemma4:12b", &routing, "");
+        assert!(matches!(result, Err(ApiError::ProviderFailure)), "{result:?}");
         assert_eq!(store.count_usage_log_rows().unwrap(), 1);
     }
 }

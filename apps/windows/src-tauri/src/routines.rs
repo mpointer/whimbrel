@@ -129,17 +129,18 @@ pub fn todays_events(meetings: &[QualifyingMeeting], now: DateTime<Local>) -> Ve
 const LEGACY_SPIKE_DEVICE: &str = "spike-device";
 
 /// What this device may run, with the Mac's rule (`RoutineHost.gate`). `Full` unless the user chose a
-/// **different** device that is known to be approved, in which case this one is a `Failover`: it runs
-/// only the read-only routines, and only once they are three hours overdue. A choice that is blank, is
-/// this device, names a device that is unknown or revoked, or arrives while the approved list is not
-/// known yet, all mean `Full`: a stale setting can never silently stop routines.
+/// **different** device that is approved, in which case this one is a `Failover`: it runs only the
+/// read-only routines, and only once they are three hours overdue. A choice that is blank, is this
+/// device, or names a device the approved list doesn't (unknown or revoked) means `Full`: a stale
+/// setting can never silently stop routines. An empty list hasn't loaded yet, so it says nothing
+/// about the choice: this device waits as a failover rather than doubling up on the primary.
 pub fn gate(primary: &str, own: Option<&str>, approved: &HashSet<String>) -> RunGate {
     let primary = primary.trim();
     let own = own.unwrap_or("");
     if primary.is_empty() || own.is_empty() || primary == own || own == LEGACY_SPIKE_DEVICE {
         return RunGate::Full;
     }
-    if approved.contains(primary) {
+    if approved.is_empty() || approved.contains(primary) {
         RunGate::Failover
     } else {
         RunGate::Full
@@ -493,8 +494,16 @@ mod tests {
     }
 
     #[test]
-    fn until_the_approved_list_is_known_a_choice_cannot_stop_routines() {
-        assert_eq!(gate("other", Some("me"), &ids(&[])), RunGate::Full, "no fetch yet, or sync is not set up");
+    fn until_the_approved_list_loads_this_pc_waits_as_a_failover() {
+        assert_eq!(gate("other", Some("me"), &ids(&[])), RunGate::Failover, "no fetch yet, or an offline launch");
+    }
+
+    #[test]
+    fn the_unloaded_list_does_not_hold_back_the_primary_or_an_unset_choice() {
+        assert_eq!(gate("me", Some("me"), &ids(&[])), RunGate::Full);
+        assert_eq!(gate("", Some("me"), &ids(&[])), RunGate::Full);
+        assert_eq!(gate("other", None, &ids(&[])), RunGate::Full);
+        assert_eq!(gate("other", Some("spike-device"), &ids(&[])), RunGate::Full);
     }
 
     #[test]
@@ -515,6 +524,9 @@ mod tests {
         assert_eq!(gate_now(&settings, Some("me"), &approved), RunGate::Full, "this PC chosen");
         settings.lock().unwrap().set_primary_device_id("");
         assert_eq!(gate_now(&settings, Some("me"), &approved), RunGate::Full, "back to any device");
+        settings.lock().unwrap().set_primary_device_id("mac");
+        let unloaded: ApprovedDevices = Arc::new(|| ids(&[]));
+        assert_eq!(gate_now(&settings, Some("me"), &unloaded), RunGate::Failover, "the list hasn't loaded");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -223,7 +223,7 @@ jobs:
 
   # Runs on PRs that touch core/ as well as on main: MSVC link failures (LNK2005,
   # see below) only show up here. It runs on the author's Windows PC (a self-hosted
-  # runner labelled kestrel-windows, C:\ar, started at sign-in) instead of
+  # runner labelled kestrel-windows, C:\ar or C:\ar2, started at sign-in) instead of
   # windows-latest, which bills at 2x a Linux minute. The PC provides Rust (MSVC)
   # and VS Build Tools with CMake and Clang; the runner's .env sets PATH (rustup,
   # cmake, cargo), LIBCLANG_PATH and core.fsmonitor=false (see
@@ -291,15 +291,27 @@ jobs:
   # Tauri crate embeds ui/dist at compile time. CARGO_TARGET_DIR is short and outside
   # the checkout: whisper.cpp's MSBuild step fails past 260 characters, and a
   # persistent target on this runner keeps rebuilds incremental without rust-cache.
+  # Each runner instance on the PC has its own (C:\ar\t-win, C:\ar2\t-win), so two of
+  # these jobs build at once instead of waiting on cargo's lock.
   # Build from src-tauri/ so its .cargo/config.toml (+crt-static) applies.
   windows-app:
     needs: changes
     if: needs.changes.outputs.run_windows_app == 'true' && github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, Windows, X64, kestrel-windows]
     timeout-minutes: 26
-    env:
-      CARGO_TARGET_DIR: C:\ar\t-win
     steps:
+      # The runner's own directory is the parent of _work (RUNNER_TEMP is _work\_temp). The skin
+      # matrix's preview server gets a free port, so a second instance's job doesn't collide on 4180.
+      - name: Build directory and preview port for this runner instance
+        shell: powershell
+        run: |
+          $root = Split-Path -Parent (Split-Path -Parent $env:RUNNER_TEMP)
+          $target = Join-Path $root 't-win'
+          if ($target.Length -gt 22) { throw "CARGO_TARGET_DIR is too long for whisper's Vulkan build: $target" }
+          $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+          $probe.Start(); $port = $probe.LocalEndpoint.Port; $probe.Stop()
+          "CARGO_TARGET_DIR=$target", "MATRIX_PORT=$port" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Host "CARGO_TARGET_DIR=$target MATRIX_PORT=$port"
       - uses: actions/checkout@v4
       # Self-hosted runners use their preinstalled, isolated toolchain (CARGO_HOME and
       # RUSTUP_HOME in the runner's .env) rather than a toolchain action.

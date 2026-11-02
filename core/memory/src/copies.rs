@@ -2,9 +2,14 @@
 //! after a relaunch — shows as one meeting: recordings that start together and overlap by
 //! at least half the shorter one are grouped, and the best copy stands for the group.
 //! (A summary-similarity check missed half the real copies, so it isn't used.) Display
-//! only: nothing is merged, rewritten or deleted.
+//! only: nothing is merged, rewritten or deleted. Search and Ask apply the same rule to
+//! their hits ([`Store::drop_copy_hits`]), so a copy's text doesn't stand beside its lead's.
 
-use memory::{Meeting, MeetingStatus};
+use std::collections::{HashMap, HashSet};
+
+use rusqlite::params;
+
+use crate::{Meeting, MeetingStatus, Store};
 
 /// The title prefix the Mac gives a calendar recording that had no system audio: that
 /// Mac wasn't in the call, so another copy is the better one to show.
@@ -41,7 +46,9 @@ fn same_call(a: &Meeting, b: &Meeting) -> bool {
     let (Some((a_start, a_end)), Some((b_start, b_end))) = (span(a), span(b)) else { return false };
     let overlap = a_end.min(b_end) - a_start.max(b_start);
     let shorter = (a_end - a_start).min(b_end - b_start);
-    let same_event = a_start == b_start && a.title == b.title;
+    // A room-audio copy carries the event's title behind the prefix.
+    let event_title = |m: &Meeting| m.title.strip_prefix(ROOM_AUDIO_PREFIX).unwrap_or(&m.title).to_string();
+    let same_event = a_start == b_start && event_title(a) == event_title(b);
     (shorter >= MIN_GROUPED_MS || same_event) && (a_start - b_start).abs() <= MAX_START_GAP_MS && overlap * 2 >= shorter
 }
 
@@ -104,10 +111,68 @@ pub fn group_copies(meetings: Vec<Meeting>) -> Vec<GroupedMeeting> {
         .collect()
 }
 
+impl Store {
+    /// Every meeting, any status, that started in `[start, end)`, newest first.
+    pub fn meetings_starting_between(&self, start_unix_ms: i64, end_unix_ms: i64) -> rusqlite::Result<Vec<Meeting>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, device_id, start_unix_ms, end_unix_ms, title, attendees, trigger, audio_path, status, \
+             transcript_path, notes, summary_tldr, summary_decisions_json, summary_action_items_json, summary_open_questions_json, \
+             summary_provider, summary_model, local_seq, estimated_speaker_count, away_outcome, away_outcome_at_unix_ms, keep_media \
+             FROM meeting WHERE start_unix_ms >= ?1 AND start_unix_ms < ?2 ORDER BY start_unix_ms DESC",
+        )?;
+        let rows = stmt.query_map(params![start_unix_ms, end_unix_ms], Self::row_to_meeting)?;
+        rows.collect()
+    }
+
+    /// Each id's group lead, grouped as the Meetings list groups them (over the meetings
+    /// that could share its call). A missing meeting maps to itself.
+    pub fn copy_leads(&self, meeting_ids: &[i64]) -> rusqlite::Result<HashMap<i64, i64>> {
+        let mut leads = HashMap::new();
+        for &id in meeting_ids {
+            if leads.contains_key(&id) {
+                continue;
+            }
+            let Some(m) = self.get_meeting(id)? else {
+                leads.insert(id, id);
+                continue;
+            };
+            let window =
+                self.meetings_starting_between(m.start_unix_ms - MAX_START_GAP_MS, m.start_unix_ms + MAX_START_GAP_MS + 1)?;
+            let lead = group_copies(window)
+                .into_iter()
+                .find(|g| g.meeting.id == id || g.also_recorded.iter().any(|c| c.id == id))
+                .map_or(id, |g| g.meeting.id);
+            leads.insert(id, lead);
+        }
+        Ok(leads)
+    }
+
+    /// `hits` without those from a copy whose lead also has a hit, order kept.
+    /// ponytail: runs after the search's LIMIT, so a search can return fewer than `limit`;
+    /// over-fetch if that ever matters.
+    pub(crate) fn drop_copy_hits<T>(&self, hits: Vec<T>, meeting_of: impl Fn(&T) -> i64) -> rusqlite::Result<Vec<T>> {
+        let ids: Vec<i64> = hits.iter().map(&meeting_of).collect();
+        let leads = self.copy_leads(&ids)?;
+        Ok(keep_lead_hits(hits, &leads, meeting_of))
+    }
+}
+
+/// Keeps a hit when its meeting leads its group, or when no hit belongs to that lead.
+pub fn keep_lead_hits<T>(hits: Vec<T>, leads: &HashMap<i64, i64>, meeting_of: impl Fn(&T) -> i64) -> Vec<T> {
+    let hit_meetings: HashSet<i64> = hits.iter().map(&meeting_of).collect();
+    hits.into_iter()
+        .filter(|h| {
+            let m = meeting_of(h);
+            let lead = leads.get(&m).copied().unwrap_or(m);
+            lead == m || !hit_meetings.contains(&lead)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use memory::MeetingTrigger;
+    use crate::MeetingTrigger;
 
     const MIN: i64 = 60_000;
 
@@ -180,6 +245,18 @@ mod tests {
     }
 
     #[test]
+    fn a_short_room_audio_copy_groups_with_the_in_call_recording_of_its_event() {
+        // 11/2 9:30: this Mac recorded the call for 20 min; the Genesys Mac's mic picked it
+        // up for 75 s under the same calendar event, titled with the room-audio prefix.
+        let mut room = meeting(587, "genesys", "Room audio only · Michael R Pointer / Aditya", 570, 571, false);
+        room.end_unix_ms = Some(570 * MIN + 75_000);
+        let grouped = group_copies(vec![room, meeting(586, "this", "Michael R Pointer / Aditya", 570, 590, true)]);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].meeting.id, 586);
+        assert_eq!(grouped[0].also_recorded.iter().map(|c| c.id).collect::<Vec<_>>(), [587]);
+    }
+
+    #[test]
     fn short_copies_of_one_calendar_event_group_when_start_and_title_match() {
         // 10/16 on two Macs: Rock Arkie's 16:00 call, 79s and 74s; FMA Partner Connect
         // 10:30, 15 min and 75s. Same event start and title, so one call.
@@ -220,5 +297,109 @@ mod tests {
         let json = serde_json::to_value(&group_copies(vec![meeting(1, "a", "T", 0, 10, false)])).unwrap();
         assert_eq!(json[0]["id"], 1);
         assert_eq!(json[0]["also_recorded"], serde_json::json!([]));
+    }
+
+    mod store_hits {
+        use crate::{MeetingStatus, MeetingTrigger, NewMeeting, NewMeetingSnapshot, NewTranscriptSegment, Store};
+
+        const MIN: i64 = 60_000;
+
+        fn add(store: &Store, title: &str, start_min: i64, end_min: i64, status: MeetingStatus) -> i64 {
+            store
+                .insert_meeting(&NewMeeting {
+                    device_id: "d".into(),
+                    start_unix_ms: start_min * MIN,
+                    end_unix_ms: (status != MeetingStatus::Recording).then_some(end_min * MIN),
+                    title: title.into(),
+                    attendees: vec![],
+                    trigger: MeetingTrigger::Calendar,
+                    audio_path: None,
+                    status,
+                })
+                .unwrap()
+        }
+
+        fn say(store: &Store, meeting_id: i64, start_cs: i64, text: &str) {
+            store
+                .insert_transcript_segments(&[NewTranscriptSegment {
+                    meeting_id,
+                    start_cs,
+                    speaker_label: "Others".into(),
+                    text: text.into(),
+                }])
+                .unwrap();
+        }
+
+        /// A (in the call, 30 min), B (room audio copy, 2 min later, 28 min), C (2 h earlier).
+        fn three(store: &Store, b_status: MeetingStatus) -> (i64, i64, i64) {
+            let c = add(store, "Standup", 0, 30, MeetingStatus::Completed);
+            let a = add(store, "Planning", 120, 150, MeetingStatus::Completed);
+            let b = add(store, "Room audio only · Planning", 122, 150, b_status);
+            (a, b, c)
+        }
+
+        #[test]
+        fn copy_leads_maps_copy_to_lead() {
+            let store = Store::open_in_memory().unwrap();
+            let (a, b, c) = three(&store, MeetingStatus::Completed);
+            let leads = store.copy_leads(&[a, b, c]).unwrap();
+            assert_eq!((leads[&a], leads[&b], leads[&c]), (a, a, c));
+        }
+
+        #[test]
+        fn search_drops_copy_hits_keeps_order() {
+            let store = Store::open_in_memory().unwrap();
+            let (a, b, c) = three(&store, MeetingStatus::Completed);
+            say(&store, c, 100, "budget review");
+            say(&store, a, 100, "the budget is fine");
+            say(&store, b, 100, "the budget is fine");
+            let hits: Vec<i64> = store.search_transcript_keyword("budget", 50).unwrap().iter().map(|h| h.meeting_id).collect();
+            assert!(!hits.contains(&b), "copy dropped: {hits:?}");
+            assert_eq!(hits.len(), 2);
+            let ts: Vec<i64> =
+                store.search_transcript_keyword_with_meeting_ts("budget", 50).unwrap().iter().map(|(h, _)| h.meeting_id).collect();
+            assert!(!ts.contains(&b));
+        }
+
+        #[test]
+        fn copy_hit_kept_when_lead_has_none() {
+            let store = Store::open_in_memory().unwrap();
+            let (a, b, _) = three(&store, MeetingStatus::Completed);
+            say(&store, a, 100, "hello");
+            say(&store, b, 100, "look at the whiteboard");
+            let hits = store.search_transcript_keyword("whiteboard", 50).unwrap();
+            assert_eq!(hits.iter().map(|h| h.meeting_id).collect::<Vec<_>>(), [b]);
+        }
+
+        #[test]
+        fn snapshot_search_drops_copy_hits() {
+            let store = Store::open_in_memory().unwrap();
+            let (a, b, _) = three(&store, MeetingStatus::Completed);
+            for (m, at) in [(a, 121), (b, 123)] {
+                store
+                    .insert_meeting_snapshot(&NewMeetingSnapshot {
+                        meeting_id: m,
+                        captured_unix_ms: at * MIN,
+                        file_path: format!("/tmp/{m}.png"),
+                        width: 1,
+                        height: 1,
+                        ocr_text: "Roadmap slide".into(),
+                    })
+                    .unwrap();
+            }
+            let hits = store.search_snapshot_keyword_with_meeting_ts("Roadmap", 50).unwrap();
+            assert_eq!(hits.iter().map(|(h, _)| h.meeting_id).collect::<Vec<_>>(), [a]);
+        }
+
+        #[test]
+        fn recording_meeting_never_grouped() {
+            let store = Store::open_in_memory().unwrap();
+            let (a, b, _) = three(&store, MeetingStatus::Recording);
+            say(&store, a, 100, "budget");
+            say(&store, b, 100, "budget");
+            let mut hits: Vec<i64> = store.search_transcript_keyword("budget", 50).unwrap().iter().map(|h| h.meeting_id).collect();
+            hits.sort();
+            assert_eq!(hits, [a, b]);
+        }
     }
 }

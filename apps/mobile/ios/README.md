@@ -49,8 +49,8 @@ runs and the sign-in screen says Google sign-in is not configured.
 
 ## TestFlight
 
-`scripts/testflight-upload.sh` builds the release xcframework, archives (Release, automatic
-signing, team GP8PFLM3Q3), checks the archive's bundle id and version, and exports with
+`scripts/testflight-upload.sh` builds the release xcframework, archives unsigned (no registered
+device needed), and signs at export (automatic distribution signing, team GP8PFLM3Q3), checks the archive's bundle id and version, and exports with
 `method app-store-connect`, `destination upload`, which uploads it. It refuses a dirty tree
 and a missing or placeholder `Secrets.xcconfig`. `MARKETING_VERSION` follows `VERSION`
 (`scripts/check-version.sh`); the build number is the UTC time of the run, `YYYYMMDD.HHMM` (HHMM without leading zeros),
