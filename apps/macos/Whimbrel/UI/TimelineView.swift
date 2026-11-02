@@ -472,7 +472,6 @@ struct TimelineView: View {
                 .foregroundStyle(Color.whimbrelTextPrimary)
             // Screen memory asks here, where it's used (doc 17, item 1.1).
             PermissionCard(kind: .accessibility).environmentObject(appState.permissions)
-            BetterTranscriptsCard(download: appState.turboDownload)
 
             captureStatusHeader
 

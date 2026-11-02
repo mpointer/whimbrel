@@ -80,6 +80,30 @@ pub struct Pipeline {
     secrets: Arc<dyn SecretStore>,
     paths: Paths,
     state: Mutex<(Option<Processing>, Option<PipelineFailure>)>,
+    /// Held for each meeting's whole run, so a recording that ends during an import's
+    /// summaries waits its turn instead of sharing the one `Processing` slot (W-1.6).
+    work: Mutex<()>,
+}
+
+/// The most summaries one import starts, newest first, so a long history can't run up a
+/// provider bill (the Mac's `importSummaryLimit`).
+pub const IMPORT_SUMMARY_LIMIT: usize = 25;
+
+/// Far above any real meeting; the stored transcript is read in one page.
+const ALL_SEGMENTS: usize = 100_000;
+
+/// The stored segments as the summary's `[HH:mm:ss] Speaker: text` lines, timed from the
+/// meeting's start: the transcript of a meeting with no file here, imported or synced.
+pub fn segments_text(segments: &[memory::MeetingTranscriptSegment], start_unix_ms: i64) -> String {
+    let started = chrono::DateTime::from_timestamp_millis(start_unix_ms).unwrap_or_default().with_timezone(&chrono::Local);
+    segments
+        .iter()
+        .map(|s| {
+            let at = started + chrono::Duration::milliseconds(s.start_cs * 10);
+            format!("[{}] {}: {}", at.format("%H:%M:%S"), s.speaker_label, s.text)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The text of the meeting's saved slides, for the summary's "Slides shown" input: one
@@ -195,7 +219,7 @@ impl Pipeline {
         secrets: Arc<dyn SecretStore>,
         paths: Paths,
     ) -> Self {
-        Pipeline { store, slow_store, settings, secrets, paths, state: Mutex::new((None, None)) }
+        Pipeline { store, slow_store, settings, secrets, paths, state: Mutex::new((None, None)), work: Mutex::new(()) }
     }
 
     pub fn processing(&self) -> Option<Processing> {
@@ -283,16 +307,15 @@ impl Pipeline {
     /// decides what happens to the user's overrides: keep them and mark this generation
     /// seen, or drop them and take the new summary's text and action items.
     pub fn regenerate(&self, meeting_id: i64, keep_edits: bool) -> Result<(), CommandError> {
+        let Ok(_work) = self.work.try_lock() else {
+            return Err(CommandError::invalid_input(tr("Whimbrel is still working on a meeting. Try again when it's done.", &[])));
+        };
         let meeting = self
             .store
             .call_blocking(move |s| s.get_meeting(meeting_id).map_err(|e| e.to_string()))?
             .map_err(CommandError::store)?
             .ok_or_else(|| CommandError::invalid_input(tr("That meeting is gone.", &[])))?;
-        let path = meeting
-            .transcript_path
-            .clone()
-            .ok_or_else(|| CommandError::invalid_input(tr("This meeting has no transcript to summarize.", &[])))?;
-        let transcript = std::fs::read_to_string(&path).map_err(|e| CommandError::invalid_input(tr("Its transcript didn't open: {error}", &[("error", &e.to_string())])))?;
+        let transcript = self.stored_transcript(&meeting)?;
 
         self.set_stage(meeting_id, Stage::Summarizing);
         let outcome = self.summarize(meeting_id, &transcript, meeting.notes.as_deref().unwrap_or_default());
@@ -310,6 +333,56 @@ impl Pipeline {
         self.finished(meeting_id, outcome.as_ref().err().cloned());
         applied?.map_err(CommandError::store)?;
         outcome.map_err(CommandError::invalid_input)
+    }
+
+    /// The meeting's transcript: its file if this PC has one, else the stored segments.
+    fn stored_transcript(&self, meeting: &Meeting) -> Result<String, CommandError> {
+        if let Some(path) = &meeting.transcript_path {
+            return std::fs::read_to_string(path).map_err(|e| CommandError::invalid_input(tr("Its transcript didn't open: {error}", &[("error", &e.to_string())])));
+        }
+        let (id, start) = (meeting.id, meeting.start_unix_ms);
+        let segments = self
+            .store
+            .call_blocking(move |s| s.get_transcript_segments_page(id, 0, ALL_SEGMENTS).map(|(segments, _)| segments).map_err(|e| e.to_string()))?
+            .map_err(CommandError::store)?;
+        if segments.is_empty() {
+            return Err(CommandError::invalid_input(tr("This meeting has no transcript to summarize.", &[])));
+        }
+        Ok(segments_text(&segments, start))
+    }
+
+    /// Summarizes newly imported meetings, newest first and at most [`IMPORT_SUMMARY_LIMIT`],
+    /// one at a time on their own thread. Each waits while a recording is processed.
+    pub fn summarize_imported(self: &Arc<Self>, meeting_ids: Vec<i64>) {
+        if meeting_ids.is_empty() {
+            return;
+        }
+        let me = self.clone();
+        let spawned = std::thread::Builder::new().name("whimbrel-import-summaries".into()).spawn(move || {
+            for meeting_id in meeting_ids.into_iter().take(IMPORT_SUMMARY_LIMIT) {
+                let _work = me.work.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                let meeting = match me.store.call_blocking(move |s| s.get_meeting(meeting_id).map_err(|e| e.to_string())) {
+                    Ok(Ok(Some(meeting))) => meeting,
+                    _ => continue,
+                };
+                let transcript = match me.stored_transcript(&meeting) {
+                    Ok(transcript) => transcript,
+                    Err(e) => {
+                        tracing::warn!(meeting_id, error = %e, "an imported meeting has no transcript to summarize");
+                        continue;
+                    }
+                };
+                me.set_stage(meeting_id, Stage::Summarizing);
+                let outcome = me.summarize(meeting_id, &transcript, meeting.notes.as_deref().unwrap_or_default());
+                if let Err(e) = &outcome {
+                    tracing::warn!(meeting_id, error = %e, "summarizing an imported meeting failed");
+                }
+                me.finished(meeting_id, outcome.err());
+            }
+        });
+        if let Err(e) = spawned {
+            tracing::error!(error = %e, "could not start the import summaries");
+        }
     }
 
     /// One summarization on the slow lane. `Err` carries what to show the user.
@@ -334,6 +407,7 @@ impl Pipeline {
     }
 
     fn run(&self, meeting_id: i64, files: RecordingFiles, transcribed: super::live::Accumulated) {
+        let _work = self.work.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let started = Instant::now();
         match self.transcribe_and_summarize(meeting_id, &files, transcribed) {
             Ok(seconds) => {
@@ -648,6 +722,22 @@ fn transcribe_channel(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stored_segments_read_as_the_summary_transcript_timed_from_the_start() {
+        let segment = |start_cs, speaker: &str, text: &str| memory::MeetingTranscriptSegment {
+            id: 0,
+            meeting_id: 1,
+            meeting_title: String::new(),
+            start_cs,
+            speaker_label: speaker.to_string(),
+            text: text.to_string(),
+        };
+        let start = chrono::TimeZone::with_ymd_and_hms(&chrono::Local, 2026, 11, 1, 9, 30, 0).unwrap().timestamp_millis();
+        let text = super::segments_text(&[segment(0, "Ana", "Morning."), segment(6_150, "Speaker", "Hi.")], start);
+        assert_eq!(text, "[09:30:00] Ana: Morning.\n[09:31:01] Speaker: Hi.");
+        assert_eq!(super::segments_text(&[], start), "");
+    }
+
     use super::*;
 
     fn meeting(attendees: &[&str], estimated: Option<i32>) -> Meeting {

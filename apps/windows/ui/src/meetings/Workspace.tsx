@@ -20,6 +20,7 @@ import { spanLabel } from "../library/rows";
 import { ActionItems } from "./ActionItems";
 import { elapsedLabel } from "./recordingModel";
 import { meetingTitleLabel } from "./sentinels";
+import { RecordingNoticeCard } from "./RecordingNoticeCard";
 import { SlidesStrip } from "./SlidesStrip";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { overrideOf, phaseTitle, transcriptLanguageOptions } from "./workspaceModel";
@@ -199,6 +200,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
             <span className="recording-dot" aria-hidden="true" />
             {t("Recording · {elapsed}", { elapsed: elapsedLabel(view.row.tsUnixMs, now) })}
           </p>
+          {!view.readOnly && <RecordingNoticeCard meetingId={meetingId} />}
           <label className="field">
             <span>{t("Notes")}</span>
             <textarea className="input" rows={6} value={notes ?? ""} onChange={(e) => setNotes(e.target.value)} />

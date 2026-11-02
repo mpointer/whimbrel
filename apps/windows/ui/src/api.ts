@@ -55,6 +55,8 @@ import type {
   RetentionSettings,
   RetentionView,
   MeetingSettings,
+  ImportView,
+  RecordingNoticeSettings,
   NextMeetingView,
   TranscriptView,
   WorkspaceView,
@@ -198,6 +200,9 @@ export const meetingRecordingStatus = () => invoke<MeetingRecordingView>("meetin
 
 // The Meetings tab (M3.3 Task 5).
 export const meetingList = (filter: string) => invoke<MeetingRow[]>("meeting_list", { filter });
+/** Import (W-1.6): each opens a picker and resolves null when it's cancelled. */
+export const importTranscripts = () => invoke<ImportView | null>("import_transcripts");
+export const importMarkdownFolder = () => invoke<ImportView | null>("import_markdown_folder");
 export const meetingWorkspace = (id: number) => invoke<WorkspaceView | null>("meeting_workspace", { id });
 export const meetingTranscript = (id: number) => invoke<TranscriptView>("meeting_transcript", { id });
 export const meetingSaveNotes = (id: number, notes: string) => invoke<void>("meeting_save_notes", { id, notes });
@@ -242,6 +247,10 @@ export const resetMeetingSnapshotsFolder = () => invoke<SnapshotSettings>("reset
 // Detection, its alert window, and Settings → Meetings (M3.3 Task 6).
 export const meetingSettings = () => invoke<MeetingSettings>("meeting_settings");
 export const setMeetingSettings = (settings: MeetingSettings) => invoke<MeetingSettings>("set_meeting_settings", { settings });
+/** "Remind me to tell people I'm recording" (W-1.7). */
+export const recordingNoticeSettings = () => invoke<RecordingNoticeSettings>("recording_notice_settings");
+export const setRecordingNoticeSettings = (settings: RecordingNoticeSettings) =>
+  invoke<RecordingNoticeSettings>("set_recording_notice_settings", { settings });
 export const alertStatus = () => invoke<AlertView>("alert_status");
 export const alertAccept = (openApp: boolean) => invoke<void>("alert_accept", { openApp });
 export const alertDismiss = () => invoke<void>("alert_dismiss");

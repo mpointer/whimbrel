@@ -84,10 +84,49 @@ pub fn set_meeting_settings(state: tauri::State<'_, AppState>, settings: Meeting
     Ok(meeting_settings(state))
 }
 
+/// Settings → Meetings → "Remind me to tell people I'm recording" (W-1.7).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingNoticeSettings {
+    pub enabled: bool,
+    /// The custom wording; "" is the default, which the UI writes in the app's language.
+    pub text: String,
+}
+
+#[tauri::command]
+pub fn recording_notice_settings(state: tauri::State<'_, AppState>) -> RecordingNoticeSettings {
+    let file = state.settings.lock().unwrap();
+    RecordingNoticeSettings { enabled: file.recording_notice_enabled(), text: file.recording_notice_text() }
+}
+
+#[tauri::command]
+pub fn set_recording_notice_settings(state: tauri::State<'_, AppState>, settings: RecordingNoticeSettings) -> Result<RecordingNoticeSettings, CommandError> {
+    {
+        let mut file = state.settings.lock().unwrap();
+        file.set_recording_notice(settings.enabled, &settings.text);
+        file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
+    }
+    Ok(recording_notice_settings(state))
+}
+
 #[cfg(test)]
 mod settings_tests {
     use super::*;
     use crate::settings::SettingsFile;
+
+    #[test]
+    fn the_recording_notice_is_off_by_default_and_blank_wording_means_the_default() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-recording-notice-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut file = SettingsFile::load(&dir.join("settings.json"));
+        assert_eq!((file.recording_notice_enabled(), file.recording_notice_text()), (false, String::new()));
+        file.set_recording_notice(true, "  Recording for my notes.  ");
+        assert_eq!((file.recording_notice_enabled(), file.recording_notice_text()), (true, "Recording for my notes.".to_string()));
+        file.set_recording_notice(true, "   ");
+        assert_eq!(file.recording_notice_text(), "", "blank goes back to the default");
+        assert!(file.get::<String>(crate::settings::keys::RECORDING_NOTICE_TEXT).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn saving_the_meeting_settings_keeps_the_prep_lead_apart_from_the_alert_lead() {

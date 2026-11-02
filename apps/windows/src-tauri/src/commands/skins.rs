@@ -416,11 +416,7 @@ pub async fn skin_delete(state: State<'_, AppState>, skin_id: String) -> Result<
 }
 
 fn file_dialog(app: &AppHandle, title: &str) -> tauri_plugin_dialog::FileDialogBuilder<tauri::Wry> {
-    let mut dialog = app.dialog().file().set_title(title).add_filter("Whimbrel Skin", &skin_maker::PACKAGE_EXTENSIONS);
-    if let Some(window) = app.get_webview_window(crate::app::MAIN_WINDOW) {
-        dialog = dialog.set_parent(&window);
-    }
-    dialog
+    super::parented_dialog(app, title).add_filter("Whimbrel Skin", &skin_maker::PACKAGE_EXTENSIONS)
 }
 
 /// Asks where to save one of your skins and writes it there; false when the picker is cancelled.

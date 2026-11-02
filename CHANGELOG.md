@@ -2,6 +2,16 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.46] - 2026-11-01
+
+### Mac
+- Only the primary device runs routines now. Other Macs ran them too unless Settings → Devices had been opened since launch. While the device list is loading, a Mac that isn't the primary waits.
+- The "Better transcripts" offer now appears on Today, not only in Library.
+
+### Windows
+- An optional reminder to tell people you're recording, with wording you can copy, in Settings → Meetings. It's off by default. The consent note sits beside it and on the Record a meeting card.
+- Import on the Meetings tab brings in transcripts (.vtt, .srt, .txt, Otter's text export) and a Granola CSV as meetings, and a folder of Markdown as searchable notes. Repeats and meetings already recorded here are skipped, and one import summarizes its newest 25 meetings. Regenerate now works on imported meetings and ones synced from the Mac.
+
 ## [0.9.45] - 2026-11-01
 
 ### Mac

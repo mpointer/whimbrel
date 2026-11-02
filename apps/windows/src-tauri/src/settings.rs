@@ -51,6 +51,11 @@ pub mod keys {
     pub const MEETING_LEAD_MINUTES: &str = "meetings.leadMinutes";
     /// Device-local, as on the Mac (`MeetingPrepSettings`): how long before a meeting its brief is made.
     pub const MEETING_PREP_LEAD_MINUTES: &str = "meetingPrep.leadMinutes";
+    /// Device-local, as on the Mac (`RecordingNoticeSettings`, W-1.7): "Remind me to tell people I'm
+    /// recording". Off unless the user turns it on.
+    pub const RECORDING_NOTICE_ENABLED: &str = "recordingNotice.enabled";
+    /// Device-local: the notice's wording. Absent or empty is the default, in the app's language.
+    pub const RECORDING_NOTICE_TEXT: &str = "recordingNotice.text";
     /// Device-local, as on the Mac (`SnapshotSettings`): whether recorded meetings save their
     /// slides, on unless turned off, and the folder they go in (absent: Pictures\Whimbrel Snapshots).
     pub const MEETING_SNAPSHOTS_ENABLED: &str = "meetingSnapshots.enabled";
@@ -492,6 +497,22 @@ impl SettingsFile {
 
     pub fn set_prep_lead_minutes(&mut self, minutes: f64) {
         self.set(keys::MEETING_PREP_LEAD_MINUTES, Some(minutes.clamp(5.0, 120.0)));
+    }
+
+    pub fn recording_notice_enabled(&self) -> bool {
+        self.get(keys::RECORDING_NOTICE_ENABLED).unwrap_or(false)
+    }
+
+    /// The custom wording, or "" for the default.
+    pub fn recording_notice_text(&self) -> String {
+        self.get(keys::RECORDING_NOTICE_TEXT).unwrap_or_default()
+    }
+
+    /// Blank wording clears it, back to the default.
+    pub fn set_recording_notice(&mut self, enabled: bool, text: &str) {
+        self.set(keys::RECORDING_NOTICE_ENABLED, Some(enabled));
+        let text = text.trim();
+        self.set(keys::RECORDING_NOTICE_TEXT, (!text.is_empty()).then_some(text));
     }
 
     pub fn set_meeting_settings(&mut self, heuristic: bool, auto_start: bool, lead_minutes: f64) {

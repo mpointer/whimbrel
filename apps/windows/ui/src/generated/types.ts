@@ -986,6 +986,32 @@ export interface ImageCandidateView {
   url: string;
 }
 /**
+ * What one import did, for the line above the Meetings list (the Mac's `ImportSummary`).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ImportView".
+ */
+export interface ImportView {
+  /**
+   * The files that couldn't be read.
+   */
+  failed: string[];
+  meetings: number;
+  notes: number;
+  /**
+   * Export rows skipped because a meeting recorded here ran at that time.
+   */
+  overlapping: number;
+  /**
+   * Already here: the same meeting, or the same note unchanged.
+   */
+  skipped: number;
+  /**
+   * How many of the new meetings get a summary now.
+   */
+  summaryLimit: number;
+}
+/**
  * What saving a key found out (core/api::hosted_models::validate_key).
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1378,6 +1404,19 @@ export interface ProfileView {
    * Whether the daily job would run now: the suggest switch is on and something is written.
    */
   suggestionsActive: boolean;
+}
+/**
+ * Settings → Meetings → "Remind me to tell people I'm recording" (W-1.7).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "RecordingNoticeSettings".
+ */
+export interface RecordingNoticeSettings {
+  enabled: boolean;
+  /**
+   * The custom wording; "" is the default, which the UI writes in the app's language.
+   */
+  text: string;
 }
 /**
  * What a sweep would remove right now, for the first-run notice. The shell's own shape

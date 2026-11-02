@@ -8,6 +8,7 @@ pub mod capture;
 pub mod chat;
 pub mod connectors;
 pub mod general;
+pub mod import;
 pub mod language;
 pub mod library;
 pub mod mcp;
@@ -35,6 +36,17 @@ use crate::settings::RoutingSettings;
 use crate::state::AppState;
 use crate::store_actor::QueueWaitStats;
 use crate::l10n::tr;
+
+/// A file or folder picker titled `title`, over the main window when it's open.
+pub(crate) fn parented_dialog(app: &tauri::AppHandle, title: &str) -> tauri_plugin_dialog::FileDialogBuilder<tauri::Wry> {
+    use tauri::Manager;
+    use tauri_plugin_dialog::DialogExt;
+    let dialog = app.dialog().file().set_title(title);
+    match app.get_webview_window(crate::app::MAIN_WINDOW) {
+        Some(window) => dialog.set_parent(&window),
+        None => dialog,
+    }
+}
 
 /// What Settings → About shows.
 #[derive(Debug, Clone, Serialize, JsonSchema)]

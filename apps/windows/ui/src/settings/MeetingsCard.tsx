@@ -10,6 +10,7 @@ import {
 import { describeError, isCommandError } from "../errors";
 import type { MeetingSettings, SnapshotSettings } from "../generated/types";
 import { t } from "../l10n";
+import { noticeText, saveNoticeSettings, useRecordingNotice } from "../meetings/recordingNotice";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -21,6 +22,15 @@ export function MeetingsCard() {
   const [snapshots, setSnapshots] = useState<SnapshotSettings | null>(null);
   const [choosing, setChoosing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { settings: notice } = useRecordingNotice();
+  // The wording being typed; saved when the box loses focus.
+  const [draft, setDraft] = useState<string | null>(null);
+  const saveNotice = (enabled: boolean, text: string) => {
+    setError(null);
+    saveNoticeSettings({ enabled, text })
+      .then(() => setDraft(null))
+      .catch((e: unknown) => setError(message(e)));
+  };
 
   useEffect(() => {
     meetingSettings()
@@ -94,6 +104,28 @@ export function MeetingsCard() {
       <p className="muted small">
         {t("Detection watches which app holds your microphone and speakers. Nothing is recorded until you accept.")}
       </p>
+      {notice && (
+        <>
+          <label className="toggle">
+            <input type="checkbox" checked={notice.enabled} onChange={(e) => saveNotice(e.target.checked, notice.text)} />
+            {t("Remind me to tell people I'm recording")}
+          </label>
+          {notice.enabled && (
+            <textarea
+              className="input"
+              rows={2}
+              aria-label={t("Remind me to tell people I'm recording")}
+              placeholder={noticeText("")}
+              value={draft ?? notice.text}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => draft !== null && saveNotice(notice.enabled, draft)}
+            />
+          )}
+          <p className="muted small">
+            {t("Some places require everyone's consent before a meeting is recorded. Check the rules where you and the other people are.")}
+          </p>
+        </>
+      )}
       {snapshots && (
         <>
           <label className="toggle">

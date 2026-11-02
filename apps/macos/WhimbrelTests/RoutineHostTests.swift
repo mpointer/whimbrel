@@ -65,4 +65,13 @@ final class RoutineHostTests: XCTestCase {
         let synced = try JSONDecoder().decode(CoreRoutineRunWithName.self, from: Data((base + #","origin_device_id":"dev-9"}"#).utf8))
         XCTAssertEqual(synced.originDeviceId, "dev-9")
     }
+
+    func testAListThatHasNotLoadedWaitsAsAFailover() {
+        XCTAssertEqual(RoutineHost.gate(primaryId: "other", ownId: "me", approvedDeviceIds: []), .failover)
+    }
+
+    func testTheUnloadedListDoesNotHoldBackThePrimaryOrAnUnsetChoice() {
+        XCTAssertEqual(RoutineHost.gate(primaryId: "me", ownId: "me", approvedDeviceIds: []), .full)
+        XCTAssertEqual(RoutineHost.gate(primaryId: "", ownId: "me", approvedDeviceIds: []), .full)
+    }
 }
