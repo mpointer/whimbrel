@@ -14929,6 +14929,40 @@
         }
       }
     },
+    "No speech detected in this recording. The recording is still here: choose Meeting options › Transcribe again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In dieser Aufnahme wurde keine Sprache erkannt. Die Aufnahme ist noch vorhanden: Wählen Sie Meeting-Optionen › Erneut transkribieren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se detectó voz en esta grabación. La grabación sigue aquí: elige Opciones de la reunión › Transcribir de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucune parole détectée dans cet enregistrement. L'enregistrement est toujours là : choisissez Options de la réunion › Retranscrire."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucune parole détectée dans cet enregistrement. L'enregistrement est toujours là : choisissez Options de la réunion › Retranscrire."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhuma fala detectada nesta gravação. A gravação ainda está aqui: escolha Opções da reunião › Transcrever novamente."
+          }
+        }
+      }
+    },
     "No summary yet today." : {
       "localizations" : {
         "de" : {
@@ -25666,6 +25700,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Falha na transcrição de %@ (modelo inválido, áudio inválido ou erro do whisper.cpp)."
+          }
+        }
+      }
+    },
+    "Transcription failed. The recording is still here: choose Meeting options › Transcribe again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Transkription ist fehlgeschlagen. Die Aufnahme ist noch vorhanden: Wählen Sie Meeting-Optionen › Erneut transkribieren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Falló la transcripción. La grabación sigue aquí: elige Opciones de la reunión › Transcribir de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La transcription a échoué. L'enregistrement est toujours là : choisissez Options de la réunion › Retranscrire."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La transcription a échoué. L'enregistrement est toujours là : choisissez Options de la réunion › Retranscrire."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A transcrição falhou. A gravação ainda está aqui: escolha Opções da reunião › Transcrever novamente."
           }
         }
       }

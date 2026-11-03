@@ -277,7 +277,7 @@ enum TranscriptionService {
         }.joined(separator: "\n")
         let url = SpikePaths.root.appendingPathComponent("transcript-\(stamp).txt")
         try body.write(to: url, atomically: true, encoding: .utf8)
-        log.info("Wrote transcript to \(url.path, privacy: .public) (\(lines.count) segments)")
+        log.notice("Wrote transcript to \(url.path, privacy: .public) (\(lines.count) segments)")
         return url
     }
 

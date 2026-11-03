@@ -1344,6 +1344,16 @@ final class AppState: ObservableObject {
         transcribeAgainAvailability?.canTranscribeAgain(meeting) ?? false
     }
 
+    /// The last transcription of this meeting threw; the recording is still there.
+    func transcriptionFailed(_ meeting: CoreMeeting) -> Bool {
+        transcribeAgainAvailability?.failedIds.contains(meeting.id) ?? false
+    }
+
+    /// The last transcription ran and found no words.
+    func noSpeechDetected(_ meeting: CoreMeeting) -> Bool {
+        transcribeAgainAvailability?.noSpeechIds.contains(meeting.id) ?? false
+    }
+
     /// Views read it through `canTranscribeAgain`; its changes re-render AppState's observers.
     private lazy var transcribeAgainAvailability: TranscribeAgainAvailability? = coreStore.map { store in
         let availability = TranscribeAgainAvailability(store: store)
@@ -1371,7 +1381,15 @@ final class AppState: ObservableObject {
     /// FR-MTG-5: queues one part's transcription (`MeetingTranscriptionQueue`, one part at
     /// a time, in order); the last part to land summarizes the whole meeting.
     private func transcribePart(meetingId: Int64, partIndex: Int64, audioPath: String?, notes: String) {
-        guard let transcriptionQueue else { return }
+        guard let transcriptionQueue else {
+            // No queue means no store, so there is nothing to recover this launch. Marking the
+            // meeting lets the next launch's reconcile pick it up (it checks for audio and status).
+            Logger(subsystem: "com.mpointer.kestrel", category: "transcription-queue")
+                .error("meeting \(meetingId) part \(partIndex): no transcription queue; marked for the next launch")
+            let pending = UserDefaults.standard.array(forKey: Self.pendingLaunchTranscriptionKey) as? [Int64] ?? []
+            UserDefaults.standard.set(Array(Set(pending).union([meetingId])), forKey: Self.pendingLaunchTranscriptionKey)
+            return
+        }
         if audioPath != nil { markProcessing(meetingId) }
         transcriptionQueue.enqueue(.init(meetingId: meetingId, partIndex: partIndex, audioPath: audioPath, notes: notes))
     }
@@ -1490,6 +1508,7 @@ final class AppState: ObservableObject {
                     self.transcribeAgainAvailability?.refresh(meetingId)
                 }
             },
+            onFailure: { [weak self] meetingId in self?.transcribeAgainAvailability?.markFailed(meetingId) },
             modelsDownloading: { [weak self] in
                 DispatchQueue.main.sync {
                     if case .downloading = self?.modelBootstrap.phase { return true }
@@ -2105,6 +2124,13 @@ final class AppState: ObservableObject {
                 guard !hasAudio, let name = StrandedAudioMatch.audioFileName(meetingStart: start, fileNames: files,
                                                                               referenced: referenced ?? []) else {
                     store.completeMeeting(id: meeting.id, endUnixMs: nowMs, audioPath: meeting.audioPath)
+                    // Audio already linked: transcribe it unless that part already landed.
+                    if let linked = open?.audioPath ?? meeting.audioPath, !(open?.transcribed ?? false) {
+                        MeetingContinuation.log.notice("meeting \(meeting.id): completed interrupted recording, transcribing its linked audio")
+                        jobs.append(.init(meetingId: meeting.id, partIndex: open?.partIndex ?? 1, audioPath: linked, notes: meeting.notes ?? ""))
+                    } else {
+                        MeetingContinuation.log.notice("meeting \(meeting.id): completed interrupted recording with no audio to transcribe")
+                    }
                     continue
                 }
                 let url = SpikePaths.audioFile(name: name)
@@ -2117,10 +2143,16 @@ final class AppState: ObservableObject {
             }
             for id in quitEnded where !jobs.contains(where: { $0.meetingId == id }) {
                 guard let meeting = store.getMeeting(id: id), meeting.status == .completed,
-                      let end = meeting.endUnixMs, nowMs - end < 86_400_000 else { continue }
+                      let end = meeting.endUnixMs, nowMs - end < 86_400_000 else {
+                    MeetingContinuation.log.notice("meeting \(id): quit-marked but not completed or older than a day; not transcribed (Transcribe again can)")
+                    continue
+                }
                 let open = StrandedAudioMatch.openPart(store.meetingParts(meetingId: id) ?? [])
                 let transcribed = open.map(\.transcribed) ?? (meeting.transcriptPath != nil)
-                guard !transcribed, let path = open.map(\.audioPath) ?? meeting.audioPath else { continue }
+                guard !transcribed, let path = open.map(\.audioPath) ?? meeting.audioPath else {
+                    MeetingContinuation.log.notice("meeting \(id): quit-marked; already transcribed or no audio, nothing to do")
+                    continue
+                }
                 jobs.append(.init(meetingId: id, partIndex: open?.partIndex ?? 1, audioPath: path, notes: meeting.notes ?? ""))
             }
             guard !jobs.isEmpty else { return }

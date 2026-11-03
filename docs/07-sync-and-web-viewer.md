@@ -42,6 +42,10 @@ Thin service, matching `04-architecture.md`'s existing description: authenticate
 - LLM calls (Ask/Digest modes): can't reach Ollama running on your Mac from a browser without extra exposure work, which is out of scope here. Simplest for personal use: the browser calls a hosted model (Anthropic/OpenAI) directly with a user-supplied API key stored locally — keeps the relay out of the LLM path entirely and preserves the "what left my machine" ledger concept (NFR-PRV-4) at the browser layer.
 - Framework: Next.js fits the existing default stack — but note it splits across hosts (see below): the viewer itself is close to a static app once ciphertext is fetched, while the relay needs a long-running WebSocket-capable process that serverless platforms don't do well.
 
+### Repairing sync state
+
+Never edit `sync_meeting_map`, `sync_row_map`, or `sync_cursor` by hand. Manual cleanup of those tables caused duplicate and transcript-less meetings. Recovery goes through code: a synced meeting update whose mapped local row was deleted inserts the meeting again, repoints the map, and drops that peer's stamps for rows that no longer exist. Its transcript lines return only when the peer's rows are pulled again (a cursor rewind or a re-push), not on the update alone.
+
 ## Hosting recommendation
 
 | Component | Recommendation | Why |

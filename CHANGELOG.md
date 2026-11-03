@@ -2,6 +2,12 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.50] - 2026-11-03
+
+### Mac
+- A meeting you deleted that came from another of your devices now comes back when that device syncs it again, instead of being silently dropped. Old meetings from before August are no longer copied a second time.
+- Meetings that ended up with no transcript no longer fail quietly. A failed transcription now says so on the meeting and is logged, a recording with no speech says "No speech detected" and still offers Transcribe again, and a recording cut short by a quit or crash is transcribed on the next launch.
+
 ## [0.9.49] - 2026-11-03
 
 ### Mac

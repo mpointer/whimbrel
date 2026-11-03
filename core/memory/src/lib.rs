@@ -2568,7 +2568,7 @@ impl Store {
         meeting: &AppliedMeeting,
     ) -> rusqlite::Result<i64> {
         if let Some(id) = existing_local_id {
-            self.conn.execute(
+            let changed = self.conn.execute(
                 "UPDATE meeting SET start_unix_ms = ?1, end_unix_ms = ?2, title = ?3, attendees = ?4, trigger = ?5, status = ?6, \
                  transcript_path = ?7, notes = ?8, summary_tldr = ?9, summary_decisions_json = ?10, summary_action_items_json = ?11, \
                  summary_open_questions_json = ?12, summary_provider = ?13, summary_model = ?14, local_seq = ?15, \
@@ -2593,7 +2593,20 @@ impl Store {
                     meeting.keep_media,
                 ],
             )?;
-            return Ok(id);
+            if changed > 0 {
+                return Ok(id);
+            }
+            // The mapped local row was deleted: a locally deleted peer meeting comes back
+            // when its peer syncs it again. Insert it fresh (the caller repoints
+            // `sync_meeting_map`) and forget this peer's stamps whose local rows are gone,
+            // so the meeting's transcript lines re-apply if pulled again.
+            self.conn.execute(
+                "DELETE FROM sync_row_map WHERE device_id = ?1 AND ( \
+                   (row_type = 'meeting' AND local_id NOT IN (SELECT id FROM meeting)) \
+                OR (row_type = 'transcript_segment' AND local_id NOT IN (SELECT id FROM transcript_segment)) \
+                OR (row_type = 'items' AND local_id NOT IN (SELECT id FROM items)))",
+                params![device_id],
+            )?;
         }
         self.conn.execute(
             "INSERT INTO meeting (device_id, start_unix_ms, end_unix_ms, title, attendees, trigger, audio_path, status, \
@@ -2621,6 +2634,24 @@ impl Store {
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// The meeting already applied from `device_id` with this exact title, start and end:
+    /// how a legacy peer meeting (no `source_meeting_id`) is matched when its
+    /// `sync_row_map` stamp is missing, instead of inserting a second copy.
+    pub fn find_synced_meeting_by_content(
+        &self,
+        device_id: &str,
+        meeting: &AppliedMeeting,
+    ) -> rusqlite::Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT id FROM meeting WHERE device_id = ?1 AND title = ?2 AND start_unix_ms = ?3 AND end_unix_ms IS ?4 \
+                 ORDER BY id LIMIT 1",
+                params![device_id, meeting.title, meeting.start_unix_ms, meeting.end_unix_ms],
+                |r| r.get(0),
+            )
+            .optional()
     }
 
     /// Applies a peer's pulled `transcript_segment` row against an already-resolved

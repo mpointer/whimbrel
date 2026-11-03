@@ -925,9 +925,17 @@ fn apply_parent_row(
                 Some(source_id) => store
                     .resolve_sync_meeting_map(peer_device_id, source_id)
                     .map_err(|e| SyncEngineError::Query(e.to_string()))?,
-                None => store
+                None => match store
                     .resolve_sync_row_map(peer_device_id, local_seq, ROW_TYPE_MEETING)
-                    .map_err(|e| SyncEngineError::Query(e.to_string()))?,
+                    .map_err(|e| SyncEngineError::Query(e.to_string()))?
+                {
+                    Some(id) => Some(id),
+                    // No stamp (e.g. cleared): match an identical meeting rather than
+                    // insert another copy of a legacy one.
+                    None => store
+                        .find_synced_meeting_by_content(peer_device_id, &payload.meeting)
+                        .map_err(|e| SyncEngineError::Query(e.to_string()))?,
+                },
             };
             let local_id = store
                 .apply_synced_meeting(
@@ -3685,6 +3693,75 @@ pub(crate) mod tests {
             item_seq,
             "the cursor must advance -- a stall here freezes every later row from this peer"
         );
+    }
+
+    #[tokio::test]
+    async fn a_deleted_peer_meeting_returns_when_the_peer_syncs_an_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = compacting_relay(&dir).await;
+        let key = GroupKey::generate();
+        let store_a = Store::open_in_memory().unwrap();
+        let store_b = Store::open_in_memory().unwrap();
+
+        let id = completed_meeting(&store_a, "device-a");
+        store_a
+            .insert_transcript_segments(&[memory::NewTranscriptSegment {
+                meeting_id: id,
+                start_cs: 0,
+                speaker_label: "Me".to_string(),
+                text: "selfrepair transcript line".to_string(),
+            }])
+            .unwrap();
+        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
+        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        let old_local = store_b.recent_meetings(10).unwrap()[0].id;
+        assert_eq!(store_b.search_transcript_keyword("selfrepair", 10).unwrap().len(), 1);
+
+        store_b.delete_meeting(old_local).unwrap();
+        assert!(store_b.recent_meetings(10).unwrap().is_empty());
+
+        store_a
+            .update_meeting_transcript_and_notes(id, "/path/transcript.txt", Some("later notes"))
+            .unwrap();
+        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
+        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+
+        let meetings = store_b.recent_meetings(10).unwrap();
+        assert_eq!(meetings.len(), 1, "the deleted meeting comes back");
+        assert_eq!(meetings[0].notes.as_deref(), Some("later notes"));
+        let new_local = meetings[0].id;
+        assert_ne!(new_local, old_local);
+        assert_eq!(
+            store_b.resolve_sync_meeting_map("device-a", id).unwrap(),
+            Some(new_local),
+            "the map is repointed"
+        );
+
+        // Its transcript lines re-apply when pulled again (a cursor rewind).
+        store_b.set_sync_cursor("device-a", 0).unwrap();
+        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        let hits = store_b.search_transcript_keyword("selfrepair", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].meeting_id, new_local);
+        assert_eq!(store_b.recent_meetings(10).unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_legacy_meeting_applied_twice_without_its_stamp_stays_one_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("shared.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let key = GroupKey::generate();
+        let meeting = sample_applied_meeting("Legacy");
+        let legacy_json = serde_json::to_string(&meeting).unwrap();
+        seed_content_row(&conn, &key, "device-a", 1, ROW_TYPE_MEETING, &legacy_json).await;
+        // Already applied earlier, but its sync_row_map stamp is gone.
+        let store_b = Store::open_in_memory().unwrap();
+        store_b.apply_synced_meeting("device-a", 99, None, &meeting).unwrap();
+        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        store_b.set_sync_cursor("device-a", 0).unwrap();
+        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        assert_eq!(store_b.recent_meetings(10).unwrap().len(), 1);
     }
 
     #[tokio::test]
