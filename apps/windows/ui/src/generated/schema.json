@@ -3835,6 +3835,39 @@
       ],
       "type": "object"
     },
+    "TranscriptionNotice": {
+      "description": "What a finished meeting with no transcript says on its page, from the markers next to\nits audio. `None` when neither marker is there (never run, or interrupted).",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "no_speech",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "TranscriptionQualityStatus": {
       "properties": {
         "offer": {
@@ -4159,6 +4192,17 @@
         },
         "summaryIsEdited": {
           "type": "boolean"
+        },
+        "transcription": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TranscriptionNotice"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why this finished meeting has no transcript, when its last run said so: it failed, or\nit heard nothing. The page shows it with Transcribe again (the Mac's #530)."
         },
         "trigger": {
           "type": "string"

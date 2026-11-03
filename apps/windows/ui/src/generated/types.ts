@@ -247,6 +247,21 @@ export type SyncState =
   | "ready"
   | "error";
 /**
+ * What a finished meeting with no transcript says on its page, from the markers next to
+ * its audio. `None` when neither marker is there (never run, or interrupted).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TranscriptionNotice".
+ */
+export type TranscriptionNotice =
+  | {
+      kind: "failed";
+      message: string;
+    }
+  | {
+      kind: "no_speech";
+    };
+/**
  * Settings → General's "Check for Updates", as the Mac's shows it.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1950,5 +1965,10 @@ export interface WorkspaceView {
   spokenLanguage?: string | null;
   summary?: string | null;
   summaryIsEdited: boolean;
+  /**
+   * Why this finished meeting has no transcript, when its last run said so: it failed, or
+   * it heard nothing. The page shows it with Transcribe again (the Mac's #530).
+   */
+  transcription?: TranscriptionNotice | null;
   trigger: string;
 }

@@ -361,4 +361,26 @@ final class LiveAlertDeliveryTests: XCTestCase {
         XCTAssertEqual(LiveAlertDelivery.contextLines([row], atCs: 246_000, partOffsetCs: 240_000), ["40:50  Them: So the deck"])
         XCTAssertEqual(LiveAlertDelivery.contextLines([row], atCs: 246_000), [])
     }
+
+    func testEvidenceDedupesOnTitleAndDateKeepingTheFirstLink() {
+        let a = URL(string: "https://a.example/x")!
+        let b = URL(string: "https://b.example/y")!
+        let out = LiveAlertDelivery.deduped([
+            .init(text: "Plan · Nov 2", link: nil), .init(text: "Plan · Nov 2", link: a), .init(text: "Plan · Nov 2", link: b),
+            .init(text: "Other · Nov 3", link: b), .init(text: "Other · Nov 3", link: a),
+        ])
+        XCTAssertEqual(out, [.init(text: "Plan · Nov 2", link: a), .init(text: "Other · Nov 3", link: b)])
+    }
+
+    func testAPeerAlertWithoutALocalMeetingLinksThroughItsOrigin() {
+        var peer = alert(id: 5, origin: "mac-2", sourceId: 9, sourceMeetingId: 77)
+        peer = CoreLiveAlert(
+            id: peer.id, meetingId: nil, originDeviceId: "mac-2", sourceId: 9, sourceMeetingId: 77, meetingTitle: peer.meetingTitle,
+            quote: peer.quote, restatement: peer.restatement, asker: nil, atCs: 12_345, createdAtUnixMs: 1_000,
+            draftJson: nil, emailStatus: nil, notifiedAtUnixMs: nil
+        )
+        let target = LiveAlertDelivery.link(for: peer, atCs: 12_345).flatMap(DeepLink.parse)
+        XCTAssertEqual(target, DeepLink.Target(meetingId: 77, atCs: 12_345, origin: "mac-2", sourceMeetingId: 77))
+        XCTAssertEqual(LiveAlertDelivery.link(for: alert(id: 1), atCs: 0), DeepLink.meetingURL(id: 3, atCs: 0))
+    }
 }

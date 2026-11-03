@@ -119,7 +119,10 @@ struct LiveMeetingSection: View {
         }
         .onReceive(LiveAlertsSection.refresh) { _ in
             let alertsOn = LiveQuestionWatcher.shouldRun(settings: appState.liveQuestionSettings, names: appState.profile.liveQuestionNames)
-            if LiveAlertsSection.shouldPoll(recording: meeting.id == appState.activeMeetingId, alertsOn: alertsOn) { loadAlerts() }
+            if LiveAlertsSection.shouldPoll(
+                recording: meeting.id == appState.activeMeetingId, alertsOn: alertsOn, rows: alerts,
+                endedUnixMs: meeting.endUnixMs, nowUnixMs: Int64(Date().timeIntervalSince1970 * 1000)
+            ) { loadAlerts() }
         }
         // A notification or link for this meeting: scroll to that moment once its line exists.
         .onReceive(appState.$pendingMeetingSeek) { consumeSeek($0) }

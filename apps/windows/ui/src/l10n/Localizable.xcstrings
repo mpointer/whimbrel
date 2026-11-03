@@ -13326,6 +13326,40 @@
         }
       }
     },
+    "No speech detected in this recording." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "In dieser Aufnahme wurde keine Sprache erkannt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se detectó voz en esta grabación."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucune parole détectée dans cet enregistrement."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucune parole détectée dans cet enregistrement."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhuma fala detectada nesta gravação."
+          }
+        }
+      }
+    },
     "No suggestions yet. Once a day, if the switch above is on and your Profile has something in it, Whimbrel looks at your meeting summaries and proposes facts here. Nothing is added unless you press Add." : {
       "localizations" : {
         "de" : {
@@ -24714,6 +24748,40 @@
         }
       }
     },
+    "Transcribe again" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erneut transkribieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcribir de nuevo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Retranscrire"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Retranscrire"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transcrever novamente"
+          }
+        }
+      }
+    },
     "Transcribing…" : {
       "localizations" : {
         "de" : {
@@ -24880,6 +24948,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Os modelos de transcrição e de locutores estão instalados."
+          }
+        }
+      }
+    },
+    "Transcription failed: {message}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Transkription ist fehlgeschlagen: {message}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Falló la transcripción: {message}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La transcription a échoué : {message}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La transcription a échoué : {message}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A transcrição falhou: {message}"
           }
         }
       }

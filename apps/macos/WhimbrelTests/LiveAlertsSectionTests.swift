@@ -25,10 +25,10 @@ final class LiveAlertsSectionTests: XCTestCase {
 
     // MARK: - Final review fixes
 
-    private func alert(origin: String?, draftJson: String?) -> CoreLiveAlert {
+    private func alert(origin: String?, draftJson: String?, createdAtUnixMs: Int64 = 0) -> CoreLiveAlert {
         CoreLiveAlert(
             id: 1, meetingId: 3, originDeviceId: origin, sourceId: 1, sourceMeetingId: 3, meetingTitle: "Standup",
-            quote: "Mike?", restatement: "Reply", asker: nil, atCs: 0, createdAtUnixMs: 0, draftJson: draftJson,
+            quote: "Mike?", restatement: "Reply", asker: nil, atCs: 0, createdAtUnixMs: createdAtUnixMs, draftJson: draftJson,
             emailStatus: nil, notifiedAtUnixMs: nil
         )
     }
@@ -60,5 +60,22 @@ final class LiveAlertsSectionTests: XCTestCase {
         XCTAssertFalse(LiveAlertsSection.shouldPoll(recording: true, alertsOn: false))
         XCTAssertFalse(LiveAlertsSection.shouldPoll(recording: false, alertsOn: true))
         XCTAssertFalse(LiveAlertsSection.shouldPoll(recording: false, alertsOn: false))
+    }
+
+    func testKeepsPollingAfterTheRecordingForADraftOrHalfAnHour() {
+        let now: Int64 = 100 * 60_000
+        let drafted = LiveAlertsSection.row(alert(origin: nil, draftJson: #"{"text":"Yes","citations":[]}"#), resolve: { _ in [] })
+        let drafting = LiveAlertsSection.row(alert(origin: nil, draftJson: nil, createdAtUnixMs: now - 5 * 60_000), resolve: { _ in [] })
+        let stale = LiveAlertsSection.row(alert(origin: nil, draftJson: nil), resolve: { _ in [] })
+        func poll(rows: [LiveAlertsSection.Row], endedMinutesAgo: Int64?) -> Bool {
+            LiveAlertsSection.shouldPoll(recording: false, alertsOn: true, rows: rows,
+                                         endedUnixMs: endedMinutesAgo.map { now - $0 * 60_000 }, nowUnixMs: now)
+        }
+        XCTAssertTrue(poll(rows: [], endedMinutesAgo: 29))
+        XCTAssertFalse(poll(rows: [], endedMinutesAgo: 31))
+        XCTAssertFalse(poll(rows: [drafted], endedMinutesAgo: 31))
+        XCTAssertTrue(poll(rows: [drafting], endedMinutesAgo: 31), "a draft still on its way")
+        XCTAssertFalse(poll(rows: [stale], endedMinutesAgo: 31), "a draft that never came stops being waited for")
+        XCTAssertFalse(LiveAlertsSection.shouldPoll(recording: false, alertsOn: false, rows: [drafting], endedUnixMs: now, nowUnixMs: now))
     }
 }

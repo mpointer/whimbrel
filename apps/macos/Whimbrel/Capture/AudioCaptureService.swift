@@ -30,6 +30,9 @@ final class AudioCaptureService: NSObject, ObservableObject {
     /// real silence. `MeetingEndDetector` derives its silence-window heuristic from
     /// this instead of that device-running check.
     private(set) var lastNonSilentAt = Date()
+    /// Loudest peak per track since the last `take()`, for the silence warning (`SilenceWatch`).
+    let micPeak = PeakMeter()
+    let systemPeak = PeakMeter()
     /// The 6 h cap or low disk ended this recording. Main actor, at most once per `start()`;
     /// the owner ends the meeting, which calls `stop()`.
     var onForcedStop: ((RecordingStop) -> Void)?
@@ -389,6 +392,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
             writer.write(out)
             self.micFramesWritten = writer.framesWritten
             let (isAudible, peak) = Self.audibilityCheck(buffer)
+            self.micPeak.record(peak)
             if isAudible {
                 self.lastNonSilentAt = Date()
             }
@@ -638,6 +642,7 @@ extension AudioCaptureService: SCStreamOutput {
             self.lastSystemBufferAt = Date()
             // Pre-conversion Float32 buffer: the silence check must never see the file's Int16.
             let (isAudible, peak) = Self.audibilityCheck(pcmBuffer)
+            self.systemPeak.record(peak)
             if isAudible {
                 self.lastNonSilentAt = Date()
             }

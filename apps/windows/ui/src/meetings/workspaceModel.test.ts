@@ -10,9 +10,21 @@ import {
   snapshotKey,
   thumbnailsToFetch,
   transcriptLanguageOptions,
+  transcriptionNoticeText,
   unsavedEditsWouldBeLost,
   withoutSnapshot,
 } from "./workspaceModel";
+
+describe("transcriptionNoticeText", () => {
+  it("says the transcription failed, with why", () => {
+    expect(transcriptionNoticeText({ kind: "failed", message: "The model didn't load." })).toBe(
+      "Transcription failed: The model didn't load.",
+    );
+  });
+  it("says no speech was detected", () => {
+    expect(transcriptionNoticeText({ kind: "no_speech" })).toBe("No speech detected in this recording.");
+  });
+});
 
 const item = (id: number, over: Partial<ActionItemView> = {}): ActionItemView => ({
   id,

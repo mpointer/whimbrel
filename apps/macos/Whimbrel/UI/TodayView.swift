@@ -90,9 +90,12 @@ struct TodayView: View {
                 liveSection: appState.liveTranscriptSettings.enabled
                     ? AnyView(LiveMeetingSection(live: appState.liveTranscript, meeting: meeting))
                     : nil,
-                noticeSection: AnyView(RecordingNoticeCard(
-                    settings: appState.recordingNoticeSettings, meetingId: meetingId, chat: appState.recordingNoticeChat
-                ))
+                noticeSection: AnyView(VStack(spacing: Spacing.sm) {
+                    SilenceWarningBanner()
+                    RecordingNoticeCard(
+                        settings: appState.recordingNoticeSettings, meetingId: meetingId, chat: appState.recordingNoticeChat
+                    )
+                })
             )
             .id(meetingId)
         )

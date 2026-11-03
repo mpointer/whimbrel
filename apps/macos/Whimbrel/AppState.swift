@@ -152,15 +152,18 @@ final class AppState: ObservableObject {
 
     /// Opens a deep link's meeting. A link another device made (the alert email) resolves
     /// through `sync_meeting_map`; one that doesn't resolve opens the meeting window's
-    /// "no longer available" page.
-    func open(_ link: DeepLink.Target) {
+    /// "no longer available" page, or, with `activateIfUnresolved` (a notification tap), just
+    /// brings the app forward.
+    func open(_ link: DeepLink.Target, activateIfUnresolved: Bool = false) {
         guard let origin = link.origin, origin != deviceId else { return openMeeting(id: link.meetingId, at: link.atCs) }
         let store = coreStore
         let deviceId = deviceId
         CoreMemoryStore.accessQueue.async {
             let local = DeepLink.localMeetingId(link, deviceId: deviceId) { store?.resolveSyncMeeting(peerDeviceId: $0, sourceMeetingId: $1) }
             // ponytail: -1 is never a meeting id, so the window shows "no longer available".
-            DispatchQueue.main.async { [weak self] in self?.openMeeting(id: local ?? -1, at: link.atCs) }
+            DispatchQueue.main.async { [weak self] in
+                if local == nil, activateIfUnresolved { NSApp.activate(ignoringOtherApps: true) } else { self?.openMeeting(id: local ?? -1, at: link.atCs) }
+            }
         }
     }
 
@@ -263,6 +266,10 @@ final class AppState: ObservableObject {
     /// The active meeting's check-in, polled every 5 s by `checkInTimer`; nil when no meeting.
     private var activeCheckIn: RecordingCheckIn?
     private var checkInTimer: Timer?
+    /// "Whimbrel isn't hearing anything": silence on every track while recording, fed by the
+    /// same 5 s poll. `silenceWarning` is the inline banner's text; nil while sound is arriving.
+    private var silenceWatch: SilenceWatch?
+    @Published private(set) var silenceWarning: String?
     /// "Meeting snapshots": slide images from the meeting window (on by default).
     let snapshotSettings = SnapshotSettings()
     /// Storage retention: the media folder (audio and snapshots) and the media ages.
@@ -560,7 +567,7 @@ final class AppState: ObservableObject {
         Task { await syncState.silentResumeIfPossible() }
         updateChecker.start()
         settingsSyncCoordinator.observeSyncState()
-        let clickHandler = NotificationClickHandler { [weak self] link in self?.open(link) }
+        let clickHandler = NotificationClickHandler { [weak self] link in self?.open(link, activateIfUnresolved: true) }
         notificationClickHandler = clickHandler
         UNUserNotificationCenter.current().delegate = clickHandler
         contentSyncCoordinator.afterPull = { [weak self] in
@@ -1129,6 +1136,8 @@ final class AppState: ObservableObject {
     private func startCheckIn(startedAt: Date) {
         stopCheckIn()
         activeCheckIn = recordingCheckInSettings.makeCheckIn(startedAt: startedAt)
+        _ = audio.micPeak.take(); _ = audio.systemPeak.take()   // drop stale peaks
+        silenceWatch = SilenceWatch()
         let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pollCheckIn() }
         }
@@ -1140,10 +1149,36 @@ final class AppState: ObservableObject {
         checkInTimer?.invalidate()
         checkInTimer = nil
         activeCheckIn = nil
+        silenceWatch = nil
+        silenceWarning = nil
         recordingCheckInPanel.hide()
     }
 
+    private func pollSilence() {
+        guard var watch = silenceWatch else { return }
+        let mic = SilenceWatch.decibels(fromPeak: audio.micPeak.take())
+        let system = SilenceWatch.decibels(fromPeak: audio.systemPeak.take())
+        // No system track (Room audio, or system capture degraded): the mic alone decides.
+        let event = watch.feed(at: Date(), systemDB: audio.systemAudioActive ? system : nil, micDB: mic)
+        silenceWatch = watch
+        switch event {
+        case .warn:
+            let title = activeMeetingTitle ?? "Meeting"
+            let body = String(localized: "\(title) has been silent for 3 minutes. Check that the meeting has started and your audio devices are right.")
+            silenceWarning = body
+            guard let id = activeMeetingId else { return }
+            LiveAlertDelivery.postToNotificationCenter(.init(
+                id: "silence-warning-\(id)", title: String(localized: "Whimbrel isn't hearing anything"), body: body,
+                deepLink: DeepLink.meetingURL(id: id, atCs: 0)))
+        case .clear:
+            silenceWarning = nil
+        case nil:
+            break
+        }
+    }
+
     private func pollCheckIn() {
+        pollSilence()
         guard var checkIn = activeCheckIn else { return }
         let action = checkIn.poll(now: Date())
         activeCheckIn = checkIn

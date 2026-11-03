@@ -222,9 +222,29 @@ final class LiveAlertDelivery: AlertDelivering {
             case .snapshot: entry = Evidence(text: String(localized: "A meeting slide"), link: nil)
             case .routineRun: entry = Evidence(text: String(localized: "A routine result"), link: nil)
             }
-            if !out.contains(entry) { out.append(entry) }
+            out.append(entry)
+        }
+        return deduped(out)
+    }
+
+    /// Each "title · date" once, in first-seen order, with the first link any of its copies has.
+    nonisolated static func deduped(_ items: [Evidence]) -> [Evidence] {
+        var out: [Evidence] = []
+        for item in items {
+            if let i = out.firstIndex(where: { $0.text == item.text }) {
+                if out[i].link == nil { out[i] = item }
+            } else {
+                out.append(item)
+            }
         }
         return out
+    }
+
+    /// An alert's notification link: its meeting here, or, for a peer's alert whose meeting
+    /// hasn't synced to this device yet, the peer's own link, resolved when it's tapped.
+    nonisolated static func link(for alert: CoreLiveAlert, atCs: Int64) -> URL? {
+        if let id = alert.meetingId { return DeepLink.meetingURL(id: id, atCs: atCs) }
+        return alert.originDeviceId.map { DeepLink.meetingURL(id: alert.sourceMeetingId, atCs: atCs, origin: $0) }
     }
 
     /// Another device's alert names its meeting, which isn't the one on screen here.
@@ -233,7 +253,7 @@ final class LiveAlertDelivery: AlertDelivering {
         return Notice(
             id: "live-alert-\(alert.originDeviceId ?? deviceId)-\(alert.sourceId)", title: title,
             subtitle: alert.originDeviceId == nil ? nil : alert.meetingTitle, body: body,
-            deepLink: alert.meetingId.map { DeepLink.meetingURL(id: $0, atCs: alert.atCs) }
+            deepLink: Self.link(for: alert, atCs: alert.atCs)
         )
     }
 
@@ -315,7 +335,7 @@ final class LiveAlertDelivery: AlertDelivering {
         for (meetingKey, alert) in summaries.sorted(by: { $0.key < $1.key }) {
             post(Self.summary(
                 origin: alert.originDeviceId ?? deviceId, sourceMeetingId: alert.sourceMeetingId, title: alert.meetingTitle,
-                extra: peerExtra[meetingKey, default: 0], deepLink: alert.meetingId.map { DeepLink.meetingURL(id: $0, atCs: 0) }
+                extra: peerExtra[meetingKey, default: 0], deepLink: Self.link(for: alert, atCs: 0)
             ))
         }
     }

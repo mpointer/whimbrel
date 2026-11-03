@@ -134,6 +134,45 @@ pub fn no_speech_marker(audio_path: &Path) -> Option<PathBuf> {
     Some(audio_path.parent()?.join(format!("no-speech-{stamp}.marker")))
 }
 
+/// The marker the pipeline leaves next to a recording whose transcription failed, holding
+/// the message to show. Like [`no_speech_marker`] it is local only, and the launch repair
+/// leaves a marked meeting for the user's Transcribe again instead of retrying it every
+/// launch (the Mac's #530). A successful run, or Transcribe again, removes it.
+pub fn failure_marker(audio_path: &Path) -> Option<PathBuf> {
+    let stamp = stamp_of(audio_path)?;
+    Some(audio_path.parent()?.join(format!("transcription-failed-{stamp}.marker")))
+}
+
+/// What a finished meeting with no transcript says on its page, from the markers next to
+/// its audio. `None` when neither marker is there (never run, or interrupted).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TranscriptionNotice {
+    Failed { message: String },
+    NoSpeech,
+}
+
+/// Reads the markers next to `audio_path`. A failure wins over silence: it is the later
+/// run's word (a silent recording that then fails to load has both).
+pub fn transcription_notice(audio_path: &Path) -> Option<TranscriptionNotice> {
+    if let Some(marker) = failure_marker(audio_path).filter(|m| m.is_file()) {
+        let message = std::fs::read_to_string(&marker).unwrap_or_default().trim().to_string();
+        return Some(TranscriptionNotice::Failed { message });
+    }
+    no_speech_marker(audio_path).filter(|m| m.is_file()).map(|_| TranscriptionNotice::NoSpeech)
+}
+
+/// Removes both markers, before a new run of the same recording.
+fn clear_markers(audio_path: &Path) {
+    for marker in [failure_marker(audio_path), no_speech_marker(audio_path)].into_iter().flatten() {
+        match std::fs::remove_file(&marker) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => tracing::warn!(marker = %marker.display(), error = %e, "could not remove a transcription marker"),
+        }
+    }
+}
+
 /// The Mac's `[HH:mm:ss] Speaker: text` transcript, with each line's local wall-clock
 /// time. `started` is the recording's start; a line's offset is centiseconds from it.
 pub fn transcript_text(lines: &[Line], started: chrono::DateTime<chrono::Local>) -> String {
@@ -167,17 +206,27 @@ pub fn expected_speakers(meeting: &Meeting) -> Option<i32> {
 
 /// Completed meetings of this device that have audio but no transcript: a pipeline that
 /// never finished (a crash, or a quit while it ran). Recordings the pipeline already found
-/// silent (they carry a [`no_speech_marker`]) are left alone. Reads the file system only to
-/// check the audio and the marker.
+/// silent ([`no_speech_marker`]) or failed on ([`failure_marker`]) are left for Transcribe
+/// again. Reads the file system only to check the audio and the markers. Every candidate
+/// it skips is logged with the reason (the Mac's #530), so a missing transcript leaves a trace.
 pub fn needs_pipeline(meetings: &[Meeting], own_device_id: &str) -> Vec<i64> {
     meetings
         .iter()
+        .filter(|m| m.device_id == own_device_id && m.status == MeetingStatus::Completed && m.transcript_path.is_none())
         .filter(|m| {
-            m.device_id == own_device_id
-                && m.status == MeetingStatus::Completed
-                && m.transcript_path.is_none()
-                && m.audio_path.as_deref().is_some_and(|p| Path::new(p).is_file())
-                && !m.audio_path.as_deref().and_then(|p| no_speech_marker(Path::new(p))).is_some_and(|marker| marker.is_file())
+            let skip = match m.audio_path.as_deref().map(Path::new) {
+                None => Some("it has no audio"),
+                Some(audio) if !audio.is_file() => Some("its audio is no longer on this PC"),
+                Some(audio) => match transcription_notice(audio) {
+                    Some(TranscriptionNotice::Failed { .. }) => Some("its last transcription failed (Transcribe again can)"),
+                    Some(TranscriptionNotice::NoSpeech) => Some("it was found silent (Transcribe again can)"),
+                    None => None,
+                },
+            };
+            if let Some(reason) = skip {
+                tracing::info!(meeting_id = m.id, reason, "launch repair: not transcribing a meeting without a transcript");
+            }
+            skip.is_none()
         })
         .map(|m| m.id)
         .collect()
@@ -267,7 +316,10 @@ impl Pipeline {
             .unwrap_or_default();
         for (meeting_id, audio_path) in candidates {
             let Some(audio_path) = audio_path else { continue };
-            let Some(stamp) = stamp_of(Path::new(&audio_path)) else { continue };
+            let Some(stamp) = stamp_of(Path::new(&audio_path)) else {
+                tracing::info!(meeting_id, audio_path, "launch repair: the recording's file name has no timestamp; not transcribing");
+                continue;
+            };
             let files = RecordingFiles::unfinished(&self.paths.recordings, &stamp, None);
             tracing::info!(meeting_id, stamp, "re-running the pipeline for a meeting left without a transcript");
             // Nothing was transcribed during that meeting -- whatever the worker had died
@@ -299,6 +351,9 @@ impl Pipeline {
             .filter(|files| files.audio_path().is_some())
             .ok_or_else(|| CommandError::invalid_input(crate::l10n::tr("This meeting's audio is no longer on this PC.", &[])))?;
         tracing::info!(meeting_id, "transcribing the meeting again");
+        if let Some(audio) = files.audio_path() {
+            clear_markers(audio);
+        }
         self.run_in_background(meeting_id, files, Default::default());
         Ok(())
     }
@@ -414,11 +469,38 @@ impl Pipeline {
         match self.transcribe_and_summarize(meeting_id, &files, transcribed) {
             Ok(seconds) => {
                 tracing::info!(meeting_id, audio_s = seconds, total_ms = started.elapsed().as_millis() as u64, "meeting pipeline finished");
+                if let Some(audio) = files.audio_path() {
+                    clear_markers(audio);
+                }
                 self.finished(meeting_id, None);
             }
             Err(e) => {
                 tracing::error!(meeting_id, error = %e, "meeting pipeline failed");
+                self.mark_failed(meeting_id, files.audio_path(), &e);
                 self.finished(meeting_id, Some(e));
+            }
+        }
+    }
+
+    /// Leaves a [`failure_marker`] for a run that ended without a transcript, so the meeting
+    /// says so and offers Transcribe again. Not for a silent recording (its own marker says
+    /// that), and not when the failure came after the transcript was saved (the speaker
+    /// labels, say): that meeting has its transcript.
+    fn mark_failed(&self, meeting_id: i64, audio: Option<&Path>, message: &str) {
+        let Some(audio) = audio else { return };
+        if no_speech_marker(audio).is_some_and(|m| m.is_file()) {
+            return;
+        }
+        let has_transcript = matches!(
+            self.store.call_blocking(move |s| s.get_meeting(meeting_id).map(|m| m.and_then(|m| m.transcript_path))),
+            Ok(Ok(Some(_)))
+        );
+        if has_transcript {
+            return;
+        }
+        if let Some(marker) = failure_marker(audio) {
+            if let Err(e) = std::fs::write(&marker, message) {
+                tracing::warn!(meeting_id, error = %e, "could not mark the recording's transcription as failed");
             }
         }
     }
@@ -869,6 +951,52 @@ mod tests {
             with(6, "this-pc", MeetingStatus::Completed, None, None),
         ];
         assert_eq!(needs_pipeline(&meetings, "this-pc"), vec![1], "a recording marked silent is not retried");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_launch_repair_leaves_a_failed_meeting_for_transcribe_again_but_repairs_an_interrupted_one() {
+        let dir = batch_dir("repair-failed");
+        let interrupted = dir.join("system-audio-I.wav");
+        let failed = dir.join("system-audio-F.wav");
+        std::fs::write(&interrupted, b"x").unwrap();
+        std::fs::write(&failed, b"x").unwrap();
+        std::fs::write(dir.join("transcription-failed-F.marker"), "The transcription model didn't load").unwrap();
+        let with = |id: i64, audio: &Path| Meeting {
+            id,
+            device_id: "this-pc".into(),
+            status: MeetingStatus::Completed,
+            audio_path: Some(audio.to_string_lossy().into_owned()),
+            transcript_path: None,
+            ..meeting(&[], None)
+        };
+        let meetings = vec![with(1, &interrupted), with(2, &failed)];
+        assert_eq!(needs_pipeline(&meetings, "this-pc"), vec![1], "only the interrupted run is retried at launch");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_failure_marker_sits_next_to_the_audio_and_is_named_by_its_stamp() {
+        assert_eq!(
+            failure_marker(Path::new(r"C:\rec\mic-audio-2026-09-17T10-42-25.531Z.wav")),
+            Some(PathBuf::from(r"C:\rec\transcription-failed-2026-09-17T10-42-25.531Z.marker"))
+        );
+        assert_eq!(failure_marker(Path::new(r"C:\rec\other.wav")), None);
+    }
+
+    #[test]
+    fn the_notice_reads_the_markers_and_a_failure_wins_over_silence() {
+        let dir = batch_dir("notice");
+        let audio = dir.join("system-audio-N.wav");
+        std::fs::write(&audio, b"x").unwrap();
+        assert_eq!(transcription_notice(&audio), None, "no marker: never run, or interrupted");
+        std::fs::write(no_speech_marker(&audio).unwrap(), b"").unwrap();
+        assert_eq!(transcription_notice(&audio), Some(TranscriptionNotice::NoSpeech));
+        std::fs::write(failure_marker(&audio).unwrap(), "  It broke.\n").unwrap();
+        assert_eq!(transcription_notice(&audio), Some(TranscriptionNotice::Failed { message: "It broke.".into() }));
+        clear_markers(&audio);
+        assert_eq!(transcription_notice(&audio), None, "a new run starts with neither");
+        clear_markers(&audio); // and clearing nothing is fine
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -13,6 +13,7 @@ use serde::Serialize;
 use tauri::State;
 
 use super::library::{meeting_row, MeetingRow};
+use crate::meetings::pipeline::{transcription_notice, TranscriptionNotice};
 use crate::error::CommandError;
 use crate::state::AppState;
 use crate::l10n::tr;
@@ -68,6 +69,9 @@ pub struct WorkspaceView {
     /// "Transcript language" is offered: multilingual mode is on, and this PC still has the
     /// meeting's audio to transcribe again (the Mac's `MeetingOptionsMenu`).
     pub can_choose_language: bool,
+    /// Why this finished meeting has no transcript, when its last run said so: it failed, or
+    /// it heard nothing. The page shows it with Transcribe again (the Mac's #530).
+    pub transcription: Option<TranscriptionNotice>,
 }
 
 /// A meeting's transcript for display: turns from the file when it's on this device,
@@ -171,7 +175,18 @@ pub async fn meeting_workspace(state: State<'_, AppState>, id: i64) -> Result<Op
     }
     view.can_choose_language = can_choose_language(multilingual, &view, has_audio(&state.paths.recordings, audio.as_deref()));
     view.spoken_language = spoken_language;
+    let shows_notice = view.phase == WorkspacePhase::After && !view.read_only && !view.has_transcript && view.processing_stage.is_none();
+    view.transcription = notice_for(shows_notice, audio.as_deref().map(Path::new));
     Ok(Some(view))
+}
+
+/// The notice applies (`applies`) to this device's finished meeting that has no transcript
+/// and isn't being worked on; its markers say which one. Reads only the markers.
+fn notice_for(applies: bool, audio: Option<&Path>) -> Option<TranscriptionNotice> {
+    if !applies {
+        return None;
+    }
+    transcription_notice(audio?)
 }
 
 /// Whether this PC still has the recording `audio_path` names, in a form the pipeline reads.
@@ -237,6 +252,7 @@ fn view_of(
         read_only,
         spoken_language: None,
         can_choose_language: false,
+        transcription: None,
     }
 }
 
@@ -443,6 +459,17 @@ pub async fn meeting_set_spoken_language(state: State<'_, AppState>, id: i64, la
         .map_err(|e| CommandError::store(format!("transcribing again failed: {e}")))?
 }
 
+/// Transcribe again from the meeting's notice (the Mac's #530): the same run as a language
+/// change, in the meeting's stored language. `transcribe_again` refuses while another
+/// meeting is being worked on, and clears the old markers.
+#[tauri::command]
+pub async fn meeting_transcribe_again(state: State<'_, AppState>, id: i64) -> Result<(), CommandError> {
+    let pipeline = state.pipeline.as_ref().ok_or_else(|| CommandError::store(tr("The pipeline isn't running", &[])))?.clone();
+    tauri::async_runtime::spawn_blocking(move || pipeline.transcribe_again(id))
+        .await
+        .map_err(|e| CommandError::store(format!("transcribing again failed: {e}")))?
+}
+
 /// Whether a regeneration would overwrite the user's edits, so the UI can ask first.
 /// The Mac's `regenerationNeedsConflictPrompt` plus `actionItemsHaveUserInteraction`.
 #[tauri::command]
@@ -541,6 +568,20 @@ mod tests {
             })
             .collect();
         (store, ids)
+    }
+
+    #[test]
+    fn the_transcription_notice_shows_only_where_it_applies_and_only_from_a_marker() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-notice-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let audio = dir.join("system-audio-W.wav");
+        std::fs::write(&audio, b"x").unwrap();
+        assert_eq!(notice_for(true, Some(&audio)), None, "no marker, no notice");
+        std::fs::write(dir.join("transcription-failed-W.marker"), "Model missing").unwrap();
+        assert_eq!(notice_for(true, Some(&audio)), Some(TranscriptionNotice::Failed { message: "Model missing".into() }));
+        assert_eq!(notice_for(false, Some(&audio)), None, "another device's, transcribed, or being worked on");
+        assert_eq!(notice_for(true, None), None, "no audio");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
