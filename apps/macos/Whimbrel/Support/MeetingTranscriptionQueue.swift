@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Transcribes meeting parts one at a time, in the order they were queued, so a continued
 /// meeting's part 2 waits for part 1. Each landed part replaces its own segments; once the
@@ -24,6 +25,9 @@ final class MeetingTranscriptionQueue {
     private let summarize: (Int64, String, String) -> Void
     /// Called on main: "Transcribing…" when a job starts, nil when it ends without a summary.
     private let onStage: (Int64, String?) -> Void
+    /// Called on main when a part's transcription threw; the part stays untranscribed.
+    private let onFailure: (Int64) -> Void
+    private static let log = Logger(subsystem: "com.mpointer.kestrel", category: "transcription-queue")
     /// Off: every part is forced to English with the English model, as before.
     private let multilingual: () -> Bool
     /// Whether the model this meeting needs is on disk.
@@ -45,6 +49,7 @@ final class MeetingTranscriptionQueue {
          transcribe: @escaping Transcriber = TranscriptionService.transcribe,
          summarize: @escaping (Int64, String, String) -> Void,
          onStage: @escaping (Int64, String?) -> Void,
+         onFailure: @escaping (Int64) -> Void = { _ in },
          multilingual: @escaping () -> Bool = {
              usesMultilingual(enabled: AppLanguage.multilingual(),
                               modelPresent: FileManager.default.fileExists(atPath: TranscriptionService.multilingualModelPath.path))
@@ -55,6 +60,7 @@ final class MeetingTranscriptionQueue {
         self.transcribe = transcribe
         self.summarize = summarize
         self.onStage = onStage
+        self.onFailure = onFailure
         self.multilingual = multilingual
         self.modelReady = modelReady
         self.modelsDownloading = modelsDownloading
@@ -112,8 +118,16 @@ final class MeetingTranscriptionQueue {
     }
 
     /// A completed meeting with a part whose audio is on disk but has no transcript.
-    static func canTranscribeAgain(status: CoreMeetingStatus, parts: [CoreMeetingPart]) -> Bool {
-        status == .completed && partsWithAudio(parts).contains { !$0.transcribed }
+    /// `noSpeech` (see `noSpeech(parts:transcript:)`) keeps it on offer after a run that heard nothing.
+    static func canTranscribeAgain(status: CoreMeetingStatus, parts: [CoreMeetingPart], noSpeech: Bool = false) -> Bool {
+        status == .completed && (noSpeech ? !partsWithAudio(parts).isEmpty : partsWithAudio(parts).contains { !$0.transcribed })
+    }
+
+    /// Every part with audio was transcribed, and together they have no words.
+    static func noSpeech(parts: [CoreMeetingPart], transcript: String?) -> Bool {
+        let withAudio = partsWithAudio(parts)
+        return !withAudio.isEmpty && withAudio.allSatisfy(\.transcribed)
+            && (transcript ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     static func partsWithAudio(_ parts: [CoreMeetingPart]) -> [CoreMeetingPart] {
@@ -138,7 +152,15 @@ final class MeetingTranscriptionQueue {
         let expectedSpeakerCount = attendeeCount > 0 ? attendeeCount : stored?.estimatedSpeakerCount.map { Int($0) }
         let multilingual = multilingual()
         let language = multilingual ? CoreMemoryStore.accessQueue.sync { store.meetingSpokenLanguage(meetingId: id) } : "en"
-        let result = job.audioPath.flatMap { try? transcribe($0, expectedSpeakerCount, language) }
+        var result: (url: URL, lines: [TranscriptionService.Line], language: String?)?
+        if let audioPath = job.audioPath {
+            do {
+                result = try transcribe(audioPath, expectedSpeakerCount, language)
+            } catch {
+                Self.log.error("meeting \(id) part \(job.partIndex): transcription failed: \(String(describing: error), privacy: .public)")
+                DispatchQueue.main.async { [onFailure] in onFailure(id) }
+            }
+        }
 
         let transcript: String? = CoreMemoryStore.accessQueue.sync {
             // A failure leaves the part's existing segments and `transcribed` untouched.
@@ -196,6 +218,10 @@ final class MeetingTranscriptionQueue {
 /// accessQueue (parts + files on disk) and published, so a list row never blocks main.
 @MainActor final class TranscribeAgainAvailability: ObservableObject {
     @Published private(set) var ids: Set<Int64> = []
+    /// Meetings whose last run heard nothing.
+    @Published private(set) var noSpeechIds: Set<Int64> = []
+    /// Meetings whose last run threw (this launch only; the log has the error).
+    @Published private(set) var failedIds: Set<Int64> = []
     private var checked: Set<Int64> = []
     private let store: CoreMemoryStore
 
@@ -208,16 +234,25 @@ final class MeetingTranscriptionQueue {
         return ids.contains(meeting.id)
     }
 
+    func markFailed(_ id: Int64) { failedIds.insert(id) }
+
     /// Rechecks one meeting, e.g. after one of its jobs finished.
     func refresh(_ id: Int64) {
         checked.insert(id)
         CoreMemoryStore.accessQueue.async { [store, weak self] in
-            let can = store.getMeeting(id: id).map {
-                MeetingTranscriptionQueue.canTranscribeAgain(status: $0.status, parts: store.meetingParts(meetingId: id) ?? [])
-            } ?? false
+            var pending = false, quiet = false
+            if let m = store.getMeeting(id: id) {
+                let parts = store.meetingParts(meetingId: id) ?? []
+                pending = MeetingTranscriptionQueue.canTranscribeAgain(status: m.status, parts: parts)
+                quiet = m.status == .completed
+                    && MeetingTranscriptionQueue.noSpeech(parts: parts, transcript: store.meetingTranscriptText(meetingId: id))
+            }
             DispatchQueue.main.async {
-                guard let self, self.ids.contains(id) != can else { return }
-                if can { self.ids.insert(id) } else { self.ids.remove(id) }
+                guard let self else { return }
+                let can = pending || quiet
+                if self.ids.contains(id) != can { if can { self.ids.insert(id) } else { self.ids.remove(id) } }
+                if self.noSpeechIds.contains(id) != quiet { if quiet { self.noSpeechIds.insert(id) } else { self.noSpeechIds.remove(id) } }
+                if !pending { self.failedIds.remove(id) }
             }
         }
     }

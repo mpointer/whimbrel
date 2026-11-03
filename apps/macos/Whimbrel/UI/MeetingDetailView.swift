@@ -658,6 +658,9 @@ struct MeetingDetailContentView: View {
         if appState.processingMeetingId == meeting.id {
             return String(localized: "Transcribing in the background — check back shortly.")
         }
+        if appState.transcriptionFailed(meeting) {
+            return String(localized: "Transcription failed. The recording is still here: choose Meeting options › Transcribe again.")
+        }
         return appState.canTranscribeAgain(meeting)
             ? String(localized: "No transcript. The recording is still here: choose Meeting options › Transcribe again.")
             : String(localized: "No transcript for this meeting.")
@@ -914,7 +917,11 @@ struct MeetingDetailContentView: View {
 
     @ViewBuilder
     private var transcriptSection: some View {
-        if let transcriptText {
+        if appState.noSpeechDetected(meeting) {
+            Text("No speech detected in this recording. The recording is still here: choose Meeting options › Transcribe again.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+        } else if let transcriptText {
             let chunks = MeetingDetailLogic.splitAtDividers(transcriptText)
             let parsed = chunks.map { CoreMemoryStore.parseTranscriptTurns(from: $0.body) }
             if parsed.allSatisfy(\.isEmpty) {

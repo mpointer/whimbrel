@@ -23,6 +23,8 @@ final class MeetingPartTranscriptionTests: XCTestCase {
     private var languages: [String?] = []
     /// Multilingual mode for the queue under test.
     private var multilingual = false
+    /// Meeting ids the queue reported a failed transcription for.
+    private var failures: [Int64] = []
 
     override func setUp() {
         super.setUp()
@@ -59,6 +61,7 @@ final class MeetingPartTranscriptionTests: XCTestCase {
                 lock.withLock { summaries.append((id, notes, transcript)) }
             },
             onStage: { _, _ in },
+            onFailure: { [unowned self] id in lock.withLock { failures.append(id) } },
             multilingual: { [unowned self] in lock.withLock { multilingual } }
         )
     }
@@ -218,6 +221,42 @@ final class MeetingPartTranscriptionTests: XCTestCase {
         XCTAssertEqual(got.count, 1)
         XCTAssertTrue(got.first?.transcript.contains("said in system-audio-A") == true, got.first?.transcript ?? "")
         XCTAssertEqual(store.meetingParts(meetingId: m.id)?.map(\.transcribed), [true, false])
+    }
+
+    func test_failed_transcription_is_reported_and_part_not_marked_done() {
+        let m = makeTwoPartMeeting()
+        failing = [m.a]
+        let queue = makeQueue()
+        queue.enqueue(.init(meetingId: m.id, partIndex: 1, audioPath: m.a, notes: ""))
+        queue.waitUntilIdle()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))  // onFailure hops to main
+        XCTAssertEqual(lock.withLock { failures }, [m.id])
+        XCTAssertEqual(store.meetingParts(meetingId: m.id)?.first?.transcribed, false)
+    }
+
+    func test_zero_segment_run_reports_no_speech_and_keeps_transcribe_again() {
+        let m = makeTwoPartMeeting()
+        silent = [m.a, m.b]
+        let queue = makeQueue()
+        queue.enqueue(.init(meetingId: m.id, partIndex: 1, audioPath: m.a, notes: ""))
+        queue.enqueue(.init(meetingId: m.id, partIndex: 2, audioPath: m.b, notes: ""))
+        queue.waitUntilIdle()
+        let parts = store.meetingParts(meetingId: m.id) ?? []
+        XCTAssertEqual(parts.map(\.transcribed), [true, true])
+        XCTAssertEqual(lock.withLock { failures }, [])
+        let text = store.meetingTranscriptText(meetingId: m.id)
+        XCTAssertTrue(MeetingTranscriptionQueue.noSpeech(parts: parts, transcript: text))
+        XCTAssertFalse(MeetingTranscriptionQueue.canTranscribeAgain(status: .completed, parts: parts))
+        XCTAssertTrue(MeetingTranscriptionQueue.canTranscribeAgain(status: .completed, parts: parts, noSpeech: true))
+    }
+
+    func test_speech_is_not_no_speech() {
+        let m = makeTwoPartMeeting()
+        let queue = makeQueue()
+        queue.enqueue(.init(meetingId: m.id, partIndex: 1, audioPath: m.a, notes: ""))
+        queue.waitUntilIdle()
+        XCTAssertFalse(MeetingTranscriptionQueue.noSpeech(parts: store.meetingParts(meetingId: m.id) ?? [],
+                                                          transcript: store.meetingTranscriptText(meetingId: m.id)))
     }
 
     func test_no_summary_when_no_part_has_segments() {

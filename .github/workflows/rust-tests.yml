@@ -3,7 +3,7 @@ name: Rust tests
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    # No tag trigger: a release tag points at the main commit this workflow already ran on.
     paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -12,7 +12,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  # Only a PR cancels what it supersedes; main and tags always finish.
+  # Only a PR cancels what it supersedes; main always finishes.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -42,7 +42,9 @@ jobs:
       # Plain git diff, not dorny/paths-filter: its predicate-quantifier: every checks
       # "does every PATTERN match some changed file" (AND across patterns) -- not "is
       # every CHANGED FILE covered by some pattern" (the whitelist/exhaustiveness check
-      # this actually needs. There's no paths-filter mode for the latter. Confirmed
+      # this actually needs. There's no paths-filter mode for the latter. The list is the
+      # release bump's files (12 version sources, both Cargo.locks, the npm lockfiles and
+      # CHANGELOG.md, as scripts/check-version.sh knows them). Confirmed
       # broken in practice: PR #72, a genuine version-bump-only diff of exactly these 5
       # files, evaluated version_only=false.
       - id: filter
@@ -50,7 +52,7 @@ jobs:
           base="${{ github.event.pull_request.base.sha || github.event.before }}"
           head="${{ github.event.pull_request.head.sha || github.sha }}"
           changed="$(git diff --name-only "$base" "$head")" || changed=""
-          allowed='^(VERSION|apps/macos/project\.yml|apps/macos/Whimbrel\.xcodeproj/project\.pbxproj|core/Cargo\.toml|core/Cargo\.lock)$'
+          allowed='^(VERSION|CHANGELOG\.md|apps/macos/project\.yml|apps/macos/Whimbrel\.xcodeproj/project\.pbxproj|apps/mobile/ios/project\.yml|apps/mobile/ios/Whimbrel\.xcodeproj/project\.pbxproj|apps/windows/package\.json|apps/windows/package-lock\.json|apps/windows/ui/package\.json|apps/windows/ui/package-lock\.json|apps/windows/src-tauri/Cargo\.toml|apps/windows/src-tauri/Cargo\.lock|apps/windows/src-tauri/tauri\.conf\.json|core/Cargo\.toml|core/Cargo\.lock)$'
           if [ -n "$changed" ] && ! grep -vqE "$allowed" <<<"$changed"; then
             version_only=true
           else
@@ -229,9 +231,11 @@ jobs:
   # cmake, cargo), LIBCLANG_PATH and core.fsmonitor=false (see
   # apps/windows/scripts/install-actions-runner.ps1). While the PC is off or asleep
   # this job waits.
+  # PRs and manual runs only: a squash merge to main lands the exact tree its PR already
+  # ran here, and this one PC takes 25-40 min per run.
   windows:
     needs: changes
-    if: needs.changes.outputs.run_core == 'true' && github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: needs.changes.outputs.run_core == 'true' && github.repository == 'mpointer/kestrel' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, Windows, X64, kestrel-windows]
     # About 12 min alone; with both runner instances on the PC busy, a run took 21 min.
     timeout-minutes: 40
@@ -297,7 +301,7 @@ jobs:
   # Build from src-tauri/ so its .cargo/config.toml (+crt-static) applies.
   windows-app:
     needs: changes
-    if: needs.changes.outputs.run_windows_app == 'true' && github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: needs.changes.outputs.run_windows_app == 'true' && github.repository == 'mpointer/kestrel' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, Windows, X64, kestrel-windows]
     # About 14 min alone; with both runner instances on the PC busy, a warm run took 26 min.
     timeout-minutes: 40
