@@ -1,4 +1,4 @@
-import type { ActionItemView, SnapshotsView, SnapshotView, WorkspaceView } from "../generated/types";
+import type { ActionItemView, SnapshotsView, SnapshotView, TranscriptionNotice, WorkspaceView } from "../generated/types";
 import { t } from "../l10n";
 
 /**
@@ -85,6 +85,13 @@ export function phaseTitle(view: WorkspaceView): string {
     default:
       return t("After the meeting");
   }
+}
+
+/** Why a finished meeting has no transcript (the Mac's #530). The page offers Transcribe again beside it. */
+export function transcriptionNoticeText(notice: TranscriptionNotice): string {
+  return notice.kind === "failed"
+    ? t("Transcription failed: {message}", { message: notice.message })
+    : t("No speech detected in this recording.");
 }
 
 /**

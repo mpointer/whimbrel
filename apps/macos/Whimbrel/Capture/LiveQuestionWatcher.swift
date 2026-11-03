@@ -38,14 +38,16 @@ final class LiveQuestionWatcher {
     private let now: () -> Date
     private let insert: (CoreNewLiveAlert) async -> Int64?
     private let saveDraft: (Int64, CoreChatAnswer) async -> Void
-    /// The recording is known to be room audio, so the mic counts at once (core's rule).
-    private let roomAudio: Bool
+    /// The title says this is room audio, so the mic counts at once (core's rule).
+    private let roomAudioTitle: Bool
 
     private var lines: [CoreLiveLine] = []
     private var seenIds = Set<Int64>()
     private var dispatched = Set<Int64>()
     private var stopped = false
     private var cancelled = false
+    /// Set on the worker once every line before the stop has been added.
+    private var linesComplete = false
     private var earlier: [(String, Int64)] = []
     private(set) var alertCount = 0
     /// The latest stored alert's `at_cs` when this watcher was built; candidates at or before it
@@ -80,7 +82,7 @@ final class LiveQuestionWatcher {
         self.now = now
         self.insert = insert
         self.saveDraft = saveDraft
-        roomAudio = meetingTitle.hasPrefix(Self.roomAudioPrefix)
+        roomAudioTitle = meetingTitle.hasPrefix(Self.roomAudioPrefix)
         // The first job on the serial worker, so every line and detection sees it.
         enqueue { [self] in
             let (stored, offset) = await seed()
@@ -126,6 +128,7 @@ final class LiveQuestionWatcher {
         guard !stopped else { return }
         stopped = true
         enqueue { [self] in
+            linesComplete = true
             await judgeReady()
             if extra > 0, !cancelled { deliver.alertsCapped(meetingId: meetingId, extra: extra) }
         }
@@ -151,6 +154,9 @@ final class LiveQuestionWatcher {
     /// Judges, one at a time, each candidate with 30 s of later lines (every one once stopped).
     private func judgeReady() async {
         guard let latest = lines.last?.startCs else { return }
+        // Room audio: the title says so, or the recording ended with no system audio at all.
+        // Core also treats a minute of mic-only lines as room audio, until the first system line.
+        let roomAudio = roomAudioTitle || (linesComplete && !lines.contains { $0.channel == "system" })
         for index in CoreLiveQuestion.candidates(lines: lines, names: names, roomAudio: roomAudio) where index < lines.count {
             let candidate = lines[index]
             guard !dispatched.contains(candidate.id), stopped || latest >= candidate.startCs + Self.followingCs else { continue }

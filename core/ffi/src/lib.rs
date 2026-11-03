@@ -753,7 +753,8 @@ pub extern "C" fn whimbrel_live_question_draft(
 }
 
 /// Live question: indices of lines worth sending to the model (pure rule). `room_audio`: the
-/// recording is known to be room audio (its title says so). JSON array of numbers; NULL on
+/// recording is known to be room audio (its title says so, or it stopped with no system line).
+/// Without it, a minute of mic-only lines counts, until the first system line. JSON array of numbers; NULL on
 /// bad input.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_live_question_candidates(

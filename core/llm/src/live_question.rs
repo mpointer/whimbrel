@@ -65,6 +65,8 @@ fn has_second_person(text: &str) -> bool {
 /// recording is room audio on the mic, when every line is. Room audio means no `system`
 /// line at all, and either `room_audio` (the recording is known to be one) or a minute of
 /// lines with none, so the user's own mic is never a trigger before system audio arrives.
+/// The first `system` line turns room audio off for good: candidates are recomputed from all
+/// lines, so mic lines still waiting to be judged drop out.
 pub fn candidate_indices(lines: &[LiveLine], names: &[String], room_audio: bool) -> Vec<usize> {
     let has_system = lines.iter().any(|l| l.channel == "system");
     let span = match (lines.first(), lines.last()) {

@@ -89,15 +89,35 @@ final class LiveQuestionWatcherTests: XCTestCase {
         XCTAssertEqual(LiveQuestionWatcher.partOffsetCs([part(2, 3_400_000), part(1, 1_000_000)]), 240_000)
     }
 
-    func testMicLinesWaitForSystemAudioOrAMinute() async {
+    func testMicLinesWaitAMinuteForSystemAudio() async {
         let watcher = makeWatcher()
         watcher.ingest([row(1, "mic", 0, "Mike here, can you hear me?"), row(2, "mic", 3_500, "Okay.")])
         await watcher.settle()
         XCTAssertEqual(detectCalls, [], "the user's own mic before system audio arrives")
         watcher.ingest([row(3, "mic", 7_000, "Still just me in this room.")])
+        await watcher.settle()
+        XCTAssertEqual(detectCalls, ["Mike here, can you hear me?"], "a minute with no system audio: room audio, live")
+    }
+
+    func testRoomAudioEndsAtTheFirstSystemLine() async {
+        let watcher = makeWatcher()
+        // A minute of mic only: room audio, so the first question alerts live.
+        watcher.ingest([row(1, "mic", 0, "Mike, can you send the deck?"), row(2, "mic", 6_000, "Mike, what about the budget?")])
+        await watcher.settle()
+        XCTAssertEqual(detectCalls, ["Mike, can you send the deck?"])
+        // System audio arrives: the second question was still waiting, and is dropped.
+        watcher.ingest([row(3, "system", 7_000, "Hello all."), row(4, "mic", 9_000, "Mike, can you hear me?"), row(5, "system", 20_000, "Moving on.")])
         watcher.flush()
         await watcher.settle()
-        XCTAssertEqual(detectCalls, ["Mike here, can you hear me?"], "a minute with no system audio: room audio")
+        XCTAssertEqual(detectCalls, ["Mike, can you send the deck?"], "only the others' channel triggers from here on")
+    }
+
+    func testMicOnlyRecordingThatStopsIsRoomAudio() async {
+        let watcher = makeWatcher()
+        watcher.ingest([row(1, "mic", 0, "Mike here, can you hear me?"), row(2, "mic", 3_500, "Okay.")])
+        watcher.flush()
+        await watcher.settle()
+        XCTAssertEqual(detectCalls, ["Mike here, can you hear me?"], "no system audio in the whole recording")
     }
 
     func testRoomAudioTitleCountsTheMicAtOnce() async {

@@ -72,7 +72,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%@ preguntó a los %@ en «%@»."
+            "value" : "%@ preguntó en el minuto %@ de «%@»."
           }
         },
         "fr" : {
@@ -90,7 +90,7 @@
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "%@ perguntou aos %@ em “%@”."
+            "value" : "%@ perguntou no minuto %@ de “%@”."
           }
         }
       }
@@ -125,6 +125,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%@ perguntou a você"
+          }
+        }
+      }
+    },
+    "%@ has been silent for 3 minutes. Check that the meeting has started and your audio devices are right." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ ist seit 3 Minuten still. Prüfe, ob das Meeting begonnen hat und ob deine Audiogeräte richtig eingestellt sind."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ lleva 3 minutos en silencio. Comprueba que la reunión haya empezado y que tus dispositivos de audio sean los correctos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ est silencieuse depuis 3 minutes. Vérifiez que la réunion a bien commencé et que vos périphériques audio sont corrects."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ est silencieuse depuis 3 minutes. Vérifiez que la réunion a bien commencé et que vos appareils audio sont les bons."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ está em silêncio há 3 minutos. Verifique se a reunião já começou e se seus dispositivos de áudio estão corretos."
           }
         }
       }
@@ -21492,7 +21526,7 @@
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Alguien preguntó a los %@ en «%@»."
+            "value" : "Alguien preguntó en el minuto %@ de «%@»."
           }
         },
         "fr" : {
@@ -21510,7 +21544,7 @@
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Alguém perguntou aos %@ em “%@”."
+            "value" : "Alguém perguntou no minuto %@ de “%@”."
           }
         }
       }
@@ -27131,6 +27165,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "O Whimbrel não iniciou a gravação: menos de 5 GB livres neste Mac."
+          }
+        }
+      }
+    },
+    "Whimbrel isn't hearing anything" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel hört nichts"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel no oye nada"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel n'entend rien"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel n'entend rien"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel não está ouvindo nada"
           }
         }
       }

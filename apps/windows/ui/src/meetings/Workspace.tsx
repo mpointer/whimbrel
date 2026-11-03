@@ -10,6 +10,7 @@ import {
   meetingSaveOverrides,
   meetingSeedActionItems,
   meetingSetSpokenLanguage,
+  meetingTranscribeAgain,
   meetingWorkspace,
 } from "../api";
 import { describeError, isCommandError } from "../errors";
@@ -23,7 +24,7 @@ import { meetingTitleLabel } from "./sentinels";
 import { RecordingNoticeCard } from "./RecordingNoticeCard";
 import { SlidesStrip } from "./SlidesStrip";
 import { TranscriptPanel } from "./TranscriptPanel";
-import { overrideOf, phaseTitle, transcriptLanguageOptions } from "./workspaceModel";
+import { overrideOf, phaseTitle, transcriptLanguageOptions, transcriptionNoticeText } from "./workspaceModel";
 
 /** The Mac's autosave delay for the workspace's editors. */
 const AUTOSAVE_MS = 1_500;
@@ -261,6 +262,21 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
               onChange={(e) => setNotes(e.target.value)}
             />
           </label>
+
+          {view.transcription && (
+            <div className="field" role="status">
+              <p className="muted small">{transcriptionNoticeText(view.transcription)}</p>
+              <div className="toolbar">
+                <button
+                  className="mode"
+                  disabled={busy || view.processingStage != null}
+                  onClick={() => act(() => meetingTranscribeAgain(meetingId))}
+                >
+                  {t("Transcribe again")}
+                </button>
+              </div>
+            </div>
+          )}
 
           <TranscriptPanel key={transcriptRound} meetingId={meetingId} hasTranscript={view.hasTranscript} />
 

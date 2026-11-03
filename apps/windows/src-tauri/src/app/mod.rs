@@ -149,6 +149,7 @@ pub fn run() {
             commands::workspace::meeting_reorder_action_items,
             commands::workspace::meeting_regenerate,
             commands::workspace::meeting_set_spoken_language,
+            commands::workspace::meeting_transcribe_again,
             commands::workspace::meeting_regeneration_conflict,
             commands::workspace::meeting_forget,
             commands::workspace::meeting_most_relevant,

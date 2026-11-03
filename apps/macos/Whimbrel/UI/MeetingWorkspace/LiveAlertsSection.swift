@@ -101,10 +101,15 @@ struct LiveAlertsSection: View {
         return String(localized: "Email not sent: \(reason)")
     }
 
-    /// The host reloads alerts every 10 s only while this meeting records with alerts on;
-    /// otherwise it loads them once.
-    static func shouldPoll(recording: Bool, alertsOn: Bool) -> Bool {
-        recording && alertsOn
+    /// The host reloads alerts every 10 s while this meeting records with alerts on, and for 30
+    /// minutes after it ends (or while an alert from the last 30 minutes still has no draft), so
+    /// a late draft or a peer's alert shows without reopening the page. Otherwise it loads once.
+    static func shouldPoll(recording: Bool, alertsOn: Bool, rows: [Row] = [], endedUnixMs: Int64? = nil, nowUnixMs: Int64 = 0) -> Bool {
+        guard alertsOn else { return false }
+        let window: Int64 = 30 * 60 * 1000
+        return recording
+            || (endedUnixMs.map { nowUnixMs - $0 < window } ?? false)
+            || rows.contains { $0.draft == nil && nowUnixMs - $0.alert.createdAtUnixMs < window }
     }
 
     /// One card's data. Evidence ids are the origin device's local ids, so an alert another

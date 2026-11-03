@@ -230,6 +230,8 @@ export const meetingRegenerate = (id: number, keepEdits: boolean) => invoke<void
 /** The per-meeting "Transcript language": stores it (`null` is Automatic) and transcribes the meeting again. */
 export const meetingSetSpokenLanguage = (id: number, language: string | null) =>
   invoke<void>("meeting_set_spoken_language", { id, language });
+/** Transcribe again from a meeting's "Transcription failed" or "No speech detected" notice (the Mac's #530). */
+export const meetingTranscribeAgain = (id: number) => invoke<void>("meeting_transcribe_again", { id });
 export const meetingRegenerationConflict = (id: number) => invoke<boolean>("meeting_regeneration_conflict", { id });
 export const meetingForget = (id: number) => invoke<void>("meeting_forget", { id });
 export const meetingMostRelevant = () => invoke<number | null>("meeting_most_relevant");

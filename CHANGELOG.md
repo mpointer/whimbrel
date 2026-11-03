@@ -2,6 +2,12 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.51] - 2026-11-03
+
+### Mac
+- Whimbrel now warns you while a meeting is recording if it has heard nothing for 3 minutes, with a notification (tap it to open the meeting) and a banner on the meeting page that goes away when sound returns. It never stops the recording by itself.
+- Question alerts are tidier. The alerts on a meeting page keep updating for 30 minutes after it ends, so a late draft or an alert from another device shows up without reopening it. Your own microphone no longer counts as room audio once the other side has been heard, tapping an alert from another device opens its meeting, a source cited twice shows once, and the Spanish and Portuguese "asked at" wording reads better.
+
 ## [0.9.50] - 2026-11-03
 
 ### Mac

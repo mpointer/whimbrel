@@ -12,6 +12,7 @@
 		017CC2D9345A2AB5DCA05784 /* SkinLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7747155351311724DBA18DB0 /* SkinLoaderTests.swift */; };
 		028E33D116D78027C78E9FA9 /* glass-sample-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 24631D5A1FEF85B662AA631D /* glass-sample-dark.png */; };
 		035F2824DF281652FFC4FA5E /* LiveTranscriptPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = A147768F01DB2BD809247153 /* LiveTranscriptPane.swift */; };
+		5170A01C0FFEE00000000005 /* SilenceWarningBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5170A01C0FFEE00000000006 /* SilenceWarningBanner.swift */; };
 		5A11B0C0FFEE0000000001D1 /* LiveAlertsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001D2 /* LiveAlertsSection.swift */; };
 		041A5EBAEB43B74042B4BE28 /* standard-sample-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = D6FA2D246BAB1499CD48248B /* standard-sample-dark.png */; };
 		0441A2E5E4370D51224A710E /* ArchetypeGlassTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1984798EC6499914A3678724 /* ArchetypeGlassTests.swift */; };
@@ -177,6 +178,7 @@
 		7BCCBAAA5D6796260B162480 /* MeetingEndDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D130B9ED4F518E5C77B1BD80 /* MeetingEndDetectorTests.swift */; };
 		7BFCFC8290D3B2030288195F /* AlmanacTodayLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42BF46FFAB7EDE329C2DF248 /* AlmanacTodayLayout.swift */; };
 		7C8FCDCE11998BB9FC8BF2B7 /* RecordingCheckIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 630BD8C89654565947668C2E /* RecordingCheckIn.swift */; };
+		5170A01C0FFEE00000000003 /* SilenceWatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5170A01C0FFEE00000000004 /* SilenceWatch.swift */; };
 		7D39FCD11A23AC255382AE30 /* RecordingWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D2CE14406C42EE4DCAE7BE1 /* RecordingWriter.swift */; };
 		7D62C59C022C3D9D89262F48 /* ZoomJoinURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DB49AD4F8501AD8916F61F3 /* ZoomJoinURLTests.swift */; };
 		1A2B3C4D5E6F708192A3B4C3 /* JoinTargetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F708192A3B4C4 /* JoinTargetTests.swift */; };
@@ -221,6 +223,7 @@
 		9568098A3CBF94BD929502DE /* AudioConversion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 221CF47EDD309D84673DCDDE /* AudioConversion.swift */; };
 		963A64098D5B6E181CBCBCBD /* AtAGlancePanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B786397EFDB6B0A155DC6AA /* AtAGlancePanelView.swift */; };
 		973E5C39F416F5BDBD1AFC36 /* RecordingCheckInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 545F7AF6991A2ABE951B89D7 /* RecordingCheckInTests.swift */; };
+		5170A01C0FFEE00000000001 /* SilenceWatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5170A01C0FFEE00000000002 /* SilenceWatchTests.swift */; };
 		9821A51D5E6F46E1AFEF7601 /* field-worstcase-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 19B61AAD94C0E5E339D16295 /* field-worstcase-dark.png */; };
 		9829363286573AECD8DAD82C /* terminal-sample-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 0622D61323693B9C63987D0B /* terminal-sample-dark.png */; };
 		991F6B181F7EF71CD99268F1 /* EpisodeDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1540AE71E8BCD18174215EE8 /* EpisodeDetailView.swift */; };
@@ -570,6 +573,7 @@
 		52DF6E84E9F188F4C3AFEC1B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		53625DCADDA879BD8D587CA0 /* BrowserMeetingCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserMeetingCheck.swift; sourceTree = "<group>"; };
 		545F7AF6991A2ABE951B89D7 /* RecordingCheckInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingCheckInTests.swift; sourceTree = "<group>"; };
+		5170A01C0FFEE00000000002 /* SilenceWatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SilenceWatchTests.swift; sourceTree = "<group>"; };
 		5512257A16D5E640B9B62B41 /* WhimbrelTests-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "WhimbrelTests-Bridging-Header.h"; sourceTree = "<group>"; };
 		551AAEADAFB414751B1EE157 /* RoutineHostSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutineHostSettings.swift; sourceTree = "<group>"; };
 		55BAA9450A61C9C6EA857667 /* RoutineHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoutineHostTests.swift; sourceTree = "<group>"; };
@@ -591,6 +595,7 @@
 		62E65C15F98CBE04D6F97BAF /* terminal-sample-light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "terminal-sample-light.png"; sourceTree = "<group>"; };
 		62EF3173FA9B49F564406171 /* whimbrel-mcp-server */ = {isa = PBXFileReference; path = "whimbrel-mcp-server"; sourceTree = "<group>"; };
 		630BD8C89654565947668C2E /* RecordingCheckIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingCheckIn.swift; sourceTree = "<group>"; };
+		5170A01C0FFEE00000000004 /* SilenceWatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SilenceWatch.swift; sourceTree = "<group>"; };
 		633F680C62641DCCD00B2C05 /* PromptLibrarySettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptLibrarySettings.swift; sourceTree = "<group>"; };
 		63A97303991874F91C6D8026 /* DiagnosticsSettingsPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsSettingsPane.swift; sourceTree = "<group>"; };
 		63DDE3692507A833A1C107B8 /* JSONLLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONLLogger.swift; sourceTree = "<group>"; };
@@ -677,6 +682,7 @@
 		9DCB7AE5EB848B8431C0DB55 /* PaletteRepair.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaletteRepair.swift; sourceTree = "<group>"; };
 		9F87B25EE3F98E1D65247939 /* GmailPollingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GmailPollingService.swift; sourceTree = "<group>"; };
 		A147768F01DB2BD809247153 /* LiveTranscriptPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptPane.swift; sourceTree = "<group>"; };
+		5170A01C0FFEE00000000006 /* SilenceWarningBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SilenceWarningBanner.swift; sourceTree = "<group>"; };
 		5A11B0C0FFEE0000000001D2 /* LiveAlertsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAlertsSection.swift; sourceTree = "<group>"; };
 		A2513AAB84B390BE205A1BDF /* TodaySampleContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodaySampleContent.swift; sourceTree = "<group>"; };
 		A4396F3B9FC6FD14E9E18910 /* RegenerationConflictSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegenerationConflictSheet.swift; sourceTree = "<group>"; };
@@ -1031,6 +1037,7 @@
 				76A6A5127797763C37EBDEA6 /* PromptLibrarySettingsTests.swift */,
 				813A97E7A99703EC6586F13B /* ReadLogicTests.swift */,
 				545F7AF6991A2ABE951B89D7 /* RecordingCheckInTests.swift */,
+				5170A01C0FFEE00000000002 /* SilenceWatchTests.swift */,
 				4190EA7F2A0DF1A9B270176F /* RecordingWriterTests.swift */,
 				AAC449F8981947D0CEF91109 /* RegenerationConflictTests.swift */,
 				DB1DBCA14B587A0FB0504382 /* ReplyPrioritySettingsTests.swift */,
@@ -1139,6 +1146,7 @@
 				FB7D56CBFF7356DE6ED185A6 /* OCRFallback.swift */,
 				B55E3CC8423FFB8D8C935E14 /* ParticipantCountEstimator.swift */,
 				630BD8C89654565947668C2E /* RecordingCheckIn.swift */,
+				5170A01C0FFEE00000000004 /* SilenceWatch.swift */,
 				1D2CE14406C42EE4DCAE7BE1 /* RecordingWriter.swift */,
 				BD8D15581A0EEE4898A7F938 /* ScreenTextCaptureService.swift */,
 				2570C11B2796637438F0A6D1 /* SnapshotFrameFilter.swift */,
@@ -1229,6 +1237,7 @@
 				27D1BC523350059E1D7B7076 /* ActiveMeetingView.swift */,
 				A10C0FFEE0000000000C0E43 /* RecordingNoticeCard.swift */,
 				A147768F01DB2BD809247153 /* LiveTranscriptPane.swift */,
+				5170A01C0FFEE00000000006 /* SilenceWarningBanner.swift */,
 				5A11B0C0FFEE0000000001D2 /* LiveAlertsSection.swift */,
 				2BE3E471BE8FD9DE260D8AF4 /* MeetingBriefView.swift */,
 				36E303E0A7F361D74FD82CBF /* MeetingWorkspaceState.swift */,
@@ -1686,6 +1695,7 @@
 				5DCE8C72F6BC89A0D02DC95C /* LiveAudioReader.swift in Sources */,
 				099C6DC063C8BE9AEDABC50A /* LiveTranscriptLogic.swift in Sources */,
 				035F2824DF281652FFC4FA5E /* LiveTranscriptPane.swift in Sources */,
+				5170A01C0FFEE00000000005 /* SilenceWarningBanner.swift in Sources */,
 				5A11B0C0FFEE0000000001D1 /* LiveAlertsSection.swift in Sources */,
 				9252C5D7077468B931FBC39F /* LiveTranscriptSettings.swift in Sources */,
 				5A11B0C0FFEE0000000001B3 /* LiveQuestionSettings.swift in Sources */,
@@ -1747,6 +1757,7 @@
 				A70D9295AE04F71115DE05B3 /* ProviderModelPicker.swift in Sources */,
 				A79D620C84DF40AE61D4D7E7 /* ReadLogic.swift in Sources */,
 				7C8FCDCE11998BB9FC8BF2B7 /* RecordingCheckIn.swift in Sources */,
+				5170A01C0FFEE00000000003 /* SilenceWatch.swift in Sources */,
 				99849CAF8C25D46146031224 /* RecordingCheckInPanelController.swift in Sources */,
 				1AF04AF0E944A619D9472688 /* RecordingCheckInSettings.swift in Sources */,
 				64923DD2BBC1509EF0D024F5 /* RecordingCheckInView.swift in Sources */,
@@ -1929,6 +1940,7 @@
 				76C12877230AD620A38AC944 /* PromptLibrarySettingsTests.swift in Sources */,
 				358BDD2DCE9DCB84DE73F883 /* ReadLogicTests.swift in Sources */,
 				973E5C39F416F5BDBD1AFC36 /* RecordingCheckInTests.swift in Sources */,
+				5170A01C0FFEE00000000001 /* SilenceWatchTests.swift in Sources */,
 				45502FE6F681646203E5F7F2 /* RecordingWriterTests.swift in Sources */,
 				CA1A5D7A7FC7BBEBEE8CDE1E /* RegenerationConflictTests.swift in Sources */,
 				8481C02D49E3E350348BE841 /* ReplyPrioritySettingsTests.swift in Sources */,
@@ -2019,7 +2031,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/target/release";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.50;
+				MARKETING_VERSION = 0.9.51;
 				OTHER_LDFLAGS = "-lwhimbrel_core -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel;
 				PRODUCT_NAME = Whimbrel;
@@ -2219,7 +2231,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/target/release";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.50;
+				MARKETING_VERSION = 0.9.51;
 				OTHER_LDFLAGS = "-lwhimbrel_core -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel;
 				PRODUCT_NAME = Whimbrel;
