@@ -34,6 +34,7 @@ pub mod envelope;
 pub mod hosted_models;
 pub mod inference;
 pub mod jobs;
+pub mod live_question;
 pub use memory::l10n;
 pub mod mcp;
 pub mod models;

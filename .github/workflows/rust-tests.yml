@@ -233,7 +233,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_core == 'true' && github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, Windows, X64, kestrel-windows]
-    timeout-minutes: 29
+    # About 12 min alone; with both runner instances on the PC busy, a run took 21 min.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       # Self-hosted runners use their preinstalled, isolated toolchain (CARGO_HOME and
@@ -298,7 +299,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_windows_app == 'true' && github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, Windows, X64, kestrel-windows]
-    timeout-minutes: 26
+    # About 14 min alone; with both runner instances on the PC busy, a warm run took 26 min.
+    timeout-minutes: 40
     steps:
       # The runner's own directory is the parent of _work (RUNNER_TEMP is _work\_temp). The skin
       # matrix's preview server gets a free port, so a second instance's job doesn't collide on 4180.

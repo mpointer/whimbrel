@@ -694,6 +694,100 @@ pub extern "C" fn whimbrel_llm_answer(
     }
 }
 
+/// Live question: decide whether `lines[index]` is a question for the user. Envelope data
+/// is the verdict, or null when the model says no or is not highly confident. Bare NULL
+/// on a null handle, bad JSON, or an out-of-range index. Other arguments as
+/// `whimbrel_llm_answer`.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_live_question_detect(
+    handle: *mut StoreHandle,
+    lines_json: *const c_char,
+    index: usize,
+    names_json: *const c_char,
+    model: *const c_char,
+    routing_config_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let (Some(lines), Some(names), Some(model)) = (
+        cstr_to_string(lines_json).and_then(|j| serde_json::from_str::<Vec<llm::live_question::LiveLine>>(&j).ok()),
+        cstr_to_string(names_json).and_then(|j| serde_json::from_str::<Vec<String>>(&j).ok()),
+        cstr_to_string(model),
+    ) else {
+        return ptr::null_mut();
+    };
+    if index >= lines.len() {
+        return ptr::null_mut();
+    }
+    let routing = parse_routing_config(routing_config_json);
+    let store = unsafe { &(*handle).0 };
+    let result = api::live_question::detect(store, &lines, index, &names, &model, &routing);
+    envelope_json(&result).map_or(ptr::null_mut(), json_to_c_string)
+}
+
+/// Live question: draft the user's reply to an alerted verdict, grounded in memory.
+/// Envelope data is a `ChatAnswer`. Bare NULL on a null handle or bad JSON.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_live_question_draft(
+    handle: *mut StoreHandle,
+    verdict_json: *const c_char,
+    recent_json: *const c_char,
+    model: *const c_char,
+    routing_config_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let (Some(verdict), Some(recent), Some(model)) = (
+        cstr_to_string(verdict_json).and_then(|j| serde_json::from_str::<llm::live_question::LiveQuestionVerdict>(&j).ok()),
+        cstr_to_string(recent_json).and_then(|j| serde_json::from_str::<Vec<llm::live_question::LiveLine>>(&j).ok()),
+        cstr_to_string(model),
+    ) else {
+        return ptr::null_mut();
+    };
+    let routing = parse_routing_config(routing_config_json);
+    let store = unsafe { &(*handle).0 };
+    let result = api::live_question::draft(store, &verdict, &recent, &model, &routing);
+    envelope_json(&result).map_or(ptr::null_mut(), json_to_c_string)
+}
+
+/// Live question: indices of lines worth sending to the model (pure rule). `room_audio`: the
+/// recording is known to be room audio (its title says so). JSON array of numbers; NULL on
+/// bad input.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_live_question_candidates(
+    lines_json: *const c_char,
+    names_json: *const c_char,
+    room_audio: bool,
+) -> *mut c_char {
+    let (Some(lines), Some(names)) = (
+        cstr_to_string(lines_json).and_then(|j| serde_json::from_str::<Vec<llm::live_question::LiveLine>>(&j).ok()),
+        cstr_to_string(names_json).and_then(|j| serde_json::from_str::<Vec<String>>(&j).ok()),
+    ) else {
+        return ptr::null_mut();
+    };
+    serde_json::to_string(&llm::live_question::candidate_indices(&lines, &names, room_audio))
+        .map_or(ptr::null_mut(), json_to_c_string)
+}
+
+/// Live question: true when an alert with nearly the same restatement fired in the last
+/// five minutes. `earlier_json` is `[[restatement, ms], ...]`. False on bad input.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_live_question_is_duplicate(
+    restatement: *const c_char,
+    earlier_json: *const c_char,
+    now_ms: i64,
+) -> bool {
+    let (Some(r), Some(earlier)) = (
+        cstr_to_string(restatement),
+        cstr_to_string(earlier_json).and_then(|j| serde_json::from_str::<Vec<(String, i64)>>(&j).ok()),
+    ) else {
+        return false;
+    };
+    llm::live_question::is_duplicate(&r, &earlier, now_ms)
+}
+
 /// Skins Release 2: one skin-maker turn (`llm::skin_maker`). `provider` is `"ollama"`,
 /// `"anthropic"`, `"openai"` or `"google"`; `api_key` may be null for Ollama.
 /// `input_json` is a `SkinTurnInput` (camelCase). `routing_config_json` — see
@@ -1385,6 +1479,59 @@ pub extern "C" fn whimbrel_profile_dismiss_suggestion(handle: *mut StoreHandle, 
 pub extern "C" fn whimbrel_profile_delete_suggestion(handle: *mut StoreHandle, id: i64) -> bool {
     if handle.is_null() { return false; }
     unsafe { &(*handle).0 }.delete_profile_suggestion(id).unwrap_or(false)
+}
+
+/// Stores this device's live alert from a `NewLiveAlert` JSON object and enqueues its sync.
+/// Returns the new id, or -1 on a null handle, bad JSON or error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_live_alert_insert(handle: *mut StoreHandle, alert_json: *const c_char) -> i64 {
+    if handle.is_null() { return -1; }
+    let Some(alert) = cstr_to_string(alert_json).and_then(|j| serde_json::from_str::<memory::live_alert::NewLiveAlert>(&j).ok()) else {
+        return -1;
+    };
+    unsafe { &(*handle).0 }.insert_live_alert(&alert).unwrap_or(-1)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_live_alert_set_draft(handle: *mut StoreHandle, id: i64, draft_json: *const c_char) -> bool {
+    if handle.is_null() { return false; }
+    let Some(draft) = cstr_to_string(draft_json) else { return false };
+    unsafe { &(*handle).0 }.set_live_alert_draft(id, &draft).unwrap_or(false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_live_alert_set_email_status(handle: *mut StoreHandle, id: i64, status: *const c_char) -> bool {
+    if handle.is_null() { return false; }
+    let Some(status) = cstr_to_string(status) else { return false };
+    unsafe { &(*handle).0 }.set_live_alert_email_status(id, &status).unwrap_or(false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_live_alert_list(handle: *mut StoreHandle, meeting_id: i64) -> *mut c_char {
+    if handle.is_null() { return ptr::null_mut(); }
+    match unsafe { &(*handle).0 }.list_live_alerts(meeting_id).ok().and_then(|rows| serde_json::to_string(&rows).ok()) {
+        Some(json) => json_to_c_string(json),
+        None => ptr::null_mut(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_live_alert_take_unnotified_peer(handle: *mut StoreHandle, now_unix_ms: i64, max_age_ms: i64) -> *mut c_char {
+    if handle.is_null() { return ptr::null_mut(); }
+    match unsafe { &(*handle).0 }.take_unnotified_peer_alerts(now_unix_ms, max_age_ms).ok().and_then(|rows| serde_json::to_string(&rows).ok()) {
+        Some(json) => json_to_c_string(json),
+        None => ptr::null_mut(),
+    }
+}
+
+/// This device's id for a peer's meeting (`sync_meeting_map`), so a link made on the device
+/// that recorded it opens the right meeting here. -1 when it isn't synced here yet, on a null
+/// handle or bad input.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_resolve_sync_meeting(handle: *mut StoreHandle, peer_device_id: *const c_char, source_meeting_id: i64) -> i64 {
+    if handle.is_null() { return -1; }
+    let Some(peer) = cstr_to_string(peer_device_id) else { return -1 };
+    unsafe { &(*handle).0 }.resolve_sync_meeting_map(&peer, source_meeting_id).ok().flatten().unwrap_or(-1)
 }
 
 #[unsafe(no_mangle)]
@@ -3685,6 +3832,22 @@ pub extern "C" fn whimbrel_memory_get_transcript_segments_page(
 /// `memory::CaptureItem`, or null on a null/invalid handle, a missing item, or a DB
 /// error (this file's existing convention doesn't distinguish these cases in the
 /// return value, matching `whimbrel_memory_get_meeting`).
+/// One transcript segment by id as JSON `MeetingTranscriptSegment`; NULL when missing.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_memory_get_transcript_segment(handle: *mut StoreHandle, id: i64) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let Ok(Some(segment)) = store.get_transcript_segment(id) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&segment) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_memory_get_capture_item(
     handle: *mut StoreHandle,
@@ -4957,6 +5120,48 @@ mod tests {
         whimbrel_core_free_string(none);
         assert_eq!(text, "null");
         assert!(whimbrel_live_next_cut(ptr::null(), 0, 16_000).is_null());
+    }
+
+    #[test]
+    fn live_alerts_round_trip_through_the_ffi() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_c = to_cstring(dir.path().join("t.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_c.as_ptr(), ptr::null());
+        let json = to_cstring(r#"{"meeting_id":7,"meeting_title":"Pricing","quote":"Can you send it?","restatement":"Send it","asker":null,"at_cs":12,"created_at_unix_ms":1}"#);
+        let id = whimbrel_live_alert_insert(handle, json.as_ptr());
+        assert!(id > 0);
+        let draft = to_cstring(r#"{"body":"hi"}"#);
+        assert!(whimbrel_live_alert_set_draft(handle, id, draft.as_ptr()));
+        let status = to_cstring("off");
+        assert!(whimbrel_live_alert_set_email_status(handle, id, status.as_ptr()));
+        let out = whimbrel_live_alert_list(handle, 7);
+        let text = unsafe { std::ffi::CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        whimbrel_core_free_string(out);
+        assert!(text.contains("Can you send it?") && text.contains("\"email_status\":\"off\""), "{text}");
+        let out = whimbrel_live_alert_take_unnotified_peer(handle, 2, 1_800_000);
+        let text = unsafe { std::ffi::CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        whimbrel_core_free_string(out);
+        assert_eq!(text, "[]", "this device's own alert is not a peer alert");
+        let bad = to_cstring("not json");
+        assert_eq!(whimbrel_live_alert_insert(handle, bad.as_ptr()), -1);
+        assert!(whimbrel_live_alert_list(ptr::null_mut(), 7).is_null());
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn resolve_sync_meeting_maps_a_peer_meeting_to_the_local_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_c = to_cstring(dir.path().join("t.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_c.as_ptr(), ptr::null());
+        let peer = to_cstring("mac-2");
+        assert_eq!(whimbrel_resolve_sync_meeting(handle, peer.as_ptr(), 42), -1, "not synced here yet");
+        unsafe { &(*handle).0 }.record_sync_meeting_map("mac-2", 42, 7).unwrap();
+        assert_eq!(whimbrel_resolve_sync_meeting(handle, peer.as_ptr(), 42), 7);
+        let other = to_cstring("mac-3");
+        assert_eq!(whimbrel_resolve_sync_meeting(handle, other.as_ptr(), 42), -1);
+        assert_eq!(whimbrel_resolve_sync_meeting(handle, ptr::null(), 42), -1);
+        assert_eq!(whimbrel_resolve_sync_meeting(ptr::null_mut(), peer.as_ptr(), 42), -1);
+        whimbrel_memory_close(handle);
     }
 
     #[test]
@@ -8532,5 +8737,51 @@ mod tests {
         assert!(result.is_null());
 
         whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn live_question_ffi_null_and_bad_json_return_null() {
+        let good = to_cstring("[]");
+        let bad = to_cstring("{nope");
+        assert!(whimbrel_live_question_detect(ptr::null_mut(), good.as_ptr(), 0, good.as_ptr(), good.as_ptr(), ptr::null()).is_null());
+        assert!(whimbrel_live_question_draft(ptr::null_mut(), good.as_ptr(), good.as_ptr(), good.as_ptr(), ptr::null()).is_null());
+        assert!(whimbrel_live_question_candidates(ptr::null(), good.as_ptr(), false).is_null());
+        assert!(whimbrel_live_question_candidates(bad.as_ptr(), good.as_ptr(), false).is_null());
+        assert!(!whimbrel_live_question_is_duplicate(ptr::null(), good.as_ptr(), 0));
+        assert!(!whimbrel_live_question_is_duplicate(good.as_ptr(), bad.as_ptr(), 0));
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = to_cstring(dir.path().join("m.db").to_str().unwrap());
+        let handle = whimbrel_memory_open(path.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let model = to_cstring("gemma4:12b");
+        assert!(whimbrel_live_question_detect(handle, bad.as_ptr(), 0, good.as_ptr(), model.as_ptr(), ptr::null()).is_null());
+        assert!(whimbrel_live_question_detect(handle, good.as_ptr(), 0, bad.as_ptr(), model.as_ptr(), ptr::null()).is_null());
+        // index out of range for empty lines
+        assert!(whimbrel_live_question_detect(handle, good.as_ptr(), 3, good.as_ptr(), model.as_ptr(), ptr::null()).is_null());
+        assert!(whimbrel_live_question_draft(handle, bad.as_ptr(), good.as_ptr(), model.as_ptr(), ptr::null()).is_null());
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn live_question_candidates_and_duplicate_work() {
+        let lines = to_cstring(r#"[{"id":1,"channel":"them","start_cs":0,"text":"Mike, thoughts?"},{"id":2,"channel":"me","start_cs":50,"text":"ok"}]"#);
+        let names = to_cstring(r#"["Mike"]"#);
+        let out = whimbrel_live_question_candidates(lines.as_ptr(), names.as_ptr(), true);
+        assert!(!out.is_null());
+        let s = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        whimbrel_core_free_string(out);
+        assert_eq!(s, "[0]");
+        // Not known room audio and under a minute of lines: the mic is not a trigger yet.
+        let out = whimbrel_live_question_candidates(lines.as_ptr(), names.as_ptr(), false);
+        let s = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+        whimbrel_core_free_string(out);
+        assert_eq!(s, "[]");
+
+        let r = to_cstring("ship the release friday");
+        let earlier = to_cstring(r#"[["ship the release on friday",1000]]"#);
+        assert!(whimbrel_live_question_is_duplicate(r.as_ptr(), earlier.as_ptr(), 2000));
+        let other = to_cstring("review budget numbers");
+        assert!(!whimbrel_live_question_is_duplicate(other.as_ptr(), earlier.as_ptr(), 2000));
     }
 }

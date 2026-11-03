@@ -42,6 +42,8 @@ struct WhimbrelApp: App {
         Window("Whimbrel", id: "timeline") {
             ThemedRoot { WhimbrelShellView() }
                 .environmentObject(appState)
+                // whimbrel://meeting/<id>?at=<cs>, from an alert email.
+                .onOpenURL { appState.handleOpenURL($0) }
                 // Explicit bounds so `.windowResizability(.automatic)` has a sane range to
                 // clamp to. Without this, a corrupted frame from macOS's own window-state
                 // restoration (tracked continuously by the window server, independent of
@@ -103,6 +105,7 @@ struct WhimbrelApp: App {
         }
         .windowResizability(.automatic)
         .commandsRemoved()
+        .handlesExternalEvents(matching: [])
 
         WindowGroup(id: "capture-detail", for: Int64.self) { $captureItemId in
             if let captureItemId {
@@ -118,6 +121,7 @@ struct WhimbrelApp: App {
         }
         .windowResizability(.automatic)
         .commandsRemoved()
+        .handlesExternalEvents(matching: [])
 
         WindowGroup(id: "episode-detail", for: Int64.self) { $episodeId in
             if let episodeId {
@@ -133,6 +137,7 @@ struct WhimbrelApp: App {
         }
         .windowResizability(.automatic)
         .commandsRemoved()
+        .handlesExternalEvents(matching: [])
 
         WindowGroup(id: "thread-detail", for: Int64.self) { $threadId in
             if let threadId {
@@ -148,6 +153,7 @@ struct WhimbrelApp: App {
         }
         .windowResizability(.automatic)
         .commandsRemoved()
+        .handlesExternalEvents(matching: [])
 
         // Native Settings scene (⌘,) — replaces the old standalone "onboarding" window;
         // permissions are one section among several here now (see SettingsView.swift).

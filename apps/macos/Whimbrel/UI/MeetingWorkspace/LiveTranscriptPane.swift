@@ -89,20 +89,72 @@ struct LiveTranscriptPane: View {
 /// Ask bar over the transcript so far. Built where `appState` is in the environment and
 /// passed into `ActiveMeetingView` as a slot.
 struct LiveMeetingSection: View {
+    @EnvironmentObject var appState: AppState
     @ObservedObject var live: LiveTranscriptionService
     let meeting: CoreMeeting
     @State private var highlightedId: Int64?
+    @State private var alerts: [LiveAlertsSection.Row] = []
+    /// Live rows count from this part's start; alerts and links from the meeting's. Nil until loaded.
+    @State private var partOffsetCs: Int64?
 
     var body: some View {
         VStack(spacing: Spacing.sm) {
             LiveTranscriptPane(segments: live.segments, status: live.status, highlightedId: highlightedId)
+            LiveAlertsSection(
+                rows: alerts,
+                paused: LiveAlertsSection.pausedLabel(
+                    status: live.status,
+                    alertsOn: LiveQuestionWatcher.shouldRun(settings: appState.liveQuestionSettings, names: appState.profile.liveQuestionNames)),
+                onJump: seek
+            )
             MeetingAskBar(session: live.askSession, meeting: meeting, segmentCount: live.segments.count, liveContext: true) { id in
-                // Reset first so citing the same line twice re-scrolls.
-                highlightedId = nil
-                DispatchQueue.main.async { highlightedId = id }
+                highlight(id)
             }
         }
         .padding(.horizontal, Spacing.xl)
         .padding(.top, Spacing.sm)
+        .onAppear {
+            loadAlerts()
+            loadPartOffset()
+        }
+        .onReceive(LiveAlertsSection.refresh) { _ in
+            let alertsOn = LiveQuestionWatcher.shouldRun(settings: appState.liveQuestionSettings, names: appState.profile.liveQuestionNames)
+            if LiveAlertsSection.shouldPoll(recording: meeting.id == appState.activeMeetingId, alertsOn: alertsOn) { loadAlerts() }
+        }
+        // A notification or link for this meeting: scroll to that moment once its line exists.
+        .onReceive(appState.$pendingMeetingSeek) { consumeSeek($0) }
+        .onChange(of: live.segments.count) { _, _ in consumeSeek(appState.pendingMeetingSeek) }
+        .onChange(of: partOffsetCs) { _, _ in consumeSeek(appState.pendingMeetingSeek) }
+    }
+
+    private func loadAlerts() {
+        LiveAlertsSection.load(store: appState.coreStore, meetingId: meeting.id) { if alerts != $0 { alerts = $0 } }
+    }
+
+    private func loadPartOffset() {
+        guard let store = appState.coreStore else { return partOffsetCs = 0 }
+        let meetingId = meeting.id
+        CoreMemoryStore.accessQueue.async {
+            let offset = LiveQuestionWatcher.partOffsetCs(store.meetingParts(meetingId: meetingId) ?? [])
+            DispatchQueue.main.async { partOffsetCs = offset }
+        }
+    }
+
+    /// Highlights a live line by its cited id (`-rowid`).
+    private func highlight(_ id: Int64) {
+        // Reset first so citing the same line twice re-scrolls.
+        highlightedId = nil
+        DispatchQueue.main.async { highlightedId = id }
+    }
+
+    /// `atCs` is meeting-absolute; the live rows are part-relative.
+    private func seek(_ atCs: Int64) {
+        if let id = LiveAlertsSection.nearest(live.segments.map { ($0.id, $0.startCs) }, to: atCs - (partOffsetCs ?? 0)) { highlight(-id) }
+    }
+
+    private func consumeSeek(_ request: (meetingId: Int64, atCs: Int64)?) {
+        guard let request, request.meetingId == meeting.id, !live.segments.isEmpty, partOffsetCs != nil else { return }
+        seek(request.atCs)
+        DispatchQueue.main.async { appState.pendingMeetingSeek = nil }
     }
 }

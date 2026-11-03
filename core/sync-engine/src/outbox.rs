@@ -589,6 +589,45 @@ mod tests {
         assert_eq!(store_b.list_profile_suggestions("pending").unwrap().len(), 1);
     }
 
+    #[tokio::test]
+    async fn live_alert_round_trips_between_two_stores() {
+        use crate::content::ROW_TYPE_LIVE_ALERT;
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let group_key = GroupKey::generate();
+        let (store_a, meeting_id) = own_store("device-a");
+        let now = crate::now_unix_ms();
+        let id = store_a
+            .insert_live_alert(&memory::live_alert::NewLiveAlert {
+                meeting_id,
+                meeting_title: "Outbox Standup".into(),
+                quote: "Mike, can you send the numbers?".into(),
+                restatement: "Send the pricing numbers".into(),
+                asker: Some("Dana".into()),
+                at_cs: 4_200,
+                created_at_unix_ms: now,
+            })
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_LIVE_ALERT).await, 1);
+
+        let store_b = Store::open_in_memory().unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        let taken = store_b.take_unnotified_peer_alerts(now, 1_800_000).unwrap();
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].meeting_title, "Outbox Standup");
+        assert_eq!(taken[0].meeting_id, None, "the meeting has not synced yet");
+        assert_eq!((taken[0].source_id, taken[0].source_meeting_id), (id, meeting_id));
+
+        store_a.set_live_alert_draft(id, r#"{"body":"Numbers attached"}"#).unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        let row = store_b.get_live_alert(taken[0].id).unwrap().unwrap();
+        assert_eq!(row.draft_json.as_deref(), Some(r#"{"body":"Numbers attached"}"#));
+        assert!(store_b.take_unnotified_peer_alerts(now, 1_800_000).unwrap().is_empty(), "an update does not re-notify");
+    }
+
     fn save_prep(store: &Store, event_id: &str, generated_at_unix_ms: i64) {
         store
             .save_meeting_prep(&memory::prep::MeetingPrepRow {

@@ -2684,6 +2684,13 @@ final class CoreMemoryStore {
         return decode(json)
     }
 
+    /// One transcript segment by id (a `transcript` citation), with its meeting's id and title.
+    func getTranscriptSegment(id: Int64) -> CoreMeetingTranscriptSegment? {
+        guard let json = whimbrel_memory_get_transcript_segment(handle, id) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
     /// A page of a meeting's transcript, ordered by start time — the source of truth for
     /// transcript display on any device. `transcript_segment` rows sync independently of
     /// a meeting's own `transcriptPath` (a local file path that never transfers between
@@ -3985,6 +3992,12 @@ extension CoreMemoryStore {
         }
     }
 
+    /// This device's id for a peer's meeting (`sync_meeting_map`); nil when it hasn't synced here.
+    func resolveSyncMeeting(peerDeviceId: String, sourceMeetingId: Int64) -> Int64? {
+        let id = peerDeviceId.withCString { whimbrel_resolve_sync_meeting(handle, $0, sourceMeetingId) }
+        return id >= 0 ? id : nil
+    }
+
     func listLiveSegments(meetingId: Int64) -> [CoreLiveSegment] {
         guard let json = whimbrel_live_list_segments(handle, meetingId) else { return [] }
         defer { whimbrel_core_free_string(json) }
@@ -3999,6 +4012,195 @@ extension CoreMemoryStore {
     @discardableResult
     func purgeStaleLiveSegments(nowUnixMs: Int64) -> Int {
         Int(whimbrel_live_purge_stale(handle, nowUnixMs))
+    }
+}
+
+// MARK: - Live question alerts (docs/superpowers/specs/2026-11-02-live-question-alerts-design.md)
+
+/// One transcript line as core's live question rules see it (`llm::live_question::LiveLine`).
+struct CoreLiveLine: Codable, Equatable {
+    let id: Int64
+    let channel: String
+    let startCs: Int64
+    let text: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, channel, text
+        case startCs = "start_cs"
+    }
+
+    init(id: Int64, channel: String, startCs: Int64, text: String) {
+        self.id = id
+        self.channel = channel
+        self.startCs = startCs
+        self.text = text
+    }
+
+    init(_ segment: CoreLiveSegment) {
+        self.init(id: segment.id, channel: segment.channel, startCs: segment.startCs, text: segment.text)
+    }
+}
+
+/// Detect's verdict (`llm::live_question::LiveQuestionVerdict`); sent back as draft's `verdict_json`.
+struct CoreLiveQuestionVerdict: Codable, Equatable {
+    let isForUser: Bool
+    let confidence: String
+    let quote: String
+    let asker: String?
+    let restatement: String
+
+    enum CodingKeys: String, CodingKey {
+        case confidence, quote, asker, restatement
+        case isForUser = "is_for_user"
+    }
+}
+
+/// `memory::live_alert::NewLiveAlert`.
+struct CoreNewLiveAlert: Encodable, Equatable {
+    let meetingId: Int64
+    let meetingTitle: String
+    let quote: String
+    let restatement: String
+    let asker: String?
+    let atCs: Int64
+    let createdAtUnixMs: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case quote, restatement, asker
+        case meetingId = "meeting_id"
+        case meetingTitle = "meeting_title"
+        case atCs = "at_cs"
+        case createdAtUnixMs = "created_at_unix_ms"
+    }
+}
+
+/// `memory::live_alert::LiveAlert`. `originDeviceId` is nil for this device's alerts.
+struct CoreLiveAlert: Decodable, Equatable, Identifiable {
+    let id: Int64
+    let meetingId: Int64?
+    let originDeviceId: String?
+    let sourceId: Int64
+    let sourceMeetingId: Int64
+    let meetingTitle: String
+    let quote: String
+    let restatement: String
+    let asker: String?
+    let atCs: Int64
+    let createdAtUnixMs: Int64
+    let draftJson: String?
+    let emailStatus: String?
+    let notifiedAtUnixMs: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case id, quote, restatement, asker
+        case meetingId = "meeting_id"
+        case originDeviceId = "origin_device_id"
+        case sourceId = "source_id"
+        case sourceMeetingId = "source_meeting_id"
+        case meetingTitle = "meeting_title"
+        case atCs = "at_cs"
+        case createdAtUnixMs = "created_at_unix_ms"
+        case draftJson = "draft_json"
+        case emailStatus = "email_status"
+        case notifiedAtUnixMs = "notified_at_unix_ms"
+    }
+}
+
+/// Core's pure live question rules; no store needed.
+enum CoreLiveQuestion {
+    fileprivate static func json<T: Encodable>(_ value: T) -> String? {
+        (try? JSONEncoder().encode(value)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    /// Indices into `lines` worth sending to the model; empty on bad input. `roomAudio`: the
+    /// recording is known to be room audio, so the mic counts before a minute has passed.
+    static func candidates(lines: [CoreLiveLine], names: [String], roomAudio: Bool = false) -> [Int] {
+        guard let l = json(lines), let n = json(names),
+              let out = l.withCString({ lc in n.withCString { whimbrel_live_question_candidates(lc, $0, roomAudio) } })
+        else { return [] }
+        defer { whimbrel_core_free_string(out) }
+        return (try? JSONDecoder().decode([Int].self, from: Data(String(cString: out).utf8))) ?? []
+    }
+
+    /// True when `restatement` nearly repeats one in `earlier` (restatement, unix ms) within five minutes.
+    static func isDuplicate(_ restatement: String, earlier: [(String, Int64)], nowMs: Int64) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: earlier.map { [$0.0, $0.1] as [Any] }),
+              let e = String(data: data, encoding: .utf8) else { return false }
+        return restatement.withCString { r in e.withCString { whimbrel_live_question_is_duplicate(r, $0, nowMs) } }
+    }
+
+    /// Detect's envelope: `data` null is a success meaning "not a question for the user".
+    static func detectResult(_ json: String) -> Result<CoreLiveQuestionVerdict?, CoreLLMError> {
+        struct Envelope: Decodable {
+            let ok: Bool
+            let data: CoreLiveQuestionVerdict?
+            let error: CoreLLMError?
+        }
+        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: Data(json.utf8)) else {
+            return .failure(.providerFailure)
+        }
+        return envelope.ok ? .success(envelope.data) : .failure(envelope.error ?? .providerFailure)
+    }
+}
+
+extension CoreMemoryStore {
+    /// Whether `lines[index]` is a question for the user (governed; holds the store across a
+    /// model call, so call on the slow lane). Nil only on invalid arguments.
+    func detectLiveQuestion(lines: [CoreLiveLine], index: Int, names: [String], model: String, routing: CoreRoutingConfig)
+        -> Result<CoreLiveQuestionVerdict?, CoreLLMError>? {
+        guard let l = CoreLiveQuestion.json(lines), let n = CoreLiveQuestion.json(names), let r = CoreLiveQuestion.json(routing),
+              let out = l.withCString({ lc in
+                  n.withCString { nc in model.withCString { mc in r.withCString { whimbrel_live_question_detect(handle, lc, index, nc, mc, $0) } } }
+              })
+        else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return CoreLiveQuestion.detectResult(String(cString: out))
+    }
+
+    /// The user's drafted reply to `verdict`, grounded in memory (governed; slow lane).
+    func draftLiveAnswer(verdict: CoreLiveQuestionVerdict, recent: [CoreLiveLine], model: String, routing: CoreRoutingConfig)
+        -> Result<CoreChatAnswer, CoreLLMError>? {
+        guard let v = CoreLiveQuestion.json(verdict), let l = CoreLiveQuestion.json(recent), let r = CoreLiveQuestion.json(routing),
+              let out = v.withCString({ vc in
+                  l.withCString { lc in model.withCString { mc in r.withCString { whimbrel_live_question_draft(handle, vc, lc, mc, $0) } } }
+              })
+        else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return decodeLLMResult(out)
+    }
+
+    /// Stores this device's alert and queues its sync; nil on failure.
+    func insertLiveAlert(_ alert: CoreNewLiveAlert) -> Int64? {
+        guard let j = CoreLiveQuestion.json(alert) else { return nil }
+        let id = j.withCString { whimbrel_live_alert_insert(handle, $0) }
+        return id < 0 ? nil : id
+    }
+
+    @discardableResult
+    func setLiveAlertDraft(id: Int64, draft: CoreChatAnswer) -> Bool {
+        guard let j = CoreLiveQuestion.json(draft) else { return false }
+        return j.withCString { whimbrel_live_alert_set_draft(handle, id, $0) }
+    }
+
+    /// "sent", "failed:<reason>" or "off"; local to this device.
+    @discardableResult
+    func setLiveAlertEmailStatus(id: Int64, status: String) -> Bool {
+        status.withCString { whimbrel_live_alert_set_email_status(handle, id, $0) }
+    }
+
+    func listLiveAlerts(meetingId: Int64) -> [CoreLiveAlert] {
+        decodeLiveAlerts(whimbrel_live_alert_list(handle, meetingId))
+    }
+
+    /// Other devices' alerts no older than `maxAgeMs` not yet notified here; marks them notified.
+    func takeUnnotifiedPeerAlerts(nowUnixMs: Int64, maxAgeMs: Int64) -> [CoreLiveAlert] {
+        decodeLiveAlerts(whimbrel_live_alert_take_unnotified_peer(handle, nowUnixMs, maxAgeMs))
+    }
+
+    private func decodeLiveAlerts(_ json: UnsafeMutablePointer<CChar>?) -> [CoreLiveAlert] {
+        guard let json else { return [] }
+        defer { whimbrel_core_free_string(json) }
+        return (try? JSONDecoder().decode([CoreLiveAlert].self, from: Data(String(cString: json).utf8))) ?? []
     }
 }
 
