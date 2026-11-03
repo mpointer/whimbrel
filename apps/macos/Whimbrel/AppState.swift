@@ -107,6 +107,12 @@ final class AppState: ObservableObject {
     /// Recording & Open Timeline" action. `AppState` itself has no SwiftUI environment
     /// access of its own.
     var openTimeline: (() -> Void)?
+    /// Opens a meeting's window; set by `TimelineView`'s `.onAppear` alongside `openTimeline`.
+    private var openMeetingWindow: ((Int64) -> Void)?
+    /// A meeting asked for (alert click, `whimbrel://` link) before the opener was set.
+    private var meetingToOpen: Int64?
+    /// Where an opened meeting should seek to, in centiseconds; the meeting page consumes it.
+    @Published var pendingMeetingSeek: (meetingId: Int64, atCs: Int64)?
     /// The shell's selected tab, here rather than in `WhimbrelShellView` so other screens
     /// (Today's "Review" button) can switch tabs.
     @Published var selectedTab: WhimbrelTab = .today
@@ -117,6 +123,46 @@ final class AppState: ObservableObject {
     @Published var pendingNewConversation = false
     /// Text from Today's composer, sent as the first message of the new conversation.
     @Published var pendingAskPrompt: String?
+
+    /// Opens meeting `id` (an alert notification or a `whimbrel://meeting/<id>?at=` link) and
+    /// leaves `atCs` (meeting-absolute) in `pendingMeetingSeek` for the meeting page.
+    func openMeeting(id: Int64, at atCs: Int64) {
+        pendingMeetingSeek = (id, atCs)
+        NSApp.activate(ignoringOtherApps: true)
+        guard let openMeetingWindow else {
+            meetingToOpen = id
+            return
+        }
+        openMeetingWindow(id)
+    }
+
+    /// Called once the meeting window can be opened; opens one asked for before then.
+    func setMeetingWindowOpener(_ open: @escaping (Int64) -> Void) {
+        openMeetingWindow = open
+        if let id = meetingToOpen {
+            meetingToOpen = nil
+            open(id)
+        }
+    }
+
+    func handleOpenURL(_ url: URL) {
+        guard let link = DeepLink.parse(url) else { return }
+        open(link)
+    }
+
+    /// Opens a deep link's meeting. A link another device made (the alert email) resolves
+    /// through `sync_meeting_map`; one that doesn't resolve opens the meeting window's
+    /// "no longer available" page.
+    func open(_ link: DeepLink.Target) {
+        guard let origin = link.origin, origin != deviceId else { return openMeeting(id: link.meetingId, at: link.atCs) }
+        let store = coreStore
+        let deviceId = deviceId
+        CoreMemoryStore.accessQueue.async {
+            let local = DeepLink.localMeetingId(link, deviceId: deviceId) { store?.resolveSyncMeeting(peerDeviceId: $0, sourceMeetingId: $1) }
+            // ponytail: -1 is never a meeting id, so the window shows "no longer available".
+            DispatchQueue.main.async { [weak self] in self?.openMeeting(id: local ?? -1, at: link.atCs) }
+        }
+    }
 
     func requestLibrarySearch() {
         openTimeline?()
@@ -188,6 +234,25 @@ final class AppState: ObservableObject {
     /// recording in chunks while it is being written
     /// (docs/superpowers/specs/2026-10-06-live-transcription-design.md).
     let liveTranscriptSettings = LiveTranscriptSettings()
+    /// "Alert me when someone asks me something" (docs/superpowers/specs/2026-11-02-live-question-alerts-design.md).
+    /// Needs live transcription, so it starts it even with the live transcript setting off.
+    let liveQuestionSettings = LiveQuestionSettings()
+    /// The active recording's question watcher; nil when alerts are off or no name is set.
+    private var liveQuestionWatcher: LiveQuestionWatcher?
+    /// Alerts go to a notification, an email to the user's own Gmail and, through sync, the
+    /// other devices. Lazy: it needs the stores and connector state set up in `init`.
+    lazy var liveAlertDelivery: LiveAlertDelivery = makeLiveAlertDelivery()
+    /// The notification center's delegate (it holds it weakly).
+    private var notificationClickHandler: NotificationClickHandler?
+    /// Alerts start live transcription only when they can run (a name is set), so a user who
+    /// turned the live transcript off isn't transcribed for nothing.
+    private var liveTranscriptionWanted: Bool {
+        Self.liveTranscriptionWanted(transcript: liveTranscriptSettings.enabled, alerts: liveQuestionSettings.enabled, names: profile.liveQuestionNames)
+    }
+
+    nonisolated static func liveTranscriptionWanted(transcript: Bool, alerts: Bool, names: [String]) -> Bool {
+        transcript || (alerts && !names.isEmpty)
+    }
     let recordingNoticeSettings = RecordingNoticeSettings()
     /// Nil until Task 7b's real Zoom chat poster: the notice is a reminder until then.
     let recordingNoticeChat: ZoomChatPosting? = nil
@@ -362,6 +427,7 @@ final class AppState: ObservableObject {
             .merge(with: calendar.objectWillChange, meetingTrigger.objectWillChange, googleCalendarPolling.objectWillChange)
             .merge(with: retention.objectWillChange, meetingHeuristicDetector.objectWillChange)
             .merge(with: routing.objectWillChange, syncState.objectWillChange, replyPriority.objectWillChange, meetingPrepSettings.objectWillChange, meetingTitleCheck.objectWillChange, liveTranscriptSettings.objectWillChange, appearanceSettings.objectWillChange)
+            .merge(with: liveQuestionSettings.objectWillChange)
             .merge(with: snapshotSettings.objectWillChange, mediaSettings.objectWillChange, mediaRetention.objectWillChange, recordingCheckInSettings.objectWillChange, awayMode.objectWillChange)
             .merge(with: settingsSyncCoordinator.objectWillChange, contentSyncCoordinator.objectWillChange)
             .merge(with: updateChecker.objectWillChange)
@@ -382,7 +448,12 @@ final class AppState: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] id in
                 guard let self else { return }
-                if let id, self.liveTranscriptSettings.enabled {
+                // A recording that ends (or gives way to another) has its waiting questions judged.
+                if self.liveQuestionWatcher?.meetingId != id {
+                    self.liveQuestionWatcher?.flush()
+                    self.liveQuestionWatcher = nil
+                }
+                if let id, self.liveTranscriptionWanted {
                     self.liveTranscript.start(meetingId: id)
                 } else {
                     self.liveTranscript.stop()
@@ -390,10 +461,33 @@ final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // The setting is a privacy control, so it applies at once in either direction: turning
-        // it off during a meeting stops live transcription and deletes all live text already
-        // stored; turning it on during one starts it.
+        // The question watcher reads every live tick's rows. It starts on the first rows, by
+        // when the meeting has its title.
+        liveTranscript.$segments
+            .sink { [weak self] rows in self?.feedLiveQuestionWatcher(rows) }
+            .store(in: &cancellables)
+
+        // Turning alerts off drops the watcher at once, without judging what is waiting.
+        liveQuestionSettings.$enabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                guard !enabled else { return }
+                self?.liveQuestionWatcher?.cancel()
+                self?.liveQuestionWatcher = nil
+            }
+            .store(in: &cancellables)
+
+        // Live transcription runs while the live transcript is on, or question alerts are on with a
+        // name to listen for (`liveTranscriptionWanted`). These are privacy controls, so they
+        // apply at once in either direction: once neither holds during a meeting, live
+        // transcription stops and all live text already stored is deleted; once either holds,
+        // it starts. (Published values arrive before the properties change, so the rule reads
+        // the emitted values, not the settings.)
         liveTranscriptSettings.$enabled
+            .combineLatest(liveQuestionSettings.$enabled, profile.$name, profile.$otherNames) { transcript, alerts, name, others in
+                AppState.liveTranscriptionWanted(
+                    transcript: transcript, alerts: alerts, names: ProfileSettings.names(profileName: name, otherNames: others))
+            }
             .removeDuplicates()
             .sink { [weak self] enabled in
                 guard let self else { return }
@@ -466,6 +560,17 @@ final class AppState: ObservableObject {
         Task { await syncState.silentResumeIfPossible() }
         updateChecker.start()
         settingsSyncCoordinator.observeSyncState()
+        let clickHandler = NotificationClickHandler { [weak self] link in self?.open(link) }
+        notificationClickHandler = clickHandler
+        UNUserNotificationCenter.current().delegate = clickHandler
+        contentSyncCoordinator.afterPull = { [weak self] in
+            guard let self, let store = self.coreStore else { return }
+            await self.liveAlertDelivery.afterPull {
+                await AppState.run(on: CoreMemoryStore.accessQueue) {
+                    store.takeUnnotifiedPeerAlerts(nowUnixMs: Int64(Date().timeIntervalSince1970 * 1000), maxAgeMs: LiveAlertDelivery.peerMaxAgeMs)
+                }
+            }
+        }
         contentSyncCoordinator.observeSyncState()
         scheduleJobsBatchStep()
         scheduleEpisodeSegmentStep()
@@ -1400,6 +1505,114 @@ final class AppState: ObservableObject {
         replyPriority.enabled = on
         guard on, let store = coreStore else { return }
         CoreMemoryStore.accessQueue.async { _ = store.seedThreadPriorityJobs() }
+    }
+
+    // MARK: - Live question alerts
+
+    private func feedLiveQuestionWatcher(_ rows: [CoreLiveSegment]) {
+        guard let id = activeMeetingId, let first = rows.first, first.meetingId == id else { return }
+        if liveQuestionWatcher?.meetingId != id {
+            let names = profile.liveQuestionNames
+            guard LiveQuestionWatcher.shouldRun(settings: liveQuestionSettings, names: names) else { return }
+            liveQuestionWatcher = makeLiveQuestionWatcher(meetingId: id, names: names)
+        }
+        liveQuestionWatcher?.ingest(rows)
+    }
+
+    /// Detection and drafting use Ask's model and routing (local-only mode, spend cap) and run on
+    /// the slow lane; the alert rows go through `accessQueue`.
+    private func makeLiveQuestionWatcher(meetingId: Int64, names: [String]) -> LiveQuestionWatcher {
+        let log = Logger(subsystem: "com.mpointer.kestrel", category: "live-question")
+        let store = coreStore
+        return LiveQuestionWatcher(
+            meetingId: meetingId, meetingTitle: activeMeetingTitle ?? String(localized: "Meeting"), names: names,
+            detect: { [weak self] lines, index in
+                guard let (slow, model, routing) = self?.liveQuestionModel() else { return nil }
+                return await AppState.run(on: CoreMemoryStore.slowLaneQueue) {
+                    switch slow.detectLiveQuestion(lines: lines, index: index, names: names, model: model, routing: routing) {
+                    case .success(let verdict): return verdict
+                    case .failure(let error): log.error("live question detect failed: \(String(describing: error), privacy: .public)")
+                    case nil: log.error("live question detect: invalid arguments")
+                    }
+                    return nil
+                }
+            },
+            draft: { [weak self] verdict, recent in
+                guard let (slow, model, routing) = self?.liveQuestionModel() else { return nil }
+                return await AppState.run(on: CoreMemoryStore.slowLaneQueue) {
+                    switch slow.draftLiveAnswer(verdict: verdict, recent: recent, model: model, routing: routing) {
+                    case .success(let answer): return answer
+                    case .failure(let error): log.error("live question draft failed: \(String(describing: error), privacy: .public)")
+                    case nil: log.error("live question draft: invalid arguments")
+                    }
+                    return nil
+                }
+            },
+            deliver: liveAlertDelivery, now: Date.init,
+            insert: { alert in
+                guard let store else { return nil }
+                return await AppState.run(on: CoreMemoryStore.accessQueue) { store.insertLiveAlert(alert) }
+            },
+            saveDraft: { id, answer in
+                guard let store else { return }
+                _ = await AppState.run(on: CoreMemoryStore.accessQueue) { store.setLiveAlertDraft(id: id, draft: answer) }
+            },
+            seed: {
+                guard let store else { return ([], 0) }
+                return await AppState.run(on: CoreMemoryStore.accessQueue) {
+                    (store.listLiveAlerts(meetingId: meetingId), LiveQuestionWatcher.partOffsetCs(store.meetingParts(meetingId: meetingId) ?? []))
+                }
+            }
+        )
+    }
+
+    /// The email goes only to the default connected Gmail account (`GmailSelfSend`); status,
+    /// evidence and context lookups go through `accessQueue`.
+    private func makeLiveAlertDelivery() -> LiveAlertDelivery {
+        let store = coreStore
+        let gmail = gmailConnectorState
+        let settings = liveQuestionSettings
+        let deviceId = deviceId
+        let log = Logger(subsystem: "com.mpointer.kestrel", category: "live-question")
+        let selfSend = GmailSelfSend(
+            connectedAccount: { [weak gmail] in gmail?.defaultEmail },
+            token: { [weak gmail] email in
+                await RoutineScheduler.fetchAccessToken(from: gmail?.oauthHelper(forEmail: email), requiredScope: RoutineScheduler.gmailWriteScope, log: log)
+            },
+            transport: { plan, token in await RoutineScheduler.performToolCall(plan: plan, accessToken: token) }
+        )
+        return LiveAlertDelivery(
+            deviceId: deviceId,
+            alertsEnabled: { settings.enabled },
+            post: LiveAlertDelivery.postToNotificationCenter,
+            sendEmail: { subject, body in await selfSend.send(subject: subject, body: body) },
+            setEmailStatus: { id, status in
+                guard let store else { return }
+                _ = await AppState.run(on: CoreMemoryStore.accessQueue) { store.setLiveAlertEmailStatus(id: id, status: status) }
+            },
+            emailEnabled: { settings.emailEnabled },
+            evidence: { refs in
+                guard let store, !refs.isEmpty else { return [] }
+                return await AppState.run(on: CoreMemoryStore.accessQueue) { LiveAlertDelivery.evidenceLines(refs, store: store, origin: deviceId) }
+            },
+            context: { alert in
+                guard let store, let meetingId = alert.meetingId else { return [] }
+                return await AppState.run(on: CoreMemoryStore.accessQueue) {
+                    let offset = LiveQuestionWatcher.partOffsetCs(store.meetingParts(meetingId: meetingId) ?? [])
+                    return LiveAlertDelivery.contextLines(store.listLiveSegments(meetingId: meetingId), atCs: alert.atCs, partOffsetCs: offset)
+                }
+            }
+        )
+    }
+
+    /// The slow store, Ask's Ollama model and a fresh routing config (keys read per call).
+    private func liveQuestionModel() -> (CoreMemoryStore, String, CoreRoutingConfig)? {
+        guard let slow = slowStore else { return nil }
+        return (slow, routing.ollamaDefaultModel, routing.routingConfig(preferredProvider: routing.preferredProvider, preferredModel: routing.preferredModel))
+    }
+
+    private nonisolated static func run<T>(on queue: DispatchQueue, _ body: @escaping () -> T) async -> T {
+        await withCheckedContinuation { continuation in queue.async { continuation.resume(returning: body()) } }
     }
 
     /// Drives the shared jobs-queue mechanism (`Store::run_jobs_batch`: `reindex_sweep`

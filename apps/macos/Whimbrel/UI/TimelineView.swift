@@ -607,6 +607,7 @@ struct TimelineView: View {
             handleMenuRequests()
             NSApp.activate(ignoringOtherApps: true)
             appState.openTimeline = { openWindow(id: "timeline") }
+            appState.setMeetingWindowOpener { openWindow(id: "meeting-detail", value: $0) }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             guard let window = notification.object as? NSWindow, window.title == "Whimbrel" else { return }

@@ -26,6 +26,7 @@ pub(crate) const ROW_TYPE_ITEMS: &str = "items";
 pub(crate) const ROW_TYPE_ROUTINE_RUN: &str = "routine_run";
 pub(crate) const ROW_TYPE_MEETING_PREP: &str = "meeting_prep";
 pub(crate) const ROW_TYPE_PROFILE_SUGGESTION: &str = "profile_suggestion";
+pub(crate) const ROW_TYPE_LIVE_ALERT: &str = "live_alert";
 pub(crate) const ROW_TYPE_ITEMS_CAPABILITY: &str = "items_capability";
 /// Skin sync (docs/superpowers/plans/2026-10-22-skins-windows-and-sync.md, Task 13): a user skin's
 /// version, its images in chunks, and the marker a device pushes once it applies them.
@@ -1010,6 +1011,17 @@ fn apply_parent_row(
             };
             store
                 .apply_synced_profile_suggestion(peer_device_id, &suggestion)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_LIVE_ALERT => {
+            // Upserts on (origin, source_id); its meeting is resolved (or back-filled later)
+            // through `sync_meeting_map`, so there is no `sync_row_map` entry to record.
+            let Ok(alert) = serde_json::from_slice::<memory::live_alert::AppliedLiveAlert>(plaintext) else {
+                return Ok(());
+            };
+            store
+                .apply_synced_live_alert(peer_device_id, &alert)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             return Ok(());
         }

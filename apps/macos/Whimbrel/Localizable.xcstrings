@@ -55,6 +55,80 @@
         }
       }
     },
+    "%@ asked at %@ in \"%@\"." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ hat bei %@ in „%@“ gefragt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ asked at %2$@ in \"%3$@\"."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ preguntó a los %@ en «%@»."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ a demandé à %@ dans « %@ »."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ a demandé à %@ dans « %@ »."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ perguntou aos %@ em “%@”."
+          }
+        }
+      }
+    },
+    "%@ asked you" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ hat Sie gefragt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ te preguntó"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ vous a posé une question"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ vous a posé une question"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ perguntou a você"
+          }
+        }
+      }
+    },
     "%@ isn't available?" : {
       "localizations" : {
         "de" : {
@@ -824,6 +898,40 @@
         }
       }
     },
+    "%lld more questions for you" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld weitere Fragen an Sie"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld preguntas más para ti"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld autres questions pour vous"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%lld autres questions pour vous"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mais %lld perguntas para você"
+          }
+        }
+      }
+    },
     "%lld of %lld characters sent" : {
       "localizations" : {
         "de" : {
@@ -1281,6 +1389,40 @@
         }
       }
     },
+    "A meeting slide" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eine Meeting-Folie"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Una diapositiva de reunión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une diapositive de réunion"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une diapositive de réunion"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Um slide de reunião"
+          }
+        }
+      }
+    },
     "A qualifying calendar meeting has a conferencing link (Zoom/Meet/Teams/Webex) or at least one other attendee. Upcoming meetings and the recording prompt itself are shown in the main window, not here." : {
       "localizations" : {
         "de" : {
@@ -1311,6 +1453,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Uma reunião de calendário qualificada tem um link de conferência (Zoom/Meet/Teams/Webex) ou pelo menos outro participante. As próximas reuniões e o próprio aviso de gravação aparecem na janela principal, não aqui."
+          }
+        }
+      }
+    },
+    "A routine result" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein Routine-Ergebnis"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un resultado de rutina"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un résultat de routine"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un résultat de routine"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Um resultado de rotina"
           }
         }
       }
@@ -1927,6 +2103,40 @@
         }
       }
     },
+    "Add your name in Settings → Profile first." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fügen Sie zuerst Ihren Namen unter Einstellungen → Profil hinzu."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Primero añade tu nombre en Ajustes → Perfil."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajoutez d’abord votre nom dans Paramètres → Profil."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajoutez d’abord votre nom dans Réglages → Profil."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Primeiro adicione seu nome em Configurações → Perfil."
+          }
+        }
+      }
+    },
     "Add your own image…" : {
       "localizations" : {
         "de" : {
@@ -1995,6 +2205,40 @@
         }
       }
     },
+    "Alert me when someone asks me something" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Benachrichtigen, wenn mich jemand etwas fragt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avisarme cuando alguien me pregunte algo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "M’avertir quand quelqu’un me pose une question"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "M’avertir quand quelqu’un me pose une question"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avisar quando alguém me perguntar algo"
+          }
+        }
+      }
+    },
     "All set" : {
       "localizations" : {
         "de" : {
@@ -2025,6 +2269,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Tudo pronto"
+          }
+        }
+      }
+    },
+    "Also email me" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auch per E-Mail senden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enviarme también un correo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "M’envoyer aussi un courriel"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "M’envoyer aussi un courriel"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Também me enviar por e-mail"
           }
         }
       }
@@ -5209,6 +5487,40 @@
         }
       }
     },
+    "Couldn't build the email." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die E-Mail konnte nicht erstellt werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo crear el correo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de créer le courriel."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de créer le courriel."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível criar o e-mail."
+          }
+        }
+      }
+    },
     "Couldn't check the key." : {
       "localizations" : {
         "de" : {
@@ -7669,6 +7981,74 @@
         }
       }
     },
+    "Draft answer:" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Antwortentwurf:"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Borrador de respuesta:"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Brouillon de réponse :"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Brouillon de réponse :"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rascunho de resposta:"
+          }
+        }
+      }
+    },
+    "Draft wasn't ready in time; it's on the meeting page." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Entwurf war nicht rechtzeitig fertig; er steht auf der Meeting-Seite."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El borrador no estuvo listo a tiempo; está en la página de la reunión."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le brouillon n’était pas prêt à temps ; il est sur la page de la réunion."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le brouillon n’était pas prêt à temps; il est sur la page de la réunion."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O rascunho não ficou pronto a tempo; ele está na página da reunião."
+          }
+        }
+      }
+    },
     "Duplicate meetings" : {
       "localizations" : {
         "de" : {
@@ -7941,6 +8321,40 @@
         }
       }
     },
+    "Email not sent: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "E-Mail nicht gesendet: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Correo no enviado: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Courriel non envoyé : %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Courriel non envoyé : %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "E-mail não enviado: %@"
+          }
+        }
+      }
+    },
     "Enable MCP Server" : {
       "localizations" : {
         "de" : {
@@ -8209,6 +8623,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Episódios"
+          }
+        }
+      }
+    },
+    "Evidence:" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Belege:"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fuentes:"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sources :"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sources :"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fontes:"
           }
         }
       }
@@ -9381,6 +9829,74 @@
         }
       }
     },
+    "Gmail isn't connected." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gmail ist nicht verbunden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gmail no está conectado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gmail n’est pas connecté."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gmail n’est pas connecté."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Gmail não está conectado."
+          }
+        }
+      }
+    },
+    "Gmail needs reconnecting in Settings to send." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verbinden Sie Gmail in den Einstellungen erneut, um zu senden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vuelve a conectar Gmail en Ajustes para enviar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reconnectez Gmail dans Paramètres pour envoyer."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reconnectez Gmail dans Réglages pour envoyer."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reconecte o Gmail em Configurações para enviar."
+          }
+        }
+      }
+    },
     "Go" : {
       "localizations" : {
         "de" : {
@@ -9751,6 +10267,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "O Google não retornou as credenciais de que a sincronização precisa. Tente entrar novamente."
+          }
+        }
+      }
+    },
+    "Google rejected the email send request." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google hat die Sendeanfrage für die E-Mail abgelehnt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google rechazó la solicitud de envío del correo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google a refusé la demande d’envoi du courriel."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google a refusé la demande d’envoi du courriel."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Google recusou o pedido de envio do e-mail."
           }
         }
       }
@@ -10469,6 +11019,40 @@
         }
       }
     },
+    "In short: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kurz gesagt: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En resumen: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En bref : %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En bref : %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Em resumo: %@"
+          }
+        }
+      }
+    },
     "Inactive" : {
       "localizations" : {
         "de" : {
@@ -10635,6 +11219,74 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Entrar na lista de espera"
+          }
+        }
+      }
+    },
+    "Jump to moment" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zur Stelle springen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ir al momento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aller au moment"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aller au moment"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ir para o momento"
+          }
+        }
+      }
+    },
+    "Just before:" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kurz davor:"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Justo antes:"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Juste avant :"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Juste avant :"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Logo antes:"
           }
         }
       }
@@ -11417,6 +12069,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Biblioteca"
+          }
+        }
+      }
+    },
+    "Lines that mention you, and the minutes before them, go to your Ask model. Alert emails go only to your own address. While alerts are on, the live transcript keeps running in meetings even when \"Live transcript during meetings\" is off." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sätze, die Sie erwähnen, und die Minuten davor gehen an Ihr Ask-Modell. Benachrichtigungs-E-Mails gehen nur an Ihre eigene Adresse. Solange Benachrichtigungen aktiv sind, läuft das Live-Transkript in Meetings weiter, auch wenn „Live-Transkript während Meetings“ aus ist."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las frases que te mencionan, y los minutos anteriores, van a tu modelo de Ask. Los correos de aviso solo van a tu propia dirección. Con los avisos activados, la transcripción en vivo sigue durante las reuniones aunque «Transcripción en vivo durante las reuniones» esté desactivada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les phrases qui vous mentionnent, et les minutes qui les précèdent, sont envoyées à votre modèle Ask. Les courriels d’alerte ne vont qu’à votre propre adresse. Quand les alertes sont activées, la transcription en direct continue pendant les réunions même si « Transcription en direct pendant les réunions » est désactivée."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les phrases qui vous mentionnent, et les minutes qui les précèdent, sont envoyées à votre modèle Ask. Les courriels d’alerte ne vont qu’à votre propre adresse. Quand les alertes sont activées, la transcription en direct continue pendant les réunions même si « Transcription en direct pendant les réunions » est désactivée."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As falas que mencionam você, e os minutos antes delas, vão para o seu modelo do Ask. Os e-mails de alerta vão só para o seu próprio endereço. Com os alertas ativados, a transcrição ao vivo continua nas reuniões mesmo que “Transcrição ao vivo durante reuniões” esteja desativada."
           }
         }
       }
@@ -13665,6 +14351,40 @@
         }
       }
     },
+    "No draft answer yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Noch kein Antwortentwurf."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aún no hay borrador de respuesta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pas encore de brouillon de réponse."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pas encore de brouillon de réponse."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ainda não há rascunho de resposta."
+          }
+        }
+      }
+    },
     "No duplicate meetings found." : {
       "localizations" : {
         "de" : {
@@ -15726,6 +16446,40 @@
         }
       }
     },
+    "Open the meeting in Whimbrel: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meeting in Whimbrel öffnen: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abre la reunión en Whimbrel: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir la réunion dans Whimbrel : %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir la réunion dans Whimbrel : %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abra a reunião no Whimbrel: %@"
+          }
+        }
+      }
+    },
     "Open this thread" : {
       "localizations" : {
         "de" : {
@@ -15938,6 +16692,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Arquivos de gravação órfãos"
+          }
+        }
+      }
+    },
+    "Other names people call you" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Andere Namen, mit denen man Sie anspricht"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otros nombres con los que te llaman"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autres noms qu’on vous donne"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Autres noms qu’on vous donne"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Outros nomes pelos quais chamam você"
           }
         }
       }
@@ -16686,6 +17474,142 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Qualidade"
+          }
+        }
+      }
+    },
+    "Question alerts paused" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fragen-Benachrichtigungen pausiert"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Avisos de preguntas en pausa"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alertes de questions en pause"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alertes de questions en pause"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alertas de perguntas pausados"
+          }
+        }
+      }
+    },
+    "Question for you" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Frage an Sie"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pregunta para ti"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Question pour vous"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Question pour vous"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pergunta para você"
+          }
+        }
+      }
+    },
+    "Question for you in \"%@\"" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Frage an Sie in „%@“"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pregunta para ti en «%@»"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Question pour vous dans « %@ »"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Question pour vous dans « %@ »"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pergunta para você em “%@”"
+          }
+        }
+      }
+    },
+    "Questions for you" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fragen an Sie"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preguntas para ti"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questions pour vous"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Questions pour vous"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Perguntas para você"
           }
         }
       }
@@ -20517,6 +21441,46 @@
         }
       }
     },
+    "Someone asked at %@ in \"%@\"." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jemand hat bei %@ in „%@“ gefragt."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Someone asked at %1$@ in \"%2$@\"."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alguien preguntó a los %@ en «%@»."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quelqu’un a demandé à %@ dans « %@ »."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quelqu’un a demandé à %@ dans « %@ »."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alguém perguntou aos %@ em “%@”."
+          }
+        }
+      }
+    },
     "Something went wrong. Try again." : {
       "localizations" : {
         "de" : {
@@ -20615,6 +21579,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Fontes"
+          }
+        }
+      }
+    },
+    "Sources are on the device that recorded this meeting." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Quellen liegen auf dem Gerät, das diese Besprechung aufgenommen hat."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las fuentes están en el dispositivo que grabó esta reunión."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les sources se trouvent sur l'appareil qui a enregistré cette réunion."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les sources se trouvent sur l’appareil qui a enregistré cette réunion."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As fontes estão no dispositivo que gravou esta reunião."
           }
         }
       }
@@ -24230,36 +25228,36 @@
         }
       }
     },
-    "Transcribes while you record so you can read along and ask questions during the call. Uses extra CPU while recording and pauses in Low Power Mode. The full transcript is still made after the meeting and replaces the live one." : {
+    "Transcribes while you record so you can read along and ask questions during the call. Uses extra CPU while recording and pauses in Low Power Mode. The full transcript is still made after the meeting and replaces the live one. Question alerts also use it." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Transkribiert während der Aufnahme, sodass Sie mitlesen und während des Gesprächs Fragen stellen können. Beansprucht zusätzliche CPU-Leistung und pausiert im Energiesparmodus. Das vollständige Transkript wird weiterhin nach der Besprechung erstellt und ersetzt das Live-Transkript."
+            "value" : "Transkribiert während der Aufnahme, sodass Sie mitlesen und während des Gesprächs Fragen stellen können. Beansprucht zusätzliche CPU-Leistung und pausiert im Energiesparmodus. Das vollständige Transkript wird weiterhin nach der Besprechung erstellt und ersetzt das Live-Transkript. Fragen-Benachrichtigungen nutzen es ebenfalls."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Transcribe mientras grabas para que puedas leer y hacer preguntas durante la llamada. Usa más CPU durante la grabación y se pausa en modo de bajo consumo. La transcripción completa se genera de todos modos después de la reunión y reemplaza a la transcripción en vivo."
+            "value" : "Transcribe mientras grabas para que puedas leer y hacer preguntas durante la llamada. Usa más CPU durante la grabación y se pausa en modo de bajo consumo. La transcripción completa se genera de todos modos después de la reunión y reemplaza a la transcripción en vivo. Los avisos de preguntas también la usan."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Transcrit pendant l'enregistrement pour vous permettre de suivre et de poser des questions pendant l'appel. Utilise davantage le processeur pendant l'enregistrement et se met en pause en mode économie d'énergie. La transcription complète est toujours générée après la réunion et remplace la transcription en direct."
+            "value" : "Transcrit pendant l'enregistrement pour vous permettre de suivre et de poser des questions pendant l'appel. Utilise davantage le processeur pendant l'enregistrement et se met en pause en mode économie d'énergie. La transcription complète est toujours générée après la réunion et remplace la transcription en direct. Les alertes de questions l'utilisent aussi."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Transcrit pendant l’enregistrement afin que vous puissiez suivre le texte et poser des questions durant l’appel. Utilise plus de CPU pendant l’enregistrement et se met en pause en mode Économie d’énergie. La transcription complète est tout de même produite après la réunion et remplace la transcription en direct."
+            "value" : "Transcrit pendant l’enregistrement afin que vous puissiez suivre le texte et poser des questions durant l’appel. Utilise plus de CPU pendant l’enregistrement et se met en pause en mode Économie d’énergie. La transcription complète est tout de même produite après la réunion et remplace la transcription en direct. Les alertes de questions l’utilisent aussi."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Transcreve enquanto você grava, para que você acompanhe a leitura e faça perguntas durante a chamada. Usa mais CPU durante a gravação e pausa no Modo de Baixo Consumo. A transcrição completa ainda é feita após a reunião e substitui a ao vivo."
+            "value" : "Transcreve enquanto você grava, para que você acompanhe a leitura e faça perguntas durante a chamada. Usa mais CPU durante a gravação e pausa no Modo de Baixo Consumo. A transcrição completa ainda é feita após a reunião e substitui a ao vivo. Os alertas de perguntas também a usam."
           }
         }
       }

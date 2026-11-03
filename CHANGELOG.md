@@ -2,6 +2,11 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.49] - 2026-11-03
+
+### Mac
+- Whimbrel can tell you when someone in a meeting asks you something, with a notification and a draft answer from your memory, and can email it to your own Gmail. The meeting page lists these under "Questions for you"; turn it on in Settings → Meetings once your name is in Settings → Profile.
+
 ## [0.9.48] - 2026-11-02
 
 ### Mac

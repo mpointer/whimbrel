@@ -44,6 +44,8 @@ final class ProfileSettings: ObservableObject {
     @Published var role: String { didSet { store("role", role) } }
     @Published var organization: String { didSet { store("organization", organization) } }
     @Published var about: String { didSet { store("about", about) } }
+    /// "Other names people call you", comma-separated, for live question alerts.
+    @Published var otherNames: String { didSet { store("other_names", otherNames) } }
     @Published var facts: [ProfileFact] { didSet { storeFacts() } }
     @Published var enabled: Bool { didSet { store("enabled", enabled ? "true" : "false") } }
     @Published var suggestEnabled: Bool { didSet { store("suggest_enabled", suggestEnabled ? "true" : "false") } }
@@ -56,6 +58,7 @@ final class ProfileSettings: ObservableObject {
         role = string("role")
         organization = string("organization")
         about = string("about")
+        otherNames = string("other_names")
         enabled = flag("enabled")
         suggestEnabled = flag("suggest_enabled")
         facts = (try? JSONDecoder().decode([ProfileFact].self, from: Data(string("facts").utf8))) ?? []
@@ -81,6 +84,18 @@ final class ProfileSettings: ObservableObject {
     }
 
     var factTexts: [String] { facts.map(\.text) }
+
+    /// The names live question alerts listen for: the full name, the first name and each other
+    /// name, trimmed, without repeats (ignoring case). Empty when nothing is set.
+    nonisolated static func names(profileName: String, otherNames: String) -> [String] {
+        let full = profileName.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let first = full.split(separator: " ").first.map(String.init) ?? ""
+        let others = otherNames.split(separator: ",").map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        var seen = Set<String>()
+        return ([full, first] + others).filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+    }
+
+    var liveQuestionNames: [String] { Self.names(profileName: name, otherNames: otherNames) }
 
     /// True once the user has written anything (a field or a fact).
     var hasContent: Bool {
@@ -127,6 +142,7 @@ final class ProfileSettings: ObservableObject {
         [
             (Self.fieldKey("name"), name), (Self.fieldKey("role"), role),
             (Self.fieldKey("organization"), organization), (Self.fieldKey("about"), about),
+            (Self.fieldKey("other_names"), otherNames),
             (Self.fieldKey("facts"), Self.encode(facts)),
             (Self.fieldKey("enabled"), enabled ? "true" : "false"),
             (Self.fieldKey("suggest_enabled"), suggestEnabled ? "true" : "false"),
@@ -140,6 +156,7 @@ final class ProfileSettings: ObservableObject {
         case Self.fieldKey("role"): role = value
         case Self.fieldKey("organization"): organization = value
         case Self.fieldKey("about"): about = value
+        case Self.fieldKey("other_names"): otherNames = value
         case Self.fieldKey("facts"):
             guard let decoded = try? JSONDecoder().decode([ProfileFact].self, from: Data(value.utf8)) else { return false }
             facts = decoded

@@ -22,6 +22,43 @@ private struct RecordingNoticeSettingsView: View {
 struct MeetingsSettingsPane: View {
     @EnvironmentObject var appState: AppState
 
+    /// "Forward me a live question". Shown off, and locked, until there is a name to listen for.
+    @ViewBuilder private var liveQuestionSection: some View {
+        let hasNames = !appState.profile.liveQuestionNames.isEmpty
+        Toggle("Alert me when someone asks me something", isOn: Binding(
+            get: { hasNames && appState.liveQuestionSettings.enabled },
+            set: { appState.liveQuestionSettings.enabled = $0 }
+        ))
+        .tint(Color.whimbrelAccentPrimary)
+        .disabled(!hasNames)
+
+        if !hasNames {
+            Text("Add your name in Settings → Profile first.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+        } else if appState.liveQuestionSettings.enabled {
+            Toggle("Also email me", isOn: Binding(
+                get: { appState.liveQuestionSettings.emailEnabled },
+                set: { appState.liveQuestionSettings.emailEnabled = $0 }
+            ))
+            .tint(Color.whimbrelAccentPrimary)
+        }
+
+        LabeledContent("Other names people call you") {
+            TextField("Other names people call you", text: Binding(
+                get: { appState.profile.otherNames },
+                set: { appState.profile.otherNames = $0 }
+            ))
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+        }
+
+        Text("Lines that mention you, and the minutes before them, go to your Ask model. Alert emails go only to your own address. While alerts are on, the live transcript keeps running in meetings even when \"Live transcript during meetings\" is off.")
+            .font(.whimbrelBody(.caption))
+            .foregroundStyle(Color.whimbrelTextSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             Text("Meetings").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
@@ -59,10 +96,14 @@ struct MeetingsSettingsPane: View {
             ))
             .tint(Color.whimbrelAccentPrimary)
 
-            Text("Transcribes while you record so you can read along and ask questions during the call. Uses extra CPU while recording and pauses in Low Power Mode. The full transcript is still made after the meeting and replaces the live one.")
+            Text("Transcribes while you record so you can read along and ask questions during the call. Uses extra CPU while recording and pauses in Low Power Mode. The full transcript is still made after the meeting and replaces the live one. Question alerts also use it.")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(Color.whimbrelBorder)
+
+            liveQuestionSection
 
             Divider().overlay(Color.whimbrelBorder)
 

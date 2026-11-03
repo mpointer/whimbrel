@@ -141,6 +141,31 @@ char *whimbrel_llm_answer(
     StoreHandle *handle, const char *query, const char *model, size_t context_limit, const char *history_json,
     const char *routing_config_json);
 
+/* Live question: decides whether lines[index] is a question for the user. lines_json is
+ * [{"id","channel","start_cs","text"}]; names_json is ["Mike", ...]. Envelope data is
+ * {"is_for_user","confidence","quote","asker","restatement"} or null when the model says no
+ * or is not highly confident. Route "live_question"; spend cap applies. routing_config_json
+ * as whimbrel_llm_answer. Bare NULL on a NULL handle, bad JSON, or an out-of-range index. */
+char *whimbrel_live_question_detect(
+    StoreHandle *handle, const char *lines_json, size_t index, const char *names_json, const char *model,
+    const char *routing_config_json);
+
+/* Live question: drafts the user's reply to a verdict (verdict_json, as returned above),
+ * grounded in memory; recent_json is the same line shape. Envelope data is a ChatAnswer.
+ * Bare NULL on a NULL handle or bad JSON. */
+char *whimbrel_live_question_draft(
+    StoreHandle *handle, const char *verdict_json, const char *recent_json, const char *model,
+    const char *routing_config_json);
+
+/* Live question rule: a JSON array of indices into lines_json worth judging, or NULL on
+ * bad input. room_audio: the recording is known to be room audio. Free with
+ * whimbrel_core_free_string. */
+char *whimbrel_live_question_candidates(const char *lines_json, const char *names_json, bool room_audio);
+
+/* Live question rule: true when restatement nearly matches one in earlier_json
+ * ([[restatement, ms], ...]) within five minutes of now_ms. False on bad input. */
+bool whimbrel_live_question_is_duplicate(const char *restatement, const char *earlier_json, int64_t now_ms);
+
 /* Skins Release 2: one skin-maker turn. provider is "ollama", "anthropic", "openai" or
  * "google"; api_key may be NULL for Ollama. input_json is a SkinTurnInput
  * ({"request","history":[{"role","text"}],"currentManifest","catalogue"}).
@@ -257,6 +282,21 @@ char *whimbrel_profile_list_suggestions(StoreHandle *handle);
 bool whimbrel_profile_dismiss_suggestion(StoreHandle *handle, int64_t id);
 
 bool whimbrel_profile_delete_suggestion(StoreHandle *handle, int64_t id);
+
+/* Live question alerts. insert takes a NewLiveAlert JSON object, stores this device's alert and
+ * enqueues its sync; returns the id or -1. set_draft re-syncs the alert; set_email_status
+ * ("sent", "failed:<reason>", "off") is local only. list returns a meeting's alerts as a JSON
+ * array. take_unnotified_peer returns other devices' alerts no older than max_age_ms not yet
+ * notified here, and marks every unnotified peer alert notified. NULL/false/-1 on error. */
+int64_t whimbrel_live_alert_insert(StoreHandle *handle, const char *alert_json);
+bool whimbrel_live_alert_set_draft(StoreHandle *handle, int64_t id, const char *draft_json);
+bool whimbrel_live_alert_set_email_status(StoreHandle *handle, int64_t id, const char *status);
+char *whimbrel_live_alert_list(StoreHandle *handle, int64_t meeting_id);
+char *whimbrel_live_alert_take_unnotified_peer(StoreHandle *handle, int64_t now_unix_ms, int64_t max_age_ms);
+
+/* This device's id for a peer's meeting (sync_meeting_map), or -1 when it isn't synced here
+ * yet, on a null handle or bad input. Resolves whimbrel://meeting links made on another device. */
+int64_t whimbrel_resolve_sync_meeting(StoreHandle *handle, const char *peer_device_id, int64_t source_meeting_id);
 
 /* Deletes a meeting's live rows; returns the count, or -1 on a null handle or error. */
 int64_t whimbrel_live_clear_segments(StoreHandle *handle, int64_t meeting_id);
@@ -818,6 +858,8 @@ bool whimbrel_memory_replace_meeting_action_items_from_generated(
  * JSON-encoded CaptureItem, or NULL on a null/invalid handle, a missing item, or a DB
  * error. */
 char *whimbrel_memory_get_capture_item(StoreHandle *handle, int64_t id);
+/* One transcript segment by id (a citation), JSON MeetingTranscriptSegment, or NULL when missing. */
+char *whimbrel_memory_get_transcript_segment(StoreHandle *handle, int64_t id);
 
 /* M4.2: display cards for an answer's citations. refs_json is a JSON array of
  * ContextItemRef ({"kind":"capture"|"transcript"|"routine_run"|"episode"|"thread"|

@@ -25,6 +25,7 @@ pub use embedding::{
 pub mod keywords;
 pub mod l10n;
 pub mod live;
+pub mod live_alert;
 pub mod copies;
 pub mod meeting_parts;
 pub mod profile;
@@ -43,6 +44,7 @@ pub const OUTBOX_ROW_TYPE_MEETING: &str = "meeting";
 pub const OUTBOX_ROW_TYPE_ROUTINE_RUN: &str = "routine_run";
 pub const OUTBOX_ROW_TYPE_MEETING_PREP: &str = "meeting_prep";
 pub const OUTBOX_ROW_TYPE_PROFILE_SUGGESTION: &str = "profile_suggestion";
+pub const OUTBOX_ROW_TYPE_LIVE_ALERT: &str = "live_alert";
 /// Skin sync (`skin_sync`): one row per version of a user skin, and its images in chunks.
 pub const OUTBOX_ROW_TYPE_SKIN: &str = "skin";
 pub const OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK: &str = "skin_image_chunk";
@@ -1719,6 +1721,7 @@ impl Store {
         prep::ensure_meeting_prep_table(conn)?;
         live::ensure_live_table(conn)?;
     profile::ensure_profile_suggestion_table(conn)?;
+        live_alert::ensure_live_alert_table(conn)?;
         skin_sync::ensure_skin_sync_tables(conn)?;
         meeting_parts::ensure_meeting_part_schema(conn)?;
         Self::ensure_items_app_fields_columns(conn)?;
@@ -2476,6 +2479,11 @@ impl Store {
         self.conn.execute(
             "INSERT INTO sync_meeting_map (peer_device_id, source_meeting_id, local_meeting_id) VALUES (?1, ?2, ?3) \
              ON CONFLICT(peer_device_id, source_meeting_id) DO UPDATE SET local_meeting_id = excluded.local_meeting_id",
+            params![peer_device_id, source_meeting_id, local_meeting_id],
+        )?;
+        // A peer's live alerts can arrive before their meeting: attach them now.
+        self.conn.execute(
+            "UPDATE live_alert SET meeting_id = ?3 WHERE origin_device_id = ?1 AND source_meeting_id = ?2 AND meeting_id IS NULL",
             params![peer_device_id, source_meeting_id, local_meeting_id],
         )?;
         Ok(())
@@ -3800,6 +3808,19 @@ impl Store {
             Self::row_to_transcript_segment,
         )?;
         self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |h: &MeetingTranscriptSegment| h.meeting_id)
+    }
+
+    /// One transcript segment by id (a citation's `transcript` ref), with its meeting's title.
+    pub fn get_transcript_segment(&self, id: i64) -> rusqlite::Result<Option<MeetingTranscriptSegment>> {
+        self.conn
+            .query_row(
+                "SELECT i.id, i.thread_id, m.title, (i.ts_unix_ms - m.start_unix_ms) / 10, json_extract(i.actors, '$[0]'), i.body_text \
+                 FROM items i JOIN meeting m ON m.id = i.thread_id \
+                 WHERE i.id = ?1 AND i.kind = 'transcript'",
+                params![id],
+                Self::row_to_transcript_segment,
+            )
+            .optional()
     }
 
     fn row_to_transcript_segment(
@@ -5861,6 +5882,15 @@ impl Store {
             "DELETE FROM profile_suggestion WHERE origin_device_id IS NOT NULL AND created_at_unix_ms < ?1",
             params![cutoff_unix_ms],
         )?;
+        // Live alerts go with their meeting; a peer's alert whose meeting never arrived ages out.
+        self.conn.execute(
+            &format!("DELETE FROM live_alert WHERE meeting_id IN {expired_ids}"),
+            params![cutoff_unix_ms],
+        )?;
+        self.conn.execute(
+            "DELETE FROM live_alert WHERE meeting_id IS NULL AND origin_device_id IS NOT NULL AND created_at_unix_ms < ?1",
+            params![cutoff_unix_ms],
+        )?;
         // The workspace's device-local edits go with the meeting; left behind they
         // would reattach to nothing (and to a reused id, never, since ids autoincrement).
         self.conn.execute(
@@ -5982,6 +6012,7 @@ impl Store {
         // Provisional live-transcript text goes with the meeting (see `live`).
         tx.execute("DELETE FROM live_transcript_segment WHERE meeting_id = ?1", params![id])?;
         tx.execute("DELETE FROM profile_suggestion WHERE source_meeting_id = ?1", params![id])?;
+        tx.execute("DELETE FROM live_alert WHERE meeting_id = ?1", params![id])?;
         tx.execute("DELETE FROM meeting_note_draft WHERE meeting_id = ?1", params![id])?;
         tx.execute("DELETE FROM meeting_action_item WHERE meeting_id = ?1", params![id])?;
         tx.execute("DELETE FROM items WHERE kind = 'snapshot' AND thread_id = ?1", params![id])?;
@@ -7388,6 +7419,7 @@ impl Store {
         tx.execute("UPDATE meeting_action_item SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
         tx.execute("UPDATE OR IGNORE meeting_note_draft SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
         tx.execute("UPDATE profile_suggestion SET source_meeting_id = ?1 WHERE source_meeting_id = ?2", params![keep, drop])?;
+        tx.execute("UPDATE live_alert SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
         tx.execute("UPDATE meeting_followup SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
         tx.execute("UPDATE sync_meeting_map SET local_meeting_id = ?1 WHERE local_meeting_id = ?2", params![keep, drop])?;
         // What's left is the copy's own: the same rows `delete_meeting` removes.
@@ -7946,6 +7978,28 @@ impl Store {
                 aggregate_id: row.event_id.clone(),
                 operation_kind: OutboxOperationKind::Upsert,
                 payload_json: serde_json::to_string(row).map_err(json_to_sql_error)?,
+                connector: OUTBOX_CONNECTOR.to_string(),
+            },
+            now_unix_ms(),
+        )?;
+        Ok(())
+    }
+
+    /// Enqueues an upsert of this device's live alert, in the caller's transaction. A store with
+    /// no device id enqueues nothing.
+    pub(crate) fn enqueue_live_alert_outbox(&self, tx: &rusqlite::Transaction<'_>, id: i64, payload: &live_alert::AppliedLiveAlert) -> rusqlite::Result<()> {
+        let Some(own) = self.own_device_id.borrow().clone() else { return Ok(()) };
+        let local_seq = Self::next_local_seq_tx(tx)?;
+        sync_outbox::enqueue_outbox_tx(
+            tx,
+            NewOutboxOperation {
+                device_id: own,
+                local_seq,
+                row_type: OUTBOX_ROW_TYPE_LIVE_ALERT.to_string(),
+                aggregate_type: "live_alert".to_string(),
+                aggregate_id: id.to_string(),
+                operation_kind: OutboxOperationKind::Upsert,
+                payload_json: serde_json::to_string(payload).map_err(json_to_sql_error)?,
                 connector: OUTBOX_CONNECTOR.to_string(),
             },
             now_unix_ms(),
@@ -10051,6 +10105,9 @@ mod tests {
             .unwrap();
         let segments = store.search_transcript_keyword("hello", 10).unwrap();
         assert_eq!(segments.len(), 1);
+        let found = store.get_transcript_segment(segments[0].id).unwrap().unwrap();
+        assert_eq!((found.meeting_id, found.meeting_title.as_str(), found.text.as_str()), (meeting_id, "Standup", "hello"));
+        assert!(store.get_transcript_segment(segments[0].id + 1_000).unwrap().is_none());
         // Both segments must have DIFFERENT local_seq values — verified indirectly via
         // the shared counter continuing to advance (checked by inserting a third row
         // and confirming it's 2 higher than the meeting's own local_seq).

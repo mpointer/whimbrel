@@ -53,7 +53,7 @@ final class RoutineScheduler: ObservableObject {
     /// wouldn't stop `create_event` from working, so requiring it would block a
     /// perfectly capable grant.
     private static let calendarWriteScope = "https://www.googleapis.com/auth/calendar.events"
-    private static let gmailWriteScope = "https://www.googleapis.com/auth/gmail.send"
+    static let gmailWriteScope = "https://www.googleapis.com/auth/gmail.send"
 
     func start(
         store: CoreMemoryStore?, slowStore: CoreMemoryStore?, meetingsProvider: @escaping () -> [QualifyingMeeting], routing: RoutingSettings,
@@ -212,7 +212,7 @@ final class RoutineScheduler: ObservableObject {
         return (calendarToken, gmailToken)
     }
 
-    private static func fetchAccessToken(from helper: GoogleOAuthHelper?, requiredScope: String, log: Logger) async -> String? {
+    static func fetchAccessToken(from helper: GoogleOAuthHelper?, requiredScope: String, log: Logger) async -> String? {
         guard let helper else { return nil }
         do {
             return try await helper.validAccessToken(requiringGrantedScope: requiredScope)
@@ -316,7 +316,8 @@ final class RoutineScheduler: ObservableObject {
     /// pattern. Everything before `callTool` is local (spawn, handshake, tool discovery)
     /// and a failure there is retryable; `callTool` is the one step that reaches
     /// Google, so its failure is the terminal case. No store access anywhere here.
-    private static func performToolCall(plan: CoreWriteActionPlan, accessToken: String) async -> CoreWriteActionOutcome {
+    /// Internal (with `fetchAccessToken`) so `GmailSelfSend` sends through the same path.
+    static func performToolCall(plan: CoreWriteActionPlan, accessToken: String) async -> CoreWriteActionOutcome {
         await Task.detached(priority: .userInitiated) {
             let connectorLabel = plan.connector == "google-calendar" ? "Calendar" : "Gmail"
             guard let nodePath = McpNodeLocator.nodeExecutablePath() else {

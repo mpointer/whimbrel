@@ -223,6 +223,8 @@ struct MeetingDetailContentView: View {
     @State private var segments: [CoreMeetingTranscriptSegment] = []
     @State private var parts: [CoreMeetingPart] = []
     @State private var highlightedSegmentId: Int64?
+    @State private var liveAlerts: [LiveAlertsSection.Row] = []
+    @State private var liveStatus: LiveTranscriptionService.Status = .idle
 
     /// Key of the Decisions/Open-questions/Action-item row currently under the mouse --
     /// its reorder/delete buttons fade in only for that row (macOS Mail/Notes-style
@@ -355,6 +357,15 @@ struct MeetingDetailContentView: View {
                             guard note.userInfo?["meetingId"] as? Int64 == meeting.id else { return }
                             Task { await snapshotsModel.reload() }
                         }
+                    LiveAlertsSection(
+                        rows: liveAlerts,
+                        paused: meeting.id == appState.activeMeetingId
+                            ? LiveAlertsSection.pausedLabel(
+                                status: liveStatus,
+                                alertsOn: LiveQuestionWatcher.shouldRun(settings: appState.liveQuestionSettings, names: appState.profile.liveQuestionNames))
+                            : nil,
+                        onJump: segments.isEmpty ? nil : { seekTranscript(to: $0) }
+                    )
                     Picker("", selection: $tab) {
                         ForEach(MeetingPageTab.allCases) { Text($0.title).tag($0) }
                     }
@@ -375,9 +386,7 @@ struct MeetingDetailContentView: View {
             }
         }
         MeetingAskBar(session: askSession, meeting: meeting, segmentCount: segments.count) { segmentId in
-            highlightedSegmentId = nil
-            tab = .transcript
-            DispatchQueue.main.async { highlightedSegmentId = segmentId }
+            highlightSegment(segmentId)
         }
         .onDisappear { askSession.teardown() }
         }
@@ -386,6 +395,7 @@ struct MeetingDetailContentView: View {
             Task { await snapshotsModel.reload() }
             loadParts()
             loadSegments()
+            loadLiveAlerts()
             let defaults = appState.routing.defaultSelection()
             selectedProvider = defaults.provider
             ollamaModel = defaults.ollamaModel
@@ -400,6 +410,14 @@ struct MeetingDetailContentView: View {
         .onChange(of: selectedProvider) { _, _ in
             regenerateError = nil
         }
+        .onReceive(LiveAlertsSection.refresh) { _ in
+            let alertsOn = LiveQuestionWatcher.shouldRun(settings: appState.liveQuestionSettings, names: appState.profile.liveQuestionNames)
+            if LiveAlertsSection.shouldPoll(recording: meeting.id == appState.activeMeetingId, alertsOn: alertsOn) { loadLiveAlerts() }
+        }
+        .onReceive(appState.liveTranscript.$status) { liveStatus = $0 }
+        // A notification or link for this meeting: scroll to that moment once the segments load.
+        .onReceive(appState.$pendingMeetingSeek) { consumeSeek($0) }
+        .onChange(of: segments.count) { _, _ in consumeSeek(appState.pendingMeetingSeek) }
         // Transcription finished while this page was open: the segments (and the Ask bar's
         // transcript gate) were loaded before they existed.
         .onChange(of: appState.processingMeetingId) { old, new in
@@ -421,6 +439,27 @@ struct MeetingDetailContentView: View {
                 onChoose: { choice in resolveRegenerationConflict(choice, conflict: conflict) }
             )
         }
+    }
+
+    private func loadLiveAlerts() {
+        LiveAlertsSection.load(store: appState.coreStore, meetingId: meeting.id) { if liveAlerts != $0 { liveAlerts = $0 } }
+    }
+
+    private func highlightSegment(_ segmentId: Int64) {
+        highlightedSegmentId = nil
+        tab = .transcript
+        DispatchQueue.main.async { highlightedSegmentId = segmentId }
+    }
+
+    private func seekTranscript(to atCs: Int64) {
+        if let id = LiveAlertsSection.nearest(segments.map { ($0.id, $0.startCs) }, to: atCs) { highlightSegment(id) }
+    }
+
+    /// Consumes `pendingMeetingSeek` for this meeting once there are segments to scroll to.
+    private func consumeSeek(_ request: (meetingId: Int64, atCs: Int64)?) {
+        guard let request, request.meetingId == meeting.id, !segments.isEmpty else { return }
+        seekTranscript(to: request.atCs)
+        DispatchQueue.main.async { appState.pendingMeetingSeek = nil }
     }
 
     private func loadSegments() {

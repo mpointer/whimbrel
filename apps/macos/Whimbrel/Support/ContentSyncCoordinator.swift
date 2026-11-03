@@ -20,6 +20,9 @@ final class ContentSyncCoordinator: ObservableObject {
     private let deviceId: String
 
     private var periodicTask: Task<Void, Never>?
+    /// Runs after each successful round, once pulled rows are applied (live question alerts
+    /// from other devices are notified here).
+    var afterPull: (() async -> Void)?
     private var statusSubscription: AnyCancellable?
 
     /// Rounds that have failed in a row. A failed round holds `CoreMemoryStore.accessQueue`
@@ -133,6 +136,7 @@ final class ContentSyncCoordinator: ObservableObject {
             lastSyncedAt = Date()
             recordSuccess(Date())
             await SkinSync.round(store: coreStore, skins: .shared, skinStore: .shared, defaults: .standard)
+            await afterPull?()
         } else {
             consecutiveFailures += 1
             let cause = CoreMemoryStore.lastSyncContentError() ?? "unknown"

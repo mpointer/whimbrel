@@ -38,6 +38,17 @@
 	<string>$(MICROSOFT_OAUTH_CLIENT_ID)</string>
 	<key>SyncWorkerBaseURL</key>
 	<string>$(SYNC_WORKER_BASE_URL)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.mpointer.kestrel.meeting</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>whimbrel</string>
+			</array>
+		</dict>
+	</array>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
