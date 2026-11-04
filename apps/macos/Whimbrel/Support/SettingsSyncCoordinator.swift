@@ -151,6 +151,7 @@ final class SettingsSyncCoordinator: ObservableObject {
             add(&fields, key, value)
         }
         add(&fields, RoutineHostSettings.fieldKey, routineHost.primaryDeviceId)
+        add(&fields, RoutineHostSettings.setByFieldKey, routineHost.setBy)
 
         add(&fields, "retention.captureItemDays", String(retention.captureItemDays))
         add(&fields, "retention.captureItemKeepForever", retention.captureItemKeepForever ? "true" : "false")
@@ -366,7 +367,7 @@ final class SettingsSyncCoordinator: ObservableObject {
         case "apiKey.openrouter":
             return applyApiKey(field, provider: .openrouter)
         default:
-            if fieldKey == RoutineHostSettings.fieldKey {
+            if fieldKey == RoutineHostSettings.fieldKey || fieldKey == RoutineHostSettings.setByFieldKey {
                 return routineHost.apply(fieldKey: fieldKey, value: field.value)
             }
             if fieldKey.hasPrefix("profile.") {

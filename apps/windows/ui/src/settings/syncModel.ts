@@ -48,6 +48,15 @@ export function contentLine(view: SyncView, locale: string): string | null {
   return t("Content synced at {time}. It syncs every minute.", { time });
 }
 
+/** The settings-sync line (the Profile, for now) under a Ready status; null until its first round. */
+export function settingsLine(view: SyncView, locale: string): string | null {
+  if (view.state !== "ready") return null;
+  if (view.settingsError) return t("Profile sync failed: {error}. Will retry automatically.", { error: view.settingsError });
+  if (view.settingsLastSyncedMs == null) return null;
+  const time = new Date(view.settingsLastSyncedMs).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
+  return t("Your profile synced at {time}.", { time });
+}
+
 export type DeviceAction = "approve" | "resendKey" | "revoke";
 
 /** What this PC can do to a device in the list. It can't approve or revoke itself

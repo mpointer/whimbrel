@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DeviceView } from "../generated/types";
-import { collidingPendingIds, contentLine, deviceActions, deviceTitle, primaryAction } from "./syncModel";
+import { collidingPendingIds, contentLine, deviceActions, deviceTitle, primaryAction, settingsLine } from "./syncModel";
 
 describe("contentLine", () => {
   const ready = { state: "ready" as const, message: null, deviceId: "k" };
@@ -12,6 +12,20 @@ describe("contentLine", () => {
     expect(contentLine({ ...ready, contentLastSyncedMs: Date.now() }, "en")).toMatch(/^Content synced at /);
     expect(contentLine({ ...ready, contentLastSyncedMs: Date.now(), contentError: "timed out after 30s" }, "en")).toBe(
       "Content sync failed: timed out after 30s. Will retry automatically.",
+    );
+  });
+});
+
+describe("settingsLine", () => {
+  const ready = { state: "ready" as const, message: null, deviceId: "k" };
+  it("is silent until enrolled and until the first round", () => {
+    expect(settingsLine({ ...ready, state: "waitingForApproval", settingsError: "x" }, "en")).toBeNull();
+    expect(settingsLine(ready, "en")).toBeNull();
+  });
+  it("reports success and failure", () => {
+    expect(settingsLine({ ...ready, settingsLastSyncedMs: Date.now() }, "en")).toMatch(/^Your profile synced at /);
+    expect(settingsLine({ ...ready, settingsLastSyncedMs: Date.now(), settingsError: "offline" }, "en")).toBe(
+      "Profile sync failed: offline. Will retry automatically.",
     );
   });
 });

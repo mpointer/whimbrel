@@ -56,6 +56,23 @@ final class RoutineHostTests: XCTestCase {
         XCTAssertFalse(s.apply(fieldKey: "routines.other", value: "x"))
     }
 
+    func testChoosingAPrimaryRecordsWhichDeviceChoseIt() {
+        let d = defaults()
+        let s = RoutineHostSettings(defaults: d)
+        s.choose("dev-2", by: "me")
+        XCTAssertEqual(s.primaryDeviceId, "dev-2")
+        XCTAssertEqual(s.setBy, "me")
+        XCTAssertEqual(RoutineHostSettings(defaults: d).setBy, "me", "persisted")
+        XCTAssertEqual(RoutineHostSettings.setByFieldKey, "routines.primaryDeviceId.setBy")
+    }
+
+    func testWhoChoseItArrivesThroughSyncWithTheChoice() {
+        let s = RoutineHostSettings(defaults: defaults())
+        XCTAssertTrue(s.apply(fieldKey: "routines.primaryDeviceId.setBy", value: "dev-9"))
+        XCTAssertEqual(s.setBy, "dev-9")
+        XCTAssertEqual(s.primaryDeviceId, "", "the choice itself is its own field")
+    }
+
     // MARK: runs from other devices
 
     func testARunDecodesWithAndWithoutItsOriginDevice() throws {

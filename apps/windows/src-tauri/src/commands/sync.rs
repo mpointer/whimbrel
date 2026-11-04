@@ -35,6 +35,8 @@ pub fn sync_status(state: State<'_, AppState>) -> SyncView {
             device_id: String::new(),
             content_last_synced_ms: None,
             content_error: None,
+            settings_last_synced_ms: None,
+            settings_error: None,
         },
     }
 }

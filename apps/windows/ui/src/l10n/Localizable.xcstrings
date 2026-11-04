@@ -16352,6 +16352,40 @@
         }
       }
     },
+    "Profile sync failed: {error}. Will retry automatically." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Profilsync fehlgeschlagen: {error}. Neuer Versuch folgt automatisch."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Error al sincronizar el perfil: {error}. Se reintentará automáticamente."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Échec de la synchronisation du profil : {error}. Nouvelle tentative automatique."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Échec de la synchro du profil : {error}. Nouvel essai automatique."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Falha na sincronização do perfil: {error}. Nova tentativa automática."
+          }
+        }
+      }
+    },
     "Progress" : {
       "localizations" : {
         "de" : {
@@ -27882,6 +27916,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Seus outros dispositivos aparecem aqui depois que a sincronização for configurada e eles forem aprovados."
+          }
+        }
+      }
+    },
+    "Your profile synced at {time}." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ihr Profil wurde um {time} synchronisiert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu perfil se sincronizó a las {time}."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Votre profil a été synchronisé à {time}."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Votre profil a été synchronisé à {time}."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seu perfil foi sincronizado às {time}."
           }
         }
       }

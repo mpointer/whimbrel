@@ -23,7 +23,10 @@ enum RoutineHost {
 @MainActor
 final class RoutineHostSettings: ObservableObject {
     nonisolated static let fieldKey = "routines.primaryDeviceId"
+    /// The device that made the current choice, synced beside it; its timestamp says when.
+    nonisolated static let setByFieldKey = "routines.primaryDeviceId.setBy"
     private static let defaultsKey = "com.mpointer.kestrel.routinePrimaryDeviceId"
+    private static let setByDefaultsKey = "com.mpointer.kestrel.routinePrimaryDeviceSetBy"
     private let defaults: UserDefaults
 
     @Published var primaryDeviceId: String {
@@ -33,14 +36,32 @@ final class RoutineHostSettings: ObservableObject {
         }
     }
 
+    @Published private(set) var setBy: String {
+        didSet {
+            defaults.set(setBy, forKey: Self.setByDefaultsKey)
+            SettingsFieldTimestamps.touch(Self.setByFieldKey)
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         primaryDeviceId = defaults.string(forKey: Self.defaultsKey) ?? ""
+        setBy = defaults.string(forKey: Self.setByDefaultsKey) ?? ""
+    }
+
+    /// A person's choice in Settings: the only path that should change the primary on this
+    /// device. Records this device as the one that chose, so every device can show who did.
+    func choose(_ deviceId: String, by ownDeviceId: String) {
+        primaryDeviceId = deviceId
+        setBy = ownDeviceId
     }
 
     func apply(fieldKey: String, value: String) -> Bool {
-        guard fieldKey == Self.fieldKey else { return false }
-        primaryDeviceId = value
+        switch fieldKey {
+        case Self.fieldKey: primaryDeviceId = value
+        case Self.setByFieldKey: setBy = value
+        default: return false
+        }
         return true
     }
 }

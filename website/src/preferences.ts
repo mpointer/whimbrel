@@ -127,7 +127,7 @@ export async function syncContact(
     const update = await fetcher(`https://api.resend.com/contacts/${encodeURIComponent(lead.email)}/topics`, {
       method: "PATCH",
       headers,
-      body: JSON.stringify({ topics }),
+      body: JSON.stringify(topics), // a bare array: Resend answers 422 to { topics: [...] }
     });
     if (update.ok) return true;
     if (update.status !== 404) {

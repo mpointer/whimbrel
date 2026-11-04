@@ -151,7 +151,7 @@ struct RoutinesSettingsPane: View {
         return VStack(alignment: .leading, spacing: Spacing.xs) {
             Picker("Routines run on", selection: Binding(
                 get: { appState.routineHost.primaryDeviceId },
-                set: { appState.routineHost.primaryDeviceId = $0 }
+                set: { appState.routineHost.choose($0, by: appState.deviceId) }
             )) {
                 Text("Any device (default)").tag("")
                 ForEach(approved, id: \.publicKey) { device in
@@ -159,6 +159,12 @@ struct RoutinesSettingsPane: View {
                 }
             }
             .accessibilityIdentifier("routines-run-on")
+            if !appState.routineHost.setBy.isEmpty {
+                let at = Date(timeIntervalSince1970: Double(SettingsFieldTimestamps.timestamp(for: RoutineHostSettings.setByFieldKey)) / 1000)
+                Text("Chosen on \(appState.deviceLabel(for: appState.routineHost.setBy)), \(at.formatted(date: .abbreviated, time: .shortened)).")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+            }
             if choice.isEmpty, approved.count >= 2 {
                 Text("Each device runs its own routines until you choose one.")
                     .font(.whimbrelBody(.caption))

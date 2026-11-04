@@ -5,7 +5,7 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { handle, type Env } from "../src/app";
 import { send, type Email } from "../src/email";
 import { runScheduled } from "../src/followup";
-import { leadByEmail, signToken, TOKEN_DAYS } from "../src/preferences";
+import { leadByEmail, signToken, syncContact, TOKEN_DAYS } from "../src/preferences";
 
 const RESEND = "https://api.resend.com/emails";
 const SECRET = "test-token-secret";
@@ -247,5 +247,19 @@ describe("the next-day follow-up", () => {
     const again = recorder();
     await runScheduled({ DB: env.DB, ...mailEnv }, now + 3600_000, again.fn);
     expect(again.sent).toHaveLength(0);
+  });
+});
+
+describe("the Resend contact", () => {
+  it("sends the topic list as a bare array, and creates the contact when Resend has none", async () => {
+    const calls: { url: string; method: string; body: unknown }[] = [];
+    const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, method: init!.method!, body: JSON.parse(String(init!.body)) });
+      return url.endsWith("/topics") ? new Response("{}", { status: 404 }) : Response.json({ id: "c1" });
+    }) as typeof fetch;
+    expect(await syncContact("re_test", "topic-1", { email: "ada@example.com", name: "Ada Lovelace", product_emails: "opted_in" }, fn)).toBe(true);
+    expect(calls[0]).toEqual({ url: "https://api.resend.com/contacts/ada%40example.com/topics", method: "PATCH", body: [{ id: "topic-1", subscription: "opt_in" }] });
+    expect(calls[1]).toEqual({ url: "https://api.resend.com/contacts", method: "POST", body: { email: "ada@example.com", first_name: "Ada", topics: [{ id: "topic-1", subscription: "opt_in" }] } });
   });
 });

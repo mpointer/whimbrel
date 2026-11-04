@@ -99,6 +99,18 @@ where
         .map_err(|e| e.to_string())?
 }
 
+/// One settings round (plan 2026-11-04-windows-settings-sync.md): the account key from Credential
+/// Manager, then core's push and pull, off the store actor. It runs before the content round and
+/// neither one's failure skips the other.
+fn settings_round(settings: &Mutex<SettingsFile>, secrets: &dyn SecretStore, url: &str, token: &str) -> Result<usize, String> {
+    let key = keys::load_group_key(secrets)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| tr("This PC doesn't hold the account key yet.", &[]))?;
+    super::settings::run_round(settings, |local| {
+        api::sync_ops::coordinators::settings_iteration(url, token, &key, local).map_err(|e| e.to_string())
+    })
+}
+
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
@@ -133,6 +145,12 @@ pub fn start(
             };
             let Some(credentials) = credentials else { continue };
             let (url, token) = (credentials.turso_database_url, credentials.turso_token);
+            let settings_round = settings_round(&settings, &*secrets, &url, &token);
+            match &settings_round {
+                Ok(applied) => tracing::info!(?trigger, applied, "settings sync round ok"),
+                Err(e) => tracing::warn!(?trigger, error = %e, "settings sync round failed"),
+            }
+            controller.record_settings_result(settings_round.map(|_| now_ms()));
             let result = run_round(&store, secrets.clone(), device_id.clone(), move |key, s, device| {
                 sync_engine::sync_content(&url, &token, key, s, device).map_err(|e| e.to_string())
             });

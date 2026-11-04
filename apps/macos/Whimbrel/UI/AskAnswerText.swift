@@ -84,10 +84,28 @@ struct AskAnswerText: NSViewRepresentable {
         view.textStorage?.setAttributedString(AskMarkdown.attributed(markdown, color: NSColor(Color.whimbrelTextPrimary)))
     }
 
+    /// Measured on a private copy of `markdown`, never on the view: SwiftUI can ask for a size
+    /// before `updateNSView` has put new text in, and resizing the view's own container to a
+    /// probe width (sometimes near zero inside a ScrollView) left a finished answer laid out one
+    /// word per line under its Copy buttons, with nothing to scroll.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {
-        guard let width = proposal.width, let container = view.textContainer, let layout = view.layoutManager else { return nil }
-        container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+        fittingSize(width: proposal.width)
+    }
+
+    func fittingSize(width: CGFloat?) -> CGSize? {
+        guard let width, width > 1 else { return nil }
+        return CGSize(width: width, height: Self.height(of: markdown, width: width))
+    }
+
+    /// Height of `markdown` laid out at `width`, as the view draws it.
+    static func height(of markdown: String, width: CGFloat) -> CGFloat {
+        let storage = NSTextStorage(attributedString: AskMarkdown.attributed(markdown)) // colour never changes layout
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
         layout.ensureLayout(for: container)
-        return CGSize(width: width, height: ceil(layout.usedRect(for: container).height))
+        return ceil(layout.usedRect(for: container).height)
     }
 }

@@ -95,7 +95,9 @@ fn apply(file: &mut SettingsFile, change: impl FnOnce(&mut Profile) -> Result<()
     if !edit_fits(before, profile.composed_chars()) {
         return Err(CommandError::invalid_input(tr("That would push your Profile past {max} characters. Shorten it first.", &[("max", &MAX_CHARS.to_string())])));
     }
+    let synced = crate::syncing::settings::encoded(file);
     file.set_profile(&profile);
+    crate::syncing::settings::stamp_changed(file, &synced, crate::syncing::settings::now_ms());
     Ok(view(&profile))
 }
 
@@ -233,6 +235,25 @@ mod tests {
             CommandError::InvalidInput { message } => message,
             other => panic!("expected invalid input, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn an_edit_stamps_only_the_synced_fields_it_changed() {
+        use crate::settings::keys;
+        let (mut f, _dir) = file("stamps");
+        apply(&mut f, |p| {
+            p.role = "Founder".into();
+            Ok(())
+        })
+        .unwrap();
+        assert!(f.stamp_of(keys::PROFILE_ROLE) > 0, "the role was edited here");
+        for key in [keys::PROFILE_NAME, keys::PROFILE_ABOUT, keys::PROFILE_FACTS, keys::PROFILE_ENABLED] {
+            assert_eq!(f.stamp_of(key), 0, "{key} didn't change, so the account's copy still wins");
+        }
+        apply(&mut f, |p| p.add_fact("a".into(), "Likes tea", Some(3)).map_err(refused)).unwrap();
+        assert!(f.stamp_of(keys::PROFILE_FACTS) > 0, "adding a fact, or accepting a suggestion, stamps the list");
+        let refused_edit = apply(&mut f, |p| p.add_fact("b".into(), "likes TEA.", None).map_err(refused));
+        assert!(refused_edit.is_err());
     }
 
     #[test]
