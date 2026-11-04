@@ -58,7 +58,7 @@ function cookieFrom(response: Response): string {
 }
 
 beforeEach(async () => {
-  await env.DB.exec("DELETE FROM downloads; DELETE FROM leads;");
+  await env.DB.exec("DELETE FROM downloads; DELETE FROM email_preference_events; DELETE FROM leads;");
 });
 
 describe("POST /api/register", () => {
@@ -191,7 +191,9 @@ describe("POST /api/register", () => {
       const f = fakeFetch({ [RESEND]: () => Response.json({ id: "e1" }) });
       const res = await call(registerJson(valid), { env: emailEnv, fetch: f });
       const leadId = cookieFrom(res).split("=")[1];
-      const [welcome, alert] = sentEmails(f);
+      const sent = sentEmails(f);
+      const welcome = sent.find((e) => (e.to as string[])[0] === "ada@example.com")!;
+      const alert = sent.find((e) => (e.to as string[])[0] === "mike@futuremeanswered.com")!;
 
       expect(welcome).toMatchObject({ to: ["ada@example.com"], reply_to: "mike@futuremeanswered.com", subject: "Your Whimbrel download links" });
       expect(welcome.text).toContain(`https://whimbrel.test/api/download/mac?lead=${leadId}`);
@@ -367,6 +369,23 @@ describe("other routes", () => {
     expect(html).toContain('"@type":"FAQPage"');
   });
 
+  // /changelog/ is built from the repository's CHANGELOG.md, the plain-language notes, not
+  // from PR titles; unreleased work and the unreleased iPhone app stay off it.
+  it("builds the changelog page from CHANGELOG.md", async () => {
+    const html = await (await call(new Request("https://whimbrel.test/changelog/"))).text();
+    expect(html).toContain('<h2>Version 0.9.52</h2>');
+    expect(html).toContain("Export everything writes your meetings with their transcripts");
+    expect(html).toContain('<span class="tag">Windows</span>');
+    expect(html).toContain("The app, its icon and its installer carry the new name.");
+    expect(html).toContain("<code>apps/macos/scripts/install-launch-agent.sh /Applications/Whimbrel.app</code>");
+    expect(html).not.toContain("Unreleased");
+    expect(html).not.toContain(">iPhone<");
+    // The private repository's "(#397)" references are dropped.
+    expect(html).toContain("The Whimbrel icon and wordmark appear at the top of Today.</li>");
+    // Releases older than CHANGELOG.md still come from the GitHub release notes.
+    expect(html).toContain('<h2>Version 0.3.12</h2>');
+  });
+
   // The trust surface (docs/superpowers/specs/2026-11-04-trust-surface-design.md): the
   // privacy page carries the "what leaves your computer" table the apps link to, and no
   // page claims "no telemetry" while the update check sends a weekly identifier.
@@ -374,9 +393,12 @@ describe("other routes", () => {
     const privacy = await (await call(new Request("https://whimbrel.test/privacy/"))).text();
     expect(privacy).toContain('<h2 id="leaves">What leaves your computer</h2>');
     expect(privacy).toContain("A random identifier that changes every week");
+    expect(privacy).toContain("<td>When the app starts, then once a day.</td>");
     for (const path of ["/", "/open-source/", "/es/", "/es/open-source/", "/fr/", "/fr/open-source/"]) {
       const html = await (await call(new Request(`https://whimbrel.test${path}`))).text();
       expect(html, path).not.toMatch(/no telemetry|sin telemetría|sans télémétrie|ni télémétrie|has no analytics or telemetry/);
+      // The check runs at launch and daily; only its identifier is weekly.
+      expect(html, path).not.toMatch(/weekly update check|comprobación semanal|mise à jour hebdomadaire/);
     }
   });
 });

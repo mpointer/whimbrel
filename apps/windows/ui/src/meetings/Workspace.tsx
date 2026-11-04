@@ -203,6 +203,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
             {t("Recording · {elapsed}", { elapsed: elapsedLabel(view.row.tsUnixMs, now) })}
           </p>
           {!view.readOnly && <RecordingNoticeCard meetingId={meetingId} />}
+          <LiveAlertsSection meetingId={meetingId} recording={true} endedUnixMs={null} />
           <label className="field">
             <span>{t("Notes")}</span>
             <textarea className="input" rows={6} value={notes ?? ""} onChange={(e) => setNotes(e.target.value)} />
@@ -279,7 +280,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
             </div>
           )}
 
-          {/* After the meeting only: (b) adds it to the live view, where `recording` is true. */}
+          {/* After the meeting it keeps polling for half an hour, while drafts may still land. */}
           <LiveAlertsSection meetingId={meetingId} recording={false} endedUnixMs={view.row.endUnixMs ?? null} />
 
           <TranscriptPanel key={transcriptRound} meetingId={meetingId} hasTranscript={view.hasTranscript} />

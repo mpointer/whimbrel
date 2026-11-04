@@ -1,6 +1,8 @@
 import { leadExists, parseLead, PLATFORMS, recordDownload, upsertLead, type LeadInput, type Platform } from "./leads";
 import { resolveRelease } from "./downloads";
-import { leadAlertEmail, sendEmail, welcomeEmail } from "./email";
+import { leadAlertEmail, send, welcomeEmail, type Email } from "./email";
+import { preferencesPage } from "./preferences-page";
+import { language, leadByEmail, leadById, logEvent, markSynced, setPreference, signToken, syncContact, verifyToken, type ProductEmails } from "./preferences";
 
 export interface Env {
   ASSETS: Fetcher;
@@ -23,6 +25,11 @@ export interface Env {
   EMAIL_REPLY_TO?: string;
   /** Who gets an alert for every registration. */
   LEAD_ALERT_EMAIL?: string;
+  /** Signs the "Manage email preferences" links (secret). Without it mail carries no
+   * footer link and product mail is refused (it could not carry one-click unsubscribe). */
+  EMAIL_TOKEN_SECRET?: string;
+  /** The Resend topic ("Product updates") that mirrors each lead's answer for broadcasts. */
+  RESEND_PRODUCT_TOPIC_ID?: string;
 }
 
 /** Cookie that remembers a registered visitor so the download links work without asking
@@ -143,13 +150,21 @@ export async function handleRegister(request: Request, env: Env, ctx: ExecutionC
   const countryCode = country(request);
   const { id, isNew } = await upsertLead(env.DB, lead, countryCode, now);
 
+  // The product-email answer (design §1, double opt-in): every lead starts opted_out. The
+  // form needs no proof of owning the address, so a ticked box only mails a confirmation
+  // link; product mail starts when the owner of the address confirms through it.
+  const where = { page: lead.signupPage, language: lead.signupLanguage };
+  if (isNew) await logEvent(env.DB, id, "opted_out", "signup_form", where, now);
+  ctx.waitUntil(syncLead(env, id, fetcher));
+  if (lead.marketingOptIn) ctx.waitUntil(requestConfirmation(env, id, new URL(request.url).origin, Date.parse(now), fetcher));
+
   // Email never blocks or fails the registration: it runs after the response is sent.
-  if (env.RESEND_API_KEY && env.EMAIL_FROM) {
-    const key = env.RESEND_API_KEY;
+  if (env.EMAIL_FROM) {
     const from = env.EMAIL_FROM;
     const origin = new URL(request.url).origin;
-    if (isNew) ctx.waitUntil(sendEmail(key, welcomeEmail(origin, id, lead, from, env.EMAIL_REPLY_TO), fetcher));
-    if (env.LEAD_ALERT_EMAIL) ctx.waitUntil(sendEmail(key, leadAlertEmail(lead, isNew, countryCode, from, env.LEAD_ALERT_EMAIL), fetcher));
+    const nowMs = Date.parse(now);
+    if (isNew) ctx.waitUntil(send(env, "transactional", welcomeEmail(origin, id, lead, from, env.EMAIL_REPLY_TO), { leadId: id, origin, nowMs }, fetcher));
+    if (env.LEAD_ALERT_EMAIL) ctx.waitUntil(send(env, "transactional", leadAlertEmail(lead, isNew, countryCode, from, env.LEAD_ALERT_EMAIL), { origin, nowMs }, fetcher));
   }
 
   if (env.LEAD_WEBHOOK_URL) {
@@ -217,6 +232,140 @@ export async function handle(request: Request, env: Env, ctx: ExecutionContext, 
 
   if (pathname === "/api/releases" && request.method === "GET") return handleReleases(env, fetcher);
 
+  if (pathname === "/email/preferences/" || pathname === "/email/preferences") {
+    if (request.method === "GET") return handlePreferencesGet(request, env);
+    if (request.method === "POST") return handlePreferencesPost(request, env, ctx, fetcher);
+    return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET, POST" } });
+  }
+
+  if (pathname === "/api/email/unsubscribe") {
+    // RFC 8058 one-click: mail clients POST. A person who opens the link gets the page.
+    if (request.method === "POST") return handleOneClickUnsubscribe(request, env, ctx, fetcher);
+    const t = new URL(request.url).searchParams.get("t") ?? "";
+    return redirect(`/email/preferences/?t=${encodeURIComponent(t)}`);
+  }
+
   if (pathname.startsWith("/api/")) return Response.json({ error: "not found" }, { status: 404 });
   return env.ASSETS.fetch(request);
 }
+
+// ---- email preferences (design §3) --------------------------------------------------------
+
+const CONFIRM_EVERY_MS = 24 * 3600_000;
+
+/** Double opt-in: mails the lead a link to confirm product emails, at most once a day, so
+ * the form can't be used to flood an address. Nothing changes until they confirm. */
+async function requestConfirmation(env: Env, leadId: string, origin: string, nowMs: number, fetcher: typeof fetch): Promise<void> {
+  if (!env.EMAIL_FROM || !env.EMAIL_TOKEN_SECRET) return;
+  const lead = await leadById(env.DB, leadId);
+  if (!lead || lead.product_emails === "opted_in") return;
+  const last = lead.product_emails_confirm_sent_at ? Date.parse(lead.product_emails_confirm_sent_at) : 0;
+  if (nowMs - last < CONFIRM_EVERY_MS) return;
+  const token = await signToken(env.EMAIL_TOKEN_SECRET, lead.id, nowMs);
+  const link = `${origin}/email/preferences/?t=${encodeURIComponent(token)}&confirm=1`;
+  const result = await send(env, "transactional", confirmEmail(lead.email, language(lead.signup_language), link, env.EMAIL_FROM, env.EMAIL_REPLY_TO), { leadId: lead.id, origin, nowMs }, fetcher);
+  if (result.sent) await env.DB.prepare("UPDATE leads SET product_emails_confirm_sent_at = ?2 WHERE id = ?1").bind(lead.id, new Date(nowMs).toISOString()).run();
+}
+
+function confirmEmail(to: string, lang: "en" | "es" | "fr", link: string, from: string, replyTo: string | undefined): Email {
+  const c = {
+    en: {
+      subject: "Confirm Whimbrel product news",
+      body: "You asked for Whimbrel release notes and product news when you registered. To make sure it was you, please confirm.",
+      button: "Yes, send me product news",
+      ignore: "If it wasn't you, ignore this email and you won't get any.",
+    },
+    es: {
+      subject: "Confirma las novedades de Whimbrel",
+      body: "Pediste recibir las notas de versión y las novedades de Whimbrel al registrarte. Para asegurarnos de que fuiste tú, confírmalo.",
+      button: "Sí, envíenme las novedades",
+      ignore: "Si no fuiste tú, ignora este correo y no recibirás ninguna.",
+    },
+    fr: {
+      subject: "Confirmez les nouvelles de Whimbrel",
+      body: "Vous avez demandé à recevoir les notes de version et les nouvelles de Whimbrel lors de votre inscription. Pour vérifier que c'était bien vous, veuillez confirmer.",
+      button: "Oui, envoyez-moi les nouvelles",
+      ignore: "Si ce n'était pas vous, ignorez ce courriel et vous n'en recevrez aucune.",
+    },
+  }[lang];
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const html = `<!doctype html><html><body style="margin:0;background:#F7F2E7;font-family:-apple-system,'Segoe UI',sans-serif;color:#241E19">
+<div style="max-width:560px;margin:0 auto;padding:32px 20px">
+<p style="font-size:16px;line-height:1.5">${esc(c.body)}</p>
+<p style="margin:24px 0"><a href="${esc(link)}" style="display:inline-block;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:600;background:#A8502E;color:#ffffff">${esc(c.button)}</a></p>
+<p style="font-size:14px;line-height:1.5;color:#6B5F4F">${esc(c.ignore)}</p>
+</div></body></html>`;
+  return { from, to, replyTo, subject: c.subject, text: `${c.body}\n\n${c.button}: ${link}\n\n${c.ignore}`, html };
+}
+
+/** Mirrors one lead's answer to its Resend contact now; the cron retries a failure. */
+async function syncLead(env: Env, leadId: string, fetcher: typeof fetch): Promise<void> {
+  if (!env.RESEND_API_KEY || !env.RESEND_PRODUCT_TOPIC_ID) return;
+  const lead = await leadById(env.DB, leadId);
+  if (lead && (await syncContact(env.RESEND_API_KEY, env.RESEND_PRODUCT_TOPIC_ID, lead, fetcher))) {
+    await markSynced(env.DB, leadId, new Date().toISOString());
+  }
+}
+
+async function leadFromToken(env: Env, token: string | null) {
+  if (!env.EMAIL_TOKEN_SECRET) return null;
+  const id = await verifyToken(env.EMAIL_TOKEN_SECRET, token, Date.now());
+  return id ? leadById(env.DB, id) : null;
+}
+
+async function handlePreferencesGet(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const token = url.searchParams.get("t");
+  const lead = await leadFromToken(env, token);
+  if (!lead || !token) return preferencesPage(language(url.searchParams.get("lang")), { kind: "expired" });
+  return preferencesPage(language(lead.signup_language), { kind: "show", value: lead.product_emails, token, saved: false, confirm: url.searchParams.get("confirm") === "1" });
+}
+
+async function handlePreferencesPost(request: Request, env: Env, ctx: ExecutionContext, fetcher: typeof fetch): Promise<Response> {
+  const form = await request.formData().catch(() => null);
+  const token = form?.get("t");
+  if (typeof token === "string" && token) {
+    const lead = await leadFromToken(env, token);
+    const value = form?.get("value");
+    if (!lead || (value !== "opted_in" && value !== "opted_out")) return preferencesPage("en", { kind: "expired" });
+    await setPreference(env.DB, lead.id, value as ProductEmails, "preferences_page", { page: "/email/preferences/", language: lead.signup_language }, new Date().toISOString());
+    ctx.waitUntil(syncLead(env, lead.id, fetcher));
+    return preferencesPage(language(lead.signup_language), { kind: "show", value: value as ProductEmails, token, saved: true, confirm: false });
+  }
+  // A new link, mailed to the address only if it is a lead. The answer is the same either
+  // way, so the page doesn't reveal who has registered.
+  // ponytail: no rate limit; add one if the form is abused (it can only mail a lead their own link).
+  const lang = language(typeof form?.get("lang") === "string" ? (form?.get("lang") as string) : null);
+  const email = form?.get("email");
+  if (typeof email === "string" && env.EMAIL_FROM && env.EMAIL_TOKEN_SECRET) {
+    const lead = await leadByEmail(env.DB, email);
+    if (lead) {
+      const origin = new URL(request.url).origin;
+      ctx.waitUntil(send(env, "transactional", preferencesLinkEmail(lead.email, language(lead.signup_language), env.EMAIL_FROM, env.EMAIL_REPLY_TO), { leadId: lead.id, origin, nowMs: Date.now() }, fetcher));
+    }
+  }
+  return preferencesPage(lang, { kind: "link_sent" });
+}
+
+/** The footer `send` adds carries the fresh link, so the body only says what it is for. */
+function preferencesLinkEmail(to: string, lang: "en" | "es" | "fr", from: string, replyTo: string | undefined): Email {
+  const copy = {
+    en: ["Your Whimbrel email preferences link", "Here's a new link to change which emails you get from Whimbrel. It's below."],
+    es: ["Tu enlace de preferencias de correo de Whimbrel", "Aquí tienes un enlace nuevo para cambiar qué correos recibes de Whimbrel. Está abajo."],
+    fr: ["Votre lien de préférences de courriel Whimbrel", "Voici un nouveau lien pour choisir les courriels que vous recevez de Whimbrel. Il se trouve ci-dessous."],
+  }[lang];
+  const html = `<!doctype html><html><body style="margin:0;background:#F7F2E7;font-family:-apple-system,'Segoe UI',sans-serif;color:#241E19">
+<div style="max-width:560px;margin:0 auto;padding:32px 20px">
+<p style="font-size:16px;line-height:1.5">${copy[1]}</p>
+</div></body></html>`;
+  return { from, to, replyTo, subject: copy[0], text: copy[1], html };
+}
+
+async function handleOneClickUnsubscribe(request: Request, env: Env, ctx: ExecutionContext, fetcher: typeof fetch): Promise<Response> {
+  const lead = await leadFromToken(env, new URL(request.url).searchParams.get("t"));
+  if (!lead) return new Response("Invalid or expired link", { status: 400 });
+  await setPreference(env.DB, lead.id, "opted_out", "one_click_unsubscribe", { page: null, language: lead.signup_language }, new Date().toISOString());
+  ctx.waitUntil(syncLead(env, lead.id, fetcher));
+  return new Response("Unsubscribed", { status: 200 });
+}
+

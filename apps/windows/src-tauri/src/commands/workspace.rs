@@ -475,7 +475,7 @@ pub async fn meeting_transcribe_again(state: State<'_, AppState>, id: i64) -> Re
 pub async fn meeting_live_alerts(state: State<'_, AppState>, id: i64) -> Result<Vec<crate::live_alerts::LiveAlertView>, CommandError> {
     state
         .store()?
-        .call(move |s| s.list_live_alerts(id).map(|rows| rows.iter().map(crate::live_alerts::alert_view).collect()).map_err(|e| e.to_string()))
+        .call(move |s| s.list_live_alerts(id).map(|rows| rows.iter().map(|a| crate::live_alerts::alert_view(s, a)).collect()).map_err(|e| e.to_string()))
         .await?
         .map_err(CommandError::store)
 }

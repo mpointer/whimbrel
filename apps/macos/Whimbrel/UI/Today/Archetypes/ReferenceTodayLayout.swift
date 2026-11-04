@@ -260,7 +260,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
         // Whimbrel's own wording for "no activity", not the skin's voice (Standard's footer shows the same line).
         var line = mine.flatMap { $0.captures > 0 ? StandardTodayLayout.activityLine($0) : nil }
             ?? SkinDefaults.whimbrel.voice.text(.emptyEarlier, name: "")
-        if others > 0 { line += " · \(others) other device\(others == 1 ? "" : "s")" }
+        if others > 0 { line += " · " + String(localized: "\(others) other devices") }
         return VStack(alignment: .leading, spacing: Spacing.xs) {
             WhimbrelMetadataChip(text: content.deviceLabel(for: content.deviceId)).help(content.deviceId)
             SkinText(line, role: .label).foregroundStyle(Color.whimbrelTextSecondary)

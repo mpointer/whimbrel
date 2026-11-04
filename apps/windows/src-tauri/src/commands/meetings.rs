@@ -42,7 +42,7 @@ pub async fn meeting_recording_status(app: AppHandle) -> Result<MeetingRecording
 }
 
 /// Settings → Meetings: how calls are detected and started.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MeetingSettings {
     /// Watch for calls at all (FR-MTG-2). On by default.
@@ -55,6 +55,13 @@ pub struct MeetingSettings {
     pub prep_lead_minutes: f64,
     /// "Alert me when someone asks me something". On by default.
     pub live_question_alerts: bool,
+    /// "Other names people call you", comma-separated, as typed.
+    #[serde(default)]
+    pub other_names: String,
+    /// Whether there is a name to listen for (the profile name or an other name). Without one,
+    /// alerts can't run and the switch shows off. Read-only: ignored when saving.
+    #[serde(default)]
+    pub has_names: bool,
 }
 
 fn read_settings(settings: &crate::settings::SettingsFile) -> MeetingSettings {
@@ -64,6 +71,8 @@ fn read_settings(settings: &crate::settings::SettingsFile) -> MeetingSettings {
         lead_minutes: settings.lead_minutes(),
         prep_lead_minutes: settings.prep_lead_minutes(),
         live_question_alerts: settings.live_question_enabled(),
+        other_names: settings.other_names(),
+        has_names: !settings.live_question_names().is_empty(),
     }
 }
 
@@ -71,6 +80,7 @@ fn apply_settings(file: &mut crate::settings::SettingsFile, settings: MeetingSet
     file.set_meeting_settings(settings.heuristic_detection, settings.auto_start, settings.lead_minutes);
     file.set_prep_lead_minutes(settings.prep_lead_minutes);
     file.set_live_question_enabled(settings.live_question_alerts);
+    file.set_other_names(&settings.other_names);
 }
 
 #[tauri::command]
@@ -138,7 +148,18 @@ mod settings_tests {
         std::fs::create_dir_all(&dir).unwrap();
         let mut file = SettingsFile::load(&dir.join("settings.json"));
         assert_eq!(read_settings(&file).prep_lead_minutes, 30.0);
-        apply_settings(&mut file, MeetingSettings { heuristic_detection: true, auto_start: false, lead_minutes: 3.0, prep_lead_minutes: 90.0, live_question_alerts: true });
+        apply_settings(
+            &mut file,
+            MeetingSettings {
+                heuristic_detection: true,
+                auto_start: false,
+                lead_minutes: 3.0,
+                prep_lead_minutes: 90.0,
+                live_question_alerts: true,
+                other_names: String::new(),
+                has_names: false,
+            },
+        );
         let back = read_settings(&file);
         assert_eq!((back.lead_minutes, back.prep_lead_minutes), (3.0, 90.0));
         apply_settings(&mut file, MeetingSettings { prep_lead_minutes: 1.0, ..back });
@@ -147,6 +168,27 @@ mod settings_tests {
         let current = read_settings(&file);
         apply_settings(&mut file, MeetingSettings { live_question_alerts: false, ..current });
         assert!(!read_settings(&file).live_question_alerts);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn question_alerts_need_a_name_to_listen_for() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-meeting-names-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut file = SettingsFile::load(&dir.join("settings.json"));
+        let blank = read_settings(&file);
+        assert!(!blank.has_names && !file.live_question_armed(), "no name, no alerts, even with the switch on");
+
+        // A claimed `has_names` is ignored on the way in; only the names count.
+        apply_settings(&mut file, MeetingSettings { other_names: "Mikey, MP".into(), has_names: false, ..blank.clone() });
+        let back = read_settings(&file);
+        assert_eq!(back.other_names, "Mikey, MP");
+        assert!(back.has_names && file.live_question_armed());
+        assert_eq!(file.live_question_names(), ["Mikey", "MP"]);
+
+        apply_settings(&mut file, MeetingSettings { other_names: "  ".into(), has_names: true, ..back });
+        assert!(file.get::<String>(crate::settings::keys::PROFILE_OTHER_NAMES).is_none(), "blank removes the key");
+        assert!(!read_settings(&file).has_names);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

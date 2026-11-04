@@ -9,7 +9,7 @@ name: website-deploy
 on:
   push:
     branches: [main]
-    paths: ["website/**", ".github/workflows/website-deploy.yml"]
+    paths: ["website/**", "CHANGELOG.md", ".github/workflows/website-deploy.yml"]
   release:
     types: [published]
   workflow_dispatch:

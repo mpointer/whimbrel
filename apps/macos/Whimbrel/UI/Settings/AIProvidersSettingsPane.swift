@@ -753,7 +753,7 @@ struct AIProvidersSettingsPane: View {
                 } else if let error {
                     Text("Couldn't load models: \(error)").font(.whimbrelBody(.caption2)).foregroundStyle(Color.whimbrelError)
                 } else {
-                    Text("\(models.count) model\(models.count == 1 ? "" : "s") available")
+                    Text("\(models.count) models available")
                         .font(.whimbrelBody(.caption2))
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 }

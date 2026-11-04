@@ -135,6 +135,7 @@ impl AppState {
         std::thread::spawn(move || crate::local_model::configure(&local_paths));
 
         let detected = Arc::new(Pending::default());
+        let question_alerts: Arc<crate::live_alerts::QuestionAlerts> = Arc::default();
         let (meetings, pipeline) = match (&store, &slow_store, &identity) {
             (Some(store), Some(slow), Some(identity)) => {
                 let pipeline = Arc::new(Pipeline::new(store.clone(), slow.clone(), settings.clone(), secrets.clone(), paths.clone()));
@@ -153,7 +154,26 @@ impl AppState {
                     paths.recordings.clone(),
                     WasapiRecording::starter(paths.recordings.clone(), {
                         let (paths, settings) = (paths.clone(), settings.clone());
-                        Arc::new(move || live_transcribe_config(&paths, &settings.lock().unwrap()))
+                        let questions = crate::live_question::Runtime {
+                            store: store.clone(),
+                            slow: slow.clone(),
+                            settings: settings.clone(),
+                            secrets: secrets.clone(),
+                            alerts: question_alerts.clone(),
+                            device_id: identity.device_id.clone(),
+                        };
+                        Arc::new(move |meeting| {
+                            let (config, armed) = {
+                                let s = settings.lock().unwrap();
+                                (live_transcribe_config(&paths, &s), s.live_question_armed())
+                            };
+                            with_question_watcher(config, armed, || {
+                                // Blank becomes core's English placeholder, which every device
+                                // translates at display time (`sentinels.ts`), never a translation.
+                                let title = Some(meeting.title.trim()).filter(|t| !t.is_empty()).unwrap_or("Meeting");
+                                questions.listener(meeting.meeting_id, title.to_string())
+                            })
+                        })
                     }),
                     snapshots,
                     pipeline.clone(),
@@ -179,7 +199,7 @@ impl AppState {
             meetings,
             pipeline,
             detected,
-            question_alerts: Arc::default(),
+            question_alerts,
             calendar: None,
             gmail: None,
             retention: None,
@@ -394,7 +414,25 @@ fn live_transcribe_config(paths: &Paths, settings: &SettingsFile) -> crate::meet
         plan,
         slices: paths.live_slices(),
         threads: (crate::meetings::perf::pipeline_threads() / 2).max(1),
+        slice_every: crate::meetings::live::SLICE_EVERY,
+        listener: None,
     }
+}
+
+/// While live question alerts are armed (the switch on and a name to listen for), a
+/// recording slices every 30 s and feeds a question watcher (Mike's choice, 2026-11-03).
+/// Otherwise it is today's transcription, untouched. Read at the start: toggling mid-meeting
+/// changes detection, not the slice length.
+/// `docs/superpowers/plans/2026-11-03-windows-live-question-detection.md`.
+fn with_question_watcher(
+    config: crate::meetings::live::Config,
+    armed: bool,
+    listener: impl FnOnce() -> Option<crate::meetings::live::Listener>,
+) -> crate::meetings::live::Config {
+    if !armed {
+        return config;
+    }
+    crate::meetings::live::Config { slice_every: crate::meetings::live::ALERT_SLICE_EVERY, listener: listener(), ..config }
 }
 
 #[cfg(test)]
@@ -406,6 +444,22 @@ mod tests {
         let p = Paths::under(std::env::temp_dir().join(format!("whimbrel-state-{name}-{}", std::process::id())));
         p.ensure_dirs().unwrap();
         p
+    }
+
+    #[test]
+    fn armed_alerts_slice_every_30_s_and_feed_a_watcher_and_otherwise_nothing_changes() {
+        let paths = temp_paths("slices");
+        let settings = SettingsFile::load(&paths.settings);
+        let listener = || Some(crate::meetings::live::Listener(Arc::new(|_: &crate::meetings::live::Accumulated| {})));
+
+        let plain = with_question_watcher(live_transcribe_config(&paths, &settings), false, || panic!("not asked"));
+        assert_eq!(plain.slice_every, crate::meetings::live::SLICE_EVERY);
+        assert!(plain.listener.is_none());
+
+        let armed = with_question_watcher(live_transcribe_config(&paths, &settings), true, listener);
+        assert_eq!(armed.slice_every, std::time::Duration::from_secs(30));
+        assert!(armed.listener.is_some());
+        let _ = std::fs::remove_dir_all(&paths.root);
     }
 
     #[test]

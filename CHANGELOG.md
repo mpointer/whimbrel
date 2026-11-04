@@ -2,6 +2,19 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.53] - 2026-11-04
+
+### Mac
+- Every German, Spanish, French and Portuguese string in the app has been checked by hand, and about 350 read better: German is formal throughout, Spanish uses Latin American wording, and French and Canadian French each use their own terms. The Routines tab is now translated, and "models available", "other devices" and "pending approvals" use the right plural in every language.
+- Settings → Your data now says when the update check really runs: when the app starts, then once a day. Only the random identifier it sends changes weekly.
+
+### Website
+- The changelog page now shows these release notes, written for people who use Whimbrel, instead of a list of code changes.
+- People who register get a short personal note the next day with a quick start guide, in the language they signed up in. Every email has a link to choose whether to get product news, and product news now needs a confirmed opt-in.
+
+### Windows
+- Whimbrel now listens for questions someone asks you during a meeting it is recording, and shows them with a draft answer from your memory, on this PC and your other devices. Turn it on in Settings → Meetings once your name is in Settings → Profile.
+
 ## [0.9.52] - 2026-11-04
 
 ### Mac

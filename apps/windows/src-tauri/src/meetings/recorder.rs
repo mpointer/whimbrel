@@ -105,8 +105,16 @@ pub trait ActiveAudio: Send {
     fn stamp(&self) -> Option<String>;
 }
 
-/// Starts a recording whose files are named with `stamp`.
-pub type StartAudio = Arc<dyn Fn(AudioTarget, &str) -> Box<dyn ActiveAudio> + Send + Sync>;
+/// Starts a recording whose files are named with `stamp`, for `meeting`.
+pub type StartAudio = Arc<dyn Fn(AudioTarget, &str, &AudioMeeting) -> Box<dyn ActiveAudio> + Send + Sync>;
+
+/// The meeting a recording is for: its row exists before audio starts, so the live
+/// transcript's question watcher knows what to store its alerts against.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioMeeting {
+    pub meeting_id: i64,
+    pub title: String,
+}
 
 /// The Mac's `SpikePaths.sessionTimestamp`: ISO 8601 UTC with milliseconds, `:` → `-`
 /// (`2026-09-17T10-42-25.531Z`). Task 4 recovers a recording's start time from it.
@@ -180,9 +188,10 @@ impl WasapiRecording {
     }
 
     /// Starts real recordings in `dir`, each transcribing itself as it goes. `transcribe` is
-    /// asked at each start, so the model and language follow the settings of the moment.
-    pub fn starter(dir: PathBuf, transcribe: Arc<dyn Fn() -> live::Config + Send + Sync>) -> StartAudio {
-        Arc::new(move |target, stamp| Box::new(WasapiRecording::start(target, &dir, stamp, Some(transcribe()))))
+    /// asked at each start, so the model, language and slice length follow the settings of the
+    /// moment.
+    pub fn starter(dir: PathBuf, transcribe: Arc<dyn Fn(&AudioMeeting) -> live::Config + Send + Sync>) -> StartAudio {
+        Arc::new(move |target, stamp, meeting| Box::new(WasapiRecording::start(target, &dir, stamp, Some(transcribe(meeting)))))
     }
 }
 

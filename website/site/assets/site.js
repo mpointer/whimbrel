@@ -164,6 +164,7 @@
     event.preventDefault();
     var data = {};
     new FormData(form).forEach(function (v, k) { data[k] = v; });
+    data.signup_page = location.pathname;
     var errors = validate(data);
     if (Object.keys(errors).length) { showErrors(errors); return; }
     showErrors({});

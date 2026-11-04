@@ -33,6 +33,9 @@ function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
 }
 
+/** Fired on `window` after a profile change is saved. */
+export const PROFILE_SAVED_EVENT = "whimbrel-profile-saved";
+
 /** Settings → Profile: who you are, as background for summaries and answers. */
 export function ProfileCard() {
   const { t, locale } = useL10n();
@@ -62,6 +65,8 @@ export function ProfileCard() {
       (v) => {
         setView(v);
         setError(null);
+        // The Meetings card's question alerts need a name; it rechecks when the profile changes.
+        window.dispatchEvent(new Event(PROFILE_SAVED_EVENT));
         return true;
       },
       (e: unknown) => {

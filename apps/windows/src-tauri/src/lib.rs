@@ -19,6 +19,7 @@ pub mod job;
 pub mod jobs;
 pub mod l10n;
 pub mod live_alerts;
+pub mod live_question;
 pub mod local_model;
 pub mod logging;
 pub mod mcp_server;

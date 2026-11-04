@@ -250,7 +250,7 @@ struct TerminalTodayLayout: TodayArchetypeView {
         let mine = content.deviceRows.first { $0.deviceId == content.deviceId }
         let others = content.deviceRows.filter { $0.deviceId != content.deviceId }.count
         var line = mine.map(StandardTodayLayout.activityLine) ?? voice.text(.emptyEarlier, name: "")
-        if others > 0 { line += " · \(others) other device\(others == 1 ? "" : "s")" }
+        if others > 0 { line += " · " + String(localized: "\(others) other devices") }
         return HStack(spacing: Spacing.sm) {
             WhimbrelMetadataChip(text: content.deviceLabel(for: content.deviceId)).help(content.deviceId)
             SkinText(line, role: .label).foregroundStyle(Color.whimbrelTextSecondary)

@@ -89,6 +89,9 @@ pub mod keys {
     pub const PROFILE_FACTS: &str = "profile.facts";
     pub const PROFILE_ENABLED: &str = "profile.enabled";
     pub const PROFILE_SUGGEST_ENABLED: &str = "profile.suggest_enabled";
+    /// "Other names people call you", comma-separated, for live question alerts. The Mac's field
+    /// key; kept apart from `Profile`, since it never goes into a prompt as profile text.
+    pub const PROFILE_OTHER_NAMES: &str = "profile.other_names";
     /// Which device runs routines: that device's public key, or absent for "any device". The Mac's
     /// settings-sync field key; on Windows it stays on this PC until a settings-sync coordinator exists.
     pub const ROUTINES_PRIMARY_DEVICE: &str = "routines.primaryDeviceId";
@@ -505,6 +508,25 @@ impl SettingsFile {
 
     pub fn set_live_question_enabled(&mut self, enabled: bool) {
         self.set(keys::LIVE_QUESTION_ENABLED, Some(enabled));
+    }
+
+    pub fn other_names(&self) -> String {
+        self.get(keys::PROFILE_OTHER_NAMES).unwrap_or_default()
+    }
+
+    /// Blank removes the key.
+    pub fn set_other_names(&mut self, names: &str) {
+        self.set(keys::PROFILE_OTHER_NAMES, (!names.trim().is_empty()).then(|| names.to_string()));
+    }
+
+    /// The names live question alerts listen for (`live_question::names`).
+    pub fn live_question_names(&self) -> Vec<String> {
+        crate::live_question::names(&self.get::<String>(keys::PROFILE_NAME).unwrap_or_default(), &self.other_names())
+    }
+
+    /// Alerts run only with the switch on and a name to listen for, as on the Mac.
+    pub fn live_question_armed(&self) -> bool {
+        self.live_question_enabled() && !self.live_question_names().is_empty()
     }
 
     pub fn set_prep_lead_minutes(&mut self, minutes: f64) {
