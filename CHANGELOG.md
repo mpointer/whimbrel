@@ -2,6 +2,18 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.52] - 2026-11-04
+
+### Mac
+- New Settings → Capture & Privacy → Your data: what Whimbrel keeps on this Mac and how much space it takes, every way data can leave your computer and whether each is on here, and what hosted models cost you in the last 30 days.
+- Export everything writes your meetings with their transcripts, screen text, email, calendar, conversations, routines and topics to a folder you can read without Whimbrel.
+- Delete everything on this Mac removes the database, the data folder, and this Mac's recordings and slide images, and can delete your sync account in the same step. Settings, keys and downloaded models stay. The deletion runs as Whimbrel restarts, so nothing is removed while the app has it open.
+- Screen capture can skip sites you list in Settings → Capture, including their subdomains. The list syncs to your other devices.
+- The menu bar shows a plain dot while only activity capture is running.
+
+### Windows
+- When another of your devices hears someone ask you something in a meeting, this PC now shows it too: a popup with Open meeting, and a "Questions for you" section on the meeting page. Turn it off in Settings → Meetings.
+
 ## [0.9.51] - 2026-11-03
 
 ### Mac

@@ -79,6 +79,14 @@ export function MeetingsCard() {
         <input type="checkbox" checked={settings.autoStart} onChange={(e) => save({ ...settings, autoStart: e.target.checked })} />
         {t("Start recording automatically after a 10-second countdown")}
       </label>
+      <label className="toggle">
+        <input
+          type="checkbox"
+          checked={settings.liveQuestionAlerts}
+          onChange={(e) => save({ ...settings, liveQuestionAlerts: e.target.checked })}
+        />
+        {t("Alert me when someone asks me something")}
+      </label>
       <label className="field-row">
         <span>{t("Ask this many minutes before a calendar meeting")}</span>
         <input

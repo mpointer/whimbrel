@@ -27,7 +27,7 @@ function triggerLabel(trigger: string | null | undefined): string {
 }
 
 /** The Meetings tab: record, the meeting list, and the selected meeting's workspace. */
-export function MeetingsView() {
+export function MeetingsView({ open }: { open?: { seq: number; meetingId: number | null } | null } = {}) {
   const [rows, setRows] = useState<MeetingRow[]>([]);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
@@ -47,6 +47,13 @@ export function MeetingsView() {
         .catch((e: unknown) => setError(message(e))),
     [],
   );
+
+  // A question alert's Open meeting: select it, clearing a search that would hide it.
+  useEffect(() => {
+    if (open?.meetingId == null) return;
+    setFilter("");
+    setSelected(open.meetingId);
+  }, [open?.seq, open?.meetingId]);
 
   useEffect(() => {
     load(filter);

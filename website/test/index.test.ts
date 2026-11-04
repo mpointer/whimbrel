@@ -366,4 +366,17 @@ describe("other routes", () => {
     expect(html).toContain("<h1>The AI assistant that");
     expect(html).toContain('"@type":"FAQPage"');
   });
+
+  // The trust surface (docs/superpowers/specs/2026-11-04-trust-surface-design.md): the
+  // privacy page carries the "what leaves your computer" table the apps link to, and no
+  // page claims "no telemetry" while the update check sends a weekly identifier.
+  it("lists what leaves the computer on the privacy page and nowhere claims no telemetry", async () => {
+    const privacy = await (await call(new Request("https://whimbrel.test/privacy/"))).text();
+    expect(privacy).toContain('<h2 id="leaves">What leaves your computer</h2>');
+    expect(privacy).toContain("A random identifier that changes every week");
+    for (const path of ["/", "/open-source/", "/es/", "/es/open-source/", "/fr/", "/fr/open-source/"]) {
+      const html = await (await call(new Request(`https://whimbrel.test${path}`))).text();
+      expect(html, path).not.toMatch(/no telemetry|sin telemetría|sans télémétrie|ni télémétrie|has no analytics or telemetry/);
+    }
+  });
 });

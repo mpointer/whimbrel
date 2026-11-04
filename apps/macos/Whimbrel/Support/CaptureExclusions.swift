@@ -34,9 +34,26 @@ final class CaptureExclusions: ObservableObject {
         }
     }
 
+    /// Sites whose pages are never captured (trust surface spec,
+    /// docs/superpowers/specs/2026-11-04-trust-surface-design.md): lowercase hosts,
+    /// matched against the window's URL host and its subdomains, checked after the
+    /// Accessibility walk found the URL and before anything is written. Synced with the
+    /// bundle ids.
+    private static let domainsDefaultsKey = "com.mpointer.kestrel.excludedDomains"
+    static let domainsFieldKey = "captureExclusions.excludedDomains"
+
+    @Published private(set) var excludedDomains: Set<String> {
+        didSet {
+            UserDefaults.standard.set(Array(excludedDomains), forKey: Self.domainsDefaultsKey)
+            SettingsFieldTimestamps.touch(Self.domainsFieldKey)
+        }
+    }
+
     private init() {
         let stored = UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? []
         excludedBundleIds = Set(stored)
+        let domains = UserDefaults.standard.stringArray(forKey: Self.domainsDefaultsKey) ?? []
+        excludedDomains = Set(domains.compactMap(Self.normalizedDomain))
     }
 
     func isExcluded(_ bundleId: String) -> Bool {
@@ -49,6 +66,55 @@ final class CaptureExclusions: ObservableObject {
         } else {
             excludedBundleIds.remove(bundleId)
         }
+    }
+
+    /// True when `url`'s host is a listed domain or a subdomain of one. A URL with no
+    /// host (a file path, a custom scheme) is never excluded by this list.
+    func isExcluded(url: String) -> Bool {
+        guard let host = Self.host(of: url) else { return false }
+        return excludedDomains.contains { Self.host(host, matches: $0) }
+    }
+
+    /// Adds a domain typed by the user; returns false for input that is not a host.
+    @discardableResult
+    func addExcludedDomain(_ raw: String) -> Bool {
+        guard let domain = Self.normalizedDomain(raw) else { return false }
+        excludedDomains.insert(domain)
+        return true
+    }
+
+    func removeExcludedDomain(_ domain: String) {
+        excludedDomains.remove(domain)
+    }
+
+    /// Replaces the list wholesale (settings sync).
+    func setExcludedDomains(_ domains: [String]) {
+        let normalized = Set(domains.compactMap(Self.normalizedDomain))
+        if normalized != excludedDomains {
+            excludedDomains = normalized
+        }
+    }
+
+    /// "Example.com/path", "https://example.com", " example.com " all become
+    /// "example.com"; nothing without a dot or with spaces inside is a domain.
+    static func normalizedDomain(_ raw: String) -> String? {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let scheme = s.range(of: "://") { s = String(s[scheme.upperBound...]) }
+        if let slash = s.firstIndex(of: "/") { s = String(s[..<slash]) }
+        if let at = s.lastIndex(of: "@") { s = String(s[s.index(after: at)...]) }
+        if let colon = s.firstIndex(of: ":") { s = String(s[..<colon]) }
+        s = s.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !s.isEmpty, s.contains("."), !s.contains(" ") else { return nil }
+        return s
+    }
+
+    static func host(of url: String) -> String? {
+        guard let parsed = URL(string: url), let host = parsed.host?.lowercased(), !host.isEmpty else { return nil }
+        return host
+    }
+
+    static func host(_ host: String, matches domain: String) -> Bool {
+        host == domain || host.hasSuffix("." + domain)
     }
 
     /// Currently-running, regular (non-background/menu-bar-only) apps — matches the

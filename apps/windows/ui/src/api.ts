@@ -3,6 +3,9 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AiSettings,
+  LiveAlertView,
+  OpenMeetingRequest,
+  QuestionNotice,
   UpdateCheck,
   ChatLine,
   ImageCandidateView,
@@ -261,6 +264,11 @@ export const setRecordingNoticeSettings = (settings: RecordingNoticeSettings) =>
 export const alertStatus = () => invoke<AlertView>("alert_status");
 export const alertAccept = (openApp: boolean) => invoke<void>("alert_accept", { openApp });
 export const alertDismiss = () => invoke<void>("alert_dismiss");
+export const questionAlertStatus = () => invoke<QuestionNotice[]>("question_alert_status");
+export const questionAlertOpen = (id: string) => invoke<void>("question_alert_open", { id });
+export const questionAlertDismiss = () => invoke<void>("question_alert_dismiss");
+export const takePendingOpenMeeting = () => invoke<OpenMeetingRequest | null>("take_pending_open_meeting");
+export const meetingLiveAlerts = (id: number) => invoke<LiveAlertView[]>("meeting_live_alerts", { id });
 
 export const calendarAccounts = () => invoke<CalendarAccounts>("calendar_accounts");
 export const calendarConnect = () => invoke<CalendarAccounts>("calendar_connect");

@@ -38,6 +38,36 @@ pub fn log_usage_for(
     });
 }
 
+/// [`log_usage_for`] under a span parent: every call one operation makes (a routine run,
+/// an eval run, later an agent run) passes the same `parent_trace_id`, and
+/// `Store::sum_usage_by_parent` rolls them up.
+pub fn log_usage_in(
+    store: &memory::Store,
+    parent_trace_id: &str,
+    provider: llm::Provider,
+    model: &str,
+    route: &str,
+    usage: llm::TokenUsage,
+) {
+    let cost_cents = llm::estimate_cost_cents(provider, model, usage);
+    let now_ms = now_unix_ms();
+    let _ = store.log_usage_with_parent(
+        &memory::NewUsageLogEntry {
+            user_id: None,
+            provider: provider.as_str().to_string(),
+            model: model.to_string(),
+            route: Some(route.to_string()),
+            input_tokens: usage.input_tokens.map(i64::from),
+            output_tokens: usage.output_tokens.map(i64::from),
+            estimated_cost_cents: cost_cents,
+            cache_hit: false,
+            trace_id: uuid_like_trace_id(now_ms),
+            ts_unix_ms: now_ms,
+        },
+        parent_trace_id,
+    );
+}
+
 /// A cheap, dependency-free trace id — no `uuid` dependency and no need for
 /// cryptographic uniqueness for a local debugging aid, just something distinct per call
 /// for correlating a usage_log row back to a specific request in logs.

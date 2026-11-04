@@ -39,7 +39,7 @@ function message(e: unknown): string {
  * and never emits raw HTML. Links and images render as text, so nothing in an answer can
  * navigate the app window or load a remote resource.
  */
-const markdownComponents = {
+export const markdownComponents = {
   a: ({ children, href }: { children?: ReactNode; href?: string }) => (
     <span className="md-link" title={href}>
       {children}

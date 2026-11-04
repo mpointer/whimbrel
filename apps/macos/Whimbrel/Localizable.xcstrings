@@ -1491,6 +1491,40 @@
         }
       }
     },
+    "A random identifier that changes every week, the platform and the app version, so we can count installs. It is not linked to you, your account or your devices." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eine zufällige Kennung, die sich jede Woche ändert, die Plattform und die App-Version, damit wir Installationen zählen können. Sie ist weder mit Ihnen noch mit Ihrem Account oder Ihren Geräten verknüpft."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un identificador aleatorio que cambia cada semana, la plataforma y la versión de la app, para contar instalaciones. No está vinculado a ti, a tu cuenta ni a tus dispositivos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un identifiant aléatoire qui change chaque semaine, la plateforme et la version de l'app, pour compter les installations. Il n'est lié ni à vous, ni à votre compte, ni à vos appareils."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Un identifiant aléatoire qui change chaque semaine, la plateforme et la version de l'app, pour compter les installations. Il n'est lié ni à vous, ni à votre compte, ni à vos appareils."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Um identificador aleatório que muda toda semana, a plataforma e a versão do app, para contarmos instalações. Ele não está ligado a você, à sua conta nem aos seus dispositivos."
+          }
+        }
+      }
+    },
     "A routine result" : {
       "localizations" : {
         "de" : {
@@ -1657,6 +1691,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "IA e roteamento"
+          }
+        }
+      }
+    },
+    "AI providers" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "KI-Anbieter"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Proveedores de IA"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fournisseurs d'IA"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fournisseurs d'IA"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Provedores de IA"
           }
         }
       }
@@ -1861,6 +1929,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Captura de atividade pausada"
+          }
+        }
+      }
+    },
+    "Activity episodes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktivitätsepisoden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Episodios de actividad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Épisodes d'activité"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Épisodes d'activité"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Episódios de atividade"
           }
         }
       }
@@ -2307,6 +2409,40 @@
         }
       }
     },
+    "Also delete my sync account" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auch mein Sync-Konto löschen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eliminar también mi cuenta de sincronización"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer aussi mon compte de synchronisation"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer aussi mon compte de synchronisation"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apagar também minha conta de sincronização"
+          }
+        }
+      }
+    },
     "Also email me" : {
       "localizations" : {
         "de" : {
@@ -2371,6 +2507,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Também gravada em"
+          }
+        }
+      }
+    },
+    "Always on. It carries nothing about you." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Immer an. Enthält nichts über Sie."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Siempre activa. No lleva nada sobre ti."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toujours active. Elle ne contient rien sur vous."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toujours active. Elle ne contient rien sur vous."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sempre ativa. Não leva nada sobre você."
           }
         }
       }
@@ -3821,6 +3991,40 @@
         }
       }
     },
+    "Calendar events" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kalendertermine"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eventos de calendario"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Événements de calendrier"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Événements de calendrier"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eventos de calendário"
+          }
+        }
+      }
+    },
     "Calendar isn't connected, or needs to be reconnected. Check Settings → Connectors, then try Approve again." : {
       "localizations" : {
         "de" : {
@@ -5181,6 +5385,40 @@
         }
       }
     },
+    "Continuously, while sync is on." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Laufend, solange Sync aktiv ist."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Continuamente, con la sincronización activa."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En continu, tant que la synchro est active."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En continu, tant que la synchro est active."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sempre, enquanto a sincronização está ativa."
+          }
+        }
+      }
+    },
     "Conversation titles, topic names and profile suggestions go to the local model first, then to the cheapest model you have a key for. Chat, summaries and digests keep using your default provider. Each routine picks its own model in Routines." : {
       "localizations" : {
         "de" : {
@@ -5449,6 +5687,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Versão do núcleo"
+          }
+        }
+      }
+    },
+    "Could not start the deletion: %@. Quit Whimbrel and remove the data folder by hand." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Löschen konnte nicht gestartet werden: %@. Beenden Sie Whimbrel und löschen Sie den Datenordner von Hand."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo iniciar la eliminación: %@. Cierra Whimbrel y elimina la carpeta de datos a mano."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de lancer la suppression : %@. Quittez Whimbrel et supprimez le dossier de données à la main."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de lancer la suppression : %@. Quittez Whimbrel et supprimez le dossier de données à la main."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível iniciar a remoção: %@. Feche o Whimbrel e remova a pasta de dados manualmente."
           }
         }
       }
@@ -6473,6 +6745,43 @@
         }
       }
     },
+    "Counting…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird gezählt …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contando…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comptage…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comptage…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contando…"
+          }
+        }
+      }
+    },
+    "DELETE" : {
+      "shouldTranslate" : false
+    },
     "Daily Digest" : {
       "localizations" : {
         "de" : {
@@ -6645,6 +6954,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Limite diário de gastos atingido (%1$@¢/%2$@¢). Tente novamente após a redefinição ou aumente o limite em Configurações."
+          }
+        }
+      }
+    },
+    "Data folder: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datenordner: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Carpeta de datos: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dossier de données : %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dossier de données : %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pasta de dados: %@"
           }
         }
       }
@@ -7057,6 +7400,40 @@
         }
       }
     },
+    "Delete and restart" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Löschen und neu starten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eliminar y reiniciar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Supprimer et redémarrer"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Supprimer et redémarrer"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Excluir e reiniciar"
+          }
+        }
+      }
+    },
     "Delete audio after" : {
       "localizations" : {
         "de" : {
@@ -7087,6 +7464,108 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Excluir áudio após"
+          }
+        }
+      }
+    },
+    "Delete everything could not remove these. Quit Whimbrel and remove them by hand:\n%@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„Alles löschen“ konnte Folgendes nicht entfernen. Beenden Sie Whimbrel und entfernen Sie es von Hand:\n%@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«Eliminar todo» no pudo quitar lo siguiente. Cierra Whimbrel y quítalo a mano:\n%@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "« Tout supprimer » n’a pas pu retirer ces éléments. Quittez Whimbrel et retirez-les à la main :\n%@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "« Tout supprimer » n’a pas pu retirer ces éléments. Quittez Whimbrel et retirez-les à la main :\n%@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“Excluir tudo” não conseguiu remover estes itens. Feche o Whimbrel e remova-os manualmente:\n%@"
+          }
+        }
+      }
+    },
+    "Delete everything on this Mac?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alles auf diesem Mac löschen?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Eliminar todo en este Mac?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tout supprimer sur ce Mac ?"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tout supprimer sur ce Mac ?"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Excluir tudo neste Mac?"
+          }
+        }
+      }
+    },
+    "Delete everything on this Mac…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alles auf diesem Mac löschen …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eliminar todo en este Mac…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tout supprimer sur ce Mac…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tout supprimer sur ce Mac…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Excluir tudo neste Mac…"
           }
         }
       }
@@ -8389,6 +8868,74 @@
         }
       }
     },
+    "Email threads" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "E-Mail-Threads"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hilos de correo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fils de courriel"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Fils de courriel"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conversas de e-mail"
+          }
+        }
+      }
+    },
+    "Emails" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "E-Mails"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Correos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "E-mails"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Courriels"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "E-mails"
+          }
+        }
+      }
+    },
     "Enable MCP Server" : {
       "localizations" : {
         "de" : {
@@ -8695,42 +9242,178 @@
         }
       }
     },
-    "Exclude apps from screen-text capture. Excluded apps' content is never read — checked before any Accessibility/OCR extraction happens, not filtered out afterward." : {
+    "Exclude apps from screen-text capture. Excluded apps' content is never read: the check happens before any Accessibility or OCR extraction, not as a filter afterward." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Apps von der Bildschirmtext-Erfassung ausschließen. Der Inhalt ausgeschlossener Apps wird nie gelesen – die Prüfung erfolgt vor jeder Extraktion per Bedienungshilfen/OCR, nicht erst durch nachträgliches Herausfiltern."
-          }
-        },
-        "en-GB" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Exclude apps from screen-text capture. Excluded apps' content is never read — checked before any Accessibility/OCR extraction happens, not filtered out afterwards."
+            "value" : "Schließen Sie Apps von der Bildschirmtext-Erfassung aus. Der Inhalt ausgeschlossener Apps wird nie gelesen: Die Prüfung erfolgt vor jeder Extraktion per Bedienungshilfen oder OCR, nicht als Filter danach."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Excluye apps de la captura de texto de pantalla. El contenido de las apps excluidas nunca se lee: se verifica antes de que ocurra cualquier extracción por Accesibilidad/OCR, no se filtra después."
+            "value" : "Excluye apps de la captura de texto en pantalla. El contenido de las apps excluidas nunca se lee: la comprobación ocurre antes de cualquier extracción por Accesibilidad u OCR, no como filtro posterior."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Excluez des apps de la capture de texte à l’écran. Le contenu des apps exclues n’est jamais lu : l’exclusion est vérifiée avant toute extraction par Accessibilité/OCR, et non filtrée après coup."
+            "value" : "Excluez des apps de la capture du texte à l'écran. Le contenu des apps exclues n'est jamais lu : la vérification a lieu avant toute extraction par Accessibilité ou OCR, pas comme un filtre après coup."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Exclure des applications de la capture de texte à l’écran. Le contenu des applications exclues n’est jamais lu : la vérification a lieu avant toute extraction par Accessibilité ou OCR, et non filtrée après coup."
+            "value" : "Excluez des apps de la capture du texte à l'écran. Le contenu des apps exclues n'est jamais lu : la vérification a lieu avant toute extraction par Accessibilité ou OCR, pas comme un filtre après coup."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Exclua apps da captura de texto da tela. O conteúdo dos apps excluídos nunca é lido — a verificação acontece antes de qualquer extração por Acessibilidade/OCR, e não depois, por filtragem."
+            "value" : "Exclua apps da captura de texto da tela. O conteúdo dos apps excluídos nunca é lido: a verificação acontece antes de qualquer extração por Acessibilidade ou OCR, não como um filtro depois."
+          }
+        }
+      }
+    },
+    "Export everything…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alles exportieren …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exportar todo…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tout exporter…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tout exporter…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exportar tudo…"
+          }
+        }
+      }
+    },
+    "Export here" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hierher exportieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exportar aquí"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exporter ici"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exporter ici"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exportar aqui"
+          }
+        }
+      }
+    },
+    "Exported %lld meeting(s), %lld screen capture(s), %lld email(s) and %lld conversation(s): %lld files, %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld Meeting(s), %2$lld Bildschirmaufnahme(n), %3$lld E-Mail(s) und %4$lld Unterhaltung(en) exportiert: %5$lld Dateien, %6$@."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Exported %1$lld meeting(s), %2$lld screen capture(s), %3$lld email(s) and %4$lld conversation(s): %5$lld files, %6$@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se exportaron %1$lld reunión(es), %2$lld captura(s) de pantalla, %3$lld correo(s) y %4$lld conversación(es): %5$lld archivos, %6$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld réunion(s), %2$lld capture(s) d'écran, %3$lld e-mail(s) et %4$lld conversation(s) exportés : %5$lld fichiers, %6$@."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$lld réunion(s), %2$lld capture(s) d'écran, %3$lld courriel(s) et %4$lld conversation(s) exportés : %5$lld fichiers, %6$@."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exportados: %1$lld reunião(ões), %2$lld captura(s) de tela, %3$lld e-mail(s) e %4$lld conversa(s): %5$lld arquivos, %6$@."
+          }
+        }
+      }
+    },
+    "Exporting…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird exportiert …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exportando…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exportation…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exportation…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exportando…"
           }
         }
       }
@@ -10203,6 +10886,9 @@
         }
       }
     },
+    "Google" : {
+      "shouldTranslate" : false
+    },
     "Google API Key" : {
       "localizations" : {
         "de" : {
@@ -10335,6 +11021,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "O Google recusou o pedido de envio do e-mail."
+          }
+        }
+      }
+    },
+    "Google sees the app reading your Gmail and Calendar. The data lands in this Mac's database; we never receive it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google sieht, dass die App Ihr Gmail und Ihren Kalender liest. Die Daten landen in der Datenbank dieses Macs; wir erhalten sie nie."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google ve que la app lee tu Gmail y tu Calendar. Los datos quedan en la base de datos de este Mac; nosotros nunca los recibimos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google voit l'app lire votre Gmail et votre agenda. Les données restent dans la base de données de ce Mac ; nous ne les recevons jamais."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Google voit l'app lire votre Gmail et votre agenda. Les données restent dans la base de données de ce Mac ; nous ne les recevons jamais."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Google vê o app lendo seu Gmail e sua Agenda. Os dados ficam no banco de dados deste Mac; nós nunca os recebemos."
           }
         }
       }
@@ -11563,6 +12283,40 @@
         }
       }
     },
+    "Keys for %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Schlüssel für %@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Claves de %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clés pour %@."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Clés pour %@."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chaves de %@."
+          }
+        }
+      }
+    },
     "Keyword" : {
       "localizations" : {
         "de" : {
@@ -11627,6 +12381,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Idioma"
+          }
+        }
+      }
+    },
+    "Last 30 days: %@ in hosted model calls (%@)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Letzte 30 Tage: %1$@ für gehostete Modellaufrufe (%2$@)."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Últimos 30 días: %1$@ en llamadas a modelos alojados (%2$@)."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les 30 derniers jours : %1$@ en appels à des modèles hébergés (%2$@)."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les 30 derniers jours : %1$@ en appels à des modèles hébergés (%2$@)."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Últimos 30 dias: %1$@ em chamadas a modelos hospedados (%2$@)."
           }
         }
       }
@@ -12583,6 +13371,40 @@
         }
       }
     },
+    "Local-only mode: nothing is sent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nur-lokal-Modus: Es wird nichts gesendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modo solo local: no se envía nada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mode local uniquement : rien n'est envoyé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mode local uniquement : rien n'est envoyé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modo somente local: nada é enviado."
+          }
+        }
+      }
+    },
     "MCP Clients" : {
       "localizations" : {
         "de" : {
@@ -13157,6 +13979,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Reuniões"
+          }
+        }
+      }
+    },
+    "Meetings with their transcripts as Markdown, screen text, email, calendar, conversations and routines as JSON, and topics as Obsidian notes. Readable without Whimbrel. Recordings and slide images are not exported." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meetings mit ihren Transkripten als Markdown, Bildschirmtext, E-Mails, Kalender, Unterhaltungen und Routinen als JSON sowie Themen als Obsidian-Notizen. Ohne Whimbrel lesbar. Aufnahmen und Folienbilder werden nicht exportiert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reuniones con sus transcripciones en Markdown; texto de pantalla, correo, calendario, conversaciones y rutinas en JSON; y temas como notas de Obsidian. Legible sin Whimbrel. Las grabaciones y las imágenes de diapositivas no se exportan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Réunions avec leurs transcriptions en Markdown, texte à l'écran, e-mails, agenda, conversations et routines en JSON, et sujets en notes Obsidian. Lisible sans Whimbrel. Les enregistrements et les images de diapositives ne sont pas exportés."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Réunions avec leurs transcriptions en Markdown, texte à l'écran, courriels, agenda, conversations et routines en JSON, et sujets en notes Obsidian. Lisible sans Whimbrel. Les enregistrements et les images de diapositives ne sont pas exportés."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Reuniões com suas transcrições em Markdown, texto da tela, e-mails, agenda, conversas e rotinas em JSON, e tópicos como notas do Obsidian. Legível sem o Whimbrel. Gravações e imagens de slides não são exportadas."
           }
         }
       }
@@ -14215,6 +15071,40 @@
         }
       }
     },
+    "No account connected." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kein Account verbunden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ninguna cuenta conectada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun compte connecté."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun compte connecté."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhuma conta conectada."
+          }
+        }
+      }
+    },
     "No attendees on record." : {
       "localizations" : {
         "de" : {
@@ -14517,6 +15407,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Ainda não há chave de grupo disponível."
+          }
+        }
+      }
+    },
+    "No hosted keys. Only local models run." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine gehosteten Schlüssel. Nur lokale Modelle laufen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sin claves alojadas. Solo se usan modelos locales."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucune clé hébergée. Seuls les modèles locaux tournent."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucune clé hébergée. Seuls les modèles locaux tournent."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sem chaves hospedadas. Só modelos locais rodam."
           }
         }
       }
@@ -14959,6 +15883,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Nenhum app aberto encontrado."
+          }
+        }
+      }
+    },
+    "No sites excluded." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine Sites ausgeschlossen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ningún sitio excluido."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun site exclu."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun site exclu."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhum site excluído."
           }
         }
       }
@@ -15813,6 +16771,40 @@
         }
       }
     },
+    "Off (the default)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aus (Standard)."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desactivado (por defecto)."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Désactivé (par défaut)."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Désactivé (par défaut)."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desativado (padrão)."
+          }
+        }
+      }
+    },
     "Off by default — the Recent tab shows meetings only. Screen-text captures are still recorded and searchable (Keyword/Semantic/Ask); this only controls whether they appear in the Recent list." : {
       "localizations" : {
         "de" : {
@@ -15961,6 +16953,40 @@
         }
       }
     },
+    "Off." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desactivado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Désactivé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Désactivé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Desativado."
+          }
+        }
+      }
+    },
     "Ollama" : {
       "shouldTranslate" : false
     },
@@ -16062,6 +17088,142 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "No plano gratuito do Google, prompts e respostas podem ser usados para melhorar os produtos do Google. O plano pago não os usa dessa forma. Consulte os termos do Google para ver o texto atual."
+          }
+        }
+      }
+    },
+    "On this Mac" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf diesem Mac"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "En este Mac"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sur ce Mac"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sur ce Mac"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Neste Mac"
+          }
+        }
+      }
+    },
+    "On, %lld device(s)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "An, %lld Gerät(e)."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activa, %lld dispositivo(s)."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Active, %lld appareil(s)."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Active, %lld appareil(s)."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ativa, %lld dispositivo(s)."
+          }
+        }
+      }
+    },
+    "On." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "An."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activée."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Activée."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ativada."
+          }
+        }
+      }
+    },
+    "Once a week." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einmal pro Woche."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Una vez por semana."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une fois par semaine."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une fois par semaine."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uma vez por semana."
           }
         }
       }
@@ -16968,6 +18130,40 @@
         }
       }
     },
+    "Pages on these sites, and their subdomains, are skipped before any text is read. Works in browsers that expose the page address." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seiten dieser Sites und ihrer Subdomains werden übersprungen, bevor Text gelesen wird. Funktioniert in Browsern, die die Seitenadresse bereitstellen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las páginas de estos sitios, y de sus subdominios, se omiten antes de leer cualquier texto. Funciona en navegadores que exponen la dirección de la página."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les pages de ces sites, et de leurs sous-domaines, sont ignorées avant toute lecture de texte. Fonctionne dans les navigateurs qui exposent l'adresse de la page."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les pages de ces sites, et de leurs sous-domaines, sont ignorées avant toute lecture de texte. Fonctionne dans les navigateurs qui exposent l'adresse de la page."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As páginas desses sites, e de seus subdomínios, são ignoradas antes de qualquer texto ser lido. Funciona em navegadores que expõem o endereço da página."
+          }
+        }
+      }
+    },
     "Paused (Low Power Mode or heat)" : {
       "localizations" : {
         "de" : {
@@ -17100,6 +18296,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Pessoas"
+          }
+        }
+      }
+    },
+    "People and organizations" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personen und Organisationen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personas y organizaciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personnes et organisations"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personnes et organisations"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pessoas e organizações"
           }
         }
       }
@@ -17818,6 +19048,40 @@
         }
       }
     },
+    "Read the full list on the privacy page" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die vollständige Liste auf der Datenschutzseite lesen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lee la lista completa en la página de privacidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lire la liste complète sur la page de confidentialité"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lire la liste complète sur la page de confidentialité"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leia a lista completa na página de privacidade"
+          }
+        }
+      }
+    },
     "Real per-speaker labels for the system-audio channel. Whimbrel can fetch these two models automatically via the first-run \"Set Up Models\" prompt, or see core/diarize/README.md to fetch them manually. If either is missing, transcripts fall back to a single \"Others\" label, exactly as before this feature existed." : {
       "localizations" : {
         "de" : {
@@ -18160,6 +19424,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Gravando: %1$@%2$@"
+          }
+        }
+      }
+    },
+    "Recordings and slide images: %@, %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aufnahmen und Folienbilder: %1$@, %2$@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grabaciones e imágenes de diapositivas: %1$@, %2$@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enregistrements et images de diapositives : %1$@, %2$@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enregistrements et images de diapositives : %1$@, %2$@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gravações e imagens de slides: %1$@, %2$@"
           }
         }
       }
@@ -19218,6 +20516,40 @@
         }
       }
     },
+    "Routine runs" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routinen-Läufe"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ejecuciones de rutinas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exécutions de routines"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Exécutions de routines"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Execuções de rotinas"
+          }
+        }
+      }
+    },
     "Routines" : {
       "shouldTranslate" : false
     },
@@ -20145,6 +21477,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Atividade da tela"
+          }
+        }
+      }
+    },
+    "Screen captures" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bildschirmaufnahmen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capturas de pantalla"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Captures d'écran"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Captures d'écran"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capturas de tela"
           }
         }
       }
@@ -21169,6 +22535,40 @@
         }
       }
     },
+    "Sites never captured" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nie erfasste Sites"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sitios nunca capturados"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sites jamais capturés"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sites jamais capturés"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sites nunca capturados"
+          }
+        }
+      }
+    },
     "Skin" : {
       "localizations" : {
         "de" : {
@@ -21369,6 +22769,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Slide correspondente"
+          }
+        }
+      }
+    },
+    "Slides" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Folien"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diapositivas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diapositives"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diapositives"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Slides"
           }
         }
       }
@@ -23001,6 +24435,40 @@
         }
       }
     },
+    "Sync is on. This Mac will download everything again from your other devices unless you also delete your sync account." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Synchronisierung ist aktiv. Dieser Mac lädt alles erneut von Ihren anderen Geräten herunter, wenn Sie nicht auch Ihr Sync-Konto löschen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La sincronización está activada. Este Mac volverá a descargar todo desde tus otros dispositivos, a menos que también elimines tu cuenta de sincronización."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La synchronisation est activée. Ce Mac retéléchargera tout depuis vos autres appareils, sauf si vous supprimez aussi votre compte de synchronisation."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La synchronisation est activée. Ce Mac retéléchargera tout depuis vos autres appareils, sauf si vous supprimez aussi votre compte de synchronisation."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A sincronização está ativada. Este Mac vai baixar tudo de novo dos seus outros dispositivos, a menos que você também apague sua conta de sincronização."
+          }
+        }
+      }
+    },
     "Sync is temporarily unavailable (server error %@)." : {
       "localizations" : {
         "de" : {
@@ -23133,6 +24601,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Sem sincronia"
+          }
+        }
+      }
+    },
+    "Sync relay" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sync-Relay"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Relay de sync"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Relais de synchro"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Relais de synchro"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Relay de sincronia"
           }
         }
       }
@@ -23511,6 +25013,40 @@
         }
       }
     },
+    "That doesn't look like a site. Enter a domain such as example.com." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das sieht nicht wie eine Site aus. Geben Sie eine Domain wie example.com ein."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eso no parece un sitio. Escribe un dominio como example.com."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cela ne ressemble pas à un site. Saisissez un domaine comme example.com."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cela ne ressemble pas à un site. Saisissez un domaine comme example.com."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Isso não parece um site. Digite um domínio como example.com."
+          }
+        }
+      }
+    },
     "That fact is blank, already listed, too long (200 characters), or the list is full (30)." : {
       "localizations" : {
         "de" : {
@@ -23789,6 +25325,74 @@
         }
       }
     },
+    "The encrypted copy on the sync server is deleted and every device is signed out of sync. Your other devices keep their own data." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die verschlüsselte Kopie auf dem Sync-Server wird gelöscht und jedes Gerät wird von der Synchronisierung abgemeldet. Ihre anderen Geräte behalten ihre eigenen Daten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se elimina la copia cifrada del servidor de sincronización y todos los dispositivos se desconectan de la sincronización. Tus otros dispositivos conservan sus propios datos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La copie chiffrée sur le serveur de synchronisation est supprimée et chaque appareil est déconnecté de la synchronisation. Vos autres appareils gardent leurs propres données."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La copie chiffrée sur le serveur de synchronisation est supprimée et chaque appareil est déconnecté de la synchronisation. Vos autres appareils gardent leurs propres données."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A cópia criptografada no servidor de sincronização é apagada e todos os dispositivos saem da sincronização. Seus outros dispositivos mantêm os próprios dados."
+          }
+        }
+      }
+    },
+    "The export failed. Check that the folder can be written to and try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Export ist fehlgeschlagen. Prüfen Sie, ob der Ordner beschreibbar ist, und versuchen Sie es erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La exportación falló. Comprueba que se pueda escribir en la carpeta y vuelve a intentarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L'exportation a échoué. Vérifiez que le dossier est accessible en écriture et réessayez."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "L'exportation a échoué. Vérifiez que le dossier est accessible en écriture et réessayez."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A exportação falhou. Verifique se é possível gravar na pasta e tente de novo."
+          }
+        }
+      }
+    },
     "The local model couldn't start." : {
       "localizations" : {
         "de" : {
@@ -23993,6 +25597,74 @@
         }
       }
     },
+    "The provider whose key you added receives the text needed for that request, under its own terms. Known secrets are redacted first." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Anbieter, dessen Schlüssel Sie hinzugefügt haben, erhält den für diese Anfrage nötigen Text zu seinen eigenen Bedingungen. Bekannte Geheimnisse werden vorher entfernt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El proveedor cuya clave agregaste recibe el texto necesario para esa solicitud, bajo sus propios términos. Los secretos conocidos se eliminan antes."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le fournisseur dont vous avez ajouté la clé reçoit le texte nécessaire à cette requête, selon ses propres conditions. Les secrets connus sont masqués avant l'envoi."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le fournisseur dont vous avez ajouté la clé reçoit le texte nécessaire à cette requête, selon ses propres conditions. Les secrets connus sont masqués avant l'envoi."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O provedor cuja chave você adicionou recebe o texto necessário para essa solicitação, sob os próprios termos. Segredos conhecidos são removidos antes."
+          }
+        }
+      }
+    },
+    "The relay stores encrypted data it cannot read. It can see your account email and identifier, each device's name, platform, public key and enrollment dates, the type and time of each synced item, and the names of synced settings fields. Never content, never keys." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das Relay speichert verschlüsselte Daten, die es nicht lesen kann. Es sieht E-Mail und Kennung Ihres Accounts, Name, Plattform, öffentlichen Schlüssel und Registrierungsdaten jedes Geräts, Typ und Zeit jedes synchronisierten Elements sowie die Namen synchronisierter Einstellungsfelder. Nie Inhalte, nie Schlüssel."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El relay guarda datos cifrados que no puede leer. Puede ver el correo y el identificador de tu cuenta, el nombre, la plataforma, la clave pública y las fechas de inscripción de cada dispositivo, el tipo y la hora de cada elemento sincronizado, y los nombres de los campos de ajustes sincronizados. Nunca el contenido, nunca las claves."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le relais stocke des données chiffrées qu'il ne peut pas lire. Il voit l'e-mail et l'identifiant de votre compte, le nom, la plateforme, la clé publique et les dates d'inscription de chaque appareil, le type et l'heure de chaque élément synchronisé, et les noms des champs de réglages synchronisés. Jamais le contenu, jamais les clés."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le relais stocke des données chiffrées qu'il ne peut pas lire. Il voit le courriel et l'identifiant de votre compte, le nom, la plateforme, la clé publique et les dates d'inscription de chaque appareil, le type et l'heure de chaque élément synchronisé, et les noms des champs de réglages synchronisés. Jamais le contenu, jamais les clés."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O relay armazena dados criptografados que não consegue ler. Ele vê o e-mail e o identificador da sua conta, o nome, a plataforma, a chave pública e as datas de inscrição de cada dispositivo, o tipo e a hora de cada item sincronizado, e os nomes dos campos de configurações sincronizados. Nunca o conteúdo, nunca as chaves."
+          }
+        }
+      }
+    },
     "The small model. Quickest, least accurate." : {
       "localizations" : {
         "de" : {
@@ -24023,6 +25695,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "O modelo pequeno. O mais rápido e o menos preciso."
+          }
+        }
+      }
+    },
+    "The sync account could not be deleted. Nothing was removed; try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Sync-Konto konnte nicht gelöscht werden. Es wurde nichts entfernt. Versuchen Sie es erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo eliminar la cuenta de sincronización. No se eliminó nada; inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le compte de synchronisation n'a pas pu être supprimé. Rien n'a été supprimé ; réessayez."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le compte de synchronisation n'a pas pu être supprimé. Rien n'a été supprimé ; réessayez."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível apagar a conta de sincronização. Nada foi removido; tente de novo."
           }
         }
       }
@@ -24821,6 +26527,40 @@
         }
       }
     },
+    "This removes the database and the data folder (%@), and this Mac's recordings and slide images in %@ (%@), then restarts Whimbrel as new. Settings, keys and downloaded models stay." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dadurch werden die Datenbank und der Datenordner (%1$@) sowie die Aufnahmen und Folienbilder dieses Macs in %2$@ (%3$@) gelöscht. Danach startet Whimbrel neu wie bei der ersten Installation. Einstellungen, Schlüssel und heruntergeladene Modelle bleiben erhalten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esto elimina la base de datos y la carpeta de datos (%1$@), y las grabaciones e imágenes de diapositivas de este Mac en %2$@ (%3$@). Después, Whimbrel se reinicia como nuevo. Los ajustes, las claves y los modelos descargados se conservan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cela supprime la base de données et le dossier de données (%1$@), ainsi que les enregistrements et images de diapositives de ce Mac dans %2$@ (%3$@), puis redémarre Whimbrel comme neuf. Les réglages, les clés et les modèles téléchargés sont conservés."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cela supprime la base de données et le dossier de données (%1$@), ainsi que les enregistrements et images de diapositives de ce Mac dans %2$@ (%3$@), puis redémarre Whimbrel comme neuf. Les réglages, les clés et les modèles téléchargés sont conservés."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Isso apaga o banco de dados e a pasta de dados (%1$@), além das gravações e imagens de slides deste Mac em %2$@ (%3$@), e reinicia o Whimbrel do zero. Ajustes, chaves e modelos baixados são mantidos."
+          }
+        }
+      }
+    },
     "This skin is too big to export (more than 64 MB or 200 files), so it couldn't be imported again." : {
       "localizations" : {
         "de" : {
@@ -25262,6 +27002,40 @@
         }
       }
     },
+    "Topics" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Themen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Temas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sujets"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sujets"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tópicos"
+          }
+        }
+      }
+    },
     "Transcribe again" : {
       "localizations" : {
         "de" : {
@@ -25564,6 +27338,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Idioma da transcrição"
+          }
+        }
+      }
+    },
+    "Transcript lines" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Transkriptzeilen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Líneas de transcripción"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lignes de transcription"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lignes de transcription"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Linhas de transcrição"
           }
         }
       }
@@ -26044,6 +27852,40 @@
         }
       }
     },
+    "Type DELETE to confirm." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zum Bestätigen DELETE eingeben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Escribe DELETE para confirmar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saisissez DELETE pour confirmer."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Saisissez DELETE pour confirmer."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Digite DELETE para confirmar."
+          }
+        }
+      }
+    },
     "Type something to search for." : {
       "localizations" : {
         "de" : {
@@ -26112,6 +27954,40 @@
         }
       }
     },
+    "TypeSafe receives email subjects and snippets to score which threads need a reply." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TypeSafe erhält Betreffzeilen und Auszüge von E-Mails, um zu bewerten, welche Threads eine Antwort brauchen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TypeSafe recibe asuntos y fragmentos de correos para puntuar qué hilos necesitan respuesta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TypeSafe reçoit les objets et extraits des e-mails pour évaluer quels fils attendent une réponse."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TypeSafe reçoit les objets et extraits des courriels pour évaluer quels fils attendent une réponse."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O TypeSafe recebe assuntos e trechos de e-mails para pontuar quais conversas precisam de resposta."
+          }
+        }
+      }
+    },
     "TypeSafe rejected this key. Check it and save it again." : {
       "localizations" : {
         "de" : {
@@ -26142,6 +28018,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "O TypeSafe rejeitou esta chave. Verifique-a e salve novamente."
+          }
+        }
+      }
+    },
+    "TypeSafe reply ranking" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "TypeSafe-Antwortranking"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Prioridad de respuestas TypeSafe"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Classement des réponses TypeSafe"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Classement des réponses TypeSafe"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ranking de respostas TypeSafe"
           }
         }
       }
@@ -26448,6 +28358,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "A seguir"
+          }
+        }
+      }
+    },
+    "Update check" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Update-Prüfung"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Buscar actualización"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mises à jour"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mises à jour"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Busca de atualização"
           }
         }
       }
@@ -26894,6 +28838,40 @@
         }
       }
     },
+    "What Whimbrel keeps on this Mac, what leaves it, and how to take it with you or remove it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Was Whimbrel auf diesem Mac behält, was ihn verlässt und wie Sie es mitnehmen oder entfernen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lo que Whimbrel guarda en este Mac, lo que sale de él y cómo llevártelo o eliminarlo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce que Whimbrel conserve sur ce Mac, ce qui en sort, et comment l'emporter ou le supprimer."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce que Whimbrel conserve sur ce Mac, ce qui en sort, et comment l'emporter ou le supprimer."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O que o Whimbrel guarda neste Mac, o que sai dele e como levar com você ou remover."
+          }
+        }
+      }
+    },
     "What Whimbrel sees" : {
       "localizations" : {
         "de" : {
@@ -26928,6 +28906,108 @@
         }
       }
     },
+    "What leaves this Mac" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Was diesen Mac verlässt"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lo que sale de este Mac"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce qui sort de ce Mac"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce qui sort de ce Mac"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O que sai deste Mac"
+          }
+        }
+      }
+    },
+    "When a Google account is connected." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wenn ein Google-Account verbunden ist."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando hay una cuenta de Google conectada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quand un compte Google est connecté."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quand un compte Google est connecté."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando uma conta do Google está conectada."
+          }
+        }
+      }
+    },
+    "When it is on, as email arrives." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wenn aktiv, sobald E-Mails eintreffen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando está activa, al llegar correo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quand elle est active, à l'arrivée des e-mails."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si elle est active, à l'arrivée des courriels."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando está ativa, à chegada de e-mails."
+          }
+        }
+      }
+    },
     "When on, every conversation uses Ollama only, regardless of the provider picked in Ask or Digest. Hosted providers are never called." : {
       "localizations" : {
         "de" : {
@@ -26958,6 +29038,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Quando ativado, todas as conversas usam apenas o Ollama, independentemente do provedor escolhido em Ask ou no Resumo. Provedores hospedados nunca são chamados."
+          }
+        }
+      }
+    },
+    "When you ask a question, summarize a meeting, or run a routine with a hosted model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wenn Sie eine Frage stellen, ein Meeting zusammenfassen oder eine Routine mit einem gehosteten Modell ausführen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cuando haces una pregunta, resumes una reunión o ejecutas una rutina con un modelo alojado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quand vous posez une question, résumez une réunion ou lancez une routine avec un modèle hébergé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quand vous posez une question, résumez une réunion ou lancez une routine avec un modèle hébergé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quando você faz uma pergunta, resume uma reunião ou executa uma rotina com um modelo hospedado."
           }
         }
       }
@@ -27849,6 +29963,40 @@
         }
       }
     },
+    "Your data" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ihre Daten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tus datos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vos données"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vos données"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seus dados"
+          }
+        }
+      }
+    },
     "Your edited version" : {
       "localizations" : {
         "de" : {
@@ -28194,6 +30342,9 @@
           }
         }
       }
+    },
+    "example.com" : {
+      "shouldTranslate" : false
     },
     "rejoined %@" : {
       "localizations" : {

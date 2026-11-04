@@ -104,6 +104,9 @@ final class ScreenTextCaptureService: NSObject, ObservableObject {
         let windowTitle = (titleRef as? String) ?? app.localizedName ?? bundleId
 
         let extraction = AXTextWalker.extract(from: windowElement)
+        // An excluded site's page is dropped here, before OCR and before anything is
+        // written; the text the walker already read goes no further.
+        if let url = extraction.url, CaptureExclusions.shared.isExcluded(url: url) { return }
         var text = extraction.text
         var source = "ax"
 

@@ -148,6 +148,13 @@ jobs:
       - name: Build sync-engine (compile-only, see exclusion note above)
         working-directory: core
         run: cargo build -p sync-engine
+      # The retrieval eval on the seeded corpus with the fake embedder: keyword
+      # retrieval, fusion, decay and the context budget, against the committed baseline.
+      # Non-blocking this round (no --strict): the step summary carries the table and any
+      # metric that moved by more than two points. docs/superpowers/specs/2026-11-04-eval-harness-design.md.
+      - name: Retrieval eval (fake embedder, against the baseline)
+        working-directory: core
+        run: cargo run -q -p eval -- retrieval --profile full --baseline eval/baselines/retrieval-fake.json | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Self-hosted jobs run only in the upstream repository and never for a pull request
   # from a fork: a fork's own CI has no such runner, and a public repository must not
@@ -222,6 +229,12 @@ jobs:
       - name: Run real-model integration tests
         working-directory: core
         run: cargo test -p memory -- --ignored
+      # The same retrieval eval on the real embedding model, so an embedding change shows
+      # here. No real-model baseline is committed yet; the table lands in the step summary
+      # and the first few runs decide the baseline.
+      - name: Retrieval eval (real embedding model)
+        working-directory: core
+        run: cargo run -q -p eval -- retrieval --profile full --real-model memory/models | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Runs on PRs that touch core/ as well as on main: MSVC link failures (LNK2005,
   # see below) only show up here. It runs on the author's Windows PC (a self-hosted
@@ -300,8 +313,11 @@ jobs:
   # these jobs build at once instead of waiting on cargo's lock.
   # Build from src-tauri/ so its .cargo/config.toml (+crt-static) applies.
   windows-app:
-    needs: changes
-    if: needs.changes.outputs.run_windows_app == 'true' && github.repository == 'mpointer/kestrel' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'workflow_dispatch')
+    # Runs after the windows job (pass, fail or skipped): FEYNMAN is the only
+    # Windows runner, and a second Windows job queued beside the first can
+    # time out with no runner before it starts.
+    needs: [changes, windows]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.run_windows_app == 'true' && github.repository == 'mpointer/kestrel' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'workflow_dispatch') }}
     runs-on: [self-hosted, Windows, X64, kestrel-windows]
     # About 14 min alone; with both runner instances on the PC busy, a warm run took 26 min.
     timeout-minutes: 40

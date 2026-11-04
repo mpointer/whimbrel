@@ -160,6 +160,9 @@ final class SettingsSyncCoordinator: ObservableObject {
         let excludedJSON = (try? JSONEncoder().encode(CaptureExclusions.shared.excludedBundleIds.sorted()))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         add(&fields, "captureExclusions.excludedBundleIds", excludedJSON)
+        let excludedDomainsJSON = (try? JSONEncoder().encode(CaptureExclusions.shared.excludedDomains.sorted()))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        add(&fields, CaptureExclusions.domainsFieldKey, excludedDomainsJSON)
 
         add(&fields, "apiKey.anthropic.syncEnabled", routing.anthropicKeySyncEnabled ? "true" : "false")
         add(&fields, "apiKey.openai.syncEnabled", routing.openaiKeySyncEnabled ? "true" : "false")
@@ -342,6 +345,10 @@ final class SettingsSyncCoordinator: ObservableObject {
             retention.meetingKeepForever = field.value == "true"
         case "captureExclusions.excludedBundleIds":
             return applyCaptureExclusions(field.value)
+        case CaptureExclusions.domainsFieldKey:
+            guard let data = field.value.data(using: .utf8),
+                  let domains = try? JSONDecoder().decode([String].self, from: data) else { return false }
+            CaptureExclusions.shared.setExcludedDomains(domains)
         case "apiKey.anthropic.syncEnabled":
             routing.anthropicKeySyncEnabled = field.value == "true"
         case "apiKey.openai.syncEnabled":

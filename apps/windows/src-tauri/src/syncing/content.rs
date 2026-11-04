@@ -11,10 +11,12 @@
 //! `ContentSyncCoordinator` cadence), and right after the PC wakes from sleep.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::live_alerts::QuestionAlerts;
 use crate::secrets::SecretStore;
+use crate::settings::SettingsFile;
 use crate::store_actor::StoreHandle;
 use crate::syncing::controller::SyncController;
 use crate::syncing::keys;
@@ -105,7 +107,17 @@ fn now_ms() -> i64 {
 /// enrollment is Ready.
 /// `skins_root` is this PC's skins folder: after each good round, skins from other devices are written
 /// there and this PC's are queued (skins Task 15).
-pub fn start(controller: Arc<SyncController>, store: StoreHandle, secrets: Arc<dyn SecretStore>, device_id: String, skins_root: PathBuf) {
+/// After every round, failed ones too (a round can apply rows before it fails), peer question
+/// alerts go to `alerts` for the popup.
+pub fn start(
+    controller: Arc<SyncController>,
+    store: StoreHandle,
+    secrets: Arc<dyn SecretStore>,
+    device_id: String,
+    skins_root: PathBuf,
+    alerts: Arc<QuestionAlerts>,
+    settings: Arc<Mutex<SettingsFile>>,
+) {
     let spawned = std::thread::Builder::new().name("whimbrel-content-sync".into()).spawn(move || {
         let purged = crate::skin_sync::purge_deleted(&skins_root);
         if purged > 0 {
@@ -132,6 +144,11 @@ pub fn start(controller: Arc<SyncController>, store: StoreHandle, secrets: Arc<d
                 if is_auth_error(message) {
                     controller.reauth_now();
                 }
+            }
+            let enabled = settings.lock().unwrap().live_question_enabled();
+            let queue = alerts.clone();
+            if let Err(e) = store.call_blocking(move |s| queue.after_round(s, enabled, now_ms())) {
+                tracing::warn!(error = %e, "question alerts after the sync round failed");
             }
             let ok = result.is_ok();
             if ok {

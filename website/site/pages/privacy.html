@@ -10,12 +10,54 @@
 <section class="page-hero">
   <div class="narrow prose">
     <h1>Privacy policy</h1>
-    <p class="muted">Last updated October 29, 2026</p>
+    <p class="muted">Last updated November 4, 2026</p>
 
     <div class="callout"><p><strong>The short version:</strong> the Whimbrel app keeps your meetings and work history on your own computer. This website only collects what you type into the registration form and basic download records, uses them to give you the download and (if you ask) product updates, and never sells them.</p></div>
 
     <h2>The Whimbrel app</h2>
     <p>Meeting audio, transcripts, notes, and screen-text history are stored in a database on your computer. If you turn on sync, that data is end-to-end encrypted on your device before it is uploaded, and the keys stay on your devices. When you use a hosted AI provider with your own API key, the text needed to answer that request is sent to that provider under its terms; local models through Ollama send nothing off your computer.</p>
+
+    <h2 id="leaves">What leaves your computer</h2>
+    <p>The app's Settings has a "Your data" pane that shows this same list with your own state next to each row. Nothing on it is on by default except the update check.</p>
+    <div class="table-wrap">
+      <table class="compare">
+        <thead>
+          <tr><th>What</th><th>When</th><th>Who can see what</th><th>How to stop it</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>AI providers</td>
+            <td>When you ask a question, summarize a meeting, or run a routine with a hosted model.</td>
+            <td>The provider whose key you added receives the text needed for that request, under its own terms. Known secrets are redacted first.</td>
+            <td>Use Local-only mode or a local model. Nothing is sent.</td>
+          </tr>
+          <tr>
+            <td>Sync relay</td>
+            <td>Continuously, while sync is on.</td>
+            <td>The relay stores encrypted data it cannot read. It can see your account email and identifier, each device's name, platform, public key and enrollment dates, the type and time of each synced item, and the names of synced settings fields. Never content, never keys.</td>
+            <td>Turn sync off, delete your sync account in Settings, or run your own relay.</td>
+          </tr>
+          <tr>
+            <td>Update check</td>
+            <td>Once a week.</td>
+            <td>A random identifier that changes every week, the platform and the app version, so we can count installs. It is not linked to you, your account or your devices.</td>
+            <td>It stays on; an app that cannot check for updates is the worse trade. It carries nothing about you.</td>
+          </tr>
+          <tr>
+            <td>Google</td>
+            <td>When you connect a Google account.</td>
+            <td>Google sees the app reading your Gmail and Calendar. The data lands in the local database; we never receive it.</td>
+            <td>Disconnect the account in Settings or at myaccount.google.com/permissions.</td>
+          </tr>
+          <tr>
+            <td>TypeSafe reply ranking</td>
+            <td>When you turn it on, as email arrives.</td>
+            <td>TypeSafe receives email subjects and snippets to score which threads need a reply.</td>
+            <td>It is off by default; turn it off in the AI settings.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <h2>Google account data</h2>
     <p>Whimbrel works with Google only when you connect a Google account in the app. You choose what to connect, and you can disconnect at any time.</p>

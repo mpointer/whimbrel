@@ -22,6 +22,7 @@ import { ActionItems } from "./ActionItems";
 import { elapsedLabel } from "./recordingModel";
 import { meetingTitleLabel } from "./sentinels";
 import { RecordingNoticeCard } from "./RecordingNoticeCard";
+import { LiveAlertsSection } from "./LiveAlertsSection";
 import { SlidesStrip } from "./SlidesStrip";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { overrideOf, phaseTitle, transcriptLanguageOptions, transcriptionNoticeText } from "./workspaceModel";
@@ -277,6 +278,9 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
               </div>
             </div>
           )}
+
+          {/* After the meeting only: (b) adds it to the live view, where `recording` is true. */}
+          <LiveAlertsSection meetingId={meetingId} recording={false} endedUnixMs={view.row.endUnixMs ?? null} />
 
           <TranscriptPanel key={transcriptRound} meetingId={meetingId} hasTranscript={view.hasTranscript} />
 

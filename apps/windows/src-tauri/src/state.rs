@@ -50,6 +50,8 @@ pub struct AppState {
     pub pipeline: Option<Arc<Pipeline>>,
     /// The detected call waiting for an answer in the alert window (M3.3 Task 6).
     pub detected: Arc<Pending>,
+    /// Question alerts other devices heard, waiting in the popup (parity item a).
+    pub question_alerts: Arc<crate::live_alerts::QuestionAlerts>,
     /// Google Calendar polling and lead-time prompts; `None` without the sync config
     /// (the connector signs in with the same Google client).
     pub calendar: Option<Arc<CalendarService>>,
@@ -177,6 +179,7 @@ impl AppState {
             meetings,
             pipeline,
             detected,
+            question_alerts: Arc::default(),
             calendar: None,
             gmail: None,
             retention: None,
@@ -205,7 +208,15 @@ impl AppState {
         controller.start();
         if let Some(store) = &self.store {
             let device_id = controller.identity().device_id.clone();
-            crate::syncing::content::start(controller.clone(), store.clone(), self.secrets.clone(), device_id, self.paths.skins.clone());
+            crate::syncing::content::start(
+                controller.clone(),
+                store.clone(),
+                self.secrets.clone(),
+                device_id,
+                self.paths.skins.clone(),
+                self.question_alerts.clone(),
+                self.settings.clone(),
+            );
         }
         self.sync = Some(controller);
     }
@@ -217,6 +228,7 @@ impl AppState {
         if let Some(controller) = &self.meetings {
             crate::meetings::service::start(app.clone(), controller.clone(), self.settings.clone(), self.detected.clone());
         }
+        crate::question_alert::watch(app.clone(), self.question_alerts.clone());
         let (Some(store), Ok(config)) = (&self.store, crate::syncing::config::SyncConfig::embedded()) else {
             tracing::info!("calendar syncing is off: no Google client in Secrets.toml");
             return;

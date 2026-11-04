@@ -7,6 +7,7 @@ import { App } from "./App";
 import { languageSettings } from "./api";
 import { L10nProvider, setLanguage, useLanguage } from "./l10n";
 import { AlertView } from "./alert/AlertView";
+import { QuestionAlertView } from "./alert/QuestionAlertView";
 import { PopupView } from "./popup/PopupView";
 import { startSkin } from "./skin";
 
@@ -20,7 +21,8 @@ const label = getCurrentWindow().label;
 // every render, so a language change re-renders the whole window without remounting it.
 function Root() {
   const lang = useLanguage();
-  const view = label === "popup" ? <PopupView /> : label === "alert" ? <AlertView /> : <App />;
+  const view =
+    label === "popup" ? <PopupView /> : label === "alert" ? <AlertView /> : label === "question-alert" ? <QuestionAlertView /> : <App />;
   return <L10nProvider lang={lang}>{view}</L10nProvider>;
 }
 

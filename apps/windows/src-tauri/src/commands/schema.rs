@@ -68,6 +68,9 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::workspace::ActionItemView>();
     generator.subschema_for::<super::meetings::MeetingSettings>();
     generator.subschema_for::<crate::meetings::service::AlertView>();
+    generator.subschema_for::<crate::live_alerts::QuestionNotice>();
+    generator.subschema_for::<crate::live_alerts::LiveAlertView>();
+    generator.subschema_for::<crate::question_alert::OpenMeetingRequest>();
     generator.subschema_for::<super::connectors::CalendarAccounts>();
     generator.subschema_for::<super::mcp::McpServerView>();
     generator.subschema_for::<super::mcp::McpClientView>();

@@ -49,6 +49,9 @@ pub mod keys {
     pub const HEURISTIC_DETECTION: &str = "meetings.heuristicDetectionEnabled";
     pub const MEETING_AUTO_START: &str = "meetings.autoStart";
     pub const MEETING_LEAD_MINUTES: &str = "meetings.leadMinutes";
+    /// Device-local, as on the Mac (`LiveQuestionSettings.enabled`): "Alert me when someone asks me
+    /// something". On unless turned off. In parity item (a) it gates the popup for other devices' alerts.
+    pub const LIVE_QUESTION_ENABLED: &str = "liveQuestion.enabled";
     /// Device-local, as on the Mac (`MeetingPrepSettings`): how long before a meeting its brief is made.
     pub const MEETING_PREP_LEAD_MINUTES: &str = "meetingPrep.leadMinutes";
     /// Device-local, as on the Mac (`RecordingNoticeSettings`, W-1.7): "Remind me to tell people I'm
@@ -493,6 +496,15 @@ impl SettingsFile {
     /// the Mac's range). Separate from the 1-10 minute alert lead above.
     pub fn prep_lead_minutes(&self) -> f64 {
         self.get::<f64>(keys::MEETING_PREP_LEAD_MINUTES).filter(|m| *m > 0.0).unwrap_or(30.0).clamp(5.0, 120.0)
+    }
+
+    /// Live question alerts: on by default, as on the Mac.
+    pub fn live_question_enabled(&self) -> bool {
+        self.get(keys::LIVE_QUESTION_ENABLED).unwrap_or(true)
+    }
+
+    pub fn set_live_question_enabled(&mut self, enabled: bool) {
+        self.set(keys::LIVE_QUESTION_ENABLED, Some(enabled));
     }
 
     pub fn set_prep_lead_minutes(&mut self, minutes: f64) {
