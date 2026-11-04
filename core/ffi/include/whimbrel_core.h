@@ -1294,6 +1294,15 @@ char *whimbrel_key_format_hint(const char *provider, const char *key);
  * "cents"}]}. NULL on a NULL/invalid handle. */
 char *whimbrel_usage_totals(StoreHandle *handle);
 
+/* The Your data pane's counts (memory::Store::data_counts) as DataCounts JSON. Null on a
+ * null/invalid handle. */
+char *whimbrel_data_counts(StoreHandle *handle);
+
+/* Export everything (api::your_data::export_all) into `root`, the folder the user picked:
+ * writes "Whimbrel export <date>/" inside it and returns ExportAllReport JSON. Null on a
+ * null/invalid handle, a bad path, or a write failure. */
+char *whimbrel_export_all(StoreHandle *handle, const char *root);
+
 /* The newest `limit` calls with since_unix_ms <= ts < until_unix_ms, as a JSON array of
  * {"ts_unix_ms","task","provider","model","input_tokens","output_tokens",
  * "estimated_cost_cents","local"}. NULL on a NULL/invalid handle. */

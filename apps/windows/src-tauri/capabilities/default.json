@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main window, the tray's quick-glance popup and the meeting alert.",
+  "description": "Permissions for the main window, the tray's quick-glance popup, the meeting alert and the question alert.",
   "windows": [
     "main",
     "popup",
-    "alert"
+    "alert",
+    "question-alert"
   ],
   "permissions": [
     "core:default"

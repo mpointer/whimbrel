@@ -1132,6 +1132,31 @@ export interface LibrarySettings {
   showScreenCaptures: boolean;
 }
 /**
+ * One "Questions for you" card.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LiveAlertView".
+ */
+export interface LiveAlertView {
+  /**
+   * When it was asked, "m:ss" from the meeting's start.
+   */
+  askedAt: string;
+  asker?: string | null;
+  createdAtUnixMs: number;
+  /**
+   * The draft answer's markdown; model output, rendered without links or images.
+   */
+  draft?: string | null;
+  id: number;
+  quote: string;
+  restatement: string;
+  /**
+   * The draft cites sources this PC can't resolve: another device recorded the meeting.
+   */
+  sourcesElsewhere: boolean;
+}
+/**
  * The small local model behind Ask (W-1.3).
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1289,6 +1314,10 @@ export interface MeetingSettings {
    */
   leadMinutes: number;
   /**
+   * "Alert me when someone asks me something". On by default.
+   */
+  liveQuestionAlerts: boolean;
+  /**
    * Minutes before a calendar meeting its Meeting Prep brief is made, 5-120. Kept on this PC.
    */
   prepLeadMinutes: number;
@@ -1383,6 +1412,16 @@ export interface PrepSourceView {
   title: string;
 }
 /**
+ * A meeting the main window should open: `meeting_id` null opens Meetings with nothing
+ * selected (the other device's meeting hasn't synced here yet).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "OpenMeetingRequest".
+ */
+export interface OpenMeetingRequest {
+  meetingId?: number | null;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "ProfileFields".
  */
@@ -1435,6 +1474,35 @@ export interface ProfileView {
    * Whether the daily job would run now: the suggest switch is on and something is written.
    */
   suggestionsActive: boolean;
+}
+/**
+ * One popup notice.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "QuestionNotice".
+ */
+export interface QuestionNotice {
+  body: string;
+  /**
+   * `live-alert-<origin>-<source id>`, or `live-alert-more-<origin>-<source meeting>`; a
+   * notice with the same id replaces the queued one.
+   */
+  id: string;
+  /**
+   * This PC's id for the meeting when it had synced at the time of the pull.
+   */
+  meetingId?: number | null;
+  /**
+   * The device that heard it and its own id for the meeting, resolved to this PC's id
+   * when the notice is opened.
+   */
+  origin: string;
+  sourceMeetingId: number;
+  /**
+   * The meeting's title: another device's alert isn't about the meeting on screen here.
+   */
+  subtitle?: string | null;
+  title: string;
 }
 /**
  * Settings → Meetings → "Remind me to tell people I'm recording" (W-1.7).

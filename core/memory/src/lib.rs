@@ -1157,6 +1157,58 @@ pub struct UsageLogEntry {
     pub cache_hit: bool,
     pub trace_id: String,
     pub ts_unix_ms: i64,
+    /// The span parent (`log_usage_with_parent`); `None` for a call logged on its own.
+    #[serde(default)]
+    pub parent_trace_id: Option<String>,
+}
+
+/// Rows per kind (`Store::data_counts`), the "On this computer" half of the Your data pane.
+/// camelCase on the wire: the shells decode it as they decode every other DTO.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataCounts {
+    pub captures: i64,
+    pub transcript_lines: i64,
+    pub snapshots: i64,
+    pub emails: i64,
+    pub calendar_events: i64,
+    pub meetings: i64,
+    pub episodes: i64,
+    pub threads: i64,
+    pub conversations: i64,
+    pub routines: i64,
+    pub routine_runs: i64,
+    pub topics: i64,
+    pub entities: i64,
+    pub usage_rows: i64,
+    pub live_alerts: i64,
+}
+
+/// One `items` row as "export everything" writes it (`Store::export_items_page`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExportItemRow {
+    pub id: i64,
+    pub device_id: String,
+    pub kind: String,
+    pub source: Option<String>,
+    pub ts_unix_ms: i64,
+    pub app_bundle_id: Option<String>,
+    pub title: Option<String>,
+    pub url: Option<String>,
+    pub actors: Vec<String>,
+    pub body_text: String,
+    /// The row's JSON refs as stored (Gmail thread id, labels, calendar fields).
+    pub refs: Option<String>,
+    pub external_id: Option<String>,
+}
+
+/// One parent's rolled-up usage (`Store::sum_usage_by_parent`).
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
+pub struct UsageByParent {
+    pub calls: i64,
+    pub estimated_cost_cents: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1712,6 +1764,7 @@ impl Store {
         Self::ensure_transcript_segment_local_seq_column(conn)?;
         Self::ensure_routine_auto_approve_column(conn)?;
         Self::ensure_routine_model_pref_column(conn)?;
+        Self::ensure_usage_log_parent_trace_id_column(conn)?;
         Self::ensure_routine_run_pending_action_column(conn)?;
         Self::ensure_routine_run_sync_columns(conn)?;
         Self::ensure_embedding_schema_migrated(conn)?;
@@ -2252,6 +2305,24 @@ impl Store {
         };
         if !existing_columns.iter().any(|c| c == "model_pref") {
             conn.execute("ALTER TABLE routine ADD COLUMN model_pref TEXT NOT NULL DEFAULT 'default'", [])?;
+        }
+        Ok(())
+    }
+
+    /// `usage_log.parent_trace_id`: the span parent. One operation that makes several
+    /// model calls (a routine run, an eval run, later an agent run) tags each row with
+    /// the same parent so its cost is one query (`sum_usage_by_parent`). NULL for every
+    /// pre-existing row and for callers that log one call at a time. `route` is the
+    /// span kind; no second column (docs/superpowers/specs/2026-11-04-eval-harness-design.md).
+    fn ensure_usage_log_parent_trace_id_column(conn: &Connection) -> rusqlite::Result<()> {
+        let existing_columns: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(usage_log)")?;
+            let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            names.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        if !existing_columns.iter().any(|c| c == "parent_trace_id") {
+            conn.execute("ALTER TABLE usage_log ADD COLUMN parent_trace_id TEXT", [])?;
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_log_parent ON usage_log(parent_trace_id)", [])?;
         }
         Ok(())
     }
@@ -6521,6 +6592,62 @@ impl Store {
             .query_row("SELECT COUNT(*) FROM usage_log", [], |row| row.get(0))
     }
 
+    /// Rows per kind, for the "Your data" pane (trust surface spec,
+    /// docs/superpowers/specs/2026-11-04-trust-surface-design.md). Counts only: the shells
+    /// own the folders and add sizes. `items` is counted by kind, so a capture and its
+    /// `capture_item` source row count once.
+    pub fn data_counts(&self) -> rusqlite::Result<DataCounts> {
+        let count = |sql: &str| -> rusqlite::Result<i64> { self.conn.query_row(sql, [], |row| row.get(0)) };
+        let kind = |k: &str| -> rusqlite::Result<i64> {
+            self.conn.query_row("SELECT COUNT(*) FROM items WHERE kind = ?1", params![k], |row| row.get(0))
+        };
+        Ok(DataCounts {
+            captures: kind("capture")?,
+            transcript_lines: kind("transcript")?,
+            snapshots: kind("snapshot")?,
+            emails: kind("email")?,
+            calendar_events: kind("calendar_event")?,
+            meetings: count("SELECT COUNT(*) FROM meeting")?,
+            episodes: count("SELECT COUNT(*) FROM episodes")?,
+            threads: count("SELECT COUNT(*) FROM threads")?,
+            conversations: count("SELECT COUNT(*) FROM conversation")?,
+            routines: count("SELECT COUNT(*) FROM routine")?,
+            routine_runs: count("SELECT COUNT(*) FROM routine_run")?,
+            topics: count("SELECT COUNT(*) FROM topic WHERE merged_into IS NULL")?,
+            entities: count("SELECT COUNT(*) FROM entity")?,
+            usage_rows: count("SELECT COUNT(*) FROM usage_log")?,
+            live_alerts: count("SELECT COUNT(*) FROM live_alert")?,
+        })
+    }
+
+    /// One keyset page of `items` of one kind, ascending by id from `after_id`
+    /// (exclusive), for "export everything". Every column a reader needs and nothing
+    /// that is sync bookkeeping.
+    pub fn export_items_page(&self, kind: &str, after_id: i64, limit: usize) -> rusqlite::Result<Vec<ExportItemRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, device_id, kind, source, ts_unix_ms, app_bundle_id, title, url, actors, body_text, refs, external_id \
+             FROM items WHERE kind = ?1 AND id > ?2 ORDER BY id ASC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![kind, after_id, limit as i64], |row| {
+            let actors_json: Option<String> = row.get(8)?;
+            Ok(ExportItemRow {
+                id: row.get(0)?,
+                device_id: row.get(1)?,
+                kind: row.get(2)?,
+                source: row.get(3)?,
+                ts_unix_ms: row.get(4)?,
+                app_bundle_id: row.get(5)?,
+                title: row.get(6)?,
+                url: row.get(7)?,
+                actors: actors_json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default(),
+                body_text: row.get(9)?,
+                refs: row.get(10)?,
+                external_id: row.get(11)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     /// FR-MTG-1/2: records a meeting — either a qualifying calendar event (prompted or
     /// auto-started) or a heuristically-detected one. Called when the prompt fires
     /// (status `Scheduled`) or when capture actually starts (status `Recording`);
@@ -7517,9 +7644,20 @@ impl Store {
     /// exempt from spend-cap checks (see `Store::sum_spend_cents`'s caller in
     /// `llm::ledger`).
     pub fn log_usage(&self, e: &NewUsageLogEntry) -> rusqlite::Result<i64> {
+        self.log_usage_inner(e, None)
+    }
+
+    /// [`log_usage`] with a span parent: every call made for one operation (a routine
+    /// run, an eval run) passes the same `parent_trace_id`, and `sum_usage_by_parent`
+    /// rolls them up.
+    pub fn log_usage_with_parent(&self, e: &NewUsageLogEntry, parent_trace_id: &str) -> rusqlite::Result<i64> {
+        self.log_usage_inner(e, Some(parent_trace_id))
+    }
+
+    fn log_usage_inner(&self, e: &NewUsageLogEntry, parent_trace_id: Option<&str>) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO usage_log (user_id, provider, model, route, input_tokens, output_tokens, estimated_cost_cents, cache_hit, trace_id, ts_unix_ms) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO usage_log (user_id, provider, model, route, input_tokens, output_tokens, estimated_cost_cents, cache_hit, trace_id, ts_unix_ms, parent_trace_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 e.user_id,
                 e.provider,
@@ -7531,9 +7669,27 @@ impl Store {
                 e.cache_hit as i64,
                 e.trace_id,
                 e.ts_unix_ms,
+                parent_trace_id,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Calls, cents and tokens of every row whose `parent_trace_id` is `parent`.
+    pub fn sum_usage_by_parent(&self, parent: &str) -> rusqlite::Result<UsageByParent> {
+        self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(estimated_cost_cents), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) \
+             FROM usage_log WHERE parent_trace_id = ?1",
+            params![parent],
+            |row| {
+                Ok(UsageByParent {
+                    calls: row.get(0)?,
+                    estimated_cost_cents: row.get(1)?,
+                    input_tokens: row.get(2)?,
+                    output_tokens: row.get(3)?,
+                })
+            },
+        )
     }
 
     /// Sum of `estimated_cost_cents` for rows at or after `since_unix_ms`.
@@ -7567,7 +7723,7 @@ impl Store {
     /// `limit`: the Model usage screen's list.
     pub fn list_usage(&self, since_unix_ms: i64, until_unix_ms: i64, limit: usize) -> rusqlite::Result<Vec<UsageLogEntry>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, user_id, provider, model, route, input_tokens, output_tokens, estimated_cost_cents, cache_hit, trace_id, ts_unix_ms \
+            "SELECT id, user_id, provider, model, route, input_tokens, output_tokens, estimated_cost_cents, cache_hit, trace_id, ts_unix_ms, parent_trace_id \
              FROM usage_log WHERE ts_unix_ms >= ?1 AND ts_unix_ms < ?2 ORDER BY ts_unix_ms DESC, id DESC LIMIT ?3",
         )?;
         let rows = stmt.query_map(params![since_unix_ms, until_unix_ms, limit as i64], |row| {
@@ -7584,6 +7740,7 @@ impl Store {
                 cache_hit: cache_hit != 0,
                 trace_id: row.get(9)?,
                 ts_unix_ms: row.get(10)?,
+                parent_trace_id: row.get(11)?,
             })
         })?;
         rows.collect()
@@ -10894,6 +11051,35 @@ mod tests {
             "starred must survive regardless of age"
         );
         assert!(store.get_conversation(recent).unwrap().is_some());
+    }
+
+    #[test]
+    fn usage_rows_under_one_parent_roll_up_and_plain_rows_have_no_parent() {
+        let store = Store::open_in_memory().unwrap();
+        let entry = |trace: &str, cents: i64| NewUsageLogEntry {
+            user_id: None,
+            provider: "anthropic".into(),
+            model: "claude-haiku-4-5".into(),
+            route: Some("routine".into()),
+            input_tokens: Some(100),
+            output_tokens: Some(20),
+            estimated_cost_cents: cents,
+            cache_hit: false,
+            trace_id: trace.into(),
+            ts_unix_ms: 1_000,
+        };
+        store.log_usage_with_parent(&entry("a", 3), "run-1").unwrap();
+        store.log_usage_with_parent(&entry("b", 4), "run-1").unwrap();
+        store.log_usage(&entry("c", 5)).unwrap();
+
+        let rolled = store.sum_usage_by_parent("run-1").unwrap();
+        assert_eq!(rolled, UsageByParent { calls: 2, estimated_cost_cents: 7, input_tokens: 200, output_tokens: 40 });
+        assert_eq!(store.sum_usage_by_parent("nothing").unwrap(), UsageByParent::default());
+
+        let rows = store.list_usage(0, 2_000, 10).unwrap();
+        let parents: Vec<Option<String>> = rows.iter().map(|r| r.parent_trace_id.clone()).collect();
+        assert!(parents.contains(&None));
+        assert_eq!(parents.iter().filter(|p| p.as_deref() == Some("run-1")).count(), 2);
     }
 
     #[test]

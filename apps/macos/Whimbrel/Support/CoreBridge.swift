@@ -777,6 +777,41 @@ struct CoreOpenRouterModel: Codable, Equatable {
     }
 }
 
+/// JSON shape matching `whimbrel_data_counts` (core/memory::DataCounts): rows per kind.
+struct CoreDataCounts: Codable, Equatable {
+    let captures: Int64
+    let transcriptLines: Int64
+    let snapshots: Int64
+    let emails: Int64
+    let calendarEvents: Int64
+    let meetings: Int64
+    let episodes: Int64
+    let threads: Int64
+    let conversations: Int64
+    let routines: Int64
+    let routineRuns: Int64
+    let topics: Int64
+    let entities: Int64
+    let usageRows: Int64
+    let liveAlerts: Int64
+}
+
+/// JSON shape matching `whimbrel_export_all` (core/api::your_data::ExportAllReport).
+struct CoreExportAllReport: Codable, Equatable {
+    let folder: String
+    let files: Int
+    let bytes: Int64
+    let meetings: Int
+    let transcriptLines: Int
+    let captures: Int
+    let emails: Int
+    let calendarEvents: Int
+    let snapshots: Int
+    let conversations: Int
+    let routines: Int
+    let topicsWritten: Int
+}
+
 /// JSON shape matching `whimbrel_usage_totals` (core/api::usage::UsageTotals): spend in
 /// cents for the windows the Model usage screen shows, UTC days.
 struct CoreUsageTotals: Codable, Equatable {
@@ -2109,6 +2144,23 @@ final class CoreMemoryStore {
     /// handle.
     func usageTotals() -> CoreUsageTotals? {
         guard let json = whimbrel_usage_totals(handle) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
+    /// Rows per kind for the Your data pane (`memory::Store::data_counts`). Nil on a
+    /// null/invalid handle.
+    func dataCounts() -> CoreDataCounts? {
+        guard let json = whimbrel_data_counts(handle) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
+    /// "Export everything" (`api::your_data::export_all`) into `root`, the folder the
+    /// user picked; writes `Whimbrel export <date>/` inside it. Nil on a bad path or a
+    /// write failure.
+    func exportAll(root: URL) -> CoreExportAllReport? {
+        guard let json = root.path.withCString({ whimbrel_export_all(handle, $0) }) else { return nil }
         defer { whimbrel_core_free_string(json) }
         return decode(json)
     }

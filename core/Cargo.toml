@@ -15,10 +15,11 @@ members = [
     "sync-engine",
     "skins",
     "ffi",
+    "eval",
 ]
 
 [workspace.package]
-version = "0.9.51"
+version = "0.9.52"
 edition = "2021"
 license = "Apache-2.0"
 publish = false

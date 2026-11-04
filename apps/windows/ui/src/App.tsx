@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { approvalsCount } from "./api";
+import { listen } from "@tauri-apps/api/event";
+import { approvalsCount, takePendingOpenMeeting } from "./api";
 import { AboutCard } from "./settings/AboutCard";
 import { AiCard } from "./settings/AiCard";
 import { CaptureCard } from "./settings/CaptureCard";
@@ -44,6 +45,20 @@ export function App() {
     look();
     const timer = setInterval(look, 20_000);
     return () => clearInterval(timer);
+  }, []);
+  // A meeting a question alert asked to open (parity item a). Read on mount, because opening it may
+  // have just created this window, and again whenever the alert pings an open window.
+  const [openMeeting, setOpenMeeting] = useState<{ seq: number; meetingId: number | null } | null>(null);
+  useEffect(() => {
+    const take = () =>
+      takePendingOpenMeeting().then((request) => {
+        if (!request) return;
+        setOpenMeeting((o) => ({ seq: (o?.seq ?? 0) + 1, meetingId: request.meetingId ?? null }));
+        setActive("meetings");
+      }, () => {});
+    take();
+    const unlisten = listen("open-meeting", take);
+    return () => void unlisten.then((stop) => stop());
   }, []);
   // Missing models download in the background, with no prompt (Release 1 item 1.1).
   useEffect(bootstrapModels, []);
@@ -111,7 +126,7 @@ export function App() {
             onOpenSettings={() => setActive("settings")}
           />
         ) : tab.id === "meetings" ? (
-          <MeetingsView />
+          <MeetingsView open={openMeeting} />
         ) : tab.id === "library" ? (
           <LibraryView askRequest={askRequest} onAskHandled={() => setAskRequest(null)} onOpenSettings={() => setActive("settings")} />
         ) : tab.id === "automations" ? (

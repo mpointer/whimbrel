@@ -2051,6 +2051,38 @@ pub extern "C" fn whimbrel_usage_totals(handle: *mut StoreHandle) -> *mut c_char
     }
 }
 
+/// The Your data pane's counts (`memory::Store::data_counts`) as `DataCounts` JSON. Null
+/// on a null/invalid handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_data_counts(handle: *mut StoreHandle) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    match store.data_counts().ok().and_then(|c| serde_json::to_string(&c).ok()) {
+        Some(json) => json_to_c_string(json),
+        None => ptr::null_mut(),
+    }
+}
+
+/// "Export everything" (`api::your_data::export_all`) into `root` (the folder the user
+/// picked): writes `Whimbrel export <date>/` inside it and returns `ExportAllReport` JSON.
+/// Null on a null/invalid handle, a bad path, or a write failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_export_all(handle: *mut StoreHandle, root: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(root) = cstr_to_string(root) else {
+        return ptr::null_mut();
+    };
+    let store = unsafe { &(*handle).0 };
+    match api::your_data::export_all(store, Path::new(&root), now_unix_ms()).ok().and_then(|r| serde_json::to_string(&r).ok()) {
+        Some(json) => json_to_c_string(json),
+        None => ptr::null_mut(),
+    }
+}
+
 /// The Model usage screen's list (`api::usage::list`): the newest `limit` calls with
 /// `since_unix_ms <= ts < until_unix_ms` as a JSON array of `{"ts_unix_ms", "task",
 /// "provider", "model", "input_tokens", "output_tokens", "estimated_cost_cents",

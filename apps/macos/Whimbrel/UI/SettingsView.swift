@@ -110,6 +110,7 @@ struct SettingsView: View {
         case .profile:
             card { ProfileSettingsPane() }
         case .capture:
+            card { YourDataSettingsPane() }
             card { CaptureSettingsPane() }
             card { RetentionSettingsPane() }
         case .meetings:

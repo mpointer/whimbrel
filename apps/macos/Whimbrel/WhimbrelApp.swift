@@ -1,11 +1,19 @@
 import SwiftUI
+import os
 
 /// A unit-test host gets an empty app: the real one opens the live database and starts
 /// pollers, sync, retention, routines, capture and the MCP server, none of which a test needs.
 @main
 enum WhimbrelMain {
     static func main() {
-        if KeychainAccess.isTestHost { TestHostApp.main() } else { WhimbrelApp.main() }
+        if KeychainAccess.isTestHost { TestHostApp.main(); return }
+        // "Delete everything" removes the data here, before anything opens the database.
+        if let failed = YourData.runPendingDelete(in: SpikePaths.root), !failed.isEmpty {
+            UserDefaults.standard.set(failed.map(\.path).joined(separator: "\n"), forKey: YourData.deleteLeftoversKey)
+            Logger(subsystem: "com.mpointer.kestrel", category: "your-data")
+                .error("Delete everything could not remove \(failed.count) item(s).")
+        }
+        WhimbrelApp.main()
     }
 }
 

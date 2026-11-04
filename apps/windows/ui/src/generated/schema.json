@@ -1891,6 +1891,55 @@
         }
       ]
     },
+    "LiveAlertView": {
+      "description": "One \"Questions for you\" card.",
+      "properties": {
+        "askedAt": {
+          "description": "When it was asked, \"m:ss\" from the meeting's start.",
+          "type": "string"
+        },
+        "asker": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "createdAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "draft": {
+          "description": "The draft answer's markdown; model output, rendered without links or images.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "quote": {
+          "type": "string"
+        },
+        "restatement": {
+          "type": "string"
+        },
+        "sourcesElsewhere": {
+          "description": "The draft cites sources this PC can't resolve: another device recorded the meeting.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "restatement",
+        "quote",
+        "sourcesElsewhere",
+        "askedAt",
+        "createdAtUnixMs"
+      ],
+      "type": "object"
+    },
     "LocalModelStatus": {
       "description": "The small local model behind Ask (W-1.3).",
       "properties": {
@@ -2218,6 +2267,10 @@
           "format": "double",
           "type": "number"
         },
+        "liveQuestionAlerts": {
+          "description": "\"Alert me when someone asks me something\". On by default.",
+          "type": "boolean"
+        },
         "prepLeadMinutes": {
           "description": "Minutes before a calendar meeting its Meeting Prep brief is made, 5-120. Kept on this PC.",
           "format": "double",
@@ -2228,7 +2281,8 @@
         "heuristicDetection",
         "autoStart",
         "leadMinutes",
-        "prepLeadMinutes"
+        "prepLeadMinutes",
+        "liveQuestionAlerts"
       ],
       "type": "object"
     },
@@ -2327,6 +2381,19 @@
         "profile",
         "covered"
       ],
+      "type": "object"
+    },
+    "OpenMeetingRequest": {
+      "description": "A meeting the main window should open: `meeting_id` null opens Meetings with nothing\nselected (the other device's meeting hasn't synced here yet).",
+      "properties": {
+        "meetingId": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "PipelineFailure": {
@@ -2734,6 +2801,52 @@
         "fast"
       ],
       "type": "string"
+    },
+    "QuestionNotice": {
+      "description": "One popup notice.",
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "id": {
+          "description": "`live-alert-<origin>-<source id>`, or `live-alert-more-<origin>-<source meeting>`; a\nnotice with the same id replaces the queued one.",
+          "type": "string"
+        },
+        "meetingId": {
+          "description": "This PC's id for the meeting when it had synced at the time of the pull.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "origin": {
+          "description": "The device that heard it and its own id for the meeting, resolved to this PC's id\nwhen the notice is opened.",
+          "type": "string"
+        },
+        "sourceMeetingId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "subtitle": {
+          "description": "The meeting's title: another device's alert isn't about the meeting on screen here.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "body",
+        "origin",
+        "sourceMeetingId"
+      ],
+      "type": "object"
     },
     "QueueWaitStats": {
       "description": "How long jobs waited for the store, over the last 4,096 jobs.",

@@ -5,6 +5,8 @@ struct CaptureSettingsPane: View {
     @ObservedObject private var exclusions = CaptureExclusions.shared
     @State private var searchText = ""
     @State private var apps: [(bundleId: String, name: String)] = []
+    @State private var newDomain = ""
+    @State private var domainRefused = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -19,7 +21,7 @@ struct CaptureSettingsPane: View {
 
             Divider().overlay(Color.whimbrelBorder)
 
-            Text("Exclude apps from screen-text capture. Excluded apps' content is never read — checked before any Accessibility/OCR extraction happens, not filtered out afterward.")
+            Text("Exclude apps from screen-text capture. Excluded apps' content is never read: the check happens before any Accessibility or OCR extraction, not as a filter afterward.")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -47,8 +49,50 @@ struct CaptureSettingsPane: View {
                     }
                 }
             }
+
+            Divider().overlay(Color.whimbrelBorder)
+
+            Text("Sites never captured")
+                .font(.whimbrelBody(.headline))
+                .foregroundStyle(Color.whimbrelTextPrimary)
+            Text("Pages on these sites, and their subdomains, are skipped before any text is read. Works in browsers that expose the page address.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                TextField("example.com", text: $newDomain)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(addDomain)
+                Button("Add") { addDomain() }
+                    .buttonStyle(.whimbrelSecondary)
+                    .disabled(newDomain.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            if domainRefused {
+                Text("That doesn't look like a site. Enter a domain such as example.com.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelError)
+            }
+            if exclusions.excludedDomains.isEmpty {
+                Text("No sites excluded.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+            } else {
+                ForEach(exclusions.excludedDomains.sorted(), id: \.self) { domain in
+                    HStack {
+                        Text(domain)
+                        Spacer()
+                        Button("Remove") { exclusions.removeExcludedDomain(domain) }
+                            .buttonStyle(.whimbrelSecondary)
+                    }
+                }
+            }
         }
         .onAppear { apps = exclusions.candidateApps() }
+    }
+
+    private func addDomain() {
+        domainRefused = !exclusions.addExcludedDomain(newDomain)
+        if !domainRefused { newDomain = "" }
     }
 
     private var filteredApps: [(bundleId: String, name: String)] {

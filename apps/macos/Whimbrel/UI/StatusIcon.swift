@@ -6,8 +6,10 @@ import SwiftUI
 /// meeting is running), plus a small color badge: red specifically while a meeting is
 /// actively recording (the more sensitive, attention-worthy state), amber when
 /// something's on but degraded or missing a permission it needs. Activity capture
-/// running alone (no meeting) gets no badge — it's the app's ambient default state,
-/// not something that needs at-a-glance attention.
+/// running alone (no meeting) gets a small neutral dot (the trust surface spec,
+/// docs/superpowers/specs/2026-11-04-trust-surface-design.md): capture of the screen is
+/// always visible, in the color of ordinary text rather than a warning color, because it
+/// is the app's normal state and still something a person should be able to see.
 struct StatusIcon: View {
     @ObservedObject var state: AppState
 
@@ -41,8 +43,21 @@ struct StatusIcon: View {
     }
 
     private var badgeColor: Color? {
-        guard isActive else { return nil }
-        if !state.permissions.allGranted || state.audio.degradedReason != nil || state.audio.micDegradedReason != nil { return .orange }
-        return state.activeMeetingId != nil ? .red : nil
+        Self.badgeColor(
+            active: isActive,
+            degraded: !state.permissions.allGranted || state.audio.degradedReason != nil || state.audio.micDegradedReason != nil,
+            meetingRecording: state.activeMeetingId != nil,
+            activityCapture: state.activityCaptureEnabled
+        )
+    }
+
+    /// Red for a recording meeting, orange for a degraded state, a neutral dot for
+    /// activity capture on its own, nothing when idle. Pure, so the test target can
+    /// check the precedence without an `AppState`.
+    static func badgeColor(active: Bool, degraded: Bool, meetingRecording: Bool, activityCapture: Bool) -> Color? {
+        guard active else { return nil }
+        if degraded { return .orange }
+        if meetingRecording { return .red }
+        return activityCapture ? .secondary : nil
     }
 }
