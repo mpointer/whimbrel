@@ -235,7 +235,7 @@ struct StandardTodayLayout: View {
         let mine = rows.first { $0.deviceId == content.deviceId }
         let others = rows.filter { $0.deviceId != content.deviceId }.count
         var line = mine.map(Self.activityLine) ?? voice.text(.emptyEarlier, name: "")
-        if others > 0 { line += " · \(others) other device\(others == 1 ? "" : "s")" }
+        if others > 0 { line += " · " + String(localized: "\(others) other devices") }
         return HStack(spacing: Spacing.sm) {
             WhimbrelMetadataChip(text: content.deviceLabel(for: content.deviceId))
                 .help(content.deviceId)

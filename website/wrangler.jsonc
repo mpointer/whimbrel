@@ -51,12 +51,19 @@
     // download links; LEAD_ALERT_EMAIL gets one email per registration.
     "EMAIL_FROM": "Whimbrel <whimbrel@futuremeanswered.com>",
     "EMAIL_REPLY_TO": "mike@futuremeanswered.com",
-    "LEAD_ALERT_EMAIL": "mike@futuremeanswered.com"
+    "LEAD_ALERT_EMAIL": "mike@futuremeanswered.com",
+    // The Resend topic "Product updates" (default opt-out): each lead's product-email answer
+    // is mirrored to a Resend contact on it, so broadcasts reach opted-in leads only.
+    "RESEND_PRODUCT_TOPIC_ID": "16aeceec-2bef-4e93-8f9d-d63c6b2775c0"
     // Optional secrets (set with `npx wrangler secret put <NAME>`):
     //   RESEND_API_KEY   — a Resend API key with sending access; turns email on.
     //   TURNSTILE_SECRET — when set, /api/register requires a valid Cloudflare
     //                      Turnstile token. Put the matching site key in site/config.json.
     //   LEAD_WEBHOOK_URL — when set, each new or updated lead is POSTed here as JSON
     //                      (Zapier/Make/HubSpot/Slack incoming webhook, etc.).
-  }
+    //   EMAIL_TOKEN_SECRET — signs the "Manage email preferences" links. Without it, mail
+    //                      has no preferences link and product mail is refused.
+  },
+  // Hourly: the next-day follow-up email and the Resend contact sync (src/followup.ts).
+  "triggers": { "crons": ["0 * * * *"] }
 }

@@ -212,7 +212,7 @@ struct TodayLeftovers: View {
             HStack(spacing: Spacing.sm) {
                 WhimbrelMetadataChip(text: content.deviceLabel(for: content.deviceId))
                 if others > 0 {
-                    Text("\(others) other device\(others == 1 ? "" : "s")")
+                    Text("\(others) other devices")
                         .font(.whimbrelBody(.caption))
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 }

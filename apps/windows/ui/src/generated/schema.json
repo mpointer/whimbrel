@@ -1376,6 +1376,25 @@
       ],
       "type": "object"
     },
+    "Evidence": {
+      "description": "One cited source under a draft this PC made: its title and, when known, its date.",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "tsUnixMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "type": "object"
+    },
     "ExchangeView": {
       "properties": {
         "answer": {
@@ -1915,6 +1934,13 @@
             "null"
           ]
         },
+        "evidence": {
+          "description": "What the draft cites, for an alert this PC made (empty for a peer's).",
+          "items": {
+            "$ref": "#/definitions/Evidence"
+          },
+          "type": "array"
+        },
         "id": {
           "format": "int64",
           "type": "integer"
@@ -1935,6 +1961,7 @@
         "restatement",
         "quote",
         "sourcesElsewhere",
+        "evidence",
         "askedAt",
         "createdAtUnixMs"
       ],
@@ -2258,6 +2285,11 @@
           "description": "Start recording when the alert's countdown ends, instead of waiting. Off by default.",
           "type": "boolean"
         },
+        "hasNames": {
+          "default": false,
+          "description": "Whether there is a name to listen for (the profile name or an other name). Without one,\nalerts can't run and the switch shows off. Read-only: ignored when saving.",
+          "type": "boolean"
+        },
         "heuristicDetection": {
           "description": "Watch for calls at all (FR-MTG-2). On by default.",
           "type": "boolean"
@@ -2270,6 +2302,11 @@
         "liveQuestionAlerts": {
           "description": "\"Alert me when someone asks me something\". On by default.",
           "type": "boolean"
+        },
+        "otherNames": {
+          "default": "",
+          "description": "\"Other names people call you\", comma-separated, as typed.",
+          "type": "string"
         },
         "prepLeadMinutes": {
           "description": "Minutes before a calendar meeting its Meeting Prep brief is made, 5-120. Kept on this PC.",

@@ -17,7 +17,7 @@ use serde::Serialize;
 use super::pipeline::{Pipeline, PipelineFailure, Processing};
 use super::live::Accumulated;
 use super::pipeline::{started_at, stamp_of};
-use super::recorder::{session_stamp, stranded_audio, ActiveAudio, AudioTarget, RecordingFiles, StartAudio, Stopped};
+use super::recorder::{session_stamp, stranded_audio, ActiveAudio, AudioMeeting, AudioTarget, RecordingFiles, StartAudio, Stopped};
 use super::snapshots::service::{SnapshotHandle, SnapshotMeeting, StartSnapshots};
 use crate::error::CommandError;
 use crate::store_actor::StoreHandle;
@@ -301,7 +301,7 @@ impl MeetingController {
             }
         };
 
-        let audio = (self.start_audio)(target, &stamp);
+        let audio = (self.start_audio)(target, &stamp, &AudioMeeting { meeting_id, title: snapshot_title.clone() });
         let root_pid = match target {
             AudioTarget::Process(pid) => Some(pid),
             AudioTarget::Endpoint => None,
@@ -474,7 +474,7 @@ mod tests {
     /// hands the recorder.
     fn controller_in(files: RecordingFiles, recordings: PathBuf, seen: Arc<Mutex<Option<String>>>) -> (MeetingController, StoreHandle) {
         let store = StoreHandle::spawn(|| memory::Store::open_in_memory().map_err(|e| e.to_string())).unwrap();
-        let start: StartAudio = Arc::new(move |_target, stamp| {
+        let start: StartAudio = Arc::new(move |_target, stamp, _meeting| {
             *seen.lock().unwrap() = Some(stamp.to_string());
             Box::new(FakeAudio { files: files.clone() })
         });

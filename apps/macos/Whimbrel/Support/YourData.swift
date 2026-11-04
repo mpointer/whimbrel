@@ -53,7 +53,7 @@ enum YourData {
         let update = Outbound(
             channel: .updateCheck,
             title: String(localized: "Update check"),
-            when: String(localized: "Once a week."),
+            when: String(localized: "When the app starts, then once a day."),
             sees: String(localized: "A random identifier that changes every week, the platform and the app version, so we can count installs. It is not linked to you, your account or your devices."),
             state: String(localized: "Always on. It carries nothing about you."),
             active: true

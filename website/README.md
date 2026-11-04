@@ -30,7 +30,7 @@ Lead routing: set `LEAD_WEBHOOK_URL` and every registration is also POSTed there
 
 ## Changelog
 
-`/changelog/` is generated from the app's GitHub releases. `scripts/fetch-releases.mjs` snapshots them into `site/data/releases.json`; the build reads only that file, so local builds work offline. The build shows user-facing entries only: it drops internal PR prefixes (`ci:`, `docs:`, `server:`, `mobile:`, …) and milestone work, and tags `windows:`/`mac:` entries by platform. The entries are PR titles, so a clear PR title is a clear changelog line.
+`/changelog/` is built from the repository's `CHANGELOG.md`, the plain-language notes each release adds (`## [x.y.z] - date`, `### Mac`/`### Windows`/… sections, `- ` items; `## [Unreleased]` and `### iPhone` stay off the page, and `(#123)` references are dropped). Releases older than `CHANGELOG.md` come from the GitHub release notes: `scripts/fetch-releases.mjs` snapshots them into `site/data/releases.json`, and the build shows their user-facing PR titles only, dropping internal prefixes (`ci:`, `docs:`, `server:`, `mobile:`, …) and milestone work. A change to `CHANGELOG.md` on `main` redeploys the site.
 
 ## Develop
 

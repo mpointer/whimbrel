@@ -170,9 +170,11 @@ function renderCrumbs(crumbs, home = "Home") {
 }
 
 // ---- changelog -----------------------------------------------------------------------
-// Built from site/data/releases.json (scripts/fetch-releases.mjs snapshots it from the
-// GitHub releases). Release notes are PR titles, so only user-facing ones are shown:
-// internal prefixes and unreleased work (the iPhone app's milestones) are dropped.
+// Built from the repository's CHANGELOG.md, the plain-language notes each release adds.
+// Releases older than CHANGELOG.md come from site/data/releases.json
+// (scripts/fetch-releases.mjs snapshots it from the GitHub releases), whose notes are PR
+// titles, so only user-facing ones are shown: internal prefixes and unreleased work (the
+// iPhone app's milestones) are dropped.
 
 const releasesFile = join(siteDir, "data", "releases.json");
 const releases = existsSync(releasesFile) ? JSON.parse(readFileSync(releasesFile, "utf8")) : [];
@@ -201,27 +203,81 @@ function changelogEntry(title) {
   return { text, platform };
 }
 
+const changelogFile = join(siteDir, "..", "..", "CHANGELOG.md");
+// The iPhone app is not released yet; its notes stay off the public page.
+const HIDDEN_SECTIONS = new Set(["iPhone"]);
+
+/** CHANGELOG.md as [{ version, date, intro: [paragraphs], items: [{ section, text }] }],
+ * newest first. "## [Unreleased]" is skipped; "### Mac" etc. name each item's platform. */
+function parseChangelog(md) {
+  const out = [];
+  let release = null;
+  let section = null;
+  for (const line of md.split(/\r?\n/)) {
+    const head = line.match(/^## \[([^\]]+)\](?:\s*-\s*(\d{4}-\d{2}-\d{2}))?/);
+    if (head) {
+      release = head[1] === "Unreleased" ? null : { version: head[1], date: head[2], intro: [], items: [] };
+      if (release) out.push(release);
+      section = null;
+      continue;
+    }
+    if (!release) continue;
+    const sub = line.match(/^### (.+)$/);
+    if (sub) section = sub[1].trim();
+    else if (line.startsWith("- ")) {
+      if (!HIDDEN_SECTIONS.has(section)) release.items.push({ section, text: line.slice(2).trim() });
+    } else if (line.trim() && !section) release.intro.push(line.trim());
+  }
+  return out;
+}
+
+/** Escaped text with `code` spans; the private repository's "(#123)" references dropped. */
+function inlineMarkdown(text) {
+  return escapeHtml(text.replace(/\s*\((?:#\d+(?:,\s*)?)+\)/g, "")).replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+const notes = existsSync(changelogFile) ? parseChangelog(readFileSync(changelogFile, "utf8")) : [];
+const versionKey = (v) => v.split(".").map((n) => n.padStart(4, "0")).join(".");
+
+function renderNotes(n) {
+  const r = releases.find((x) => x.tag === `v${n.version}`);
+  const url = r?.url ?? `https://github.com/mpointer/whimbrel/releases/tag/v${n.version}`;
+  const date = n.date ?? r?.date;
+  const intro = n.intro.map((p) => `<p>${inlineMarkdown(p)}</p>`).join("");
+  const list = n.items.length
+    ? `<ul>${n.items.map((e) => `<li>${e.section ? `<span class="tag">${escapeHtml(e.section)}</span> ` : ""}${inlineMarkdown(e.text)}</li>`).join("")}</ul>`
+    : "";
+  const when = date ? `<time datetime="${date}">${dateFormat.format(new Date(`${date}T00:00:00Z`))}</time> · ` : "";
+  return `<article class="release" id="v${n.version.replace(/\./g, "-")}"><h2>Version ${escapeHtml(n.version)}</h2><p class="muted">${when}<a href="${escapeHtml(url)}">Release on GitHub</a></p>${intro}${list || (intro ? "" : `<p class="muted">Maintenance release: internal improvements.</p>`)}</article>`;
+}
+
 function renderChangelog() {
-  return releases
-    .map((r) => {
-      const version = r.tag.replace(/^v/, "");
-      // A pull-request link is shown only when it is readable: releases before the
-      // public repository link the private one, and the public notes carry no links.
-      const items = r.entries
-        .map((e) => ({ ...changelogEntry(e.title), url: e.url, number: e.number }))
-        .filter((e) => e.text)
-        .map((e) => ({ ...e, link: Boolean(e.url && e.number && !e.url.includes("github.com/mpointer/kestrel/")) }));
-      const list = items.length
-        ? `<ul>${items
-            .map(
-              (e) =>
-                `<li>${e.platform ? `<span class="tag">${e.platform}</span> ` : ""}${escapeHtml(e.text)}${e.link ? ` <a class="pr" href="${escapeHtml(e.url)}">#${e.number}</a>` : ""}</li>`,
-            )
-            .join("")}</ul>`
-        : `<p class="muted">Maintenance release: internal improvements.</p>`;
-      return `<article class="release" id="v${version.replace(/\./g, "-")}"><h2>Version ${escapeHtml(version)}</h2><p class="muted"><time datetime="${r.date}">${dateFormat.format(new Date(`${r.date}T00:00:00Z`))}</time> · <a href="${escapeHtml(r.url)}">Release on GitHub</a></p>${list}</article>`;
-    })
+  const covered = new Set(notes.map((n) => n.version));
+  const fromNotes = notes.map((n) => ({ version: n.version, html: renderNotes(n) }));
+  const fromReleases = releases.filter((r) => !covered.has(r.tag.replace(/^v/, ""))).map((r) => ({ version: r.tag.replace(/^v/, ""), html: renderRelease(r) }));
+  return [...fromNotes, ...fromReleases]
+    .sort((a, b) => versionKey(b.version).localeCompare(versionKey(a.version)))
+    .map((x) => x.html)
     .join("\n");
+}
+
+function renderRelease(r) {
+    const version = r.tag.replace(/^v/, "");
+    // A pull-request link is shown only when it is readable: releases before the
+    // public repository link the private one, and the public notes carry no links.
+    const items = r.entries
+      .map((e) => ({ ...changelogEntry(e.title), url: e.url, number: e.number }))
+      .filter((e) => e.text)
+      .map((e) => ({ ...e, link: Boolean(e.url && e.number && !e.url.includes("github.com/mpointer/kestrel/")) }));
+    const list = items.length
+      ? `<ul>${items
+          .map(
+            (e) =>
+              `<li>${e.platform ? `<span class="tag">${e.platform}</span> ` : ""}${escapeHtml(e.text)}${e.link ? ` <a class="pr" href="${escapeHtml(e.url)}">#${e.number}</a>` : ""}</li>`,
+          )
+          .join("")}</ul>`
+      : `<p class="muted">Maintenance release: internal improvements.</p>`;
+    return `<article class="release" id="v${version.replace(/\./g, "-")}"><h2>Version ${escapeHtml(version)}</h2><p class="muted"><time datetime="${r.date}">${dateFormat.format(new Date(`${r.date}T00:00:00Z`))}</time> · <a href="${escapeHtml(r.url)}">Release on GitHub</a></p>${list}</article>`;
 }
 
 // ---- build ---------------------------------------------------------------------------
@@ -315,7 +371,7 @@ for (const file of pageFiles) {
     crumbs: meta.crumbs ? renderCrumbs(meta.crumbs, home) : "",
     changelog: meta.changelog ? renderChangelog() : "",
   };
-  if (meta.changelog && releases.length === 0) fail(route, "no releases in site/data/releases.json (run scripts/fetch-releases.mjs)");
+  if (meta.changelog && releases.length === 0 && notes.length === 0) fail(route, "no releases in CHANGELOG.md or site/data/releases.json");
   const content = render(body, scope);
 
   const h1s = content.match(/<h1[\s>]/g) ?? [];
@@ -372,7 +428,7 @@ for (const file of pageFiles) {
   writeFileSync(outFile, html);
   if (indexable && route !== "/404.html") {
     // The changelog changes with each release, not when its template file does.
-    const lastmod = meta.changelog && releases.length ? releases[0].date : lastModified(file);
+    const lastmod = meta.changelog && (notes[0]?.date ?? releases[0]?.date) ? (notes[0]?.date ?? releases[0].date) : lastModified(file);
     sitemap.push({ loc: `${siteUrl}${route}`, lastmod, priority: meta.priority ?? 0.5 });
   }
 }

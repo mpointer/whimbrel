@@ -898,6 +898,16 @@ export interface EpisodeRow {
   tsUnixMs: number;
 }
 /**
+ * One cited source under a draft this PC made: its title and, when known, its date.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "Evidence".
+ */
+export interface Evidence {
+  label: string;
+  tsUnixMs?: number | null;
+}
+/**
  * One learned fact: a single line, with the meeting it was suggested from when it came from a
  * suggestion.
  *
@@ -1148,6 +1158,10 @@ export interface LiveAlertView {
    * The draft answer's markdown; model output, rendered without links or images.
    */
   draft?: string | null;
+  /**
+   * What the draft cites, for an alert this PC made (empty for a peer's).
+   */
+  evidence: Evidence[];
   id: number;
   quote: string;
   restatement: string;
@@ -1306,6 +1320,11 @@ export interface MeetingSettings {
    */
   autoStart: boolean;
   /**
+   * Whether there is a name to listen for (the profile name or an other name). Without one,
+   * alerts can't run and the switch shows off. Read-only: ignored when saving.
+   */
+  hasNames?: boolean;
+  /**
    * Watch for calls at all (FR-MTG-2). On by default.
    */
   heuristicDetection: boolean;
@@ -1317,6 +1336,10 @@ export interface MeetingSettings {
    * "Alert me when someone asks me something". On by default.
    */
   liveQuestionAlerts: boolean;
+  /**
+   * "Other names people call you", comma-separated, as typed.
+   */
+  otherNames?: string;
   /**
    * Minutes before a calendar meeting its Meeting Prep brief is made, 5-120. Kept on this PC.
    */

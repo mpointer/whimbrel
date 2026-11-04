@@ -30,7 +30,7 @@ struct TodaySlots: View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             WhimbrelSectionLabel(text: String(localized: "Needs your decision"))
             HStack {
-                Text("\(decisionCount) pending approval\(decisionCount == 1 ? "" : "s")")
+                Text("\(decisionCount) pending approvals")
                     .font(.whimbrelBody(.body))
                 Spacer()
                 Button("Review") { actions.reviewApprovals() }

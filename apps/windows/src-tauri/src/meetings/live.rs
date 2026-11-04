@@ -32,6 +32,11 @@ use super::spoken::{Plan, Speech};
 /// inside NFR-PRF-5's 120 s with the summary. Shorter slices shrink that tail but cut
 /// the audio more often; longer ones spend the margin (plan Decision 3).
 pub const SLICE_EVERY: Duration = Duration::from_secs(120);
+/// The slice length while live question alerts are armed (Mike, 2026-11-03): a question
+/// waits for 30 s of later talk before it's judged, so 120 s slices would make an alert up to
+/// about 4.5 minutes late. This costs more cuts (a clipped word each), not more whisper work.
+/// `docs/superpowers/plans/2026-11-03-windows-live-question-detection.md`.
+pub const ALERT_SLICE_EVERY: Duration = Duration::from_secs(30);
 /// The stop flag is checked this often, so stopping is prompt inside a long wait.
 const POLL: Duration = Duration::from_millis(250);
 
@@ -49,7 +54,7 @@ const MIN_TAIL_BYTES: u64 = SAMPLE_RATE as u64 * BYTES_PER_SAMPLE / 4;
 
 /// Where a slice's samples sit in the recording, in centiseconds — the offset that puts
 /// its segments back on the meeting's clock.
-fn cs_at(byte: u64) -> i64 {
+pub fn cs_at(byte: u64) -> i64 {
     let samples = byte.saturating_sub(HEADER_BYTES) / BYTES_PER_SAMPLE;
     (samples * 100 / SAMPLE_RATE as u64) as i64
 }
@@ -177,6 +182,23 @@ pub struct Config {
     /// The meeting's language (W7): English as before, or the multilingual model detecting
     /// on the first chunk with speech. `model` is the file this plan names.
     pub plan: Plan,
+    /// How often a slice is taken: [`SLICE_EVERY`], or [`ALERT_SLICE_EVERY`] while question
+    /// alerts are armed.
+    pub slice_every: Duration,
+    /// Told what the worker has after every slice that changed it, on the worker's thread, so
+    /// it must return at once. The worker drops it when it ends, by any path, which is how a
+    /// listener holding a channel learns the recording's live transcript is complete.
+    pub listener: Option<Listener>,
+}
+
+/// See [`Config::listener`].
+#[derive(Clone)]
+pub struct Listener(pub Arc<dyn Fn(&Accumulated) + Send + Sync>);
+
+impl std::fmt::Debug for Listener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Listener")
+    }
 }
 
 /// What the worker transcribed before the meeting stopped, and how far into each file it
@@ -288,7 +310,7 @@ fn run(
     stop: Arc<AtomicBool>,
     state: Arc<Mutex<Accumulated>>,
 ) {
-    let Config { model, slices, threads, mut plan } = config;
+    let Config { model, slices, threads, mut plan, slice_every, listener } = config;
     // Anything left here is from a meeting that ended badly; it is scratch either way.
     let _ = std::fs::remove_dir_all(&slices);
     if let Err(e) = std::fs::create_dir_all(&slices) {
@@ -305,12 +327,12 @@ fn run(
 
     let mut system = system.map(Channel::new);
     let mut mic = mic.map(Channel::new);
-    while !wait(&stop, SLICE_EVERY) {
+    while !wait(&stop, slice_every) {
         for (channel, which) in [(system.as_mut(), Which::System), (mic.as_mut(), Which::Mic)] {
             let Some(channel) = channel else { continue };
             // One plan for both channels: whichever has speech first locks the meeting's language.
             if slice_once(&transcriber, channel, &slices, threads, &mut plan) {
-                publish(&state, which, channel, &plan);
+                publish(&state, which, channel, &plan, listener.as_ref());
             }
             if stop.load(Ordering::Relaxed) {
                 break;
@@ -327,18 +349,25 @@ enum Which {
 }
 
 /// Copies a channel's progress where `Live::finish` can read it without waiting.
-fn publish(state: &Mutex<Accumulated>, which: Which, channel: &Channel, plan: &Plan) {
-    let Ok(mut state) = state.lock() else { return };
-    state.language = plan.language.clone();
-    match which {
-        Which::System => {
-            state.system = channel.segments.clone();
-            state.system_cursor = channel.cursor;
+/// Then tells the listener, with the lock released, so a slow listener never holds up `finish`.
+fn publish(state: &Mutex<Accumulated>, which: Which, channel: &Channel, plan: &Plan, listener: Option<&Listener>) {
+    let snapshot = {
+        let Ok(mut state) = state.lock() else { return };
+        state.language = plan.language.clone();
+        match which {
+            Which::System => {
+                state.system = channel.segments.clone();
+                state.system_cursor = channel.cursor;
+            }
+            Which::Mic => {
+                state.mic = channel.segments.clone();
+                state.mic_cursor = channel.cursor;
+            }
         }
-        Which::Mic => {
-            state.mic = channel.segments.clone();
-            state.mic_cursor = channel.cursor;
-        }
+        listener.map(|_| state.clone())
+    };
+    if let (Some(listener), Some(snapshot)) = (listener, snapshot) {
+        (listener.0)(&snapshot);
     }
 }
 
@@ -503,7 +532,7 @@ mod tests {
         assert!(channel.segments.is_empty(), "and nothing is counted twice");
 
         let state = Mutex::new(Accumulated::default());
-        publish(&state, Which::System, &channel, &Plan::english());
+        publish(&state, Which::System, &channel, &Plan::english(), None);
         let published = state.lock().unwrap();
         assert_eq!(published.system_cursor, 0);
         assert!(published.system.is_empty());
@@ -526,10 +555,10 @@ mod tests {
 
         // Round one: the system slice is silent, so the mic slice still detects.
         assert!(slice_once(&speech, &mut system_channel, &slices, 1, &mut plan));
-        publish(&state, Which::System, &system_channel, &plan);
+        publish(&state, Which::System, &system_channel, &plan, None);
         assert_eq!(state.lock().unwrap().language, None, "a silent slice locks nothing");
         assert!(slice_once(&speech, &mut mic_channel, &slices, 1, &mut plan));
-        publish(&state, Which::Mic, &mic_channel, &plan);
+        publish(&state, Which::Mic, &mic_channel, &plan, None);
         assert_eq!(state.lock().unwrap().language.as_deref(), Some("es"));
 
         // Round two: forced, whatever whisper would have guessed.
@@ -560,10 +589,45 @@ mod tests {
     #[test]
     fn a_worker_with_no_model_hands_back_nothing_and_stops() {
         let dir = std::env::temp_dir().join(format!("whimbrel-live-nomodel-{}", std::process::id()));
-        let config = Config { model: dir.join("no-such-model.bin"), slices: dir.join("slices"), threads: 1, plan: Plan::english() };
+        let (tx, rx) = std::sync::mpsc::channel::<Accumulated>();
+        let listener = Listener(Arc::new(move |a: &Accumulated| {
+            let _ = tx.send(a.clone());
+        }));
+        let config = Config {
+            model: dir.join("no-such-model.bin"),
+            slices: dir.join("slices"),
+            threads: 1,
+            plan: Plan::english(),
+            slice_every: SLICE_EVERY,
+            listener: Some(listener),
+        };
         let live = Live::start(None, None, config);
         let accumulated = live.finish();
         assert!(accumulated.system.is_empty() && accumulated.mic.is_empty());
         assert_eq!((accumulated.system_cursor, accumulated.mic_cursor), (0, 0), "the pipeline does all of it");
+        // The worker ended without a slice, and dropping its listener says so.
+        assert!(matches!(rx.recv_timeout(Duration::from_secs(10)), Err(std::sync::mpsc::RecvTimeoutError::Disconnected)));
+    }
+
+    #[test]
+    fn the_listener_hears_each_published_slice_with_both_channels() {
+        let (tx, rx) = std::sync::mpsc::channel::<Accumulated>();
+        let listener = Listener(Arc::new(move |a: &Accumulated| {
+            let _ = tx.send(a.clone());
+        }));
+        let state = Mutex::new(Accumulated::default());
+        let mut system = Channel::new(PathBuf::from("system-audio-T.wav"));
+        system.segments.push(segment(0, 100, "Mike, can you"));
+        system.cursor = HEADER_BYTES + SECOND;
+        publish(&state, Which::System, &system, &Plan::english(), Some(&listener));
+        let mut mic = Channel::new(PathBuf::from("mic-audio-T.wav"));
+        mic.segments.push(segment(120, 200, "sure"));
+        publish(&state, Which::Mic, &mic, &Plan::english(), Some(&listener));
+
+        let first = rx.try_recv().unwrap();
+        assert_eq!((shape(&first.system), first.mic.len()), (vec![(0, 100, "Mike, can you")], 0));
+        let second = rx.try_recv().unwrap();
+        assert_eq!((second.system.len(), shape(&second.mic)), (1, vec![(120, 200, "sure")]), "each snapshot is the whole state");
+        assert!(rx.try_recv().is_err());
     }
 }

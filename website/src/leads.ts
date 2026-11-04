@@ -1,3 +1,4 @@
+import { language, type Language } from "./preferences";
 export const PLATFORMS = ["mac", "windows"] as const;
 export type Platform = (typeof PLATFORMS)[number];
 
@@ -27,6 +28,9 @@ export interface LeadInput {
   utmCampaign: string | null;
   referrer: string | null;
   landingPage: string | null;
+  /** The path of the page the form was on, and that page's language. */
+  signupPage: string | null;
+  signupLanguage: Language;
   turnstileToken: string | null;
   /** Honeypot: a field hidden from people. Anything in it means a bot filled the form. */
   honeypot: string;
@@ -84,6 +88,8 @@ export function parseLead(body: Record<string, unknown>): ParseResult {
       utmCampaign: text(body.utm_campaign, 200),
       referrer: text(body.referrer, 500),
       landingPage: text(body.landing_page, 500),
+      signupPage: text(body.signup_page, 500),
+      signupLanguage: language(text(body.signup_language, 10)),
       turnstileToken: text(body["cf-turnstile-response"], 4096),
       // `kestrel_hp` is the field's name on pages cached from before the rename.
       honeypot: text(body.whimbrel_hp ?? body.kestrel_hp, 200) ?? "",
@@ -104,8 +110,10 @@ export async function upsertLead(
   const row = await db
     .prepare(
       `INSERT INTO leads (id, email, name, company, role, team_size, platform, marketing_opt_in,
-         utm_source, utm_medium, utm_campaign, referrer, landing_page, country, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)
+         utm_source, utm_medium, utm_campaign, referrer, landing_page, country, created_at, updated_at,
+         product_emails, product_emails_set_at, product_emails_source, signup_page, signup_language)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15,
+         'opted_out', ?15, 'signup_form', ?16, ?17)
        ON CONFLICT(email) DO UPDATE SET
          name = excluded.name,
          company = COALESCE(excluded.company, leads.company),
@@ -134,6 +142,8 @@ export async function upsertLead(
       lead.landingPage,
       country,
       now,
+      lead.signupPage,
+      lead.signupLanguage,
     )
     .first<{ id: string; registrations: number }>();
   if (!row) throw new Error("lead upsert returned no row");
