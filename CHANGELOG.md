@@ -2,6 +2,16 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.54] - 2026-11-04
+
+### Mac
+- A meeting Ask answer no longer hides under its Copy buttons. The first answer in a meeting could show one word per line with nothing to scroll.
+- Two more ready buttons beside "Make me sound smart" in a meeting: "Bring me up to speed" and "Did anyone ask me a question?". The second looks for your name and the other names in Settings → Profile.
+- Settings → Routines shows which device chose where routines run, and when, so a change nobody meant to make is easy to spot.
+
+### Windows
+- Your profile now syncs with your Mac. The first sync takes the Mac's profile, so the PC can't blank it.
+
 ## [0.9.53] - 2026-11-04
 
 ### Mac

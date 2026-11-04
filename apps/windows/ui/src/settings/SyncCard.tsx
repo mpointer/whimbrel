@@ -12,7 +12,7 @@ import {
 import { describeError, isCommandError } from "../errors";
 import type { DeviceView, SyncView } from "../generated/types";
 import { useL10n } from "../l10n";
-import { collidingPendingIds, contentLine, deviceActions, deviceTitle, primaryAction, stateLabel } from "./syncModel";
+import { collidingPendingIds, contentLine, deviceActions, deviceTitle, primaryAction, settingsLine, stateLabel } from "./syncModel";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -71,6 +71,7 @@ export function SyncCard() {
         )}
       </div>
       {contentLine(view, locale) && <p className="muted small">{contentLine(view, locale)}</p>}
+      {settingsLine(view, locale) && <p className="muted small">{settingsLine(view, locale)}</p>}
       {error && <p role="alert">{error}</p>}
       {view.state === "ready" && <Devices />}
     </section>

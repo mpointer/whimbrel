@@ -7,3 +7,4 @@ pub mod content;
 pub mod controller;
 pub mod enrollment;
 pub mod keys;
+pub mod settings;

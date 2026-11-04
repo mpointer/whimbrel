@@ -3743,6 +3743,21 @@
             "null"
           ]
         },
+        "settingsError": {
+          "description": "The last settings-sync failure, cleared by the next success.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "settingsLastSyncedMs": {
+          "description": "When settings (the Profile) last synced successfully, if they have this session.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "state": {
           "$ref": "#/definitions/SyncState"
         }

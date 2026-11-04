@@ -80,7 +80,9 @@ fn apply_settings(file: &mut crate::settings::SettingsFile, settings: MeetingSet
     file.set_meeting_settings(settings.heuristic_detection, settings.auto_start, settings.lead_minutes);
     file.set_prep_lead_minutes(settings.prep_lead_minutes);
     file.set_live_question_enabled(settings.live_question_alerts);
+    let synced = crate::syncing::settings::encoded(file);
     file.set_other_names(&settings.other_names);
+    crate::syncing::settings::stamp_changed(file, &synced, crate::syncing::settings::now_ms());
 }
 
 #[tauri::command]
@@ -189,6 +191,7 @@ mod settings_tests {
         apply_settings(&mut file, MeetingSettings { other_names: "  ".into(), has_names: true, ..back });
         assert!(file.get::<String>(crate::settings::keys::PROFILE_OTHER_NAMES).is_none(), "blank removes the key");
         assert!(!read_settings(&file).has_names);
+        assert!(file.stamp_of(crate::settings::keys::PROFILE_OTHER_NAMES) > 0, "other names sync, so an edit stamps them");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

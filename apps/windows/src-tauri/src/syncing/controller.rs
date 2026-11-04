@@ -55,6 +55,10 @@ pub struct SyncView {
     pub content_last_synced_ms: Option<i64>,
     /// The last content-sync failure, cleared by the next success.
     pub content_error: Option<String>,
+    /// When settings (the Profile) last synced successfully, if they have this session.
+    pub settings_last_synced_ms: Option<i64>,
+    /// The last settings-sync failure, cleared by the next success.
+    pub settings_error: Option<String>,
 }
 
 /// The content-sync coordinator's last result (Task 6), shown in the Sync card.
@@ -144,6 +148,17 @@ pub fn is_due(last: Option<Instant>, every: Duration, now: Instant) -> bool {
     last.is_none_or(|t| now.saturating_duration_since(t) >= every)
 }
 
+/// A round's result: a success clears the last error.
+fn record(status: &mut ContentStatus, result: Result<i64, String>) {
+    match result {
+        Ok(at) => {
+            status.last_synced_ms = Some(at);
+            status.last_error = None;
+        }
+        Err(message) => status.last_error = Some(message),
+    }
+}
+
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
@@ -217,6 +232,7 @@ pub struct SyncController {
     last_auth: Mutex<Option<Instant>>,
     last_devices: Mutex<Option<Instant>>,
     content: Mutex<ContentStatus>,
+    settings: Mutex<ContentStatus>,
     open_url: Opener,
 }
 
@@ -258,6 +274,7 @@ impl SyncController {
             last_auth: Mutex::new(None),
             last_devices: Mutex::new(None),
             content: Mutex::new(ContentStatus::default()),
+            settings: Mutex::new(ContentStatus::default()),
             open_url,
         }
     }
@@ -265,25 +282,26 @@ impl SyncController {
     pub fn view(&self) -> SyncView {
         let (state, message) = view_of(self.config.as_ref().err().map(String::as_str), &self.status.lock().unwrap());
         let content = self.content.lock().unwrap().clone();
+        let settings = self.settings.lock().unwrap().clone();
         SyncView {
             state,
             message,
             device_id: self.identity.device_id.clone(),
             content_last_synced_ms: content.last_synced_ms,
             content_error: content.last_error,
+            settings_last_synced_ms: settings.last_synced_ms,
+            settings_error: settings.last_error,
         }
     }
 
     /// Records a content-sync round: `Ok(synced_at_ms)` or the failure message.
     pub fn record_content_result(&self, result: Result<i64, String>) {
-        let mut content = self.content.lock().unwrap();
-        match result {
-            Ok(at) => {
-                content.last_synced_ms = Some(at);
-                content.last_error = None;
-            }
-            Err(message) => content.last_error = Some(message),
-        }
+        record(&mut self.content.lock().unwrap(), result);
+    }
+
+    /// Records a settings-sync round, the same way.
+    pub fn record_settings_result(&self, result: Result<i64, String>) {
+        record(&mut self.settings.lock().unwrap(), result);
     }
 
     /// Whether a row from `device_id` gets a real label: this PC, or a named peer.

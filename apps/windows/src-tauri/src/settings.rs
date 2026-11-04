@@ -92,6 +92,9 @@ pub mod keys {
     /// "Other names people call you", comma-separated, for live question alerts. The Mac's field
     /// key; kept apart from `Profile`, since it never goes into a prompt as profile text.
     pub const PROFILE_OTHER_NAMES: &str = "profile.other_names";
+    /// Device-local, never synced: when each synced field was last edited on this PC or applied from
+    /// another device, `{field_key: unix ms}` (the Mac's `SettingsFieldTimestamps`). Missing is 0.
+    pub const SYNC_FIELD_TIMESTAMPS: &str = "sync.fieldTimestamps";
     /// Which device runs routines: that device's public key, or absent for "any device". The Mac's
     /// settings-sync field key; on Windows it stays on this PC until a settings-sync coordinator exists.
     pub const ROUTINES_PRIMARY_DEVICE: &str = "routines.primaryDeviceId";
@@ -405,6 +408,27 @@ impl SettingsFile {
     /// The field's value, or `None` if it is missing or has the wrong type.
     pub fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
         self.fields.get(key).and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+
+    /// When `key` was last edited here or applied from another device (unix ms); 0 if never, so the
+    /// account's copy wins on a first sync. A missing or malformed stamps object reads as all zeros.
+    pub fn stamp_of(&self, key: &str) -> i64 {
+        self.fields
+            .get(keys::SYNC_FIELD_TIMESTAMPS)
+            .and_then(|v| v.get(key))
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+    }
+
+    /// Records `key`'s timestamp. Saved with the value in the same atomic write.
+    pub fn set_stamp(&mut self, key: &str, unix_ms: i64) {
+        let stamps = self.fields.entry(keys::SYNC_FIELD_TIMESTAMPS.to_string()).or_insert_with(|| Value::Object(Default::default()));
+        if !stamps.is_object() {
+            *stamps = Value::Object(Default::default());
+        }
+        if let Value::Object(map) = stamps {
+            map.insert(key.to_string(), Value::from(unix_ms));
+        }
     }
 
     /// Sets a field; `None` removes it (so "use the default" is an absent key).

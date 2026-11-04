@@ -1864,6 +1864,14 @@ export interface SyncView {
   contentLastSyncedMs?: number | null;
   deviceId: string;
   message?: string | null;
+  /**
+   * The last settings-sync failure, cleared by the next success.
+   */
+  settingsError?: string | null;
+  /**
+   * When settings (the Profile) last synced successfully, if they have this session.
+   */
+  settingsLastSyncedMs?: number | null;
   state: SyncState;
 }
 /**
