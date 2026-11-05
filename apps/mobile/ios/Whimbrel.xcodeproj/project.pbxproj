@@ -502,7 +502,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.54;
+				MARKETING_VERSION = 0.9.55;
 				PRODUCT_NAME = Whimbrel;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Whimbrel/Bridging-Header.h";
@@ -692,7 +692,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.54;
+				MARKETING_VERSION = 0.9.55;
 				PRODUCT_NAME = Whimbrel;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Whimbrel/Bridging-Header.h";

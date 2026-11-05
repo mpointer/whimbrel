@@ -127,12 +127,12 @@ retained count starts low.
   | Status and body | From | Meaning |
   |---|---|---|
   | `409 {"error":"device_limit","kind":"computer"\|"phone","devices":[{id,name,platform}]}` | `/v1/auth/google`, `/v1/devices/swap`, `/v1/devices/<id>/approve` | Over the free limit. Nothing was enrolled or approved; show the limit screen |
-  | `409 {"error":"desktop_required"}` | `/v1/auth/google` | A phone can't be an account's first device |
+  | `409 {"error":"desktop_required"}` | `/v1/auth/google` | A phone (iPhone or Android) can't be an account's first device |
   | `429 {"error":"rate_limited"}` | `/v1/auth/google`, `/v1/waitlist` | Transient; try again shortly |
   | `503 {"error":"account_deleting"}` | Any route that signs in | The account is being deleted; transient |
   | `409 {"error":"reset_in_progress"}` | `/v1/devices/swap`, `/v1/account/reset` | Another reset is running; transient |
   | `403 {"error":"other_device_active","devices":[{id,name,platform}]}` | `/v1/account/reset` | A device was seen in the last 7 days; approve from it instead |
-  | `403 {"error":"reset_requires_computer"}` | `/v1/account/reset` | Only a computer can start fresh |
+  | `403 {"error":"reset_requires_computer"}` | `/v1/account/reset` | Only a computer can start fresh; a phone (iPhone or Android) is refused |
   | `400 {"error":"reset_confirm_required"}` | `/v1/account/reset`, `/v1/account/delete` | The body lacked `confirm: true` |
   | `400 {"error":"swap_kind_mismatch"}` | `/v1/devices/swap` | A computer can only replace a computer, a phone a phone |
   | `400 {"error":"wants_required"}` | `/v1/waitlist` | No valid `wants` were sent |

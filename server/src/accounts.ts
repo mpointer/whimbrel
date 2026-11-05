@@ -66,12 +66,13 @@ CREATE TABLE IF NOT EXISTS account_creation (
 CREATE INDEX IF NOT EXISTS account_creation_ip ON account_creation(ip_bucket, created_at_unix_ms);
 `;
 
-export type DevicePlatform = "mac" | "windows" | "ios";
+export type PhoneAudience = "ios" | "android";
+export type DevicePlatform = "mac" | "windows" | "ios" | "android";
 
-/** An iOS Google audience always wins; otherwise only "mac" or "windows"
+/** A phone Google audience always wins; otherwise only "mac" or "windows"
  * from the body is trusted. Old builds that send nothing count as a Mac. */
-export function platformFor(bodyPlatform: unknown, isIos: boolean): DevicePlatform {
-  if (isIos) return "ios";
+export function platformFor(bodyPlatform: unknown, phone: PhoneAudience | null): DevicePlatform {
+  if (phone) return phone;
   return bodyPlatform === "windows" ? "windows" : "mac";
 }
 

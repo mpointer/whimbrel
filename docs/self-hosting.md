@@ -54,6 +54,7 @@ allows 100 databases; each account gets one).
    | `ALLOWED_GOOGLE_EMAILS` | Comma-separated emails allowed to sign in. Fail-closed: empty means nobody |
    | `GOOGLE_CLIENT_ID` | The desktop OAuth client id |
    | `GOOGLE_IOS_CLIENT_ID` | The iOS client id, or leave unset to reject iOS sign-ins |
+   | `GOOGLE_ANDROID_CLIENT_ID` | The Android app's Web OAuth client id, or leave unset to reject Android sign-ins |
    | `TURSO_ORG_SLUG` | Your Turso organization slug |
    | `TURSO_DB_GROUP` | The group from step 1 (must already exist) |
    | `TURSO_DATABASE_URL` | The control-plane database URL (`libsql://…` or `https://…`) |

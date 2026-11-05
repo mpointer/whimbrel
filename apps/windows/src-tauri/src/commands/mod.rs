@@ -113,6 +113,6 @@ pub fn get_routing_settings(state: State<'_, AppState>) -> RoutingSettings {
 #[tauri::command]
 pub fn set_routing_settings(state: State<'_, AppState>, routing: RoutingSettings) -> Result<(), CommandError> {
     let mut settings = state.settings.lock().unwrap();
-    settings.set_routing(&routing);
+    crate::syncing::settings::edit(&mut settings, |f| f.set_routing(&routing));
     settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))
 }

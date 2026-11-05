@@ -39,7 +39,7 @@ pub fn retention_settings(state: tauri::State<'_, AppState>) -> RetentionView {
 pub fn set_retention_settings(state: tauri::State<'_, AppState>, settings: RetentionSettings) -> Result<RetentionView, CommandError> {
     {
         let mut file = state.settings.lock().unwrap();
-        file.set_retention(settings);
+        crate::syncing::settings::edit(&mut file, |f| f.set_retention(settings));
         file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
     Ok(view(&state))

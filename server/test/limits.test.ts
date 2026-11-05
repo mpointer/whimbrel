@@ -1,5 +1,5 @@
 import { it, expect } from "vitest";
-import { limitCheck } from "../src/limits";
+import { kindOf, limitCheck } from "../src/limits";
 import type { DeviceRecord } from "../src/accounts";
 
 let n = 0;
@@ -25,6 +25,21 @@ it("a second computer is over the limit", () => {
 
 it("a phone fits beside one computer", () => {
   expect(limitCheck([dev("mac")], "ios", false)).toEqual({ ok: true });
+});
+
+it("an Android phone fits beside one computer", () => {
+  expect(limitCheck([dev("mac")], "android", false)).toEqual({ ok: true });
+});
+
+it("an iPhone and an Android phone share one phone slot", () => {
+  const android = dev("android");
+  expect(limitCheck([dev("mac"), android], "ios", false)).toEqual({ ok: false, kind: "phone", holders: [android] });
+  const ios = dev("ios");
+  expect(limitCheck([dev("mac"), ios], "android", false)).toEqual({ ok: false, kind: "phone", holders: [ios] });
+});
+
+it("kindOf treats android as a phone", () => {
+  expect(kindOf("android")).toBe("phone");
 });
 
 it("a second phone is over the limit", () => {

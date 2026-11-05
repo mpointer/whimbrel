@@ -80,9 +80,7 @@ fn apply_settings(file: &mut crate::settings::SettingsFile, settings: MeetingSet
     file.set_meeting_settings(settings.heuristic_detection, settings.auto_start, settings.lead_minutes);
     file.set_prep_lead_minutes(settings.prep_lead_minutes);
     file.set_live_question_enabled(settings.live_question_alerts);
-    let synced = crate::syncing::settings::encoded(file);
-    file.set_other_names(&settings.other_names);
-    crate::syncing::settings::stamp_changed(file, &synced, crate::syncing::settings::now_ms());
+    crate::syncing::settings::edit(file, |f| f.set_other_names(&settings.other_names));
 }
 
 #[tauri::command]

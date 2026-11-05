@@ -2,6 +2,19 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.55] - 2026-11-04
+
+### Mac
+- Ask answers in a live meeting no longer overlap. An answer could spill past its card when the window offered it no width.
+
+### Windows
+- Routing, retention, prompts, routines and hidden episodes now sync with your Mac.
+- A meeting opened from Today, Library or Ask shows its full page, with its stage, why a summary failed and Transcribe again. It no longer says recording arrives in a later version.
+- Updater and Tauri updated (Tauri 2.12.5, updater 2.14.1).
+
+### All platforms
+- Dependency updates that clear security alerts (candle 0.11, zod 4.6.7).
+
 ## [0.9.54] - 2026-11-04
 
 ### Mac

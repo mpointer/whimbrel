@@ -113,3 +113,23 @@ it("returns the matched audience, also when aud is an array", async () => {
     .sign(privateKey);
   expect((await verifyGoogleIdToken(multi, aud, jwks)).audience).toBe(IOS_AUDIENCE);
 });
+
+const ANDROID_AUDIENCE = "test-android-client-id";
+
+it("a token for the Android client id is accepted and its audience returned", async () => {
+  const aud = allowedAudiences({ GOOGLE_CLIENT_ID: AUDIENCE, GOOGLE_ANDROID_CLIENT_ID: ANDROID_AUDIENCE });
+  const identity = await verifyGoogleIdToken(await signToken({ audience: ANDROID_AUDIENCE }), aud, jwks);
+  expect(identity.audience).toBe(ANDROID_AUDIENCE);
+});
+
+it("an empty GOOGLE_ANDROID_CLIENT_ID does not widen the audience list", async () => {
+  const aud = allowedAudiences({ GOOGLE_CLIENT_ID: AUDIENCE, GOOGLE_ANDROID_CLIENT_ID: "" });
+  expect(aud).toEqual([AUDIENCE]);
+  await expect(verifyGoogleIdToken(await signToken({ audience: ANDROID_AUDIENCE }), aud, jwks)).rejects.toThrow();
+});
+
+it("all three audiences set gives three entries", () => {
+  expect(
+    allowedAudiences({ GOOGLE_CLIENT_ID: AUDIENCE, GOOGLE_IOS_CLIENT_ID: IOS_AUDIENCE, GOOGLE_ANDROID_CLIENT_ID: ANDROID_AUDIENCE }),
+  ).toEqual([AUDIENCE, IOS_AUDIENCE, ANDROID_AUDIENCE]);
+});

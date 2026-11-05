@@ -95,9 +95,7 @@ fn apply(file: &mut SettingsFile, change: impl FnOnce(&mut Profile) -> Result<()
     if !edit_fits(before, profile.composed_chars()) {
         return Err(CommandError::invalid_input(tr("That would push your Profile past {max} characters. Shorten it first.", &[("max", &MAX_CHARS.to_string())])));
     }
-    let synced = crate::syncing::settings::encoded(file);
-    file.set_profile(&profile);
-    crate::syncing::settings::stamp_changed(file, &synced, crate::syncing::settings::now_ms());
+    crate::syncing::settings::edit(file, |f| f.set_profile(&profile));
     Ok(view(&profile))
 }
 

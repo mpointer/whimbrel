@@ -13666,40 +13666,6 @@
         }
       }
     },
-    "No summary yet. Recording and summaries on Windows arrive in M3.3." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Noch keine Zusammenfassung. Aufnahme und Zusammenfassungen unter Windows folgen in M3.3."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Aún no hay resumen. La grabación y los resúmenes en Windows llegarán en M3.3."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Aucun résumé pour l'instant. L'enregistrement et les résumés sous Windows arriveront dans M3.3."
-          }
-        },
-        "fr-CA" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Aucun résumé pour l’instant. L’enregistrement et les résumés sous Windows arriveront dans M3.3."
-          }
-        },
-        "pt" : {
-          "stringUnit" : {
-            "state" : "needs_review",
-            "value" : "Nenhum resumo ainda. Gravação e resumos no Windows chegam no M3.3."
-          }
-        }
-      }
-    },
     "No threads need you right now. Email threads arrive with Gmail on Windows (M3.4), or from your other devices through sync." : {
       "localizations" : {
         "de" : {
@@ -18609,36 +18575,36 @@
         }
       }
     },
-    "Routines run on {label}. If it has not run the Daily Brief 3 hours after its time, this PC runs it (devices in different time zones may then both run). Results sync to every device." : {
+    "Routines run on {label}. If it has not run the Daily Brief 3 hours after its time, this PC runs it (devices in different time zones may then both run). Its on/off and time sync between devices. Results sync to every device." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Routines laufen auf {label}. Wurde der Daily Brief 3 Stunden nach der vorgesehenen Zeit nicht ausgeführt, führt dieser PC ihn aus (bei Geräten in verschiedenen Zeitzonen kann er dann mehrfach laufen). Die Ergebnisse werden mit jedem Gerät synchronisiert."
+            "value" : "Routines laufen auf {label}. Wurde der Daily Brief 3 Stunden nach der vorgesehenen Zeit nicht ausgeführt, führt dieser PC ihn aus (bei Geräten in verschiedenen Zeitzonen kann er dann mehrfach laufen). Ein/Aus und Uhrzeit werden zwischen den Geräten synchronisiert. Die Ergebnisse werden mit jedem Gerät synchronisiert."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Las Routines se ejecutan en {label}. Si no se ha ejecutado el Daily Brief 3 horas después de su hora, esta PC lo ejecuta (los dispositivos en distintas zonas horarias podrían ejecutarlo ambos). Los resultados se sincronizan con todos los dispositivos."
+            "value" : "Las Routines se ejecutan en {label}. Si no se ha ejecutado el Daily Brief 3 horas después de su hora, esta PC lo ejecuta (los dispositivos en distintas zonas horarias podrían ejecutarlo ambos). Su activación y su hora se sincronizan entre dispositivos. Los resultados se sincronizan con todos los dispositivos."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Les Routines s'exécutent sur {label}. Sans exécution du brief quotidien 3 h après l'heure prévue, ce PC le lance (des appareils de fuseaux horaires différents peuvent alors le lancer aussi). Les résultats sont synchronisés sur tous les appareils."
+            "value" : "Les Routines s'exécutent sur {label}. Sans exécution du brief quotidien 3 h après l'heure prévue, ce PC le lance (des appareils de fuseaux horaires différents peuvent alors le lancer aussi). Son activation et son heure sont synchronisées entre appareils. Les résultats sont synchronisés sur tous les appareils."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Les Routines s’exécutent sur {label}. Si le Résumé quotidien ne s’est pas exécuté 3 h après l’heure prévue, ce PC l’exécute (les appareils de fuseaux horaires différents peuvent l’exécuter tous deux). Les résultats sont synchronisés sur tous les appareils."
+            "value" : "Les Routines s’exécutent sur {label}. Si le Résumé quotidien ne s’est pas exécuté 3 h après l’heure prévue, ce PC l’exécute (les appareils de fuseaux horaires différents peuvent l’exécuter tous deux). Son activation et son heure sont synchronisées entre appareils. Les résultats sont synchronisés sur tous les appareils."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "As Routines são executadas em {label}. Se o Daily Brief não tiver sido executado 3 horas após o horário, este PC o executa (dispositivos em fusos horários diferentes podem acabar executando os dois). Os resultados são sincronizados com todos os dispositivos."
+            "value" : "As Routines são executadas em {label}. Se o Daily Brief não tiver sido executado 3 horas após o horário, este PC o executa (dispositivos em fusos horários diferentes podem acabar executando os dois). A ativação e o horário dele são sincronizados entre os dispositivos. Os resultados são sincronizados com todos os dispositivos."
           }
         }
       }

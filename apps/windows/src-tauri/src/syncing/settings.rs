@@ -9,19 +9,21 @@
 //!   JSON array.
 //! - **Timestamps** live in the settings file (`SettingsFile::stamp_of`). A field never edited on
 //!   this PC is 0, so on a first sync the account's value wins and this PC's can't overwrite it.
-//! - **Only the keys in [`SYNCED_KEYS`]** ever leave this PC. Device-local and Windows-only keys
-//!   are never gathered, and a pulled key not on the list is ignored and not stamped.
+//! - **Only the keys [`synced_keys`] lists** (plus the routine fields and hidden-episode marks, which
+//!   live in the store) ever leave this PC. Device-local and Windows-only keys are never gathered, and
+//!   a pulled key not on the list is ignored and not stamped.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
-use api::sync_ops::coordinators::{apply_plan, Iteration, LocalField, LocalSettings, PulledField};
+use api::sync_ops::coordinators::{apply_plan, Iteration, LocalField, LocalSettings, PulledField, SettingsField};
+use memory::{Routine, RoutineTemplate};
 
 use crate::profile::{Fact, MAX_FACTS, MAX_FACT_CHARS};
-use crate::settings::{keys, SettingsFile};
+use crate::settings::{keys, PromptSurface, Provider, RoutingSettings, SettingsFile};
 
-/// The keys this PC syncs: the Profile (plan Decision 1).
-pub const SYNCED_KEYS: &[&str] = &[
+/// The Profile's keys (plan Decision 1).
+pub const PROFILE_KEYS: &[&str] = &[
     keys::PROFILE_NAME,
     keys::PROFILE_ROLE,
     keys::PROFILE_ORGANIZATION,
@@ -31,6 +33,113 @@ pub const SYNCED_KEYS: &[&str] = &[
     keys::PROFILE_SUGGEST_ENABLED,
     keys::PROFILE_OTHER_NAMES,
 ];
+
+/// How a flat (non-Profile) key is encoded and checked, as the Mac's stores do (plan Decision 5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// `ollama`, `anthropic`, `openai`, `google` or `openrouter`.
+    Provider,
+    /// A default model: blank goes back to this PC's default.
+    Model,
+    /// Free text (the OpenRouter pick, prompts, the routines host): blank removes the key.
+    Text,
+    /// A spend cap in cents: `""` is the built-in default, `0` is no cap.
+    Cap,
+    /// `"true"` / `"false"`, with the default when unset.
+    Flag(bool),
+    /// Whole days, at least 1, with the default when unset.
+    Days(u32),
+}
+
+/// Routing, retention, the prompts and the routines host: the flat keys this PC syncs.
+fn flat_keys() -> Vec<(String, Kind)> {
+    use crate::retention::{DEFAULT_CAPTURE_DAYS, DEFAULT_MEETING_DAYS};
+    let d = RoutingSettings::default();
+    let mut out: Vec<(String, Kind)> = [
+        (keys::PREFERRED_PROVIDER, Kind::Provider),
+        (keys::OLLAMA_MODEL, Kind::Model),
+        (keys::ANTHROPIC_MODEL, Kind::Model),
+        (keys::OPENAI_MODEL, Kind::Model),
+        (keys::GOOGLE_MODEL, Kind::Model),
+        (keys::OPENROUTER_MODEL, Kind::Text),
+        (keys::USER_DAILY_CAP_CENTS, Kind::Cap),
+        (keys::GLOBAL_DAILY_CAP_CENTS, Kind::Cap),
+        (keys::LOCAL_ONLY_MODE, Kind::Flag(d.local_only)),
+        (keys::CHEAP_FIRST, Kind::Flag(d.cheap_first)),
+        (keys::USE_LOCAL_MODEL, Kind::Flag(d.use_local_model)),
+        (keys::RETENTION_CAPTURE_DAYS, Kind::Days(DEFAULT_CAPTURE_DAYS)),
+        (keys::RETENTION_CAPTURE_FOREVER, Kind::Flag(false)),
+        (keys::RETENTION_MEETING_DAYS, Kind::Days(DEFAULT_MEETING_DAYS)),
+        (keys::RETENTION_MEETING_FOREVER, Kind::Flag(false)),
+        (keys::SUMMARY_CUSTOM_PROMPT, Kind::Text),
+        (keys::ROUTINES_PRIMARY_DEVICE, Kind::Text),
+    ]
+    .into_iter()
+    .map(|(k, kind)| (k.to_string(), kind))
+    .collect();
+    out.extend(PromptSurface::ALL.iter().map(|s| (s.key(), Kind::Text)));
+    out
+}
+
+/// Every settings-file key this PC syncs: the Profile, then the flat keys.
+pub fn synced_keys() -> Vec<String> {
+    PROFILE_KEYS.iter().map(|k| k.to_string()).chain(flat_keys().into_iter().map(|(k, _)| k)).collect()
+}
+
+fn kind_of(key: &str) -> Option<Kind> {
+    flat_keys().into_iter().find(|(k, _)| k == key).map(|(_, kind)| kind)
+}
+
+/// A model key's value as the routing settings read it (the stored pick, else this PC's default).
+fn model_of(r: &RoutingSettings, key: &str) -> String {
+    match key {
+        keys::OLLAMA_MODEL => r.ollama_model.clone(),
+        keys::ANTHROPIC_MODEL => r.anthropic_model.clone(),
+        keys::OPENAI_MODEL => r.openai_model.clone(),
+        _ => r.google_model.clone(),
+    }
+}
+
+fn provider_name(p: Provider) -> String {
+    serde_json::to_value(p).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+}
+
+fn encode_flat(file: &SettingsFile, routing: &RoutingSettings, key: &str, kind: Kind) -> String {
+    match kind {
+        Kind::Provider => provider_name(routing.preferred_provider),
+        Kind::Model => model_of(routing, key),
+        Kind::Text => file.get::<String>(key).map(|s| s.trim().to_string()).unwrap_or_default(),
+        Kind::Cap => file.get::<i64>(key).map(|c| c.to_string()).unwrap_or_default(),
+        Kind::Flag(default) => flag(file.get::<bool>(key).unwrap_or(default)),
+        Kind::Days(default) => file.get::<u32>(key).filter(|d| *d > 0).unwrap_or(default).to_string(),
+    }
+}
+
+/// Writes a pulled flat value, or false if this PC wouldn't accept it as typed in.
+fn apply_flat(file: &mut SettingsFile, key: &str, kind: Kind, value: &str) -> bool {
+    let text = value.trim();
+    match kind {
+        Kind::Provider => match serde_json::from_value::<Provider>(serde_json::Value::String(text.to_string())) {
+            Ok(p) => file.set(key, Some(p)),
+            Err(_) => return false,
+        },
+        Kind::Model | Kind::Text => file.set(key, (!text.is_empty()).then_some(text)),
+        Kind::Cap if text.is_empty() => file.set::<i64>(key, None),
+        Kind::Cap => match text.parse::<i64>() {
+            Ok(c) if c >= 0 => file.set(key, Some(c)),
+            _ => return false,
+        },
+        Kind::Flag(_) => match parse_flag(text) {
+            Some(b) => file.set(key, Some(b)),
+            None => return false,
+        },
+        Kind::Days(_) => match text.parse::<u32>() {
+            Ok(d) if d >= 1 => file.set(key, Some(d)),
+            _ => return false,
+        },
+    }
+    true
+}
 
 const TEXT_KEYS: &[&str] = &[keys::PROFILE_NAME, keys::PROFILE_ROLE, keys::PROFILE_ORGANIZATION, keys::PROFILE_ABOUT];
 
@@ -55,6 +164,20 @@ pub fn encoded(file: &SettingsFile) -> BTreeMap<String, String> {
     out.insert(keys::PROFILE_ENABLED.to_string(), flag(profile.enabled));
     out.insert(keys::PROFILE_SUGGEST_ENABLED.to_string(), flag(profile.suggest_enabled));
     out.insert(keys::PROFILE_OTHER_NAMES.to_string(), file.other_names());
+    let routing = file.routing();
+    for (key, kind) in flat_keys() {
+        let value = encode_flat(file, &routing, &key, kind);
+        out.insert(key, value);
+    }
+    out
+}
+
+/// Runs `change` on the settings and stamps "now" on each synced key it changed. Every write path
+/// a person drives goes through this, so their edits beat the account's older copies.
+pub fn edit<R>(file: &mut SettingsFile, change: impl FnOnce(&mut SettingsFile) -> R) -> R {
+    let before = encoded(file);
+    let out = change(file);
+    stamp_changed(file, &before, now_ms());
     out
 }
 
@@ -104,7 +227,13 @@ fn parse_flag(value: &str) -> Option<bool> {
 /// Writes one pulled value. False (nothing written) for a key this PC doesn't sync, a tombstone,
 /// or a value it wouldn't accept; the caller then leaves the stamp alone, as the Mac does.
 pub fn apply_field(file: &mut SettingsFile, field: &PulledField) -> bool {
-    if field.is_deleted || !SYNCED_KEYS.contains(&field.field_key.as_str()) {
+    if field.is_deleted {
+        return false;
+    }
+    if let Some(kind) = kind_of(&field.field_key) {
+        return apply_flat(file, &field.field_key, kind, &field.value);
+    }
+    if !PROFILE_KEYS.contains(&field.field_key.as_str()) {
         return false;
     }
     if field.field_key == keys::PROFILE_OTHER_NAMES {
@@ -158,21 +287,176 @@ pub fn apply_pulled(file: &mut SettingsFile, pulled: &HashMap<String, api::sync_
     applied
 }
 
-/// One settings round. The lock is held only to gather and to apply, never across `iterate`
-/// (the network call: `settings_iteration` in production, a fake in tests).
-pub fn run_round<F>(settings: &Mutex<SettingsFile>, iterate: F) -> Result<usize, String>
+// --- Routines and hidden episodes, which live in the store ------------------------------------------
+
+/// The routines that can fail over (the Mac's `RoutineSyncFields.templates`): only their on/off, time
+/// and model sync, so a device standing in for the primary runs them the same way.
+fn routine_name(template: RoutineTemplate) -> Option<&'static str> {
+    match template {
+        RoutineTemplate::DailyBrief => Some("daily_brief"),
+        RoutineTemplate::ReplyPriorities => Some("reply_priorities"),
+        _ => None,
+    }
+}
+
+const ROUTINE_FIELDS: [&str; 3] = ["enabled", "schedule", "model_pref"];
+
+/// `routine.<template>.<field>`, or `None` for a routine whose settings stay on this PC.
+pub fn routine_key(template: RoutineTemplate, field: &str) -> Option<String> {
+    routine_name(template).map(|name| format!("routine.{name}.{field}"))
+}
+
+fn parse_routine_key(key: &str) -> Option<(&str, &str)> {
+    let (template, field) = key.strip_prefix("routine.")?.split_once('.')?;
+    (["daily_brief", "reply_priorities"].contains(&template) && ROUTINE_FIELDS.contains(&field)).then_some((template, field))
+}
+
+/// The routine fields to push, read from this PC's routine rows. A template with no row pushes
+/// nothing, as on the Mac.
+pub fn routine_values(routines: &[Routine]) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for r in routines {
+        let Some(name) = routine_name(r.template) else { continue };
+        out.insert(format!("routine.{name}.enabled"), flag(r.enabled));
+        out.insert(format!("routine.{name}.schedule"), r.schedule_hhmm.clone());
+        out.insert(format!("routine.{name}.model_pref"), r.model_pref.clone());
+    }
+    out
+}
+
+/// A pulled routine field as an edit to this PC's row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RoutineChange {
+    Enabled { id: i64, on: bool },
+    Schedule { id: i64, hhmm: String },
+    ModelPref { id: i64, pref: String },
+}
+
+/// The edit a pulled routine field asks for; `None` when the key is unknown, the value malformed, or
+/// this PC has no row of that template (the stamp then stays put, so it is retried).
+pub fn routine_change(key: &str, value: &str, routines: &[Routine]) -> Option<RoutineChange> {
+    let (template, field) = parse_routine_key(key)?;
+    let id = routines.iter().find(|r| routine_name(r.template) == Some(template))?.id;
+    match field {
+        "enabled" => parse_flag(value).map(|on| RoutineChange::Enabled { id, on }),
+        "schedule" => crate::routines::valid_schedule(value).map(|hhmm| RoutineChange::Schedule { id, hhmm }),
+        _ => Some(RoutineChange::ModelPref { id, pref: value.to_string() }),
+    }
+}
+
+/// What the round reads from the store before the network call.
+#[derive(Debug, Clone, Default)]
+pub struct StoreLocal {
+    pub routines: Vec<Routine>,
+    /// `episode.hidden.*` marks; core owns their timestamps and last-writer-wins.
+    pub hidden_marks: HashMap<String, SettingsField>,
+}
+
+/// What `StoreSide::apply` reports: the routine keys that applied, and how many hidden marks did.
+pub type StoreApplied = (Vec<String>, usize);
+
+/// The store's half of a round: the store actor in production, a fake in tests.
+pub trait StoreSide {
+    fn gather(&self) -> Result<StoreLocal, String>;
+    /// Applies each routine change this PC accepts (the same checks the Routines tab makes), then the
+    /// hidden marks.
+    fn apply(&self, changes: Vec<(String, RoutineChange)>, hidden: HashMap<String, SettingsField>) -> Result<StoreApplied, String>;
+}
+
+impl StoreSide for crate::store_actor::StoreHandle {
+    fn gather(&self) -> Result<StoreLocal, String> {
+        self.call_blocking(|s| -> Result<StoreLocal, String> {
+            let routines = s.list_routines().map_err(|e| e.to_string())?;
+            let marks = api::sync_ops::hidden_episode_sync_fields(s).map_err(|e| e.to_string())?;
+            let hidden_marks = marks.into_iter().filter_map(|(k, v)| Some((k, serde_json::from_value(v).ok()?))).collect();
+            Ok(StoreLocal { routines, hidden_marks })
+        })
+        .map_err(|e| e.to_string())?
+    }
+
+    fn apply(&self, changes: Vec<(String, RoutineChange)>, hidden: HashMap<String, SettingsField>) -> Result<StoreApplied, String> {
+        use crate::commands::routines::{set_enabled, set_model_pref, set_schedule};
+        self.call_blocking(move |s| -> Result<StoreApplied, String> {
+            let mut applied = Vec::new();
+            for (key, change) in changes {
+                let result = match &change {
+                    RoutineChange::Enabled { id, on } => set_enabled(s, *id, *on, crate::routines::capabilities(s)),
+                    RoutineChange::Schedule { id, hhmm } => set_schedule(s, *id, hhmm),
+                    RoutineChange::ModelPref { id, pref } => set_model_pref(s, *id, pref),
+                };
+                match result {
+                    Ok(()) => applied.push(key),
+                    Err(e) => tracing::info!(%key, error = %e, "a synced routine setting doesn't apply on this PC"),
+                }
+            }
+            let fields: api::sync_ops::SettingsFields =
+                hidden.into_iter().filter_map(|(k, v)| Some((k, serde_json::to_value(v).ok()?))).collect();
+            let marks = if fields.is_empty() { 0 } else { api::sync_ops::apply_hidden_episode_sync_fields(s, &fields).map_err(|e| e.to_string())? };
+            Ok((applied, marks))
+        })
+        .map_err(|e| e.to_string())?
+    }
+}
+
+/// What this PC pushes: [`gather`] plus the routine fields (stamped in the settings file, as on the
+/// Mac) and the hidden marks.
+pub fn gather_all(file: &SettingsFile, store: &StoreLocal) -> LocalSettings {
+    let mut local = gather(file);
+    for (key, value) in routine_values(&store.routines) {
+        let updated_at_unix_ms = file.stamp_of(&key);
+        local.fields.insert(key, LocalField { value, updated_at_unix_ms });
+    }
+    local.hidden_episode_marks = store.hidden_marks.clone();
+    local
+}
+
+/// One settings round. The settings lock is held only to gather and to apply, never across the store
+/// or `iterate` (the network call: `settings_iteration` in production, a fake in tests).
+pub fn run_round<F>(settings: &Mutex<SettingsFile>, store: &dyn StoreSide, iterate: F) -> Result<usize, String>
 where
     F: FnOnce(&LocalSettings) -> Result<Iteration, String>,
 {
-    let local = gather(&settings.lock().unwrap());
+    let store_local = store.gather()?;
+    let local = gather_all(&settings.lock().unwrap(), &store_local);
     let iteration = iterate(&local)?;
     if iteration.pulled.is_empty() {
         return Ok(0);
     }
-    let mut file = settings.lock().unwrap();
-    let applied = apply_pulled(&mut file, &iteration.pulled);
-    if applied > 0 {
-        file.save().map_err(|e| e.to_string())?;
+    let mut applied = 0;
+    let mut routine_changes = Vec::new();
+    let mut routine_stamps = HashMap::new();
+    let hidden = {
+        let mut file = settings.lock().unwrap();
+        let stamps: HashMap<String, i64> = iteration.pulled.keys().map(|k| (k.clone(), file.stamp_of(k))).collect();
+        let plan = apply_plan(&iteration.pulled, &stamps, &HashMap::new());
+        for field in &plan.fields {
+            if parse_routine_key(&field.field_key).is_some() {
+                let change = if field.is_deleted { None } else { routine_change(&field.field_key, &field.value, &store_local.routines) };
+                if let Some(change) = change {
+                    routine_changes.push((field.field_key.clone(), change));
+                    routine_stamps.insert(field.field_key.clone(), field.updated_at_unix_ms);
+                }
+            } else if apply_field(&mut file, field) {
+                file.set_stamp(&field.field_key, field.updated_at_unix_ms);
+                applied += 1;
+            }
+        }
+        if applied > 0 {
+            file.save().map_err(|e| e.to_string())?;
+        }
+        plan.hidden_episode_marks
+    };
+    if !routine_changes.is_empty() || !hidden.is_empty() {
+        let (routine_keys, marks) = store.apply(routine_changes, hidden)?;
+        applied += marks;
+        if !routine_keys.is_empty() {
+            let mut file = settings.lock().unwrap();
+            for key in &routine_keys {
+                file.set_stamp(key, routine_stamps[key]);
+            }
+            file.save().map_err(|e| e.to_string())?;
+            applied += routine_keys.len();
+        }
     }
     Ok(applied)
 }
@@ -219,6 +503,48 @@ mod tests {
         PulledField { field_key: key.into(), value: value.into(), updated_at_unix_ms: ts, is_deleted: false }
     }
 
+    fn routine(id: i64, template: RoutineTemplate) -> Routine {
+        Routine {
+            id,
+            name: format!("{template:?}"),
+            template,
+            schedule_hhmm: "08:00".into(),
+            enabled: false,
+            auto_approve_write_actions: false,
+            model_pref: "default".into(),
+            created_at_unix_ms: 0,
+        }
+    }
+
+    /// A store that holds `local` and accepts changes unless their key is in `refuse`.
+    #[derive(Default)]
+    struct FakeStore {
+        local: StoreLocal,
+        refuse: Vec<String>,
+        applied: Mutex<Vec<(String, RoutineChange)>>,
+        marks: Mutex<HashMap<String, SettingsField>>,
+    }
+
+    impl StoreSide for FakeStore {
+        fn gather(&self) -> Result<StoreLocal, String> {
+            Ok(self.local.clone())
+        }
+
+        fn apply(&self, changes: Vec<(String, RoutineChange)>, hidden: HashMap<String, SettingsField>) -> Result<StoreApplied, String> {
+            let accepted: Vec<_> = changes.into_iter().filter(|(k, _)| !self.refuse.contains(k)).collect();
+            let keys = accepted.iter().map(|(k, _)| k.clone()).collect();
+            self.applied.lock().unwrap().extend(accepted);
+            let n = hidden.len();
+            self.marks.lock().unwrap().extend(hidden);
+            Ok((keys, n))
+        }
+    }
+
+    fn sorted(mut v: Vec<String>) -> Vec<String> {
+        v.sort_unstable();
+        v
+    }
+
     #[test]
     fn every_key_round_trips_through_its_string() {
         let (_d, mut a) = file();
@@ -232,12 +558,31 @@ mod tests {
         p.suggest_enabled = false;
         a.set_profile(&p);
         a.set_other_names("Mikey, MP");
+        let mut r = a.routing();
+        r.preferred_provider = Provider::Openrouter;
+        r.anthropic_model = "claude-sonnet-5".into();
+        r.openrouter_model = "meta/llama-5".into();
+        r.user_daily_cap_cents = Some(0);
+        r.global_daily_cap_cents = Some(250);
+        r.local_only = true;
+        r.cheap_first = false;
+        a.set_routing(&r);
+        a.set_retention(crate::retention::RetentionSettings { capture_days: None, meeting_days: Some(14), conversation_days: Some(30) });
+        a.set_prompt(PromptSurface::Ask, "Answer in bullets");
+        a.set(keys::SUMMARY_CUSTOM_PROMPT, Some("Lead with decisions"));
+        a.set_primary_device_id("MACKEY");
         let (_d2, mut b) = file();
         for (key, value) in encoded(&a) {
             assert!(apply_field(&mut b, &pulled(&key, &value, 5)), "{key} should apply");
         }
         assert_eq!(b.profile(), a.profile());
         assert_eq!(b.other_names(), "Mikey, MP");
+        assert_eq!(b.routing().preferred_provider, Provider::Openrouter);
+        assert_eq!((b.routing().user_daily_cap_cents, b.routing().global_daily_cap_cents), (Some(0), Some(250)));
+        assert_eq!(b.retention().meeting_days, Some(14));
+        assert_eq!(b.retention().capture_days, None, "keep forever");
+        assert_eq!(b.prompt(PromptSurface::Ask), "Answer in bullets");
+        assert_eq!(b.primary_device_id(), "MACKEY");
         assert_eq!(encoded(&b), encoded(&a));
     }
 
@@ -264,7 +609,7 @@ mod tests {
 
     #[test]
     fn the_stamps_key_is_never_synced() {
-        assert!(!SYNCED_KEYS.contains(&keys::SYNC_FIELD_TIMESTAMPS));
+        assert!(!synced_keys().iter().any(|k| k == keys::SYNC_FIELD_TIMESTAMPS));
     }
 
     #[test]
@@ -305,9 +650,10 @@ mod tests {
         let mut tomb = pulled(keys::PROFILE_NAME, "", 5);
         tomb.is_deleted = true;
         assert!(!apply_field(&mut f, &tomb));
-        assert!(!apply_field(&mut f, &pulled("prompts.ask", "Be brief", 5)));
+        assert!(!apply_field(&mut f, &pulled("prompts.someFutureSurface", "Be brief", 5)));
+        assert!(!apply_field(&mut f, &pulled("apiKey.anthropic", "sk-x", 5)), "API keys aren't synced yet");
         assert!(!apply_field(&mut f, &pulled(keys::CAPTURE_ENABLED, "false", 5)), "a device-local key never applies");
-        assert_eq!(f.get::<String>("prompts.ask"), None, "an unknown key isn't written into the file");
+        assert_eq!(f.get::<String>("prompts.someFutureSurface"), None, "an unknown key isn't written into the file");
     }
 
     #[test]
@@ -316,11 +662,19 @@ mod tests {
         f.set(keys::CAPTURE_ENABLED, Some(false));
         f.set(keys::APP_LANGUAGE, Some("fr"));
         let local = gather(&f);
-        let mut gathered: Vec<_> = local.fields.keys().map(String::as_str).collect();
-        gathered.sort_unstable();
-        let mut expected = SYNCED_KEYS.to_vec();
-        expected.sort_unstable();
-        assert_eq!(gathered, expected);
+        assert_eq!(sorted(local.fields.keys().cloned().collect()), sorted(synced_keys()));
+        for local_only in [
+            keys::CAPTURE_ENABLED,
+            keys::APP_LANGUAGE,
+            keys::OPENROUTER_PRICES,
+            keys::RETENTION_CONVERSATION_DAYS,
+            keys::RETENTION_CONVERSATION_FOREVER,
+            keys::RETENTION_ACKNOWLEDGED,
+            keys::EXCLUDED_BUNDLE_IDS,
+            keys::LIVE_QUESTION_ENABLED,
+        ] {
+            assert!(!local.fields.contains_key(local_only), "{local_only} stays on this PC");
+        }
         assert!(local.api_keys.is_empty() && local.hidden_episode_marks.is_empty());
     }
 
@@ -365,7 +719,7 @@ mod tests {
         f.set_profile(&p);
         stamp_changed(&mut f, &before, 1_000);
         assert_eq!(f.stamp_of(keys::PROFILE_ROLE), 1_000);
-        for key in SYNCED_KEYS.iter().filter(|k| **k != keys::PROFILE_ROLE) {
+        for key in synced_keys().iter().filter(|k| *k != keys::PROFILE_ROLE) {
             assert_eq!(f.stamp_of(key), 0, "{key} didn't change");
         }
         let before = encoded(&f);
@@ -378,7 +732,7 @@ mod tests {
     fn an_edit_during_the_round_trip_wins() {
         let (_d, f) = file();
         let settings = Mutex::new(f);
-        let result = run_round(&settings, |_local| {
+        let result = run_round(&settings, &FakeStore::default(), |_local| {
             // The user saves a role while the network call is out.
             let mut file = settings.lock().unwrap();
             let before = encoded(&file);
@@ -398,8 +752,8 @@ mod tests {
         let dir = tempdir();
         let path = dir.path().join("settings.json");
         let settings = Mutex::new(SettingsFile::load(&path));
-        let result = run_round(&settings, |local| {
-            assert_eq!(local.fields.len(), SYNCED_KEYS.len());
+        let result = run_round(&settings, &FakeStore::default(), |local| {
+            assert_eq!(local.fields.len(), synced_keys().len());
             Ok(Iteration { pushed_count: local.fields.len(), pulled: HashMap::from([(keys::PROFILE_NAME.to_string(), remote("Mike", 10))]) })
         });
         assert_eq!(result, Ok(1));
@@ -413,7 +767,120 @@ mod tests {
         let (_d, f) = file();
         let settings = Mutex::new(f);
         let before = encoded(&settings.lock().unwrap());
-        assert_eq!(run_round(&settings, |_| Err("settings sync connection failed: offline".into())), Err("settings sync connection failed: offline".into()));
+        assert_eq!(run_round(&settings, &FakeStore::default(), |_| Err("settings sync connection failed: offline".into())), Err("settings sync connection failed: offline".into()));
         assert_eq!(encoded(&settings.lock().unwrap()), before);
+    }
+    #[test]
+    fn flat_values_this_pc_would_refuse_are_not_applied() {
+        let (_d, mut f) = file();
+        for (key, bad) in [
+            (keys::PREFERRED_PROVIDER, "gemini"),
+            (keys::USER_DAILY_CAP_CENTS, "-5"),
+            (keys::USER_DAILY_CAP_CENTS, "lots"),
+            (keys::RETENTION_MEETING_DAYS, "0"),
+            (keys::RETENTION_CAPTURE_DAYS, "a month"),
+            (keys::LOCAL_ONLY_MODE, "yes"),
+        ] {
+            assert!(!apply_field(&mut f, &pulled(key, bad, 5)), "{key} = {bad:?} should be refused");
+        }
+        assert_eq!(encoded(&f), encoded(&file().1), "nothing was written");
+    }
+
+    #[test]
+    fn blank_values_go_back_to_the_defaults() {
+        let (_d, mut f) = file();
+        f.set(keys::USER_DAILY_CAP_CENTS, Some(500));
+        f.set_prompt(PromptSurface::Ask, "Be brief");
+        f.set(keys::OLLAMA_MODEL, Some("qwen3:8b"));
+        assert!(apply_field(&mut f, &pulled(keys::USER_DAILY_CAP_CENTS, "", 5)));
+        assert!(apply_field(&mut f, &pulled(&PromptSurface::Ask.key(), "  ", 5)));
+        assert!(apply_field(&mut f, &pulled(keys::OLLAMA_MODEL, "", 5)));
+        assert_eq!(f.routing().user_daily_cap_cents, None, "the built-in cap");
+        assert_eq!(f.prompt(PromptSurface::Ask), "");
+        assert_eq!(f.routing().ollama_model, RoutingSettings::default().ollama_model);
+    }
+
+    #[test]
+    fn edit_stamps_only_what_a_routing_save_changed() {
+        let (_d, mut f) = file();
+        let mut r = f.routing();
+        r.openai_model = "gpt-5-mini".into();
+        edit(&mut f, |file| file.set_routing(&r));
+        assert!(f.stamp_of(keys::OPENAI_MODEL) > 0);
+        for key in [keys::PREFERRED_PROVIDER, keys::OLLAMA_MODEL, keys::USER_DAILY_CAP_CENTS, keys::CHEAP_FIRST] {
+            assert_eq!(f.stamp_of(key), 0, "{key} was saved but didn't change");
+        }
+        edit(&mut f, |file| {
+            file.set_retention(crate::retention::RetentionSettings { capture_days: Some(30), meeting_days: None, conversation_days: Some(7) })
+        });
+        assert!(f.stamp_of(keys::RETENTION_MEETING_FOREVER) > 0);
+        assert_eq!(f.stamp_of(keys::RETENTION_CAPTURE_DAYS), 0, "30 is the default it already had");
+        assert_eq!(f.stamp_of(keys::RETENTION_CONVERSATION_DAYS), 0, "conversation retention isn't synced");
+    }
+
+    #[test]
+    fn only_the_failover_routines_push_their_fields() {
+        let mut brief = routine(1, RoutineTemplate::DailyBrief);
+        brief.enabled = true;
+        brief.schedule_hhmm = "07:30".into();
+        brief.model_pref = "anthropic/claude-sonnet-5".into();
+        let values = routine_values(&[brief, routine(2, RoutineTemplate::FocusTime), routine(3, RoutineTemplate::EodRecap)]);
+        assert_eq!(
+            values,
+            BTreeMap::from([
+                ("routine.daily_brief.enabled".to_string(), "true".to_string()),
+                ("routine.daily_brief.model_pref".to_string(), "anthropic/claude-sonnet-5".to_string()),
+                ("routine.daily_brief.schedule".to_string(), "07:30".to_string()),
+            ]),
+            "no Reply Priorities row, so nothing for it; focus time and the recap stay on this PC"
+        );
+    }
+
+    #[test]
+    fn a_pulled_routine_field_becomes_an_edit_to_this_pcs_row() {
+        let rows = [routine(4, RoutineTemplate::DailyBrief)];
+        assert_eq!(routine_change("routine.daily_brief.enabled", "true", &rows), Some(RoutineChange::Enabled { id: 4, on: true }));
+        assert_eq!(routine_change("routine.daily_brief.schedule", "06:45", &rows), Some(RoutineChange::Schedule { id: 4, hhmm: "06:45".into() }));
+        assert_eq!(routine_change("routine.daily_brief.model_pref", "cheapest", &rows), Some(RoutineChange::ModelPref { id: 4, pref: "cheapest".into() }));
+        assert_eq!(routine_change("routine.daily_brief.schedule", "25:99", &rows), None);
+        assert_eq!(routine_change("routine.daily_brief.enabled", "on", &rows), None);
+        assert_eq!(routine_change("routine.reply_priorities.enabled", "true", &rows), None, "no row of that template here");
+        assert_eq!(routine_change("routine.focus_time.enabled", "true", &rows), None, "not a synced routine");
+    }
+
+    #[test]
+    fn a_round_pushes_routines_and_marks_and_applies_what_the_store_accepts() {
+        let (_d, f) = file();
+        let settings = Mutex::new(f);
+        let mark = SettingsField { value: "1".into(), updated_at_unix_ms: 40, is_deleted: false };
+        let store = FakeStore {
+            local: StoreLocal {
+                routines: vec![routine(1, RoutineTemplate::DailyBrief)],
+                hidden_marks: HashMap::from([("episode.hidden.pc|chrome.exe|100".to_string(), mark)]),
+            },
+            refuse: vec!["routine.daily_brief.enabled".into()],
+            ..FakeStore::default()
+        };
+        let result = run_round(&settings, &store, |local| {
+            assert_eq!(local.fields["routine.daily_brief.schedule"], LocalField { value: "08:00".into(), updated_at_unix_ms: 0 });
+            assert_eq!(local.hidden_episode_marks.len(), 1);
+            Ok(Iteration {
+                pushed_count: local.fields.len(),
+                pulled: HashMap::from([
+                    ("routine.daily_brief.schedule".to_string(), remote("07:15", 50)),
+                    ("routine.daily_brief.enabled".to_string(), remote("true", 51)),
+                    ("episode.hidden.mac|com.apple.Safari|200".to_string(), remote("1", 52)),
+                ]),
+            })
+        });
+        assert_eq!(result, Ok(2), "the schedule and the mark applied; turning it on was refused here");
+        let file = settings.lock().unwrap();
+        assert_eq!(file.stamp_of("routine.daily_brief.schedule"), 50);
+        assert_eq!(file.stamp_of("routine.daily_brief.enabled"), 0, "a refused change isn't stamped, so it is retried");
+        assert_eq!(
+            store.applied.lock().unwrap()[0],
+            ("routine.daily_brief.schedule".to_string(), RoutineChange::Schedule { id: 1, hhmm: "07:15".into() })
+        );
+        assert!(store.marks.lock().unwrap().contains_key("episode.hidden.mac|com.apple.Safari|200"));
     }
 }

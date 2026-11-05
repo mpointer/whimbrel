@@ -1371,6 +1371,7 @@ function mockAud(audience: string) {
   vi.spyOn(turso, "mintDeviceToken").mockResolvedValue("minted-turso-jwt");
   return createDb;
 }
+const ANDROID = "test-android-web-client-id";
 const authAs = (db: FakeSqlExecutor, e: Partial<Env>) =>
   handleGoogleAuth(postAuth({ idToken: "t", devicePublicKey: "phone-key" }), makeEnv(e), db);
 
@@ -1404,6 +1405,33 @@ it("an iOS-audience token still enrolls pending when the account has an active d
   expect(await res.json()).toEqual({ status: "pending" });
 });
 
+it("409 desktop_required for an Android-audience first device, with no database or device row created", async () => {
+  const createDb = mockAud(ANDROID);
+  const db = new FakeSqlExecutor();
+  const res = await authAs(db, { GOOGLE_ANDROID_CLIENT_ID: ANDROID });
+  expect(res.status).toBe(409);
+  expect(await res.json()).toEqual({ error: "desktop_required" });
+  expect(createDb).not.toHaveBeenCalled();
+  expect(await accounts.findAccountByGoogleSub(db, "google-sub-1")).toBeNull();
+});
+
+it("409 desktop_required for an Android audience when the account has no active device, and enrolls nothing", async () => {
+  mockAud(ANDROID);
+  const db = new FakeSqlExecutor();
+  const account = await accounts.getOrCreateAccount(db, "owner@example.com", "google-sub-1", 1, "n", "u");
+  const old = await accounts.enrollDevice(db, account.id, "old-key", "approved", 2);
+  await accounts.revokeDevice(db, old.id, 3);
+  const res = await authAs(db, { GOOGLE_ANDROID_CLIENT_ID: ANDROID });
+  expect(res.status).toBe(409);
+  expect(await accounts.countDevicesForAccount(db, account.id)).toBe(1);
+});
+
+it.each([undefined, ""])("never refuses when GOOGLE_ANDROID_CLIENT_ID is %j", async (android) => {
+  mockAud("");
+  const res = await authAs(new FakeSqlExecutor(), { GOOGLE_ANDROID_CLIENT_ID: android });
+  expect(res.status).toBe(200);
+});
+
 it("a desktop-audience token as first device is auto-approved", async () => {
   mockAud("test-client-id");
   const res = await authAs(new FakeSqlExecutor(), { GOOGLE_IOS_CLIENT_ID: IOS });
@@ -1426,7 +1454,7 @@ async function firstDevicePlatform(extra: Record<string, unknown>, aud = "test-c
   // Seed an account so an iOS audience is allowed to enrol (as a pending device).
   const account = await accounts.getOrCreateAccount(db, "owner@example.com", "google-sub-1", 1, "n", "u");
   await accounts.enrollDevice(db, account.id, "mac-key", "approved", 2, "mac");
-  await handleGoogleAuth(authBody(extra), makeEnv({ GOOGLE_IOS_CLIENT_ID: IOS, UNLIMITED_EMAILS: "owner@example.com" }), db);
+  await handleGoogleAuth(authBody(extra), makeEnv({ GOOGLE_IOS_CLIENT_ID: IOS, GOOGLE_ANDROID_CLIENT_ID: ANDROID, UNLIMITED_EMAILS: "owner@example.com" }), db);
   return (await accounts.findDeviceByPublicKey(db, account.id, "k1"))?.platform;
 }
 
@@ -1458,6 +1486,10 @@ it("auth stores the platform sent by a Mac", async () => {
 
 it("an iOS audience is stored as ios regardless of body platform", async () => {
   expect(await firstDevicePlatform({ platform: "windows" }, IOS)).toBe("ios");
+});
+
+it("an Android audience is stored as android regardless of body platform", async () => {
+  expect(await firstDevicePlatform({ platform: "windows" }, ANDROID)).toBe("android");
 });
 
 it("a body without platform is stored as mac", async () => {
@@ -1524,6 +1556,16 @@ it("auth for a second computer returns device_limit with the holder's name and e
     devices: [{ id: mac.id, name: "Office Mac", platform: "mac" }],
   });
   expect(await accounts.countDevicesForAccount(db, account.id)).toBe(1);
+});
+
+it("an iPhone and an Android phone count as one phone slot in the device-limit response", async () => {
+  const { db, account } = await seeded();
+  const ios = await accounts.enrollDevice(db, account.id, "ios-key", "approved", 3, "ios");
+  mockAud(ANDROID);
+  const res = await handleGoogleAuth(authBody(), hostedEnv({ GOOGLE_ANDROID_CLIENT_ID: ANDROID }), db);
+  expect(res.status).toBe(409);
+  expect(await res.json()).toMatchObject({ error: "device_limit", kind: "phone", devices: [{ id: ios.id, platform: "ios" }] });
+  expect(await accounts.countDevicesForAccount(db, account.id)).toBe(2);
 });
 
 it("an unlimited email enrols a second computer as pending", async () => {
@@ -1715,6 +1757,20 @@ it("reset from a phone swap is 403", async () => {
   const swap = await handleSwapDevice(post("/v1/devices/swap", swapBody(phone.id, { platform: undefined })), makeEnv(ios), db);
   expect(await swap.json()).toEqual({ status: "pending" });
   const { res, create } = await resetFrom(db, ios);
+  expect(res.status).toBe(403);
+  expect(await res.json()).toEqual({ error: "reset_requires_computer" });
+  expect(create).not.toHaveBeenCalled();
+  expect((await accounts.findDeviceById(db, phone.id))?.status).toBe("approved");
+});
+
+it("reset from an Android phone swap is 403 reset_requires_computer", async () => {
+  const { db, account } = await seeded();
+  const phone = await accounts.enrollDevice(db, account.id, "phone-key", "approved", 3, "android");
+  mockAud(ANDROID);
+  const android = { GOOGLE_ANDROID_CLIENT_ID: ANDROID };
+  const swap = await handleSwapDevice(post("/v1/devices/swap", swapBody(phone.id, { platform: undefined })), makeEnv(android), db);
+  expect(await swap.json()).toEqual({ status: "pending" });
+  const { res, create } = await resetFrom(db, android);
   expect(res.status).toBe(403);
   expect(await res.json()).toEqual({ error: "reset_requires_computer" });
   expect(create).not.toHaveBeenCalled();
