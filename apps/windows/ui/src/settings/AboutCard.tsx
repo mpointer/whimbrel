@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { appStatus, sendFeedback } from "../api";
 import { describeError, isCommandError } from "../errors";
-import type { AppStatus } from "../generated/types";
+import type { AppStatus, FeedbackResult } from "../generated/types";
 import { t } from "../l10n";
 
 export function AboutCard() {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [feedback, setFeedback] = useState<FeedbackResult | null>(null);
 
   useEffect(() => {
     appStatus()
@@ -39,15 +41,28 @@ export function AboutCard() {
         <button
           type="button"
           className="mode"
+          disabled={preparing}
           onClick={() => {
             setFeedbackError(null);
-            sendFeedback().catch((e: unknown) => setFeedbackError(isCommandError(e) ? describeError(e) : String(e)));
+            setFeedback(null);
+            setPreparing(true);
+            sendFeedback()
+              .then(setFeedback, (e: unknown) => setFeedbackError(isCommandError(e) ? describeError(e) : String(e)))
+              .finally(() => setPreparing(false));
           }}
         >
-          {t("Send feedback…")}
+          {preparing ? t("Preparing…") : t("Send feedback…")}
         </button>
-        <span className="muted small">{t("Opens an email to the Whimbrel team with this PC's version filled in.")}</span>
+        <span className="muted small">
+          {t(
+            "Opens an email to the Whimbrel team and saves a diagnostics file to attach. It has recent logs and settings status, with email addresses and meeting titles removed. No recordings, transcripts or keys.",
+          )}
+        </span>
       </div>
+      {feedback?.bundlePath && <p className="muted small">{t("Saved {file}. Attach it to the email.", { file: feedback.bundlePath })}</p>}
+      {feedback?.bundleError && (
+        <p className="muted small">{t("Couldn't save the diagnostics file: {error}", { error: feedback.bundleError })}</p>
+      )}
       {feedbackError && <p className="muted small">{feedbackError}</p>}
       {status.startupErrors.length > 0 && (
         <div role="alert" className="startup-errors">

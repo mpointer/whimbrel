@@ -72,6 +72,9 @@ pub struct WorkspaceView {
     /// Why this finished meeting has no transcript, when its last run said so: it failed, or
     /// it heard nothing. The page shows it with Transcribe again (the Mac's #530).
     pub transcription: Option<TranscriptionNotice>,
+    /// Why the last summary of this device's transcribed meeting failed, shown beside
+    /// Regenerate. `None` once a summary succeeds.
+    pub summary_failure: Option<String>,
 }
 
 /// A meeting's transcript for display: turns from the file when it's on this device,
@@ -177,7 +180,18 @@ pub async fn meeting_workspace(state: State<'_, AppState>, id: i64) -> Result<Op
     view.spoken_language = spoken_language;
     let shows_notice = view.phase == WorkspacePhase::After && !view.read_only && !view.has_transcript && view.processing_stage.is_none();
     view.transcription = notice_for(shows_notice, audio.as_deref().map(Path::new));
+    let shows_summary_failure = !view.read_only && view.has_transcript && view.processing_stage.is_none();
+    view.summary_failure = summary_failure_for(shows_summary_failure, audio.as_deref().map(Path::new));
     Ok(Some(view))
+}
+
+/// The summary failure applies (`applies`) to this device's transcribed meeting that isn't
+/// being worked on; its marker holds the message.
+fn summary_failure_for(applies: bool, audio: Option<&Path>) -> Option<String> {
+    if !applies {
+        return None;
+    }
+    crate::meetings::pipeline::summary_failure(audio?)
 }
 
 /// The notice applies (`applies`) to this device's finished meeting that has no transcript
@@ -253,6 +267,7 @@ fn view_of(
         spoken_language: None,
         can_choose_language: false,
         transcription: None,
+        summary_failure: None,
     }
 }
 
@@ -591,6 +606,19 @@ mod tests {
         assert_eq!(notice_for(true, Some(&audio)), Some(TranscriptionNotice::Failed { message: "Model missing".into() }));
         assert_eq!(notice_for(false, Some(&audio)), None, "another device's, transcribed, or being worked on");
         assert_eq!(notice_for(true, None), None, "no audio");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_summary_shows_its_reason_until_one_succeeds() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-summary-notice-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let audio = dir.join("system-audio-S.wav");
+        std::fs::write(&audio, b"x").unwrap();
+        assert_eq!(summary_failure_for(true, Some(&audio)), None, "no marker");
+        std::fs::write(dir.join("summary-failed-S.marker"), "No AI provider is set up.\n").unwrap();
+        assert_eq!(summary_failure_for(true, Some(&audio)).as_deref(), Some("No AI provider is set up."));
+        assert_eq!(summary_failure_for(false, Some(&audio)), None, "another device's, untranscribed, or being worked on");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

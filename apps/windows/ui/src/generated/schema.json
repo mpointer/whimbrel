@@ -1454,6 +1454,26 @@
       ],
       "type": "object"
     },
+    "FeedbackResult": {
+      "description": "What Send feedback did with the diagnostics bundle, for the About card.",
+      "properties": {
+        "bundleError": {
+          "description": "Why there is no bundle, when making it failed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bundlePath": {
+          "description": "Where the bundle was saved, for the user to attach.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "GeneralSettings": {
       "properties": {
         "autostart": {
@@ -4350,6 +4370,13 @@
           ]
         },
         "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summaryFailure": {
+          "description": "Why the last summary of this device's transcribed meeting failed, shown beside\nRegenerate. `None` once a summary succeeds.",
           "type": [
             "string",
             "null"

@@ -321,7 +321,7 @@ impl CalendarService {
         if self.pending.get().is_some() {
             return;
         }
-        tracing::info!(id = %meeting.id, title = %meeting.title, "a calendar meeting is about to start");
+        tracing::info!(id = %meeting.id, title = ?meeting.title, "a calendar meeting is about to start");
         self.pending.set_calendar(meeting, now);
         crate::alert::show(&self.app);
     }

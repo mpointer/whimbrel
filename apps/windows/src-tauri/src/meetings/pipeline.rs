@@ -143,6 +143,36 @@ pub fn failure_marker(audio_path: &Path) -> Option<PathBuf> {
     Some(audio_path.parent()?.join(format!("transcription-failed-{stamp}.marker")))
 }
 
+/// The marker the pipeline leaves next to a recording whose summary failed, holding the
+/// message to show beside Regenerate. A summary failure used to reach only the log, so a
+/// meeting showed its transcript and no word on why it had no summary (first support
+/// report, 2026-11-04). Local only. The next successful summary removes it.
+pub fn summary_failure_marker(audio_path: &Path) -> Option<PathBuf> {
+    let stamp = stamp_of(audio_path)?;
+    Some(audio_path.parent()?.join(format!("summary-failed-{stamp}.marker")))
+}
+
+/// Why the last summary of `audio_path`'s meeting failed, if it did.
+pub fn summary_failure(audio_path: &Path) -> Option<String> {
+    let marker = summary_failure_marker(audio_path).filter(|m| m.is_file())?;
+    Some(std::fs::read_to_string(&marker).unwrap_or_default().trim().to_string())
+}
+
+/// Leaves or removes the summary marker after a summary run.
+fn record_summary<T>(meeting_id: i64, audio_path: Option<&Path>, outcome: &Result<T, String>) {
+    let Some(marker) = audio_path.and_then(summary_failure_marker) else { return };
+    let written = match outcome {
+        Err(message) => std::fs::write(&marker, message),
+        Ok(_) => match std::fs::remove_file(&marker) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        },
+    };
+    if let Err(e) = written {
+        tracing::warn!(meeting_id, error = %e, "could not update the summary marker");
+    }
+}
+
 /// What a finished meeting with no transcript says on its page, from the markers next to
 /// its audio. `None` when neither marker is there (never run, or interrupted).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -374,6 +404,7 @@ impl Pipeline {
 
         self.set_stage(meeting_id, Stage::Summarizing);
         let outcome = self.summarize(meeting_id, &transcript, meeting.notes.as_deref().unwrap_or_default());
+        record_summary(meeting_id, meeting.audio_path.as_deref().map(Path::new), &outcome);
         let now = now_ms();
         let applied = self.store.call_blocking(move |s| -> Result<(), String> {
             if !keep_edits {
@@ -631,6 +662,7 @@ impl Pipeline {
             })
             .map_err(|e| e.to_string())?;
         let summary_ms = summarizing.elapsed().as_millis() as u64;
+        record_summary(meeting_id, Some(audio), &summary);
         match &summary {
             Ok(_) => {}
             // A failed summary leaves the transcript in place; the workspace offers Regenerate.

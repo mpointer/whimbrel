@@ -2,6 +2,12 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.56] - 2026-11-04
+
+### Windows
+- Send feedback attaches a diagnostics bundle (logs with personal details removed) and opens it in File Explorer, so it's easy to attach to an email.
+- A meeting whose summary failed says why.
+
 ## [0.9.55] - 2026-11-04
 
 ### Mac

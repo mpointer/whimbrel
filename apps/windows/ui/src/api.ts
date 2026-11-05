@@ -29,6 +29,7 @@ import type {
   EpisodeRow,
   LibraryRow,
   LibrarySettings,
+  FeedbackResult,
   MeetingDetail,
   MeetingModelsStatus,
   QualityChoice,
@@ -126,7 +127,7 @@ export const syncRevokeDevice = (id: string) => invoke<DeviceView[]>("sync_revok
 
 export const aiSettings = () => invoke<AiSettings>("ai_settings");
 /** Opens a new email to Whimbrel with the version and Windows build filled in. */
-export const sendFeedback = () => invoke<void>("send_feedback");
+export const sendFeedback = () => invoke<FeedbackResult>("send_feedback");
 export const setApiKey = (provider: Provider, key: string | null) => invoke<ProviderKey[]>("set_api_key", { provider, key });
 /** Saves (or, with null, removes) the skin maker's Brave Search key; resolves to it masked. */
 export const setImageSearchKey = (key: string | null) => invoke<string | null>("set_image_search_key", { key });

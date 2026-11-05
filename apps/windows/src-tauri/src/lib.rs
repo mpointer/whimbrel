@@ -12,6 +12,7 @@ pub mod chat;
 pub mod commands;
 pub mod connectors;
 pub mod device_labels;
+pub mod diagnostics;
 pub mod error;
 pub mod feedback;
 pub mod identity;
