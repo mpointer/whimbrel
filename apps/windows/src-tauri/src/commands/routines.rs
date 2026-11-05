@@ -271,6 +271,17 @@ pub fn runs(store: &Store, limit: usize, labeler: &DeviceLabeler) -> Result<Vec<
         .collect())
 }
 
+/// Stamps a synced routine field (Daily Brief, Reply Priorities) after an edit here, so it beats the
+/// account's older copy (settings sync, plan Decision 5). Other routines' settings stay on this PC.
+fn note_synced_edit(state: &AppState, template: RoutineTemplate, field: &str) {
+    let Some(key) = crate::syncing::settings::routine_key(template, field) else { return };
+    let mut settings = state.settings.lock().unwrap();
+    settings.set_stamp(&key, crate::syncing::settings::now_ms());
+    if let Err(e) = settings.save() {
+        tracing::warn!(error = %e, "could not save a routine edit's sync stamp");
+    }
+}
+
 #[tauri::command]
 pub async fn routines_list(state: State<'_, AppState>) -> Result<Vec<RoutineView>, CommandError> {
     state.store()?.call(|s| list(s, capabilities(s))).await?
@@ -282,9 +293,13 @@ pub async fn routine_set_enabled(state: State<'_, AppState>, id: i64, enabled: b
         .store()?
         .call(move |s| {
             set_enabled(s, id, enabled, capabilities(s))?;
-            list(s, capabilities(s))
+            Ok::<_, CommandError>((find(s, id)?.template, list(s, capabilities(s))?))
         })
         .await?
+        .map(|(template, views)| {
+            note_synced_edit(&state, template, "enabled");
+            views
+        })
 }
 
 #[tauri::command]
@@ -293,9 +308,13 @@ pub async fn routine_set_schedule(state: State<'_, AppState>, id: i64, schedule:
         .store()?
         .call(move |s| {
             set_schedule(s, id, &schedule)?;
-            list(s, capabilities(s))
+            Ok::<_, CommandError>((find(s, id)?.template, list(s, capabilities(s))?))
         })
         .await?
+        .map(|(template, views)| {
+            note_synced_edit(&state, template, "schedule");
+            views
+        })
 }
 
 #[tauri::command]
@@ -354,9 +373,13 @@ pub async fn routine_set_model_pref(state: State<'_, AppState>, id: i64, pref: S
         .store()?
         .call(move |s| {
             set_model_pref(s, id, &pref)?;
-            list(s, capabilities(s))
+            Ok::<_, CommandError>((find(s, id)?.template, list(s, capabilities(s))?))
         })
         .await?
+        .map(|(template, views)| {
+            note_synced_edit(&state, template, "model_pref");
+            views
+        })
 }
 
 /// The Model picker's entries, from the routing settings and the saved keys.
@@ -380,12 +403,12 @@ pub fn caption_any_device() -> String {
     tr("Each device runs its own routines until you choose one.", &[])
 }
 
-/// The caption when another device was chosen. The Mac's also says the routines' on/off and time
-/// sync between devices, which is not true on Windows (no settings sync), and names Reply Priorities,
-/// which Windows cannot run yet, so this one says neither.
+/// The caption when another device was chosen. Like the Mac's, it says the routine's on/off and time
+/// sync between devices (settings sync). It names only the Daily Brief: Windows can't run Reply
+/// Priorities yet.
 pub fn caption_other_device(label: &str) -> String {
     tr(
-        "Routines run on {label}. If it has not run the Daily Brief 3 hours after its time, this PC runs it (devices in different time zones may then both run). Results sync to every device.",
+        "Routines run on {label}. If it has not run the Daily Brief 3 hours after its time, this PC runs it (devices in different time zones may then both run). Its on/off and time sync between devices. Results sync to every device.",
         &[("label", label)],
     )
 }
@@ -436,7 +459,7 @@ pub fn set_host(settings: &mut SettingsFile, id: &str, devices: &[DeviceView]) -
     if !id.is_empty() && !devices.iter().any(|d| d.status == "approved" && d.public_key == id) {
         return Err(CommandError::invalid_input(tr("That isn't one of your approved devices.", &[])));
     }
-    settings.set_primary_device_id(id);
+    crate::syncing::settings::edit(settings, |f| f.set_primary_device_id(id));
     Ok(())
 }
 
@@ -694,7 +717,7 @@ mod tests {
         let caption = view.caption.unwrap();
         assert!(caption.starts_with("Routines run on Mike's MacBook Pro."), "{caption}");
         assert!(caption.contains("3 hours after its time") && caption.contains("Results sync to every device."), "{caption}");
-        assert!(!caption.contains("on/off"), "Windows has no settings sync, so the Mac's sentence about it is left out");
+        assert!(caption.contains("Its on/off and time sync between devices."), "settings sync carries them, as on the Mac: {caption}");
         assert!(!caption.contains("Reply Priorities"), "Windows cannot run that routine yet");
     }
 

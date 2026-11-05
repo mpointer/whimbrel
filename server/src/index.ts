@@ -35,6 +35,7 @@ import {
   AccountDeletingError,
   type AccountRecord,
   type DevicePlatform,
+  type PhoneAudience,
   type DeviceRecord,
   type SqlExecutor,
   type SqlRow,
@@ -44,6 +45,8 @@ export interface Env {
   GOOGLE_CLIENT_ID: string;
   /** iOS app OAuth client ID; empty/unset = iOS tokens rejected. */
   GOOGLE_IOS_CLIENT_ID?: string;
+  /** Android app Web OAuth client ID; empty/unset = Android tokens rejected. */
+  GOOGLE_ANDROID_CLIENT_ID?: string;
   TURSO_DATABASE_URL: string;
   TURSO_DATABASE_AUTH_TOKEN: string;
   TURSO_PLATFORM_API_TOKEN: string;
@@ -143,9 +146,9 @@ export async function handleGoogleAuth(
 
     const existingAccount = await liveAccount(db, identity.googleSub);
     // A phone must never become the account's first device (it can't create
-    // the group key). Blank GOOGLE_IOS_CLIENT_ID never matches (reject-by-default).
-    const isIos = isIosAudience(env, identity.audience);
-    if (isIos && !existingAccount) return desktopRequired(); // before createAccountDatabase
+    // the group key). Blank GOOGLE_IOS_CLIENT_ID / GOOGLE_ANDROID_CLIENT_ID never match (reject-by-default).
+    const phone = phoneAudience(env, identity.audience);
+    if (phone && !existingAccount) return desktopRequired(); // before createAccountDatabase
     let dataDbName: string;
     let dataDbUrl: string;
     if (existingAccount) {
@@ -202,7 +205,7 @@ export async function handleGoogleAuth(
       // Only new device keys count: a known device (a pending one polls every
       // few seconds) is never limited.
       if (!(await rateLimit(env.ENROLLMENT_HANDOFF, `auth:${identity.googleSub}`, 30, 10 * 60))) return rateLimited();
-      const enrolled = await enrolNewDevice(db, env, identity.email, account.id, body.devicePublicKey, platformFor(body.platform, isIos), isIos, now);
+      const enrolled = await enrolNewDevice(db, env, identity.email, account.id, body.devicePublicKey, platformFor(body.platform, phone), phone, now);
       if (enrolled instanceof Response) return enrolled;
       device = enrolled;
     }
@@ -243,8 +246,10 @@ interface AuthenticatedApprovedDeviceRequestBody {
   devicePublicKey?: string;
 }
 
-function isIosAudience(env: Env, audience: string): boolean {
-  return !!env.GOOGLE_IOS_CLIENT_ID && audience === env.GOOGLE_IOS_CLIENT_ID;
+function phoneAudience(env: Env, audience: string): PhoneAudience | null {
+  if (env.GOOGLE_IOS_CLIENT_ID && audience === env.GOOGLE_IOS_CLIENT_ID) return "ios";
+  if (env.GOOGLE_ANDROID_CLIENT_ID && audience === env.GOOGLE_ANDROID_CLIENT_ID) return "android";
+  return null;
 }
 
 /** Validates the body's credentials and the Google token, and applies the
@@ -252,7 +257,7 @@ function isIosAudience(env: Env, audience: string): boolean {
 async function verifyCaller(
   body: AuthenticatedApprovedDeviceRequestBody,
   env: Env,
-): Promise<{ email: string; googleSub: string; isIos: boolean; devicePublicKey: string } | Response> {
+): Promise<{ email: string; googleSub: string; phone: PhoneAudience | null; devicePublicKey: string } | Response> {
   if (
     typeof body.idToken !== "string" ||
     body.idToken.length === 0 ||
@@ -273,7 +278,7 @@ async function verifyCaller(
   return {
     email: identity.email,
     googleSub: identity.googleSub,
-    isIos: isIosAudience(env, identity.audience),
+    phone: phoneAudience(env, identity.audience),
     devicePublicKey: body.devicePublicKey,
   };
 }
@@ -290,11 +295,11 @@ async function enrolNewDevice(
   accountId: string,
   publicKey: string,
   platform: DevicePlatform,
-  isIos: boolean,
+  phone: PhoneAudience | null,
   now: number,
 ): Promise<DeviceRecord | Response> {
   const activeDeviceCount = await countActiveDevicesForAccount(db, accountId);
-  if (isIos && activeDeviceCount === 0) return desktopRequired();
+  if (phone && activeDeviceCount === 0) return desktopRequired();
   const status = activeDeviceCount === 0 ? "approved" : "pending";
   const device = await enrollDevice(db, accountId, publicKey, status, now, platform);
   const limited = await deviceLimitAfterEnrol(db, env, email, device, () => deleteDevice(db, device.id));
@@ -358,7 +363,7 @@ async function authenticateApprovedDevice(
   env: Env,
   db: SqlExecutor,
   allowPending = false,
-): Promise<{ account: AccountRecord; device: DeviceRecord; isIos: boolean } | Response> {
+): Promise<{ account: AccountRecord; device: DeviceRecord; phone: PhoneAudience | null } | Response> {
   const caller = await verifyCaller(body, env);
   if (caller instanceof Response) return caller;
   const account = await liveAccount(db, caller.googleSub);
@@ -371,7 +376,7 @@ async function authenticateApprovedDevice(
     return Response.json({ error: "device not approved" }, { status: 403 });
   }
   await touchLastSeen(db, account.id, device.id, Date.now());
-  return { account, device, isIos: caller.isIos };
+  return { account, device, phone: caller.phone };
 }
 
 /** `db` defaults to a real Turso connection built from `env`, same
@@ -638,7 +643,7 @@ export async function handleSwapDevice(
     if (!target || target.accountId !== account.id || target.status === "revoked" || target.id === existing?.id) {
       return Response.json({ error: "device not found" }, { status: 404 });
     }
-    const platform = existing ? existing.platform : platformFor(body.platform, caller.isIos);
+    const platform = existing ? existing.platform : platformFor(body.platform, caller.phone);
     if (kindOf(platform) !== kindOf(target.platform)) {
       return Response.json({ error: "swap_kind_mismatch" }, { status: 400 });
     }
@@ -651,7 +656,7 @@ export async function handleSwapDevice(
     }
 
     const device =
-      existing ?? (await enrollDevice(db, account.id, caller.devicePublicKey, "pending", now, platformFor(body.platform, caller.isIos)));
+      existing ?? (await enrollDevice(db, account.id, caller.devicePublicKey, "pending", now, platformFor(body.platform, caller.phone)));
     await setReplacesDevice(db, device.id, target.id);
     const limited = await deviceLimitAfterEnrol(db, env, caller.email, { ...device, replacesDeviceId: target.id }, () =>
       existing ? setReplacesDevice(db, device.id, existing.replacesDeviceId ?? null) : deleteDevice(db, device.id),
@@ -701,7 +706,7 @@ export async function handleWaitlist(
     const now = Date.now();
     const device = await findDeviceByPublicKey(db, account.id, caller.devicePublicKey);
     if (device && device.status !== "revoked") await touchLastSeen(db, account.id, device.id, now);
-    if (!(await addToWaitlist(db, account.id, wants, platformFor(body.platform, caller.isIos), now))) throw new AccountDeletingError();
+    if (!(await addToWaitlist(db, account.id, wants, platformFor(body.platform, caller.phone), now))) throw new AccountDeletingError();
     return Response.json({ status: "ok" });
   } catch (err) {
     return backendError("handleWaitlist", err);
@@ -748,11 +753,11 @@ export async function handleResetAccount(
   try {
     const authResult = await authenticateApprovedDevice(body, env, db, true);
     if (authResult instanceof Response) return authResult;
-    const { account, device, isIos } = authResult;
+    const { account, device, phone } = authResult;
     if (device.status !== "pending" || !device.replacesDeviceId) {
       return Response.json({ error: "device not approved" }, { status: 403 });
     }
-    if (isIos || kindOf(device.platform) !== "computer") {
+    if (phone || kindOf(device.platform) !== "computer") {
       return Response.json({ error: "reset_requires_computer" }, { status: 403 });
     }
     const now = Date.now();

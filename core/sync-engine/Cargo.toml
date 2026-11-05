@@ -14,7 +14,22 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 
+# Android has no system cert store that rustls-native-certs can read, so libsql's default
+# connector (native roots) fails with "no valid native root CA certificates found". On
+# Android the remote connector is built here with Mozilla's roots instead. Same versions
+# libsql 0.9 itself uses, so the connector type matches. Desktop and iOS keep native roots.
+[target.'cfg(target_os = "android")'.dependencies]
+hyper = "0.14"
+hyper-rustls = "0.25"
+rustls = "0.22"
+webpki-roots = "0.26"
+
 [dev-dependencies]
 tempfile = "3"
 libsql = { version = "0.9", default-features = false, features = ["core"] }
 tokio = { version = "1", features = ["test-util"] }
+# Builds the Android connector in host tests too (see the target section above).
+hyper = "0.14"
+hyper-rustls = "0.25"
+rustls = "0.22"
+webpki-roots = "0.26"

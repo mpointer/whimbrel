@@ -75,6 +75,9 @@ struct AskAnswerText: NSViewRepresentable {
         view.textContainerInset = .zero
         view.textContainer?.lineFragmentPadding = 0
         view.textContainer?.widthTracksTextView = true
+        // SwiftUI sets the frame; the text view must not resize itself to its text.
+        view.isVerticallyResizable = false
+        view.isHorizontallyResizable = false
         return view
     }
 
@@ -92,13 +95,23 @@ struct AskAnswerText: NSViewRepresentable {
         fittingSize(width: proposal.width)
     }
 
-    func fittingSize(width: CGFloat?) -> CGSize? {
-        guard let width, width > 1 else { return nil }
-        return CGSize(width: width, height: Self.height(of: markdown, width: width))
+    /// Always a real size. An unspecified or infinite width gets the text's own width; returning
+    /// nil there let SwiftUI size the view from AppKit's defaults (zero), and the answer drew
+    /// past its frame over the cards below it (live "Questions for you", 2026-11-04).
+    func fittingSize(width: CGFloat?) -> CGSize {
+        guard let width, width.isFinite else { return Self.size(of: markdown, width: Self.idealWidth) }
+        let usable = max(width, 1)
+        return CGSize(width: max(width, 0), height: Self.size(of: markdown, width: usable).height)
     }
 
+    /// The widest an answer asks for when SwiftUI offers no width: a readable column, not one long line.
+    static let idealWidth: CGFloat = 640
+
     /// Height of `markdown` laid out at `width`, as the view draws it.
-    static func height(of markdown: String, width: CGFloat) -> CGFloat {
+    static func height(of markdown: String, width: CGFloat) -> CGFloat { size(of: markdown, width: width).height }
+
+    /// Size of `markdown` laid out at `width` (the used width can be narrower).
+    static func size(of markdown: String, width: CGFloat) -> CGSize {
         let storage = NSTextStorage(attributedString: AskMarkdown.attributed(markdown)) // colour never changes layout
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
@@ -106,6 +119,7 @@ struct AskAnswerText: NSViewRepresentable {
         layout.addTextContainer(container)
         storage.addLayoutManager(layout)
         layout.ensureLayout(for: container)
-        return ceil(layout.usedRect(for: container).height)
+        let used = layout.usedRect(for: container)
+        return CGSize(width: ceil(used.width), height: ceil(used.height))
     }
 }

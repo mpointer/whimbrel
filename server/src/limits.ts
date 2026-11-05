@@ -4,7 +4,7 @@ export type DeviceKind = "computer" | "phone";
 
 /** NULL platform means a row from before platforms were recorded; those were computers. */
 export function kindOf(platform: string | null): DeviceKind {
-  return platform === "ios" ? "phone" : "computer";
+  return platform === "ios" || platform === "android" ? "phone" : "computer";
 }
 
 /** The free plan allows one active computer and one active phone. Active

@@ -120,6 +120,9 @@ static REMOTE_BUILD_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::A
 /// url/token instead of once a minute); routing the build through
 /// `tokio::spawn` means a panic there is caught by the `JoinHandle` as an
 /// ordinary `Err` instead of unwinding into the caller.
+///
+/// On Android the connector verifies against bundled Mozilla roots instead
+/// (`webpki_connector`): there is no native store there to load.
 async fn remote_connection(
     turso_url: &str,
     turso_token: &str,
@@ -141,7 +144,12 @@ async fn remote_connection(
 
     let url = turso_url.to_string();
     let token = turso_token.to_string();
-    let db = tokio::spawn(async move { Builder::new_remote(url, token).build().await })
+    let db = tokio::spawn(async move {
+        let builder = Builder::new_remote(url, token);
+        #[cfg(target_os = "android")]
+        let builder = builder.connector(webpki_connector());
+        builder.build().await
+    })
         .await
         .map_err(|e| SyncEngineError::Connection(format!("connector setup panicked: {e}")))?
         .map_err(|e| SyncEngineError::Connection(e.to_string()))?;
@@ -155,6 +163,36 @@ async fn remote_connection(
         db,
     });
     Ok(conn)
+}
+
+/// Mozilla's trusted roots, bundled into the binary (webpki-roots). Android has no
+/// system cert store that rustls-native-certs can read, so there libsql's default
+/// native-roots connector fails every connect with "no valid native root CA
+/// certificates found".
+#[cfg(any(target_os = "android", test))]
+fn webpki_root_store() -> rustls::RootCertStore {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    roots
+}
+
+/// The HTTPS connector Android hands libsql: the same shape as libsql's own default
+/// (`libsql::database::connector`, hyper-rustls 0.25, http1, https_or_http) but
+/// verifying against `webpki_root_store`. Normal rustls verification, hostname
+/// checks included. Desktop and iOS keep libsql's native-roots default.
+#[cfg(any(target_os = "android", test))]
+fn webpki_connector() -> hyper_rustls::HttpsConnector<hyper::client::HttpConnector> {
+    let mut http = hyper::client::HttpConnector::new();
+    http.enforce_http(false);
+    http.set_nodelay(true);
+    let tls = rustls::ClientConfig::builder()
+        .with_root_certificates(webpki_root_store())
+        .with_no_client_auth();
+    hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(tls)
+        .https_or_http()
+        .enable_http1()
+        .wrap_connector(http)
 }
 
 const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1000; // 5 minutes
@@ -958,6 +996,19 @@ mod tests {
             .unwrap();
 
         assert!(b_result.is_empty());
+    }
+
+    /// Android's connector: a non-empty bundled root store, and libsql accepts the
+    /// connector (`build` and `connect` are offline, so no network is touched).
+    #[tokio::test]
+    async fn android_webpki_connector_builds_with_a_non_empty_root_store() {
+        assert!(webpki_root_store().len() > 100, "bundled Mozilla roots missing");
+        let db = Builder::new_remote("https://example.invalid".to_string(), "token".to_string())
+            .connector(webpki_connector())
+            .build()
+            .await
+            .expect("libsql must accept the webpki connector");
+        db.connect().expect("connect is lazy and must not fail offline");
     }
 
     /// `remote_connection`'s whole point is to stop rebuilding the HTTPS

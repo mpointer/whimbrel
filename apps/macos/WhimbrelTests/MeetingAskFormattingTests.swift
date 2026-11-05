@@ -61,10 +61,20 @@ final class MeetingAskFormattingTests: XCTestCase {
         XCTAssertEqual(AskAnswerText.height(of: short, width: 600), AskAnswerText.height(of: short, width: 600), "no hidden state")
     }
 
-    @MainActor func testAnUnusableWidthIsNotMeasured() {
-        let text = AskAnswerText(markdown: "The answer.")
-        XCTAssertNil(text.fittingSize(width: 0))
-        XCTAssertNil(text.fittingSize(width: nil))
-        XCTAssertEqual(text.fittingSize(width: 400)?.width, 400)
+    // An unspecified width gets a real size, never nil: nil let SwiftUI give the view a zero
+    // frame and the answer drew over the cards below it (live "Questions for you", 2026-11-04).
+    @MainActor func testEveryProposalGetsARealSize() {
+        let short = AskAnswerText(markdown: "The answer.")
+        let ideal = short.fittingSize(width: nil)
+        XCTAssertGreaterThan(ideal.width, 0)
+        XCTAssertLessThanOrEqual(ideal.width, AskAnswerText.idealWidth)
+        XCTAssertEqual(ideal.height, AskAnswerText.height(of: "The answer.", width: AskAnswerText.idealWidth))
+        XCTAssertEqual(short.fittingSize(width: .infinity), ideal)
+        XCTAssertEqual(short.fittingSize(width: 400).width, 400)
+        XCTAssertEqual(short.fittingSize(width: 0).width, 0)
+
+        let long = AskAnswerText(markdown: String(repeating: "A finished answer with several sentences in it. ", count: 12))
+        XCTAssertLessThanOrEqual(long.fittingSize(width: nil).width, AskAnswerText.idealWidth, "a readable column, not one long line")
+        XCTAssertGreaterThan(long.fittingSize(width: nil).height, ideal.height)
     }
 }

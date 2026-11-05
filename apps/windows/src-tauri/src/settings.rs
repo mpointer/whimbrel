@@ -80,7 +80,7 @@ pub mod keys {
     /// until each ends so a relaunch mid-meeting doesn't prompt or record it again.
     pub const MEETINGS_PROMPTED: &str = "meetings.promptedEvents";
     /// The Profile (docs/superpowers/specs/2026-10-06-profile-design.md), under the Mac's settings-sync
-    /// field keys. Synced on the Mac; on Windows it stays on this PC until settings sync exists here.
+    /// field keys. Synced between devices (`syncing::settings`).
     pub const PROFILE_NAME: &str = "profile.name";
     pub const PROFILE_ROLE: &str = "profile.role";
     pub const PROFILE_ORGANIZATION: &str = "profile.organization";
@@ -96,7 +96,7 @@ pub mod keys {
     /// another device, `{field_key: unix ms}` (the Mac's `SettingsFieldTimestamps`). Missing is 0.
     pub const SYNC_FIELD_TIMESTAMPS: &str = "sync.fieldTimestamps";
     /// Which device runs routines: that device's public key, or absent for "any device". The Mac's
-    /// settings-sync field key; on Windows it stays on this PC until a settings-sync coordinator exists.
+    /// settings-sync field key, synced between devices (`syncing::settings`).
     pub const ROUTINES_PRIMARY_DEVICE: &str = "routines.primaryDeviceId";
     /// Device-local, never synced: the Language picker's choice, absent for Automatic. The Mac keeps
     /// its equivalent in `AppleLanguages`.
@@ -841,7 +841,7 @@ mod language_tests {
 
     #[test]
     fn language_keys_are_the_macs_device_local_keys() {
-        // Windows has no settings sync yet; these are the names the Mac keeps out of it.
+        // Settings sync never gathers these; they are the names the Mac keeps out of it.
         assert_eq!(keys::OUTPUT_LANGUAGE_OVERRIDE, "app.outputLanguageOverride");
         assert_eq!(keys::APP_LANGUAGE, "app.language");
         assert_eq!(keys::TRANSCRIPTION_MULTILINGUAL, "transcription.multilingual");

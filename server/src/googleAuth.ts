@@ -23,13 +23,14 @@ export function googleJwks(): JWTVerifyGetKey {
 }
 
 /** Accepted token audiences: the desktop client and, if configured, the iOS
- * client. Empty/unset values are dropped so a blank var can never widen
+ * and Android clients. Empty/unset values are dropped so a blank var can never widen
  * acceptance (reject-by-default). */
 export function allowedAudiences(env: {
   GOOGLE_CLIENT_ID: string;
   GOOGLE_IOS_CLIENT_ID?: string;
+  GOOGLE_ANDROID_CLIENT_ID?: string;
 }): string[] {
-  return [env.GOOGLE_CLIENT_ID, env.GOOGLE_IOS_CLIENT_ID].filter(
+  return [env.GOOGLE_CLIENT_ID, env.GOOGLE_IOS_CLIENT_ID, env.GOOGLE_ANDROID_CLIENT_ID].filter(
     (a): a is string => typeof a === "string" && a !== "",
   );
 }

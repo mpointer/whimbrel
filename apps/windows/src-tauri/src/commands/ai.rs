@@ -321,7 +321,7 @@ pub async fn usage_rows(state: State<'_, AppState>, days: Option<i64>) -> Result
 pub fn set_summary_instructions(state: State<'_, AppState>, text: String) -> Result<(), CommandError> {
     let mut settings = state.settings.lock().unwrap();
     let text = text.trim();
-    settings.set(keys::SUMMARY_CUSTOM_PROMPT, (!text.is_empty()).then_some(text));
+    crate::syncing::settings::edit(&mut settings, |f| f.set(keys::SUMMARY_CUSTOM_PROMPT, (!text.is_empty()).then_some(text)));
     settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))
 }
 
@@ -349,7 +349,7 @@ fn save_image_search_key(secrets: &dyn SecretStore, key: Option<&str>) -> Result
 #[tauri::command]
 pub fn set_prompt(state: State<'_, AppState>, surface: PromptSurface, text: String) -> Result<(), CommandError> {
     let mut settings = state.settings.lock().unwrap();
-    settings.set_prompt(surface, &text);
+    crate::syncing::settings::edit(&mut settings, |f| f.set_prompt(surface, &text));
     settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))
 }
 
