@@ -28,6 +28,8 @@ pub struct Paths {
     pub recordings: PathBuf,
     /// Skins the user made or imported: one folder per skin, `user-<slug>/` (Task 6; never synced here).
     pub skins: PathBuf,
+    /// Diagnostics bundles Send feedback writes for the user to attach (the 3 newest are kept).
+    pub diagnostics: PathBuf,
     /// The old folder, when `root` is the new one: stored paths under it are re-rooted
     /// onto `root` at launch (`state::reroot_stored_paths`).
     pub legacy_root: Option<PathBuf>,
@@ -98,6 +100,7 @@ impl Paths {
             settings: root.join("settings.json"),
             recordings: root.join("recordings"),
             skins: root.join("skins"),
+            diagnostics: root.join("diagnostics"),
             legacy_root: None,
             root,
         }
@@ -187,7 +190,7 @@ impl Paths {
 
     /// Creates the directories (not the files) if missing.
     pub fn ensure_dirs(&self) -> io::Result<()> {
-        for dir in [&self.root, &self.models, &self.minilm, &self.logs, &self.recordings, &self.skins] {
+        for dir in [&self.root, &self.models, &self.minilm, &self.logs, &self.recordings, &self.skins, &self.diagnostics] {
             std::fs::create_dir_all(dir)?;
         }
         Ok(())
@@ -204,7 +207,7 @@ mod tests {
         assert_eq!(p.db, Path::new(r"C:\Users\u\AppData\Local\Whimbrel\data\kestrel.sqlite"));
         assert_eq!(p.minilm, Path::new(r"C:\Users\u\AppData\Local\Whimbrel\data\models\minilm"));
         assert_eq!(p.settings, Path::new(r"C:\Users\u\AppData\Local\Whimbrel\data\settings.json"));
-        for child in [&p.db, &p.models, &p.minilm, &p.logs, &p.settings, &p.recordings, &p.skins] {
+        for child in [&p.db, &p.models, &p.minilm, &p.logs, &p.settings, &p.recordings, &p.skins, &p.diagnostics] {
             assert!(child.starts_with(&p.root));
         }
     }
@@ -335,7 +338,7 @@ mod tests {
         let p = Paths::under(&root);
         p.ensure_dirs().unwrap();
         p.ensure_dirs().unwrap();
-        for dir in [&p.root, &p.models, &p.minilm, &p.logs, &p.recordings, &p.skins] {
+        for dir in [&p.root, &p.models, &p.minilm, &p.logs, &p.recordings, &p.skins, &p.diagnostics] {
             assert!(dir.is_dir(), "{} missing", dir.display());
         }
         assert!(!p.db.exists(), "ensure_dirs must not create the database");

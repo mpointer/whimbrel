@@ -21,10 +21,22 @@ fn encode(value: &str) -> String {
 }
 
 /// The `mailto:` link for `version` of the app on `windows` (as [`describe_windows`] writes it).
-pub fn mail_url(version: &str, windows: &str) -> String {
+/// `attachment` is the line about the diagnostics bundle, if there is one to mention.
+pub fn mail_url(version: &str, windows: &str, attachment: Option<&str>) -> String {
     let subject = format!("Whimbrel feedback (Windows {version})");
-    let body = format!("\n\n---\nWhimbrel {version} \u{00B7} {windows}");
+    let attach = attachment.map(|line| format!("\n\n{line}")).unwrap_or_default();
+    let body = format!("{attach}\n\n---\nWhimbrel {version} \u{00B7} {windows}");
     format!("mailto:{ADDRESS}?subject={}&body={}", encode(&subject), encode(&body))
+}
+
+/// What Send feedback did with the diagnostics bundle, for the About card.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackResult {
+    /// Where the bundle was saved, for the user to attach.
+    pub bundle_path: Option<String>,
+    /// Why there is no bundle, when making it failed.
+    pub bundle_error: Option<String>,
 }
 
 /// "Windows 11 24H2 (build 26100.2314)". The registry's `ProductName` still says Windows 10 on Windows 11,
@@ -71,11 +83,11 @@ pub fn this_windows() -> String {
 }
 
 /// Opens a new feedback email in the user's mail app.
-pub fn open() -> Result<(), String> {
+pub fn open(attachment: Option<&str>) -> Result<(), String> {
     use windows::core::{w, HSTRING, PCWSTR};
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    let url = mail_url(env!("CARGO_PKG_VERSION"), &this_windows());
+    let url = mail_url(env!("CARGO_PKG_VERSION"), &this_windows(), attachment);
     let result = unsafe { ShellExecuteW(None, w!("open"), &HSTRING::from(url), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL) };
     if result.0 as isize > 32 {
         Ok(())
@@ -84,13 +96,44 @@ pub fn open() -> Result<(), String> {
     }
 }
 
-/// Settings → About this PC: "Send feedback…".
+/// Settings → About this PC: "Send feedback…". Saves a diagnostics bundle, shows it in File
+/// Explorer, then opens the email, which asks for it to be attached. Off the main thread: the
+/// bundle reads up to 15 MB of logs and the store.
 #[tauri::command]
-pub fn send_feedback() -> Result<(), CommandError> {
-    open().map_err(|e| {
+pub async fn send_feedback(app: tauri::AppHandle) -> Result<FeedbackResult, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || send_with_bundle(&app))
+        .await
+        .map_err(|e| CommandError::not_configured(e.to_string()))?
+}
+
+/// The bundle, File Explorer, then the email: the About card's button and the tray's
+/// Send feedback. Blocking.
+pub fn send_with_bundle(app: &tauri::AppHandle) -> Result<FeedbackResult, CommandError> {
+    use tauri::Manager;
+    let made = crate::diagnostics::bundle(&app.state::<crate::state::AppState>());
+    let (result, line) = match made {
+        Ok(path) => {
+            if let Err(e) = crate::diagnostics::reveal(&path) {
+                tracing::warn!(error = %e, "could not show the diagnostics bundle in File Explorer");
+            }
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let line = tr(
+                "Please attach {file}, the diagnostics file Whimbrel just saved (File Explorer has it selected). It has recent logs and settings status, with email addresses and meeting titles removed.",
+                &[("file", &name)],
+            );
+            (FeedbackResult { bundle_path: Some(path.display().to_string()), bundle_error: None }, line)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "could not make the diagnostics bundle");
+            let line = tr("Whimbrel couldn't save a diagnostics file: {error}", &[("error", &e)]);
+            (FeedbackResult { bundle_path: None, bundle_error: Some(e) }, line)
+        }
+    };
+    open(Some(&line)).map_err(|e| {
         tracing::warn!(error = %e, "send feedback");
         CommandError::not_configured(tr("Couldn't open your mail app. Email {address} instead.", &[("address", &ADDRESS.to_string())]))
-    })
+    })?;
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -99,7 +142,7 @@ mod tests {
 
     #[test]
     fn the_link_has_the_address_subject_and_body() {
-        let url = mail_url("0.9.39", "Windows 11 24H2 (build 26100.2314)");
+        let url = mail_url("0.9.39", "Windows 11 24H2 (build 26100.2314)", None);
         assert_eq!(
             url,
             "mailto:hello@whimbrelapp.com?subject=Whimbrel%20feedback%20%28Windows%200.9.39%29\
@@ -109,7 +152,7 @@ mod tests {
 
     #[test]
     fn nothing_in_the_values_is_left_unencoded() {
-        let url = mail_url("1.0 & more?", "Windows #1 = x");
+        let url = mail_url("1.0 & more?", "Windows #1 = x", Some("Attach Whimbrel-diagnostics-1.zip & send?"));
         let query = url.split_once('?').unwrap().1;
         for pair in query.split('&') {
             let (_, value) = pair.split_once('=').unwrap();

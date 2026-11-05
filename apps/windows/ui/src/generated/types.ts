@@ -920,6 +920,22 @@ export interface Fact {
   text: string;
 }
 /**
+ * What Send feedback did with the diagnostics bundle, for the About card.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "FeedbackResult".
+ */
+export interface FeedbackResult {
+  /**
+   * Why there is no bundle, when making it failed.
+   */
+  bundleError?: string | null;
+  /**
+   * Where the bundle was saved, for the user to attach.
+   */
+  bundlePath?: string | null;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "GeneralSettings".
  */
@@ -2063,6 +2079,11 @@ export interface WorkspaceView {
    */
   spokenLanguage?: string | null;
   summary?: string | null;
+  /**
+   * Why the last summary of this device's transcribed meeting failed, shown beside
+   * Regenerate. `None` once a summary succeeds.
+   */
+  summaryFailure?: string | null;
   summaryIsEdited: boolean;
   /**
    * Why this finished meeting has no transcript, when its last run said so: it failed, or

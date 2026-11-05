@@ -222,7 +222,7 @@ impl Detection {
             attendees: Vec::new(),
             start_unix_ms: None,
         };
-        tracing::info!(id = %detected.id, title = %detected.title, pid = detected.root_pid, "meeting detected");
+        tracing::info!(id = %detected.id, title = ?detected.title, pid = detected.root_pid, "meeting detected");
         self.pending.set(Some(detected));
         crate::alert::show(&self.app);
     }

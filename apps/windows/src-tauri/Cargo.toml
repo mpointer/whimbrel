@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.55"
+version = "0.9.56"
 edition = "2021"
 publish = false
 # Two binaries (the app and the M3.1 capture-spike CLI); the Tauri CLI builds and
@@ -55,6 +55,8 @@ serde_json = "1"
 chrono = "0.4"
 # Meeting snapshot PNGs. Already in the build through Tauri's `image`.
 png = "0.18"
+# Send feedback's diagnostics bundle. Already in the build through candle and the updater, same features.
+zip = { version = "9", default-features = false, features = ["deflate"] }
 # Slide thumbnails for the workspace strip; also already in the build through Tauri.
 image = { version = "0.25", default-features = false, features = ["png"] }
 clap = { version = "4", features = ["derive"] }

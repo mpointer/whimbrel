@@ -263,9 +263,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => crate::app::show_main_window(app),
             "feedback" => {
-                if let Err(e) = crate::feedback::open() {
-                    tracing::warn!(error = %e, "send feedback from the tray");
-                }
+                // The bundle reads logs and the store: off the event loop.
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    if let Err(e) = crate::feedback::send_with_bundle(&app) {
+                        tracing::warn!(error = %e, "send feedback from the tray");
+                    }
+                });
             }
             "quit" => app.exit(0),
             _ => {}

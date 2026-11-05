@@ -6224,6 +6224,40 @@
         }
       }
     },
+    "Couldn't save the diagnostics file: {error}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Diagnosedatei konnte nicht gespeichert werden: {error}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo guardar el archivo de diagnóstico: {error}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible d'enregistrer le fichier de diagnostic : {error}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible d'enregistrer le fichier de diagnostic : {error}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível salvar o arquivo de diagnóstico: {error}"
+          }
+        }
+      }
+    },
     "Couldn't start the local sign-in listener." : {
       "localizations" : {
         "de" : {
@@ -15774,36 +15808,36 @@
         }
       }
     },
-    "Opens an email to the Whimbrel team with this PC's version filled in." : {
+    "Opens an email to the Whimbrel team and saves a diagnostics file to attach. It has recent logs and settings status, with email addresses and meeting titles removed. No recordings, transcripts or keys." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Öffnet eine E-Mail an das Whimbrel-Team mit der Version dieses PCs."
+            "value" : "Öffnet eine E-Mail an das Whimbrel-Team und speichert eine Diagnosedatei zum Anhängen. Sie enthält aktuelle Protokolle und den Einstellungsstatus, ohne E-Mail-Adressen und Besprechungstitel. Keine Aufnahmen, Transkripte oder Schlüssel."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Abre un correo al equipo de Whimbrel con la versión de esta PC ya incluida."
+            "value" : "Abre un correo al equipo de Whimbrel y guarda un archivo de diagnóstico para adjuntar. Contiene registros recientes y el estado de la configuración, sin direcciones de correo ni títulos de reuniones. Sin grabaciones, transcripciones ni claves."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ouvre un e-mail à l'équipe Whimbrel avec la version de ce PC déjà renseignée."
+            "value" : "Ouvre un e-mail à l'équipe Whimbrel et enregistre un fichier de diagnostic à joindre. Il contient les journaux récents et l'état des réglages, sans adresses e-mail ni titres de réunion. Aucun enregistrement, transcription ni clé."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ouvre un courriel adressé à l’équipe Whimbrel avec la version de ce PC déjà indiquée."
+            "value" : "Ouvre un courriel à l'équipe Whimbrel et enregistre un fichier de diagnostic à joindre. Il contient les journaux récents et l'état des paramètres, sans adresses courriel ni titres de réunion. Aucun enregistrement, transcription ni clé."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Abre um e-mail para a equipe do Whimbrel com a versão deste PC já preenchida."
+            "value" : "Abre um e-mail para a equipe do Whimbrel e salva um arquivo de diagnóstico para anexar. Ele tem registros recentes e o estado das configurações, sem endereços de e-mail nem títulos de reuniões. Sem gravações, transcrições ou chaves."
           }
         }
       }
@@ -16114,6 +16148,40 @@
         }
       }
     },
+    "Please attach {file}, the diagnostics file Whimbrel just saved (File Explorer has it selected). It has recent logs and settings status, with email addresses and meeting titles removed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bitte hängen Sie {file} an, die Diagnosedatei, die Whimbrel gerade gespeichert hat (im Datei-Explorer ausgewählt). Sie enthält aktuelle Protokolle und den Einstellungsstatus, ohne E-Mail-Adressen und Besprechungstitel."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Adjunta {file}, el archivo de diagnóstico que Whimbrel acaba de guardar (está seleccionado en el Explorador de archivos). Contiene registros recientes y el estado de la configuración, sin direcciones de correo ni títulos de reuniones."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Veuillez joindre {file}, le fichier de diagnostic que Whimbrel vient d'enregistrer (sélectionné dans l'Explorateur de fichiers). Il contient les journaux récents et l'état des réglages, sans adresses e-mail ni titres de réunion."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Veuillez joindre {file}, le fichier de diagnostic que Whimbrel vient d'enregistrer (sélectionné dans l'Explorateur de fichiers). Il contient les journaux récents et l'état des paramètres, sans adresses courriel ni titres de réunion."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anexe {file}, o arquivo de diagnóstico que o Whimbrel acabou de salvar (está selecionado no Explorador de Arquivos). Ele tem registros recentes e o estado das configurações, sem endereços de e-mail nem títulos de reuniões."
+          }
+        }
+      }
+    },
     "Point the assistant at {address} and have it send the header \"Authorization: Bearer <your token>\" with each request." : {
       "localizations" : {
         "de" : {
@@ -16280,6 +16348,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Preparado às {time}."
+          }
+        }
+      }
+    },
+    "Preparing…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird vorbereitet…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preparando…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Préparation…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Préparation…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preparando…"
           }
         }
       }
@@ -18775,6 +18877,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Salvar slides e telas compartilhadas"
+          }
+        }
+      }
+    },
+    "Saved {file}. Attach it to the email." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{file} gespeichert. Hängen Sie die Datei an die E-Mail an."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se guardó {file}. Adjúntalo al correo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{file} enregistré. Joignez-le à l'e-mail."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{file} enregistré. Joignez-le au courriel."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{file} foi salvo. Anexe-o ao e-mail."
           }
         }
       }
@@ -23895,6 +24031,40 @@
         }
       }
     },
+    "The summary didn't finish. Regenerate summary tries again. What went wrong: {reason}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Die Zusammenfassung wurde nicht fertig. „Neu zusammenfassen“ versucht es erneut. Fehler: {reason}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El resumen no terminó. «Regenerar resumen» lo intenta de nuevo. Qué falló: {reason}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le résumé n'a pas abouti. « Régénérer le résumé » réessaie. Problème : {reason}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le résumé n'a pas abouti. « Régénérer le résumé » réessaie. Problème : {reason}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O resumo não terminou. \"Gerar resumo novamente\" tenta de novo. O que deu errado: {reason}"
+          }
+        }
+      }
+    },
     "The sweep failed: {error}" : {
       "localizations" : {
         "de" : {
@@ -26716,6 +26886,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "O Whimbrel não conseguiu ler esse arquivo."
+          }
+        }
+      }
+    },
+    "Whimbrel couldn't save a diagnostics file: {error}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel konnte keine Diagnosedatei speichern: {error}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel no pudo guardar un archivo de diagnóstico: {error}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel n'a pas pu enregistrer de fichier de diagnostic : {error}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel n'a pas pu enregistrer de fichier de diagnostic : {error}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel não conseguiu salvar um arquivo de diagnóstico: {error}"
           }
         }
       }

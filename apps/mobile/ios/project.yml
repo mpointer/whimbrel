@@ -112,7 +112,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Whimbrel/Bridging-Header.h
         HEADER_SEARCH_PATHS: $(SRCROOT)/../../../core/ffi/include
         # Follows the repo's VERSION (scripts/check-version.sh checks it; docs/RELEASING.md).
-        MARKETING_VERSION: "0.9.55"
+        MARKETING_VERSION: "0.9.56"
         # Local builds only. scripts/testflight-upload.sh sets the uploaded build's number
         # (UTC time, YYYYMMDD.HHMM) at archive time, so every upload is higher than the last.
         CURRENT_PROJECT_VERSION: "1"

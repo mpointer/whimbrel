@@ -304,6 +304,11 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
             </label>
           )}
 
+          {view.summaryFailure != null && (
+            <p className="muted small" role="status">
+              {t("The summary didn't finish. Regenerate summary tries again. What went wrong: {reason}", { reason: view.summaryFailure })}
+            </p>
+          )}
           <div className="toolbar">
             {!view.readOnly && (
               <button className="mode" disabled={busy || !view.hasTranscript} onClick={askThenRegenerate}>

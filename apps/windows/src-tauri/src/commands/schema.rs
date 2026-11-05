@@ -19,6 +19,7 @@ pub const SCHEMA_PATH: &str = "../ui/src/generated/schema.json";
 pub fn schema_bundle() -> Value {
     let mut generator = SchemaSettings::draft07().into_generator();
     generator.subschema_for::<AppStatus>();
+    generator.subschema_for::<crate::feedback::FeedbackResult>();
     generator.subschema_for::<CommandError>();
     generator.subschema_for::<RoutingSettings>();
     generator.subschema_for::<crate::capture::service::CaptureStatus>();
