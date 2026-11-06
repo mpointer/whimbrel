@@ -23,7 +23,8 @@ impl PriorityJudgments {
     pub fn priority(&self) -> f64 {
         let urgency_factor = URGENCY_FLOOR
             + (1.0 - URGENCY_FLOOR) * (self.urgency / URGENCY_MAX_LEVEL).clamp(0.0, 1.0);
-        let base = self.asks_reply * (1.0 - self.bulk) * urgency_factor + PERSON_BOOST * self.person;
+        let base =
+            self.asks_reply * (1.0 - self.bulk) * urgency_factor + PERSON_BOOST * self.person;
         base * (1.0 - self.automated)
     }
 }
@@ -32,8 +33,20 @@ impl PriorityJudgments {
 mod tests {
     use super::*;
 
-    fn j(asks_reply: f64, urgency: f64, person: f64, bulk: f64, automated: f64) -> PriorityJudgments {
-        PriorityJudgments { asks_reply, urgency, person, bulk, automated }
+    fn j(
+        asks_reply: f64,
+        urgency: f64,
+        person: f64,
+        bulk: f64,
+        automated: f64,
+    ) -> PriorityJudgments {
+        PriorityJudgments {
+            asks_reply,
+            urgency,
+            person,
+            bulk,
+            automated,
+        }
     }
 
     #[test]
@@ -61,8 +74,14 @@ mod tests {
 
     #[test]
     fn urgency_is_clamped_to_its_scale() {
-        assert_eq!(j(1.0, 5.0, 0.0, 0.0, 0.0).priority(), j(1.0, 3.0, 0.0, 0.0, 0.0).priority());
-        assert_eq!(j(1.0, -2.0, 0.0, 0.0, 0.0).priority(), j(1.0, 0.0, 0.0, 0.0, 0.0).priority());
+        assert_eq!(
+            j(1.0, 5.0, 0.0, 0.0, 0.0).priority(),
+            j(1.0, 3.0, 0.0, 0.0, 0.0).priority()
+        );
+        assert_eq!(
+            j(1.0, -2.0, 0.0, 0.0, 0.0).priority(),
+            j(1.0, 0.0, 0.0, 0.0, 0.0).priority()
+        );
     }
 
     #[test]

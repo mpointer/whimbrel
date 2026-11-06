@@ -1,7 +1,7 @@
 //! Monthly AI budgets on Windows (plan 2026-11-05-windows-provider-budgets.md): the synced
 //! budget settings pushed to core, and the 80% / 100% notices in a small popup at the top
 //! right, built like the question alert (`question_alert.rs`) and for the same reason, not a
-//! toast (Mike's choice, 2026-11-05). "Raise budget" opens Settings → AI Providers.
+//! toast (Mike's choice, 2026-11-05). "Raise budget" opens Settings → AI.
 
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -152,7 +152,7 @@ pub fn budget_alert_status() -> Vec<BudgetNoticeView> {
     queue().lock().unwrap().clone()
 }
 
-/// Raise budget: the main window opens Settings at AI Providers, and the notices are dropped.
+/// Raise budget: the main window opens Settings at AI, and the notices are dropped.
 #[tauri::command]
 pub fn budget_alert_raise(app: AppHandle) {
     queue().lock().unwrap().clear();
@@ -160,7 +160,7 @@ pub fn budget_alert_raise(app: AppHandle) {
     open_ai_settings(&app);
 }
 
-/// Brings the main window up on Settings → AI Providers.
+/// Brings the main window up on Settings → AI.
 pub fn open_ai_settings(app: &AppHandle) {
     crate::app::show_main_window(app);
     let _ = app.emit_to(crate::app::MAIN_WINDOW, OPEN_SETTINGS_EVENT, "ai");

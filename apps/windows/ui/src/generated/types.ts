@@ -385,7 +385,7 @@ export interface AiSettings {
   usage?: UsageView | null;
 }
 /**
- * A paid provider's monthly budget (Settings → AI Providers); `None` is no budget.
+ * A paid provider's monthly budget (Settings → AI); `None` is no budget.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "ProviderBudgetView".

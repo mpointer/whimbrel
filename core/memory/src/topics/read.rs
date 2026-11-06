@@ -795,10 +795,16 @@ mod tests {
         sql(&s, "INSERT INTO entity_mention (entity_id, source_id) SELECT id, 1 FROM entity WHERE key IN ('acme.com','p')", []);
         let m = s.topic_entity_mentions(t).unwrap();
         assert_eq!(
-            m.iter().map(|x| (x.source_id, x.kind.as_str())).collect::<Vec<_>>(),
+            m.iter()
+                .map(|x| (x.source_id, x.kind.as_str()))
+                .collect::<Vec<_>>(),
             vec![(1, "person"), (2, "person"), (1, "org")]
         );
-        sql(&s, "UPDATE topic_member SET origin='removed' WHERE topic_id=?1 AND source_id=2", [t]);
+        sql(
+            &s,
+            "UPDATE topic_member SET origin='removed' WHERE topic_id=?1 AND source_id=2",
+            [t],
+        );
         assert_eq!(s.topic_entity_mentions(t).unwrap().len(), 2);
     }
 }

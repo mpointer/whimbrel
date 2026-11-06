@@ -35,6 +35,10 @@ enum SnapshotFrameFilter {
     static let minContentArea = 0.25        // content left beside faces must cover this much of the frame
     static let barStdDev = 6.0              // an edge row/column flatter than this is a uniform bar
     static let barStep = 40.0               // … and ends where the mean luminance steps by this much
+    /// Narrowest content kept, as width / height. Slides and screens are landscape and a letter or A4
+    /// page is ~0.71-0.77; a strip of call window beside the speaker (toolbar, name tile) measured
+    /// ~0.41-0.47 on 2026-11-05, when 15 such strips were kept from a meeting where nothing was shared.
+    static let minContentAspect = 0.6
 
     // The duplicate-frame gate in front of `decide`: a frame is saved only if, against the last
     // saved frame's 32×32 grayscale copy, at least `dedupeMinChangedCells` pixels changed by more
@@ -124,6 +128,7 @@ enum SnapshotFrameFilter {
         }
         let x0 = toSource(box.x.lowerBound, luma.width, image.width), x1 = toSource(box.x.upperBound, luma.width, image.width)
         let y0 = toSource(box.y.lowerBound, luma.height, image.height), y1 = toSource(box.y.upperBound, luma.height, image.height)
+        guard x1 - x0 >= minContentAspect * (y1 - y0) else { return nil }
         return CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
     }
 

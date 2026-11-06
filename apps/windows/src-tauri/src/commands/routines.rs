@@ -463,26 +463,55 @@ pub fn set_host(settings: &mut SettingsFile, id: &str, devices: &[DeviceView]) -
     Ok(())
 }
 
-fn cached_devices(state: &AppState) -> Vec<DeviceView> {
-    state.sync.as_ref().map(|c| c.cached_devices()).unwrap_or_default()
+/// Whether the picker should fetch the device list itself: sync is signed in but the background
+/// fetch after launch hasn't landed yet. Once anything is cached (even just this PC), it waits
+/// for the 10-minute refresh like everything else.
+fn needs_fetch(ready: bool, cached: usize) -> bool {
+    ready && cached == 0
 }
 
-#[tauri::command]
-pub fn routines_host(state: State<'_, AppState>) -> HostView {
+/// The approved devices for the picker. Fetches them now (off the main thread) when the
+/// launch-time fetch hasn't finished, so the picker doesn't sit greyed out until it does.
+async fn host_devices(state: &AppState) -> Vec<DeviceView> {
+    let Some(sync) = state.sync.clone() else { return Vec::new() };
+    let cached = sync.cached_devices();
+    if !needs_fetch(sync.ready_credentials().is_some(), cached.len()) {
+        return cached;
+    }
+    match tokio::task::spawn_blocking(move || sync.refresh_devices()).await {
+        Ok(Ok(devices)) => devices,
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "device list for the routines picker failed");
+            cached
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "device list for the routines picker failed");
+            cached
+        }
+    }
+}
+
+fn host_for(state: &AppState, devices: &[DeviceView]) -> HostView {
     let stored = state.settings.lock().unwrap().primary_device_id();
     let own = state.identity.as_ref().map(|i| i.device_id.clone());
-    host_view(&stored, &cached_devices(&state), own.as_deref(), &state.device_labeler())
+    host_view(&stored, devices, own.as_deref(), &state.device_labeler())
 }
 
 #[tauri::command]
-pub fn routines_set_host(state: State<'_, AppState>, id: String) -> Result<HostView, CommandError> {
-    let devices = cached_devices(&state);
+pub async fn routines_host(state: State<'_, AppState>) -> Result<HostView, CommandError> {
+    let devices = host_devices(&state).await;
+    Ok(host_for(&state, &devices))
+}
+
+#[tauri::command]
+pub async fn routines_set_host(state: State<'_, AppState>, id: String) -> Result<HostView, CommandError> {
+    let devices = host_devices(&state).await;
     {
         let mut file = state.settings.lock().unwrap();
         set_host(&mut file, &id, &devices)?;
         file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
-    Ok(routines_host(state))
+    Ok(host_for(&state, &devices))
 }
 
 #[cfg(test)]
@@ -832,5 +861,12 @@ mod tests {
         assert!(runs(&store, 50, &DeviceLabeler::default()).unwrap().is_empty());
         assert!(runs(&store, 0, &DeviceLabeler::default()).unwrap().is_empty(), "a zero limit is treated as one, not an error");
         assert!(runs(&store, usize::MAX, &DeviceLabeler::default()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_picker_fetches_devices_only_when_signed_in_and_nothing_is_cached_yet() {
+        assert!(needs_fetch(true, 0), "signed in, launch fetch not landed: fetch now");
+        assert!(!needs_fetch(true, 1), "anything cached (even just this PC) waits for the 10-minute refresh");
+        assert!(!needs_fetch(false, 0), "not signed in: nothing to fetch");
     }
 }

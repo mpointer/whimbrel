@@ -2,6 +2,19 @@ import XCTest
 @testable import Whimbrel
 
 final class ContentSyncBackoffTests: XCTestCase {
+    func testABacklogIsStalledOnlyOnceItsOldestChangeIsAnHourOld() {
+        let now = Date()
+        XCTAssertFalse(SyncTiming.backlogIsStalled(pending: 0, oldest: nil, now: now))
+        XCTAssertFalse(SyncTiming.backlogIsStalled(pending: 5, oldest: now.addingTimeInterval(-59 * 60), now: now))
+        XCTAssertTrue(SyncTiming.backlogIsStalled(pending: 5, oldest: now.addingTimeInterval(-61 * 60), now: now))
+    }
+
+    func testOutboxBacklogDecodesTheCoreJSON() throws {
+        let b = try JSONDecoder().decode(CoreOutboxBacklog.self, from: Data(#"{"pending":3,"oldest_unix_ms":1000}"#.utf8))
+        XCTAssertEqual(b.pending, 3)
+        XCTAssertEqual(b.oldest, Date(timeIntervalSince1970: 1))
+    }
+
     func testHealthySyncKeepsTheNormalInterval() {
         XCTAssertEqual(SyncTiming.nextDelaySeconds(consecutiveFailures: 0), 60)
     }

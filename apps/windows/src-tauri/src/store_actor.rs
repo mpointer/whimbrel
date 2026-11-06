@@ -56,8 +56,19 @@ impl StoreHandle {
     /// no startup sweep, which runs once, on the primary. Open it at launch before capture
     /// or sync write: opening takes the write lock briefly and waits behind a writer.
     pub fn open_secondary(db_path: PathBuf, primary: &StoreHandle) -> Result<Self, CommandError> {
+        Self::open_lane(db_path, primary, "whimbrel-store-slow")
+    }
+
+    /// The background lane: a third connection, opened the same way, for the job loops. Their
+    /// Ollama summaries hold the store for 15-45 s a turn. On the main store that made every
+    /// click wait; on the slow lane it would hold up asks and meeting summaries.
+    pub fn open_background(db_path: PathBuf, primary: &StoreHandle) -> Result<Self, CommandError> {
+        Self::open_lane(db_path, primary, "whimbrel-store-bg")
+    }
+
+    fn open_lane(db_path: PathBuf, primary: &StoreHandle, thread_name: &str) -> Result<Self, CommandError> {
         let embedder = primary.call_blocking(|s| s.embedder())?;
-        Self::spawn_named("whimbrel-store-slow", move || {
+        Self::spawn_named(thread_name, move || {
             Store::open_with_embedder(&db_path, embedder).map_err(|e| e.to_string())
         })
     }
@@ -313,6 +324,37 @@ mod tests {
         let (a, b) = (primary.call_blocking(|s| s.embedder()).unwrap(), slow.call_blocking(|s| s.embedder()).unwrap());
         assert!(Arc::ptr_eq(&a, &b));
         drop((primary, slow));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_long_background_job_does_not_hold_up_the_main_lane() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-store-background-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("kestrel.sqlite");
+        let primary = StoreHandle::open(db.clone(), dir.join("models").join("minilm")).unwrap();
+        let bg = StoreHandle::open_background(db, &primary).unwrap();
+
+        // Stands in for an episode summary: holds the background store across a slow "model call".
+        let (started_tx, started_rx) = mpsc::channel();
+        let holder = {
+            let bg = bg.clone();
+            std::thread::spawn(move || {
+                bg.call_blocking(move |_s| {
+                    started_tx.send(()).unwrap();
+                    std::thread::sleep(Duration::from_secs(2));
+                })
+                .unwrap()
+            })
+        };
+        started_rx.recv().unwrap();
+        let t = Instant::now();
+        let id = primary.call_blocking(|s| s.insert_conversation("a click", 1).unwrap()).unwrap();
+        assert!(t.elapsed() < Duration::from_secs(1), "the main lane waited {:?} behind the background job", t.elapsed());
+        holder.join().unwrap();
+        let title = bg.call_blocking(move |s| s.get_conversation(id).unwrap().unwrap().title).unwrap();
+        assert_eq!(title, "a click", "the background lane sees the main lane's writes");
+        drop((primary, bg));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

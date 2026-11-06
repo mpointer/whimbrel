@@ -1,24 +1,12 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { approvalsCount, takePendingOpenMeeting } from "./api";
-import { AboutCard } from "./settings/AboutCard";
-import { AiCard } from "./settings/AiCard";
-import { CaptureCard } from "./settings/CaptureCard";
-import { GeneralCard } from "./settings/GeneralCard";
-import { MeetingModelsCard } from "./settings/MeetingModelsCard";
-import { AccountsCard } from "./settings/AccountsCard";
-import { GmailCard } from "./settings/GmailCard";
-import { McpCard } from "./settings/McpCard";
-import { RetentionCard } from "./settings/RetentionCard";
 import { RetentionNotice } from "./settings/RetentionNotice";
 import { UpdateBanner } from "./settings/UpdateBanner";
-import { MeetingsCard } from "./settings/MeetingsCard";
 import { bootstrapModels } from "./settings/modelBootstrap";
 import { ModelStatusLine } from "./settings/ModelStatusLine";
-import { SearchModelCard } from "./settings/SearchModelCard";
-import { SyncCard } from "./settings/SyncCard";
-import { ProfileCard } from "./settings/ProfileCard";
-import { SkinGallery } from "./settings/SkinGallery";
+import { SettingsView } from "./settings/SettingsView";
+import { rememberedSection, rememberSection, toSection, type SettingsSectionId } from "./settings/settingsSections";
 import { AutomationsView } from "./automations/AutomationsView";
 import { waitingLabel } from "./automations/automationsModel";
 import type { AskRequest } from "./chat/chatModel";
@@ -40,6 +28,16 @@ export function App() {
   const [waiting, setWaiting] = useState(0);
   // A question Today's composer hands to Library > Ask; Ask sends it once and clears it.
   const [askRequest, setAskRequest] = useState<AskRequest | null>(null);
+  // Which Settings section shows: the last one chosen, or the one a button elsewhere asked for.
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>(() => rememberedSection());
+  const chooseSection = (id: SettingsSectionId) => {
+    setSettingsSection(id);
+    rememberSection(id);
+  };
+  const openSettings = (id: SettingsSectionId) => {
+    chooseSection(id);
+    setActive("settings");
+  };
   useEffect(() => {
     const look = () => approvalsCount().then(setWaiting, () => {});
     look();
@@ -60,11 +58,13 @@ export function App() {
     const unlisten = listen("open-meeting", take);
     return () => void unlisten.then((stop) => stop());
   }, []);
-  // "Raise budget" and "Open AI Providers settings" (provider budgets): Settings, at AI Providers.
+  // "Raise budget" and "Open AI settings" (provider budgets): Settings, at the section named.
   useEffect(() => {
     const unlisten = listen<string>("open-settings", (event) => {
+      const id = toSection(event.payload);
+      setSettingsSection(id);
+      rememberSection(id);
       setActive("settings");
-      if (event.payload === "ai") setTimeout(() => document.getElementById("ai-heading")?.scrollIntoView({ block: "start" }), 50);
     });
     return () => void unlisten.then((stop) => stop());
   }, []);
@@ -105,38 +105,23 @@ export function App() {
       <SkinHeader />
       <main id="panel" role="tabpanel" aria-labelledby={`tab-${tab.id}`} className="content">
         <UpdateBanner />
-        <RetentionNotice key={retentionSaved} onChangeSettings={() => setActive("settings")} />
+        <RetentionNotice key={retentionSaved} onChangeSettings={() => openSettings("capture")} />
         {/* Today writes its own heading: the greeting. */}
         {tab.id !== "today" && <h1 className="display">{tab.label}</h1>}
         {tab.id === "settings" ? (
-          <div className="stack">
-            <GeneralCard />
-            <SkinGallery />
-            <ProfileCard />
-            <SyncCard />
-            <AiCard />
-            <CaptureCard />
-            <MeetingsCard />
-            <AccountsCard />
-            <GmailCard />
-            <McpCard />
-            <RetentionCard onSaved={() => setRetentionSaved((n) => n + 1)} />
-            <SearchModelCard />
-            <MeetingModelsCard />
-            <AboutCard />
-          </div>
+          <SettingsView section={settingsSection} onSection={chooseSection} onRetentionSaved={() => setRetentionSaved((n) => n + 1)} />
         ) : tab.id === "today" ? (
           <TodayView
             onAsk={(prompt) => {
               setAskRequest((r) => ({ id: (r?.id ?? 0) + 1, prompt }));
               setActive("library");
             }}
-            onOpenSettings={() => setActive("settings")}
+            onOpenSettings={() => openSettings("ai")}
           />
         ) : tab.id === "meetings" ? (
           <MeetingsView open={openMeeting} />
         ) : tab.id === "library" ? (
-          <LibraryView askRequest={askRequest} onAskHandled={() => setAskRequest(null)} onOpenSettings={() => setActive("settings")} />
+          <LibraryView askRequest={askRequest} onAskHandled={() => setAskRequest(null)} onOpenSettings={() => openSettings("ai")} />
         ) : tab.id === "automations" ? (
           <AutomationsView onWaiting={setWaiting} />
         ) : (

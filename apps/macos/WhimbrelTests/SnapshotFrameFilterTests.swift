@@ -63,6 +63,17 @@ final class SnapshotFrameFilterTests: XCTestCase {
         XCTAssertNil(SnapshotFrameFilter.contentCrop(webcam.image, faces: webcam.faces))
     }
 
+    func testTallStripOfCallWindowHasNoCrop() {
+        // 2026-11-05: a narrow call window with toolbar text and a name, nothing shared.
+        let strip = SnapshotFixtures.slide(["Scott Lemerond", "Record", "Leave"], size: CGSize(width: 860, height: 1940))
+        XCTAssertNil(SnapshotFrameFilter.contentCrop(strip, faces: []))
+    }
+
+    func testSharedLetterPageStillCrops() {
+        let page = SnapshotFixtures.slide(roadmap, size: CGSize(width: 850, height: 1100))
+        XCTAssertNotNil(SnapshotFrameFilter.contentCrop(page, faces: []))
+    }
+
     func testFaceLeavingUnderAQuarterOfTheFrameHasNoCrop() {
         // A mid-size face on a text slide: its 900 px tile leaves 190 px strips (15%) each side.
         let image = SnapshotFixtures.slide(roadmap)

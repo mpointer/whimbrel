@@ -22,6 +22,9 @@ final class FakeStore: MeetingSyncStore, PhoneReadStore {
     }
 
     func groupedMeetingCount() -> Int? { count }
+    /// Scripted per good pull: true while the phone is catching up.
+    var moreAfterPull: [Bool] = []
+    func moreToPull() -> Bool { moreAfterPull.isEmpty ? false : moreAfterPull.removeFirst() }
     func lastSyncError() -> String? { "connect failed: secret detail" }
 
     // PhoneReadStore: scripted, and records the thread each read ran on.
@@ -176,6 +179,15 @@ final class SyncModelTests: XCTestCase {
         XCTAssertNil(model.lastError)
         XCTAssertFalse(model.isSyncing)
         XCTAssertEqual(credentials.renewals.first?.afterFailure, false)
+    }
+
+    func testAPhoneCatchingUpComesBackAfterTenSecondsThenEveryMinute() async {
+        sleeper.limit = 2
+        store.moreAfterPull = [true, true, false]
+        let model = makeModel()
+        model.start()
+        await model.loopTask?.value
+        XCTAssertEqual(sleeper.intervals, [10, 10, 60])
     }
 
     func testFailuresBackOffShowAGenericMessageAndRenewTheToken() async {

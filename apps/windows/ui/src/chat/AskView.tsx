@@ -280,7 +280,7 @@ function TurnView({ turn, onOpen }: { turn: Turn; onOpen: (s: Selection) => void
         {turn.budgetSpent && (
           <div className="toolbar">
             <button className="mode" onClick={() => void openAiSettings()}>
-              {t("Open AI Providers settings")}
+              {t("Open AI settings")}
             </button>
           </div>
         )}

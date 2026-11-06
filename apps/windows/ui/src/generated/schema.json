@@ -2898,7 +2898,7 @@
       ]
     },
     "ProviderBudgetView": {
-      "description": "A paid provider's monthly budget (Settings → AI Providers); `None` is no budget.",
+      "description": "A paid provider's monthly budget (Settings → AI); `None` is no budget.",
       "properties": {
         "cents": {
           "format": "int64",

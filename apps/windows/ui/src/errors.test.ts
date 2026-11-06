@@ -53,17 +53,17 @@ describe("describeError", () => {
 describe("a provider failure says why, when core knows", () => {
   it("names the missing Ollama model and how to get it", () => {
     expect(describeError({ kind: "provider_failure", reason: { kind: "ollama_model_missing", model: "gemma4:12b" } })).toBe(
-      "Ollama doesn't have the model gemma4:12b. Pick one you have in Settings → AI Providers, or run: ollama pull gemma4:12b",
+      "Ollama doesn't have the model gemma4:12b. Pick one you have in Settings → AI, or run: ollama pull gemma4:12b",
     );
   });
 
   it("says Ollama isn't running, nothing is set up, a key was refused, or a provider is busy", () => {
     expect(describeError({ kind: "provider_failure", reason: { kind: "ollama_not_running" } })).toMatch(/^Ollama isn't running/);
     expect(describeError({ kind: "provider_failure", reason: { kind: "no_provider_configured" } })).toBe(
-      "No AI provider is set up. Add one in Settings → AI Providers.",
+      "No AI provider is set up. Add one in Settings → AI.",
     );
     expect(describeError({ kind: "provider_failure", reason: { kind: "unauthorized", provider: "openai" } })).toBe(
-      "OpenAI rejected the API key. Check it in Settings → AI Providers.",
+      "OpenAI rejected the API key. Check it in Settings → AI.",
     );
     expect(describeError({ kind: "provider_failure", reason: { kind: "rate_limited", provider: "anthropic" } })).toBe(
       "Anthropic is busy or out of credit. Try again shortly.",

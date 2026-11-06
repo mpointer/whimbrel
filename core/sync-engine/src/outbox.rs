@@ -47,6 +47,11 @@ pub struct OutboxDispatchSummary {
     pub dropped: usize,
 }
 
+/// Row types the legacy `push_content` scan also sends, under the outbox op's own `local_seq`.
+fn legacy_twin(row_type: &str) -> bool {
+    matches!(row_type, memory::OUTBOX_ROW_TYPE_MEETING | memory::OUTBOX_ROW_TYPE_ITEMS)
+}
+
 pub async fn dispatch_outbox(
     conn: &Connection,
     group_key: &GroupKey,
@@ -97,7 +102,7 @@ pub(crate) async fn dispatch_outbox_at(
         if batch.is_empty() {
             break;
         }
-        for op in batch {
+        for mut op in batch {
             // The image budget: chunks past it wait for the next round (not a failure, no backoff), and
             // don't count toward this pass's rows, so rows enqueued after a large image still go now.
             if op.row_type == memory::OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK {
@@ -154,6 +159,11 @@ pub(crate) async fn dispatch_outbox_at(
                     .map_err(query_error)?;
                 summary.deferred += 1;
                 continue;
+            }
+            // #600: rows only the outbox sends get a fresh number on every send, above any puller's cursor.
+            // Meeting and transcript rows keep theirs: the legacy push sent the same row under it.
+            if !legacy_twin(&op.row_type) {
+                op.local_seq = store.restamp_outbox_operation(&op.operation_id).map_err(query_error)?;
             }
             let tag = epoch
                 .as_deref()
@@ -626,6 +636,14 @@ mod tests {
         let store_b = Store::open_in_memory().unwrap();
         pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
         assert_eq!(store_b.list_profile_suggestions("pending").unwrap().len(), 1);
+
+        // Dismissed on A: B's copy is dismissed at its next pull.
+        let id = store_a.list_profile_suggestions("pending").unwrap()[0].id;
+        store_a.set_profile_suggestion_status(id, "dismissed").unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert!(store_b.list_profile_suggestions("pending").unwrap().is_empty());
+        assert_eq!(store_b.list_profile_suggestions("dismissed").unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1148,6 +1166,35 @@ mod tests {
         store.resolve_sync_meeting_map("device-a", a_meeting).unwrap().is_some() || has_line(store, "pelican") || has_line(store, "heron")
     }
 
+    /// #600: an outbox-only row that waits while the legacy push sends newer rows still reaches a puller whose
+    /// cursor already passed the number it was enqueued with.
+    #[tokio::test]
+    async fn a_late_outbox_row_lands_above_a_pullers_cursor() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, meeting_id) = own_store("device-a");
+        store_a
+            .insert_live_alert(&memory::live_alert::NewLiveAlert {
+                meeting_id,
+                meeting_title: "Outbox Standup".into(),
+                quote: "Can you send the deck?".into(),
+                restatement: "Send the deck".into(),
+                asker: None,
+                at_cs: 100,
+                created_at_unix_ms: crate::now_unix_ms(),
+            })
+            .unwrap();
+        store_a.complete_meeting(meeting_id, 2000, None).unwrap();
+        // The legacy scan sends the meeting (numbered after the alert) before the outbox runs.
+        push_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        let store_c = peer("device-c");
+        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
+        assert!(store_c.resolve_sync_meeting_map("device-a", meeting_id).unwrap().is_some());
+
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
+        assert_eq!(store_c.take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000).unwrap().len(), 1, "the alert arrives");
+    }
+
     #[tokio::test]
     async fn forget_on_recorder_removes_meeting_everywhere() {
         let (_dir, conn, group_key) = relay_and_store().await;
@@ -1283,6 +1330,27 @@ mod tests {
             assert!(store_d.list_sync_pending_dependencies("device-a").unwrap().is_empty(), "clean_up_first: {clean_up_first}");
             assert!(!has_a_meeting(&store_d, a_meeting));
         }
+    }
+
+    #[tokio::test]
+    async fn an_earlier_databases_forget_never_drops_a_reused_ids_rows() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (_store_a, a_meeting) = delivered_meeting(&conn, &group_key).await;
+        // A forget of the same id from a database device-a had before (another epoch).
+        let old = memory::MeetingForgotten {
+            origin_device_id: "device-a".into(),
+            origin_epoch: Some("an-earlier-database".into()),
+            source_meeting_id: a_meeting,
+            forgotten_at_unix_ms: 1,
+            source_start_unix_ms: None,
+        };
+        // The lines and alert arrive before their meeting: they carry their epoch, so they wait, not drop.
+        conn.execute("DELETE FROM sync_row WHERE device_id = 'device-a' AND row_type = 'meeting'", ()).await.unwrap();
+        let store_c = peer("device-c");
+        store_c.apply_meeting_forgotten(&old).unwrap();
+        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
+        assert_eq!(store_c.list_sync_pending_dependencies("device-a").unwrap().len(), 2, "lines wait for the meeting");
+        assert_eq!(store_c.take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000).unwrap().len(), 1, "the alert waits");
     }
 
     #[tokio::test]

@@ -86,7 +86,10 @@ impl Store {
             [keep, absorb],
         )?;
         // Flatten chains: topics already merged into `absorb` now point at `keep`.
-        tx.execute("UPDATE topic SET merged_into = ?1 WHERE merged_into = ?2", [keep, absorb])?;
+        tx.execute(
+            "UPDATE topic SET merged_into = ?1 WHERE merged_into = ?2",
+            [keep, absorb],
+        )?;
         let now = now_unix_ms();
         tx.execute(
             "UPDATE topic SET merged_into = ?2, updated_at_unix_ms = ?3 WHERE id = ?1",
@@ -367,7 +370,12 @@ mod tests {
         let c = topic_of(&f, BOARD);
         s.merge_topics(a, h).unwrap();
         s.merge_topics(c, a).unwrap();
-        let m: i64 = s.conn.query_row("SELECT merged_into FROM topic WHERE id=?1", [h], |r| r.get(0)).unwrap();
+        let m: i64 = s
+            .conn
+            .query_row("SELECT merged_into FROM topic WHERE id=?1", [h], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(m, c);
     }
 

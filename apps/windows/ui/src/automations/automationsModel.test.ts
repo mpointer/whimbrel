@@ -9,6 +9,7 @@ import {
   canChooseHost,
   canToggle,
   description,
+  fastHostPoll,
   formatRange,
   formatWhen,
   hasModelPicker,
@@ -20,6 +21,7 @@ import {
   noApprovals,
   noOtherDevices,
   outcomeLabel,
+  routinesIntro,
   runHeading,
   scheduleChanged,
   unavailableNote,
@@ -254,7 +256,27 @@ describe("the Routines run on picker", () => {
     expect(canChooseHost(host({ options: [{ id: "me", label: "This PC" }, { id: "mac", label: "MacBook" }] }))).toBe(true);
   });
 
+  it("says routines run on this PC unless another device is chosen", () => {
+    const here = /^Routines run on this PC while Whimbrel is running\. A routine that would send/;
+    expect(routinesIntro(null)).toMatch(here);
+    expect(routinesIntro(host({ selected: "", caption: null }))).toMatch(here);
+    expect(routinesIntro(host({ selected: "", caption: "Each device runs its own." }))).toMatch(here);
+    expect(routinesIntro(host({ selected: "me", caption: null }))).toMatch(here);
+    expect(routinesIntro(host({ selected: "mac", caption: "Routines run on MacBook." }))).toBe(
+      "A routine that would send or add something waits for your approval first, unless you turn on approving it automatically for that routine.",
+    );
+  });
+
   it("says when there is nobody else to choose", () => {
     expect(noOtherDevices()).toMatch(/other devices appear here once sync is set up/);
+  });
+
+  it("re-checks soon only while there is nothing to choose, for the page's first minute", () => {
+    const one = host({ options: [{ id: "me", label: "This PC" }] });
+    const two = host({ options: [{ id: "me", label: "This PC" }, { id: "mac", label: "MacBook" }] });
+    expect(fastHostPoll(null, 0)).toBe(true);
+    expect(fastHostPoll(one, 5_000)).toBe(true);
+    expect(fastHostPoll(two, 5_000)).toBe(false);
+    expect(fastHostPoll(one, 60_000)).toBe(false);
   });
 });

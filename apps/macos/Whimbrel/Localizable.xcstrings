@@ -3095,6 +3095,40 @@
         }
       }
     },
+    "Android phone" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Android-Smartphone"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Teléfono Android"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Téléphone Android"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Téléphone Android"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Telefone Android"
+          }
+        }
+      }
+    },
     "Another pending device shows the same code — don't approve it" : {
       "localizations" : {
         "de" : {
@@ -4775,6 +4809,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Captura e privacidade"
+          }
+        }
+      }
+    },
+    "Changes waiting to send: %lld, the oldest from %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ausstehende Änderungen: %1$lld, die älteste von %2$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Changes waiting to send: %1$lld, the oldest from %2$@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cambios en espera de envío: %1$lld, el más antiguo de %2$@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modifications en attente d’envoi : %1$lld, la plus ancienne datant du %2$@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Modifications en attente d’envoi : %1$lld, la plus ancienne datant de %2$@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alterações aguardando envio: %1$lld, a mais antiga de %2$@"
           }
         }
       }

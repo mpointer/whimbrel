@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 /// to a newer model: change these three and `EMBEDDING_MODEL_VERSION` in `lib.rs`. The next
 /// launch downloads it, prunes the old folder and re-embeds everything.
 pub const EMBEDDING_MODEL_ID: &str = "paraphrase-multilingual-minilm-l12-v2";
-pub const EMBEDDING_MODEL_REPO: &str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2";
+pub const EMBEDDING_MODEL_REPO: &str =
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2";
 /// A Hugging Face commit, so the same version always means the same weights.
 pub const EMBEDDING_MODEL_REVISION: &str = "e8f8c211226b894fcb81acc59f3b34ba3efd5f42";
 /// The files `EmbeddingModel::load` reads.
@@ -27,13 +28,18 @@ pub fn embedding_model_dir(models_dir: &Path) -> PathBuf {
 /// (the three files directly in `models_dir`) and any other folder holding a
 /// `model.safetensors`. Other files (whisper, diarization) are untouched. Best-effort.
 pub fn prune_stale_embedding_models(models_dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(models_dir) else { return };
+    let Ok(entries) = std::fs::read_dir(models_dir) else {
+        return;
+    };
     for f in EMBEDDING_MODEL_FILES {
         let _ = std::fs::remove_file(models_dir.join(f));
     }
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() && entry.file_name() != EMBEDDING_MODEL_ID && path.join("model.safetensors").is_file() {
+        if path.is_dir()
+            && entry.file_name() != EMBEDDING_MODEL_ID
+            && path.join("model.safetensors").is_file()
+        {
             let _ = std::fs::remove_dir_all(&path);
         }
     }
@@ -217,7 +223,10 @@ impl LazyModelEmbedder {
     /// downloads at runtime, so a later call loads it once the files land.
     fn model(&self) -> Result<std::sync::Arc<EmbeddingModel>, EmbeddingError> {
         let mut cached = self.cached.lock().unwrap_or_else(|e| e.into_inner());
-        if matches!(*cached, None | Some(Err(EmbeddingError::ModelFilesMissing(_)))) {
+        if matches!(
+            *cached,
+            None | Some(Err(EmbeddingError::ModelFilesMissing(_)))
+        ) {
             *cached = Some(EmbeddingModel::load(&self.models_dir).map(std::sync::Arc::new));
         }
         cached.clone().expect("set above")
@@ -247,19 +256,28 @@ mod tests {
     fn model_lives_in_a_folder_named_for_it() {
         let dir = embedding_model_dir(std::path::Path::new("/m"));
         assert_eq!(dir, std::path::Path::new("/m").join(EMBEDDING_MODEL_ID));
-        assert!(EMBEDDING_MODEL_REVISION.len() == 40, "pinned to a commit, not main");
+        assert!(
+            EMBEDDING_MODEL_REVISION.len() == 40,
+            "pinned to a commit, not main"
+        );
     }
 
     #[test]
     fn lazy_embedder_retries_once_the_files_appear() {
         let dir = tempfile::tempdir().unwrap();
         let embedder = LazyModelEmbedder::new(dir.path().to_path_buf());
-        assert!(matches!(embedder.embed("x"), Err(EmbeddingError::ModelFilesMissing(_))));
+        assert!(matches!(
+            embedder.embed("x"),
+            Err(EmbeddingError::ModelFilesMissing(_))
+        ));
         // Junk files: no longer "missing", so the next call tries to load them and fails differently.
         for f in ["config.json", "tokenizer.json", "model.safetensors"] {
             std::fs::write(dir.path().join(f), b"junk").unwrap();
         }
-        assert!(matches!(embedder.embed("x"), Err(EmbeddingError::ModelLoadFailed(_))));
+        assert!(matches!(
+            embedder.embed("x"),
+            Err(EmbeddingError::ModelLoadFailed(_))
+        ));
     }
 
     #[test]
@@ -285,7 +303,9 @@ mod tests {
         assert!(!root.join("model.safetensors").exists() && !root.join("config.json").exists());
         assert!(!old.exists());
         assert!(current.join("model.safetensors").exists());
-        assert!(root.join("ggml-tiny.en.bin").exists() && unrelated.join("segmentation.onnx").exists());
+        assert!(
+            root.join("ggml-tiny.en.bin").exists() && unrelated.join("segmentation.onnx").exists()
+        );
         prune_stale_embedding_models(std::path::Path::new("")); // no models dir: a no-op
     }
 
@@ -317,7 +337,8 @@ mod tests {
     #[test]
     #[ignore] // needs real model files in core/memory/models/ — see core/memory/README.md
     fn embed_produces_384_dim_vector_and_discriminates_topics() {
-        let model = EmbeddingModel::load(&embedding_model_dir(std::path::Path::new("models"))).unwrap();
+        let model =
+            EmbeddingModel::load(&embedding_model_dir(std::path::Path::new("models"))).unwrap();
         let budget = model.embed("the quarterly budget meeting notes").unwrap();
         let budget_review = model.embed("notes from the finance budget review").unwrap();
         let cookies = model.embed("a recipe for chocolate chip cookies").unwrap();
@@ -345,7 +366,9 @@ mod tests {
 
     /// The model folder: `WHIMBREL_EMBEDDING_MODELS_DIR`, else `models/<EMBEDDING_MODEL_ID>/`.
     fn multilingual_dir() -> std::path::PathBuf {
-        std::env::var_os("WHIMBREL_EMBEDDING_MODELS_DIR").map(Into::into).unwrap_or_else(|| embedding_model_dir(std::path::Path::new("models")))
+        std::env::var_os("WHIMBREL_EMBEDDING_MODELS_DIR")
+            .map(Into::into)
+            .unwrap_or_else(|| embedding_model_dir(std::path::Path::new("models")))
     }
 
     fn cosine(a: &[f32], b: &[f32]) -> f32 {
@@ -360,7 +383,13 @@ mod tests {
     #[ignore] // needs real model files
     fn multilingual_model_loads_in_bert_and_is_384_dim() {
         let model = EmbeddingModel::load(&multilingual_dir()).unwrap();
-        assert_eq!(model.embed("¿Qué decidimos sobre el presupuesto?").unwrap().len(), EMBEDDING_OUTPUT_DIM);
+        assert_eq!(
+            model
+                .embed("¿Qué decidimos sobre el presupuesto?")
+                .unwrap()
+                .len(),
+            EMBEDDING_OUTPUT_DIM
+        );
     }
 
     #[test]
@@ -369,13 +398,18 @@ mod tests {
         let model = EmbeddingModel::load(&multilingual_dir()).unwrap();
         let es = model.embed("¿Qué decidimos sobre el presupuesto?").unwrap();
         let en = model.embed("What did we decide about the budget?").unwrap();
-        let fr = model.embed("Qu'avons-nous décidé pour le budget ?").unwrap();
+        let fr = model
+            .embed("Qu'avons-nous décidé pour le budget ?")
+            .unwrap();
         let cookies = model.embed("a recipe for chocolate chip cookies").unwrap();
         let (es_en, fr_en, off) = (cosine(&es, &en), cosine(&fr, &en), cosine(&es, &cookies));
         eprintln!("es/en {es_en:.3}  fr/en {fr_en:.3}  es/cookies {off:.3}");
         assert!(es_en > 0.7, "es/en paraphrase similarity too low: {es_en}");
         assert!(fr_en > 0.7, "fr/en paraphrase similarity too low: {fr_en}");
-        assert!(off < es_en, "unrelated text scored higher: {off} vs {es_en}");
+        assert!(
+            off < es_en,
+            "unrelated text scored higher: {off} vs {es_en}"
+        );
     }
 
     /// Rough throughput for a model folder (manual: compares the re-embed cost of two models).
@@ -386,7 +420,9 @@ mod tests {
         let text = "We agreed to ship the pricing change on Friday and revisit the discount tiers next week.";
         model.embed(text).unwrap();
         let start = std::time::Instant::now();
-        for _ in 0..100 { model.embed(text).unwrap(); }
+        for _ in 0..100 {
+            model.embed(text).unwrap();
+        }
         eprintln!("{:.1} embeddings/s", 100.0 / start.elapsed().as_secs_f64());
     }
 }

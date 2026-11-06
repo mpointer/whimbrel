@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::sync_outbox::{self, NewOutboxOperation, OutboxOperationKind};
 use crate::{
-    json_to_sql_error, now_unix_ms, DeletedMeetingFiles, Store, OUTBOX_CONNECTOR, OUTBOX_ROW_TYPE_ITEMS,
-    OUTBOX_ROW_TYPE_LIVE_ALERT, OUTBOX_ROW_TYPE_MEETING, OUTBOX_ROW_TYPE_MEETING_FORGOTTEN, OUTBOX_ROW_TYPE_MEETING_SPEAKER,
+    json_to_sql_error, now_unix_ms, DeletedMeetingFiles, Store, OUTBOX_CONNECTOR,
+    OUTBOX_ROW_TYPE_ITEMS, OUTBOX_ROW_TYPE_LIVE_ALERT, OUTBOX_ROW_TYPE_MEETING,
+    OUTBOX_ROW_TYPE_MEETING_FORGOTTEN, OUTBOX_ROW_TYPE_MEETING_SPEAKER,
     OUTBOX_ROW_TYPE_PROFILE_SUGGESTION,
 };
 
@@ -64,7 +65,10 @@ const CLEANUP_CLOCK_MARGIN_MS: i64 = 24 * 60 * 60 * 1000;
 /// `meeting_server_cleanup` rows are never pruned (a row leased at a forget can be acknowledged and
 /// recorded long after its cleanup looked finished).
 pub(crate) fn prune_pushed_rows(conn: &Connection, meeting_id: i64) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM pushed_meeting_row WHERE meeting_id = ?1", params![meeting_id])?;
+    conn.execute(
+        "DELETE FROM pushed_meeting_row WHERE meeting_id = ?1",
+        params![meeting_id],
+    )?;
     Ok(())
 }
 
@@ -97,7 +101,10 @@ pub(crate) fn ensure_forget_tables(conn: &Connection) -> rusqlite::Result<()> {
         .iter()
         .any(|c| c == "origin_epoch");
     if !has_epoch {
-        conn.execute("ALTER TABLE sync_meeting_map ADD COLUMN origin_epoch TEXT NOT NULL DEFAULT ''", [])?;
+        conn.execute(
+            "ALTER TABLE sync_meeting_map ADD COLUMN origin_epoch TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
     }
     Ok(())
 }
@@ -110,9 +117,11 @@ impl Store {
     pub fn forget_meeting(&self, id: i64) -> rusqlite::Result<Option<DeletedMeetingFiles>> {
         let Some((device_id, start_unix_ms)) = self
             .conn
-            .query_row("SELECT device_id, start_unix_ms FROM meeting WHERE id = ?1", params![id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-            })
+            .query_row(
+                "SELECT device_id, start_unix_ms FROM meeting WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+            )
             .optional()?
         else {
             return Ok(None);
@@ -150,7 +159,10 @@ impl Store {
     /// Applies a peer's tombstone: deletes the local meeting it names, if any, and records it as forgotten
     /// so a row for it arriving later can be dropped. Never enqueues a tombstone. Returns the deleted
     /// meeting's files, `None` when no local meeting matched.
-    pub fn apply_meeting_forgotten(&self, t: &MeetingForgotten) -> rusqlite::Result<Option<DeletedMeetingFiles>> {
+    pub fn apply_meeting_forgotten(
+        &self,
+        t: &MeetingForgotten,
+    ) -> rusqlite::Result<Option<DeletedMeetingFiles>> {
         let epoch = t.origin_epoch.as_deref().unwrap_or("");
         let local = if self.own_device_id().as_deref() == Some(t.origin_device_id.as_str()) {
             let own_epoch = self.sync_entity_epoch()?;
@@ -193,13 +205,22 @@ impl Store {
     ) -> rusqlite::Result<bool> {
         self.conn.query_row(
             &format!("SELECT EXISTS (SELECT 1 FROM forgotten_meeting WHERE {SAME_MEETING})"),
-            params![origin_device_id, source_meeting_id, origin_epoch.unwrap_or("")],
+            params![
+                origin_device_id,
+                source_meeting_id,
+                origin_epoch.unwrap_or("")
+            ],
             |r| r.get(0),
         )
     }
 
     /// Records that this device pushed a server row for its meeting `meeting_id`.
-    pub fn record_pushed_meeting_row(&self, meeting_id: i64, local_seq: i64, row_type: &str) -> rusqlite::Result<()> {
+    pub fn record_pushed_meeting_row(
+        &self,
+        meeting_id: i64,
+        local_seq: i64,
+        row_type: &str,
+    ) -> rusqlite::Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO pushed_meeting_row (meeting_id, local_seq, row_type) VALUES (?1, ?2, ?3)",
             params![meeting_id, local_seq, row_type],
@@ -237,29 +258,38 @@ impl Store {
     ///
     /// Each row comes with its meeting's `not_before_unix_ms`: a server row created earlier can't be this
     /// meeting's (it is an earlier database's row at a reused `local_seq`), so the delete must skip it.
-    pub fn forgotten_pushed_meeting_rows(&self, limit: i64) -> rusqlite::Result<Vec<(i64, i64, String, i64)>> {
+    pub fn forgotten_pushed_meeting_rows(
+        &self,
+        limit: i64,
+    ) -> rusqlite::Result<Vec<(i64, i64, String, i64)>> {
         // Only meetings this database actually had and deleted (`meeting_server_cleanup`), never re-derived from
         // `forgotten_meeting` by id: a tombstone alone must not reach a meeting it didn't delete here.
         let mut stmt = self.conn.prepare(
             "SELECT p.meeting_id, p.local_seq, p.row_type, c.not_before_unix_ms FROM meeting_server_cleanup c \
              JOIN pushed_meeting_row p ON p.meeting_id = c.meeting_id LIMIT ?1",
         )?;
-        let rows = stmt.query_map(params![limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        let rows = stmt.query_map(params![limit], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?;
         rows.collect()
     }
 
     /// This device's forgotten meetings whose `meeting` server row is still to be deleted by its entity tag
     /// (covers versions pushed before `pushed_meeting_row` existed).
     pub fn meetings_awaiting_tag_delete(&self) -> rusqlite::Result<Vec<i64>> {
-        let mut stmt = self.conn.prepare("SELECT meeting_id FROM meeting_server_cleanup WHERE tag_deleted = 0")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT meeting_id FROM meeting_server_cleanup WHERE tag_deleted = 0")?;
         let rows = stmt.query_map([], |r| r.get(0))?;
         rows.collect()
     }
 
     /// The tag delete for this meeting succeeded.
     pub fn mark_meeting_tag_deleted(&self, meeting_id: i64) -> rusqlite::Result<()> {
-        self.conn
-            .execute("UPDATE meeting_server_cleanup SET tag_deleted = 1 WHERE meeting_id = ?1", params![meeting_id])?;
+        self.conn.execute(
+            "UPDATE meeting_server_cleanup SET tag_deleted = 1 WHERE meeting_id = ?1",
+            params![meeting_id],
+        )?;
         Ok(())
     }
 
@@ -293,7 +323,13 @@ impl Store {
             // Before the delete: the transcript items' ids name their outbox rows.
             tx.execute(
                 SNAPSHOT_DELIVERED_ROWS,
-                params![id, OUTBOX_ROW_TYPE_MEETING, OUTBOX_ROW_TYPE_ITEMS, OUTBOX_ROW_TYPE_LIVE_ALERT, OUTBOX_ROW_TYPE_MEETING_SPEAKER],
+                params![
+                    id,
+                    OUTBOX_ROW_TYPE_MEETING,
+                    OUTBOX_ROW_TYPE_ITEMS,
+                    OUTBOX_ROW_TYPE_LIVE_ALERT,
+                    OUTBOX_ROW_TYPE_MEETING_SPEAKER
+                ],
             )?;
             // This device's own meeting, deleted here: its server rows are the recorder's to remove (kept, so a
             // row delivered after the forget is removed too; ids are AUTOINCREMENT, never reused).
@@ -307,8 +343,9 @@ impl Store {
             // Every unsent row about the meeting. A speaker row is named `<origin>:<source id>:<speaker>`,
             // with an empty origin for this device's own meeting.
             let own_speaker_prefix = format!(":{id}:");
-            let speaker_prefix =
-                identity.map_or(own_speaker_prefix.clone(), |t| format!("{}:{}:", t.origin_device_id, t.source_meeting_id));
+            let speaker_prefix = identity.map_or(own_speaker_prefix.clone(), |t| {
+                format!("{}:{}:", t.origin_device_id, t.source_meeting_id)
+            });
             tx.execute(
                 "DELETE FROM sync_outbox WHERE state IN ('pending', 'blocked') AND ( \
                  (row_type = ?2 AND aggregate_id = CAST(?1 AS TEXT)) \
@@ -332,7 +369,10 @@ impl Store {
         }
         // Even when the meeting row is already gone, its map entry must not outlive the forget.
         if let Some(id) = local {
-            tx.execute("DELETE FROM sync_meeting_map WHERE local_meeting_id = ?1", params![id])?;
+            tx.execute(
+                "DELETE FROM sync_meeting_map WHERE local_meeting_id = ?1",
+                params![id],
+            )?;
         }
         if let Some(t) = identity {
             tx.execute(
@@ -394,8 +434,15 @@ mod tests {
     }
 
     fn segments(store: &Store, meeting_id: i64) {
-        let seg = |start_cs: i64| NewTranscriptSegment { meeting_id, start_cs, speaker_label: "Me".into(), text: "hi".into() };
-        store.insert_transcript_segments(&[seg(100), seg(200)]).unwrap();
+        let seg = |start_cs: i64| NewTranscriptSegment {
+            meeting_id,
+            start_cs,
+            speaker_label: "Me".into(),
+            text: "hi".into(),
+        };
+        store
+            .insert_transcript_segments(&[seg(100), seg(200)])
+            .unwrap();
     }
 
     /// `(row_type, aggregate_type, aggregate_id, operation_kind, state, device_id, payload)` of every outbox row.
@@ -408,10 +455,20 @@ mod tests {
                  FROM sync_outbox ORDER BY local_seq",
             )
             .unwrap();
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))
-            .unwrap()
-            .map(Result::unwrap)
-            .collect()
+        stmt.query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
+        })
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
     }
 
     fn tombstones(store: &Store) -> Vec<(String, String, String, MeetingForgotten)> {
@@ -423,7 +480,10 @@ mod tests {
     }
 
     fn forgotten_count(store: &Store) -> i64 {
-        store.conn.query_row("SELECT COUNT(*) FROM forgotten_meeting", [], |r| r.get(0)).unwrap()
+        store
+            .conn
+            .query_row("SELECT COUNT(*) FROM forgotten_meeting", [], |r| r.get(0))
+            .unwrap()
     }
 
     /// Final pass 3: without its own device id the store can't tell its meetings from a peer's, so it hands
@@ -437,8 +497,17 @@ mod tests {
             }
             assert_eq!(store.own_device_id(), None);
             let id = meeting(&store, "dev-a", 5000);
-            store.conn.execute("UPDATE meeting SET transcript_path = '/r/transcript-A.txt' WHERE id = ?1", [id]).unwrap();
-            let files = store.delete_meeting_returning_files(id).unwrap().expect("deleted");
+            store
+                .conn
+                .execute(
+                    "UPDATE meeting SET transcript_path = '/r/transcript-A.txt' WHERE id = ?1",
+                    [id],
+                )
+                .unwrap();
+            let files = store
+                .delete_meeting_returning_files(id)
+                .unwrap()
+                .expect("deleted");
             assert_eq!((files.audio_path, files.transcript_path), (None, None));
             assert!(files.audio_paths.is_empty() && files.transcript_paths.is_empty());
         }
@@ -450,8 +519,16 @@ mod tests {
         store.set_own_device_id("dev-b");
         let local = meeting(&store, "dev-a", 5000);
         store.conn.execute("UPDATE meeting SET audio_path = NULL, transcript_path = '/etc/hosts' WHERE id = ?1", [local]).unwrap();
-        store.record_sync_meeting_map_with_epoch("dev-a", 42, local, Some("epoch-a")).unwrap();
-        let t = MeetingForgotten { origin_device_id: "dev-a".into(), origin_epoch: Some("epoch-a".into()), source_meeting_id: 42, forgotten_at_unix_ms: 1, source_start_unix_ms: None };
+        store
+            .record_sync_meeting_map_with_epoch("dev-a", 42, local, Some("epoch-a"))
+            .unwrap();
+        let t = MeetingForgotten {
+            origin_device_id: "dev-a".into(),
+            origin_epoch: Some("epoch-a".into()),
+            source_meeting_id: 42,
+            forgotten_at_unix_ms: 1,
+            source_start_unix_ms: None,
+        };
 
         let files = store.apply_meeting_forgotten(&t).unwrap().expect("deleted");
         assert_eq!(files.transcript_path, None, "a peer wrote that path");
@@ -464,10 +541,15 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         store.set_own_device_id("dev-a");
         let id = meeting(&store, "dev-a", 5000);
-        store.complete_meeting(id, 6000, Some("/tmp/a.m4a")).unwrap();
+        store
+            .complete_meeting(id, 6000, Some("/tmp/a.m4a"))
+            .unwrap();
         let epoch = store.sync_entity_epoch().unwrap();
 
-        let files = store.forget_meeting(id).unwrap().expect("files of the deleted meeting");
+        let files = store
+            .forget_meeting(id)
+            .unwrap()
+            .expect("files of the deleted meeting");
         assert_eq!(files.audio_path.as_deref(), Some("/tmp/a.m4a"));
         assert!(store.get_meeting(id).unwrap().is_none());
 
@@ -480,8 +562,13 @@ mod tests {
         assert_eq!(payload.origin_device_id, "dev-a");
         assert_eq!(payload.origin_epoch.as_deref(), Some(epoch.as_str()));
         assert_eq!(payload.source_meeting_id, id);
-        assert!(store.is_meeting_forgotten("dev-a", Some(&epoch), id).unwrap());
-        assert!(store.forget_meeting(id).unwrap().is_none(), "a second forget finds nothing");
+        assert!(store
+            .is_meeting_forgotten("dev-a", Some(&epoch), id)
+            .unwrap());
+        assert!(
+            store.forget_meeting(id).unwrap().is_none(),
+            "a second forget finds nothing"
+        );
         assert_eq!(tombstones(&store).len(), 1);
     }
 
@@ -490,7 +577,9 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         store.set_own_device_id("dev-b");
         let local = meeting(&store, "dev-a", 5000);
-        store.record_sync_meeting_map_with_epoch("dev-a", 42, local, Some("epoch-a")).unwrap();
+        store
+            .record_sync_meeting_map_with_epoch("dev-a", 42, local, Some("epoch-a"))
+            .unwrap();
         store.record_sync_meeting_map("dev-a", 42, local).unwrap(); // no epoch: keeps the known one
 
         assert!(store.forget_meeting(local).unwrap().is_some());
@@ -508,10 +597,21 @@ mod tests {
                 source_start_unix_ms: Some(5000),
             }
         );
-        assert_eq!(outbox(&store).last().unwrap().5, "dev-b", "this device pushes the tombstone");
+        assert_eq!(
+            outbox(&store).last().unwrap().5,
+            "dev-b",
+            "this device pushes the tombstone"
+        );
         assert_eq!(store.resolve_sync_meeting_map("dev-a", 42).unwrap(), None);
-        assert!(store.is_meeting_forgotten("dev-a", Some("epoch-a"), 42).unwrap());
-        assert!(!store.is_meeting_forgotten("dev-a", Some("epoch-a"), local).unwrap(), "not the local id");
+        assert!(store
+            .is_meeting_forgotten("dev-a", Some("epoch-a"), 42)
+            .unwrap());
+        assert!(
+            !store
+                .is_meeting_forgotten("dev-a", Some("epoch-a"), local)
+                .unwrap(),
+            "not the local id"
+        );
     }
 
     #[test]
@@ -548,10 +648,22 @@ mod tests {
         let old = meeting(&store, "dev-a", 5000);
         store.complete_meeting(old, 6000, None).unwrap();
         let deleted = meeting(&store, "dev-a", 5000);
-        let policy = RetentionPolicy { meeting_days: Some(1), ..Default::default() };
+        let policy = RetentionPolicy {
+            meeting_days: Some(1),
+            ..Default::default()
+        };
 
-        assert!(store.delete_meeting_returning_files(deleted).unwrap().is_some());
-        assert_eq!(store.apply_retention(&policy, 10 * 86_400_000).unwrap().meetings_deleted, 1);
+        assert!(store
+            .delete_meeting_returning_files(deleted)
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            store
+                .apply_retention(&policy, 10 * 86_400_000)
+                .unwrap()
+                .meetings_deleted,
+            1
+        );
 
         assert!(tombstones(&store).is_empty());
         assert_eq!(forgotten_count(&store), 0);
@@ -567,18 +679,44 @@ mod tests {
         peer.record_sync_meeting_map("dev-a", 7, copy).unwrap();
         peer.forget_meeting(copy).unwrap().unwrap();
         let sent = &tombstones(&peer)[0].3;
-        assert_eq!((sent.origin_epoch.as_deref(), sent.source_start_unix_ms), (None, Some(5000)));
+        assert_eq!(
+            (sent.origin_epoch.as_deref(), sent.source_start_unix_ms),
+            (None, Some(5000))
+        );
 
         let recorder = Store::open_in_memory().unwrap();
         recorder.set_own_device_id("dev-a");
         let own = meeting(&recorder, "dev-a", 5000);
-        let at = |start: Option<i64>| MeetingForgotten { source_meeting_id: own, source_start_unix_ms: start, ..sent.clone() };
-        assert!(recorder.apply_meeting_forgotten(&at(None)).unwrap().is_none(), "no start: never");
-        assert!(recorder.apply_meeting_forgotten(&at(Some(5001))).unwrap().is_none(), "another start: another meeting");
+        let at = |start: Option<i64>| MeetingForgotten {
+            source_meeting_id: own,
+            source_start_unix_ms: start,
+            ..sent.clone()
+        };
+        assert!(
+            recorder
+                .apply_meeting_forgotten(&at(None))
+                .unwrap()
+                .is_none(),
+            "no start: never"
+        );
+        assert!(
+            recorder
+                .apply_meeting_forgotten(&at(Some(5001)))
+                .unwrap()
+                .is_none(),
+            "another start: another meeting"
+        );
         assert!(recorder.get_meeting(own).unwrap().is_some());
-        assert!(recorder.apply_meeting_forgotten(&at(Some(5000))).unwrap().is_some());
+        assert!(recorder
+            .apply_meeting_forgotten(&at(Some(5000)))
+            .unwrap()
+            .is_some());
         assert!(recorder.get_meeting(own).unwrap().is_none());
-        assert_eq!(recorder.meetings_awaiting_tag_delete().unwrap(), vec![own], "its server rows go next");
+        assert_eq!(
+            recorder.meetings_awaiting_tag_delete().unwrap(),
+            vec![own],
+            "its server rows go next"
+        );
     }
 
     #[test]
@@ -587,7 +725,9 @@ mod tests {
         store.set_own_device_id("dev-a");
         let own = meeting(&store, "dev-a", 5000);
         let pulled = meeting(&store, "dev-c", 5000);
-        store.record_sync_meeting_map_with_epoch("dev-c", 9, pulled, Some("new-epoch")).unwrap();
+        store
+            .record_sync_meeting_map_with_epoch("dev-c", 9, pulled, Some("new-epoch"))
+            .unwrap();
         let stale = |device: &str, source_meeting_id: i64, epoch: Option<&str>| MeetingForgotten {
             origin_device_id: device.into(),
             origin_epoch: epoch.map(String::from),
@@ -597,45 +737,83 @@ mod tests {
         };
 
         // A tombstone from an earlier database (same device, same ids, other epoch) deletes nothing.
-        assert!(store.apply_meeting_forgotten(&stale("dev-a", own, Some("old-epoch"))).unwrap().is_none());
-        assert!(store.apply_meeting_forgotten(&stale("dev-c", 9, Some("old-epoch"))).unwrap().is_none());
+        assert!(store
+            .apply_meeting_forgotten(&stale("dev-a", own, Some("old-epoch")))
+            .unwrap()
+            .is_none());
+        assert!(store
+            .apply_meeting_forgotten(&stale("dev-c", 9, Some("old-epoch")))
+            .unwrap()
+            .is_none());
         assert!(store.get_meeting(own).unwrap().is_some());
         assert!(store.get_meeting(pulled).unwrap().is_some());
-        assert!(!store.is_meeting_forgotten("dev-c", Some("new-epoch"), 9).unwrap());
-        assert!(store.is_meeting_forgotten("dev-c", Some("old-epoch"), 9).unwrap());
-        assert!(store.is_meeting_forgotten("dev-c", None, 9).unwrap(), "an unknown epoch matches");
+        assert!(!store
+            .is_meeting_forgotten("dev-c", Some("new-epoch"), 9)
+            .unwrap());
+        assert!(store
+            .is_meeting_forgotten("dev-c", Some("old-epoch"), 9)
+            .unwrap());
+        assert!(
+            store.is_meeting_forgotten("dev-c", None, 9).unwrap(),
+            "an unknown epoch matches"
+        );
 
         // The recorder never takes an unknown epoch for its own meeting (its own epoch is always known).
-        assert!(store.apply_meeting_forgotten(&stale("dev-a", own, None)).unwrap().is_none());
+        assert!(store
+            .apply_meeting_forgotten(&stale("dev-a", own, None))
+            .unwrap()
+            .is_none());
         assert!(store.get_meeting(own).unwrap().is_some());
 
         // The same epoch, or an unknown one from a peer, does match; applying never enqueues a tombstone.
         let epoch = store.sync_entity_epoch().unwrap();
-        assert!(store.apply_meeting_forgotten(&stale("dev-a", own, Some(&epoch))).unwrap().is_some());
-        assert!(store.apply_meeting_forgotten(&stale("dev-c", 9, None)).unwrap().is_some());
+        assert!(store
+            .apply_meeting_forgotten(&stale("dev-a", own, Some(&epoch)))
+            .unwrap()
+            .is_some());
+        assert!(store
+            .apply_meeting_forgotten(&stale("dev-c", 9, None))
+            .unwrap()
+            .is_some());
         assert!(store.get_meeting(own).unwrap().is_none());
         assert!(store.get_meeting(pulled).unwrap().is_none());
         assert!(tombstones(&store).is_empty());
         // Recorded once per identity, however often it arrives.
         let before = forgotten_count(&store);
-        store.apply_meeting_forgotten(&stale("dev-c", 9, None)).unwrap();
+        store
+            .apply_meeting_forgotten(&stale("dev-c", 9, None))
+            .unwrap();
         assert_eq!(forgotten_count(&store), before);
     }
 
     /// Claims every due outbox row as worker "w" and acknowledges it.
     fn deliver_all(store: &Store) -> Vec<crate::ClaimedOutboxOperation> {
-        let ops = store.claim_due_outbox_batch(OUTBOX_CONNECTOR, "w", i64::MAX / 2, i64::MAX / 2 + 1, 100).unwrap();
+        let ops = store
+            .claim_due_outbox_batch(OUTBOX_CONNECTOR, "w", i64::MAX / 2, i64::MAX / 2 + 1, 100)
+            .unwrap();
         for op in &ops {
-            assert!(store.acknowledge_outbox_operation(&op.operation_id, "w", "ok", i64::MAX / 2).unwrap());
+            assert!(store
+                .acknowledge_outbox_operation(&op.operation_id, "w", "ok", i64::MAX / 2)
+                .unwrap());
         }
         ops
     }
 
     /// `(local_seq, row_type)` of the delivered `ops` about meeting `id`: its meeting row and its items.
-    fn rows_of(store: &Store, ops: &[crate::ClaimedOutboxOperation], id: i64) -> Vec<(i64, String)> {
+    fn rows_of(
+        store: &Store,
+        ops: &[crate::ClaimedOutboxOperation],
+        id: i64,
+    ) -> Vec<(i64, String)> {
         let items: Vec<String> = {
-            let mut stmt = store.conn.prepare("SELECT CAST(id AS TEXT) FROM items WHERE thread_id = ?1").unwrap();
-            stmt.query_map(params![id], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+            let mut stmt = store
+                .conn
+                .prepare("SELECT CAST(id AS TEXT) FROM items WHERE thread_id = ?1")
+                .unwrap();
+            stmt.query_map(params![id], |r| r.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
         };
         let mut rows: Vec<(i64, String)> = ops
             .iter()
@@ -659,18 +837,32 @@ mod tests {
         let ops = deliver_all(&store);
         let mut expected = rows_of(&store, &ops, id);
         assert_eq!(expected.len(), 3, "two items and the meeting");
-        store.record_pushed_meeting_row(id, 999, "transcript_segment").unwrap();
-        store.record_pushed_meeting_row(id, 999, "transcript_segment").unwrap();
-        assert_eq!(store.pushed_meeting_rows(id).unwrap(), vec![(999, "transcript_segment".to_string())]);
+        store
+            .record_pushed_meeting_row(id, 999, "transcript_segment")
+            .unwrap();
+        store
+            .record_pushed_meeting_row(id, 999, "transcript_segment")
+            .unwrap();
+        assert_eq!(
+            store.pushed_meeting_rows(id).unwrap(),
+            vec![(999, "transcript_segment".to_string())]
+        );
 
         store.forget_meeting(id).unwrap();
         expected.push((999, "transcript_segment".into()));
         expected.sort();
-        assert_eq!(store.pushed_meeting_rows(id).unwrap(), expected, "snapshotted before the delete");
+        assert_eq!(
+            store.pushed_meeting_rows(id).unwrap(),
+            expected,
+            "snapshotted before the delete"
+        );
     }
 
     fn pushed_count(store: &Store) -> i64 {
-        store.conn.query_row("SELECT COUNT(*) FROM pushed_meeting_row", [], |r| r.get(0)).unwrap()
+        store
+            .conn
+            .query_row("SELECT COUNT(*) FROM pushed_meeting_row", [], |r| r.get(0))
+            .unwrap()
     }
 
     /// Final pass 7: retention, merge and a plain delete (the split's discard) leave no `pushed_meeting_row`
@@ -685,12 +877,27 @@ mod tests {
         for m in [old, kept] {
             store.record_pushed_meeting_row(m, 1, "items").unwrap();
         }
-        let policy = RetentionPolicy { meeting_days: Some(1), ..Default::default() };
-        assert_eq!(store.apply_retention(&policy, 10 * 86_400_000).unwrap().meetings_deleted, 1);
-        assert!(store.pushed_meeting_rows(old).unwrap().is_empty(), "retention");
+        let policy = RetentionPolicy {
+            meeting_days: Some(1),
+            ..Default::default()
+        };
+        assert_eq!(
+            store
+                .apply_retention(&policy, 10 * 86_400_000)
+                .unwrap()
+                .meetings_deleted,
+            1
+        );
+        assert!(
+            store.pushed_meeting_rows(old).unwrap().is_empty(),
+            "retention"
+        );
         assert_eq!(store.pushed_meeting_rows(kept).unwrap().len(), 1);
 
-        assert!(store.delete_meeting_returning_files(kept).unwrap().is_some());
+        assert!(store
+            .delete_meeting_returning_files(kept)
+            .unwrap()
+            .is_some());
         assert_eq!(pushed_count(&store), 0, "a plain delete");
     }
 
@@ -703,7 +910,10 @@ mod tests {
         let from = meeting(&store, "dev-a", 7000);
         store.complete_meeting(from, 8000, None).unwrap();
         store.record_pushed_meeting_row(from, 1, "items").unwrap();
-        assert_eq!(store.previous_mergeable_meeting(from, "dev-a").unwrap(), Some(into));
+        assert_eq!(
+            store.previous_mergeable_meeting(from, "dev-a").unwrap(),
+            Some(into)
+        );
         store.merge_into_previous(into, from).unwrap();
         assert!(store.get_meeting(from).unwrap().is_none());
         assert_eq!(pushed_count(&store), 0);
@@ -730,20 +940,33 @@ mod tests {
                 .unwrap();
             store.complete_meeting(m, 8000, None).unwrap();
             store.upsert_person("sam@x.com", "Sam", None).unwrap();
-            store.set_meeting_speaker(m, 0, Some("sam@x.com"), None).unwrap();
+            store
+                .set_meeting_speaker(m, 0, Some("sam@x.com"), None)
+                .unwrap();
         }
         let ops = deliver_all(&store);
-        let alert_id: String = store.conn.query_row("SELECT CAST(id AS TEXT) FROM live_alert WHERE meeting_id = ?1", [id], |r| r.get(0)).unwrap();
+        let alert_id: String = store
+            .conn
+            .query_row(
+                "SELECT CAST(id AS TEXT) FROM live_alert WHERE meeting_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
         let mut extra: Vec<(i64, String)> = ops
             .iter()
             .filter(|op| {
                 (op.row_type == OUTBOX_ROW_TYPE_LIVE_ALERT && op.aggregate_id == alert_id)
-                    || (op.row_type == OUTBOX_ROW_TYPE_MEETING_SPEAKER && op.aggregate_id == format!(":{id}:0"))
+                    || (op.row_type == OUTBOX_ROW_TYPE_MEETING_SPEAKER
+                        && op.aggregate_id == format!(":{id}:0"))
             })
             .map(|op| (op.local_seq, op.row_type.clone()))
             .collect();
         assert_eq!(extra.len(), 2, "{ops:?}");
-        store.conn.execute("DELETE FROM pushed_meeting_row", []).unwrap(); // only the snapshot names them now
+        store
+            .conn
+            .execute("DELETE FROM pushed_meeting_row", [])
+            .unwrap(); // only the snapshot names them now
 
         store.forget_meeting(id).unwrap();
         let mut expected = rows_of(&store, &ops, id);
@@ -768,12 +991,21 @@ mod tests {
         assert_eq!(expected.len(), 3);
 
         let epoch = store.sync_entity_epoch().unwrap();
-        let t = MeetingForgotten { origin_device_id: "dev-a".into(), origin_epoch: Some(epoch), source_meeting_id: id, forgotten_at_unix_ms: 1, source_start_unix_ms: None };
+        let t = MeetingForgotten {
+            origin_device_id: "dev-a".into(),
+            origin_epoch: Some(epoch),
+            source_meeting_id: id,
+            forgotten_at_unix_ms: 1,
+            source_start_unix_ms: None,
+        };
         assert!(store.apply_meeting_forgotten(&t).unwrap().is_some());
 
         assert_eq!(store.pushed_meeting_rows(id).unwrap(), expected);
         assert!(store.pushed_meeting_rows(other).unwrap().is_empty());
-        let all: i64 = store.conn.query_row("SELECT COUNT(*) FROM pushed_meeting_row", [], |r| r.get(0)).unwrap();
+        let all: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM pushed_meeting_row", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(all, 3);
     }
 
@@ -781,10 +1013,19 @@ mod tests {
     #[test]
     fn snapshot_lookups_use_indexes() {
         let store = Store::open_in_memory().unwrap();
-        let mut stmt = store.conn.prepare(&format!("EXPLAIN QUERY PLAN {SNAPSHOT_DELIVERED_ROWS}")).unwrap();
+        let mut stmt = store
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {SNAPSHOT_DELIVERED_ROWS}"))
+            .unwrap();
         let p = stmt
             .query_map(
-                params![1, OUTBOX_ROW_TYPE_MEETING, OUTBOX_ROW_TYPE_ITEMS, OUTBOX_ROW_TYPE_LIVE_ALERT, OUTBOX_ROW_TYPE_MEETING_SPEAKER],
+                params![
+                    1,
+                    OUTBOX_ROW_TYPE_MEETING,
+                    OUTBOX_ROW_TYPE_ITEMS,
+                    OUTBOX_ROW_TYPE_LIVE_ALERT,
+                    OUTBOX_ROW_TYPE_MEETING_SPEAKER
+                ],
                 |r| r.get::<_, String>(3),
             )
             .unwrap()
@@ -796,7 +1037,9 @@ mod tests {
         assert!(p.contains("idx_live_alert_meeting"), "{p}");
         assert!(p.contains("meeting_speaker"), "{p}");
         assert!(
-            !p.contains("SCAN sync_outbox") && !p.contains("SCAN items") && !p.contains("SCAN live_alert")
+            !p.contains("SCAN sync_outbox")
+                && !p.contains("SCAN items")
+                && !p.contains("SCAN live_alert")
                 && !p.contains("SCAN meeting_speaker"),
             "{p}"
         );
@@ -825,9 +1068,17 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         store.set_own_device_id("dev-b");
         let local = meeting(&store, "dev-a", 5000);
-        store.record_sync_meeting_map_with_epoch("dev-a", 42, local, Some("e")).unwrap();
+        store
+            .record_sync_meeting_map_with_epoch("dev-a", 42, local, Some("e"))
+            .unwrap();
         store.delete_meeting(local).unwrap();
-        let t = MeetingForgotten { origin_device_id: "dev-a".into(), origin_epoch: Some("e".into()), source_meeting_id: 42, forgotten_at_unix_ms: 1, source_start_unix_ms: None };
+        let t = MeetingForgotten {
+            origin_device_id: "dev-a".into(),
+            origin_epoch: Some("e".into()),
+            source_meeting_id: 42,
+            forgotten_at_unix_ms: 1,
+            source_start_unix_ms: None,
+        };
 
         assert!(store.apply_meeting_forgotten(&t).unwrap().is_none());
         assert_eq!(store.resolve_sync_meeting_map("dev-a", 42).unwrap(), None);
@@ -841,11 +1092,21 @@ mod tests {
         let id = meeting(&store, "dev-a", 5000);
         segments(&store, id);
         store.complete_meeting(id, 6000, None).unwrap();
-        let ops = store.claim_due_outbox_batch(OUTBOX_CONNECTOR, "w", i64::MAX / 2, i64::MAX / 2 + 1, 100).unwrap();
+        let ops = store
+            .claim_due_outbox_batch(OUTBOX_CONNECTOR, "w", i64::MAX / 2, i64::MAX / 2 + 1, 100)
+            .unwrap();
         assert_eq!(ops.len(), 3);
         for op in &ops[..2] {
             store
-                .release_outbox_after_failure(&op.operation_id, "w", crate::DeliveryFailureClass::NeedsAuthentication, "auth", "", None, i64::MAX / 2)
+                .release_outbox_after_failure(
+                    &op.operation_id,
+                    "w",
+                    crate::DeliveryFailureClass::NeedsAuthentication,
+                    "auth",
+                    "",
+                    None,
+                    i64::MAX / 2,
+                )
                 .unwrap();
         }
         let states: Vec<String> = outbox(&store).into_iter().map(|r| r.4).collect();
@@ -856,7 +1117,10 @@ mod tests {
         let left: Vec<(String, String)> = outbox(&store).into_iter().map(|r| (r.0, r.4)).collect();
         assert_eq!(
             left,
-            vec![(ops[2].row_type.clone(), "leased".to_string()), ("meeting_forgotten".to_string(), "pending".to_string())]
+            vec![
+                (ops[2].row_type.clone(), "leased".to_string()),
+                ("meeting_forgotten".to_string(), "pending".to_string())
+            ]
         );
     }
 
@@ -872,7 +1136,11 @@ mod tests {
         .unwrap();
         ensure_forget_tables(&conn).unwrap();
         ensure_forget_tables(&conn).unwrap();
-        let epoch: String = conn.query_row("SELECT origin_epoch FROM sync_meeting_map", [], |r| r.get(0)).unwrap();
+        let epoch: String = conn
+            .query_row("SELECT origin_epoch FROM sync_meeting_map", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(epoch, "");
     }
 
@@ -881,8 +1149,12 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         store.set_own_device_id("dev-a");
         let id = meeting(&store, "dev-a", 5000);
-        store.record_pushed_meeting_rows(&[(id, 7, "meeting"), (id, 8, "items")]).unwrap();
-        store.record_pushed_meeting_rows(&[(id + 1, 9, "meeting")]).unwrap();
+        store
+            .record_pushed_meeting_rows(&[(id, 7, "meeting"), (id, 8, "items")])
+            .unwrap();
+        store
+            .record_pushed_meeting_rows(&[(id + 1, 9, "meeting")])
+            .unwrap();
         let tombstone = |device: &str, epoch: Option<&str>| MeetingForgotten {
             origin_device_id: device.into(),
             origin_epoch: epoch.map(Into::into),
@@ -890,25 +1162,43 @@ mod tests {
             forgotten_at_unix_ms: 1,
             source_start_unix_ms: None,
         };
-        store.apply_meeting_forgotten(&tombstone("dev-b", None)).unwrap();
-        store.apply_meeting_forgotten(&tombstone("dev-a", Some("an-older-database"))).unwrap();
-        store.apply_meeting_forgotten(&tombstone("dev-a", None)).unwrap();
+        store
+            .apply_meeting_forgotten(&tombstone("dev-b", None))
+            .unwrap();
+        store
+            .apply_meeting_forgotten(&tombstone("dev-a", Some("an-older-database")))
+            .unwrap();
+        store
+            .apply_meeting_forgotten(&tombstone("dev-a", None))
+            .unwrap();
         assert!(store.get_meeting(id).unwrap().is_some());
         assert!(
             store.forgotten_pushed_meeting_rows(10).unwrap().is_empty(),
             "another device's, another epoch's, or an unknown epoch's"
         );
 
-        store.apply_meeting_forgotten(&tombstone("dev-a", Some(&store.sync_entity_epoch().unwrap()))).unwrap();
+        store
+            .apply_meeting_forgotten(&tombstone(
+                "dev-a",
+                Some(&store.sync_entity_epoch().unwrap()),
+            ))
+            .unwrap();
         let rows = store.forgotten_pushed_meeting_rows(10).unwrap();
         assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|r| r.3 == 5000 - CLEANUP_CLOCK_MARGIN_MS), "bounded by the meeting's start");
+        assert!(
+            rows.iter().all(|r| r.3 == 5000 - CLEANUP_CLOCK_MARGIN_MS),
+            "bounded by the meeting's start"
+        );
         let keys: Vec<(i64, i64, String)> = rows.into_iter().map(|r| (r.0, r.1, r.2)).collect();
         store.clear_pushed_meeting_rows(&keys).unwrap();
         assert!(store.forgotten_pushed_meeting_rows(10).unwrap().is_empty());
         assert_eq!(store.meetings_awaiting_tag_delete().unwrap(), vec![id]);
         store.mark_meeting_tag_deleted(id).unwrap();
         assert!(store.meetings_awaiting_tag_delete().unwrap().is_empty());
-        assert_eq!(store.pushed_meeting_rows(id + 1).unwrap().len(), 1, "another meeting's record stays");
+        assert_eq!(
+            store.pushed_meeting_rows(id + 1).unwrap().len(),
+            1,
+            "another meeting's record stays"
+        );
     }
 }

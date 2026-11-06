@@ -97,8 +97,10 @@ impl Store {
     }
 
     pub fn clear_live_segments(&self, meeting_id: i64) -> rusqlite::Result<usize> {
-        self.conn
-            .execute("DELETE FROM live_transcript_segment WHERE meeting_id = ?1", params![meeting_id])
+        self.conn.execute(
+            "DELETE FROM live_transcript_segment WHERE meeting_id = ?1",
+            params![meeting_id],
+        )
     }
 
     /// Deletes live rows that can no longer be useful: older than a day, belonging to a
@@ -118,14 +120,21 @@ impl Store {
     /// The transcript to read for a meeting: the real rows when any exist, otherwise the
     /// provisional live rows with negative ids (`-rowid`), so a citation to a live row can
     /// never collide with a real segment id.
-    pub fn transcript_for_meeting(&self, meeting_id: i64) -> rusqlite::Result<Vec<MeetingTranscriptSegment>> {
+    pub fn transcript_for_meeting(
+        &self,
+        meeting_id: i64,
+    ) -> rusqlite::Result<Vec<MeetingTranscriptSegment>> {
         let (real, _total) = self.get_transcript_segments_page(meeting_id, 0, usize::MAX >> 1)?;
         if !real.is_empty() {
             return Ok(real);
         }
         let title: String = self
             .conn
-            .query_row("SELECT title FROM meeting WHERE id = ?1", params![meeting_id], |r| r.get(0))
+            .query_row(
+                "SELECT title FROM meeting WHERE id = ?1",
+                params![meeting_id],
+                |r| r.get(0),
+            )
             .unwrap_or_default();
         Ok(self
             .list_live_segments(meeting_id)?
@@ -165,7 +174,11 @@ mod tests {
     fn live(meeting_id: i64, chunk: i64, start: i64, who: &str, text: &str) -> NewLiveSegment {
         NewLiveSegment {
             meeting_id,
-            channel: if who == "Me" { "mic".into() } else { "system".into() },
+            channel: if who == "Me" {
+                "mic".into()
+            } else {
+                "system".into()
+            },
             chunk_index: chunk,
             start_cs: start,
             end_cs: start + 100,
@@ -179,10 +192,16 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let id = meeting(&store, MeetingStatus::Recording);
         store
-            .insert_live_segments(&[live(id, 1, 500, "Others", "second"), live(id, 0, 100, "Me", "first")])
+            .insert_live_segments(&[
+                live(id, 1, 500, "Others", "second"),
+                live(id, 0, 100, "Me", "first"),
+            ])
             .unwrap();
         let rows = store.list_live_segments(id).unwrap();
-        assert_eq!(rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(), ["first", "second"]);
+        assert_eq!(
+            rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+            ["first", "second"]
+        );
         assert!(rows.iter().all(|r| r.id > 0));
         assert_eq!(store.clear_live_segments(id).unwrap(), 2);
         assert!(store.list_live_segments(id).unwrap().is_empty());
@@ -198,7 +217,9 @@ mod tests {
             count("SELECT COUNT(*) FROM items"),
             count("SELECT COUNT(*) FROM sync_outbox"),
         );
-        store.insert_live_segments(&[live(id, 0, 0, "Me", "hello there")]).unwrap();
+        store
+            .insert_live_segments(&[live(id, 0, 0, "Me", "hello there")])
+            .unwrap();
         let after = (
             count("SELECT COUNT(*) FROM transcript_segment"),
             count("SELECT COUNT(*) FROM items"),
@@ -211,11 +232,23 @@ mod tests {
     fn transcript_for_meeting_uses_negative_ids_for_live_rows_and_real_rows_win() {
         let store = Store::open_in_memory().unwrap();
         let id = meeting(&store, MeetingStatus::Recording);
-        store.insert_live_segments(&[live(id, 0, 100, "Me", "live words")]).unwrap();
+        store
+            .insert_live_segments(&[live(id, 0, 100, "Me", "live words")])
+            .unwrap();
         let rows = store.transcript_for_meeting(id).unwrap();
         assert_eq!(rows.len(), 1);
-        assert!(rows[0].id < 0, "live rows must have negative ids, got {}", rows[0].id);
-        assert_eq!((rows[0].meeting_title.as_str(), rows[0].speaker_label.as_str()), ("Acme sync", "Me"));
+        assert!(
+            rows[0].id < 0,
+            "live rows must have negative ids, got {}",
+            rows[0].id
+        );
+        assert_eq!(
+            (
+                rows[0].meeting_title.as_str(),
+                rows[0].speaker_label.as_str()
+            ),
+            ("Acme sync", "Me")
+        );
 
         store
             .insert_transcript_segments(&[NewTranscriptSegment {
@@ -226,7 +259,10 @@ mod tests {
             }])
             .unwrap();
         let rows = store.transcript_for_meeting(id).unwrap();
-        assert_eq!(rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(), ["final words"]);
+        assert_eq!(
+            rows.iter().map(|r| r.text.as_str()).collect::<Vec<_>>(),
+            ["final words"]
+        );
         assert!(rows[0].id > 0);
     }
 
@@ -235,8 +271,12 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let recording = meeting(&store, MeetingStatus::Recording);
         let finished = meeting(&store, MeetingStatus::Completed);
-        store.insert_live_segments(&[live(recording, 0, 0, "Me", "keep")]).unwrap();
-        store.insert_live_segments(&[live(finished, 0, 0, "Me", "stale")]).unwrap();
+        store
+            .insert_live_segments(&[live(recording, 0, 0, "Me", "keep")])
+            .unwrap();
+        store
+            .insert_live_segments(&[live(finished, 0, 0, "Me", "stale")])
+            .unwrap();
         store
             .insert_transcript_segments(&[NewTranscriptSegment {
                 meeting_id: finished,
@@ -255,8 +295,15 @@ mod tests {
     fn a_completed_meeting_without_final_rows_keeps_its_live_rows_for_a_day() {
         let store = Store::open_in_memory().unwrap();
         let finished = meeting(&store, MeetingStatus::Completed);
-        store.insert_live_segments(&[live(finished, 0, 0, "Me", "only copy")]).unwrap();
-        assert_eq!(store.purge_stale_live_segments(crate::now_unix_ms()).unwrap(), 0);
+        store
+            .insert_live_segments(&[live(finished, 0, 0, "Me", "only copy")])
+            .unwrap();
+        assert_eq!(
+            store
+                .purge_stale_live_segments(crate::now_unix_ms())
+                .unwrap(),
+            0
+        );
         let day_later = crate::now_unix_ms() + 25 * 60 * 60 * 1000;
         assert_eq!(store.purge_stale_live_segments(day_later).unwrap(), 1);
     }
@@ -265,7 +312,9 @@ mod tests {
     fn rows_older_than_a_day_are_purged_even_for_a_recording_meeting() {
         let store = Store::open_in_memory().unwrap();
         let id = meeting(&store, MeetingStatus::Recording);
-        store.insert_live_segments(&[live(id, 0, 0, "Me", "old")]).unwrap();
+        store
+            .insert_live_segments(&[live(id, 0, 0, "Me", "old")])
+            .unwrap();
         let day_later = crate::now_unix_ms() + 25 * 60 * 60 * 1000;
         assert_eq!(store.purge_stale_live_segments(day_later).unwrap(), 1);
     }
@@ -273,24 +322,38 @@ mod tests {
     #[test]
     fn rows_of_a_deleted_meeting_are_purged() {
         let store = Store::open_in_memory().unwrap();
-        store.insert_live_segments(&[live(9_999, 0, 0, "Me", "orphan")]).unwrap();
-        assert_eq!(store.purge_stale_live_segments(crate::now_unix_ms()).unwrap(), 1);
+        store
+            .insert_live_segments(&[live(9_999, 0, 0, "Me", "orphan")])
+            .unwrap();
+        assert_eq!(
+            store
+                .purge_stale_live_segments(crate::now_unix_ms())
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
     fn forgetting_a_meeting_deletes_its_live_rows_at_once() {
         let store = Store::open_in_memory().unwrap();
         let id = meeting(&store, MeetingStatus::Recording);
-        store.insert_live_segments(&[live(id, 0, 0, "Me", "private words")]).unwrap();
+        store
+            .insert_live_segments(&[live(id, 0, 0, "Me", "private words")])
+            .unwrap();
         assert!(store.delete_meeting(id).unwrap());
-        assert!(store.list_live_segments(id).unwrap().is_empty(), "no transcript text may outlive a forgotten meeting");
+        assert!(
+            store.list_live_segments(id).unwrap().is_empty(),
+            "no transcript text may outlive a forgotten meeting"
+        );
     }
 
     #[test]
     fn retention_deletes_the_live_rows_of_expired_meetings() {
         let store = Store::open_in_memory().unwrap();
         let id = meeting(&store, MeetingStatus::Scheduled); // starts at 1_000
-        store.insert_live_segments(&[live(id, 0, 0, "Me", "old words")]).unwrap();
+        store
+            .insert_live_segments(&[live(id, 0, 0, "Me", "old words")])
+            .unwrap();
         let (deleted, _files) = store.delete_meetings_before(2_000).unwrap();
         assert_eq!(deleted, 1);
         assert!(store.list_live_segments(id).unwrap().is_empty());
@@ -301,7 +364,12 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let recording = meeting(&store, MeetingStatus::Recording);
         let finished = meeting(&store, MeetingStatus::Completed);
-        store.insert_live_segments(&[live(recording, 0, 0, "Me", "a"), live(finished, 0, 0, "Me", "b")]).unwrap();
+        store
+            .insert_live_segments(&[
+                live(recording, 0, 0, "Me", "a"),
+                live(finished, 0, 0, "Me", "b"),
+            ])
+            .unwrap();
         assert_eq!(store.purge_stale_live_segments(i64::MAX / 2).unwrap(), 2);
         assert!(store.list_live_segments(recording).unwrap().is_empty());
         assert!(store.list_live_segments(finished).unwrap().is_empty());

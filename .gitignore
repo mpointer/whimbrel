@@ -37,3 +37,14 @@ apps/windows/ui/e2e/.generated/
 apps/windows/ui/test-results/
 apps/windows/ui/playwright-report/
 __pycache__/
+
+# Android app (apps/mobile/android)
+apps/mobile/android/secrets.properties
+apps/mobile/android/keystore.properties
+apps/mobile/android/local.properties
+apps/mobile/android/.gradle/
+apps/mobile/android/build/
+apps/mobile/android/app/build/
+apps/mobile/android/app/.cxx/
+*.jks
+*.keystore

@@ -84,12 +84,12 @@ impl ProviderFailureReason {
         };
         Some(match self {
             Self::OllamaModelMissing { model } => tr(
-                "Ollama doesn't have the model {model}. Pick one you have in Settings → AI Providers, or run: ollama pull {model}",
+                "Ollama doesn't have the model {model}. Pick one you have in Settings → AI, or run: ollama pull {model}",
                 &[("model", model)],
             ),
-            Self::OllamaNotRunning => tr("Ollama isn't running on this computer. Start Ollama, or add an API key in Settings → AI Providers.", &[]),
-            Self::NoProviderConfigured => tr("No AI provider is set up. Add one in Settings → AI Providers.", &[]),
-            Self::Unauthorized { provider } => tr("{provider} rejected the API key. Check it in Settings → AI Providers.", &[("provider", &name(provider))]),
+            Self::OllamaNotRunning => tr("Ollama isn't running on this computer. Start Ollama, or add an API key in Settings → AI.", &[]),
+            Self::NoProviderConfigured => tr("No AI provider is set up. Add one in Settings → AI.", &[]),
+            Self::Unauthorized { provider } => tr("{provider} rejected the API key. Check it in Settings → AI.", &[("provider", &name(provider))]),
             Self::RateLimited { provider } => tr("{provider} is busy or out of credit. Try again shortly.", &[("provider", &name(provider))]),
             Self::Network { .. } | Self::Other { .. } => return None,
         })
@@ -222,11 +222,11 @@ mod tests {
         );
         assert_eq!(
             err.to_string(),
-            "Ollama doesn't have the model gemma4:12b. Pick one you have in Settings → AI Providers, or run: ollama pull gemma4:12b"
+            "Ollama doesn't have the model gemma4:12b. Pick one you have in Settings → AI, or run: ollama pull gemma4:12b"
         );
         let key: ProviderFailureReason = llm::ProviderFailureKind::Unauthorized { provider: llm::Provider::OpenAI }.into();
         assert_eq!(serde_json::to_value(&key).unwrap(), serde_json::json!({"kind": "unauthorized", "provider": "openai"}));
-        assert_eq!(key.message().unwrap(), "OpenAI rejected the API key. Check it in Settings → AI Providers.");
+        assert_eq!(key.message().unwrap(), "OpenAI rejected the API key. Check it in Settings → AI.");
         let net = CommandError::ProviderFailure { reason: Some(ProviderFailureReason::Network { provider: "google".into() }) };
         assert_eq!(net.to_string(), "every model provider failed", "a network blip keeps the general line");
         assert_eq!(serde_json::to_value(CommandError::provider_failure()).unwrap(), serde_json::json!({"kind": "provider_failure"}));

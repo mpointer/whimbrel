@@ -441,6 +441,13 @@ pub extern "C" fn whimbrel_sync_content_more_to_pull() -> bool {
     sync_engine::more_to_pull()
 }
 
+/// The last pull round's per-peer stats as a JSON array (hashed peer tags and counts only;
+/// issue #572). Caller frees with `whimbrel_core_free_string`.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_content_last_pull_stats() -> *mut c_char {
+    json_to_c_string(sync_engine::last_pull_stats_json())
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_sync_content_last_error() -> *mut c_char {
     sync_engine::last_content_sync_error().map_or(ptr::null_mut(), json_to_c_string)
@@ -454,8 +461,24 @@ pub extern "C" fn whimbrel_sync_take_forgotten_meeting_files() -> *mut c_char {
     serde_json::to_string(&sync_engine::take_forgotten_meeting_files()).map_or(ptr::null_mut(), json_to_c_string)
 }
 
+/// `{"pending": N, "oldest_unix_ms": T|null}`: the outbox operations not yet sent and when the oldest
+/// was made, for "changes waiting to send" (#590). NULL on a null handle or a store error. Caller frees.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_outbox_backlog(handle: *mut StoreHandle) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    store.outbox_backlog().ok().and_then(|b| serde_json::to_string(&b).ok()).map_or(ptr::null_mut(), json_to_c_string)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn outbox_backlog_is_null_for_a_null_handle() {
+        assert!(whimbrel_sync_outbox_backlog(std::ptr::null_mut()).is_null());
+    }
+
     use super::*;
     use std::ffi::CStr;
 

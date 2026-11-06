@@ -13,7 +13,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::sync_outbox::{self, NewOutboxOperation, OutboxOperationKind};
-use crate::{json_to_sql_error, now_unix_ms, Store, OUTBOX_CONNECTOR, OUTBOX_ROW_TYPE_SKIN, OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK};
+use crate::{
+    json_to_sql_error, now_unix_ms, Store, OUTBOX_CONNECTOR, OUTBOX_ROW_TYPE_SKIN,
+    OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK,
+};
 
 /// Raw bytes per image chunk. ponytail: Turso documents no row limit below SQLite's own
 /// (`SQLITE_MAX_LENGTH`, 1 GB by default), but every row is one HTTP request body; 192 KB is
@@ -100,19 +103,27 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn is_sha256_hex(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// `user-` then `a-z0-9-`: the only skins that sync (the built-ins ship with every app).
 fn is_user_skin_id(id: &str) -> bool {
-    id.len() > 5 && id.starts_with("user-") && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    id.len() > 5
+        && id.starts_with("user-")
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 impl Store {
     /// Records this device's current version of a skin (it is what the folder holds) and enqueues it.
     /// Its images must be enqueued with `enqueue_skin_chunks` too. A store with no device id does neither.
     pub fn enqueue_skin_row(&self, payload: &SkinSyncPayload) -> rusqlite::Result<()> {
-        let Some(own) = self.own_device_id.borrow().clone() else { return Ok(()) };
+        let Some(own) = self.own_device_id.borrow().clone() else {
+            return Ok(());
+        };
         if !is_user_skin_id(&payload.skin_id) {
             return Ok(());
         }
@@ -134,7 +145,11 @@ impl Store {
                 row_type: OUTBOX_ROW_TYPE_SKIN.to_string(),
                 aggregate_type: "skin".to_string(),
                 aggregate_id: payload.skin_id.clone(),
-                operation_kind: if payload.deleted { OutboxOperationKind::Tombstone } else { OutboxOperationKind::Upsert },
+                operation_kind: if payload.deleted {
+                    OutboxOperationKind::Tombstone
+                } else {
+                    OutboxOperationKind::Upsert
+                },
                 payload_json: json,
                 connector: OUTBOX_CONNECTOR.to_string(),
             },
@@ -146,22 +161,39 @@ impl Store {
     /// Enqueues an image's chunks, unless it was sent before or arrived from a peer (so an image shared by
     /// two skins goes once). Returns whether it enqueued. `sha256` must be the bytes' own hash.
     pub fn enqueue_skin_chunks(&self, sha256: &str, bytes: &[u8]) -> rusqlite::Result<bool> {
-        let Some(own) = self.own_device_id.borrow().clone() else { return Ok(false) };
+        let Some(own) = self.own_device_id.borrow().clone() else {
+            return Ok(false);
+        };
         if sha256_hex(bytes) != sha256 {
-            return Err(rusqlite::Error::InvalidParameterName(format!("{sha256} is not the hash of these bytes")));
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "{sha256} is not the hash of these bytes"
+            )));
         }
         let known: Option<(bool, bool)> = self
             .conn
-            .query_row("SELECT complete, sent FROM synced_skin_image WHERE sha256 = ?1", params![sha256], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_row(
+                "SELECT complete, sent FROM synced_skin_image WHERE sha256 = ?1",
+                params![sha256],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .optional()?;
         if known.is_some_and(|(complete, sent)| complete || sent) {
             return Ok(false);
         }
-        let pieces: Vec<&[u8]> = if bytes.is_empty() { vec![&[][..]] } else { bytes.chunks(SKIN_CHUNK_BYTES).collect() };
+        let pieces: Vec<&[u8]> = if bytes.is_empty() {
+            vec![&[][..]]
+        } else {
+            bytes.chunks(SKIN_CHUNK_BYTES).collect()
+        };
         let count = pieces.len() as u32;
         let tx = self.conn.unchecked_transaction()?;
         for (index, piece) in pieces.into_iter().enumerate() {
-            let chunk = SkinImageChunk { sha256: sha256.to_string(), index: index as u32, count, data: STANDARD.encode(piece) };
+            let chunk = SkinImageChunk {
+                sha256: sha256.to_string(),
+                index: index as u32,
+                count,
+                data: STANDARD.encode(piece),
+            };
             let local_seq = Self::next_local_seq_tx(&tx)?;
             sync_outbox::enqueue_outbox_tx(
                 &tx,
@@ -190,21 +222,31 @@ impl Store {
     /// A skin pulled from a peer: kept when it is newer than what this device has (by
     /// `(updated_at_unix_ms, device_id)`), else ignored. Returns whether it was kept. Never enqueued.
     /// `device_id` is the device that saved this version, which a re-push by another peer keeps.
-    pub fn apply_synced_skin(&self, _peer_device_id: &str, payload: &SkinSyncPayload) -> rusqlite::Result<bool> {
+    pub fn apply_synced_skin(
+        &self,
+        _peer_device_id: &str,
+        payload: &SkinSyncPayload,
+    ) -> rusqlite::Result<bool> {
         if !is_user_skin_id(&payload.skin_id) {
             return Ok(false);
         }
         let json = serde_json::to_string(payload).map_err(json_to_sql_error)?;
-        if json.len() > SKIN_PAYLOAD_MAX_BYTES || payload.images.iter().any(|(_, sha)| !is_sha256_hex(sha)) {
+        if json.len() > SKIN_PAYLOAD_MAX_BYTES
+            || payload.images.iter().any(|(_, sha)| !is_sha256_hex(sha))
+        {
             return Ok(false);
         }
         let current: Option<(i64, String)> = self
             .conn
-            .query_row("SELECT updated_at_unix_ms, device_id FROM synced_skin WHERE skin_id = ?1", params![payload.skin_id], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
+            .query_row(
+                "SELECT updated_at_unix_ms, device_id FROM synced_skin WHERE skin_id = ?1",
+                params![payload.skin_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .optional()?;
-        if current.is_some_and(|(at, device)| (at, device.as_str()) >= (payload.updated_at_unix_ms, payload.device_id.as_str())) {
+        if current.is_some_and(|(at, device)| {
+            (at, device.as_str()) >= (payload.updated_at_unix_ms, payload.device_id.as_str())
+        }) {
             return Ok(false);
         }
         self.conn.execute(
@@ -218,18 +260,26 @@ impl Store {
     /// One pulled image chunk. When the last one arrives the image is checked against its hash: whole, it
     /// is complete; otherwise its chunks are dropped (a peer re-sending the image starts it again).
     pub fn apply_synced_skin_chunk(&self, chunk: &SkinImageChunk) -> rusqlite::Result<()> {
-        if !is_sha256_hex(&chunk.sha256) || chunk.count == 0 || chunk.count > SKIN_IMAGE_MAX_CHUNKS || chunk.index >= chunk.count {
+        if !is_sha256_hex(&chunk.sha256)
+            || chunk.count == 0
+            || chunk.count > SKIN_IMAGE_MAX_CHUNKS
+            || chunk.index >= chunk.count
+        {
             return Ok(());
         }
-        let Ok(data) = STANDARD.decode(&chunk.data) else { return Ok(()) };
+        let Ok(data) = STANDARD.decode(&chunk.data) else {
+            return Ok(());
+        };
         if data.len() > SKIN_CHUNK_BYTES {
             return Ok(());
         }
         let known: Option<(u32, bool, bool)> = self
             .conn
-            .query_row("SELECT count, complete, own FROM synced_skin_image WHERE sha256 = ?1", params![chunk.sha256], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-            })
+            .query_row(
+                "SELECT count, complete, own FROM synced_skin_image WHERE sha256 = ?1",
+                params![chunk.sha256],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
             .optional()?;
         match known {
             Some((_, true, _)) | Some((_, _, true)) => return Ok(()),
@@ -237,16 +287,35 @@ impl Store {
             _ => {}
         }
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute("INSERT OR IGNORE INTO synced_skin_image (sha256, count) VALUES (?1, ?2)", params![chunk.sha256, chunk.count])?;
-        tx.execute("INSERT OR IGNORE INTO synced_skin_chunk (sha256, idx, data) VALUES (?1, ?2, ?3)", params![chunk.sha256, chunk.index, data])?;
-        let have: u32 = tx.query_row("SELECT COUNT(*) FROM synced_skin_chunk WHERE sha256 = ?1", params![chunk.sha256], |r| r.get(0))?;
+        tx.execute(
+            "INSERT OR IGNORE INTO synced_skin_image (sha256, count) VALUES (?1, ?2)",
+            params![chunk.sha256, chunk.count],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO synced_skin_chunk (sha256, idx, data) VALUES (?1, ?2, ?3)",
+            params![chunk.sha256, chunk.index, data],
+        )?;
+        let have: u32 = tx.query_row(
+            "SELECT COUNT(*) FROM synced_skin_chunk WHERE sha256 = ?1",
+            params![chunk.sha256],
+            |r| r.get(0),
+        )?;
         if have == chunk.count {
             let whole = assemble(&tx, &chunk.sha256)?;
             if sha256_hex(&whole) == chunk.sha256 {
-                tx.execute("UPDATE synced_skin_image SET complete = 1 WHERE sha256 = ?1", params![chunk.sha256])?;
+                tx.execute(
+                    "UPDATE synced_skin_image SET complete = 1 WHERE sha256 = ?1",
+                    params![chunk.sha256],
+                )?;
             } else {
-                tx.execute("DELETE FROM synced_skin_chunk WHERE sha256 = ?1", params![chunk.sha256])?;
-                tx.execute("DELETE FROM synced_skin_image WHERE sha256 = ?1", params![chunk.sha256])?;
+                tx.execute(
+                    "DELETE FROM synced_skin_chunk WHERE sha256 = ?1",
+                    params![chunk.sha256],
+                )?;
+                tx.execute(
+                    "DELETE FROM synced_skin_image WHERE sha256 = ?1",
+                    params![chunk.sha256],
+                )?;
             }
         }
         tx.commit()
@@ -260,16 +329,24 @@ impl Store {
              WHERE applied_updated_at_unix_ms IS NULL OR applied_updated_at_unix_ms != updated_at_unix_ms OR applied_device_id != device_id \
              ORDER BY skin_id",
         )?;
-        let payloads: Vec<String> = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let payloads: Vec<String> = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
         let mut ready = Vec::new();
         for json in payloads {
-            let Ok(payload) = serde_json::from_str::<SkinSyncPayload>(&json) else { continue };
+            let Ok(payload) = serde_json::from_str::<SkinSyncPayload>(&json) else {
+                continue;
+            };
             let mut whole = true;
             if !payload.deleted {
                 for (_, sha) in &payload.images {
                     let have: bool = self
                         .conn
-                        .query_row("SELECT complete OR own FROM synced_skin_image WHERE sha256 = ?1", params![sha], |r| r.get(0))
+                        .query_row(
+                            "SELECT complete OR own FROM synced_skin_image WHERE sha256 = ?1",
+                            params![sha],
+                            |r| r.get(0),
+                        )
                         .optional()?
                         .unwrap_or(false);
                     if !have {
@@ -290,7 +367,11 @@ impl Store {
     pub fn synced_image(&self, sha256: &str) -> rusqlite::Result<Option<Vec<u8>>> {
         let complete: bool = self
             .conn
-            .query_row("SELECT complete FROM synced_skin_image WHERE sha256 = ?1", params![sha256], |r| r.get(0))
+            .query_row(
+                "SELECT complete FROM synced_skin_image WHERE sha256 = ?1",
+                params![sha256],
+                |r| r.get(0),
+            )
             .optional()?
             .unwrap_or(false);
         if !complete {
@@ -312,7 +393,12 @@ impl Store {
     }
 
     /// The skins folder now holds `skin_id` at this version, so `synced_skins_ready` stops offering it.
-    pub fn mark_skin_applied(&self, skin_id: &str, updated_at_unix_ms: i64, device_id: &str) -> rusqlite::Result<()> {
+    pub fn mark_skin_applied(
+        &self,
+        skin_id: &str,
+        updated_at_unix_ms: i64,
+        device_id: &str,
+    ) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE synced_skin SET applied_updated_at_unix_ms = ?2, applied_device_id = ?3 WHERE skin_id = ?1",
             params![skin_id, updated_at_unix_ms, device_id],
@@ -323,7 +409,10 @@ impl Store {
     /// Notes that `peer_device_id` has announced it syncs skins. The first time, a full re-push is
     /// requested (`take_skin_repush_request`), so a peer that just updated gets every skin made before.
     pub fn record_skin_peer(&self, peer_device_id: &str) -> rusqlite::Result<bool> {
-        let added = self.conn.execute("INSERT OR IGNORE INTO synced_skin_peer (device_id, repush) VALUES (?1, 1)", params![peer_device_id])?;
+        let added = self.conn.execute(
+            "INSERT OR IGNORE INTO synced_skin_peer (device_id, repush) VALUES (?1, 1)",
+            params![peer_device_id],
+        )?;
         Ok(added > 0)
     }
 
@@ -333,7 +422,10 @@ impl Store {
     /// that came from peers stay as they are; the device that made them resends them.
     pub fn take_skin_repush_request(&self) -> rusqlite::Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
-        let changed = tx.execute("UPDATE synced_skin_peer SET repush = 0 WHERE repush = 1", [])?;
+        let changed = tx.execute(
+            "UPDATE synced_skin_peer SET repush = 0 WHERE repush = 1",
+            [],
+        )?;
         if changed > 0 {
             tx.execute("UPDATE synced_skin_image SET sent = 0 WHERE own = 1", [])?;
         }
@@ -355,7 +447,11 @@ impl Store {
     pub fn is_skin_peer(&self, peer_device_id: &str) -> rusqlite::Result<bool> {
         Ok(self
             .conn
-            .query_row("SELECT 1 FROM synced_skin_peer WHERE device_id = ?1", params![peer_device_id], |_| Ok(()))
+            .query_row(
+                "SELECT 1 FROM synced_skin_peer WHERE device_id = ?1",
+                params![peer_device_id],
+                |_| Ok(()),
+            )
             .optional()?
             .is_some())
     }
@@ -363,8 +459,11 @@ impl Store {
 
 /// The image's chunks in order, joined.
 fn assemble(conn: &Connection, sha256: &str) -> rusqlite::Result<Vec<u8>> {
-    let mut stmt = conn.prepare("SELECT data FROM synced_skin_chunk WHERE sha256 = ?1 ORDER BY idx")?;
-    let parts: Vec<Vec<u8>> = stmt.query_map(params![sha256], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    let mut stmt =
+        conn.prepare("SELECT data FROM synced_skin_chunk WHERE sha256 = ?1 ORDER BY idx")?;
+    let parts: Vec<Vec<u8>> = stmt
+        .query_map(params![sha256], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
     Ok(parts.concat())
 }
 
@@ -384,7 +483,10 @@ mod tests {
             name: "Stadium".into(),
             manifest: serde_json::json!({ "id": id, "name": "Stadium" }),
             palettes: vec![],
-            images: images.iter().map(|(n, s)| (n.to_string(), s.to_string())).collect(),
+            images: images
+                .iter()
+                .map(|(n, s)| (n.to_string(), s.to_string()))
+                .collect(),
             updated_at_unix_ms: at,
             device_id: device.into(),
             deleted: false,
@@ -392,26 +494,46 @@ mod tests {
     }
 
     fn outbox(store: &Store, row_type: &str) -> Vec<String> {
-        let mut stmt = store.conn.prepare("SELECT payload_json FROM sync_outbox WHERE row_type = ?1 ORDER BY local_seq").unwrap();
-        stmt.query_map(params![row_type], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+        let mut stmt = store
+            .conn
+            .prepare("SELECT payload_json FROM sync_outbox WHERE row_type = ?1 ORDER BY local_seq")
+            .unwrap();
+        stmt.query_map(params![row_type], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
     }
 
     fn chunks_of(store: &Store) -> Vec<SkinImageChunk> {
-        outbox(store, OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK).iter().map(|j| serde_json::from_str(j).unwrap()).collect()
+        outbox(store, OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK)
+            .iter()
+            .map(|j| serde_json::from_str(j).unwrap())
+            .collect()
     }
 
     #[test]
     fn older_skin_loses_to_newer() {
         let b = store("device-b");
-        assert!(b.apply_synced_skin("device-a", &payload("user-x-1", 200, "device-a", &[])).unwrap());
+        assert!(b
+            .apply_synced_skin("device-a", &payload("user-x-1", 200, "device-a", &[]))
+            .unwrap());
         // Older, or the same version again: ignored.
-        assert!(!b.apply_synced_skin("device-a", &payload("user-x-1", 100, "device-a", &[])).unwrap());
-        assert!(!b.apply_synced_skin("device-a", &payload("user-x-1", 200, "device-a", &[])).unwrap());
+        assert!(!b
+            .apply_synced_skin("device-a", &payload("user-x-1", 100, "device-a", &[]))
+            .unwrap());
+        assert!(!b
+            .apply_synced_skin("device-a", &payload("user-x-1", 200, "device-a", &[]))
+            .unwrap());
         // A tie on time goes to the larger device id, so every device picks the same one.
-        assert!(b.apply_synced_skin("device-c", &payload("user-x-1", 200, "device-c", &[])).unwrap());
+        assert!(b
+            .apply_synced_skin("device-c", &payload("user-x-1", 200, "device-c", &[]))
+            .unwrap());
         // A local save newer than a peer's version keeps winning.
-        b.enqueue_skin_row(&payload("user-x-1", 300, "device-b", &[])).unwrap();
-        assert!(!b.apply_synced_skin("device-a", &payload("user-x-1", 250, "device-a", &[])).unwrap());
+        b.enqueue_skin_row(&payload("user-x-1", 300, "device-b", &[]))
+            .unwrap();
+        assert!(!b
+            .apply_synced_skin("device-a", &payload("user-x-1", 250, "device-a", &[]))
+            .unwrap());
         // What this device saved itself is already in the folder.
         assert!(b.synced_skins_ready().unwrap().is_empty());
     }
@@ -419,9 +541,18 @@ mod tests {
     #[test]
     fn refuses_what_is_not_a_user_skin() {
         let b = store("device-b");
-        assert!(!b.apply_synced_skin("device-a", &payload("whimbrel", 1, "device-a", &[])).unwrap());
-        assert!(!b.apply_synced_skin("device-a", &payload("user-../x", 1, "device-a", &[])).unwrap());
-        assert!(!b.apply_synced_skin("device-a", &payload("user-x-1", 1, "device-a", &[("a.png", "nothex")])).unwrap());
+        assert!(!b
+            .apply_synced_skin("device-a", &payload("whimbrel", 1, "device-a", &[]))
+            .unwrap());
+        assert!(!b
+            .apply_synced_skin("device-a", &payload("user-../x", 1, "device-a", &[]))
+            .unwrap());
+        assert!(!b
+            .apply_synced_skin(
+                "device-a",
+                &payload("user-x-1", 1, "device-a", &[("a.png", "nothex")])
+            )
+            .unwrap());
     }
 
     #[test]
@@ -434,18 +565,27 @@ mod tests {
         let chunks = chunks_of(&a);
         assert_eq!(chunks.len(), 3);
         assert!(chunks.iter().all(|c| c.count == 3));
-        assert!(a.enqueue_skin_chunks(&"0".repeat(64), &bytes).is_err(), "the hash must match the bytes");
+        assert!(
+            a.enqueue_skin_chunks(&"0".repeat(64), &bytes).is_err(),
+            "the hash must match the bytes"
+        );
     }
 
     #[test]
     fn partial_chunks_hold_skin() {
         let a = store("device-a");
-        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES * 2 + 9).map(|i| (i % 251) as u8).collect();
+        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES * 2 + 9)
+            .map(|i| (i % 251) as u8)
+            .collect();
         let sha = sha256_hex(&bytes);
         a.enqueue_skin_chunks(&sha, &bytes).unwrap();
         let chunks = chunks_of(&a);
         let b = store("device-b");
-        b.apply_synced_skin("device-a", &payload("user-x-1", 1, "device-a", &[("big.png", &sha)])).unwrap();
+        b.apply_synced_skin(
+            "device-a",
+            &payload("user-x-1", 1, "device-a", &[("big.png", &sha)]),
+        )
+        .unwrap();
         b.apply_synced_skin_chunk(&chunks[0]).unwrap();
         b.apply_synced_skin_chunk(&chunks[2]).unwrap();
         // Two of three: held, and nothing half-written is offered.
@@ -458,7 +598,11 @@ mod tests {
         // Applied: no longer offered, until a newer version arrives.
         b.mark_skin_applied("user-x-1", 1, "device-a").unwrap();
         assert!(b.synced_skins_ready().unwrap().is_empty());
-        b.apply_synced_skin("device-a", &payload("user-x-1", 2, "device-a", &[("big.png", &sha)])).unwrap();
+        b.apply_synced_skin(
+            "device-a",
+            &payload("user-x-1", 2, "device-a", &[("big.png", &sha)]),
+        )
+        .unwrap();
         assert_eq!(b.synced_skins_ready().unwrap().len(), 1);
     }
 
@@ -466,20 +610,42 @@ mod tests {
     fn a_corrupt_image_is_dropped_whole() {
         let b = store("device-b");
         let sha = sha256_hex(b"the real bytes");
-        let forged = SkinImageChunk { sha256: sha.clone(), index: 0, count: 1, data: STANDARD.encode(b"other bytes") };
+        let forged = SkinImageChunk {
+            sha256: sha.clone(),
+            index: 0,
+            count: 1,
+            data: STANDARD.encode(b"other bytes"),
+        };
         b.apply_synced_skin_chunk(&forged).unwrap();
         assert_eq!(b.synced_image(&sha).unwrap(), None);
-        let real = SkinImageChunk { data: STANDARD.encode(b"the real bytes"), ..forged };
+        let real = SkinImageChunk {
+            data: STANDARD.encode(b"the real bytes"),
+            ..forged
+        };
         b.apply_synced_skin_chunk(&real).unwrap();
-        assert_eq!(b.synced_image(&sha).unwrap().as_deref(), Some(&b"the real bytes"[..]));
+        assert_eq!(
+            b.synced_image(&sha).unwrap().as_deref(),
+            Some(&b"the real bytes"[..])
+        );
         // Out-of-range pieces are ignored.
-        b.apply_synced_skin_chunk(&SkinImageChunk { sha256: sha256_hex(b"x"), index: 3, count: 2, data: String::new() }).unwrap();
+        b.apply_synced_skin_chunk(&SkinImageChunk {
+            sha256: sha256_hex(b"x"),
+            index: 3,
+            count: 2,
+            data: String::new(),
+        })
+        .unwrap();
     }
 
     #[test]
     fn a_deletion_is_ready_without_its_images() {
         let b = store("device-b");
-        let mut gone = payload("user-x-1", 5, "device-a", &[("a.png", &sha256_hex(b"never sent"))]);
+        let mut gone = payload(
+            "user-x-1",
+            5,
+            "device-a",
+            &[("a.png", &sha256_hex(b"never sent"))],
+        );
         gone.deleted = true;
         b.apply_synced_skin("device-a", &gone).unwrap();
         assert_eq!(b.synced_skins_ready().unwrap(), vec![gone]);
@@ -503,11 +669,24 @@ mod tests {
         let own = b"made here".to_vec();
         a.enqueue_skin_chunks(&sha256_hex(&own), &own).unwrap();
         let received = b"made elsewhere";
-        a.apply_synced_skin_chunk(&SkinImageChunk { sha256: sha256_hex(received), index: 0, count: 1, data: STANDARD.encode(received) }).unwrap();
+        a.apply_synced_skin_chunk(&SkinImageChunk {
+            sha256: sha256_hex(received),
+            index: 0,
+            count: 1,
+            data: STANDARD.encode(received),
+        })
+        .unwrap();
         a.record_skin_peer("device-b").unwrap();
         assert!(a.take_skin_repush_request().unwrap());
-        assert!(a.enqueue_skin_chunks(&sha256_hex(&own), &own).unwrap(), "own image resent");
-        assert!(!a.enqueue_skin_chunks(&sha256_hex(received), received).unwrap(), "a received image is its maker's to resend");
+        assert!(
+            a.enqueue_skin_chunks(&sha256_hex(&own), &own).unwrap(),
+            "own image resent"
+        );
+        assert!(
+            !a.enqueue_skin_chunks(&sha256_hex(received), received)
+                .unwrap(),
+            "a received image is its maker's to resend"
+        );
         assert_eq!(chunks_of(&a).len(), 2);
     }
 
@@ -521,7 +700,8 @@ mod tests {
     #[test]
     fn a_store_with_no_device_id_enqueues_nothing() {
         let s = Store::open_in_memory().unwrap();
-        s.enqueue_skin_row(&payload("user-x-1", 1, "d", &[])).unwrap();
+        s.enqueue_skin_row(&payload("user-x-1", 1, "d", &[]))
+            .unwrap();
         assert!(!s.enqueue_skin_chunks(&sha256_hex(b"x"), b"x").unwrap());
         assert!(outbox(&s, OUTBOX_ROW_TYPE_SKIN).is_empty());
     }

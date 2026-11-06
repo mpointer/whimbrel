@@ -37,7 +37,11 @@ impl Store {
     /// recording, another device's meeting (or this device's id unknown), or `keep_ms` not
     /// inside `(0, meeting_length_ms)`. One transaction; the meeting row is
     /// restamped and re-enqueued so peers get the new end and the trim marker.
-    pub fn trim_meeting(&self, meeting_id: i64, keep_ms: i64) -> rusqlite::Result<Option<TrimResult>> {
+    pub fn trim_meeting(
+        &self,
+        meeting_id: i64,
+        keep_ms: i64,
+    ) -> rusqlite::Result<Option<TrimResult>> {
         let Some(meeting) = self.get_meeting(meeting_id)? else {
             return Ok(None);
         };
@@ -64,7 +68,9 @@ impl Store {
             params![meeting_id],
         )?;
         let parts = self.meeting_parts(meeting_id)?;
-        let origin = parts.first().map_or(meeting.start_unix_ms, |p| p.start_unix_ms);
+        let origin = parts
+            .first()
+            .map_or(meeting.start_unix_ms, |p| p.start_unix_ms);
         let cut = origin + keep_ms;
         let removed_parts: Vec<i64> = parts
             .iter()
@@ -109,9 +115,14 @@ impl Store {
         // The row repeats a part's file paths; one that was a removed part's moves to the last
         // kept part's (NULL when it has none).
         let kept_last = parts.iter().rev().find(|p| p.start_unix_ms < cut);
-        let removed = |path: &Option<String>, of: fn(&crate::meeting_parts::MeetingPart) -> &Option<String>| {
-            path.is_some() && parts.iter().any(|p| p.start_unix_ms >= cut && of(p) == path)
-        };
+        let removed =
+            |path: &Option<String>,
+             of: fn(&crate::meeting_parts::MeetingPart) -> &Option<String>| {
+                path.is_some()
+                    && parts
+                        .iter()
+                        .any(|p| p.start_unix_ms >= cut && of(p) == path)
+            };
         let audio_path = if removed(&meeting.audio_path, |p| &p.audio_path) {
             kept_last.and_then(|p| p.audio_path.clone())
         } else {
@@ -130,7 +141,11 @@ impl Store {
         )?;
         self.enqueue_meeting_outbox(&tx, meeting_id, local_seq)?;
         tx.commit()?;
-        Ok(Some(TrimResult { removed_parts, spanning_part, removed_snapshot_paths }))
+        Ok(Some(TrimResult {
+            removed_parts,
+            spanning_part,
+            removed_snapshot_paths,
+        }))
     }
 
     /// The meeting's length on the transcript clock: the longest of its recorded span
@@ -142,7 +157,9 @@ impl Store {
             return Ok(0);
         };
         let parts = self.meeting_parts(meeting_id)?;
-        let origin = parts.first().map_or(meeting.start_unix_ms, |p| p.start_unix_ms);
+        let origin = parts
+            .first()
+            .map_or(meeting.start_unix_ms, |p| p.start_unix_ms);
         let span = meeting.end_unix_ms.map_or(0, |e| e - origin);
         let (segment, live): (Option<i64>, Option<i64>) = self.conn.query_row(
             "SELECT (SELECT MAX(start_cs) FROM transcript_segment WHERE meeting_id = ?1) * 10, \
@@ -216,7 +233,10 @@ impl Store {
 mod tests {
     use super::*;
     use crate::live::NewLiveSegment;
-    use crate::{AppliedMeeting, AppliedTranscriptSegment, MeetingTrigger, NewMeeting, NewMeetingSnapshot, NewTranscriptSegment};
+    use crate::{
+        AppliedMeeting, AppliedTranscriptSegment, MeetingTrigger, NewMeeting, NewMeetingSnapshot,
+        NewTranscriptSegment,
+    };
 
     fn count(s: &Store, sql: &str, id: i64) -> i64 {
         s.conn.query_row(sql, [id], |r| r.get(0)).unwrap()
@@ -242,11 +262,20 @@ mod tests {
     fn three_parts(s: &Store) -> i64 {
         s.set_own_device_id("d");
         let id = insert(s, "d", MeetingStatus::Recording);
-        for (n, (start, end)) in [(1_000, 50_000), (61_000, 100_000), (121_000, 190_000)].into_iter().enumerate() {
+        for (n, (start, end)) in [(1_000, 50_000), (61_000, 100_000), (121_000, 190_000)]
+            .into_iter()
+            .enumerate()
+        {
             let n = n as i64 + 1;
             s.begin_meeting_part(id, start, None).unwrap();
-            s.complete_meeting_part(id, n, end, Some(&format!("/a/{n}.caf"))).unwrap();
-            let seg = NewTranscriptSegment { meeting_id: id, start_cs: 10, speaker_label: "Me".into(), text: format!("s{n}") };
+            s.complete_meeting_part(id, n, end, Some(&format!("/a/{n}.caf")))
+                .unwrap();
+            let seg = NewTranscriptSegment {
+                meeting_id: id,
+                start_cs: 10,
+                speaker_label: "Me".into(),
+                text: format!("s{n}"),
+            };
             s.replace_part_transcript_segments(id, n, &[seg]).unwrap();
             s.insert_meeting_snapshot(&NewMeetingSnapshot {
                 meeting_id: id,
@@ -276,18 +305,35 @@ mod tests {
     fn trim_cuts_spanning_part_and_drops_later_parts() {
         let s = Store::open_in_memory().unwrap();
         let id = three_parts(&s);
-        assert_eq!(s.meeting_length_ms(id).unwrap(), 189_000, "measured from part 1, not the scheduled start");
+        assert_eq!(
+            s.meeting_length_ms(id).unwrap(),
+            189_000,
+            "measured from part 1, not the scheduled start"
+        );
 
         // Cut at 1_000 + 80_000 = 81_000, 20 s into part 2.
         let r = s.trim_meeting(id, 80_000).unwrap().unwrap();
         assert_eq!(r.removed_parts, [3]);
         assert_eq!(r.spanning_part, Some((2, 20_000)));
         assert_eq!(r.removed_snapshot_paths, ["/s/3.png"]);
-        let parts: Vec<_> = s.meeting_parts(id).unwrap().iter().map(|p| (p.part_index, p.end_unix_ms)).collect();
-        assert_eq!(parts, [(1, Some(50_000)), (2, Some(81_000))], "part 1 whole, part 2 ends at the cut");
+        let parts: Vec<_> = s
+            .meeting_parts(id)
+            .unwrap()
+            .iter()
+            .map(|p| (p.part_index, p.end_unix_ms))
+            .collect();
+        assert_eq!(
+            parts,
+            [(1, Some(50_000)), (2, Some(81_000))],
+            "part 1 whole, part 2 ends at the cut"
+        );
         assert_eq!(texts(&s, id), ["s1", "s2"]);
         assert_eq!(
-            count(&s, "SELECT COUNT(*) FROM items WHERE kind = 'transcript' AND thread_id = ?1", id),
+            count(
+                &s,
+                "SELECT COUNT(*) FROM items WHERE kind = 'transcript' AND thread_id = ?1",
+                id
+            ),
             2,
             "the removed segment's search mirror goes too"
         );
@@ -306,25 +352,53 @@ mod tests {
         for keep in [189_000, 500_000, 0, -5] {
             assert_eq!(s.trim_meeting(id, keep).unwrap(), None, "keep {keep}");
         }
-        assert_eq!(s.trim_meeting(9_999, 1_000).unwrap(), None, "missing meeting");
+        assert_eq!(
+            s.trim_meeting(9_999, 1_000).unwrap(),
+            None,
+            "missing meeting"
+        );
 
         let recording = insert(&s, "d", MeetingStatus::Recording);
         s.begin_meeting_part(recording, 1_000, None).unwrap();
-        assert_eq!(s.trim_meeting(recording, 1).unwrap(), None, "still recording");
+        assert_eq!(
+            s.trim_meeting(recording, 1).unwrap(),
+            None,
+            "still recording"
+        );
         s.complete_meeting(recording, 60_000, None).unwrap();
         s.reopen_meeting(recording).unwrap();
-        assert_eq!(s.trim_meeting(recording, 1).unwrap(), None, "reopened keeps its end but is recording");
+        assert_eq!(
+            s.trim_meeting(recording, 1).unwrap(),
+            None,
+            "reopened keeps its end but is recording"
+        );
 
         let theirs = insert(&s, "peer", MeetingStatus::Recording);
-        s.conn.execute("UPDATE meeting SET status = 'completed', end_unix_ms = 60000 WHERE id = ?1", [theirs]).unwrap();
-        assert_eq!(s.trim_meeting(theirs, 1_000).unwrap(), None, "another device's meeting");
+        s.conn
+            .execute(
+                "UPDATE meeting SET status = 'completed', end_unix_ms = 60000 WHERE id = ?1",
+                [theirs],
+            )
+            .unwrap();
+        assert_eq!(
+            s.trim_meeting(theirs, 1_000).unwrap(),
+            None,
+            "another device's meeting"
+        );
 
         let unknown = Store::open_in_memory().unwrap();
         let mine = three_parts(&unknown);
         *unknown.own_device_id.borrow_mut() = None;
-        assert_eq!(unknown.trim_meeting(mine, 80_000).unwrap(), None, "this device's id unknown");
+        assert_eq!(
+            unknown.trim_meeting(mine, 80_000).unwrap(),
+            None,
+            "this device's id unknown"
+        );
 
-        assert_eq!(s.get_meeting(id).unwrap().unwrap().end_unix_ms, Some(190_000));
+        assert_eq!(
+            s.get_meeting(id).unwrap().unwrap().end_unix_ms,
+            Some(190_000)
+        );
         assert_eq!(texts(&s, id).len(), 3);
         assert_eq!(s.meeting_parts(id).unwrap().len(), 3);
         assert_eq!(s.meeting_trim(id).unwrap(), None);
@@ -336,7 +410,10 @@ mod tests {
         let id = three_parts(&s);
         let before = s.list_outbox_operations().unwrap().len();
         s.trim_meeting(id, 80_000).unwrap().unwrap();
-        assert_eq!(s.get_meeting(id).unwrap().unwrap().end_unix_ms, Some(81_000));
+        assert_eq!(
+            s.get_meeting(id).unwrap().unwrap().end_unix_ms,
+            Some(81_000)
+        );
         assert_eq!(s.meeting_trim(id).unwrap(), Some((0, 80_000)));
 
         let ops = s.list_outbox_operations().unwrap();
@@ -344,23 +421,46 @@ mod tests {
         let (_, row_type, _, payload) = ops.last().unwrap();
         assert_eq!(row_type, "meeting");
         let pushed: AppliedMeeting = serde_json::from_str(payload).unwrap();
-        assert_eq!((pushed.end_unix_ms, pushed.trimmed_keep_ms), (Some(81_000), Some(80_000)));
+        assert_eq!(
+            (pushed.end_unix_ms, pushed.trimmed_keep_ms),
+            (Some(81_000), Some(80_000))
+        );
         let pushed_legacy = s.unpushed_meeting_rows("d", 0).unwrap();
-        assert!(matches!(&pushed_legacy[0], crate::SyncableRow::Meeting { meeting, .. } if meeting.trimmed_keep_ms == Some(80_000)));
+        assert!(
+            matches!(&pushed_legacy[0], crate::SyncableRow::Meeting { meeting, .. } if meeting.trimmed_keep_ms == Some(80_000))
+        );
 
         // A peer holding legacy segment rows drops those past the trim when the row arrives,
         // and an older payload without the marker never un-trims it.
         let peer = Store::open_in_memory().unwrap();
-        let untrimmed = AppliedMeeting { trimmed_keep_ms: None, end_unix_ms: Some(190_000), ..pushed.clone() };
+        let untrimmed = AppliedMeeting {
+            trimmed_keep_ms: None,
+            end_unix_ms: Some(190_000),
+            ..pushed.clone()
+        };
         let local = peer.apply_synced_meeting("d", 1, None, &untrimmed).unwrap();
         for (seq, cs) in [(2, 10), (3, 12_010)] {
-            let seg = AppliedTranscriptSegment { start_cs: cs, speaker_label: "Me".into(), text: format!("at {cs}") };
-            peer.apply_synced_transcript_segment(seq, local, &seg).unwrap();
+            let seg = AppliedTranscriptSegment {
+                start_cs: cs,
+                speaker_label: "Me".into(),
+                text: format!("at {cs}"),
+            };
+            peer.apply_synced_transcript_segment(seq, local, &seg)
+                .unwrap();
         }
-        peer.apply_synced_meeting("d", 4, Some(local), &pushed).unwrap();
+        peer.apply_synced_meeting("d", 4, Some(local), &pushed)
+            .unwrap();
         assert_eq!(texts(&peer, local), ["at 10"]);
-        assert_eq!(count(&peer, "SELECT COUNT(*) FROM items WHERE kind = 'transcript' AND thread_id = ?1", local), 1);
-        peer.apply_synced_meeting("d", 5, Some(local), &untrimmed).unwrap();
+        assert_eq!(
+            count(
+                &peer,
+                "SELECT COUNT(*) FROM items WHERE kind = 'transcript' AND thread_id = ?1",
+                local
+            ),
+            1
+        );
+        peer.apply_synced_meeting("d", 5, Some(local), &untrimmed)
+            .unwrap();
         assert_eq!(peer.meeting_trim(local).unwrap(), Some((0, 80_000)));
     }
 
@@ -378,7 +478,8 @@ mod tests {
             speaker_label: "Me".into(),
             text: text.into(),
         };
-        s.insert_live_segments(&[live(100, "early"), live(900, "late")]).unwrap();
+        s.insert_live_segments(&[live(100, "early"), live(900, "late")])
+            .unwrap();
         s.insert_meeting_snapshot(&NewMeetingSnapshot {
             meeting_id: id,
             captured_unix_ms: 130_000,
@@ -390,12 +491,32 @@ mod tests {
         .unwrap();
         // Cut at 126_000: 5 s into part 3. "early" is at 121 s, "late" at 129 s.
         let r = s.trim_meeting(id, 125_000).unwrap().unwrap();
-        assert_eq!((r.spanning_part, r.removed_snapshot_paths), (Some((3, 5_000)), vec!["/s/late.png".to_string()]));
-        let kept: Vec<String> = s.list_live_segments(id).unwrap().into_iter().map(|l| l.text).collect();
+        assert_eq!(
+            (r.spanning_part, r.removed_snapshot_paths),
+            (Some((3, 5_000)), vec!["/s/late.png".to_string()])
+        );
+        let kept: Vec<String> = s
+            .list_live_segments(id)
+            .unwrap()
+            .into_iter()
+            .map(|l| l.text)
+            .collect();
         assert_eq!(kept, ["early"]);
-        let snaps: Vec<String> = s.list_meeting_snapshots(id).unwrap().into_iter().map(|x| x.file_path).collect();
+        let snaps: Vec<String> = s
+            .list_meeting_snapshots(id)
+            .unwrap()
+            .into_iter()
+            .map(|x| x.file_path)
+            .collect();
         assert_eq!(snaps, ["/s/1.png", "/s/2.png", "/s/3.png"]);
-        assert_eq!(count(&s, "SELECT COUNT(*) FROM items WHERE kind = 'snapshot' AND thread_id = ?1", id), 3);
+        assert_eq!(
+            count(
+                &s,
+                "SELECT COUNT(*) FROM items WHERE kind = 'snapshot' AND thread_id = ?1",
+                id
+            ),
+            3
+        );
     }
 
     #[test]
@@ -410,7 +531,10 @@ mod tests {
             .unwrap();
         s.trim_meeting(id, 80_000).unwrap().unwrap();
         let m = s.get_meeting(id).unwrap().unwrap();
-        assert_eq!((m.audio_path.as_deref(), m.transcript_path.as_deref()), (Some("/a/2.caf"), Some("/t/2.txt")));
+        assert_eq!(
+            (m.audio_path.as_deref(), m.transcript_path.as_deref()),
+            (Some("/a/2.caf"), Some("/t/2.txt"))
+        );
 
         // The last kept part has no audio: the row's path is cleared, not left on a removed file.
         let s = Store::open_in_memory().unwrap();
@@ -427,9 +551,17 @@ mod tests {
         // A path that isn't a removed part's is kept.
         let s = Store::open_in_memory().unwrap();
         let id = three_parts(&s);
-        s.conn.execute("UPDATE meeting SET audio_path = '/a/1.caf' WHERE id = ?1", [id]).unwrap();
+        s.conn
+            .execute(
+                "UPDATE meeting SET audio_path = '/a/1.caf' WHERE id = ?1",
+                [id],
+            )
+            .unwrap();
         s.trim_meeting(id, 80_000).unwrap().unwrap();
-        assert_eq!(s.get_meeting(id).unwrap().unwrap().audio_path.as_deref(), Some("/a/1.caf"));
+        assert_eq!(
+            s.get_meeting(id).unwrap().unwrap().audio_path.as_deref(),
+            Some("/a/1.caf")
+        );
     }
 
     #[test]
@@ -437,9 +569,19 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         let id = three_parts(&s);
         s.trim_meeting(id, 80_000).unwrap().unwrap(); // cut 20 s into part 2
-        let seg = |start_cs, text: &str| NewTranscriptSegment { meeting_id: id, start_cs, speaker_label: "Me".into(), text: text.into() };
+        let seg = |start_cs, text: &str| NewTranscriptSegment {
+            meeting_id: id,
+            start_cs,
+            speaker_label: "Me".into(),
+            text: text.into(),
+        };
         // "Transcribe again" on part 2's audio (as if its truncation had failed): part-relative times.
-        s.replace_part_transcript_segments(id, 2, &[seg(1_000, "kept"), seg(2_000, "at cut"), seg(3_000, "past")]).unwrap();
+        s.replace_part_transcript_segments(
+            id,
+            2,
+            &[seg(1_000, "kept"), seg(2_000, "at cut"), seg(3_000, "past")],
+        )
+        .unwrap();
         // Meeting-clock insert: 85 s is past the cut.
         s.insert_transcript_segments(&[seg(8_500, "late")]).unwrap();
         assert_eq!(texts(&s, id), ["s1", "kept"]);
@@ -454,8 +596,14 @@ mod tests {
             speaker_label: "Me".into(),
             text: text.into(),
         };
-        s.insert_live_segments(&[live(1_900, "live kept"), live(2_000, "live at cut")]).unwrap();
-        let kept: Vec<String> = s.list_live_segments(id).unwrap().into_iter().map(|l| l.text).collect();
+        s.insert_live_segments(&[live(1_900, "live kept"), live(2_000, "live at cut")])
+            .unwrap();
+        let kept: Vec<String> = s
+            .list_live_segments(id)
+            .unwrap()
+            .into_iter()
+            .map(|l| l.text)
+            .collect();
         assert_eq!(kept, ["live kept"]);
     }
 
@@ -464,8 +612,13 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         let id = three_parts(&s);
         // keep 60_000 puts the cut at 61_000, exactly where part 2 starts.
-        s.insert_transcript_segments(&[NewTranscriptSegment { meeting_id: id, start_cs: 6_000, speaker_label: "Me".into(), text: "edge".into() }])
-            .unwrap();
+        s.insert_transcript_segments(&[NewTranscriptSegment {
+            meeting_id: id,
+            start_cs: 6_000,
+            speaker_label: "Me".into(),
+            text: "edge".into(),
+        }])
+        .unwrap();
         s.insert_meeting_snapshot(&NewMeetingSnapshot {
             meeting_id: id,
             captured_unix_ms: 61_000,
@@ -475,11 +628,21 @@ mod tests {
             ocr_text: "edge slide".into(),
         })
         .unwrap();
-        let live = NewLiveSegment { meeting_id: id, channel: "mic".into(), chunk_index: 0, start_cs: 0, end_cs: 0, speaker_label: "Me".into(), text: "x".into() };
+        let live = NewLiveSegment {
+            meeting_id: id,
+            channel: "mic".into(),
+            chunk_index: 0,
+            start_cs: 0,
+            end_cs: 0,
+            speaker_label: "Me".into(),
+            text: "x".into(),
+        };
         s.insert_live_segments(&[live]).unwrap();
         let r = s.trim_meeting(id, 60_000).unwrap().unwrap();
         assert_eq!((r.removed_parts, r.spanning_part), (vec![2, 3], None));
-        assert!(r.removed_snapshot_paths.contains(&"/s/edge.png".to_string()));
+        assert!(r
+            .removed_snapshot_paths
+            .contains(&"/s/edge.png".to_string()));
         assert_eq!(texts(&s, id), ["s1"], "the segment at exactly keep goes");
         assert!(s.list_live_segments(id).unwrap().is_empty());
         assert_eq!(s.meeting_trim(id).unwrap(), Some((0, 60_000)));
@@ -492,15 +655,25 @@ mod tests {
         let id = insert(&s, "d", MeetingStatus::Recording);
         s.begin_meeting_part(id, 1_000, Some("zoom:1")).unwrap();
         s.complete_meeting(id, 60_000, None).unwrap();
-        assert_eq!(s.find_continuable_meeting("zoom:1", 61_000).unwrap(), Some(id));
+        assert_eq!(
+            s.find_continuable_meeting("zoom:1", 61_000).unwrap(),
+            Some(id)
+        );
         assert!(!s.is_trimmed(id).unwrap());
 
         s.trim_meeting(id, 30_000).unwrap().unwrap();
         assert!(s.is_trimmed(id).unwrap());
-        assert_eq!(s.find_continuable_meeting("zoom:1", 32_000).unwrap(), None, "a rejoin starts a new meeting");
+        assert_eq!(
+            s.find_continuable_meeting("zoom:1", 32_000).unwrap(),
+            None,
+            "a rejoin starts a new meeting"
+        );
         assert!(s.reopen_meeting(id).is_err());
         assert!(s.begin_meeting_part(id, 40_000, None).is_err());
-        assert_eq!(s.get_meeting(id).unwrap().unwrap().status, MeetingStatus::Completed);
+        assert_eq!(
+            s.get_meeting(id).unwrap().unwrap().status,
+            MeetingStatus::Completed
+        );
         assert_eq!(s.meeting_parts(id).unwrap().len(), 1);
 
         // Nor merged into: the same-titled meeting right after it isn't offered the merge.
@@ -532,18 +705,49 @@ mod tests {
                 [id],
             )
             .unwrap();
-        let seg = |start_cs, text: &str| NewTranscriptSegment { meeting_id: id, start_cs, speaker_label: "Me".into(), text: text.into() };
-        s.insert_transcript_segments(&[seg(1_000, "kept"), seg(4_000, "past")]).unwrap();
-        assert_eq!(count(&s, "SELECT COUNT(*) FROM meeting_part WHERE meeting_id = ?1", id), 0);
+        let seg = |start_cs, text: &str| NewTranscriptSegment {
+            meeting_id: id,
+            start_cs,
+            speaker_label: "Me".into(),
+            text: text.into(),
+        };
+        s.insert_transcript_segments(&[seg(1_000, "kept"), seg(4_000, "past")])
+            .unwrap();
+        assert_eq!(
+            count(
+                &s,
+                "SELECT COUNT(*) FROM meeting_part WHERE meeting_id = ?1",
+                id
+            ),
+            0
+        );
 
         let r = s.trim_meeting(id, 30_000).unwrap().unwrap();
-        assert_eq!((r.removed_parts, r.spanning_part), (vec![], Some((1, 30_000))));
+        assert_eq!(
+            (r.removed_parts, r.spanning_part),
+            (vec![], Some((1, 30_000)))
+        );
         let parts = s.meeting_parts(id).unwrap();
         assert_eq!(parts.len(), 1);
         let p = &parts[0];
-        assert_eq!((p.part_index, p.start_unix_ms, p.end_unix_ms), (1, 0, Some(30_000)), "part 1 is the row's span, cut");
-        assert_eq!((p.audio_path.as_deref(), p.transcript_path.as_deref()), (Some("/a/old.caf"), Some("/t/old.txt")));
-        assert_eq!(count(&s, "SELECT transcribed FROM meeting_part WHERE meeting_id = ?1", id), 1, "it was transcribed");
+        assert_eq!(
+            (p.part_index, p.start_unix_ms, p.end_unix_ms),
+            (1, 0, Some(30_000)),
+            "part 1 is the row's span, cut"
+        );
+        assert_eq!(
+            (p.audio_path.as_deref(), p.transcript_path.as_deref()),
+            (Some("/a/old.caf"), Some("/t/old.txt"))
+        );
+        assert_eq!(
+            count(
+                &s,
+                "SELECT transcribed FROM meeting_part WHERE meeting_id = ?1",
+                id
+            ),
+            1,
+            "it was transcribed"
+        );
         assert_eq!(texts(&s, id), ["kept"]);
     }
 
@@ -566,7 +770,10 @@ mod tests {
         };
         let first = meeting(0, 60_000);
         let second = meeting(61_000, 120_000);
-        assert_eq!(s.previous_mergeable_meeting(second, "d").unwrap(), Some(first));
+        assert_eq!(
+            s.previous_mergeable_meeting(second, "d").unwrap(),
+            Some(first)
+        );
 
         // The later one trimmed: it can't be merged into the one before it either.
         s.trim_meeting(second, 30_000).unwrap().unwrap();

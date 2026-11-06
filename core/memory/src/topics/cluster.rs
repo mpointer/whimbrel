@@ -827,22 +827,37 @@ mod tests {
         ))
         .unwrap();
         let vec_n = || -> i64 {
-            c.query_row("SELECT vec_n FROM topic_stats WHERE topic_id = ?1", [t], |r| r.get(0))
-                .unwrap()
+            c.query_row(
+                "SELECT vec_n FROM topic_stats WHERE topic_id = ?1",
+                [t],
+                |r| r.get(0),
+            )
+            .unwrap()
         };
         let orphan = || -> i64 {
-            c.query_row("SELECT COUNT(*) FROM entity WHERE key = 'orphan'", [], |r| r.get(0))
-                .unwrap()
+            c.query_row(
+                "SELECT COUNT(*) FROM entity WHERE key = 'orphan'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
         };
         assert!(!run_topic_cluster_job(&f.store, 200).unwrap());
         assert_eq!((vec_n(), orphan()), (-1, 1), "no centroid load, no prune");
-        c.execute("INSERT INTO kv_meta (key, value) VALUES ('topic_prune_dirty', '1')", [])
-            .unwrap();
+        c.execute(
+            "INSERT INTO kv_meta (key, value) VALUES ('topic_prune_dirty', '1')",
+            [],
+        )
+        .unwrap();
         assert!(!run_topic_cluster_job(&f.store, 200).unwrap());
         assert_eq!((vec_n(), orphan()), (-1, 0), "flag set: pruned");
         assert_eq!(
-            c.query_row("SELECT COUNT(*) FROM kv_meta WHERE key = 'topic_prune_dirty'", [], |r| r.get::<_, i64>(0))
-                .unwrap(),
+            c.query_row(
+                "SELECT COUNT(*) FROM kv_meta WHERE key = 'topic_prune_dirty'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
             0,
             "flag cleared"
         );

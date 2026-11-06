@@ -29,6 +29,14 @@ enum SyncTiming {
         return consecutiveFailures > 0 || stuck
     }
 
+    /// Changes waiting to send longer than this are worth showing (#590: a Mac sent nothing for four days).
+    nonisolated static let backlogStalledSeconds: TimeInterval = 60 * 60
+
+    nonisolated static func backlogIsStalled(pending: Int64, oldest: Date?, now: Date) -> Bool {
+        guard pending > 0, let oldest else { return false }
+        return now.timeIntervalSince(oldest) >= backlogStalledSeconds
+    }
+
     /// The Worker's Turso token lasts one day (`DEVICE_TOKEN_EXPIRATION`); renew at half,
     /// matching the Windows app's `REAUTH_EVERY`.
     nonisolated static let renewAfterSeconds: TimeInterval = 12 * 60 * 60

@@ -119,6 +119,23 @@ struct MeetingDetailView: View {
             loadedMeeting = nil
             loadMeetingIfNeeded()
         }
+        // Forgotten on another device (or otherwise deleted) while open: show "no longer available".
+        .onReceive(NotificationCenter.default.publisher(for: MeetingLifecycle.meetingsDidChange)) { _ in
+            closeIfMeetingGone()
+        }
+    }
+
+    private func closeIfMeetingGone() {
+        guard loadedMeeting != nil, let store = appState.coreStore else { return }
+        let id = meetingId
+        CoreMemoryStore.accessQueue.async {
+            let gone = store.getMeeting(id: id) == nil
+            DispatchQueue.main.async {
+                guard gone else { return }
+                loadedMeeting = nil
+                loadFailed = true
+            }
+        }
     }
 
     private func loadMeetingIfNeeded() {

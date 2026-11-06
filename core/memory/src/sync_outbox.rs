@@ -107,8 +107,64 @@ pub(crate) fn ensure_sync_outbox_schema(conn: &Connection) -> rusqlite::Result<(
          CREATE INDEX IF NOT EXISTS idx_sync_outbox_lease
            ON sync_outbox(state, lease_expires_at_unix_ms);
          CREATE INDEX IF NOT EXISTS idx_sync_outbox_aggregate
-           ON sync_outbox(row_type, aggregate_id);",
+           ON sync_outbox(row_type, aggregate_id);
+         CREATE TABLE IF NOT EXISTS sync_round (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            at_unix_ms INTEGER NOT NULL,
+            error TEXT,
+            outbox_pending INTEGER NOT NULL
+         );",
     )
+}
+
+/// How many sync rounds `sync_round` keeps: the newest few hundred show whether rounds run and where
+/// they stop, and cost nothing on disk.
+const SYNC_ROUNDS_KEPT: i64 = 500;
+
+/// What waits to be sent: operations not yet delivered (blocked ones wait on a parent, on purpose)
+/// and the oldest one's creation time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct OutboxBacklog {
+    pub pending: i64,
+    pub oldest_unix_ms: Option<i64>,
+}
+
+pub fn outbox_backlog(conn: &Connection, connector: &str) -> rusqlite::Result<OutboxBacklog> {
+    conn.query_row(
+        "SELECT COUNT(*), MIN(created_at_unix_ms) FROM sync_outbox
+         WHERE connector = ?1 AND state IN ('pending', 'leased')",
+        params![connector],
+        |r| Ok(OutboxBacklog { pending: r.get(0)?, oldest_unix_ms: r.get(1)? }),
+    )
+}
+
+/// One content-sync round as recorded on disk, so a stall can be read after the system log rolls over.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SyncRound {
+    pub at_unix_ms: i64,
+    /// `None` for a round that succeeded; else the error and the phase it stopped in.
+    pub error: Option<String>,
+    pub outbox_pending: i64,
+}
+
+/// Records a round with the outbox backlog after it, keeping the newest [`SYNC_ROUNDS_KEPT`].
+pub fn record_sync_round(conn: &Connection, connector: &str, at_unix_ms: i64, error: Option<&str>) -> rusqlite::Result<()> {
+    let pending = outbox_backlog(conn, connector)?.pending;
+    conn.execute(
+        "INSERT INTO sync_round (at_unix_ms, error, outbox_pending) VALUES (?1, ?2, ?3)",
+        params![at_unix_ms, error, pending],
+    )?;
+    conn.execute("DELETE FROM sync_round WHERE id <= last_insert_rowid() - ?1", params![SYNC_ROUNDS_KEPT])?;
+    Ok(())
+}
+
+/// The newest rounds, newest first.
+pub fn recent_sync_rounds(conn: &Connection, limit: i64) -> rusqlite::Result<Vec<SyncRound>> {
+    let mut st = conn.prepare("SELECT at_unix_ms, error, outbox_pending FROM sync_round ORDER BY id DESC LIMIT ?1")?;
+    let rows = st.query_map(params![limit], |r| {
+        Ok(SyncRound { at_unix_ms: r.get(0)?, error: r.get(1)?, outbox_pending: r.get(2)? })
+    })?;
+    rows.collect()
 }
 
 /// Must be called inside the caller's mutation transaction — never a standalone commit.
@@ -161,7 +217,8 @@ pub fn claim_due_outbox_batch(
               AND state IN ('pending', 'leased')
               AND next_attempt_at_unix_ms <= ?2
               AND (state = 'pending' OR lease_expires_at_unix_ms <= ?2)
-            ORDER BY created_at_unix_ms, local_seq
+            -- A forget goes first: behind a backlog it would wait hours while the meeting stays on other devices.
+            ORDER BY row_type = 'meeting_forgotten' DESC, created_at_unix_ms, local_seq
             LIMIT ?3
          )
          UPDATE sync_outbox
@@ -386,6 +443,52 @@ mod tests {
             claim_due_outbox_batch(&conn, "kestrel_data_plane", "worker-2", 2001, 32001, 10)
                 .unwrap();
         assert!(second.is_empty());
+    }
+
+    #[test]
+    fn a_forget_is_claimed_ahead_of_an_older_backlog() {
+        let mut conn = setup();
+        let tx = conn.transaction().unwrap();
+        for seq in 1..=5 {
+            enqueue_outbox_tx(&tx, sample_op(seq), 1000 + seq).unwrap();
+        }
+        let forget = NewOutboxOperation {
+            row_type: "meeting_forgotten".to_string(),
+            aggregate_type: "meeting_forgotten".to_string(),
+            operation_kind: OutboxOperationKind::Tombstone,
+            ..sample_op(6)
+        };
+        let id = enqueue_outbox_tx(&tx, forget, 9000).unwrap();
+        tx.commit().unwrap();
+
+        let claimed =
+            claim_due_outbox_batch(&conn, "kestrel_data_plane", "w", 10_000, 40_000, 1).unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].operation_id, id);
+    }
+
+    #[test]
+    fn backlog_counts_undelivered_ops_and_dates_the_oldest() {
+        let mut conn = setup();
+        assert_eq!(outbox_backlog(&conn, "kestrel_data_plane").unwrap(), OutboxBacklog { pending: 0, oldest_unix_ms: None });
+        let tx = conn.transaction().unwrap();
+        enqueue_outbox_tx(&tx, sample_op(1), 1000).unwrap();
+        enqueue_outbox_tx(&tx, sample_op(2), 2000).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(outbox_backlog(&conn, "kestrel_data_plane").unwrap(), OutboxBacklog { pending: 2, oldest_unix_ms: Some(1000) });
+    }
+
+    #[test]
+    fn sync_rounds_are_recorded_newest_first_and_pruned() {
+        let conn = setup();
+        for i in 0..SYNC_ROUNDS_KEPT + 3 {
+            record_sync_round(&conn, "kestrel_data_plane", i, (i % 2 == 1).then_some("timed out (during pull)")).unwrap();
+        }
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM sync_round", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, SYNC_ROUNDS_KEPT);
+        let newest = recent_sync_rounds(&conn, 2).unwrap();
+        assert_eq!(newest[0], SyncRound { at_unix_ms: SYNC_ROUNDS_KEPT + 2, error: None, outbox_pending: 0 });
+        assert_eq!(newest[1].error.as_deref(), Some("timed out (during pull)"));
     }
 
     /// SYNC-107 recovery half: an expired lease becomes claimable again by another

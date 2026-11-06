@@ -3614,6 +3614,17 @@ pub extern "C" fn whimbrel_meetings_recent_grouped(handle: *mut StoreHandle, lim
     }
 }
 
+/// Number of meetings after grouping copies, over every meeting (no list cap). Returns -1
+/// on a null handle or DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meetings_grouped_count(handle: *mut StoreHandle) -> i64 {
+    if handle.is_null() {
+        return -1;
+    }
+    let store = unsafe { &(*handle).0 };
+    store.grouped_meeting_count().map_or(-1, |n| n as i64)
+}
+
 /// Captures per device in [start_unix_ms, end_unix_ms), busiest first. Returns a JSON
 /// array of `{"device_id", "captures", "last_ts_unix_ms"}`, or null on a null handle or a
 /// DB error.

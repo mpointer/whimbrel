@@ -14,6 +14,8 @@ final class ContentSyncCoordinator: ObservableObject {
 
     @Published private(set) var lastSyncError: String?
     @Published private(set) var lastSyncedAt: Date?
+    /// The outbox after the last round, for "changes waiting to send" in Settings (#590).
+    @Published private(set) var outboxBacklog: CoreOutboxBacklog?
 
     private let coreStore: CoreMemoryStore?
     private let syncState: SyncState
@@ -116,7 +118,7 @@ final class ContentSyncCoordinator: ObservableObject {
         // bare `Task.detached` here would NOT provide that, since two concurrent
         // detached closures could race against the same handle. `withCheckedContinuation`
         // bridges this async function to that serial DispatchQueue.
-        let success = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+        let (success, backlog) = await withCheckedContinuation { (continuation: CheckedContinuation<(Bool, CoreOutboxBacklog?), Never>) in
             CoreMemoryStore.accessQueue.async {
                 let result = coreStore.syncContent(
                     tursoURL: tursoDatabaseUrl,
@@ -125,11 +127,12 @@ final class ContentSyncCoordinator: ObservableObject {
                     deviceId: deviceId
                 )
                 MeetingLifecycle.deleteFilesOfMeetingsForgottenElsewhere(CoreMemoryStore.takeForgottenMeetingFiles())
-                continuation.resume(returning: result)
+                continuation.resume(returning: (result, coreStore.outboxBacklog()))
             }
         }
 
-        log.log("syncNow: whimbrel_sync_content returned success=\(success, privacy: .public)")
+        outboxBacklog = backlog
+        log.log("syncNow: whimbrel_sync_content returned success=\(success, privacy: .public), outbox pending=\(backlog?.pending ?? -1, privacy: .public)")
         moreToPull = success && CoreMemoryStore.syncContentHasMoreToPull
         if success {
             consecutiveFailures = 0
