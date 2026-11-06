@@ -213,7 +213,10 @@
 		91F5CB0ADE0BB99159E4D195 /* RoutineScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3872D4BE13A6C77C504B717 /* RoutineScheduler.swift */; };
 		9252C5D7077468B931FBC39F /* LiveTranscriptSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49310B8A325EFBEE4D164C4D /* LiveTranscriptSettings.swift */; };
 		5A11B0C0FFEE0000000001B3 /* LiveQuestionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001B4 /* LiveQuestionSettings.swift */; };
+		5A11B0C0FFEE0000000001D5 /* SpeakerNamesSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001D6 /* SpeakerNamesSettings.swift */; };
+		5A11B0C0FFEE0000000001D9 /* SpeakerMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001DA /* SpeakerMenu.swift */; };
 		5A11B0C0FFEE0000000001C1 /* LiveAlertDelivery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001C2 /* LiveAlertDelivery.swift */; };
+		5A11B0C0FFEE0000000001DD /* BudgetNotices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001DE /* BudgetNotices.swift */; };
 		5A11B0C0FFEE0000000001C3 /* GmailSelfSend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001C4 /* GmailSelfSend.swift */; };
 		9275720E35279E79570539E7 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC7547CA1649B8326F2E8B0F /* Theme.swift */; };
 		92CC40953FD124BC6B42FD91 /* Skin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 601974960322F2CEEC13BFB3 /* Skin.swift */; };
@@ -235,6 +238,10 @@
 		5A11B0C0FFEE0000000000E5 /* MeetingAskFormattingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000000E6 /* MeetingAskFormattingTests.swift */; };
 		5A11B0C0FFEE0000000001B5 /* LiveQuestionWatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001B6 /* LiveQuestionWatcherTests.swift */; };
 		5A11B0C0FFEE0000000001C5 /* LiveAlertDeliveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001C6 /* LiveAlertDeliveryTests.swift */; };
+		5A11B0C0FFEE0000000001D7 /* SpeakerNamesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001D8 /* SpeakerNamesTests.swift */; };
+		5A11B0C0FFEE0000000001E5 /* MeetingTrimTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001E6 /* MeetingTrimTests.swift */; };
+		5A11B0C0FFEE0000000001E1 /* StillInMeetingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001E2 /* StillInMeetingTests.swift */; };
+		5A11B0C0FFEE0000000001DB /* ProviderBudgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001DC /* ProviderBudgetTests.swift */; };
 		5A11B0C0FFEE0000000001D3 /* LiveAlertsSectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001D4 /* LiveAlertsSectionTests.swift */; };
 		5A11B0C0FFEE0000000000D5 /* MeetingMergeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000000D6 /* MeetingMergeTests.swift */; };
 		5A11B0C0FFEE0000000000D3 /* CallAutoStartTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000000D4 /* CallAutoStartTests.swift */; };
@@ -265,6 +272,8 @@
 		AAAA00000000000000006001 /* MediaMover.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAA00000000000000006002 /* MediaMover.swift */; };
 		AAAA00000000000000009001 /* MediaRetentionRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAA00000000000000009002 /* MediaRetentionRunner.swift */; };
 		AAAA00000000000000007001 /* AudioCompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAA00000000000000007002 /* AudioCompressor.swift */; };
+		5A11B0C0FFEE0000000001E3 /* AudioTrimmer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001E4 /* AudioTrimmer.swift */; };
+		5A11B0C0FFEE0000000001DF /* StillInMeeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A11B0C0FFEE0000000001E0 /* StillInMeeting.swift */; };
 		AAAA00000000000000008001 /* SnapshotThumbnailer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAA00000000000000008002 /* SnapshotThumbnailer.swift */; };
 		AAAA00000000000000008003 /* SnapshotThumbnailerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAA00000000000000008004 /* SnapshotThumbnailerTests.swift */; };
 		AAAA00000000000000008005 /* SnapshotDedupeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAAA00000000000000008006 /* SnapshotDedupeTests.swift */; };
@@ -560,9 +569,16 @@
 		48599AB26BD0FF551A0BDBFE /* MeetingPrepView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingPrepView.swift; sourceTree = "<group>"; };
 		49310B8A325EFBEE4D164C4D /* LiveTranscriptSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptSettings.swift; sourceTree = "<group>"; };
 		5A11B0C0FFEE0000000001B4 /* LiveQuestionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveQuestionSettings.swift; sourceTree = "<group>"; };
+		5A11B0C0FFEE0000000001D6 /* SpeakerNamesSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerNamesSettings.swift; sourceTree = "<group>"; };
+		5A11B0C0FFEE0000000001DA /* SpeakerMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerMenu.swift; sourceTree = "<group>"; };
 		5A11B0C0FFEE0000000001C2 /* LiveAlertDelivery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAlertDelivery.swift; sourceTree = "<group>"; };
+		5A11B0C0FFEE0000000001DE /* BudgetNotices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BudgetNotices.swift; sourceTree = "<group>"; };
 		5A11B0C0FFEE0000000001C4 /* GmailSelfSend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GmailSelfSend.swift; sourceTree = "<group>"; };
 		5A11B0C0FFEE0000000001C6 /* LiveAlertDeliveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAlertDeliveryTests.swift; sourceTree = "<group>"; };
+		5A11B0C0FFEE0000000001D8 /* SpeakerNamesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerNamesTests.swift; sourceTree = "<group>"; };
+		5A11B0C0FFEE0000000001E6 /* MeetingTrimTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingTrimTests.swift; sourceTree = "<group>"; };
+		5A11B0C0FFEE0000000001E2 /* StillInMeetingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StillInMeetingTests.swift; sourceTree = "<group>"; };
+		5A11B0C0FFEE0000000001DC /* ProviderBudgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderBudgetTests.swift; sourceTree = "<group>"; };
 		5A11B0C0FFEE0000000001D4 /* LiveAlertsSectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAlertsSectionTests.swift; sourceTree = "<group>"; };
 		496EFB6FB646D0BDF908D75B /* AudioDeviceActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDeviceActivity.swift; sourceTree = "<group>"; };
 		4974FC1800465548216C4891 /* WeeklyClientIdTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyClientIdTests.swift; sourceTree = "<group>"; };
@@ -818,6 +834,8 @@
 		AAAA00000000000000006002 /* MediaMover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaMover.swift; sourceTree = "<group>"; };
 		AAAA00000000000000009002 /* MediaRetentionRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaRetentionRunner.swift; sourceTree = "<group>"; };
 		AAAA00000000000000007002 /* AudioCompressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCompressor.swift; sourceTree = "<group>"; };
+		5A11B0C0FFEE0000000001E4 /* AudioTrimmer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioTrimmer.swift; sourceTree = "<group>"; };
+		5A11B0C0FFEE0000000001E0 /* StillInMeeting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StillInMeeting.swift; sourceTree = "<group>"; };
 		AAAA00000000000000008002 /* SnapshotThumbnailer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotThumbnailer.swift; sourceTree = "<group>"; };
 		AAAA00000000000000008004 /* SnapshotThumbnailerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotThumbnailerTests.swift; sourceTree = "<group>"; };
 		AAAA00000000000000008006 /* SnapshotDedupeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapshotDedupeTests.swift; sourceTree = "<group>"; };
@@ -889,7 +907,9 @@
 				5F4E5FD926DA62ECF06A7EDF /* LiveTranscriptLogic.swift */,
 				49310B8A325EFBEE4D164C4D /* LiveTranscriptSettings.swift */,
 				5A11B0C0FFEE0000000001B4 /* LiveQuestionSettings.swift */,
+				5A11B0C0FFEE0000000001D6 /* SpeakerNamesSettings.swift */,
 				5A11B0C0FFEE0000000001C2 /* LiveAlertDelivery.swift */,
+				5A11B0C0FFEE0000000001DE /* BudgetNotices.swift */,
 				5A11B0C0FFEE0000000001C4 /* GmailSelfSend.swift */,
 				0FB5EC407B1EFC1F7AEE5B2B /* McpNodeLocator.swift */,
 				8967D1EBB775744B016BA84F /* McpServerProcessManager.swift */,
@@ -934,6 +954,8 @@
 				AAAA00000000000000006002 /* MediaMover.swift */,
 				AAAA00000000000000009002 /* MediaRetentionRunner.swift */,
 				AAAA00000000000000007002 /* AudioCompressor.swift */,
+				5A11B0C0FFEE0000000001E4 /* AudioTrimmer.swift */,
+				5A11B0C0FFEE0000000001E0 /* StillInMeeting.swift */,
 				AAAA00000000000000005002 /* MediaSettings.swift */,
 				CA772E78D7C59227A9449D98 /* SpikePaths.swift */,
 				B502EFCDA84CAB22CC7305B8 /* StreamingAskViewModel.swift */,
@@ -1014,6 +1036,10 @@
 				5A11B0C0FFEE0000000000E6 /* MeetingAskFormattingTests.swift */,
 				5A11B0C0FFEE0000000001B6 /* LiveQuestionWatcherTests.swift */,
 				5A11B0C0FFEE0000000001C6 /* LiveAlertDeliveryTests.swift */,
+				5A11B0C0FFEE0000000001D8 /* SpeakerNamesTests.swift */,
+				5A11B0C0FFEE0000000001E6 /* MeetingTrimTests.swift */,
+				5A11B0C0FFEE0000000001E2 /* StillInMeetingTests.swift */,
+				5A11B0C0FFEE0000000001DC /* ProviderBudgetTests.swift */,
 				5A11B0C0FFEE0000000001D4 /* LiveAlertsSectionTests.swift */,
 				5A11B0C0FFEE0000000000D6 /* MeetingMergeTests.swift */,
 				5A11B0C0FFEE0000000000D4 /* CallAutoStartTests.swift */,
@@ -1250,6 +1276,7 @@
 				5A11B0C0FFEE0000000001D2 /* LiveAlertsSection.swift */,
 				2BE3E471BE8FD9DE260D8AF4 /* MeetingBriefView.swift */,
 				36E303E0A7F361D74FD82CBF /* MeetingWorkspaceState.swift */,
+				5A11B0C0FFEE0000000001DA /* SpeakerMenu.swift */,
 				A4396F3B9FC6FD14E9E18910 /* RegenerationConflictSheet.swift */,
 			);
 			path = MeetingWorkspace;
@@ -1710,7 +1737,10 @@
 				5A11B0C0FFEE0000000001D1 /* LiveAlertsSection.swift in Sources */,
 				9252C5D7077468B931FBC39F /* LiveTranscriptSettings.swift in Sources */,
 				5A11B0C0FFEE0000000001B3 /* LiveQuestionSettings.swift in Sources */,
+				5A11B0C0FFEE0000000001D5 /* SpeakerNamesSettings.swift in Sources */,
+				5A11B0C0FFEE0000000001D9 /* SpeakerMenu.swift in Sources */,
 				5A11B0C0FFEE0000000001C1 /* LiveAlertDelivery.swift in Sources */,
+				5A11B0C0FFEE0000000001DD /* BudgetNotices.swift in Sources */,
 				5A11B0C0FFEE0000000001C3 /* GmailSelfSend.swift in Sources */,
 				129BF14D28E7A5CDA5AA1323 /* LiveTranscriptionService.swift in Sources */,
 				661D97EED40C05FD437AD2B9 /* MCPClientsSettingsPane.swift in Sources */,
@@ -1808,6 +1838,8 @@
 				AAAA00000000000000006001 /* MediaMover.swift in Sources */,
 				AAAA00000000000000009001 /* MediaRetentionRunner.swift in Sources */,
 				AAAA00000000000000007001 /* AudioCompressor.swift in Sources */,
+				5A11B0C0FFEE0000000001E3 /* AudioTrimmer.swift in Sources */,
+				5A11B0C0FFEE0000000001DF /* StillInMeeting.swift in Sources */,
 				AAAA00000000000000005001 /* MediaSettings.swift in Sources */,
 				FB9EC5679D08165E33FA414F /* SnapshotStorage.swift in Sources */,
 				AAAA00000000000000008001 /* SnapshotThumbnailer.swift in Sources */,
@@ -1921,6 +1953,10 @@
 				5A11B0C0FFEE0000000000E5 /* MeetingAskFormattingTests.swift in Sources */,
 				5A11B0C0FFEE0000000001B5 /* LiveQuestionWatcherTests.swift in Sources */,
 				5A11B0C0FFEE0000000001C5 /* LiveAlertDeliveryTests.swift in Sources */,
+				5A11B0C0FFEE0000000001D7 /* SpeakerNamesTests.swift in Sources */,
+				5A11B0C0FFEE0000000001E5 /* MeetingTrimTests.swift in Sources */,
+				5A11B0C0FFEE0000000001E1 /* StillInMeetingTests.swift in Sources */,
+				5A11B0C0FFEE0000000001DB /* ProviderBudgetTests.swift in Sources */,
 				5A11B0C0FFEE0000000001D3 /* LiveAlertsSectionTests.swift in Sources */,
 				5A11B0C0FFEE0000000000D5 /* MeetingMergeTests.swift in Sources */,
 				5A11B0C0FFEE0000000000D3 /* CallAutoStartTests.swift in Sources */,
@@ -2043,7 +2079,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/target/release";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.56;
+				MARKETING_VERSION = 0.9.57;
 				OTHER_LDFLAGS = "-lwhimbrel_core -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel;
 				PRODUCT_NAME = Whimbrel;
@@ -2243,7 +2279,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/target/release";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.56;
+				MARKETING_VERSION = 0.9.57;
 				OTHER_LDFLAGS = "-lwhimbrel_core -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel;
 				PRODUCT_NAME = Whimbrel;

@@ -92,7 +92,7 @@ pub async fn alert_accept(app: AppHandle, open_app: bool) -> Result<(), CommandE
         let started = if detected.source == "calendar" {
             // Record the call's app when detection has spotted one; otherwise everything
             // the PC plays, which the workspace notes (docs/12 §4.4).
-            meetings.start_calendar(detected.title.clone(), detected.attendees.clone(), detected.start_unix_ms, state.detected.candidate_pid())
+            meetings.start_calendar(detected.title.clone(), detected.attendees.clone(), detected.attendee_details.clone(), detected.start_unix_ms, state.detected.candidate_pid())
         } else {
             meetings.start_detected(detected.title.clone(), detected.root_pid)
         };

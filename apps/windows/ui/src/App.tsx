@@ -60,6 +60,14 @@ export function App() {
     const unlisten = listen("open-meeting", take);
     return () => void unlisten.then((stop) => stop());
   }, []);
+  // "Raise budget" and "Open AI Providers settings" (provider budgets): Settings, at AI Providers.
+  useEffect(() => {
+    const unlisten = listen<string>("open-settings", (event) => {
+      setActive("settings");
+      if (event.payload === "ai") setTimeout(() => document.getElementById("ai-heading")?.scrollIntoView({ block: "start" }), 50);
+    });
+    return () => void unlisten.then((stop) => stop());
+  }, []);
   // Missing models download in the background, with no prompt (Release 1 item 1.1).
   useEffect(bootstrapModels, []);
   const allTabs = tabs();

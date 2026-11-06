@@ -188,7 +188,7 @@ struct StandardTodayLayout: View {
     /// Only the next event has prep data: a status label, and its brief when one is ready.
     @ViewBuilder
     private func prepLine(for event: TodayUpcoming) -> some View {
-        if let prep = content.nextPrep, prep.eventId == event.id, prep.brief != nil {
+        if let prep = content.nextPrep, TodayLogic.prep(prep, isFor: event), prep.brief != nil {
             HStack(spacing: Spacing.sm) {
                 Text("Prep ready")
                     .font(.whimbrelBody(.subheadline))

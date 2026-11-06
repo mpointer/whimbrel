@@ -127,11 +127,11 @@ final class SettingsSyncCoordinator: ObservableObject {
 
     // MARK: - Gathering local state for push
 
-    private func gatherLocalSettings() -> CoreMemoryStore.SyncLocalSettings {
+    func gatherLocalSettings() -> CoreMemoryStore.SyncLocalSettings {
         var fields: [String: CoreMemoryStore.SyncLocalField] = [:]
 
         add(&fields, "routing.preferredProvider", routing.preferredProvider.rawValue)
-        add(&fields, "routing.ollamaDefaultModel", routing.ollamaDefaultModel)
+        add(&fields, "routing.ollamaDefaultModel", routing.storedOllamaModel)  // never the in-memory stand-in
         add(&fields, "routing.anthropicDefaultModel", routing.anthropicDefaultModel)
         add(&fields, "routing.openaiDefaultModel", routing.openaiDefaultModel)
         add(&fields, "routing.googleDefaultModel", routing.googleDefaultModel)
@@ -142,6 +142,9 @@ final class SettingsSyncCoordinator: ObservableObject {
         add(&fields, "routing.cheapFirst", routing.cheapFirst ? "true" : "false")
         add(&fields, "routing.useLocalModel", routing.useLocalModel ? "true" : "false")
         add(&fields, "summary.customPromptInstructions", routing.customPromptInstructions)
+        for (key, value) in routing.budgetSyncValues() {
+            add(&fields, key, value)
+        }
 
         for surface in PromptSurface.allCases {
             add(&fields, PromptLibrarySettings.fieldKey(for: surface), promptLibrary.instructions[surface] ?? "")
@@ -292,13 +295,13 @@ final class SettingsSyncCoordinator: ObservableObject {
     /// value was actually assigned — `false` for every no-op path (see
     /// `applyDelta` for why that distinction matters).
     @discardableResult
-    private func apply(fieldKey: String, field: CoreMemoryStore.SyncSettingsField) -> Bool {
+    func apply(fieldKey: String, field: CoreMemoryStore.SyncSettingsField) -> Bool {
         switch fieldKey {
         case "routing.preferredProvider":
             guard let provider = RoutingSettings.Provider(rawValue: field.value) else { return false }
             routing.preferredProvider = provider
         case "routing.ollamaDefaultModel":
-            routing.ollamaDefaultModel = field.value
+            routing.storedOllamaModel = field.value
         case "routing.anthropicDefaultModel":
             routing.anthropicDefaultModel = field.value
         case "routing.openaiDefaultModel":
@@ -372,6 +375,10 @@ final class SettingsSyncCoordinator: ObservableObject {
             }
             if fieldKey.hasPrefix("profile.") {
                 return profile.apply(fieldKey: fieldKey, value: field.value)
+            }
+            // Assigning a budget pushes them all to core (`RoutingSettings.onBudgetsChanged`).
+            if fieldKey.hasPrefix("budget.monthlyCents.") {
+                return routing.applyBudget(fieldKey: fieldKey, value: field.value)
             }
             guard let surface = PromptSurface.allCases.first(where: { PromptLibrarySettings.fieldKey(for: $0) == fieldKey }) else {
                 return false

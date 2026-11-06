@@ -107,3 +107,80 @@ struct MeetingPrepView: View {
         return formatter.localizedString(for: Date(timeIntervalSince1970: Double(unixMs) / 1000), relativeTo: Date())
     }
 }
+
+/// Which brief the main window's sheet shows: a `TodayLogic.prepKey`.
+struct PrepBriefRequest: Identifiable, Equatable {
+    let key: String
+    var id: String { key }
+}
+
+/// A Meeting Prep brief on its own, opened from its notification or from Routines.
+struct PrepBriefSheet: View {
+    let key: String
+    @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var prep: CoreMeetingPrep?
+    @State private var loaded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            ScrollView {
+                if let prep {
+                    MeetingPrepView(prep: prep)
+                } else if loaded {
+                    Text("This brief is no longer available.")
+                        .font(.whimbrelBody(.callout))
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(Spacing.lg)
+        .frame(minWidth: 520, idealWidth: 640, minHeight: 360, idealHeight: 560)
+        .onAppear {
+            guard let store = appState.coreStore else { loaded = true; return }
+            CoreMemoryStore.accessQueue.async {
+                let found = store.meetingPrep(key: key)
+                DispatchQueue.main.async {
+                    prep = found
+                    loaded = true
+                }
+            }
+        }
+    }
+}
+
+/// The meeting page's collapsible "Prep brief": the brief Meeting Prep wrote for the calendar
+/// event this meeting was recorded from. Nothing at all when there is none.
+struct MeetingPrepSection: View {
+    let meetingId: Int64
+    @EnvironmentObject var appState: AppState
+    @State private var prep: CoreMeetingPrep?
+    @State private var expanded = false
+
+    var body: some View {
+        Group {
+            if let prep {
+                DisclosureGroup(isExpanded: $expanded) {
+                    MeetingPrepView(prep: prep)
+                } label: {
+                    Text("Prep brief")
+                        .font(.whimbrelBody(.callout).bold())
+                        .foregroundStyle(Color.whimbrelTextPrimary)
+                }
+            }
+        }
+        .task(id: meetingId) {
+            guard let store = appState.coreStore else { return }
+            let id = meetingId
+            prep = await withCheckedContinuation { done in
+                CoreMemoryStore.accessQueue.async { done.resume(returning: store.meetingPrep(meetingId: id)) }
+            }
+        }
+    }
+}

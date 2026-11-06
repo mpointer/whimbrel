@@ -8,6 +8,8 @@ final class RoutingSettingsTests: XCTestCase {
         "com.mpointer.kestrel.routingOpenAIDefaultModel",
         "com.mpointer.kestrel.routingCheapFirst",
         "com.mpointer.kestrel.routingUseLocalModel",
+        "com.mpointer.kestrel.routingOllamaDefaultModel",
+        "com.mpointer.kestrel.routingPreferredProvider",
     ]
 
     override func setUp() {
@@ -183,6 +185,92 @@ final class RoutingSettingsTests: XCTestCase {
 
         let reloaded = RoutingSettings()
         XCTAssertEqual(reloaded.anthropicDefaultModel, "claude-opus-4", "an explicit pick must persist and override the fallback")
+    }
+}
+
+extension RoutingSettingsTests {
+    private static let ollamaKey = "com.mpointer.kestrel.routingOllamaDefaultModel"
+
+    /// Windows' first support case: the default `gemma4:12b` wasn't pulled, so every summary
+    /// failed though other models were installed. An installed one stands in, in memory only.
+    @MainActor
+    func testAnInstalledOllamaModelStandsInForAMissingDefaultWithoutBeingSavedOrSynced() {
+        let settings = RoutingSettings()
+        settings.ollamaModels = ["llama3.2:3b", "qwen3:8b"]
+        XCTAssertEqual(settings.ollamaDefaultModel, "llama3.2:3b")
+        XCTAssertEqual(settings.preferredModel, "llama3.2:3b", "Ollama is the preferred provider by default")
+        XCTAssertEqual(settings.defaultSelection().ollamaModel, "llama3.2:3b")
+        XCTAssertEqual(settings.storedOllamaModel, RoutingSettings.builtInOllamaModel, "the pick is never stored, so it never syncs")
+        XCTAssertNil(UserDefaults.standard.string(forKey: Self.ollamaKey))
+
+        // A stored default (Settings used to save it) still counts as no choice.
+        UserDefaults.standard.set(RoutingSettings.builtInOllamaModel, forKey: Self.ollamaKey)
+        let stored = RoutingSettings()
+        stored.ollamaModels = ["llama3.2:3b"]
+        XCTAssertEqual(stored.ollamaDefaultModel, "llama3.2:3b")
+
+        // Ollama unreachable before any list: nothing to pick, the default stays.
+        XCTAssertEqual(RoutingSettings().ollamaDefaultModel, RoutingSettings.builtInOllamaModel)
+    }
+
+    @MainActor
+    func testAnInstalledModelIsKeptAndADefaultStandInRaisesNoWarning() {
+        let settings = RoutingSettings()
+        settings.ollamaModels = ["qwen3:8b", "gemma4:12b"]
+        XCTAssertEqual(settings.ollamaDefaultModel, "gemma4:12b", "the default is installed")
+
+        settings.ollamaDefaultModel = "qwen3:8b"
+        XCTAssertEqual(settings.ollamaDefaultModel, "qwen3:8b", "a chosen, installed model: no fallback")
+        XCTAssertNil(settings.ollamaMissingChoice, "nothing to warn about")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: Self.ollamaKey), "qwen3:8b", "a pick in Settings is saved")
+
+        settings.storedOllamaModel = RoutingSettings.builtInOllamaModel
+        settings.ollamaModels = ["llama3.2:3b"]
+        XCTAssertEqual(settings.ollamaDefaultModel, "llama3.2:3b")
+        XCTAssertNil(settings.ollamaMissingChoice, "nobody chose the built-in default: no warning")
+    }
+
+    /// Mike's call on PR #581: a chosen model that isn't installed is kept, a warning says
+    /// so, and the first installed model is used meanwhile, in memory only.
+    @MainActor
+    func testAChosenModelThatIsntInstalledIsKeptWhileAnInstalledOneIsUsed() {
+        let settings = RoutingSettings()
+        settings.ollamaDefaultModel = "qwen3:8b"
+        settings.ollamaModels = ["llama3.2:3b", "mistral:latest"]
+        XCTAssertEqual(settings.ollamaDefaultModel, "llama3.2:3b")
+        XCTAssertEqual(settings.storedOllamaModel, "qwen3:8b")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: Self.ollamaKey), "qwen3:8b", "the pick stays saved")
+        XCTAssertEqual(settings.ollamaMissingChoice?.chosen, "qwen3:8b")
+        XCTAssertEqual(settings.ollamaMissingChoice?.using, "llama3.2:3b")
+
+        settings.ollamaModels = []
+        XCTAssertEqual(settings.ollamaDefaultModel, "qwen3:8b", "nothing installed or Ollama unreachable: the stored model")
+        XCTAssertNil(settings.ollamaMissingChoice)
+    }
+
+    /// Settings sync pushes and applies the stored model, never this Mac's stand-in.
+    @MainActor
+    func testSettingsSyncPushesAndAppliesTheStoredOllamaModelNotTheStandIn() {
+        let routing = RoutingSettings()
+        routing.ollamaModels = ["llama3.2:3b"]
+        XCTAssertEqual(routing.ollamaDefaultModel, "llama3.2:3b", "precondition: a stand-in is in effect")
+        let sync = SettingsSyncCoordinator(
+            routing: routing, retention: RetentionSettings(), promptLibrary: PromptLibrarySettings(),
+            profile: ProfileSettings(defaults: UserDefaults(suiteName: "RoutingSettingsTests.sync")!),
+            routineHost: RoutineHostSettings(defaults: UserDefaults(suiteName: "RoutingSettingsTests.sync")!),
+            syncState: SyncState(signIn: nil, worker: nil)
+        )
+        XCTAssertEqual(sync.gatherLocalSettings().fields["routing.ollamaDefaultModel"]?.value, RoutingSettings.builtInOllamaModel)
+
+        let pulled = CoreMemoryStore.SyncSettingsField(value: "qwen3:8b", updatedAtUnixMs: 1, isDeleted: false)
+        XCTAssertTrue(sync.apply(fieldKey: "routing.ollamaDefaultModel", field: pulled))
+        XCTAssertEqual(routing.storedOllamaModel, "qwen3:8b")
+        XCTAssertEqual(routing.ollamaDefaultModel, "llama3.2:3b", "a synced choice that isn't installed: the stand-in, in memory")
+        XCTAssertEqual(sync.gatherLocalSettings().fields["routing.ollamaDefaultModel"]?.value, "qwen3:8b", "the choice syncs, not the stand-in")
+
+        // A routine saved as the built-in default still finds its option.
+        routing.storedOllamaModel = RoutingSettings.builtInOllamaModel
+        XCTAssertTrue(RoutinesSettingsPane.modelPrefOptions(routing: routing).contains { $0.value == "ollama/gemma4:12b" })
     }
 }
 

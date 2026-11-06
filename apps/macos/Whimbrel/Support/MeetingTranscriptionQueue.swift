@@ -3,8 +3,8 @@ import os
 
 /// Transcribes meeting parts one at a time, in the order they were queued, so a continued
 /// meeting's part 2 waits for part 1. Each landed part replaces its own segments; once the
-/// last outstanding part of a meeting lands and the meeting is no longer recording, the
-/// whole-meeting transcript (`meetingTranscriptText`) is summarized once.
+/// last outstanding part of a meeting lands and the meeting is no longer recording, its
+/// speakers are named and the whole-meeting transcript (`meetingTranscriptText`) is summarized once.
 final class MeetingTranscriptionQueue {
     struct Job {
         let meetingId: Int64
@@ -13,16 +13,28 @@ final class MeetingTranscriptionQueue {
         /// still be what lets the earlier parts' summary run.
         let audioPath: String?
         let notes: String
+        /// "Still in a meeting?" stopped it: once the full transcript is stored, trim it back
+        /// to the last speech (`StillInMeeting.autoTrimKeepMs`). In memory only, so a quit
+        /// before then leaves it untrimmed.
+        var autoTrim = false
     }
 
-    /// `language` is a whisper code to force, nil to detect; the result carries the language used.
+    /// `language` is a whisper code to force, nil to detect; the result carries the language used
+    /// and the diarized voices.
     typealias Transcriber = (_ audioPath: String, _ expectedSpeakerCount: Int?, _ language: String?) throws
-        -> (url: URL, lines: [TranscriptionService.Line], language: String?)
+        -> (url: URL, lines: [TranscriptionService.Line], language: String?, voices: [CoreVoice])
 
     private let store: CoreMemoryStore
     private let transcribe: Transcriber
     /// Called on the queue's thread with (meetingId, notes, whole transcript).
     private let summarize: (Int64, String, String) -> Void
+    /// Called on the queue's thread, before the summary, with a single-part meeting's voices.
+    /// ponytail: a meeting with more than one part is not named: diarization restarts per part, so
+    /// one name would land on different people. Multi-part naming waits for per-part speaker identity.
+    private let nameSpeakers: (Int64, [CoreVoice]) -> Void
+    /// Called on the queue's thread, after an auto-trim job's meeting is fully transcribed and
+    /// before naming and the summary, with (meetingId, keepMs): trims the rows and files.
+    private let trim: (Int64, Int64) -> Void
     /// Called on main: "Transcribing…" when a job starts, nil when it ends without a summary.
     private let onStage: (Int64, String?) -> Void
     /// Called on main when a part's transcription threw; the part stays untranscribed.
@@ -48,6 +60,8 @@ final class MeetingTranscriptionQueue {
     init(store: CoreMemoryStore,
          transcribe: @escaping Transcriber = TranscriptionService.transcribe,
          summarize: @escaping (Int64, String, String) -> Void,
+         nameSpeakers: @escaping (Int64, [CoreVoice]) -> Void = { _, _ in },
+         trim: @escaping (Int64, Int64) -> Void = { _, _ in },
          onStage: @escaping (Int64, String?) -> Void,
          onFailure: @escaping (Int64) -> Void = { _ in },
          multilingual: @escaping () -> Bool = {
@@ -59,6 +73,8 @@ final class MeetingTranscriptionQueue {
         self.store = store
         self.transcribe = transcribe
         self.summarize = summarize
+        self.nameSpeakers = nameSpeakers
+        self.trim = trim
         self.onStage = onStage
         self.onFailure = onFailure
         self.multilingual = multilingual
@@ -134,6 +150,19 @@ final class MeetingTranscriptionQueue {
         parts.filter { $0.audioPath.map(FileManager.default.fileExists(atPath:)) ?? false }
     }
 
+    /// On accessQueue: the auto-trim's keep from the stored lines and this part's line ends.
+    private func autoTrimKeepMs(_ job: Job, partLines: [TranscriptionService.Line]) -> Int64? {
+        let id = job.meetingId
+        let parts = store.meetingParts(meetingId: id) ?? []
+        let offset = (parts.first { $0.partIndex == job.partIndex }?.startUnixMs ?? 0) - (parts.first?.startUnixMs ?? 0)
+        var stored: [TranscriptionService.Line] = []
+        while let page = store.getTranscriptSegmentsPage(meetingId: id, offset: stored.count, limit: 500), !page.segments.isEmpty {
+            stored += page.segments.map { TranscriptionService.Line(speakerLabel: $0.speakerLabel, startCs: $0.startCs, text: $0.text) }
+        }
+        return StillInMeeting.autoTrimKeepMs(stored: stored, partLines: partLines, partOffsetMs: offset,
+                                             lengthMs: store.meetingLengthMs(meetingId: id) ?? 0)
+    }
+
     /// Tests only.
     func waitUntilIdle() { queue.waitUntilAllOperationsAreFinished() }
 
@@ -152,7 +181,7 @@ final class MeetingTranscriptionQueue {
         let expectedSpeakerCount = attendeeCount > 0 ? attendeeCount : stored?.estimatedSpeakerCount.map { Int($0) }
         let multilingual = multilingual()
         let language = multilingual ? CoreMemoryStore.accessQueue.sync { store.meetingSpokenLanguage(meetingId: id) } : "en"
-        var result: (url: URL, lines: [TranscriptionService.Line], language: String?)?
+        var result: (url: URL, lines: [TranscriptionService.Line], language: String?, voices: [CoreVoice])?
         if let audioPath = job.audioPath {
             do {
                 result = try transcribe(audioPath, expectedSpeakerCount, language)
@@ -162,12 +191,12 @@ final class MeetingTranscriptionQueue {
             }
         }
 
-        let transcript: String? = CoreMemoryStore.accessQueue.sync {
+        let (finish, onePart): (Bool, Bool) = CoreMemoryStore.accessQueue.sync {
             // A failure leaves the part's existing segments and `transcribed` untouched.
             let notes = job.notes.isEmpty ? nil : job.notes
             store.setMeetingNotes(meetingId: id, notes: notes)
             if let result {
-                let (url, lines, used) = result
+                let (url, lines, used, _) = result
                 if multilingual, language == nil, let used, !lines.isEmpty {
                     store.setMeetingSpokenLanguage(meetingId: id, language: used)
                 }
@@ -195,7 +224,16 @@ final class MeetingTranscriptionQueue {
             let recording = store.getMeeting(id: id)?.status == .recording
             // A later part recording now owns the live rows.
             if result != nil, !recording { store.clearLiveSegments(meetingId: id) }
-            guard last, !recording else { return nil }
+            return (last && !recording, (store.meetingParts(meetingId: id)?.count ?? 0) <= 1)
+        }
+        if finish, job.autoTrim,
+           let keep = CoreMemoryStore.accessQueue.sync(execute: { autoTrimKeepMs(job, partLines: result?.lines ?? []) }) {
+            trim(id, keep)
+        }
+        // Named off accessQueue: naming may wait on a model.
+        if finish, onePart, let voices = result?.voices, !voices.isEmpty { nameSpeakers(id, voices) }
+
+        let transcript: String? = !finish ? nil : CoreMemoryStore.accessQueue.sync {
             // Summarize whatever landed, even if a part failed. A silent meeting still has its
             // notes and slides. With no words, notes or slides there is nothing to summarize,
             // and a model asked to anyway invents a meeting (10/30 "Quick Debrief").

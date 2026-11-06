@@ -71,6 +71,7 @@ impl Debounce {
                     start_unix_ms: now_unix_ms,
                     end_unix_ms: now_unix_ms + DETECTED_MEETING_LENGTH_MS,
                     attendees: Vec::new(),
+                    attendee_details: Vec::new(),
                     conference_link: None,
                     source: MeetingSource::Detected,
                     app_bundle_id: Some(app_id),

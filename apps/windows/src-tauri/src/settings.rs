@@ -28,6 +28,9 @@ pub mod keys {
     pub const OPENROUTER_MODEL: &str = "routing.openrouterDefaultModel";
     pub const USER_DAILY_CAP_CENTS: &str = "routing.userDailyCapCents";
     pub const GLOBAL_DAILY_CAP_CENTS: &str = "routing.globalDailyCapCents";
+    /// Synced, as on the Mac: `budget.monthlyCents.<provider>` for each paid provider, cents; unset
+    /// or 0 is no budget (provider budgets spec).
+    pub const MONTHLY_BUDGET_PREFIX: &str = "budget.monthlyCents.";
     pub const LOCAL_ONLY_MODE: &str = "routing.localOnlyMode";
     /// Cheap-first routing and the local-model switch (the Mac's keys;
     /// docs/superpowers/specs/2026-10-29-cheap-first-routing-and-key-on-ramp-design.md).
@@ -52,6 +55,9 @@ pub mod keys {
     /// Device-local, as on the Mac (`LiveQuestionSettings.enabled`): "Alert me when someone asks me
     /// something". On unless turned off. In parity item (a) it gates the popup for other devices' alerts.
     pub const LIVE_QUESTION_ENABLED: &str = "liveQuestion.enabled";
+    /// Device-local, as on the Mac (`SpeakerNamesSettings.rememberVoices`): "Remember people's
+    /// voices". On unless turned off; off keeps no voice embeddings.
+    pub const REMEMBER_VOICES: &str = "speakerNames.rememberVoices";
     /// Device-local, as on the Mac (`MeetingPrepSettings`): how long before a meeting its brief is made.
     pub const MEETING_PREP_LEAD_MINUTES: &str = "meetingPrep.leadMinutes";
     /// Device-local, as on the Mac (`RecordingNoticeSettings`, W-1.7): "Remind me to tell people I'm
@@ -361,6 +367,14 @@ const LEGACY_KEYS: [(&str, &str); 10] = [
     ("littlebird.retentionNoticeAcknowledged", keys::RETENTION_ACKNOWLEDGED),
 ];
 
+/// The providers a monthly budget applies to (`llm::Provider::as_str`); Ollama and local models are free.
+pub const PAID_PROVIDERS: [&str; 4] = ["anthropic", "openai", "google", "openrouter"];
+
+/// `budget.monthlyCents.<provider>`.
+pub fn monthly_budget_key(provider: &str) -> String {
+    format!("{}{provider}", keys::MONTHLY_BUDGET_PREFIX)
+}
+
 /// The settings file.
 #[derive(Debug, Clone)]
 pub struct SettingsFile {
@@ -447,7 +461,12 @@ impl SettingsFile {
         let d = RoutingSettings::default();
         RoutingSettings {
             preferred_provider: self.get(keys::PREFERRED_PROVIDER).unwrap_or(d.preferred_provider),
-            ollama_model: self.get(keys::OLLAMA_MODEL).unwrap_or(d.ollama_model),
+            // An installed model stands in for a configured one that isn't installed, chosen or
+            // the default (`ollama_default`); AI Providers still shows a chosen one, with a warning.
+            ollama_model: {
+                let (configured, _) = self.ollama_model_choice();
+                crate::ollama_default::pick_for(&configured).unwrap_or(configured)
+            },
             anthropic_model: self.get(keys::ANTHROPIC_MODEL).unwrap_or(d.anthropic_model),
             openai_model: self.get(keys::OPENAI_MODEL).unwrap_or(d.openai_model),
             google_model: self.get(keys::GOOGLE_MODEL).unwrap_or(d.google_model),
@@ -462,11 +481,27 @@ impl SettingsFile {
         }
     }
 
+    /// The stored Ollama model (else the app's default) and whether it is the user's own choice:
+    /// set to something other than the default. Saving routing used to store the default too, so
+    /// a stored default still counts as no choice.
+    pub fn ollama_model_choice(&self) -> (String, bool) {
+        let default = RoutingSettings::default().ollama_model;
+        match self.get::<String>(keys::OLLAMA_MODEL).filter(|m| !m.trim().is_empty()) {
+            Some(m) if m != default => (m, true),
+            _ => (default, false),
+        }
+    }
+
     /// The UI's half of the routing settings; the cached OpenRouter prices stay as they are
     /// (`set_openrouter_prices` is the only writer).
     pub fn set_routing(&mut self, r: &RoutingSettings) {
         self.set(keys::PREFERRED_PROVIDER, Some(r.preferred_provider));
-        self.set(keys::OLLAMA_MODEL, Some(&r.ollama_model));
+        // The in-memory stand-in isn't the user's choice: a save of other routing fields that
+        // sends it back leaves the stored model as it was, so the pick is never saved or synced.
+        let stand_in = crate::ollama_default::pick_for(&self.ollama_model_choice().0).as_deref() == Some(r.ollama_model.as_str());
+        if !stand_in {
+            self.set(keys::OLLAMA_MODEL, Some(&r.ollama_model));
+        }
         self.set(keys::ANTHROPIC_MODEL, Some(&r.anthropic_model));
         self.set(keys::OPENAI_MODEL, Some(&r.openai_model));
         self.set(keys::GOOGLE_MODEL, Some(&r.google_model));
@@ -532,6 +567,29 @@ impl SettingsFile {
 
     pub fn set_live_question_enabled(&mut self, enabled: bool) {
         self.set(keys::LIVE_QUESTION_ENABLED, Some(enabled));
+    }
+
+    /// Each paid provider's monthly budget in cents, 0 for none, in [`PAID_PROVIDERS`] order: what
+    /// `api::budget::set_budgets` takes.
+    pub fn monthly_budgets(&self) -> std::collections::BTreeMap<String, i64> {
+        PAID_PROVIDERS
+            .iter()
+            .map(|p| (p.to_string(), self.get::<i64>(&monthly_budget_key(p)).filter(|c| *c > 0).unwrap_or(0)))
+            .collect()
+    }
+
+    /// Sets one provider's monthly budget; `None` or 0 removes it.
+    pub fn set_monthly_budget(&mut self, provider: &str, cents: Option<i64>) {
+        self.set(&monthly_budget_key(provider), cents.filter(|c| *c > 0));
+    }
+
+    /// Speaker names learn voices: on by default, as on the Mac.
+    pub fn remember_voices(&self) -> bool {
+        self.get(keys::REMEMBER_VOICES).unwrap_or(true)
+    }
+
+    pub fn set_remember_voices(&mut self, remember: bool) {
+        self.set(keys::REMEMBER_VOICES, Some(remember));
     }
 
     pub fn other_names(&self) -> String {

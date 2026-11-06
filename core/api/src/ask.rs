@@ -8,6 +8,7 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
 
+use crate::budget::{apply_budgets, check_provider};
 use crate::envelope::{ApiError, ApiResult};
 use crate::routing::{build_chain_for, RoutingConfig};
 use crate::util::{log_usage_for, now_unix_ms};
@@ -30,8 +31,8 @@ pub fn answer(
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms())?;
 
-    let chain = build_chain_for(llm::TaskKind::Chat, ollama_model, routing);
-    let Some((answer, entry)) = llm::try_chain(&chain, |entry| {
+    let chain = apply_budgets(store, build_chain_for(llm::TaskKind::Chat, ollama_model, routing), false, now_unix_ms())?;
+    let (answer, entry) = llm::try_chain_with_failures(&chain, |entry| {
         llm::answer_with_citations(
             entry.client.as_ref(),
             history,
@@ -40,9 +41,8 @@ pub fn answer(
             &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language),
             date_scope_label.as_deref(),
         )
-    }) else {
-        return Err(ApiError::ProviderFailure);
-    };
+    })
+    .map_err(crate::chain_failed)?;
     log_usage_for(
         store,
         entry.provider,
@@ -138,6 +138,9 @@ pub fn prepare_ask(
 
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms())?;
+    // The shell streams against this one provider: pinned, no fallthrough.
+    let provider = provider_for_streamed_answer(routing);
+    check_provider(store, provider, now_unix_ms())?;
 
     let prompt = llm::build_ask_prompt(
         history,
@@ -149,10 +152,7 @@ pub fn prepare_ask(
     let prepare_id = llm::streaming::new_run_id();
     prepared_asks().lock().unwrap().insert(
         prepare_id.clone(),
-        PreparedAsk {
-            context,
-            provider: provider_for_streamed_answer(routing),
-        },
+        PreparedAsk { context, provider },
     );
     Ok(PreparedAskData { prepare_id, prompt })
 }
@@ -190,6 +190,73 @@ pub fn prepare_meeting_ask(
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
 ) -> Result<PreparedMeetingAskData, MeetingAskError> {
+    let (context, prompt, narrowed) = meeting_ask_prompt(store, meeting_id, query, history, routing)?;
+    let cap_config = routing.spend_cap_config();
+    llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms()).map_err(ApiError::from)?;
+    let provider = provider_for_streamed_answer(routing);
+    check_provider(store, provider, now_unix_ms()).map_err(ApiError::from)?;
+
+    let prepare_id = llm::streaming::new_run_id();
+    prepared_asks().lock().unwrap().insert(
+        prepare_id.clone(),
+        PreparedAsk { context, provider },
+    );
+    Ok(PreparedMeetingAskData { prepare_id, prompt, narrowed })
+}
+
+/// [`answer_meeting`]'s result: the answer, its transcript citations, and whether the
+/// transcript was narrowed.
+#[derive(Debug, Clone, Serialize)]
+pub struct MeetingAnswer {
+    pub text: String,
+    pub citations: Vec<llm::ContextItemRef>,
+    pub narrowed: bool,
+}
+
+/// The blocking counterpart of [`prepare_meeting_ask`], through the governed chain (not
+/// pinned): a provider over its monthly budget is skipped for the next one. The shells use
+/// it when the streamed provider's budget is spent; `BudgetSpent` only when every provider is.
+pub fn answer_meeting(
+    store: &memory::Store,
+    meeting_id: i64,
+    query: &str,
+    ollama_model: &str,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+) -> Result<MeetingAnswer, MeetingAskError> {
+    answer_meeting_with(store, meeting_id, query, history, routing, || {
+        build_chain_for(llm::TaskKind::Chat, ollama_model, routing)
+    })
+}
+
+fn answer_meeting_with(
+    store: &memory::Store,
+    meeting_id: i64,
+    query: &str,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    chain: impl FnOnce() -> Vec<llm::ChainLink>,
+) -> Result<MeetingAnswer, MeetingAskError> {
+    let (context, prompt, narrowed) = meeting_ask_prompt(store, meeting_id, query, history, routing)?;
+    let cap_config = routing.spend_cap_config();
+    llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms()).map_err(ApiError::from)?;
+    let chain = apply_budgets(store, chain(), false, now_unix_ms()).map_err(ApiError::from)?;
+    let Some((completion, entry)) = llm::try_chain(&chain, |entry| entry.client.complete(&prompt)) else {
+        return Err(ApiError::ProviderFailure.into());
+    };
+    log_usage_for(store, entry.provider, &entry.model, "ask", completion.token_usage);
+    let citations = llm::extract_citations(&completion.text, &context);
+    Ok(MeetingAnswer { text: completion.text, citations, narrowed })
+}
+
+/// The meeting Ask prompt and its citable context, shared by the streaming and blocking paths.
+fn meeting_ask_prompt(
+    store: &memory::Store,
+    meeting_id: i64,
+    query: &str,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+) -> Result<(Vec<llm::ContextItem>, String, bool), MeetingAskError> {
     let meeting = store
         .get_meeting(meeting_id)
         .ok()
@@ -202,9 +269,15 @@ pub fn prepare_meeting_ask(
     if segments.is_empty() {
         return Err(MeetingAskError::NoTranscript);
     }
-
-    let cap_config = routing.spend_cap_config();
-    llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms()).map_err(ApiError::from)?;
+    // "Speaker N" becomes its name, a guess marked, as in the summary's transcript.
+    let speakers = store.meeting_speakers(meeting_id).unwrap_or_default();
+    let segments: Vec<_> = segments
+        .into_iter()
+        .map(|mut s| {
+            s.speaker_label = memory::speaker_names::transcript_label(&s.speaker_label, &speakers);
+            s
+        })
+        .collect();
 
     let context = llm::meeting_ask::assemble_meeting_context(segments, query, llm::meeting_ask::CONTEXT_BUDGET_CHARS);
     // Every segment larger than the budget: nothing citable fits, same as no transcript.
@@ -231,12 +304,7 @@ pub fn prepare_meeting_ask(
         &summary,
         &notes,
     );
-    let prepare_id = llm::streaming::new_run_id();
-    prepared_asks().lock().unwrap().insert(
-        prepare_id.clone(),
-        PreparedAsk { context: context.items, provider: provider_for_streamed_answer(routing) },
-    );
-    Ok(PreparedMeetingAskData { prepare_id, prompt, narrowed: context.narrowed })
+    Ok((context.items, prompt, context.narrowed))
 }
 
 /// [`finalize_ask`]'s result: a plain object, not the `{"ok":…}` envelope — there is no
@@ -304,12 +372,11 @@ pub fn generate_conversation_title(
         now_unix_ms(),
     )?;
 
-    let chain = build_chain_for(llm::TaskKind::ConversationTitle, ollama_model, routing);
-    let Some(((title, token_usage), entry)) = llm::try_chain(&chain, |entry| {
+    let chain = apply_budgets(store, build_chain_for(llm::TaskKind::ConversationTitle, ollama_model, routing), false, now_unix_ms())?;
+    let ((title, token_usage), entry) = llm::try_chain_with_failures(&chain, |entry| {
         llm::generate_conversation_title(entry.client.as_ref(), query, answer, &routing.output_language)
-    }) else {
-        return Err(ApiError::ProviderFailure);
-    };
+    })
+    .map_err(crate::chain_failed)?;
     log_usage_for(
         store,
         entry.provider,
@@ -445,6 +512,28 @@ mod tests {
         let finalized = finalize_ask(&store, &data.prepare_id, "Friday [1] and Ben sends it [2]. Also [9].", "m", llm::TokenUsage::default());
         assert_eq!(finalized.citations.len(), 2, "[9] is out of range and ignored");
         assert!(finalized.citations.iter().all(|c| matches!(c, llm::ContextItemRef::Transcript { .. })));
+    }
+
+    #[test]
+    fn a_meeting_ask_names_speakers_and_marks_guesses() {
+        let _serial = serialize_prepared_asks();
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = meeting_with_transcript(&store, &["we agreed on Friday"]);
+        store
+            .insert_transcript_segments(&[
+                memory::NewTranscriptSegment { meeting_id: id, start_cs: 500, speaker_label: "Speaker 1".into(), text: "I send the deck".into() },
+                memory::NewTranscriptSegment { meeting_id: id, start_cs: 600, speaker_label: "Speaker 2".into(), text: "I review it".into() },
+            ])
+            .unwrap();
+        store.upsert_person("name:sam", "Sam", None).unwrap();
+        store.upsert_person("ana@x.com", "Ana", Some("ana@x.com")).unwrap();
+        store.set_meeting_speaker(id, 0, Some("name:sam"), Some(memory::speaker_names::NameStatus::Guess)).unwrap();
+        store.set_meeting_speaker(id, 1, Some("ana@x.com"), Some(memory::speaker_names::NameStatus::Confirmed)).unwrap();
+
+        let data = prepare_meeting_ask(&store, id, "who sends it?", &[], &RoutingConfig::default()).unwrap();
+        assert!(data.prompt.contains("Sam (unconfirmed)) I send the deck"), "{}", data.prompt);
+        assert!(data.prompt.contains("Ana) I review it"), "{}", data.prompt);
+        assert!(data.prompt.contains("Ben) we agreed on Friday"), "other labels stay: {}", data.prompt);
     }
 
     #[test]
@@ -642,5 +731,98 @@ mod tests {
         let routing = tripped_cap_routing(&store);
         let result = generate_conversation_title(&store, "gemma4:12b", "q", "a", &routing);
         assert!(matches!(result, Err(ApiError::SpendCap(_))));
+    }
+
+    /// Streaming Ask is pinned to the one provider the shell streams against: a spent
+    /// budget fails the prepare call, stashes nothing, and never falls through to Ollama.
+    #[test]
+    fn streaming_ask_provider_checked() {
+        let _serial = serialize_prepared_asks();
+        let store = store_with_capture_text("the quarterly roadmap review");
+        store
+            .log_usage(&memory::NewUsageLogEntry {
+                user_id: None,
+                provider: "anthropic".into(),
+                model: "claude-haiku-4-5".into(),
+                route: Some("ask".into()),
+                input_tokens: None,
+                output_tokens: None,
+                estimated_cost_cents: 2500,
+                cache_hit: false,
+                trace_id: "t".into(),
+                ts_unix_ms: now_unix_ms(),
+            })
+            .unwrap();
+        store.set_provider_budgets(&[("anthropic".into(), 2500)]).unwrap();
+        let routing = RoutingConfig {
+            anthropic_key: Some("k".into()),
+            preferred_provider: "anthropic".into(),
+            user_daily_cap_cents: Some(0),
+            global_daily_cap_cents: Some(0),
+            ..RoutingConfig::default()
+        };
+        let before = prepared_asks().lock().unwrap().len();
+        let result = prepare_ask(&store, "roadmap", 5, &[], &routing);
+        let Err(ApiError::BudgetSpent(spent)) = result else { panic!("{result:?}") };
+        assert_eq!(spent.provider, llm::Provider::Anthropic);
+        assert_eq!(prepared_asks().lock().unwrap().len(), before);
+
+        // Streaming another provider is untouched by anthropic's spent budget (still set),
+        // and by its own unspent one.
+        store.set_provider_budgets(&[("anthropic".into(), 2500), ("openai".into(), 1)]).unwrap();
+        let other = RoutingConfig { openai_key: Some("k".into()), preferred_provider: "openai".into(), ..routing.clone() };
+        let prepared = prepare_ask(&store, "roadmap", 5, &[], &other).unwrap();
+        discard_ask(&prepared.prepare_id);
+    }
+
+    struct Fake;
+    impl llm::LlmClient for Fake {
+        fn complete(&self, _prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            Ok(llm::Completion { text: "Friday [1].".into(), token_usage: llm::TokenUsage::default() })
+        }
+    }
+
+    fn fake_chain(providers: &[llm::Provider]) -> Vec<llm::ChainLink> {
+        providers.iter().map(|&provider| llm::ChainLink { provider, model: "m".into(), client: Box::new(Fake) }).collect()
+    }
+
+    /// The blocking meeting Ask is not pinned: a spent provider is skipped for the next one,
+    /// and only an all-spent chain fails with `BudgetSpent`.
+    #[test]
+    fn a_blocking_meeting_ask_falls_back_past_a_spent_budget() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = meeting_with_transcript(&store, &["we agreed on Friday"]);
+        store
+            .log_usage(&memory::NewUsageLogEntry {
+                user_id: None,
+                provider: "anthropic".into(),
+                model: "claude-haiku-4-5".into(),
+                route: Some("ask".into()),
+                input_tokens: None,
+                output_tokens: None,
+                estimated_cost_cents: 2500,
+                cache_hit: false,
+                trace_id: "t".into(),
+                ts_unix_ms: now_unix_ms(),
+            })
+            .unwrap();
+        store.set_provider_budgets(&[("anthropic".into(), 2500)]).unwrap();
+        let routing = RoutingConfig {
+            preferred_provider: "anthropic".into(),
+            user_daily_cap_cents: Some(0),
+            global_daily_cap_cents: Some(0),
+            ..RoutingConfig::default()
+        };
+
+        let answer = answer_meeting_with(&store, id, "when?", &[], &routing, || {
+            fake_chain(&[llm::Provider::Anthropic, llm::Provider::OpenAI])
+        })
+        .unwrap();
+        assert_eq!(answer.text, "Friday [1].");
+        assert_eq!(answer.citations.len(), 1);
+
+        let result = answer_meeting_with(&store, id, "when?", &[], &routing, || fake_chain(&[llm::Provider::Anthropic]));
+        let Err(MeetingAskError::Api(ApiError::BudgetSpent(spent))) = result else { panic!("{result:?}") };
+        assert_eq!(spent.provider, llm::Provider::Anthropic);
     }
 }

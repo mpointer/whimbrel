@@ -133,7 +133,9 @@ char *whimbrel_memory_recent(StoreHandle *handle, size_t limit);
  * Returns a discriminated JSON envelope (LB0-5): {"ok":true,"data":{"text": ...,
  * "citations": [...]}} on success, {"ok":false,"error":{"kind":"spend_cap",
  * "scope":"user"|"global","spent_cents":N,"cap_cents":N}} if the spend cap rejected the
- * call, or {"ok":false,"error":{"kind":"provider_failure"}} if every link in the
+ * call, {"ok":false,"error":{"kind":"budget_spent","provider":"openai","spent_cents":N,
+ * "budget_cents":N}} if every provider left is over its monthly budget (every governed
+ * call can return this kind), or {"ok":false,"error":{"kind":"provider_failure"}} if every link in the
  * provider chain failed for any other reason (e.g. no local Ollama server running and
  * no hosted fallback configured). Returns a bare NULL only on a null/invalid handle,
  * invalid arguments, or a malformed history_json. */
@@ -170,14 +172,17 @@ bool whimbrel_live_question_is_duplicate(const char *restatement, const char *ea
  * "google"; api_key may be NULL for Ollama. input_json is a SkinTurnInput
  * ({"request","history":[{"role","text"}],"currentManifest","catalogue"}).
  * routing_config_json — see whimbrel_llm_answer's doc comment, identical shape and
- * NULL-handling; only its spend caps apply here. Opens its own connection to db_path;
- * spend-cap check (route "skin") before the call, usage logged after. Returns the
+ * NULL-handling; only its spend caps apply here. Opens its own connection to db_path as
+ * device_id (this device's sync id, as whimbrel_memory_set_device_id; NULL before one is
+ * known), so the spend counts and syncs as this device's own; spend-cap check (route
+ * "skin") before the call, usage logged after. Returns the
  * LB0-5 envelope with the SkinTurnReply
  * ({"intent","reply","notes","skin","palettes","imageQueries","imagePrompts"}) as data;
  * an unreadable reply after one retry is provider_failure. Bare NULL on malformed
  * arguments or a store that won't open. Free with whimbrel_core_free_string. */
 char *whimbrel_skin_turn(
-    const char *db_path, const char *provider, const char *model, const char *api_key, const char *input_json,
+    const char *db_path, const char *device_id, const char *provider, const char *model, const char *api_key,
+    const char *input_json,
     const char *routing_config_json);
 
 /* Skins Release 2: Brave image search (strict safesearch, 6 results; query cut to 200
@@ -192,11 +197,11 @@ char *whimbrel_skin_image_search(
 
 /* Skins Release 2: generates one image. provider is "openai" (gpt-image-1, 1536x1024) or
  * "google" (imagen-4.0-generate-001); anything else is a bare NULL. prompt cut to 200
- * chars. Spend handling as whimbrel_skin_image_search, 5 cents on route
+ * chars. device_id as whimbrel_skin_turn. Spend handling as whimbrel_skin_image_search, 5 cents on route
  * "skin-image-generate". Envelope data is the image bytes as a base64 string; any
  * failure is provider_failure (still charged). Free with whimbrel_core_free_string. */
 char *whimbrel_skin_image_generate(
-    const char *db_path, const char *provider, const char *api_key, const char *prompt,
+    const char *db_path, const char *device_id, const char *provider, const char *api_key, const char *prompt,
     const char *routing_config_json);
 
 /* Skins Release 2: downloads a user-approved image: https only, port 443, public addresses only
@@ -231,6 +236,15 @@ char *whimbrel_llm_prepare_ask(
 char *whimbrel_llm_prepare_meeting_ask(
     StoreHandle *handle, int64_t meeting_id, const char *query, const char *history_json,
     const char *routing_config_json);
+
+/* Blocking meeting Ask through the governed chain (not pinned: a provider over its monthly
+ * budget is skipped for the next). Used when the streamed provider's budget is spent.
+ * Success data: {"text","citations","narrowed"}. Errors as whimbrel_llm_prepare_meeting_ask,
+ * plus budget_spent only when every provider is spent. NULL on a null handle or malformed
+ * arguments. */
+char *whimbrel_llm_answer_meeting(
+    StoreHandle *handle, int64_t meeting_id, const char *query, const char *model,
+    const char *history_json, const char *routing_config_json);
 
 /* ---- Live transcription (docs/superpowers/specs/2026-10-06-live-transcription-design.md) ---- */
 
@@ -379,8 +393,13 @@ char *whimbrel_routines_tick(
  * window opens); anything else is off. */
 char *whimbrel_meeting_prep_run(StoreHandle *handle, int64_t now_unix_ms, double lead_minutes, const char *ollama_model, const char *routing_config_json, const char *upcoming_meetings_json, uint8_t gate);
 
-/* The stored brief for a calendar event id as JSON, or NULL when there is none. */
+/* The stored brief for "<event id>@<start unix ms>" (a bare event id finds its newest
+ * occurrence) as JSON, or NULL when there is none. */
 char *whimbrel_meeting_prep_get(StoreHandle *handle, const char *event_id);
+
+/* The brief prepared for a recorded meeting (by its calendar event, else by title and start)
+ * as JSON, or NULL when there is none. */
+char *whimbrel_meeting_prep_for_meeting(StoreHandle *handle, int64_t meeting_id);
 
 /* Away Mode could not attend a meeting: records the to-do and, when the organizer's address is
  * known and is not the user, files the organizer email as a pending approval. request_json is
@@ -558,6 +577,11 @@ char *whimbrel_diarize_wav(const char *segmentation_model_path, const char *embe
 /* Merges transcript segments with speaker segments (from the two calls above) into one
  * labeled list. Returns a JSON array of LabeledSegment, or NULL on malformed input. */
 char *whimbrel_label_speakers(const char *transcript_segments_json, const char *speaker_segments_json);
+
+/* Diarization (diarize feature only, like whimbrel_diarize_wav) with one voice per speaker:
+ * {"segments":[SpeakerSegment],"voices":[{"speaker_id","embedding":[f32],"speech_cs"}]},
+ * or NULL on any failure. */
+char *whimbrel_diarize_wav_voices(const char *segmentation_model_path, const char *embedding_model_path, const char *wav_path, int32_t expected_speaker_count);
 
 /* Write-time transcript post-processing (core/transcribe::postprocess). Both inputs
  * are JSON arrays of {"speaker_label","start_cs","text"}: the mic channel (labeled
@@ -955,6 +979,21 @@ char *whimbrel_meeting_transcript_text(StoreHandle *handle, int64_t meeting_id);
 /* {"new_meeting_id":N,"moved_snapshot_paths":[...]}. */
 char *whimbrel_meeting_split(StoreHandle *handle, int64_t meeting_id, int64_t from_part_index);
 
+/* Trim: keeps the first keep_ms (transcript clock) of a meeting this device recorded.
+ * {"ok":true,"data":{"removed_parts":[N],"spanning_part":[part_index,keep_ms]|null,
+ * "removed_snapshot_paths":[...]}}; anything at or after the cut goes. "data":null when
+ * nothing changed (recording, another device's or this device's id unknown, keep not
+ * shorter), {"ok":false,"error":{"kind":"store"}} on a database error. */
+char *whimbrel_trim_meeting(StoreHandle *handle, int64_t meeting_id, int64_t keep_ms);
+
+/* Whether the meeting was trimmed: it can't be continued or merged into, so hide those.
+ * False on a null handle or a database error. */
+bool whimbrel_meeting_is_trimmed(StoreHandle *handle, int64_t meeting_id);
+
+/* The meeting's length in ms on the transcript clock (the trim sheet's default and bound).
+ * 0 for a missing meeting, -1 on a null handle or a database error. */
+int64_t whimbrel_meeting_length_ms(StoreHandle *handle, int64_t meeting_id);
+
 /* "Keep together": moves from's snapshot rows and continue key to into. JSON array of the
  * moved file paths, oldest first. */
 char *whimbrel_meeting_absorb_split(StoreHandle *handle, int64_t into, int64_t from);
@@ -1272,6 +1311,11 @@ bool whimbrel_ask_is_time_critical(const char *query);
  * {"error": "<display-ready message>"}; NULL only on a NULL or unknown provider. */
 char *whimbrel_hosted_models_fetch(const char *provider, const char *api_key, const char *base_url_override);
 
+/* The installed Ollama model to use instead of `configured`, or NULL to keep it: the user
+ * never chose one (user_chose false) and the default isn't among installed_json (a JSON
+ * array of model ids, as whimbrel_hosted_models_fetch returns them). Pure, no I/O. */
+char *whimbrel_installed_ollama_choice(const char *configured, bool user_chose, const char *installed_json);
+
 /* ---- Key on-ramp and Model usage (core/api::hosted_models, providers, usage) ----
  * Validates a pasted key by fetching the provider's model list. BLOCKING like
  * whimbrel_hosted_models_fetch. Returns {"status":"valid","models":[...]} (plus
@@ -1291,8 +1335,21 @@ char *whimbrel_key_format_hint(const char *provider, const char *key);
 
 /* Spend totals in cents, every window ending now, UTC days: {"today_cents",
  * "last_30_days_cents","month_to_date_cents","last_30_days_by_provider":[{"provider",
- * "cents"}]}. NULL on a NULL/invalid handle. */
+ * "cents"}],"month_to_date_by_provider":[{"provider","cents"}]} (this UTC month, paid providers,
+ * including the user's other computers). NULL on a NULL/invalid handle. */
 char *whimbrel_usage_totals(StoreHandle *handle);
+
+/* Replaces every monthly provider budget from {"anthropic":2500,...} (integer cents; 0 or a
+ * free provider sets none). Envelope {"ok":true,"data":{}} or {"ok":false,"error":{"kind":
+ * "invalid"}}. NULL on a NULL handle. Free with whimbrel_core_free_string. */
+char *whimbrel_set_provider_budgets(StoreHandle *handle, const char *budgets_json);
+
+/* {"ok":true,"data":{"anthropic":2500,...}}: every budget set. NULL on a NULL handle. */
+char *whimbrel_provider_budgets(StoreHandle *handle);
+
+/* Thresholds newly reached, each returned once: {"ok":true,"data":[{"provider","threshold"
+ * (80|100),"spent_cents","budget_cents","month"}]}. NULL on a NULL handle. */
+char *whimbrel_take_budget_notices(StoreHandle *handle);
 
 /* The Your data pane's counts (memory::Store::data_counts) as DataCounts JSON. Null on a
  * null/invalid handle. */
@@ -1506,5 +1563,50 @@ char *whimbrel_sync_worker_error_message(const char *error_json);
 /* The same failure as {"code","params","message"}: a stable snake_case code and its
  * params for the shell to localize, beside the English message. NULL on bad JSON. */
 char *whimbrel_sync_worker_error_code(const char *error_json);
+
+/* Speaker names. Each returns {"ok":true,"data":...}, {"ok":false,"error":{"kind":"store"}}
+ * on a database error, or NULL on a null handle or unreadable argument; free with
+ * whimbrel_core_free_string. MeetingSpeaker is {"speaker_id","person_key","name","status"}
+ * (status "confirmed"|"guess"|null); VoicePerson is {"person_key","name","confirmed_count"}. */
+
+/* Names the meeting's unnamed speakers from voices_json (whimbrel_diarize_wav_voices's
+ * "voices"): a strong voice match to an invitee is confirmed; the rest are guesses from
+ * the conversation (model and routing_config_json as for whimbrel_llm_summarize_meeting)
+ * or one-and-one elimination. Speakers already named keep their names. remember=false
+ * stores no embeddings. A model failure or spend cap leaves the rest unnamed, still ok.
+ * data: [MeetingSpeaker]. */
+char *whimbrel_assign_meeting_speakers(StoreHandle *handle, int64_t meeting_id, const char *voices_json, const char *model, const char *routing_config_json, bool remember);
+
+/* Stores the meeting's invitees with their emails: attendees_json is [{"name","email"}]
+ * (email may be null), the user left out. data: null. */
+char *whimbrel_set_meeting_attendee_details(StoreHandle *handle, int64_t meeting_id, const char *attendees_json);
+
+/* data: the meeting's invitees [{"name","email"}]; without stored details, its attendee
+ * names with a null email. */
+char *whimbrel_meeting_attendee_details(StoreHandle *handle, int64_t meeting_id);
+
+/* data: [MeetingSpeaker]. */
+char *whimbrel_meeting_speakers(StoreHandle *handle, int64_t meeting_id);
+
+/* Mike's pick for a speaker, confirmed (and learned when its voice is remembered). email may
+ * be NULL: then an invitee with that name (trimmed, any case) is the person, keeping their
+ * email; otherwise a person known by name. data: the meeting's [MeetingSpeaker]. */
+char *whimbrel_set_meeting_speaker(StoreHandle *handle, int64_t meeting_id, int32_t speaker_id, const char *name, const char *email);
+
+/* "Yes, that's X": confirms the speaker as person_key, the person it was shown as (never
+ * re-resolved by name). A speaker that is no longer that person is left as is.
+ * data: the meeting's [MeetingSpeaker]. */
+char *whimbrel_confirm_meeting_speaker(StoreHandle *handle, int64_t meeting_id, int32_t speaker_id, const char *person_key);
+
+/* labels_json: raw transcript labels (["Speaker 1","Me",...]). data: [{"label","guess",
+ * "person_key"}] in the same order; "Speaker N" becomes its assigned name (person_key that
+ * person's, else null), anything else stays. */
+char *whimbrel_display_labels(StoreHandle *handle, int64_t meeting_id, const char *labels_json);
+
+/* data: [VoicePerson], people with a remembered voice. */
+char *whimbrel_voice_people(StoreHandle *handle);
+
+/* Forgets one person's voice (names stay). data: the remaining [VoicePerson]. */
+char *whimbrel_forget_voice(StoreHandle *handle, const char *person_key);
 
 #endif /* WHIMBREL_CORE_H */

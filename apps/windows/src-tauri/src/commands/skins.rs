@@ -466,7 +466,7 @@ pub async fn skin_image_search(state: State<'_, AppState>, query: String) -> Res
     let caps = caps(&routing, &keys);
     state.store()?.call(move |s| skin_maker::charge(s, &caps, "skin-image-search", llm::images::IMAGE_SEARCH_CENTS)).await??;
     let found = tauri::async_runtime::spawn_blocking(move || llm::images::search_images(&key, &query)).await.map_err(blocking_failed)?;
-    Ok(found.map_err(|_| CommandError::ProviderFailure)?.into_iter().map(Into::into).collect())
+    Ok(found.map_err(|_| CommandError::provider_failure())?.into_iter().map(Into::into).collect())
 }
 
 /// Makes one image (5¢, charged before the call). It waits here, unsaved, until approved.
@@ -477,12 +477,12 @@ pub async fn skin_image_generate(state: State<'_, AppState>, prompt: String) -> 
         return Err(CommandError::not_configured(tr("Add an OpenAI or Google key in Settings to make images.", &[])));
     };
     let caps = caps(&routing, &keys);
-    state.store()?.call(move |s| skin_maker::charge(s, &caps, "skin-image-generate", llm::images::IMAGE_GENERATE_CENTS)).await??;
+    state.store()?.call(move |s| skin_maker::charge_for(s, &caps, provider, "skin-image-generate", llm::images::IMAGE_GENERATE_CENTS)).await??;
     let asked = prompt.clone();
     let bytes = tauri::async_runtime::spawn_blocking(move || llm::images::generate_image(provider, &key, &asked))
         .await
         .map_err(blocking_failed)?
-        .map_err(|_| CommandError::ProviderFailure)?;
+        .map_err(|_| CommandError::provider_failure())?;
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let url = format!("generated:{nanos:x}");
     remember_generated(&url, bytes);
@@ -500,7 +500,7 @@ pub async fn skin_image_thumbnail(state: State<'_, AppState>, url: String) -> Re
         return Err(CommandError::invalid_input(tr("Local-only mode is on, so nothing is downloaded.", &[])));
     }
     let bytes = tauri::async_runtime::spawn_blocking(move || llm::images::fetch_image(&url)).await.map_err(blocking_failed)?;
-    Ok(Response::new(bytes.map_err(|_| CommandError::ProviderFailure)?))
+    Ok(Response::new(bytes.map_err(|_| CommandError::provider_failure())?))
 }
 
 /// Forgets a candidate; nothing was saved, so nothing is on disk.

@@ -1,5 +1,6 @@
 //! Which upcoming calendar meetings are due a prep brief: the lead window is open, the
-//! meeting has not started, someone else is attending, and no brief exists yet. Pure.
+//! meeting has not started, someone else is attending, and this occurrence has no brief yet
+//! (`prepared` holds `memory::prep::prep_key`s). Pure.
 
 use std::collections::HashSet;
 
@@ -16,7 +17,7 @@ pub fn due(
         .iter()
         .filter(|m| {
             !m.attendees.is_empty()
-                && !prepared.contains(&m.id)
+                && !prepared.contains(&memory::prep::prep_key(&m.id, m.start_unix_ms))
                 && now_unix_ms >= m.start_unix_ms - lead_ms
                 && now_unix_ms < m.start_unix_ms
         })
@@ -38,6 +39,7 @@ mod tests {
             start_unix_ms: start,
             end_unix_ms: start + 30 * MIN,
             attendees: attendees.iter().map(|s| s.to_string()).collect(),
+            attendee_details: Vec::new(),
             conference_link: None,
             source: MeetingSource::GoogleCalendar,
             app_bundle_id: None,
@@ -65,8 +67,17 @@ mod tests {
     #[test]
     fn a_meeting_with_a_brief_is_not_due_again() {
         let ms = [meeting("a", 100 * MIN, &["Ben"]), meeting("b", 100 * MIN, &["Ben"])];
-        let prepared: HashSet<String> = ["a".to_string()].into_iter().collect();
+        let prepared: HashSet<String> = [memory::prep::prep_key("a", 100 * MIN)].into_iter().collect();
         assert_eq!(ids(&due(&ms, &prepared, 80 * MIN, 30.0)), ["b"]);
+    }
+
+    #[test]
+    fn each_occurrence_of_a_recurring_meeting_is_due_its_own_brief() {
+        // EventKit gives every occurrence of a series the same id.
+        let ms = [meeting("weekly", 100 * MIN, &["Ben"]), meeting("weekly", 200 * MIN, &["Ben"])];
+        let prepared: HashSet<String> = [memory::prep::prep_key("weekly", 100 * MIN)].into_iter().collect();
+        let next = due(&ms, &prepared, 180 * MIN, 30.0);
+        assert_eq!(next.iter().map(|m| m.start_unix_ms).collect::<Vec<_>>(), [200 * MIN]);
     }
 
     #[test]

@@ -1,16 +1,28 @@
 import { useState } from "react";
-import { meetingTranscript } from "../api";
+import { confirmMeetingSpeaker, meetingTranscript, setMeetingSpeaker } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { TranscriptView } from "../generated/types";
 import { useL10n } from "../l10n";
-import { speakerLabel } from "./sentinels";
+import { SpeakerMenu } from "./SpeakerMenu";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
 }
 
-/** The meeting's transcript, loaded on demand: it can be thousands of lines. */
-export function TranscriptPanel({ meetingId, hasTranscript }: { meetingId: number; hasTranscript: boolean }) {
+/**
+ * The meeting's transcript, loaded on demand: it can be thousands of lines. Speakers show
+ * their names (a guess as "Name?"); a diarized speaker's menu confirms or fixes the name for
+ * all of their lines, and `onNamesChanged` then lets the page offer a new summary.
+ */
+export function TranscriptPanel({
+  meetingId,
+  hasTranscript,
+  onNamesChanged,
+}: {
+  meetingId: number;
+  hasTranscript: boolean;
+  onNamesChanged?: () => void;
+}) {
   const [view, setView] = useState<TranscriptView | null>(null);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,6 +37,16 @@ export function TranscriptPanel({ meetingId, hasTranscript }: { meetingId: numbe
     if (view) return;
     meetingTranscript(meetingId)
       .then(setView)
+      .catch((e: unknown) => setError(message(e)));
+  };
+
+  const rename = (change: Promise<TranscriptView>) => {
+    setError(null);
+    change
+      .then((next) => {
+        setView(next);
+        onNamesChanged?.();
+      })
       .catch((e: unknown) => setError(message(e)));
   };
 
@@ -45,13 +67,26 @@ export function TranscriptPanel({ meetingId, hasTranscript }: { meetingId: numbe
       {open && view && view.turns.length > 0 && (
         <>
           <ol className="transcript">
-            {view.turns.map((turn, i) => (
-              <li key={i}>
-                <span className="transcript-time mono small">{turn.timestamp}</span>
-                <span className="transcript-speaker">{speakerLabel(turn.speaker)}</span>
-                <span>{turn.text}</span>
-              </li>
-            ))}
+            {view.turns.map((turn, i) => {
+              const speakerId = turn.speakerId;
+              return (
+                <li key={i}>
+                  <span className="transcript-time mono small">{turn.timestamp}</span>
+                  <SpeakerMenu
+                    turn={turn}
+                    invitees={view.invitees}
+                    offered={view.canName && speakerId != null}
+                    onConfirm={(personKey) => {
+                      if (speakerId != null) rename(confirmMeetingSpeaker(meetingId, speakerId, personKey));
+                    }}
+                    onPick={(name, email) => {
+                      if (speakerId != null) rename(setMeetingSpeaker(meetingId, speakerId, name, email));
+                    }}
+                  />
+                  <span>{turn.text}</span>
+                </li>
+              );
+            })}
           </ol>
           {view.more && <p className="muted small">{t("Showing the first part of a long transcript.")}</p>}
         </>

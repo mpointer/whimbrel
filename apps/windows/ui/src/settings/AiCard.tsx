@@ -9,6 +9,7 @@ import {
   setApiKey,
   setImageSearchKey,
   setPrompt,
+  setProviderBudget,
   setRoutingSettings,
   setSummaryInstructions,
   usageRows,
@@ -28,11 +29,14 @@ import {
   keyLine,
   modelField,
   modelOptions,
+  ollamaWarningLine,
+  monthSpent,
   parseCapDollars,
   providerLabel,
   providers,
   showsOnRamp,
   surfaces,
+  thisMonth,
   usageCost,
   usageTime,
   usageTokens,
@@ -90,6 +94,11 @@ export function AiCard() {
         notice={hostedNotice(settings.routing, settings.keys)}
         onError={setError}
       />
+      {settings.ollamaWarning && (
+        <p className="small" role="status">
+          {ollamaWarningLine(settings.ollamaWarning)}
+        </p>
+      )}
       <h3 className="section-label">{t("API keys")}</h3>
       <p className="muted small">{t("Stored in Windows Credential Manager under the same names the Mac's Keychain uses.")}</p>
       {settings.keys.map((k) => (
@@ -100,6 +109,15 @@ export function AiCard() {
           usage={settings.usage}
           line={keyLine(k)}
           saved={!!k.masked}
+          budgetCents={settings.budgets.find((b) => b.provider === k.provider)?.cents ?? null}
+          onBudget={(dollars) =>
+            setProviderBudget(k.provider, dollars)
+              .then((budgets) => {
+                setSettings((s) => s && { ...s, budgets });
+                setError(null);
+              })
+              .catch((e: unknown) => setError(message(e)))
+          }
           onSave={(key) =>
             setApiKey(k.provider, key)
               .then((keys) => {
@@ -110,6 +128,7 @@ export function AiCard() {
           }
         />
       ))}
+      {settings.keys.some((k) => k.masked) && <p className="muted small">{t("Includes your other computers.")}</p>}
       <ImageSearchKeyRow
         line={keyLine({ masked: settings.imageSearchKey })}
         saved={!!settings.imageSearchKey}
@@ -324,6 +343,8 @@ function KeyRow(props: {
   usage: UsageView | null | undefined;
   line: string;
   saved: boolean;
+  budgetCents: number | null;
+  onBudget: (dollars: number | null) => void;
   onSave: (key: string | null) => Promise<void>;
 }) {
   const { info, provider, saved } = props;
@@ -412,7 +433,43 @@ function KeyRow(props: {
         </p>
       )}
       {info && <p className="muted small">{costLine(info, props.usage)}</p>}
+      {saved && <MonthlyBudget spentCents={monthSpent(props.usage, provider)} budgetCents={props.budgetCents} onBudget={props.onBudget} />}
       {info && dataTermsLine(info) && <p className="muted small">{dataTermsLine(info)}</p>}
+    </div>
+  );
+}
+
+/** A paid provider's month against its budget: the line, a thin bar (red at 100%), and the field. */
+function MonthlyBudget(props: { spentCents: number; budgetCents: number | null; onBudget: (dollars: number | null) => void }) {
+  const stored = capToDollars(props.budgetCents);
+  const [draft, setDraft] = useState(stored);
+  useEffect(() => setDraft(stored), [stored]);
+  const month = thisMonth(props.spentCents, props.budgetCents);
+  const save = () => {
+    const cents = parseCapDollars(draft);
+    // Not a dollar amount: back to what is saved.
+    if (cents === undefined) return setDraft(stored);
+    if ((cents || null) !== props.budgetCents) props.onBudget(cents ? cents / 100 : null);
+  };
+  return (
+    <div className="stack-sm">
+      <p className={month.over ? "small budget-over" : "muted small"}>{month.text}</p>
+      {month.fill !== null && (
+        <div className={month.over ? "budget-bar budget-bar--over" : "budget-bar"} aria-hidden="true">
+          <span style={{ width: `${Math.round(month.fill * 100)}%` }} />
+        </div>
+      )}
+      <label className="field-row">
+        <span>{t("Monthly budget")}</span>
+        <input
+          className="input short"
+          inputMode="decimal"
+          placeholder="$"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={save}
+        />
+      </label>
     </div>
   );
 }

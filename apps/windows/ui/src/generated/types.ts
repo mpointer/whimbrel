@@ -146,6 +146,13 @@ export type CommandError =
     }
   | {
       kind: "provider_failure";
+      reason?: ProviderFailureReason | null;
+    }
+  | {
+      budget_cents: number;
+      kind: "budget_spent";
+      provider: string;
+      spent_cents: number;
     }
   | {
       kind: "store";
@@ -172,6 +179,41 @@ export type CommandError =
  * via the `definition` "SpendScope".
  */
 export type SpendScope = "user" | "global";
+/**
+ * Why a provider failed, as core's `llm::ProviderFailureKind` serializes it (`provider` is
+ * `Provider::as_str`). Never the provider's own error text.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ProviderFailureReason".
+ */
+export type ProviderFailureReason =
+  | {
+      kind: "ollama_not_running";
+    }
+  | {
+      kind: "ollama_model_missing";
+      model: string;
+    }
+  | {
+      kind: "no_provider_configured";
+    }
+  | {
+      kind: "unauthorized";
+      provider: string;
+    }
+  | {
+      kind: "rate_limited";
+      provider: string;
+    }
+  | {
+      kind: "network";
+      provider: string;
+    }
+  | {
+      kind: "other";
+      provider: string;
+      status?: number | null;
+    };
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "KeyCheckStatus".
@@ -320,10 +362,18 @@ export interface ActionItemView {
  */
 export interface AiSettings {
   /**
+   * Each paid provider's monthly budget.
+   */
+  budgets: ProviderBudgetView[];
+  /**
    * The Brave Search key the skin maker finds images with, masked; `None` when unset.
    */
   imageSearchKey?: string | null;
   keys: ProviderKey[];
+  /**
+   * The Ollama model the user chose isn't installed: what stands in meanwhile (Mac #581).
+   */
+  ollamaWarning?: OllamaWarning | null;
   prompts: PromptText[];
   providers: ProviderInfoView[];
   routing: RoutingSettings;
@@ -335,6 +385,16 @@ export interface AiSettings {
   usage?: UsageView | null;
 }
 /**
+ * A paid provider's monthly budget (Settings → AI Providers); `None` is no budget.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ProviderBudgetView".
+ */
+export interface ProviderBudgetView {
+  cents?: number | null;
+  provider: Provider;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "ProviderKey".
  */
@@ -344,6 +404,16 @@ export interface ProviderKey {
    */
   masked?: string | null;
   provider: Provider;
+}
+/**
+ * "{model} isn't installed. Whimbrel is using {fallback} until you install it or choose another model."
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "OllamaWarning".
+ */
+export interface OllamaWarning {
+  fallback: string;
+  model: string;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -438,6 +508,10 @@ export interface SpendView {
 export interface UsageView {
   byProvider: ProviderSpendView[];
   last30DaysCents: number;
+  /**
+   * This UTC month's spend per provider, including the user's other computers (budgets).
+   */
+  monthByProvider: ProviderSpendView[];
   monthToDateCents: number;
   todayCents: number;
 }
@@ -598,6 +672,25 @@ export interface DeviceTag {
   deviceId: string;
   label: string;
   thisDevice: boolean;
+}
+/**
+ * One notice as the popup shows it.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "BudgetNoticeView".
+ */
+export interface BudgetNoticeView {
+  budgetCents: number;
+  /**
+   * UTC month, "YYYY-MM"; the popup names it in the UI language.
+   */
+  month: string;
+  provider: string;
+  spentCents: number;
+  /**
+   * 80 or 100.
+   */
+  threshold: number;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1053,6 +1146,16 @@ export interface ImportView {
   summaryLimit: number;
 }
 /**
+ * A calendar invitee, for the speaker menu.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "InviteeView".
+ */
+export interface InviteeView {
+  email?: string | null;
+  name: string;
+}
+/**
  * What saving a key found out (core/api::hosted_models::validate_key).
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1360,6 +1463,10 @@ export interface MeetingSettings {
    * Minutes before a calendar meeting its Meeting Prep brief is made, 5-120. Kept on this PC.
    */
   prepLeadMinutes: number;
+  /**
+   * "Remember people's voices" (speaker names). On by default, kept on this PC.
+   */
+  rememberVoices?: boolean;
 }
 /**
  * One entry of a routine's Model picker.
@@ -1963,7 +2070,26 @@ export interface TodayRecap {
  * via the `definition` "TranscriptTurn".
  */
 export interface TranscriptTurn {
+  /**
+   * The name is a guess, shown as "Name?".
+   */
+  guess: boolean;
+  /**
+   * What to show: the speaker's name when one is assigned, else `speaker`.
+   */
+  label: string;
+  /**
+   * The named person, for "Yes, that's {name}".
+   */
+  personKey?: string | null;
+  /**
+   * The label as stored: "Me", "Others", "Speaker 2".
+   */
   speaker: string;
+  /**
+   * The diarized speaker ("Speaker 2" is 1), the ones the speaker menu can name.
+   */
+  speakerId?: number | null;
   text: string;
   timestamp: string;
 }
@@ -1972,6 +2098,11 @@ export interface TranscriptTurn {
  * via the `definition` "TranscriptView".
  */
 export interface TranscriptView {
+  /**
+   * The speaker menu is offered: see [`can_name_speakers`].
+   */
+  canName: boolean;
+  invitees: InviteeView[];
   /**
    * More segments remain beyond this page.
    */
@@ -2017,6 +2148,16 @@ export interface TrayStatus {
   recordingStartedUnixMs?: number | null;
 }
 /**
+ * Whether "Trim recording…" is offered for a meeting, and its length on the transcript clock.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TrimInfo".
+ */
+export interface TrimInfo {
+  lengthMs: number;
+  offered: boolean;
+}
+/**
  * One call as the Model usage list shows it (core/api::usage::UsageRow).
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -2034,6 +2175,17 @@ export interface UsageRowView {
   provider: string;
   task: string;
   tsUnixMs: number;
+}
+/**
+ * A person with a remembered voice (Settings → Meetings → Remembered voices…).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "VoicePersonView".
+ */
+export interface VoicePersonView {
+  confirmedCount: number;
+  name: string;
+  personKey: string;
 }
 /**
  * One meeting's workspace: what to show, and which parts the user has edited.

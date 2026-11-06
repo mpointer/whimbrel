@@ -25,6 +25,8 @@ pub mod local_model;
 pub mod logging;
 pub mod mcp_server;
 pub mod meetings;
+pub mod budget_alert;
+pub mod ollama_default;
 pub mod paths;
 pub mod profile;
 pub mod question_alert;

@@ -19,6 +19,8 @@ export interface Turn {
   context: ContextEntry[];
   citations: ContextItemRef[];
   error: string | null;
+  /** The error was a spent monthly budget: the turn offers "Open AI Providers settings". */
+  budgetSpent?: boolean;
 }
 
 export function newTurn(query: string): Turn {
@@ -64,6 +66,7 @@ export function applyEvent(turn: Turn, event: ChatEvent): Turn {
         progress: null,
         text: event.partial ? turn.text : "",
         error: describeError(event.error),
+        budgetSpent: event.error.kind === "budget_spent",
       };
     case "titled":
       return turn;

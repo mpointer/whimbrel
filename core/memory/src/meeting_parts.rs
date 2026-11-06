@@ -80,13 +80,16 @@ pub(crate) fn ensure_meeting_part_schema(conn: &Connection) -> rusqlite::Result<
 
 impl Store {
     /// Adds the next part (1-based) and returns its index. The first part also sets the
-    /// meeting's `continue_key`.
+    /// meeting's `continue_key`. An error for a trimmed meeting ([`Store::is_trimmed`]).
     pub fn begin_meeting_part(
         &self,
         meeting_id: i64,
         start_unix_ms: i64,
         continue_key: Option<&str>,
     ) -> rusqlite::Result<i64> {
+        if self.is_trimmed(meeting_id)? {
+            return Err(bad("cannot continue a trimmed meeting"));
+        }
         let tx = self.conn.unchecked_transaction()?;
         let index: i64 = tx.query_row(
             "SELECT COALESCE(MAX(part_index), 0) + 1 FROM meeting_part WHERE meeting_id = ?1",
@@ -109,7 +112,8 @@ impl Store {
         Ok(index)
     }
 
-    /// The completed meeting with `continue_key` that ended within the window, latest end wins.
+    /// The completed, untrimmed meeting with `continue_key` that ended within the window,
+    /// latest end wins.
     pub fn find_continuable_meeting(
         &self,
         continue_key: &str,
@@ -132,7 +136,7 @@ impl Store {
         self.conn
             .query_row(
                 "SELECT id FROM meeting WHERE continue_key = ?1 AND status = ?2 \
-                 AND end_unix_ms >= ?3 ORDER BY end_unix_ms DESC, id DESC LIMIT 1",
+                 AND end_unix_ms >= ?3 AND trimmed_keep_ms IS NULL ORDER BY end_unix_ms DESC, id DESC LIMIT 1",
                 params![
                     continue_key,
                     MeetingStatus::Completed.as_str(),
@@ -145,7 +149,11 @@ impl Store {
 
     /// Back to `Recording`. Deliberately no `local_seq` restamp: the push scan skips
     /// non-terminal rows, and `complete_meeting` restamps when the meeting ends again.
+    /// An error for a trimmed meeting.
     pub fn reopen_meeting(&self, id: i64) -> rusqlite::Result<()> {
+        if self.is_trimmed(id)? {
+            return Err(bad("cannot continue a trimmed meeting"));
+        }
         self.conn.execute(
             "UPDATE meeting SET status = ?1 WHERE id = ?2",
             params![MeetingStatus::Recording.as_str(), id],
@@ -281,7 +289,9 @@ impl Store {
 
     /// Whole-meeting transcript for the summary: `[HH:mm:ss] Speaker: text` per segment (the
     /// shape Swift writes and rebuilds, wall-clock from part 1's start), in `start_cs`
-    /// order, with `— rejoined HH:MM —` before the first line of each part >= 2.
+    /// order, with `— rejoined HH:MM —` before the first line of each part >= 2. "Speaker N"
+    /// reads as the assigned name (a guess as `Sam (unconfirmed)`), and a non-empty
+    /// transcript starts with `Invitees: a, b` when the meeting has any.
     pub fn meeting_transcript_text(&self, meeting_id: i64) -> rusqlite::Result<String> {
         use chrono::{Local, TimeZone};
         let hms = |ms: i64, f: &str| {
@@ -312,9 +322,11 @@ impl Store {
                 r.get::<_, String>(2)?,
             ))
         })?;
+        let speakers = self.meeting_speakers(meeting_id)?;
         let mut lines = Vec::new();
         for row in rows {
             let (cs, speaker, text) = row?;
+            let speaker = crate::speaker_names::transcript_label(&speaker, &speakers);
             // Emit the divider of the latest part this segment reaches; a part with no
             // segments gets none.
             let mut due = None;
@@ -330,6 +342,12 @@ impl Store {
                 speaker,
                 text
             ));
+        }
+        // Only a transcript with lines gets the header, so an empty one stays empty.
+        let invitees = self.meeting_attendee_details(meeting_id)?;
+        if !lines.is_empty() && !invitees.is_empty() {
+            let names: Vec<&str> = invitees.iter().map(|a| a.name.as_str()).collect();
+            lines.insert(0, format!("Invitees: {}", names.join(", ")));
         }
         Ok(lines.join("\n"))
     }
@@ -528,15 +546,16 @@ impl Store {
 
     /// "Merge with previous meeting": the meeting on `device_id` that ended last before
     /// `meeting_id` started, when it has the same title, ended under 10 minutes before, and
-    /// both are completed meetings of `device_id`.
+    /// both are completed meetings of `device_id`. Never offered when either one was trimmed.
     pub fn previous_mergeable_meeting(&self, meeting_id: i64, device_id: &str) -> rusqlite::Result<Option<i64>> {
         self.conn
             .query_row(
-                "SELECT p.id, p.title = t.title AND p.status = 'completed' \
+                "SELECT p.id, p.title = t.title AND p.status = 'completed' AND p.trimmed_keep_ms IS NULL \
                         AND p.end_unix_ms IS NOT NULL AND p.end_unix_ms <= t.start_unix_ms \
                         AND t.start_unix_ms - p.end_unix_ms < ?3 \
                  FROM meeting t JOIN meeting p ON p.device_id = t.device_id AND p.id != t.id \
-                 WHERE t.id = ?1 AND t.device_id = ?2 AND t.status = 'completed' AND p.start_unix_ms < t.start_unix_ms \
+                 WHERE t.id = ?1 AND t.device_id = ?2 AND t.status = 'completed' AND t.trimmed_keep_ms IS NULL \
+                   AND p.start_unix_ms < t.start_unix_ms \
                  ORDER BY p.start_unix_ms DESC LIMIT 1",
                 params![meeting_id, device_id, MERGE_GAP_MS],
                 |r| Ok((r.get::<_, i64>(0)?, r.get::<_, bool>(1)?)),

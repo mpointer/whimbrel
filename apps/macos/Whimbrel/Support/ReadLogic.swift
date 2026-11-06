@@ -37,6 +37,28 @@ enum ReadLogic {
         return names.count > 2 ? "\(shown) +\(names.count - 2)" : shown
     }
 
+    /// How many names the meeting page shows before "+N more" (Android's `ReadLogic.COLLAPSED_ATTENDEES`).
+    static let collapsedAttendees = 3
+
+    /// How many names the collapsed meeting-page list hides.
+    static func hiddenAttendeeCount(_ names: [String]) -> Int { max(0, names.count - collapsedAttendees) }
+
+    /// The meeting-page names: the first three when collapsed, all of them when expanded.
+    static func attendeeLine(_ names: [String], expanded: Bool) -> String {
+        (expanded ? names : Array(names.prefix(collapsedAttendees))).joined(separator: ", ")
+    }
+
+    /// The toggle under a long list: "+N more" (spoken "Show all N participants"), or "Show fewer".
+    static func attendeeToggle(_ names: [String], expanded: Bool) -> (label: String, accessibilityLabel: String)? {
+        let hidden = hiddenAttendeeCount(names)
+        guard hidden > 0 else { return nil }
+        if expanded {
+            let fewer = String(localized: "Show fewer")
+            return (fewer, fewer)
+        }
+        return (String(localized: "+\(hidden) more"), String(localized: "Show all \(names.count) participants"))
+    }
+
     static func timeText(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .none

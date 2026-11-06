@@ -99,6 +99,15 @@ struct SettingsView: View {
             }
         }
         .frame(minWidth: 640, minHeight: 480)
+        .onAppear(perform: showPendingSection)
+        .onChange(of: appState.pendingSettingsSection) { _, _ in showPendingSection() }
+    }
+
+    /// Lands on the section a button elsewhere asked for (`OpenAIProvidersSettingsButton`).
+    private func showPendingSection() {
+        guard let section = appState.pendingSettingsSection else { return }
+        appState.pendingSettingsSection = nil
+        selection = section
     }
 
     @ViewBuilder
@@ -137,5 +146,20 @@ struct SettingsView: View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
             .whimbrelCard()
+    }
+}
+
+/// "Open AI Providers settings": shown next to a message whose fix is there (a spent monthly budget).
+struct OpenAIProvidersSettingsButton: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Button("Open AI Providers settings") {
+            appState.pendingSettingsSection = .ai
+            openSettings()
+        }
+        .buttonStyle(.whimbrelSecondary)
+        .controlSize(.small)
     }
 }

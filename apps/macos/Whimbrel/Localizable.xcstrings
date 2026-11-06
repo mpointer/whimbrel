@@ -163,6 +163,80 @@
         }
       }
     },
+    "%@ is at 80%% of this month's budget (%@ of %@)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ hat 80 %% des Monatsbudgets erreicht (%2$@ von %3$@)."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ is at 80%% of this month's budget (%2$@ of %3$@)."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ está al 80%% del presupuesto de este mes (%2$@ de %3$@)."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ a atteint 80 %% du budget de ce mois-ci (%2$@ sur %3$@)."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ a atteint 80 %% du budget de ce mois (%2$@ sur %3$@)."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ está em 80%% do orçamento deste mês (%2$@ de %3$@)."
+          }
+        }
+      }
+    },
+    "%@ is busy or out of credit. Try again shortly." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ ausgelastet oder Guthaben leer. Bitte gleich erneut versuchen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ está ocupado o sin crédito. Inténtalo de nuevo en breve."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ est surchargé ou n’a plus de crédit. Réessayez dans un instant."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ est occupé ou n'a plus de crédit. Réessayez dans un instant."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ está ocupado ou sem créditos. Tente novamente em instantes."
+          }
+        }
+      }
+    },
     "%@ isn't available?" : {
       "localizations" : {
         "de" : {
@@ -197,6 +271,46 @@
         }
       }
     },
+    "%@ isn't installed. Whimbrel is using %@ until you install it or choose another model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ ist nicht installiert. Whimbrel verwendet %2$@, bis Sie es installieren oder ein anderes Modell wählen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ isn't installed. Whimbrel is using %2$@ until you install it or choose another model."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ no está instalado. Whimbrel está usando %2$@ hasta que lo instales o elijas otro modelo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ n'est pas installé. Whimbrel utilise %2$@ jusqu'à ce que vous l'installiez ou que vous choisissiez un autre modèle."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ n’est pas installé. Whimbrel utilise %2$@ jusqu’à ce que vous l’installiez ou que vous choisissiez un autre modèle."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ não está instalado. O Whimbrel está usando %2$@ até você instalá-lo ou escolher outro modelo."
+          }
+        }
+      }
+    },
     "%@ options" : {
       "localizations" : {
         "de" : {
@@ -227,6 +341,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Opções de %@"
+          }
+        }
+      }
+    },
+    "%@ reached this month's budget. Whimbrel will use your other providers until %@ ends." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ hat das Monatsbudget erreicht. Whimbrel verwendet Ihre anderen Anbieter, bis %2$@ endet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ reached this month's budget. Whimbrel will use your other providers until %2$@ ends."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ alcanzó el presupuesto de este mes. Whimbrel usará tus otros proveedores hasta que termine %2$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ a atteint le budget de ce mois-ci. Whimbrel utilisera vos autres fournisseurs jusqu’à la fin de %2$@."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ a atteint le budget de ce mois. Whimbrel utilisera vos autres fournisseurs jusqu’à la fin de %2$@."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ atingiu o orçamento deste mês. O Whimbrel usará seus outros provedores até %2$@ terminar."
           }
         }
       }
@@ -267,6 +421,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$@ recusou esta chave. Verifique na página de chaves de %2$@."
+          }
+        }
+      }
+    },
+    "%@ rejected the API key. Check it in Settings → AI Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ hat den API-Schlüssel abgelehnt. Prüfen Sie ihn unter Einstellungen → KI-Anbieter."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ rechazó la clave de API. Revísala en Ajustes → Proveedores de IA."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ a rejeté la clé d’API. Vérifiez-la dans Réglages → Fournisseurs d’IA."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ a refusé la clé API. Vérifiez-la dans Réglages → Fournisseurs d'IA."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ rejeitou a chave de API. Verifique em Configurações → Provedores de IA."
           }
         }
       }
@@ -894,24 +1082,6 @@
     },
     "%lld models available" : {
       "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld model available"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld models available"
-                }
-              }
-            }
-          }
-        },
         "de" : {
           "variations" : {
             "plural" : {
@@ -925,6 +1095,24 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld Modelle verfügbar"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld model available"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld models available"
                 }
               }
             }
@@ -1120,24 +1308,6 @@
     },
     "%lld other devices" : {
       "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld other device"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld other devices"
-                }
-              }
-            }
-          }
-        },
         "de" : {
           "variations" : {
             "plural" : {
@@ -1151,6 +1321,24 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld weitere Geräte"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld other device"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld other devices"
                 }
               }
             }
@@ -1232,24 +1420,6 @@
     },
     "%lld pending approvals" : {
       "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld pending approval"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld pending approvals"
-                }
-              }
-            }
-          }
-        },
         "de" : {
           "variations" : {
             "plural" : {
@@ -1263,6 +1433,24 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld ausstehende Genehmigungen"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld pending approval"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld pending approvals"
                 }
               }
             }
@@ -1561,6 +1749,118 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "+%lld cópias"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "+%lld more" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "+%lld weiterer"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "+%lld weitere"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "+%lld more"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "+%lld more"
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "+%lld más"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "+%lld más"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "+%lld de plus"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "+%lld de plus"
+                }
+              }
+            }
+          }
+        },
+        "fr-CA" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "+%lld de plus"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "+%lld de plus"
+                }
+              }
+            }
+          }
+        },
+        "pt" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "+%lld a mais"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "+%lld a mais"
                 }
               }
             }
@@ -6995,6 +7295,40 @@
         }
       }
     },
+    "Couldn't trim the recording" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aufnahme konnte nicht gekürzt werden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo recortar la grabación"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de couper l’enregistrement"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de couper l’enregistrement"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível cortar a gravação"
+          }
+        }
+      }
+    },
     "Couldn't write today's recap. Try again." : {
       "localizations" : {
         "de" : {
@@ -12159,6 +12493,40 @@
         }
       }
     },
+    "Includes your other computers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enthält Ihre anderen Computer."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Incluye tus otras computadoras."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inclut vos autres ordinateurs."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comprend vos autres ordinateurs."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inclui seus outros computadores."
+          }
+        }
+      }
+    },
     "Install Ollama" : {
       "localizations" : {
         "de" : {
@@ -12563,6 +12931,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Manter snapshots"
+          }
+        }
+      }
+    },
+    "Keep the first" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Den ersten Teil behalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conservar el primero"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conserver le début"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conserver le début"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter o início"
           }
         }
       }
@@ -14811,6 +15213,40 @@
         }
       }
     },
+    "Monthly budget" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Monatsbudget"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Presupuesto mensual"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Budget mensuel"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Budget mensuel"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Orçamento mensal"
+          }
+        }
+      }
+    },
     "Move down" : {
       "localizations" : {
         "de" : {
@@ -14909,6 +15345,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nome"
+          }
+        }
+      }
+    },
+    "Names changed. Update the summary?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Namen geändert. Zusammenfassung aktualisieren?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cambiaron los nombres. ¿Actualizar el resumen?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les noms ont changé. Mettre à jour le résumé ?"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les noms ont changé. Mettre à jour le résumé ?"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nomes alterados. Atualizar o resumo?"
           }
         }
       }
@@ -15181,6 +15651,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nova versão gerada"
+          }
+        }
+      }
+    },
+    "No AI provider is set up. Add one in Settings → AI Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kein KI-Anbieter eingerichtet. Fügen Sie einen unter Einstellungen → KI-Anbieter hinzu."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No hay ningún proveedor de IA configurado. Agrega uno en Ajustes → Proveedores de IA."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun fournisseur d’IA n’est configuré. Ajoutez-en un dans Réglages → Fournisseurs d’IA."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun fournisseur d'IA n'est configuré. Ajoutez-en un dans Réglages → Fournisseurs d'IA."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhum provedor de IA está configurado. Adicione um em Configurações → Provedores de IA."
           }
         }
       }
@@ -16069,6 +16573,40 @@
         }
       }
     },
+    "No one has spoken for 15 minutes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seit 15 Minuten hat niemand gesprochen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nadie ha hablado en 15 minutos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personne n’a parlé depuis 15 minutes."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Personne n’a parlé depuis 15 minutes."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ninguém fala há 15 minutos."
+          }
+        }
+      }
+    },
     "No orphaned files found." : {
       "localizations" : {
         "de" : {
@@ -16133,6 +16671,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sem preparação ainda"
+          }
+        }
+      }
+    },
+    "No remembered voices yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Noch keine gespeicherten Stimmen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aún no hay voces recordadas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucune voix mémorisée pour l’instant."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucune voix mémorisée pour le moment."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhuma voz memorizada ainda."
           }
         }
       }
@@ -16511,6 +17083,40 @@
         }
       }
     },
+    "None" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ninguno"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhum"
+          }
+        }
+      }
+    },
     "Not Now" : {
       "localizations" : {
         "de" : {
@@ -16817,6 +17423,40 @@
         }
       }
     },
+    "Nothing to trim." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nichts zu kürzen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nada que recortar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rien à couper."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rien à couper."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nada para cortar."
+          }
+        }
+      }
+    },
     "Nothing waiting on you." : {
       "localizations" : {
         "de" : {
@@ -16847,6 +17487,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nada aguardando você."
+          }
+        }
+      }
+    },
+    "Nothing was removed. Please try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Es wurde nichts entfernt. Bitte versuchen Sie es erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se eliminó nada. Inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rien n’a été supprimé. Veuillez réessayer."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rien n’a été supprimé. Veuillez réessayer."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nada foi removido. Tente novamente."
           }
         }
       }
@@ -17308,6 +17982,46 @@
     "Ollama" : {
       "shouldTranslate" : false
     },
+    "Ollama doesn't have the model %@. Pick one you have in Settings → AI Providers, or run: ollama pull %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ollama hat das Modell %1$@ nicht. Wählen Sie unter Einstellungen → KI-Anbieter ein vorhandenes Modell oder führen Sie aus: ollama pull %2$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Ollama doesn't have the model %1$@. Pick one you have in Settings → AI Providers, or run: ollama pull %2$@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ollama no tiene el modelo %1$@. Elige uno que tengas en Ajustes → Proveedores de IA, o ejecuta: ollama pull %2$@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ollama n’a pas le modèle %1$@. Choisissez-en un que vous avez dans Réglages → Fournisseurs d’IA, ou exécutez : ollama pull %2$@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ollama n'a pas le modèle %1$@. Choisissez-en un que vous avez dans Réglages → Fournisseurs d'IA, ou exécutez : ollama pull %2$@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Ollama não tem o modelo %1$@. Escolha um que você tenha em Configurações → Provedores de IA ou execute: ollama pull %2$@"
+          }
+        }
+      }
+    },
     "Ollama is free, runs on this Mac and nothing leaves it. Gemini's free tier is free, and Google may use prompts to improve its products. Or paste any Anthropic, OpenAI or Google key below." : {
       "localizations" : {
         "de" : {
@@ -17338,6 +18052,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "O Ollama é gratuito, roda neste Mac e nada sai dele. O plano gratuito do Gemini é gratuito, e o Google pode usar os prompts para melhorar seus produtos. Ou cole abaixo qualquer chave da Anthropic, OpenAI ou Google."
+          }
+        }
+      }
+    },
+    "Ollama isn't running on this computer. Start Ollama, or add an API key in Settings → AI Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ollama läuft auf diesem Computer nicht. Starten Sie Ollama oder fügen Sie unter Einstellungen → KI-Anbieter einen API-Schlüssel hinzu."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ollama no se está ejecutando en esta computadora. Inicia Ollama o agrega una clave de API en Ajustes → Proveedores de IA."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ollama n’est pas lancé sur cet ordinateur. Démarrez Ollama ou ajoutez une clé d’API dans Réglages → Fournisseurs d’IA."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ollama n'est pas en cours d'exécution sur cet ordinateur. Démarrez Ollama ou ajoutez une clé API dans Réglages → Fournisseurs d'IA."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Ollama não está em execução neste computador. Inicie o Ollama ou adicione uma chave de API em Configurações → Provedores de IA."
           }
         }
       }
@@ -17650,6 +18398,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Abrir %1$@, %2$@%3$@"
+          }
+        }
+      }
+    },
+    "Open AI Providers settings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einstellungen für KI-Anbieter öffnen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir ajustes de proveedores de IA"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Paramètres des fournisseurs d'IA"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ouvrir les réglages des fournisseurs IA"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Abrir configurações de provedores de IA"
           }
         }
       }
@@ -18686,6 +19468,40 @@
         }
       }
     },
+    "Prep brief" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vorbereitungs-Brief"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resumen previo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Brief de préparation"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Note de préparation"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Resumo de preparação"
+          }
+        }
+      }
+    },
     "Prep ready" : {
       "localizations" : {
         "de" : {
@@ -19260,6 +20076,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Feche e abra o Whimbrel novamente para usar o novo idioma."
+          }
+        }
+      }
+    },
+    "Raise budget" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Budget erhöhen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aumentar presupuesto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Augmenter le budget"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Augmenter le budget"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aumentar orçamento"
           }
         }
       }
@@ -19950,6 +20800,74 @@
         }
       }
     },
+    "Remember people's voices" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stimmen von Personen merken"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recordar las voces de las personas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mémoriser la voix des participants"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mémoriser la voix des participants"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lembrar das vozes das pessoas"
+          }
+        }
+      }
+    },
+    "Remembered voices…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gespeicherte Stimmen …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voces recordadas…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voix mémorisées…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Voix mémorisées…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vozes memorizadas…"
+          }
+        }
+      }
+    },
     "Remind me to tell people I'm recording" : {
       "localizations" : {
         "de" : {
@@ -20116,6 +21034,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Removido da reunião"
+          }
+        }
+      }
+    },
+    "Removes %@ after %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Entfernt %1$@ nach %2$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Removes %1$@ after %2$@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Elimina %1$@ después de %2$@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Supprime %1$@ après %2$@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Supprime %1$@ après %2$@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Remove %1$@ após %2$@"
           }
         }
       }
@@ -20835,7 +21793,6 @@
       }
     },
     "Routines" : {
-      "shouldTranslate" : false,
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -20867,7 +21824,8 @@
             "value" : "Rotinas"
           }
         }
-      }
+      },
+      "shouldTranslate" : false
     },
     "Routines run on" : {
       "localizations" : {
@@ -22579,6 +23537,152 @@
         }
       }
     },
+    "Show all %lld participants" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Den %lld Teilnehmer anzeigen"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Alle %lld Teilnehmer anzeigen"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Show all %lld participant"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Show all %lld participants"
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Mostrar al participante (%lld)"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Mostrar a los %lld participantes"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Afficher le participant (%lld)"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Afficher les %lld participants"
+                }
+              }
+            }
+          }
+        },
+        "fr-CA" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Afficher le participant (%lld)"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Afficher les %lld participants"
+                }
+              }
+            }
+          }
+        },
+        "pt" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Mostrar o participante (%lld)"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Mostrar todos os %lld participantes"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Show fewer" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Weniger anzeigen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar menos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Afficher moins"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Afficher moins"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar menos"
+          }
+        }
+      }
+    },
     "Show hidden episodes" : {
       "localizations" : {
         "de" : {
@@ -23295,6 +24399,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Alguém perguntou no minuto %@ de “%@”."
+          }
+        }
+      }
+    },
+    "Someone else…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Jemand anderes …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otra persona…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quelqu’un d’autre…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Quelqu’un d’autre…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Outra pessoa…"
           }
         }
       }
@@ -24089,6 +25227,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Para começar do zero, use um computador."
+          }
+        }
+      }
+    },
+    "Still in a meeting?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Noch in einem Meeting?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Sigues en una reunión?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toujours en réunion ?"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Toujours en réunion ?"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ainda em reunião?"
           }
         }
       }
@@ -26185,6 +27357,74 @@
         }
       }
     },
+    "This brief is no longer available." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieser Brief ist nicht mehr verfügbar."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este resumen ya no está disponible."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce brief n'est plus disponible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce résumé n’est plus disponible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este resumo não está mais disponível."
+          }
+        }
+      }
+    },
+    "This can't be undone." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht rückgängig zu machen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se puede deshacer."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette action est irréversible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette action est irréversible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Isso não pode ser desfeito."
+          }
+        }
+      }
+    },
     "This client will lose access immediately. This can't be undone from here — it would need a brand new token to reconnect." : {
       "localizations" : {
         "de" : {
@@ -26703,6 +27943,80 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "A gravação desta reunião passa a ser a próxima parte de “%@” às %@. Os slides também são movidos e esta reunião é removida. A reunião mesclada é transcrita e resumida novamente. Não é possível desfazer."
+          }
+        }
+      }
+    },
+    "This month: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diesen Monat: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este mes: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce mois-ci : %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce mois-ci : %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este mês: %@"
+          }
+        }
+      }
+    },
+    "This month: %@ of %@ (%lld%%)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diesen Monat: %1$@ von %2$@ (%3$lld %%)"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This month: %1$@ of %2$@ (%3$lld%%)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este mes: %1$@ de %2$@ (%3$lld%%)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce mois-ci : %1$@ sur %2$@ (%3$lld %%)"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ce mois-ci : %1$@ sur %2$@ (%3$lld %%)"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este mês: %1$@ de %2$@ (%3$lld%%)"
           }
         }
       }
@@ -27930,6 +29244,108 @@
         }
       }
     },
+    "Trim" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kürzen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recortar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Couper"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Couper"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cortar"
+          }
+        }
+      }
+    },
+    "Trim recording" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aufnahme kürzen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recortar grabación"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Couper l’enregistrement"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Couper l’enregistrement"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cortar gravação"
+          }
+        }
+      }
+    },
+    "Trim recording…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aufnahme kürzen …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Recortar grabación…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Couper l’enregistrement…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Couper l’enregistrement…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cortar gravação…"
+          }
+        }
+      }
+    },
     "Try Again" : {
       "localizations" : {
         "de" : {
@@ -28742,6 +30158,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Atualização pronta: v%@"
+          }
+        }
+      }
+    },
+    "Update the summary" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zusammenfassung erneuern"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actualizar el resumen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mettre à jour le résumé"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mettre à jour le résumé"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Atualizar o resumo"
           }
         }
       }
@@ -29667,6 +31117,40 @@
         }
       }
     },
+    "Whimbrel learns a voice when you confirm or fix a name. Voices stay on your devices and in your encrypted sync." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel lernt eine Stimme, wenn Sie einen Namen bestätigen oder korrigieren. Stimmen bleiben auf Ihren Geräten und in Ihrer verschlüsselten Synchronisierung."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel aprende una voz cuando confirmas o corriges un nombre. Las voces permanecen en tus dispositivos y en tu sincronización cifrada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel apprend une voix lorsque vous confirmez ou corrigez un nom. Les voix restent sur vos appareils et dans votre synchronisation chiffrée."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel apprend une voix lorsque vous confirmez ou corrigez un nom. Les voix restent sur vos appareils et dans votre synchronisation chiffrée."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel aprende uma voz quando você confirma ou corrige um nome. As vozes ficam nos seus dispositivos e na sua sincronização criptografada."
+          }
+        }
+      }
+    },
     "Whimbrel needs a few model files for transcription and speaker detection." : {
       "localizations" : {
         "de" : {
@@ -30177,6 +31661,40 @@
         }
       }
     },
+    "Yes, that's %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ja, das ist %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sí, es %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oui, c’est %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Oui, c’est %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sim, é %@"
+          }
+        }
+      }
+    },
     "Yesterday" : {
       "localizations" : {
         "de" : {
@@ -30275,6 +31793,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Você editou o resumo desta reunião. O que deve acontecer com as suas edições?"
+          }
+        }
+      }
+    },
+    "Your %@ budget for this month is spent (%@ of %@). Raise it in Settings → AI Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ihr %1$@-Budget für diesen Monat ist aufgebraucht (%2$@ von %3$@). Erhöhen Sie es unter Einstellungen → KI-Anbieter."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Your %1$@ budget for this month is spent (%2$@ of %3$@). Raise it in Settings → AI Providers."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se agotó tu presupuesto de %1$@ para este mes (%2$@ de %3$@). Auméntalo en Ajustes → Proveedores de IA."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Votre budget %1$@ pour ce mois-ci est épuisé (%2$@ sur %3$@). Augmentez-le dans Réglages → Fournisseurs d’IA."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Votre budget %1$@ pour ce mois est épuisé (%2$@ sur %3$@). Augmentez-le dans Réglages → Fournisseurs d’IA."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seu orçamento de %1$@ deste mês foi totalmente usado (%2$@ de %3$@). Aumente-o em Configurações → Provedores de IA."
           }
         }
       }
@@ -30695,6 +32253,40 @@
     },
     "example.com" : {
       "shouldTranslate" : false
+    },
+    "h:mm" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "h:mm"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "h:mm"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "h:mm"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "h:mm"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "h:mm"
+          }
+        }
+      }
     },
     "rejoined %@" : {
       "localizations" : {

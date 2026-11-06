@@ -38,6 +38,25 @@ pub enum SystemEvent {
 type Sink = Box<dyn Fn(SystemEvent) + Send + Sync>;
 static SINK: OnceLock<Sink> = OnceLock::new();
 
+/// Run on the pump thread when Windows says it is going to sleep, before the capture service hears
+/// it. Windows suspends once the message returns, so this must finish quickly (stopping a meeting
+/// recording: its end must be the moment of sleep, not of waking up). Set once.
+static ON_SUSPEND: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+/// Registers what runs as the PC goes to sleep (see [`ON_SUSPEND`]).
+pub fn on_suspend(f: impl Fn() + Send + Sync + 'static) {
+    if ON_SUSPEND.set(Box::new(f)).is_err() {
+        tracing::warn!("a sleep handler was already registered");
+    }
+}
+
+fn suspending() {
+    if let Some(f) = ON_SUSPEND.get() {
+        f();
+    }
+    emit(SystemEvent::Suspending(true));
+}
+
 fn emit(event: SystemEvent) {
     if let Some(sink) = SINK.get() {
         sink(event);
@@ -126,7 +145,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         emit(SystemEvent::DisplayOn(setting.Data[0] != 0));
                     }
                 }
-                PBT_APMSUSPEND => emit(SystemEvent::Suspending(true)),
+                PBT_APMSUSPEND => suspending(),
                 PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND => emit(SystemEvent::Suspending(false)),
                 _ => {}
             }

@@ -335,7 +335,7 @@ final class AudioCompressorTests: XCTestCase {
             store: store,
             transcribe: { path, _, language in
                 lock.withLock { calls.append(path) }
-                return (self.tempDir.appendingPathComponent("t.txt"), [], language)
+                return (self.tempDir.appendingPathComponent("t.txt"), [], language, [])
             },
             summarize: { _, _, _ in }, onStage: { _, _ in })
         queue.transcribeAgain(meetingId: m.id, notes: "")

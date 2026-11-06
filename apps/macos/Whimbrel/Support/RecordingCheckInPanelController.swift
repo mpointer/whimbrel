@@ -9,6 +9,8 @@ import SwiftUI
 final class RecordingCheckInPanelController: ObservableObject {
     /// `nil` when the panel isn't showing. Read by `RecordingCheckInView`.
     @Published fileprivate(set) var secondsRemaining: Int?
+    /// True for "Still in a meeting?" (`StillInMeeting`), false for the hourly "Still recording?".
+    @Published fileprivate(set) var asksStillInMeeting = false
 
     private static let panelSize = NSSize(width: 380, height: 120)
     private static let screenMargin: CGFloat = 16
@@ -19,7 +21,8 @@ final class RecordingCheckInPanelController: ObservableObject {
     private var onKeep: (() -> Void)?
     private var onStop: (() -> Void)?
 
-    func show(deadline: Date, onKeep: @escaping () -> Void, onStop: @escaping () -> Void) {
+    func show(deadline: Date, stillInMeeting: Bool = false, onKeep: @escaping () -> Void, onStop: @escaping () -> Void) {
+        asksStillInMeeting = stillInMeeting
         self.deadline = deadline
         self.onKeep = onKeep
         self.onStop = onStop

@@ -110,6 +110,26 @@ pub fn fetch_models(provider: HostedProvider, api_key: &str, base_url: Option<&s
     parse_models(provider, &body)
 }
 
+/// The Ollama model to use instead of `configured`, when there should be one: the user never
+/// picked a model (`user_chose` false, so `configured` is the app's default) and that default
+/// isn't among `installed` (Ollama's `/api/tags`, as [`fetch_models`] returns it). Then the first
+/// installed model. `None` keeps `configured`: a model the user chose is never swapped (the
+/// provider-failure message says how to fix it), and with nothing installed there is no choice.
+/// First support case (2026-11-05): the default `gemma4:12b` wasn't pulled, so every summary
+/// failed though other models were installed.
+pub fn installed_ollama_choice(configured: &str, user_chose: bool, installed: &[String]) -> Option<String> {
+    if user_chose || installed.is_empty() {
+        return None;
+    }
+    // Ollama lists "name:tag"; a name without a tag means ":latest".
+    let canonical = |m: &str| if m.contains(':') { m.to_string() } else { format!("{m}:latest") };
+    let want = canonical(configured.trim());
+    if installed.iter().any(|m| canonical(m) == want) {
+        return None;
+    }
+    installed.first().cloned()
+}
+
 /// What saving a key found out, for the key row. `Valid` carries the model list the
 /// picker fills from (and, for OpenRouter, the prices the shell caches).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -270,6 +290,17 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn a_missing_default_ollama_model_gives_way_to_an_installed_one() {
+        let installed = vec!["llama3.2:3b".to_string(), "qwen3:8b".to_string()];
+        assert_eq!(installed_ollama_choice("gemma4:12b", false, &installed).as_deref(), Some("llama3.2:3b"));
+        assert_eq!(installed_ollama_choice("gemma4:12b", true, &installed), None, "a model the user chose is kept");
+        assert_eq!(installed_ollama_choice("qwen3:8b", false, &installed), None, "the default is installed");
+        assert_eq!(installed_ollama_choice("gemma4:12b", false, &[]), None, "nothing installed: nothing to pick");
+        let latest = vec!["mistral:latest".to_string()];
+        assert_eq!(installed_ollama_choice("mistral", false, &latest), None, "no tag means :latest");
+    }
 
     /// One-shot server: records the request head, replies with `status` and `body`.
     fn serve(status: u16, body: &str) -> (String, std::sync::mpsc::Receiver<String>) {

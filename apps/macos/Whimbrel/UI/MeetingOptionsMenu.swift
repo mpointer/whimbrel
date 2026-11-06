@@ -23,6 +23,12 @@ struct MeetingOptionsMenu: View {
     /// "Merge with previous meeting": this device's copy and the meeting it can join. nil until loaded.
     @State private var mergeTarget: (ownId: Int64, previousId: Int64, title: String, start: Date, audioOnDisk: Bool)?
     @State private var showMergeConfirmation = false
+    /// "Trim recording…": the meeting's length on the transcript clock; nil until loaded, and
+    /// for a meeting another device recorded.
+    @State private var lengthMs: Int64?
+    @State private var showTrimSheet = false
+    @State private var trimFailed = false
+    @State private var nothingToTrim = false
 
     @Environment(\.openWindow) private var openWindow
 
@@ -56,6 +62,12 @@ struct MeetingOptionsMenu: View {
         return mediaWorkingId != previousId && mediaWorkingId != ownId
     }
 
+    /// Only on the Mac that recorded it, once it's finished, and only when there's a whole
+    /// minute to keep that is shorter than it.
+    static func canOfferTrim(meeting: CoreMeeting, deviceId: String, lengthMs: Int64?) -> Bool {
+        meeting.deviceId == deviceId && meeting.status == .completed && (lengthMs ?? 0) > TrimRecordingSheet.minuteMs
+    }
+
     private func loadMenuState() {
         guard let store = appState.coreStore else { return }
         let id = meeting.id
@@ -67,8 +79,10 @@ struct MeetingOptionsMenu: View {
             let audio = parts.contains { $0.audioPath.map(FileManager.default.fileExists(atPath:)) ?? false }
             let keep = ownId.flatMap { store.getMeeting(id: $0)?.keepMedia }
             let deviceId = appState.deviceId
+            let length = meeting.deviceId == deviceId ? store.meetingLengthMs(meetingId: id) : nil
             let merge = ownId.flatMap { own -> (Int64, Int64, String, Date, Bool)? in
-                guard let prev = store.previousMergeableMeeting(meetingId: own, deviceId: deviceId),
+                // A trimmed meeting can't be merged (core already never offers one as the target).
+                guard !store.meetingIsTrimmed(meetingId: own), let prev = store.previousMergeableMeeting(meetingId: own, deviceId: deviceId),
                       let m = store.getMeeting(id: prev) else { return nil }
                 let onDisk = [own, prev].allSatisfy { id in
                     MeetingTranscriptionQueue.partsWithAudio(store.meetingParts(meetingId: id) ?? []).isEmpty == false
@@ -76,7 +90,7 @@ struct MeetingOptionsMenu: View {
                 return (own, prev, m.title, Date(timeIntervalSince1970: TimeInterval(m.startUnixMs) / 1000), onDisk)
             }
             DispatchQueue.main.async {
-                partCount = n; ownKeepMedia = keep; hasAudio = audio
+                partCount = n; ownKeepMedia = keep; hasAudio = audio; lengthMs = length
                 mergeTarget = merge.map { (ownId: $0.0, previousId: $0.1, title: $0.2, start: $0.3, audioOnDisk: $0.4) }
             }
         }
@@ -116,6 +130,13 @@ struct MeetingOptionsMenu: View {
                                               mediaWorkingId: appState.mediaRetention.workingMeetingId,
                                               audioOnDisk: target.audioOnDisk))
             }
+            if Self.canOfferTrim(meeting: meeting, deviceId: appState.deviceId, lengthMs: lengthMs) {
+                Button("Trim recording…") {
+                    showTrimSheet = true
+                }
+                .disabled(appState.processingMeetingId != nil || appState.mediaBusyMeetingIds.contains(meeting.id)
+                          || appState.mediaRetention.workingMeetingId == meeting.id)
+            }
             if let keep = ownKeepMedia {
                 Toggle("Keep media", isOn: Binding(
                     get: { keep },
@@ -132,8 +153,16 @@ struct MeetingOptionsMenu: View {
         }
         .accessibilityLabel("Meeting options")
         .onAppear { loadMenuState() }
-        .onChange(of: meeting.id) { _, _ in ownKeepMedia = nil; mergeTarget = nil; loadMenuState() }
+        .onChange(of: meeting.id) { _, _ in ownKeepMedia = nil; mergeTarget = nil; lengthMs = nil; loadMenuState() }
         .onChange(of: appState.processingMeetingId) { _, _ in loadMenuState() }
+        .sheet(isPresented: $showTrimSheet) {
+            if let lengthMs {
+                TrimRecordingSheet(lengthMs: lengthMs) { keepMs in
+                    appState.trimMeeting(meeting, keepMs: keepMs, onFailure: { trimFailed = true },
+                                         onNothingToTrim: { nothingToTrim = true })
+                }
+            }
+        }
         .confirmationDialog(
             "Split the last part into its own meeting?",
             isPresented: $showSplitConfirmation,
@@ -175,6 +204,14 @@ struct MeetingOptionsMenu: View {
         } message: {
             Text("Couldn't move the snapshots for the split meeting; they're still in the original folder.")
         }
+        .alert("Couldn't trim the recording", isPresented: $trimFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Nothing was removed. Please try again.")
+        }
+        .alert("Nothing to trim.", isPresented: $nothingToTrim) {
+            Button("OK", role: .cancel) {}
+        }
         .alert("Couldn't forget meeting", isPresented: $forgetFailed) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -192,10 +229,91 @@ struct MeetingOptionsMenu: View {
             isForgetting = false
             switch result {
             case .deleted, .deletedWithFileCleanupWarning:
+                appState.clearSummaryFailure(meetingId: meeting.id)
                 onForgotten()
             case .failed:
                 forgetFailed = true
             }
         }
+    }
+}
+
+/// "Trim recording": keeps the first H:MM of the meeting, on its transcript clock.
+struct TrimRecordingSheet: View {
+    let lengthMs: Int64
+    let onTrim: (Int64) -> Void
+
+    static let minuteMs: Int64 = 60_000
+
+    @State private var text: String
+    @Environment(\.dismiss) private var dismiss
+
+    init(lengthMs: Int64, onTrim: @escaping (Int64) -> Void) {
+        self.lengthMs = lengthMs
+        self.onTrim = onTrim
+        // The current length, rounded up to the minute: nothing to trim until it's changed.
+        _text = State(initialValue: Self.hoursMinutes((lengthMs + Self.minuteMs - 1) / Self.minuteMs * Self.minuteMs))
+    }
+
+    /// "1:05" for 65 minutes.
+    static func hoursMinutes(_ ms: Int64) -> String {
+        let minutes = ms / minuteMs
+        return String(format: "%d:%02d", minutes / 60, minutes % 60)
+    }
+
+    /// "1:05" → 3_900_000 ms; nil unless it's H:MM (at most 3 hour digits) with minutes under 60.
+    static func keepMs(from text: String) -> Int64? {
+        let parts = text.trimmingCharacters(in: .whitespaces).split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2, parts[0].count <= 3, parts[1].count == 2, parts.allSatisfy({ part in !part.isEmpty && part.allSatisfy { $0.isASCII && $0.isNumber } }),
+              let h = Int64(parts[0]), let m = Int64(parts[1]), h >= 0, (0..<60).contains(m) else { return nil }
+        return (h * 60 + m) * minuteMs
+    }
+
+    /// "Removes 55 minutes after 1:05".
+    static func removedLine(currentMs: Int64, keepMs: Int64) -> String {
+        let removed = max(0, currentMs - keepMs) / 1000
+        let formatter = DateComponentsFormatter()
+        formatter.unitsStyle = .full
+        formatter.allowedUnits = removed < 60 ? [.second] : [.hour, .minute]
+        let duration = formatter.string(from: TimeInterval(removed)) ?? ""
+        return String(localized: "Removes \(duration) after \(hoursMinutes(keepMs))")
+    }
+
+    /// What Trim keeps: a valid H:MM above zero and shorter than the meeting.
+    static func keep(_ text: String, lengthMs: Int64) -> Int64? {
+        keepMs(from: text).flatMap { $0 > 0 && $0 < lengthMs ? $0 : nil }
+    }
+
+    private var keep: Int64? { Self.keep(text, lengthMs: lengthMs) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Trim recording").font(.headline)
+            HStack {
+                Text("Keep the first")
+                TextField("h:mm", text: $text)
+                    .frame(width: 70)
+                    .onSubmit(trim)
+            }
+            if let keep {
+                Text(Self.removedLine(currentMs: lengthMs, keepMs: keep))
+            }
+            Text("This can't be undone.").foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Trim", role: .destructive, action: trim)
+                    .disabled(keep == nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+
+    private func trim() {
+        guard let keep else { return }
+        onTrim(keep)
+        dismiss()
     }
 }

@@ -12,6 +12,8 @@ struct MeetingAskExchange: Identifiable {
     var citedSegmentIds: [Int64] = []
     var narrowed = false
     var errorText: String?
+    /// The error's fix is in Settings → AI Providers (a spent monthly budget).
+    var opensAIProvidersSettings = false
     /// Output received before a provider failure. Shown above the error, never part of history.
     var partial: String = ""
 }
@@ -55,9 +57,11 @@ final class MeetingAskSession: ObservableObject {
     }
 
     /// `route` nil means no provider can stream; the exchange shows `noRouteMessage`.
+    /// `fallback` answers through the governed chain when the streamed provider's budget is spent.
     func submit(
         _ text: String, prompt: String? = nil, meetingId: Int64, store: CoreMemoryStore, routing: CoreRoutingConfig, model: String,
-        route: (provider: InferenceStreamClient.Provider, apiKey: String?)?, noRouteMessage: String
+        route: (provider: InferenceStreamClient.Provider, apiKey: String?)?, noRouteMessage: String,
+        fallback: (slowStore: CoreMemoryStore, ollamaModel: String)? = nil
     ) {
         self.store = store
         let past = history()
@@ -84,11 +88,50 @@ final class MeetingAskSession: ObservableObject {
                 case .none:
                     self.exchanges[index].errorText = String(localized: "Couldn't prepare the question. Try again.")
                 case .some(.failure(let error)):
-                    self.exchanges[index].errorText = error.userFacingMessage
+                    if let fallback, error.fallsBackToGovernedAsk(alreadyFellBack: false) {
+                        self.answerGoverned(index: index, meetingId: meetingId, query: prompt ?? text, history: past, routing: routing, fallback: fallback)
+                    } else {
+                        self.show(error, at: index)
+                    }
                 case .some(.success(let data)):
                     self.exchanges[index].narrowed = data.narrowed
                     self.pending = (data.prepareId, index, model)
                     self.streaming.start(prompt: data.prompt, model: model, provider: route.provider, apiKey: route.apiKey)
+                }
+            }
+        }
+    }
+
+    private func show(_ error: CoreLLMError, at index: Int) {
+        exchanges[index].errorText = error.userFacingMessage
+        exchanges[index].opensAIProvidersSettings = error.opensAIProvidersSettings
+    }
+
+    /// The streamed provider's budget is spent: answer once through the governed chain, which
+    /// skips it. Busy as while preparing, so Stop and teardown make a late answer inert.
+    private func answerGoverned(
+        index: Int, meetingId: Int64, query: String, history: [CoreChatTurn], routing: CoreRoutingConfig,
+        fallback: (slowStore: CoreMemoryStore, ollamaModel: String)
+    ) {
+        isPreparing = true
+        let token = UUID()
+        prepareToken = token
+        CoreMemoryStore.slowLaneQueue.async {
+            let answered = fallback.slowStore.answerMeetingQuestion(
+                meetingId: meetingId, query: query, model: fallback.ollamaModel, history: history, routing: routing)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.prepareToken == token, self.exchanges.indices.contains(index) else { return }
+                self.isPreparing = false
+                self.prepareToken = nil
+                switch answered {
+                case .none:
+                    self.exchanges[index].errorText = String(localized: "Couldn't prepare the question. Try again.")
+                case .some(.failure(let error)):
+                    self.show(error, at: index)
+                case .some(.success(let answer)):
+                    self.exchanges[index].narrowed = answer.narrowed
+                    self.exchanges[index].answer = answer.text
+                    self.exchanges[index].citedSegmentIds = TranscriptCitations.segmentIds(from: answer.citations)
                 }
             }
         }
@@ -233,8 +276,11 @@ struct MeetingAskBar: View {
                         if let error = exchange.errorText {
                             if !exchange.partial.isEmpty { AskAnswerText(markdown: exchange.partial) }
                             Text(error).font(.whimbrelBody(.callout)).foregroundStyle(Color.whimbrelError)
-                            Button("Retry") { retry(index) }
-                                .buttonStyle(.whimbrelSecondary).controlSize(.small).disabled(isBusy)
+                            HStack(spacing: Spacing.xs) {
+                                Button("Retry") { retry(index) }
+                                    .buttonStyle(.whimbrelSecondary).controlSize(.small).disabled(isBusy)
+                                if exchange.opensAIProvidersSettings { OpenAIProvidersSettingsButton() }
+                            }
                         } else {
                             AskAnswerText(markdown: session.pending?.index == index ? session.streaming.streamedText : exchange.answer)
                             if session.pending?.index != index, !exchange.answer.isEmpty {
@@ -314,6 +360,7 @@ struct MeetingAskBar: View {
             ? String(localized: "Local-only mode is on, so Ask can't use a hosted model. Choose a local model in Settings.")
             : String(localized: "No API key is set for the selected provider. Choose a local model or add a key in Settings.")
         let preset = AskPreset.matching(text)
-        session.submit(preset?.label ?? text, prompt: preset?.prompt, meetingId: meeting.id, store: store, routing: routing, model: model, route: route, noRouteMessage: noRouteMessage)
+        session.submit(preset?.label ?? text, prompt: preset?.prompt, meetingId: meeting.id, store: store, routing: routing, model: model, route: route, noRouteMessage: noRouteMessage,
+            fallback: appState.slowStore.map { ($0, defaults.ollamaModel) })
     }
 }

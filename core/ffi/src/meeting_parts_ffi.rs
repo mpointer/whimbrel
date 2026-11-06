@@ -227,6 +227,34 @@ pub extern "C" fn whimbrel_meeting_split(
     json_out(unsafe { &(*handle).0 }.split_meeting(meeting_id, from_part_index))
 }
 
+/// Trim (`api::meetings::trim_meeting`): `{"ok":true,"data":TrimResult}`, `"data":null` when
+/// nothing changed, `{"ok":false,"error":{"kind":"store"}}` on a database error, NULL on a
+/// null handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_trim_meeting(handle: *mut StoreHandle, meeting_id: i64, keep_ms: i64) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    crate::speaker_names_ffi::envelope(api::meetings::trim_meeting(unsafe { &(*handle).0 }, meeting_id, keep_ms))
+}
+
+/// Whether the meeting was trimmed (it can't be continued or merged into). False on a null
+/// handle or a database error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meeting_is_trimmed(handle: *mut StoreHandle, meeting_id: i64) -> bool {
+    !handle.is_null() && api::meetings::is_trimmed(unsafe { &(*handle).0 }, meeting_id).unwrap_or(false)
+}
+
+/// The meeting's length in ms on the transcript clock (`api::meetings::meeting_length_ms`).
+/// 0 for a missing meeting, -1 on a null handle or a database error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meeting_length_ms(handle: *mut StoreHandle, meeting_id: i64) -> i64 {
+    if handle.is_null() {
+        return -1;
+    }
+    api::meetings::meeting_length_ms(unsafe { &(*handle).0 }, meeting_id).unwrap_or(-1)
+}
+
 /// "Keep together": moves `from`'s snapshot rows (and continue key) to `into`. JSON array of
 /// the moved file paths, oldest first.
 #[unsafe(no_mangle)]
@@ -570,6 +598,21 @@ mod tests {
         assert!(whimbrel_meeting_delete_returning_files(ptr::null_mut(), 1).is_null());
         assert!(!whimbrel_meeting_reopen(ptr::null_mut(), 1));
         assert!(!whimbrel_meeting_undo_reopen(ptr::null_mut(), 1, 2));
+    }
+
+    #[test]
+    fn meeting_length_through_the_ffi() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = c(dir.path().join("t.sqlite").to_str().unwrap());
+        let h = whimbrel_memory_open(db.as_ptr(), ptr::null());
+        let id = meeting(h, 1_000);
+        let store = unsafe { &(*h).0 };
+        store.begin_meeting_part(id, 1_000, None).unwrap();
+        store.complete_meeting(id, 61_000, None).unwrap();
+        assert_eq!(whimbrel_meeting_length_ms(h, id), 60_000);
+        assert_eq!(whimbrel_meeting_length_ms(h, id + 1), 0, "missing meeting");
+        assert_eq!(whimbrel_meeting_length_ms(ptr::null_mut(), id), -1);
+        whimbrel_memory_close(h);
     }
 
     #[test]

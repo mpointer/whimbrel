@@ -92,9 +92,12 @@ fn brief_view(s: &memory::Store, row: &memory::prep::MeetingPrepRow) -> Option<P
 
 /// The brief stored under this PC's calendar event id for `meeting`, aliasing a peer's first so
 /// a brief made on another device (under its own event id) shows without waiting for the next tick.
+/// Keyed per occurrence (#578): a recurring series shares its event id, so a bare id would show the
+/// newest occurrence's brief on every one. A row written before still matches (core's fallback).
 fn brief_for(s: &memory::Store, meeting: &QualifyingMeeting) -> Result<Option<PrepBriefView>, String> {
-    s.alias_synced_meeting_prep(&meeting.id, meeting.start_unix_ms, &meeting.title).map_err(|e| e.to_string())?;
-    Ok(s.get_meeting_prep(&meeting.id).map_err(|e| e.to_string())?.as_ref().and_then(|row| brief_view(s, row)))
+    let key = memory::prep::prep_key(&meeting.id, meeting.start_unix_ms);
+    s.alias_synced_meeting_prep(&key, meeting.start_unix_ms, &meeting.title).map_err(|e| e.to_string())?;
+    Ok(s.get_meeting_prep(&key).map_err(|e| e.to_string())?.as_ref().and_then(|row| brief_view(s, row)))
 }
 
 /// The first of `upcoming` (qualifying, not over, soonest first) as the card shows it.
@@ -187,6 +190,16 @@ mod tests {
         let shown = next_meeting(&store, &[meeting("my-id", 10_000_000)]).unwrap().unwrap();
         assert_eq!(shown.brief.expect("aliased brief").summary, "Pricing is open.");
         assert!(store.get_meeting_prep("my-id").unwrap().is_some(), "now stored under the local id");
+    }
+
+    #[test]
+    fn each_occurrence_of_a_recurring_meeting_shows_its_own_brief() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let brief = |summary: &str| a_brief().replace("Pricing is open.", summary);
+        store.save_meeting_prep(&row(&memory::prep::prep_key("weekly", 10_000_000), 10_000_000, brief("Monday's"))).unwrap();
+        store.save_meeting_prep(&row(&memory::prep::prep_key("weekly", 20_000_000), 20_000_000, brief("Next Monday's"))).unwrap();
+        let shown = next_meeting(&store, &[meeting("weekly", 10_000_000)]).unwrap().unwrap();
+        assert_eq!(shown.brief.expect("this occurrence's brief").summary, "Monday's");
     }
 
     #[test]

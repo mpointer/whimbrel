@@ -3,6 +3,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AiSettings,
+  BudgetNoticeView,
+  ProviderBudgetView,
   LiveAlertView,
   OpenMeetingRequest,
   QuestionNotice,
@@ -38,6 +40,7 @@ import type {
   MeetingRow,
   ModelStatus,
   ActionItemView,
+  VoicePersonView,
   AlertView,
   CalendarAccounts,
   ProfileFields,
@@ -64,6 +67,7 @@ import type {
   RecordingNoticeSettings,
   NextMeetingView,
   TranscriptView,
+  TrimInfo,
   WorkspaceView,
   PromptSurface,
   Provider,
@@ -126,6 +130,11 @@ export const syncApproveDevice = (id: string) => invoke<DeviceView[]>("sync_appr
 export const syncRevokeDevice = (id: string) => invoke<DeviceView[]>("sync_revoke_device", { id });
 
 export const aiSettings = () => invoke<AiSettings>("ai_settings");
+/** A paid provider's monthly budget in dollars; `null` removes it. */
+export const setProviderBudget = (provider: Provider, dollars: number | null) =>
+  invoke<ProviderBudgetView[]>("set_provider_budget", { provider, dollars });
+/** "Open AI Providers settings": the main window shows Settings at AI Providers. */
+export const openAiSettings = () => invoke<void>("open_ai_settings");
 /** Opens a new email to Whimbrel with the version and Windows build filled in. */
 export const sendFeedback = () => invoke<FeedbackResult>("send_feedback");
 export const setApiKey = (provider: Provider, key: string | null) => invoke<ProviderKey[]>("set_api_key", { provider, key });
@@ -214,6 +223,15 @@ export const importTranscripts = () => invoke<ImportView | null>("import_transcr
 export const importMarkdownFolder = () => invoke<ImportView | null>("import_markdown_folder");
 export const meetingWorkspace = (id: number) => invoke<WorkspaceView | null>("meeting_workspace", { id });
 export const meetingTranscript = (id: number) => invoke<TranscriptView>("meeting_transcript", { id });
+/** Speaker names: an invitee or a typed name for one of the meeting's speakers, confirmed. */
+export const setMeetingSpeaker = (id: number, speakerId: number, name: string, email: string | null) =>
+  invoke<TranscriptView>("set_meeting_speaker", { id, speakerId, name, email });
+/** "Yes, that's {name}": confirms a guess as the person it was shown as. */
+export const confirmMeetingSpeaker = (id: number, speakerId: number, personKey: string) =>
+  invoke<TranscriptView>("confirm_meeting_speaker", { id, speakerId, personKey });
+/** People with a remembered voice (Settings → Meetings). */
+export const voicePeople = () => invoke<VoicePersonView[]>("voice_people");
+export const forgetVoice = (personKey: string) => invoke<VoicePersonView[]>("forget_voice", { personKey });
 export const meetingSaveNotes = (id: number, notes: string) => invoke<void>("meeting_save_notes", { id, notes });
 export const meetingSaveOverrides = (
   id: number,
@@ -231,6 +249,10 @@ export const meetingReorderActionItems = (id: number, orderedIds: number[]) =>
   invoke<ActionItemView[]>("meeting_reorder_action_items", { id, orderedIds });
 export const meetingResetOverrides = (id: number) => invoke<void>("meeting_reset_overrides", { id });
 export const meetingRegenerate = (id: number, keepEdits: boolean) => invoke<void>("meeting_regenerate", { id, keepEdits });
+/** Whether "Trim recording…" is offered, and the meeting's length on the transcript clock. */
+export const meetingTrimInfo = (id: number) => invoke<TrimInfo>("meeting_trim_info", { id });
+/** Keeps the first `keepMs`; false is "Nothing to trim." */
+export const meetingTrim = (id: number, keepMs: number) => invoke<boolean>("meeting_trim", { id, keepMs });
 /** The per-meeting "Transcript language": stores it (`null` is Automatic) and transcribes the meeting again. */
 export const meetingSetSpokenLanguage = (id: number, language: string | null) =>
   invoke<void>("meeting_set_spoken_language", { id, language });
@@ -268,6 +290,13 @@ export const alertDismiss = () => invoke<void>("alert_dismiss");
 export const questionAlertStatus = () => invoke<QuestionNotice[]>("question_alert_status");
 export const questionAlertOpen = (id: string) => invoke<void>("question_alert_open", { id });
 export const questionAlertDismiss = () => invoke<void>("question_alert_dismiss");
+/** "Still in a meeting?": Keep recording, or Stop (trimmed to the last words once transcribed). */
+export const stillHereKeep = () => invoke<void>("still_here_keep");
+export const stillHereStop = () => invoke<void>("still_here_stop");
+/** The budget alert popup's queued 80% / 100% notices. */
+export const budgetAlertStatus = () => invoke<BudgetNoticeView[]>("budget_alert_status");
+export const budgetAlertRaise = () => invoke<void>("budget_alert_raise");
+export const budgetAlertDismiss = () => invoke<void>("budget_alert_dismiss");
 export const takePendingOpenMeeting = () => invoke<OpenMeetingRequest | null>("take_pending_open_meeting");
 export const meetingLiveAlerts = (id: number) => invoke<LiveAlertView[]>("meeting_live_alerts", { id });
 

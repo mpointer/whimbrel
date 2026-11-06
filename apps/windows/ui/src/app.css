@@ -792,6 +792,29 @@ details summary {
   gap: var(--space-xs);
 }
 
+/* Monthly budgets: a thin bar under a provider, red at or over 100%. */
+.budget-bar {
+  height: 4px;
+  max-width: 320px;
+  border-radius: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.budget-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-accent-primary);
+}
+
+.budget-bar--over > span {
+  background: var(--color-error);
+}
+
+.budget-over {
+  color: var(--color-error);
+}
+
 .transcript li {
   display: grid;
   grid-template-columns: 72px 90px 1fr;
@@ -800,6 +823,33 @@ details summary {
 
 .transcript-speaker {
   color: var(--color-text-secondary);
+}
+
+/* Speaker names: a guess ("Sam?") reads weaker than a confirmed name. */
+.transcript-speaker--guess {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.speaker-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+button.link.transcript-speaker {
+  color: var(--color-text-secondary);
+  text-align: left;
+}
+
+.speaker-menu-list,
+.speaker-menu-typed {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-xs);
 }
 
 .confirm {

@@ -12,3 +12,6 @@ pub mod recorder;
 pub mod service;
 pub mod snapshots;
 pub mod spoken;
+pub mod still_here;
+pub mod trim;
+pub mod wav;

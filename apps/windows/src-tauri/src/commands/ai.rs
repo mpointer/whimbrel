@@ -87,6 +87,16 @@ pub struct UsageView {
     pub last_30_days_cents: i64,
     pub month_to_date_cents: i64,
     pub by_provider: Vec<ProviderSpendView>,
+    /// This UTC month's spend per provider, including the user's other computers (budgets).
+    pub month_by_provider: Vec<ProviderSpendView>,
+}
+
+/// A paid provider's monthly budget (Settings → AI Providers); `None` is no budget.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderBudgetView {
+    pub provider: Provider,
+    pub cents: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
@@ -122,8 +132,20 @@ pub struct AiSettings {
     pub spend: Option<SpendView>,
     pub providers: Vec<ProviderInfoView>,
     pub usage: Option<UsageView>,
+    /// Each paid provider's monthly budget.
+    pub budgets: Vec<ProviderBudgetView>,
     /// The Brave Search key the skin maker finds images with, masked; `None` when unset.
     pub image_search_key: Option<String>,
+    /// The Ollama model the user chose isn't installed: what stands in meanwhile (Mac #581).
+    pub ollama_warning: Option<OllamaWarning>,
+}
+
+/// "{model} isn't installed. Whimbrel is using {fallback} until you install it or choose another model."
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OllamaWarning {
+    pub model: String,
+    pub fallback: String,
 }
 
 /// The on-ramp table as the UI reads it, in core's order.
@@ -158,7 +180,55 @@ fn usage_view(totals: api::usage::UsageTotals) -> UsageView {
         last_30_days_cents: totals.last_30_days_cents,
         month_to_date_cents: totals.month_to_date_cents,
         by_provider: totals.last_30_days_by_provider.into_iter().map(|p| ProviderSpendView { provider: p.provider, cents: p.cents }).collect(),
+        month_by_provider: totals.month_to_date_by_provider.into_iter().map(|p| ProviderSpendView { provider: p.provider, cents: p.cents }).collect(),
     }
+}
+
+fn budget_views(settings: &crate::settings::SettingsFile) -> Vec<ProviderBudgetView> {
+    let budgets = settings.monthly_budgets();
+    Provider::HOSTED
+        .into_iter()
+        .map(|provider| ProviderBudgetView { provider, cents: budgets.get(provider.as_str()).copied().filter(|c| *c > 0) })
+        .collect()
+}
+
+/// Whole cents from a typed dollar amount: `None`, zero or less, or not a number is no budget.
+pub fn budget_cents(dollars: Option<f64>) -> Option<i64> {
+    dollars.filter(|d| d.is_finite() && *d > 0.0).map(|d| (d * 100.0).round() as i64).filter(|c| *c > 0)
+}
+
+/// Sets one paid provider's monthly budget in dollars (`None` removes it), synced like the daily
+/// caps, then pushes every budget to core and looks for notices the new amount reaches at once.
+#[tauri::command]
+pub async fn set_provider_budget(app: tauri::AppHandle, state: State<'_, AppState>, provider: Provider, dollars: Option<f64>) -> Result<Vec<ProviderBudgetView>, CommandError> {
+    let views = {
+        let mut file = state.settings.lock().unwrap();
+        // Ollama is free: it has no budget to set.
+        if provider != Provider::Ollama {
+            crate::syncing::settings::edit(&mut file, |f| f.set_monthly_budget(provider.as_str(), budget_cents(dollars)));
+            file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
+        }
+        budget_views(&file)
+    };
+    if let Some(store) = state.store.clone() {
+        let settings = state.settings.clone();
+        let pushed = tauri::async_runtime::spawn_blocking(move || {
+            crate::budget_alert::push(&store, &settings);
+            crate::budget_alert::check(&store);
+            crate::budget_alert::show_if_queued(&app);
+        })
+        .await;
+        if let Err(e) = pushed {
+            tracing::warn!(error = %e, "could not apply the new budget");
+        }
+    }
+    Ok(views)
+}
+
+/// "Open AI Providers settings" from a "budget spent" message in another window or view.
+#[tauri::command]
+pub fn open_ai_settings(app: tauri::AppHandle) {
+    crate::budget_alert::open_ai_settings(&app);
 }
 
 fn key_check_view(check: api::hosted_models::KeyCheck, provider: Provider) -> (KeyCheckView, Vec<api::hosted_models::OpenRouterModel>) {
@@ -235,10 +305,16 @@ fn now_ms() -> i64 {
 
 #[tauri::command]
 pub async fn ai_settings(state: State<'_, AppState>) -> Result<AiSettings, CommandError> {
-    let (routing, summary_instructions, prompts) = {
+    let (routing, summary_instructions, prompts, budgets, ollama_warning) = {
         let settings = state.settings.lock().unwrap();
         let prompts = PromptSurface::ALL.iter().map(|&surface| PromptText { surface, text: settings.prompt(surface) }).collect();
-        (settings.routing(), settings.get(keys::SUMMARY_CUSTOM_PROMPT).unwrap_or_default(), prompts)
+        let mut routing = settings.routing();
+        let ollama_warning = crate::ollama_default::warning(&settings).map(|(model, fallback)| OllamaWarning { model, fallback });
+        // The page shows the model the user chose, never the stand-in, so a save keeps their choice.
+        if let Some(w) = &ollama_warning {
+            routing.ollama_model = w.model.clone();
+        }
+        (routing, settings.get(keys::SUMMARY_CUSTOM_PROMPT).unwrap_or_default(), prompts, budget_views(&settings), ollama_warning)
     };
     let (spend, usage) = match &state.store {
         Some(store) => {
@@ -248,7 +324,7 @@ pub async fn ai_settings(state: State<'_, AppState>) -> Result<AiSettings, Comma
         None => (None, None),
     };
     let image_search_key = state.secrets.get_string(APP_SERVICE, accounts::IMAGE_SEARCH_API_KEY)?.as_deref().map(mask_key);
-    Ok(AiSettings { routing, keys: api_keys(&*state.secrets)?, summary_instructions, prompts, spend, providers: provider_infos(), usage, image_search_key })
+    Ok(AiSettings { routing, keys: api_keys(&*state.secrets)?, summary_instructions, prompts, spend, providers: provider_infos(), usage, budgets, image_search_key, ollama_warning })
 }
 
 /// Checks the saved key for `provider` against its model list; for OpenRouter a valid
@@ -363,15 +439,31 @@ pub async fn provider_models(state: State<'_, AppState>, provider: Provider) -> 
             .ok_or_else(|| CommandError::not_configured(tr("Add a {provider} API key first.", &[("provider", provider.as_str())])))?,
         None => String::new(),
     };
-    tokio::task::spawn_blocking(move || api::hosted_models::fetch_models(hosted(provider), &key, None))
+    let models = tokio::task::spawn_blocking(move || api::hosted_models::fetch_models(hosted(provider), &key, None))
         .await
         .map_err(|e| CommandError::network(e.to_string()))?
-        .map_err(CommandError::network)
+        .map_err(CommandError::network)?;
+    // Ollama's list also decides which installed model stands in for a missing default.
+    if provider == Provider::Ollama {
+        crate::ollama_default::update(&state.settings.lock().unwrap(), &models);
+    }
+    Ok(models)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_typed_budget_becomes_whole_cents_and_nothing_or_zero_is_none() {
+        assert_eq!(budget_cents(Some(25.0)), Some(2500));
+        assert_eq!(budget_cents(Some(12.345)), Some(1235));
+        assert_eq!(budget_cents(Some(0.001)), None, "rounds to zero: no budget");
+        assert_eq!(budget_cents(Some(0.0)), None);
+        assert_eq!(budget_cents(Some(-5.0)), None);
+        assert_eq!(budget_cents(Some(f64::NAN)), None);
+        assert_eq!(budget_cents(None), None);
+    }
 
     #[test]
     fn keys_are_masked_to_their_last_four_characters() {

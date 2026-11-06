@@ -78,6 +78,8 @@ fn flat_keys() -> Vec<(String, Kind)> {
     .map(|(k, kind)| (k.to_string(), kind))
     .collect();
     out.extend(PromptSurface::ALL.iter().map(|s| (s.key(), Kind::Text)));
+    // Monthly budgets read like the daily caps: cents, `""` none (0 is none too).
+    out.extend(crate::settings::PAID_PROVIDERS.iter().map(|p| (crate::settings::monthly_budget_key(p), Kind::Cap)));
     out
 }
 
@@ -107,6 +109,9 @@ fn provider_name(p: Provider) -> String {
 fn encode_flat(file: &SettingsFile, routing: &RoutingSettings, key: &str, kind: Kind) -> String {
     match kind {
         Kind::Provider => provider_name(routing.preferred_provider),
+        // The stored Ollama model, never this PC's in-memory stand-in for a missing default
+        // (`ollama_default`): another computer has its own models.
+        Kind::Model if key == keys::OLLAMA_MODEL => file.ollama_model_choice().0,
         Kind::Model => model_of(routing, key),
         Kind::Text => file.get::<String>(key).map(|s| s.trim().to_string()).unwrap_or_default(),
         Kind::Cap => file.get::<i64>(key).map(|c| c.to_string()).unwrap_or_default(),
@@ -672,6 +677,7 @@ mod tests {
             keys::RETENTION_ACKNOWLEDGED,
             keys::EXCLUDED_BUNDLE_IDS,
             keys::LIVE_QUESTION_ENABLED,
+            keys::REMEMBER_VOICES,
         ] {
             assert!(!local.fields.contains_key(local_only), "{local_only} stays on this PC");
         }
@@ -784,6 +790,27 @@ mod tests {
             assert!(!apply_field(&mut f, &pulled(key, bad, 5)), "{key} = {bad:?} should be refused");
         }
         assert_eq!(encoded(&f), encoded(&file().1), "nothing was written");
+    }
+
+    #[test]
+    fn monthly_budgets_sync_as_cents_and_blank_or_zero_is_none() {
+        let (_d, mut f) = file();
+        let openai = crate::settings::monthly_budget_key("openai");
+        let google = crate::settings::monthly_budget_key("google");
+        assert!(synced_keys().contains(&openai), "every paid provider's budget syncs");
+        assert!(!synced_keys().contains(&crate::settings::monthly_budget_key("ollama")), "Ollama is free");
+        edit(&mut f, |f| f.set_monthly_budget("openai", Some(2500)));
+        assert_eq!(encoded(&f)[&openai], "2500");
+        assert_eq!(encoded(&f)[&google], "", "no budget");
+        assert!(apply_field(&mut f, &pulled(&google, "1000", 5)));
+        assert!(apply_field(&mut f, &pulled(&openai, "0", 5)), "the Mac may send 0 for none");
+        assert!(!apply_field(&mut f, &pulled(&openai, "-1", 5)));
+        assert!(!apply_field(&mut f, &pulled(&openai, "$25", 5)));
+        let budgets = f.monthly_budgets();
+        assert_eq!(budgets.keys().cloned().collect::<Vec<_>>(), ["anthropic", "google", "openai", "openrouter"]);
+        assert_eq!((budgets["openai"], budgets["google"], budgets["anthropic"]), (0, 1000, 0), "every paid provider is pushed; 0 is none");
+        assert!(apply_field(&mut f, &pulled(&google, "", 5)));
+        assert_eq!(f.monthly_budgets()["google"], 0);
     }
 
     #[test]

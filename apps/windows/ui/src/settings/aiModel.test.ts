@@ -11,12 +11,23 @@ import {
   keyLine,
   modelField,
   modelOptions,
+  monthSpent,
+  ollamaWarningLine,
   parseCapDollars,
   showsOnRamp,
+  thisMonth,
   usageCost,
   usageTokens,
   usageTotalsLine,
 } from "./aiModel";
+
+describe("a chosen Ollama model that isn't installed", () => {
+  it("says so and names what stands in", () => {
+    expect(ollamaWarningLine({ model: "qwen3:8b", fallback: "llama3.2:3b" })).toBe(
+      "qwen3:8b isn't installed. Whimbrel is using llama3.2:3b until you install it or choose another model.",
+    );
+  });
+});
 
 const routing: RoutingSettings = {
   preferredProvider: "anthropic",
@@ -40,7 +51,30 @@ const google: ProviderInfoView = {
   cheapModel: "gemini-2.0-flash",
 };
 
-const usage: UsageView = { todayCents: 3, last30DaysCents: 37, monthToDateCents: 12, byProvider: [{ provider: "google", cents: 37 }] };
+const usage: UsageView = {
+  todayCents: 3,
+  last30DaysCents: 37,
+  monthToDateCents: 12,
+  byProvider: [{ provider: "google", cents: 37 }],
+  monthByProvider: [{ provider: "google", cents: 1240 }],
+};
+
+describe("monthly budgets", () => {
+  it("says this month's spend against the budget, red at 100%", () => {
+    expect(thisMonth(1240, 2500)).toEqual({ text: "This month: $12.40 of $25.00 (49%)", fill: 0.496, over: false });
+    expect(thisMonth(1250, 2500).text).toBe("This month: $12.50 of $25.00 (50%)");
+    expect(thisMonth(2500, 2500)).toMatchObject({ fill: 1, over: true });
+    expect(thisMonth(3100, 2500)).toEqual({ text: "This month: $31.00 of $25.00 (124%)", fill: 1, over: true });
+    expect(thisMonth(1240, null)).toEqual({ text: "This month: $12.40", fill: null, over: false });
+    expect(thisMonth(0, 0).text).toBe("This month: $0.00");
+  });
+
+  it("reads this month's spend for one provider, other computers included", () => {
+    expect(monthSpent(usage, "google")).toBe(1240);
+    expect(monthSpent(usage, "openai")).toBe(0);
+    expect(monthSpent(null, "google")).toBe(0);
+  });
+});
 
 describe("the on-ramp", () => {
   it("says what small tasks use and the user's own figure once there is one", () => {

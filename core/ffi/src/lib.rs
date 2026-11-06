@@ -23,6 +23,7 @@ mod enrollment_ffi;
 mod inference_ffi;
 mod mcp_ffi;
 mod meeting_parts_ffi;
+mod speaker_names_ffi;
 mod models_ffi;
 mod prompts_ffi;
 mod oauth_ffi;
@@ -793,14 +794,17 @@ pub extern "C" fn whimbrel_live_question_is_duplicate(
 /// `"anthropic"`, `"openai"` or `"google"`; `api_key` may be null for Ollama.
 /// `input_json` is a `SkinTurnInput` (camelCase). `routing_config_json` — see
 /// `whimbrel_llm_answer`'s doc comment, identical shape and null-handling; only its spend
-/// caps apply here (provider and model are explicit). Opens its own connection to
+/// caps apply here (provider and model are explicit), plus that provider's monthly budget
+/// (`budget_spent`, no fallthrough). Opens its own connection to
 /// `db_path` for the spend-cap check (route `"skin"`) before the call and the usage row
-/// after it. Returns the usual envelope with a `SkinTurnReply` as `data`; an
+/// after it, as `device_id` (this device's sync id; null before one is known, as
+/// `whimbrel_memory_set_device_id`). Returns the usual envelope with a `SkinTurnReply` as `data`; an
 /// unreadable reply after the retry is `provider_failure`. Bare NULL on malformed
 /// arguments or a store that won't open.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_skin_turn(
     db_path: *const c_char,
+    device_id: *const c_char,
     provider: *const c_char,
     model: *const c_char,
     api_key: *const c_char,
@@ -827,12 +831,22 @@ pub extern "C" fn whimbrel_skin_turn(
         "openrouter" => (llm::Provider::OpenRouter, Box::new(llm::OpenAIClient::openrouter(key, &model))),
         _ => return ptr::null_mut(),
     };
-    let Ok(store) = Store::open(Path::new(&db_path), Path::new("")) else {
+    let Some(store) = open_as_device(&db_path, device_id) else {
         return ptr::null_mut();
     };
     let caps = parse_routing_config(routing_config_json).spend_cap_config();
     let result = skin_turn(&store, &caps, provider, &model, client.as_ref(), &input);
     envelope_json(&result).map_or(ptr::null_mut(), json_to_c_string)
+}
+
+/// Opens `db_path` for one skin call as this device (`device_id`; null before one is
+/// known), so the call's spend is counted and synced as the device's own, never as a peer's.
+fn open_as_device(db_path: &str, device_id: *const c_char) -> Option<Store> {
+    let store = Store::open(Path::new(db_path), Path::new("")).ok()?;
+    if let Some(id) = cstr_to_string(device_id).filter(|id| !id.is_empty()) {
+        store.set_own_device_id(&id);
+    }
+    Some(store)
 }
 
 fn skin_turn(
@@ -844,6 +858,8 @@ fn skin_turn(
     input: &llm::skin_maker::SkinTurnInput,
 ) -> api::ApiResult<llm::skin_maker::SkinTurnReply> {
     llm::check_spend_cap(store, caps, None, Some("skin"), now_unix_ms())?;
+    // The user picked this one provider: a spent budget fails, never falls through.
+    api::budget::check_provider(store, provider, now_unix_ms())?;
     let (reply, usage) = llm::skin_maker::run_skin_turn(client, input)
         .map_err(|_| api::ApiError::ProviderFailure)?;
     api::util::log_usage_for(store, provider, model, "skin", usage);
@@ -871,7 +887,7 @@ pub extern "C" fn whimbrel_skin_image_search(
         return ptr::null_mut();
     };
     let caps = parse_routing_config(routing_config_json).spend_cap_config();
-    let result = charge_skin(&store, &caps, "skin-image-search", llm::images::IMAGE_SEARCH_CENTS)
+    let result = charge_skin(&store, &caps, "image", "skin-image-search", llm::images::IMAGE_SEARCH_CENTS)
         .and_then(|()| {
             llm::images::search_images(&key, &query).map_err(|_| api::ApiError::ProviderFailure)
         });
@@ -880,11 +896,13 @@ pub extern "C" fn whimbrel_skin_image_search(
 
 /// Skins Release 2: generates one image. `provider` is `"openai"` (gpt-image-1) or
 /// `"google"` (Imagen); anything else is a bare NULL. Charges `IMAGE_GENERATE_CENTS` on
-/// route `"skin-image-generate"` like `whimbrel_skin_image_search`. Envelope `data` is the
-/// image as a base64 string.
+/// route `"skin-image-generate"` like `whimbrel_skin_image_search`, logged under `provider` so it
+/// counts toward that provider's monthly budget (and refused with `budget_spent` once it is
+/// spent). `device_id` as `whimbrel_skin_turn`. Envelope `data` is the image as a base64 string.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_skin_image_generate(
     db_path: *const c_char,
+    device_id: *const c_char,
     provider: *const c_char,
     api_key: *const c_char,
     prompt: *const c_char,
@@ -903,11 +921,14 @@ pub extern "C" fn whimbrel_skin_image_generate(
         "google" => llm::Provider::Google,
         _ => return ptr::null_mut(),
     };
-    let Ok(store) = Store::open(Path::new(&db_path), Path::new("")) else {
+    let Some(store) = open_as_device(&db_path, device_id) else {
         return ptr::null_mut();
     };
     let caps = parse_routing_config(routing_config_json).spend_cap_config();
-    let result = charge_skin(&store, &caps, "skin-image-generate", llm::images::IMAGE_GENERATE_CENTS)
+    // `provider` bills the call: a spent budget refuses it, and the charge counts toward it.
+    let result = api::budget::check_provider(&store, provider, now_unix_ms())
+        .map_err(api::ApiError::from)
+        .and_then(|()| charge_skin(&store, &caps, provider.as_str(), "skin-image-generate", llm::images::IMAGE_GENERATE_CENTS))
         .and_then(|()| base64_image(llm::images::generate_image(provider, &key, &prompt)));
     envelope_json(&result).map_or(ptr::null_mut(), json_to_c_string)
 }
@@ -924,13 +945,16 @@ pub extern "C" fn whimbrel_skin_image_fetch(url: *const c_char) -> *mut c_char {
     envelope_json(&result).map_or(ptr::null_mut(), json_to_c_string)
 }
 
+/// `provider` is the usage_log label: `"image"` for Brave search (no budget), the paid
+/// provider's `as_str` for generation.
 fn charge_skin(
     store: &Store,
     caps: &llm::SpendCapConfig,
+    provider: &str,
     route: &str,
     cents: i64,
 ) -> api::ApiResult<()> {
-    llm::charge_skin_call(store, caps, route, cents, now_unix_ms()).map_err(|e| match e {
+    llm::charge_skin_call_for(store, caps, provider, route, cents, now_unix_ms()).map_err(|e| match e {
         llm::ChargeError::SpendCap(cap) => api::ApiError::SpendCap(cap),
         // Fail closed: no recorded charge, no paid call.
         llm::ChargeError::Ledger(_) => api::ApiError::ProviderFailure,
@@ -1031,6 +1055,37 @@ pub extern "C" fn whimbrel_llm_prepare_meeting_ask(
             Some(json) => json_to_c_string(json),
             None => ptr::null_mut(),
         },
+    }
+}
+
+/// Blocking meeting Ask through the governed chain (not pinned), for when the streamed
+/// provider's budget is spent. Success data: `{"text","citations","narrowed"}`; errors as
+/// `whimbrel_llm_prepare_meeting_ask`. NULL on a null handle or malformed arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_llm_answer_meeting(
+    handle: *mut StoreHandle,
+    meeting_id: i64,
+    query: *const c_char,
+    model: *const c_char,
+    history_json: *const c_char,
+    routing_config_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let (Some(query), Some(model), Some(history)) =
+        (cstr_to_string(query), cstr_to_string(model), parse_history_json(history_json))
+    else {
+        return ptr::null_mut();
+    };
+    let routing = parse_routing_config(routing_config_json);
+    let store = unsafe { &(*handle).0 };
+    match api::ask::answer_meeting(store, meeting_id, &query, &model, &history, &routing) {
+        Ok(data) => envelope_json(&Ok::<_, api::ApiError>(data)).map_or(ptr::null_mut(), json_to_c_string),
+        Err(api::ask::MeetingAskError::NoTranscript) => {
+            json_to_c_string(r#"{"ok":false,"error":{"kind":"no_transcript"}}"#.to_string())
+        }
+        Err(api::ask::MeetingAskError::Api(e)) => envelope_json::<()>(&Err(e)).map_or(ptr::null_mut(), json_to_c_string),
     }
 }
 
@@ -1568,8 +1623,9 @@ pub extern "C" fn whimbrel_live_purge_stale(handle: *mut StoreHandle, now_unix_m
     store.purge_stale_live_segments(now_unix_ms).map(|n| n as i64).unwrap_or(-1)
 }
 
-/// The stored brief for a calendar event id as JSON (`MeetingPrepRow`), or `NULL` when
-/// there is none, the handle is null, or the lookup fails.
+/// The stored brief for a `memory::prep::prep_key` (`<event id>@<start unix ms>`; a bare event
+/// id finds its newest occurrence) as JSON (`MeetingPrepRow`), or `NULL` when there is none,
+/// the handle is null, or the lookup fails.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_meeting_prep_get(
     handle: *mut StoreHandle,
@@ -1586,6 +1642,20 @@ pub extern "C" fn whimbrel_meeting_prep_get(
         Ok(Some(row)) => serde_json::to_string(&row)
             .map(json_to_c_string)
             .unwrap_or(ptr::null_mut()),
+        _ => ptr::null_mut(),
+    }
+}
+
+/// The brief prepared for a recorded meeting (`Store::meeting_prep_for_meeting`) as JSON
+/// (`MeetingPrepRow`), or `NULL` when there is none, the handle is null, or the lookup fails.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meeting_prep_for_meeting(handle: *mut StoreHandle, meeting_id: i64) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    match store.meeting_prep_for_meeting(meeting_id) {
+        Ok(Some(row)) => serde_json::to_string(&row).map(json_to_c_string).unwrap_or(ptr::null_mut()),
         _ => ptr::null_mut(),
     }
 }
@@ -2038,7 +2108,8 @@ pub extern "C" fn whimbrel_llm_spend_today(
 
 /// The Model usage screen's totals (`api::usage::totals`): `{"today_cents",
 /// "last_30_days_cents", "month_to_date_cents", "last_30_days_by_provider": [{"provider",
-/// "cents"}]}`, every window ending now, UTC days. Null on a null/invalid handle.
+/// "cents"}], "month_to_date_by_provider": [{"provider","cents"}]}`, every window ending
+/// now, UTC days. Null on a null/invalid handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_usage_totals(handle: *mut StoreHandle) -> *mut c_char {
     if handle.is_null() {
@@ -2048,6 +2119,53 @@ pub extern "C" fn whimbrel_usage_totals(handle: *mut StoreHandle) -> *mut c_char
     match serde_json::to_string(&api::usage::totals(store, now_unix_ms())) {
         Ok(json) => json_to_c_string(json),
         Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Replaces every monthly provider budget from `{"anthropic":2500,...}` (cents; 0 or a free
+/// provider sets none). Envelope `{"ok":true,"data":{}}`, or `{"ok":false,"error":{"kind":
+/// "invalid"}}` for a bad payload or a store error. Null on a null handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_set_provider_budgets(handle: *mut StoreHandle, budgets_json: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let parsed: Option<std::collections::BTreeMap<String, i64>> =
+        cstr_to_string(budgets_json).and_then(|s| serde_json::from_str(&s).ok());
+    match parsed.map(|b| api::budget::set_budgets(store, &b)) {
+        Some(Ok(())) => json_to_c_string(ok_envelope("{}")),
+        _ => json_to_c_string(r#"{"ok":false,"error":{"kind":"invalid"}}"#.to_string()),
+    }
+}
+
+/// Every monthly provider budget as `{"ok":true,"data":{"anthropic":2500,...}}`. Null on a
+/// null handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_provider_budgets(handle: *mut StoreHandle) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    budget_envelope(api::budget::budgets(store))
+}
+
+/// Budget thresholds newly reached (80 / 100 percent), each returned once:
+/// `{"ok":true,"data":[{"provider","threshold","spent_cents","budget_cents","month"}]}`.
+/// Null on a null handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_take_budget_notices(handle: *mut StoreHandle) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    budget_envelope(api::budget::take_notices(store, now_unix_ms()))
+}
+
+fn budget_envelope<T: serde::Serialize, E>(result: Result<T, E>) -> *mut c_char {
+    match result.ok().and_then(|v| serde_json::to_string(&v).ok()) {
+        Some(json) => json_to_c_string(ok_envelope(&json)),
+        None => json_to_c_string(r#"{"ok":false,"error":{"kind":"invalid"}}"#.to_string()),
     }
 }
 
@@ -4276,6 +4394,7 @@ mod tests {
         let call = |routing: *const c_char| {
             let out = whimbrel_skin_turn(
                 db_path_c.as_ptr(),
+                ptr::null(),
                 provider_c.as_ptr(),
                 model_c.as_ptr(),
                 ptr::null(),
@@ -4300,6 +4419,7 @@ mod tests {
         let bad_input_c = to_cstring("not json");
         assert!(whimbrel_skin_turn(
             db_path_c.as_ptr(),
+            ptr::null(),
             provider_c.as_ptr(),
             model_c.as_ptr(),
             ptr::null(),
@@ -4340,6 +4460,61 @@ mod tests {
         let routes = usage_routes(&db_path);
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].0, "skin");
+    }
+
+    /// A skin call's store, opened with the device id, counts the main handle's spend once and
+    /// syncs its own spend as this device's.
+    #[test]
+    fn skin_store_with_device_id_counts_own_spend_once() {
+        struct Scripted;
+        impl llm::LlmClient for Scripted {
+            fn complete(&self, _prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+                Ok(llm::Completion {
+                    text: r#"{"intent":"new","reply":"ok"}"#.into(),
+                    token_usage: llm::TokenUsage { input_tokens: Some(1_000_000), output_tokens: Some(0) },
+                })
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("skin-device.sqlite");
+        let main = memory::Store::open(&db_path, std::path::Path::new("")).unwrap();
+        main.set_own_device_id("dev");
+        main.set_provider_budgets(&[("anthropic".into(), 1000)]).unwrap();
+        main.log_usage(&memory::NewUsageLogEntry {
+            user_id: None,
+            provider: "anthropic".into(),
+            model: "m".into(),
+            route: Some("ask".into()),
+            input_tokens: None,
+            output_tokens: None,
+            estimated_cost_cents: 600,
+            cache_hit: false,
+            trace_id: "t".into(),
+            ts_unix_ms: now_unix_ms(),
+        })
+        .unwrap();
+        let month = memory::provider_budget::month_label(now_unix_ms());
+        let device_c = to_cstring("dev");
+        let skin = open_as_device(db_path.to_str().unwrap(), device_c.as_ptr()).unwrap();
+        assert_eq!(skin.month_spend_by_provider(&month).unwrap(), vec![("anthropic".into(), 600)]);
+        assert_eq!(skin.provider_over_budget("anthropic", now_unix_ms()).unwrap(), None);
+        let input: llm::skin_maker::SkinTurnInput =
+            serde_json::from_str(r#"{"request":"a stadium skin","catalogue":{}}"#).unwrap();
+        skin_turn(&skin, &llm::SpendCapConfig { user_daily_cents: Some(i64::MAX), global_daily_cents: Some(i64::MAX) }, llm::Provider::Anthropic, "claude-haiku-4-5", &Scripted, &input)
+            .unwrap();
+        let total = main.month_spend_by_provider(&month).unwrap()[0].1;
+        assert!(total > 600, "{total}");
+        assert_eq!(skin.month_spend_by_provider(&month).unwrap()[0].1, total);
+        // The skin call's spend went out under this device, so peers count it too.
+        let last: memory::provider_budget::AppliedProviderSpend = main
+            .list_outbox_operations()
+            .unwrap()
+            .into_iter()
+            .filter(|o| o.1 == memory::OUTBOX_ROW_TYPE_PROVIDER_SPEND)
+            .last()
+            .map(|o| serde_json::from_str(&o.3).unwrap())
+            .unwrap();
+        assert_eq!(last.cents, total);
     }
 
     fn usage_routes(db_path: &std::path::Path) -> Vec<(String, i64)> {
@@ -4392,6 +4567,7 @@ mod tests {
         assert!(search.contains("\"kind\":\"spend_cap\""), "{search}");
         let generate = take(whimbrel_skin_image_generate(
             db_c.as_ptr(),
+            ptr::null(),
             openai_c.as_ptr(),
             key_c.as_ptr(),
             text_c.as_ptr(),
@@ -4403,6 +4579,7 @@ mod tests {
         let ollama_c = to_cstring("ollama");
         assert!(whimbrel_skin_image_generate(
             db_c.as_ptr(),
+            ptr::null(),
             ollama_c.as_ptr(),
             key_c.as_ptr(),
             text_c.as_ptr(),
@@ -6046,6 +6223,60 @@ mod tests {
     }
 
     #[test]
+    fn provider_budgets_round_trip_and_notices_fire_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = to_cstring(dir.path().join("b.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(path.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let call = |p: *mut c_char| {
+            assert!(!p.is_null());
+            let v: serde_json::Value = serde_json::from_str(unsafe { CStr::from_ptr(p) }.to_str().unwrap()).unwrap();
+            whimbrel_core_free_string(p);
+            v
+        };
+        let set = |h, json: &str| call(whimbrel_set_provider_budgets(h, to_cstring(json).as_ptr()));
+
+        assert_eq!(set(handle, r#"{"anthropic":2500,"ollama":900,"openai":0}"#)["ok"], true);
+        assert_eq!(call(whimbrel_provider_budgets(handle))["data"], serde_json::json!({"anthropic":2500}));
+        assert_eq!(set(handle, "not json")["error"]["kind"], "invalid");
+        assert_eq!(call(whimbrel_provider_budgets(handle))["data"], serde_json::json!({"anthropic":2500}));
+
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+        {
+            let store = unsafe { &(*handle).0 };
+            store
+                .log_usage(&memory::NewUsageLogEntry {
+                    user_id: None,
+                    provider: "anthropic".into(),
+                    model: "m".into(),
+                    route: Some("ask".into()),
+                    input_tokens: None,
+                    output_tokens: None,
+                    estimated_cost_cents: 2000,
+                    cache_hit: false,
+                    trace_id: "b1".into(),
+                    ts_unix_ms: now,
+                })
+                .unwrap();
+        }
+        let n = call(whimbrel_take_budget_notices(handle));
+        assert_eq!(n["data"][0]["provider"], "anthropic");
+        assert_eq!(n["data"][0]["threshold"], 80);
+        assert_eq!(n["data"][0]["spent_cents"], 2000);
+        assert_eq!(n["data"][0]["budget_cents"], 2500);
+        assert_eq!(n["data"].as_array().unwrap().len(), 1);
+        assert_eq!(call(whimbrel_take_budget_notices(handle))["data"], serde_json::json!([]));
+
+        let totals = call(whimbrel_usage_totals(handle));
+        assert_eq!(totals["month_to_date_by_provider"], serde_json::json!([{"provider":"anthropic","cents":2000}]));
+
+        assert!(whimbrel_set_provider_budgets(ptr::null_mut(), ptr::null()).is_null());
+        assert!(whimbrel_provider_budgets(ptr::null_mut()).is_null());
+        assert!(whimbrel_take_budget_notices(ptr::null_mut()).is_null());
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
     fn null_handle_is_handled_safely() {
         assert!(whimbrel_memory_ingest_jsonl(ptr::null_mut(), ptr::null(), ptr::null()).is_null());
         assert!(whimbrel_memory_search_keyword(ptr::null_mut(), ptr::null(), 10).is_null());
@@ -7176,6 +7407,7 @@ mod tests {
 
         let store = unsafe { &(*handle).0 };
         let meeting = memory::AppliedMeeting {
+            attendee_details: vec![],
             start_unix_ms: 1000,
             end_unix_ms: Some(2000),
             title: "Genesys".to_string(),
@@ -7191,6 +7423,7 @@ mod tests {
             summary_provider: None,
             summary_model: None,
             keep_media: None,
+            trimmed_keep_ms: None,
         };
         store
             .apply_synced_meeting("device-a", 1, None, &meeting)

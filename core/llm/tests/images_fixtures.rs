@@ -362,3 +362,17 @@ fn search_results_without_https_image_and_thumbnail_are_dropped() {
         .collect();
     assert_eq!(titles, ["ok"]);
 }
+
+/// Image generation is billed by OpenAI or Google: its charge is logged under that
+/// provider, so it counts toward the provider's monthly budget. Search stays "image".
+#[test]
+fn image_generation_charge_counts_toward_the_provider_month_spend() {
+    let store = Store::open_in_memory().unwrap();
+    let now = 1_794_744_000_000; // 2026-11-15T12:00:00Z
+    let caps = SpendCapConfig { user_daily_cents: Some(0), global_daily_cents: Some(0) };
+    llm::charge_skin_call_for(&store, &caps, Provider::OpenAI.as_str(), "skin-image-generate", 4, now).unwrap();
+    charge_skin_call(&store, &caps, "skin-image-search", 1, now).unwrap();
+    assert_eq!(store.month_spend_by_provider("2026-11").unwrap(), vec![("openai".to_string(), 4)]);
+    store.set_provider_budgets(&[("openai".to_string(), 4)]).unwrap();
+    assert_eq!(store.provider_over_budget("openai", now).unwrap(), Some((4, 4)));
+}

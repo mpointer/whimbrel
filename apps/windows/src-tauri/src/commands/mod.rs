@@ -112,7 +112,12 @@ pub fn get_routing_settings(state: State<'_, AppState>) -> RoutingSettings {
 
 #[tauri::command]
 pub fn set_routing_settings(state: State<'_, AppState>, routing: RoutingSettings) -> Result<(), CommandError> {
-    let mut settings = state.settings.lock().unwrap();
-    crate::syncing::settings::edit(&mut settings, |f| f.set_routing(&routing));
-    settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))
+    {
+        let mut settings = state.settings.lock().unwrap();
+        crate::syncing::settings::edit(&mut settings, |f| f.set_routing(&routing));
+        settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
+    }
+    // A newly chosen Ollama model: is it installed, or does a stand-in cover it?
+    crate::ollama_default::refresh_soon(state.settings.clone());
+    Ok(())
 }

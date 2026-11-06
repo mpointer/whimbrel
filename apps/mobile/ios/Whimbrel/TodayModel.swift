@@ -28,6 +28,12 @@ final class TodayModel: ObservableObject {
             .max { $0.ranAtUnixMs < $1.ranAtUnixMs }
     }
 
+    /// The event's brief under core's per-occurrence key (`<event id>@<start unix ms>`; a
+    /// recurring meeting's occurrences share their id), else under the bare id (older briefs).
+    nonisolated static func prep(for event: PhoneCalendarEvent, in store: PhoneReadStore) -> PhoneMeetingPrep? {
+        store.prep(eventId: "\(event.externalId)@\(event.startUnixMs)") ?? store.prep(eventId: event.externalId)
+    }
+
     func reload(sync: SyncModel, now: Date, calendar: Calendar) async {
         func ms(_ date: Date) -> Int64 { Int64(date.timeIntervalSince1970 * 1000) }
         // Like the Mac: an event that started up to 15 minutes ago still counts as next.
@@ -38,7 +44,7 @@ final class TodayModel: ObservableObject {
             return Snapshot(
                 runs: store.routineRuns(limit: 50),
                 event: event,
-                prep: event.flatMap { store.prep(eventId: $0.externalId) },
+                prep: event.flatMap { Self.prep(for: $0, in: store) },
                 meetings: store.recentMeetings(limit: 10)
             )
         }

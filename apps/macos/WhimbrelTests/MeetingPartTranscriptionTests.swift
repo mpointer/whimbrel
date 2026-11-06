@@ -50,12 +50,12 @@ final class MeetingPartTranscriptionTests: XCTestCase {
                 let name = URL(fileURLWithPath: audioPath).deletingPathExtension().lastPathComponent
                 let url = tempDir.appendingPathComponent("transcript-\(name).txt")
                 try "x".write(to: url, atomically: true, encoding: .utf8)
-                if lock.withLock({ silent.contains(audioPath) }) { return (url, [], language) }
+                if lock.withLock({ silent.contains(audioPath) }) { return (url, [], language, []) }
                 let me = TranscriptionService.Speaker.me.rawValue
                 return (url, [
                     TranscriptionService.Line(speakerLabel: lock.withLock { meOnly } ? me : "Them", startCs: 100, text: "said in \(name)"),
                     TranscriptionService.Line(speakerLabel: me, startCs: 200, text: "replied in \(name)")
-                ], language ?? "es")
+                ], language ?? "es", [])
             },
             summarize: { [unowned self] id, notes, transcript in
                 lock.withLock { summaries.append((id, notes, transcript)) }

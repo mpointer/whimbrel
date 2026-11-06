@@ -76,6 +76,7 @@ struct AIProvidersSettingsPane: View {
                 }
             )
             providerNotes(for: "anthropic")
+            monthlyBudget(for: "anthropic")
             Toggle("Sync to devices", isOn: $appState.routing.anthropicKeySyncEnabled)
                 .disabled(!appState.routing.hasAnthropicKey)
                 .font(.whimbrelBody(.caption))
@@ -118,6 +119,7 @@ struct AIProvidersSettingsPane: View {
                 }
             )
             providerNotes(for: "openai")
+            monthlyBudget(for: "openai")
             Toggle("Sync to devices", isOn: $appState.routing.openaiKeySyncEnabled)
                 .disabled(!appState.routing.hasOpenAIKey)
                 .font(.whimbrelBody(.caption))
@@ -160,6 +162,7 @@ struct AIProvidersSettingsPane: View {
                 }
             )
             providerNotes(for: "google")
+            monthlyBudget(for: "google")
             Toggle("Sync to devices", isOn: $appState.routing.googleKeySyncEnabled)
                 .disabled(!appState.routing.hasGoogleKey)
                 .font(.whimbrelBody(.caption))
@@ -207,6 +210,7 @@ struct AIProvidersSettingsPane: View {
                 .foregroundStyle(Color.whimbrelTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             providerNotes(for: "openrouter")
+            monthlyBudget(for: "openrouter")
             Toggle("Sync to devices", isOn: $appState.routing.openrouterKeySyncEnabled)
                 .disabled(!appState.routing.hasOpenRouterKey)
                 .font(.whimbrelBody(.caption))
@@ -241,6 +245,13 @@ struct AIProvidersSettingsPane: View {
                 }
             }
 
+            if usageTotals != nil {
+                // Once, under the paid providers: every "This month" line above counts all computers.
+                Text("Includes your other computers.")
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+            }
+
             Text("Ollama").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary)
             Text("Local server, no API key needed. Runs on this Mac and nothing leaves it.")
                 .font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
@@ -262,6 +273,12 @@ struct AIProvidersSettingsPane: View {
                 error: appState.routing.ollamaModelsError,
                 refresh: { Task { await appState.routing.refreshOllamaModels() } }
             )
+            if let missing = appState.routing.ollamaMissingChoice {
+                Text("\(missing.chosen) isn't installed. Whimbrel is using \(missing.using) until you install it or choose another model.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelError)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Divider().overlay(Color.whimbrelBorder)
 
@@ -506,13 +523,14 @@ struct AIProvidersSettingsPane: View {
     private func clampDefaultModelIfNeeded() {
         guard !defaultModelOptions.isEmpty, !defaultModelOptions.contains(appState.routing.preferredModel) else { return }
         switch appState.routing.preferredProvider {
-        case .ollama: appState.routing.ollamaDefaultModel = defaultModelOptions[0]
         case .anthropic: appState.routing.anthropicDefaultModel = defaultModelOptions[0]
         case .openai: appState.routing.openaiDefaultModel = defaultModelOptions[0]
         case .google: appState.routing.googleDefaultModel = defaultModelOptions[0]
         // OpenRouter is never snapped to a model the user did not pick: an unpicked
-        // model keeps it out of the chain on purpose.
-        case .openrouter: break
+        // model keeps it out of the chain on purpose. Ollama keeps the user's pick too:
+        // an installed model stands in, in memory (`RoutingSettings.ollamaDefaultModel`),
+        // and the Ollama section says so.
+        case .ollama, .openrouter: break
         }
     }
 
@@ -595,6 +613,44 @@ struct AIProvidersSettingsPane: View {
         }
     }
 
+    /// Under a paid provider: this month's spend against its budget, and the budget field.
+    @ViewBuilder
+    private func monthlyBudget(for id: String) -> some View {
+        let budget = appState.routing.monthlyBudgetCents[id]
+        if let totals = usageTotals {
+            let line = Self.thisMonthLine(spentCents: totals.monthCents(for: id), budgetCents: budget.map(Int64.init))
+            Text(line.text)
+                .font(.whimbrelBody(.caption2))
+                .foregroundStyle(line.over ? Color.whimbrelError : Color.whimbrelTextSecondary)
+            if let fraction = line.fraction {
+                ProgressView(value: min(fraction, 1))
+                    .tint(line.over ? Color.whimbrelError : Color.whimbrelAccentPrimary)
+                    .frame(width: 280)
+            }
+        }
+        HStack {
+            Text("Monthly budget").font(.whimbrelBody(.caption))
+            Text(verbatim: "$").font(.whimbrelBody(.caption))
+            TextField("None", value: Binding<Double?>(
+                get: { budget.map { Double($0) / 100 } },
+                set: { appState.routing.setBudget(id, cents: RoutingSettings.budgetCents(dollars: $0)) }
+            ), format: .number.precision(.fractionLength(2)))
+            .textFieldStyle(.roundedBorder)
+            .frame(width: 100)
+        }
+    }
+
+    /// "This month: $12.40 of $25.00 (50%)", or "This month: $12.40" with no budget; `fraction`
+    /// (nil with no budget) fills the bar, and `over` (spend at or past the budget) turns it red.
+    nonisolated static func thisMonthLine(spentCents: Int64, budgetCents: Int64?) -> (text: String, fraction: Double?, over: Bool) {
+        guard let budgetCents, budgetCents > 0 else {
+            return (String(localized: "This month: \(dollars(spentCents))"), nil, false)
+        }
+        let fraction = Double(spentCents) / Double(budgetCents)
+        let percent = Int((fraction * 100).rounded())
+        return (String(localized: "This month: \(dollars(spentCents)) of \(dollars(budgetCents)) (\(percent)%)"), fraction, spentCents >= budgetCents)
+    }
+
     /// The cost line for one provider: the light-task model, then the user's own figure
     /// once there is one, else the one general claim doc 16 makes.
     static func costLine(info: CoreProviderInfo, totals: CoreUsageTotals?) -> String {
@@ -610,7 +666,7 @@ struct AIProvidersSettingsPane: View {
         return parts.joined(separator: " ")
     }
 
-    static func dollars(_ cents: Int64) -> String {
+    nonisolated static func dollars(_ cents: Int64) -> String {
         String(format: "$%.2f", Double(cents) / 100)
     }
 

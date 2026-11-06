@@ -32,6 +32,9 @@ pub struct UsageTotals {
     /// Last 30 days per provider, sorted by provider name; a provider with no calls is
     /// absent.
     pub last_30_days_by_provider: Vec<ProviderSpend>,
+    /// This UTC month per paid provider, across this device's calls and the user's other
+    /// computers (`Store::month_spend_by_provider`); the number a monthly budget is held to.
+    pub month_to_date_by_provider: Vec<ProviderSpend>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -72,6 +75,12 @@ pub fn totals(store: &memory::Store, now_unix_ms: i64) -> UsageTotals {
         month_to_date_cents: store.sum_spend_cents(month_start, None).unwrap_or(0),
         last_30_days_by_provider: store
             .sum_spend_cents_by_provider(thirty_days_ago)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(provider, cents)| ProviderSpend { provider, cents })
+            .collect(),
+        month_to_date_by_provider: store
+            .month_spend_by_provider(&memory::provider_budget::month_label(now_unix_ms))
             .unwrap_or_default()
             .into_iter()
             .map(|(provider, cents)| ProviderSpend { provider, cents })
@@ -131,6 +140,11 @@ mod tests {
         assert_eq!(t.today_cents, 3);
         assert_eq!(t.month_to_date_cents, 8);
         assert_eq!(t.last_30_days_cents, 15);
+        // Paid providers only, this UTC month only.
+        assert_eq!(
+            t.month_to_date_by_provider,
+            vec![ProviderSpend { provider: "anthropic".into(), cents: 3 }, ProviderSpend { provider: "openai".into(), cents: 5 }]
+        );
         assert_eq!(
             t.last_30_days_by_provider,
             vec![
@@ -166,11 +180,12 @@ mod tests {
             last_30_days_cents: 2,
             month_to_date_cents: 3,
             last_30_days_by_provider: vec![ProviderSpend { provider: "openai".into(), cents: 2 }],
+            month_to_date_by_provider: vec![ProviderSpend { provider: "openai".into(), cents: 2 }],
         })
         .unwrap();
         assert_eq!(
             json,
-            r#"{"today_cents":1,"last_30_days_cents":2,"month_to_date_cents":3,"last_30_days_by_provider":[{"provider":"openai","cents":2}]}"#
+            r#"{"today_cents":1,"last_30_days_cents":2,"month_to_date_cents":3,"last_30_days_by_provider":[{"provider":"openai","cents":2}],"month_to_date_by_provider":[{"provider":"openai","cents":2}]}"#
         );
     }
 }

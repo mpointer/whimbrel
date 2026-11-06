@@ -150,6 +150,10 @@ pub fn start(
                 Ok(applied) => tracing::info!(?trigger, applied, "settings sync round ok"),
                 Err(e) => tracing::warn!(?trigger, error = %e, "settings sync round failed"),
             }
+            // A budget changed on another computer takes effect here at once.
+            if matches!(settings_round, Ok(applied) if applied > 0) {
+                crate::budget_alert::push(&store, &settings);
+            }
             controller.record_settings_result(settings_round.map(|_| now_ms()));
             let result = run_round(&store, secrets.clone(), device_id.clone(), move |key, s, device| {
                 sync_engine::sync_content(&url, &token, key, s, device).map_err(|e| e.to_string())

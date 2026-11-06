@@ -137,11 +137,25 @@ impl From<SpendCapError> for ChargeError {
 /// before the caller touches the network, so a failed call still costs its price — the
 /// provider bills the attempt either way. The row is anonymous (`user_id: None`), which
 /// is what the next check's per-user sum counts; `provider` is the fixed label `"image"`
-/// and `model` repeats the route, since these calls have no token usage to price.
-/// Returns `ChargeError` (not R2's bare `SpendCapError`) so a failed write fails closed.
+/// (no monthly budget counts it) and `model` repeats the route, since these calls have no
+/// token usage to price. Returns `ChargeError` (not R2's bare `SpendCapError`) so a failed
+/// write fails closed. A call billed by a budgeted provider uses [`charge_skin_call_for`].
 pub fn charge_skin_call(
     store: &Store,
     config: &SpendCapConfig,
+    route: &str,
+    cents: i64,
+    now_unix_ms: i64,
+) -> Result<(), ChargeError> {
+    charge_skin_call_for(store, config, "image", route, cents, now_unix_ms)
+}
+
+/// [`charge_skin_call`] logged under `provider` (`Provider::as_str`, e.g. `"openai"` for image
+/// generation), so the charge counts toward that provider's monthly budget.
+pub fn charge_skin_call_for(
+    store: &Store,
+    config: &SpendCapConfig,
+    provider: &str,
     route: &str,
     cents: i64,
     now_unix_ms: i64,
@@ -150,7 +164,7 @@ pub fn charge_skin_call(
     store
         .log_usage(&memory::NewUsageLogEntry {
             user_id: None,
-            provider: "image".to_string(),
+            provider: provider.to_string(),
             model: route.to_string(),
             route: Some(route.to_string()),
             input_tokens: None,

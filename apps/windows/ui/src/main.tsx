@@ -7,7 +7,9 @@ import { App } from "./App";
 import { languageSettings } from "./api";
 import { L10nProvider, setLanguage, useLanguage } from "./l10n";
 import { AlertView } from "./alert/AlertView";
+import { BudgetAlertView } from "./alert/BudgetAlertView";
 import { QuestionAlertView } from "./alert/QuestionAlertView";
+import { StillHereView } from "./alert/StillHereView";
 import { PopupView } from "./popup/PopupView";
 import { startSkin } from "./skin";
 
@@ -22,7 +24,19 @@ const label = getCurrentWindow().label;
 function Root() {
   const lang = useLanguage();
   const view =
-    label === "popup" ? <PopupView /> : label === "alert" ? <AlertView /> : label === "question-alert" ? <QuestionAlertView /> : <App />;
+    label === "popup" ? (
+      <PopupView />
+    ) : label === "alert" ? (
+      <AlertView />
+    ) : label === "question-alert" ? (
+      <QuestionAlertView />
+    ) : label === "budget-alert" ? (
+      <BudgetAlertView />
+    ) : label === "still-here" ? (
+      <StillHereView />
+    ) : (
+      <App />
+    );
   return <L10nProvider lang={lang}>{view}</L10nProvider>;
 }
 

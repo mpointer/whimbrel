@@ -94,11 +94,13 @@ pub fn run(
     let day_end = day_start + 24 * 60 * 60 * 1000;
     let routing = prepared_routing(routing);
     let cap_config = routing.spend_cap_config();
-    let chain = build_chain_for(llm::TaskKind::ProfileSuggest, ollama_model, &routing);
     let mut complete = |prompt: &str| -> Option<String> {
         if llm::check_spend_cap(store, &cap_config, None, Some("profile_suggest"), now_unix_ms).is_err() {
             return None;
         }
+        // Built per prompt: spend from the previous prompt can put a provider over budget.
+        let chain = build_chain_for(llm::TaskKind::ProfileSuggest, ollama_model, &routing);
+        let chain = crate::budget::apply_budgets(store, chain, false, now_unix_ms).ok()?;
         let (completion, link) = llm::try_chain(&chain, |link| link.client.complete(prompt))?;
         crate::util::log_usage_for(store, link.provider, &link.model, "profile_suggest", completion.token_usage);
         Some(completion.text)

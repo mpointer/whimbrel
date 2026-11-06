@@ -177,11 +177,13 @@ final class RoutineScheduler: ObservableObject {
             // `executeWriteAction` moments after this tick, so it keeps the normal
             // output-summary notification.
             let needsApproval = run.status == "pending_approval" && routine?.autoApproveWriteActions != true
-            postNotification(for: run, routineName: routine?.name, needsApproval: needsApproval)
+            let prepKey = routine?.template == "meeting_prep" ? TodayLogic.prepKey(runOutputJson: run.outputJson) : nil
+            postNotification(for: run, routineName: routine?.name, needsApproval: needsApproval, prepKey: prepKey)
         }
     }
 
-    private func postNotification(for run: CoreRoutineRun, routineName: String?, needsApproval: Bool) {
+    /// A Meeting Prep run's notification (`prepKey` set) shows even with Whimbrel in front and opens its brief.
+    private func postNotification(for run: CoreRoutineRun, routineName: String?, needsApproval: Bool, prepKey: String?) {
         let content = UNMutableNotificationContent()
         // The routine's own name, not a hardcoded one -- there are three templates now
         // (Daily Brief, Focus Time, EOD Recap), so a fixed "Daily Brief" title mislabels
@@ -189,7 +191,12 @@ final class RoutineScheduler: ObservableObject {
         content.title = routineName ?? "Routines"
         content.body = needsApproval ? String(localized: "Needs your approval") : run.outputSummary
         content.sound = .default
-        let request = UNNotificationRequest(identifier: "routine-run-\(run.id)", content: content, trigger: nil)
+        var identifier = "routine-run-\(run.id)"
+        if let prepKey {
+            content.userInfo = [NotificationClickHandler.prepKeyInfo: prepKey]
+            identifier = NotificationClickHandler.prepIdentifierPrefix + String(run.id)
+        }
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { [weak self] error in
             if let error {
                 self?.log.error("Failed to post routine notification: \(error.localizedDescription, privacy: .public)")

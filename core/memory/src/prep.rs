@@ -74,7 +74,15 @@ pub struct PrepContext {
     pub last_interaction: Vec<LastInteraction>,
 }
 
-/// A stored brief, keyed by the calendar event id (upcoming meetings are not `meeting` rows).
+/// The `meeting_prep` key for one occurrence of a calendar event: a recurring meeting's
+/// occurrences share their calendar id, so the start is part of the key. Rows written before
+/// this were keyed by the bare event id; [`Store::get_meeting_prep`] still finds them.
+pub fn prep_key(event_id: &str, start_unix_ms: i64) -> String {
+    format!("{event_id}@{start_unix_ms}")
+}
+
+/// A stored brief, keyed by [`prep_key`] (upcoming meetings are not `meeting` rows). `event_id`
+/// holds that key; older rows hold the bare calendar event id.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MeetingPrepRow {
     pub event_id: String,
@@ -133,7 +141,8 @@ impl Store {
             brief_json: self.keep_only_local_meeting_ids(&row.brief_json),
             ..row.clone()
         };
-        if let Some(existing) = self.get_meeting_prep(&row.event_id)? {
+        // The exact key only: the lookup fallbacks would let a peer's row stand in for another occurrence.
+        if let Some(existing) = self.meeting_prep_where("event_id = ?1", params![row.event_id])? {
             if existing.generated_at_unix_ms >= row.generated_at_unix_ms {
                 return Ok(false);
             }
@@ -191,11 +200,29 @@ impl Store {
         Ok(false)
     }
 
-    pub fn get_meeting_prep(&self, event_id: &str) -> rusqlite::Result<Option<MeetingPrepRow>> {
+    /// The brief stored under `key` (normally a [`prep_key`]). A miss on a `prep_key` falls back
+    /// to an older row under the bare event id with the same start; a miss on a bare event id
+    /// falls back to the newest occurrence of that event.
+    pub fn get_meeting_prep(&self, key: &str) -> rusqlite::Result<Option<MeetingPrepRow>> {
+        if let Some(row) = self.meeting_prep_where("event_id = ?1", params![key])? {
+            return Ok(Some(row));
+        }
+        match key.rsplit_once('@').and_then(|(id, start)| Some((id, start.parse::<i64>().ok()?))) {
+            Some((id, start)) => self.meeting_prep_where("event_id = ?1 AND start_unix_ms = ?2", params![id, start]),
+            None => self.meeting_prep_where(
+                "substr(event_id, 1, length(?1) + 1) = ?1 || '@' ORDER BY start_unix_ms DESC LIMIT 1",
+                params![key],
+            ),
+        }
+    }
+
+    fn meeting_prep_where(&self, condition: &str, args: impl rusqlite::Params) -> rusqlite::Result<Option<MeetingPrepRow>> {
         self.conn
             .query_row(
-                "SELECT event_id, title, start_unix_ms, generated_at_unix_ms, brief_json, provider, model FROM meeting_prep WHERE event_id = ?1",
-                params![event_id],
+                &format!(
+                    "SELECT event_id, title, start_unix_ms, generated_at_unix_ms, brief_json, provider, model FROM meeting_prep WHERE {condition}"
+                ),
+                args,
                 |r| {
                     Ok(MeetingPrepRow {
                         event_id: r.get(0)?,
@@ -211,11 +238,48 @@ impl Store {
             .optional()
     }
 
-    /// Every event id that already has a brief, so a meeting is prepared once.
+    /// Every occurrence that already has a brief, as [`prep_key`]s, so an occurrence is prepared
+    /// once. A row stored under a bare event id counts for the occurrence at its start.
     pub fn prepared_event_ids(&self) -> rusqlite::Result<HashSet<String>> {
-        let mut stmt = self.conn.prepare("SELECT event_id FROM meeting_prep")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        rows.collect()
+        let mut stmt = self.conn.prepare("SELECT event_id, start_unix_ms FROM meeting_prep")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        let mut keys = HashSet::new();
+        for row in rows {
+            let (id, start) = row?;
+            keys.insert(prep_key(&id, start));
+            keys.insert(id);
+        }
+        Ok(keys)
+    }
+
+    /// The brief prepared for a recorded meeting. A meeting started from a calendar event keeps
+    /// the event's start and has `continue_key` `cal:<event id>`, which names the brief exactly;
+    /// otherwise (or when that finds none) a brief with the same title, ignoring case and padding,
+    /// whose meeting was due to start between an hour before and 15 minutes after this one did,
+    /// preferring the latest one that had started by then (the meeting already under way).
+    pub fn meeting_prep_for_meeting(&self, meeting_id: i64) -> rusqlite::Result<Option<MeetingPrepRow>> {
+        let Some((start, title, continue_key)) = self
+            .conn
+            .query_row(
+                "SELECT start_unix_ms, title, continue_key FROM meeting WHERE id = ?1",
+                params![meeting_id],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+            )
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        if let Some(event_id) = continue_key.as_deref().and_then(|k| k.strip_prefix("cal:")) {
+            if let Some(row) = self.get_meeting_prep(&prep_key(event_id, start))? {
+                return Ok(Some(row));
+            }
+        }
+        // ponytail: lower() folds ASCII only; titles differing in non-ASCII case will not match.
+        self.meeting_prep_where(
+            "start_unix_ms BETWEEN ?1 - 3600000 AND ?1 + 900000 AND lower(trim(title)) = lower(trim(?2)) \
+             ORDER BY start_unix_ms > ?1, CASE WHEN start_unix_ms > ?1 THEN start_unix_ms ELSE -start_unix_ms END LIMIT 1",
+            params![start, title],
+        )
     }
 
     /// Drops briefs for meetings that started before `older_than_start_unix_ms`.
@@ -388,10 +452,8 @@ mod tests {
         store.save_meeting_prep(&row("e1", 1_000_000)).unwrap();
         store.save_meeting_prep(&row("e2", 9_000_000)).unwrap();
         assert_eq!(store.get_meeting_prep("e1").unwrap(), Some(row("e1", 1_000_000)));
-        assert_eq!(
-            store.prepared_event_ids().unwrap(),
-            ["e1", "e2"].iter().map(|s| s.to_string()).collect::<HashSet<String>>()
-        );
+        let prepared = store.prepared_event_ids().unwrap();
+        assert!(prepared.contains(&prep_key("e1", 1_000_000)) && prepared.contains(&prep_key("e2", 9_000_000)), "{prepared:?}");
 
         let mut changed = row("e1", 1_000_000);
         changed.brief_json = "{\"x\":2}".into();
@@ -404,6 +466,73 @@ mod tests {
     }
 
     use crate::{MeetingStatus, MeetingTrigger, NewEmailItem, NewMeeting};
+
+    fn recorded(store: &crate::Store, start: i64, title: &str) -> i64 {
+        store
+            .insert_meeting(&NewMeeting {
+                device_id: "dev-1".into(),
+                start_unix_ms: start,
+                end_unix_ms: None,
+                title: title.into(),
+                attendees: Vec::new(),
+                trigger: MeetingTrigger::Calendar,
+                audio_path: None,
+                status: MeetingStatus::Completed,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_recorded_meeting_finds_its_occurrences_brief_through_its_calendar_event() {
+        let store = crate::Store::open_in_memory().unwrap();
+        let week = 7 * DAY;
+        store.save_meeting_prep(&row(&prep_key("series", 10 * DAY), 10 * DAY)).unwrap();
+        store.save_meeting_prep(&row(&prep_key("series", 10 * DAY + week), 10 * DAY + week)).unwrap();
+        // Renamed by the title check after recording: the event link still finds it.
+        let id = recorded(&store, 10 * DAY + week, "Renamed");
+        store.begin_meeting_part(id, 10 * DAY + week, Some("cal:series")).unwrap();
+        assert_eq!(store.meeting_prep_for_meeting(id).unwrap().unwrap().start_unix_ms, 10 * DAY + week);
+        assert!(store.meeting_prep_for_meeting(9_999).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_meeting_without_an_event_link_matches_a_brief_by_title_and_start() {
+        let store = crate::Store::open_in_memory().unwrap();
+        store.save_meeting_prep(&row("legacy-id", 10 * DAY)).unwrap();
+        let late = recorded(&store, 10 * DAY + 10 * 60_000, "  acme RENEWAL ");
+        assert_eq!(store.meeting_prep_for_meeting(late).unwrap().unwrap().event_id, "legacy-id");
+        let other_title = recorded(&store, 10 * DAY, "Standup");
+        assert!(store.meeting_prep_for_meeting(other_title).unwrap().is_none());
+        let next_day = recorded(&store, 11 * DAY, "Acme renewal");
+        assert!(store.meeting_prep_for_meeting(next_day).unwrap().is_none(), "outside the event window");
+    }
+
+    #[test]
+    fn the_title_match_prefers_the_meeting_already_under_way() {
+        let store = crate::Store::open_in_memory().unwrap();
+        let (nine, nine_thirty) = (20 * DAY, 20 * DAY + 30 * 60_000);
+        store.save_meeting_prep(&row("at-9", nine)).unwrap();
+        store.save_meeting_prep(&row("at-930", nine_thirty)).unwrap();
+        // Started at 9:20: 9:30 is nearer, but the 9:00 meeting is the one under way.
+        let id = recorded(&store, nine + 20 * 60_000, "Acme renewal");
+        assert_eq!(store.meeting_prep_for_meeting(id).unwrap().unwrap().event_id, "at-9");
+        // Started at 8:50: nothing under way yet, so the soonest one ahead.
+        let early = recorded(&store, nine - 10 * 60_000, "Acme renewal");
+        assert_eq!(store.meeting_prep_for_meeting(early).unwrap().unwrap().event_id, "at-9");
+    }
+
+    #[test]
+    fn a_synced_row_is_compared_with_its_own_key_only() {
+        let store = crate::Store::open_in_memory().unwrap();
+        // This occurrence's brief, generated late.
+        let mut mine = row(&prep_key("weekly", 10 * DAY), 10 * DAY);
+        mine.generated_at_unix_ms = 10 * DAY;
+        store.save_meeting_prep(&mine).unwrap();
+        // An older peer's bare-id row for last week, generated earlier: still applied.
+        let peer = row("weekly", 3 * DAY);
+        assert!(store.apply_synced_meeting_prep(&peer).unwrap());
+        assert_eq!(store.get_meeting_prep("weekly").unwrap().unwrap().start_unix_ms, 3 * DAY);
+    }
 
     const DAY: i64 = 86_400_000;
 

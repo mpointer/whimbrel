@@ -45,4 +45,24 @@ final class ReadLogicTests: XCTestCase {
         XCTAssertEqual(ReadLogic.syncLine(lastSyncedAt: now, now: now, isSyncing: true, error: nil), "Syncing…")
         XCTAssertEqual(ReadLogic.syncLine(lastSyncedAt: now, now: now, isSyncing: false, error: "Couldn't sync."), "Couldn't sync.")
     }
+
+    func testMeetingPageAttendees() {
+        func names(_ n: Int) -> [String] { (0..<n).map { "P\($0 + 1)" } }
+        XCTAssertEqual(ReadLogic.attendeeLine(names(0), expanded: false), "")
+        XCTAssertNil(ReadLogic.attendeeToggle(names(0), expanded: false))
+        XCTAssertEqual(ReadLogic.attendeeLine(names(1), expanded: false), "P1")
+        XCTAssertNil(ReadLogic.attendeeToggle(names(1), expanded: false))
+        XCTAssertEqual(ReadLogic.attendeeLine(names(3), expanded: false), "P1, P2, P3")
+        XCTAssertNil(ReadLogic.attendeeToggle(names(3), expanded: false))
+        XCTAssertEqual(ReadLogic.attendeeLine(names(4), expanded: false), "P1, P2, P3")
+        XCTAssertEqual(ReadLogic.attendeeToggle(names(4), expanded: false)?.label, "+1 more")
+        XCTAssertEqual(ReadLogic.attendeeToggle(names(4), expanded: false)?.accessibilityLabel, "Show all 4 participants")
+        XCTAssertEqual(ReadLogic.attendeeLine(names(4), expanded: true), "P1, P2, P3, P4")
+        XCTAssertEqual(ReadLogic.attendeeToggle(names(4), expanded: true)?.label, "Show fewer")
+        XCTAssertEqual(ReadLogic.attendeeLine(names(52), expanded: false), "P1, P2, P3")
+        XCTAssertEqual(ReadLogic.hiddenAttendeeCount(names(52)), 49)
+        XCTAssertEqual(ReadLogic.attendeeToggle(names(52), expanded: false)?.label, "+49 more")
+        XCTAssertEqual(ReadLogic.attendeeToggle(names(52), expanded: false)?.accessibilityLabel, "Show all 52 participants")
+        XCTAssertEqual(ReadLogic.attendeeLine(names(52), expanded: true).components(separatedBy: ", ").count, 52)
+    }
 }

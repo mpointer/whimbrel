@@ -236,11 +236,14 @@ extension TimelineView {
             .whimbrelCard()
             .frame(maxWidth: 380, alignment: .leading)
         case .failure(let error):
-            Text(error.userFacingMessage)
-                .font(.whimbrelBody(.callout))
-                .foregroundStyle(Color.whimbrelTextSecondary)
-                .whimbrelCard()
-                .frame(maxWidth: 380, alignment: .leading)
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                Text(error.userFacingMessage)
+                    .font(.whimbrelBody(.callout))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                if error.opensAIProvidersSettings { OpenAIProvidersSettingsButton() }
+            }
+            .whimbrelCard()
+            .frame(maxWidth: 380, alignment: .leading)
         }
     }
 
@@ -494,6 +497,11 @@ extension TimelineView {
                     return
                 }
                 switch prepared {
+                case .failure(let error) where error.fallsBackToGovernedAsk(alreadyFellBack: false):
+                    // The streamed provider's budget is spent: answer through the governed
+                    // chain, which skips it. askBlocking clears isAsking, and shows the
+                    // budget-spent message itself if every provider is spent.
+                    fallbackToBlocking()
                 case .failure(let error):
                     isAsking = false
                     query = capturedQuery

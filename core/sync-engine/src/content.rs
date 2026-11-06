@@ -27,6 +27,11 @@ pub(crate) const ROW_TYPE_ROUTINE_RUN: &str = "routine_run";
 pub(crate) const ROW_TYPE_MEETING_PREP: &str = "meeting_prep";
 pub(crate) const ROW_TYPE_PROFILE_SUGGESTION: &str = "profile_suggestion";
 pub(crate) const ROW_TYPE_LIVE_ALERT: &str = "live_alert";
+pub(crate) const ROW_TYPE_PROVIDER_SPEND: &str = memory::OUTBOX_ROW_TYPE_PROVIDER_SPEND;
+/// Speaker names (docs/superpowers/specs/2026-11-05-speaker-names-design.md): people and who each
+/// meeting's voices were assigned to.
+pub(crate) const ROW_TYPE_PERSON: &str = memory::OUTBOX_ROW_TYPE_PERSON;
+pub(crate) const ROW_TYPE_MEETING_SPEAKER: &str = memory::OUTBOX_ROW_TYPE_MEETING_SPEAKER;
 pub(crate) const ROW_TYPE_ITEMS_CAPABILITY: &str = "items_capability";
 /// Skin sync (docs/superpowers/plans/2026-10-22-skins-windows-and-sync.md, Task 13): a user skin's
 /// version, its images in chunks, and the marker a device pushes once it applies them.
@@ -312,7 +317,8 @@ pub(crate) fn entity_identity(row: &SyncableRow) -> Option<String> {
 /// stable id as `aggregate_id`.
 pub(crate) fn outbox_entity_identity(op: &memory::ClaimedOutboxOperation) -> Option<String> {
     match op.row_type.as_str() {
-        ROW_TYPE_MEETING | ROW_TYPE_ROUTINE_RUN | ROW_TYPE_MEETING_PREP | ROW_TYPE_SKIN | ROW_TYPE_SKIN_IMAGE_CHUNK => {
+        ROW_TYPE_MEETING | ROW_TYPE_ROUTINE_RUN | ROW_TYPE_MEETING_PREP | ROW_TYPE_SKIN | ROW_TYPE_SKIN_IMAGE_CHUNK
+        | ROW_TYPE_PERSON | ROW_TYPE_MEETING_SPEAKER | ROW_TYPE_PROVIDER_SPEND => {
             Some(format!("{}:{}", op.row_type, op.aggregate_id))
         }
         _ => None,
@@ -636,6 +642,41 @@ async fn distinct_peer_device_ids(
             ids.push(after.clone());
         }
     }
+}
+
+/// This device's own `provider_spend` rows on the relay. A PK prefix seek, but it reads
+/// every own row, so it runs once per database (see `restore_own_provider_spend`).
+const OWN_PROVIDER_SPEND_SQL: &str =
+    "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND row_type = 'provider_spend'";
+
+/// Takes back this device's own month spend from the relay, once per database, so a
+/// reinstall (same Keychain device id, new database) doesn't start its months at zero
+/// (spec anti-goal: never silently spend past a budget). The peer loop skips the own id.
+async fn restore_own_provider_spend(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    own_device_id: &str,
+) -> Result<(), SyncEngineError> {
+    if own_device_id.is_empty() || store.own_provider_spend_restored().map_err(|e| SyncEngineError::Query(e.to_string()))? {
+        return Ok(());
+    }
+    let rows = conn
+        .query(OWN_PROVIDER_SPEND_SQL, params![own_device_id])
+        .await
+        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    for env in read_envelopes(rows).await? {
+        let Some(plaintext) = decrypt_row(group_key, own_device_id, &env) else { continue };
+        let Ok(spend) = serde_json::from_slice::<memory::provider_budget::AppliedProviderSpend>(&plaintext) else {
+            continue;
+        };
+        store
+            .apply_synced_provider_spend(own_device_id, &spend)
+            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    }
+    store
+        .mark_own_provider_spend_restored()
+        .map_err(|e| SyncEngineError::Query(e.to_string()))
 }
 
 /// Caps how many peer rows one `pull_content` call applies. The apply loop below calls
@@ -1033,6 +1074,36 @@ fn apply_parent_row(
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             return Ok(());
         }
+        ROW_TYPE_PERSON => {
+            // Last write wins on `updated_at_unix_ms`; no local row id to map.
+            let Ok(person) = serde_json::from_slice::<memory::speaker_names::AppliedPerson>(plaintext) else {
+                return Ok(());
+            };
+            store
+                .apply_synced_person(peer_device_id, &person)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_MEETING_SPEAKER => {
+            // Its meeting is resolved (or back-filled later) through `sync_meeting_map`.
+            let Ok(speaker) = serde_json::from_slice::<memory::speaker_names::AppliedMeetingSpeaker>(plaintext) else {
+                return Ok(());
+            };
+            store
+                .apply_synced_meeting_speaker(peer_device_id, &speaker)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_PROVIDER_SPEND => {
+            // The highest cents per (peer, install, month, provider) wins; no local row id to map.
+            let Ok(spend) = serde_json::from_slice::<memory::provider_budget::AppliedProviderSpend>(plaintext) else {
+                return Ok(());
+            };
+            store
+                .apply_synced_provider_spend(peer_device_id, &spend)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
         _ => return Ok(()), // unknown row_type (including items_capability): forward-compatibility no-op, not an error
     };
     // Unconditional for BOTH branches above (insert and update) — required so a
@@ -1135,6 +1206,7 @@ async fn pull_content_with_budget(
     // bandwidth on the phone matters.
     let capture_cutoff = options.capture_window_ms.map(|w| now_unix_ms() - w);
     let outside_window = |ts_unix_ms: i64| capture_cutoff.is_some_and(|cutoff| ts_unix_ms < cutoff);
+    restore_own_provider_spend(conn, group_key, store, own_device_id).await?;
     for peer in distinct_peer_device_ids(conn, own_device_id).await? {
         let cursor = store
             .get_sync_cursor(&peer)
@@ -1464,6 +1536,21 @@ async fn resolve_segments(
         let resolved_meeting_id = resolve(source_meeting_id, fallback_local_seq)?;
         match resolved_meeting_id {
             Some(local_meeting_id) => {
+                // A line past the meeting's trim was pushed before the owner trimmed it
+                // (no tombstones): drop it. Untrimmed meetings keep every late line.
+                let trim = store
+                    .meeting_trim(local_meeting_id)
+                    .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+                let past_trim = trim.is_some_and(|(start, keep)| match pending {
+                    PendingSegment::Legacy { segment, .. } => segment.start_cs * 10 >= keep,
+                    PendingSegment::Item { item, .. } => item.ts_unix_ms - start >= keep,
+                });
+                if past_trim {
+                    store
+                        .delete_sync_pending_dependency(peer, env.local_seq, &env.row_type)
+                        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+                    continue;
+                }
                 let local_id = match pending {
                     PendingSegment::Legacy { segment, .. } => store
                         .apply_synced_transcript_segment(
@@ -1918,6 +2005,7 @@ pub(crate) mod tests {
 
     fn sample_applied_meeting(title: &str) -> memory::AppliedMeeting {
         memory::AppliedMeeting {
+            attendee_details: vec![],
             start_unix_ms: 1000,
             end_unix_ms: Some(2000),
             title: title.to_string(),
@@ -1933,6 +2021,7 @@ pub(crate) mod tests {
             summary_provider: None,
             summary_model: None,
             keep_media: None,
+            trimmed_keep_ms: None,
         }
     }
 
@@ -4578,7 +4667,7 @@ mod relay_query_tests {
     #[tokio::test]
     async fn no_relay_query_scans_the_table() {
         let (_dir, conn) = relay().await;
-        for sql in [NEXT_PEER_SQL, PEER_MARKER_SQL, FETCH_ROWS_SQL, FETCH_ROWS_NO_SKINS_SQL] {
+        for sql in [NEXT_PEER_SQL, PEER_MARKER_SQL, FETCH_ROWS_SQL, FETCH_ROWS_NO_SKINS_SQL, OWN_PROVIDER_SPEND_SQL] {
             assert_seeks(&conn, sql).await;
         }
         assert_seeks(&conn, &compaction_delete_sql(3)).await;

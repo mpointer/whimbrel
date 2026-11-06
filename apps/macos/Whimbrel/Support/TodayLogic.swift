@@ -60,6 +60,27 @@ enum TodayLogic {
             .max { $0.ranAtUnixMs < $1.ranAtUnixMs }
     }
 
+    /// Core's `meeting_prep` key for one occurrence of an event (`memory::prep::prep_key`): a
+    /// recurring meeting's occurrences share their calendar id, so the start is part of it.
+    static func prepKey(eventId: String, start: Date) -> String {
+        "\(eventId)@\(Int64(start.timeIntervalSince1970 * 1000))"
+    }
+
+    /// The brief key a Meeting Prep routine run names (`event_id` and `start_unix_ms` in its
+    /// output JSON); nil for any other run.
+    static func prepKey(runOutputJson: String) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(runOutputJson.utf8)) as? [String: Any],
+              let eventId = object["event_id"] as? String, let start = object["start_unix_ms"] as? NSNumber else { return nil }
+        return "\(eventId)@\(start.int64Value)"
+    }
+
+    /// Whether `prep` is this occurrence's brief: stored under its key, or under the bare event
+    /// id with its start (a brief written before keys named the occurrence).
+    static func prep(_ prep: CoreMeetingPrep, isFor event: TodayUpcoming) -> Bool {
+        prep.eventId == prepKey(eventId: event.id, start: event.start)
+            || (prep.eventId == event.id && prep.startUnixMs == Int64(event.start.timeIntervalSince1970 * 1000))
+    }
+
     /// Drops upcoming events that were already recorded: `AppState.startCapture(for:)` stores
     /// the meeting with the event's own start (unix ms) and title, so an exact match means the
     /// call is live or done and must not also show as upcoming.

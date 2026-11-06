@@ -628,6 +628,284 @@ mod tests {
         assert!(store_b.take_unnotified_peer_alerts(now, 1_800_000).unwrap().is_empty(), "an update does not re-notify");
     }
 
+    fn has_line(store: &Store, word: &str) -> bool {
+        !store.search_transcript_keyword(word, 10).unwrap().is_empty()
+    }
+
+    /// Meeting 1_000-121_000 with lines at 0 s ("opening") and 90 s ("tangent"), all pushed.
+    async fn pushed_meeting_with_two_lines(conn: &Connection, group_key: &GroupKey) -> (Store, i64) {
+        let (store_a, meeting_id) = own_store("device-a");
+        let line = |start_cs, text: &str| NewTranscriptSegment {
+            meeting_id,
+            start_cs,
+            speaker_label: "Me".into(),
+            text: text.into(),
+        };
+        store_a.insert_transcript_segments(&[line(0, "opening"), line(9_000, "tangent")]).unwrap();
+        store_a.complete_meeting(meeting_id, 121_000, None).unwrap();
+        dispatch_outbox_at(conn, group_key, &store_a, "device-a", t0()).await.unwrap();
+        (store_a, meeting_id)
+    }
+
+    #[tokio::test]
+    async fn peer_drops_segments_past_trim_both_orders() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, meeting_id) = pushed_meeting_with_two_lines(&conn, &group_key).await;
+
+        // B pulls the lines before the trim; C only after it.
+        let store_b = Store::open_in_memory().unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert!(has_line(&store_b, "opening") && has_line(&store_b, "tangent"));
+
+        store_a.trim_meeting(meeting_id, 60_000).unwrap().unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 2, "no tombstone: the relay keeps the late line");
+
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        let store_c = Store::open_in_memory().unwrap();
+        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
+        for (name, peer) in [("B: lines then trim", &store_b), ("C: trim then lines", &store_c)] {
+            assert!(has_line(peer, "opening"), "{name}");
+            assert!(!has_line(peer, "tangent"), "{name}");
+            let local = peer.resolve_sync_meeting_map("device-a", meeting_id).unwrap().unwrap();
+            assert_eq!(peer.get_meeting(local).unwrap().unwrap().end_unix_ms, Some(61_000), "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn untrimmed_meeting_keeps_late_segments() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, meeting_id) = own_store("device-a");
+        store_a.complete_meeting(meeting_id, 2_000, None).unwrap();
+        // Transcription finishes after the stop, with a line past the recorded end.
+        store_a
+            .insert_transcript_segments(&[NewTranscriptSegment {
+                meeting_id,
+                start_cs: 9_000,
+                speaker_label: "Me".into(),
+                text: "afterwards".into(),
+            }])
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        let store_b = Store::open_in_memory().unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert!(has_line(&store_b, "afterwards"));
+    }
+
+    /// A's completed meeting synced to B; returns B's store and B's id for it.
+    async fn meeting_on_b(conn: &Connection, group_key: &GroupKey, store_a: &Store, a_meeting: i64) -> (Store, i64) {
+        store_a.complete_meeting(a_meeting, 2000, None).unwrap();
+        dispatch_outbox_at(conn, group_key, store_a, "device-a", t0()).await.unwrap();
+        let store_b = Store::open_in_memory().unwrap();
+        store_b.set_own_device_id("device-b");
+        pull_content(conn, group_key, &store_b, "device-b").await.unwrap();
+        let b_meeting = store_b.resolve_sync_meeting_map("device-a", a_meeting).unwrap().unwrap();
+        (store_b, b_meeting)
+    }
+
+    /// Two devices' edits a clock tick apart, so the later one is strictly newer.
+    fn tick() {
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+
+    async fn relay_and_store() -> (tempfile::TempDir, Connection, GroupKey) {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        (dir, conn, GroupKey::generate())
+    }
+
+    #[tokio::test]
+    async fn person_round_trips_between_two_stores() {
+        use crate::content::ROW_TYPE_PERSON;
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, a_meeting) = own_store("device-a");
+        store_a.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
+        store_a.set_meeting_speaker(a_meeting, 0, Some("sam@x.com"), Some(memory::speaker_names::NameStatus::Confirmed)).unwrap();
+        let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_PERSON).await, 1);
+        assert_eq!(store_b.meeting_speakers(b_meeting).unwrap()[0].name.as_deref(), Some("Sam"));
+
+        tick();
+        store_a.upsert_person("sam@x.com", "Sam Lee", Some("sam@x.com")).unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert_eq!(store_b.meeting_speakers(b_meeting).unwrap()[0].name.as_deref(), Some("Sam Lee"));
+        assert!(
+            store_b.list_outbox_operations().unwrap().iter().all(|o| o.1 != ROW_TYPE_PERSON),
+            "an applied row is never re-enqueued"
+        );
+    }
+
+    #[tokio::test]
+    async fn provider_spend_round_trips_between_two_stores() {
+        use crate::content::ROW_TYPE_PROVIDER_SPEND;
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, _) = own_store("device-a");
+        let (store_b, _) = own_store("device-b");
+        let log = |s: &Store, cents: i64| {
+            s.log_usage(&memory::NewUsageLogEntry {
+                user_id: None,
+                provider: "anthropic".into(),
+                model: "m".into(),
+                route: None,
+                input_tokens: None,
+                output_tokens: None,
+                estimated_cost_cents: cents,
+                cache_hit: false,
+                trace_id: "t".into(),
+                ts_unix_ms: 1_794_744_000_000, // 2026-11-15
+            })
+            .unwrap();
+        };
+        log(&store_a, 300);
+        log(&store_b, 50);
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_PROVIDER_SPEND).await, 1);
+        assert_eq!(store_b.month_spend_by_provider("2026-11").unwrap(), vec![("anthropic".into(), 350)]);
+
+        tick();
+        log(&store_a, 100);
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert_eq!(store_b.month_spend_by_provider("2026-11").unwrap(), vec![("anthropic".into(), 450)]);
+    }
+
+    /// A reinstalled device (new database, same Keychain device id) never lowers what its
+    /// peers count for it, and gets its own month back from the relay.
+    #[tokio::test]
+    async fn reinstall_never_lowers_provider_spend() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, _) = own_store("device-a");
+        let (store_b, _) = own_store("device-b");
+        let log = |s: &Store, cents: i64| {
+            s.log_usage(&memory::NewUsageLogEntry {
+                user_id: None,
+                provider: "anthropic".into(),
+                model: "m".into(),
+                route: None,
+                input_tokens: None,
+                output_tokens: None,
+                estimated_cost_cents: cents,
+                cache_hit: false,
+                trace_id: "t".into(),
+                ts_unix_ms: 1_794_744_000_000, // 2026-11-15
+            })
+            .unwrap();
+        };
+        let spend = |s: &Store| s.month_spend_by_provider("2026-11").unwrap();
+        log(&store_a, 2000);
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert_eq!(spend(&store_b), vec![("anthropic".into(), 2000)]);
+
+        drop(store_a);
+        tick();
+        let (store_a, _) = own_store("device-a");
+        log(&store_a, 50);
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert!(spend(&store_b)[0].1 >= 2000, "B: {:?}", spend(&store_b));
+        assert!(spend(&store_a)[0].1 >= 2050, "A: {:?}", spend(&store_a));
+        // Pulling again doesn't count the restored month twice.
+        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        assert_eq!(spend(&store_a), vec![("anthropic".into(), 2050)]);
+    }
+
+    #[tokio::test]
+    async fn meeting_speaker_round_trips_between_two_stores() {
+        use crate::content::ROW_TYPE_MEETING_SPEAKER;
+        use memory::speaker_names::NameStatus;
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, a_meeting) = own_store("device-a");
+        store_a.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
+        store_a.save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0]), (1, vec![0.0, 1.0])], true).unwrap();
+        store_a.set_meeting_speaker(a_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        // The speaker rows reach B before their meeting does: they wait, then attach.
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        let early = Store::open_in_memory().unwrap();
+        pull_content(&conn, &group_key, &early, "device-b").await.unwrap();
+        assert!(early.resolve_sync_meeting_map("device-a", a_meeting).unwrap().is_none(), "the meeting is still recording");
+        let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
+        pull_content(&conn, &group_key, &early, "device-b").await.unwrap();
+        assert!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING_SPEAKER).await >= 1);
+        for store in [&early, &store_b] {
+            let b_id = store.resolve_sync_meeting_map("device-a", a_meeting).unwrap().unwrap();
+            let speakers = store.meeting_speakers(b_id).unwrap();
+            assert_eq!(speakers.len(), 2);
+            assert_eq!((speakers[0].name.as_deref(), speakers[0].status), (Some("Sam"), Some(NameStatus::Confirmed)));
+            assert_eq!(speakers[1].person_key, None);
+            assert_eq!(store.voice_print("sam@x.com").unwrap(), Some(vec![1.0, 0.0]), "the embedding came along");
+        }
+        assert_eq!(b_meeting, store_b.resolve_sync_meeting_map("device-a", a_meeting).unwrap().unwrap());
+    }
+
+    #[tokio::test]
+    async fn meeting_speaker_rename_converges() {
+        use memory::speaker_names::NameStatus;
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, a_meeting) = own_store("device-a");
+        let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
+        store_a.upsert_person("ana", "Ana", None).unwrap();
+        store_a.set_meeting_speaker(a_meeting, 0, Some("ana"), Some(NameStatus::Guess)).unwrap();
+        tick();
+        store_b.upsert_person("bo", "Bo", None).unwrap();
+        store_b.set_meeting_speaker(b_meeting, 0, Some("bo"), Some(NameStatus::Confirmed)).unwrap();
+
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        for (store, id) in [(&store_a, a_meeting), (&store_b, b_meeting)] {
+            let s = &store.meeting_speakers(id).unwrap()[0];
+            assert_eq!((s.name.as_deref(), s.status), (Some("Bo"), Some(NameStatus::Confirmed)), "B's later edit wins");
+        }
+    }
+
+    #[tokio::test]
+    async fn meeting_speaker_edit_on_non_recording_device_reaches_origin() {
+        use crate::content::ROW_TYPE_MEETING_SPEAKER;
+        use memory::speaker_names::{AppliedMeetingSpeaker, NameStatus};
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, a_meeting) = own_store("device-a");
+        store_a.save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0])], true).unwrap();
+        let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
+        tick();
+        store_b.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
+        store_b.set_meeting_speaker(b_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        let ops = store_b.list_outbox_operations().unwrap();
+        let sent: AppliedMeetingSpeaker =
+            serde_json::from_str(&ops.iter().rev().find(|o| o.1 == ROW_TYPE_MEETING_SPEAKER).unwrap().3).unwrap();
+        assert_eq!((sent.origin_device_id.as_deref(), sent.source_meeting_id), (Some("device-a"), a_meeting));
+
+        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        let s = &store_a.meeting_speakers(a_meeting).unwrap()[0];
+        assert_eq!((s.name.as_deref(), s.status), (Some("Sam"), Some(NameStatus::Confirmed)));
+        assert_eq!(store_a.voice_print("sam@x.com").unwrap(), Some(vec![1.0, 0.0]), "A's embedding is B's row's too");
+    }
+
+    #[tokio::test]
+    async fn forget_voice_syncs() {
+        use memory::speaker_names::NameStatus;
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, a_meeting) = own_store("device-a");
+        store_a.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
+        store_a.save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0])], true).unwrap();
+        store_a.set_meeting_speaker(a_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
+        assert!(store_b.voice_print("sam@x.com").unwrap().is_some());
+
+        tick();
+        store_a.forget_voice("sam@x.com").unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert_eq!(store_b.voice_print("sam@x.com").unwrap(), None, "B's embedding is gone");
+        assert_eq!(store_b.meeting_speakers(b_meeting).unwrap()[0].name.as_deref(), Some("Sam"), "the name stays");
+    }
+
     fn save_prep(store: &Store, event_id: &str, generated_at_unix_ms: i64) {
         store
             .save_meeting_prep(&memory::prep::MeetingPrepRow {

@@ -118,8 +118,9 @@ struct RoutinesSettingsPane: View {
             ModelPrefOption(value: "default", label: "Default (\(routing.preferredProvider.displayName))"),
             ModelPrefOption(value: "cheapest", label: "Cheapest model you have"),
         ]
-        if !routing.ollamaDefaultModel.isEmpty {
-            options.append(ModelPrefOption(value: "ollama/\(routing.ollamaDefaultModel)", label: "Ollama (\(routing.ollamaDefaultModel))"))
+        // The stored model, never this Mac's in-memory stand-in: a routine's pref syncs.
+        if !routing.storedOllamaModel.isEmpty {
+            options.append(ModelPrefOption(value: "ollama/\(routing.storedOllamaModel)", label: "Ollama (\(routing.storedOllamaModel))"))
         }
         if routing.hasAnthropicKey {
             options.append(ModelPrefOption(value: "anthropic/\(routing.anthropicDefaultModel)", label: "Anthropic (\(routing.anthropicDefaultModel))"))

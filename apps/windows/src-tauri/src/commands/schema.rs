@@ -66,6 +66,10 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<crate::skin_maker::ChatLine>();
     generator.subschema_for::<super::skins::ImageCandidateView>();
     generator.subschema_for::<super::workspace::TranscriptView>();
+    generator.subschema_for::<super::workspace::VoicePersonView>();
+    generator.subschema_for::<crate::budget_alert::BudgetNoticeView>();
+    generator.subschema_for::<super::ai::ProviderBudgetView>();
+    generator.subschema_for::<super::workspace::TrimInfo>();
     generator.subschema_for::<super::workspace::ActionItemView>();
     generator.subschema_for::<super::meetings::MeetingSettings>();
     generator.subschema_for::<crate::meetings::service::AlertView>();

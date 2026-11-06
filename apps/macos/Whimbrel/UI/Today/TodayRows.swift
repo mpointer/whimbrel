@@ -112,7 +112,7 @@ enum TodayRows {
         let source = content.events.first { $0.id == id }
         var prep: TodayEventRowModel.Prep?
         if isNext {
-            if let p = content.nextPrep, p.eventId == id, p.brief != nil { prep = .ready(p) } else { prep = .missing }
+            if let p = content.nextPrep, TodayLogic.prep(p, isFor: event), p.brief != nil { prep = .ready(p) } else { prep = .missing }
         }
         return TodayEventRowModel(
             event: event,

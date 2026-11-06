@@ -84,6 +84,13 @@
     },
     "AiSettings": {
       "properties": {
+        "budgets": {
+          "description": "Each paid provider's monthly budget.",
+          "items": {
+            "$ref": "#/definitions/ProviderBudgetView"
+          },
+          "type": "array"
+        },
         "imageSearchKey": {
           "description": "The Brave Search key the skin maker finds images with, masked; `None` when unset.",
           "type": [
@@ -96,6 +103,17 @@
             "$ref": "#/definitions/ProviderKey"
           },
           "type": "array"
+        },
+        "ollamaWarning": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/OllamaWarning"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The Ollama model the user chose isn't installed: what stands in meanwhile (Mac #581)."
         },
         "prompts": {
           "items": {
@@ -142,7 +160,8 @@
         "keys",
         "summaryInstructions",
         "prompts",
-        "providers"
+        "providers",
+        "budgets"
       ],
       "type": "object"
     },
@@ -327,6 +346,41 @@
       "required": [
         "summary",
         "ranAtUnixMs"
+      ],
+      "type": "object"
+    },
+    "BudgetNoticeView": {
+      "description": "One notice as the popup shows it.",
+      "properties": {
+        "budgetCents": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "month": {
+          "description": "UTC month, \"YYYY-MM\"; the popup names it in the UI language.",
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "spentCents": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "threshold": {
+          "description": "80 or 100.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "provider",
+        "threshold",
+        "spentCents",
+        "budgetCents",
+        "month"
       ],
       "type": "object"
     },
@@ -815,15 +869,52 @@
           "type": "object"
         },
         {
-          "description": "Every provider in the chain failed for a reason other than the cap.",
+          "description": "Every provider in the chain failed for a reason other than the cap. `reason` is the one\nworth acting on (core #575, `api::last_provider_failure`), when core knows it.",
           "properties": {
             "kind": {
               "const": "provider_failure",
               "type": "string"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProviderFailureReason"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
             "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Every provider the call could use is over its monthly budget (`api::budget`).\n`provider` is `llm::Provider::as_str` (\"openai\", \"anthropic\", ...).",
+          "properties": {
+            "budget_cents": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "budget_spent",
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "spent_cents": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "provider",
+            "spent_cents",
+            "budget_cents"
           ],
           "type": "object"
         },
@@ -1664,6 +1755,24 @@
       ],
       "type": "object"
     },
+    "InviteeView": {
+      "description": "A calendar invitee, for the speaker menu.",
+      "properties": {
+        "email": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "KeyCheckStatus": {
       "oneOf": [
         {
@@ -2332,6 +2441,11 @@
           "description": "Minutes before a calendar meeting its Meeting Prep brief is made, 5-120. Kept on this PC.",
           "format": "double",
           "type": "number"
+        },
+        "rememberVoices": {
+          "default": true,
+          "description": "\"Remember people's voices\" (speaker names). On by default, kept on this PC.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -2437,6 +2551,22 @@
         "available",
         "profile",
         "covered"
+      ],
+      "type": "object"
+    },
+    "OllamaWarning": {
+      "description": "\"{model} isn't installed. Whimbrel is using {fallback} until you install it or choose another model.\"",
+      "properties": {
+        "fallback": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "fallback"
       ],
       "type": "object"
     },
@@ -2764,6 +2894,143 @@
           "const": "openrouter",
           "description": "One key, any model on OpenRouter's catalogue, free ones included.",
           "type": "string"
+        }
+      ]
+    },
+    "ProviderBudgetView": {
+      "description": "A paid provider's monthly budget (Settings → AI Providers); `None` is no budget.",
+      "properties": {
+        "cents": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "provider": {
+          "$ref": "#/definitions/Provider"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "ProviderFailureReason": {
+      "description": "Why a provider failed, as core's `llm::ProviderFailureKind` serializes it (`provider` is\n`Provider::as_str`). Never the provider's own error text.",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "ollama_not_running",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "ollama_model_missing",
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "model"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "no_provider_configured",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "unauthorized",
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "provider"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "rate_limited",
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "provider"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "network",
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "provider"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "other",
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "status": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "provider"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3979,8 +4246,32 @@
     "TranscriptTurn": {
       "description": "A meeting's transcript for display: turns from the file when it's on this device,\nelse from the stored segments.",
       "properties": {
-        "speaker": {
+        "guess": {
+          "description": "The name is a guess, shown as \"Name?\".",
+          "type": "boolean"
+        },
+        "label": {
+          "description": "What to show: the speaker's name when one is assigned, else `speaker`.",
           "type": "string"
+        },
+        "personKey": {
+          "description": "The named person, for \"Yes, that's {name}\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "speaker": {
+          "description": "The label as stored: \"Me\", \"Others\", \"Speaker 2\".",
+          "type": "string"
+        },
+        "speakerId": {
+          "description": "The diarized speaker (\"Speaker 2\" is 1), the ones the speaker menu can name.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "text": {
           "type": "string"
@@ -3991,6 +4282,8 @@
       },
       "required": [
         "speaker",
+        "label",
+        "guess",
         "timestamp",
         "text"
       ],
@@ -3998,6 +4291,16 @@
     },
     "TranscriptView": {
       "properties": {
+        "canName": {
+          "description": "The speaker menu is offered: see [`can_name_speakers`].",
+          "type": "boolean"
+        },
+        "invitees": {
+          "items": {
+            "$ref": "#/definitions/InviteeView"
+          },
+          "type": "array"
+        },
         "more": {
           "description": "More segments remain beyond this page.",
           "type": "boolean"
@@ -4016,7 +4319,9 @@
       "required": [
         "turns",
         "source",
-        "more"
+        "more",
+        "canName",
+        "invitees"
       ],
       "type": "object"
     },
@@ -4103,6 +4408,23 @@
       "required": [
         "line",
         "captureEnabled"
+      ],
+      "type": "object"
+    },
+    "TrimInfo": {
+      "description": "Whether \"Trim recording…\" is offered for a meeting, and its length on the transcript clock.",
+      "properties": {
+        "lengthMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "offered": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "offered",
+        "lengthMs"
       ],
       "type": "object"
     },
@@ -4260,6 +4582,13 @@
           "format": "int64",
           "type": "integer"
         },
+        "monthByProvider": {
+          "description": "This UTC month's spend per provider, including the user's other computers (budgets).",
+          "items": {
+            "$ref": "#/definitions/ProviderSpendView"
+          },
+          "type": "array"
+        },
         "monthToDateCents": {
           "format": "int64",
           "type": "integer"
@@ -4273,7 +4602,29 @@
         "todayCents",
         "last30DaysCents",
         "monthToDateCents",
-        "byProvider"
+        "byProvider",
+        "monthByProvider"
+      ],
+      "type": "object"
+    },
+    "VoicePersonView": {
+      "description": "A person with a remembered voice (Settings → Meetings → Remembered voices…).",
+      "properties": {
+        "confirmedCount": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "personKey": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "personKey",
+        "name",
+        "confirmedCount"
       ],
       "type": "object"
     },

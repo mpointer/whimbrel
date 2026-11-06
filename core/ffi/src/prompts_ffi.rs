@@ -49,6 +49,25 @@ pub extern "C" fn whimbrel_hosted_models_fetch(
     json_to_c_string(result.to_string())
 }
 
+/// The installed Ollama model to use instead of `configured`, or null to keep it
+/// (`api::hosted_models::installed_ollama_choice`). `installed_json` is a JSON array of
+/// model ids, as `whimbrel_hosted_models_fetch` returns them. Pure, no I/O.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_installed_ollama_choice(
+    configured: *const c_char,
+    user_chose: bool,
+    installed_json: *const c_char,
+) -> *mut c_char {
+    let configured = cstr_to_string(configured).unwrap_or_default();
+    let installed: Vec<String> = cstr_to_string(installed_json)
+        .and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_default();
+    match api::hosted_models::installed_ollama_choice(&configured, user_chose, &installed) {
+        Some(model) => json_to_c_string(model),
+        None => ptr::null_mut(),
+    }
+}
+
 /// Validates a pasted key by fetching `provider`'s model list
 /// (`api::hosted_models::validate_key`). Returns `{"status":"valid","models":[…]}`
 /// (plus `"prices"` for OpenRouter), `{"status":"refused","message":…}`,
@@ -161,5 +180,16 @@ mod tests {
         let bogus = CString::new("bogus").unwrap();
         assert!(whimbrel_hosted_models_fetch(bogus.as_ptr(), ptr::null(), ptr::null()).is_null());
         assert!(whimbrel_hosted_models_fetch(ptr::null(), ptr::null(), ptr::null()).is_null());
+    }
+
+    #[test]
+    fn installed_ollama_choice_over_ffi() {
+        let default = CString::new("gemma4:12b").unwrap();
+        let installed = CString::new(r#"["llama3.2:3b","qwen3:8b"]"#).unwrap();
+        assert_eq!(take(whimbrel_installed_ollama_choice(default.as_ptr(), false, installed.as_ptr())), "llama3.2:3b");
+        assert!(whimbrel_installed_ollama_choice(default.as_ptr(), true, installed.as_ptr()).is_null(), "a chosen model is kept");
+        let none = CString::new("[]").unwrap();
+        assert!(whimbrel_installed_ollama_choice(default.as_ptr(), false, none.as_ptr()).is_null());
+        assert!(whimbrel_installed_ollama_choice(ptr::null(), false, ptr::null()).is_null());
     }
 }

@@ -8,6 +8,7 @@ struct MeetingDetailView: View {
     let labels: DeviceLabels
     @StateObject private var model: MeetingDetailModel
     @State private var tab: Tab = .summary
+    @State private var attendeesExpanded = false
 
     init(meetingId: Int64, sync: SyncModel, labels: DeviceLabels) {
         _sync = ObservedObject(wrappedValue: sync)
@@ -22,7 +23,10 @@ struct MeetingDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if let meeting = model.meeting {
-                    header(meeting)
+                    VStack(alignment: .leading, spacing: 6) {
+                        header(meeting)
+                        attendees(meeting)
+                    }
                     Picker("Section", selection: $tab) {
                         ForEach(Tab.allCases, id: \.self) { Text($0 == .summary ? String(localized: "Summary") : String(localized: "Transcript")).tag($0) }
                     }
@@ -59,12 +63,25 @@ struct MeetingDetailView: View {
                 .font(.subheadline).foregroundStyle(Color.theme(.textSecondary))
             Text(where_.joined(separator: " · "))
                 .font(.subheadline).foregroundStyle(Color.theme(.textSecondary))
-            if !meeting.attendees.isEmpty {
-                Text(meeting.attendees.joined(separator: ", "))
-                    .font(.subheadline).foregroundStyle(Color.theme(.textSecondary))
-            }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// Three names and a "+N more" toggle until expanded; per meeting (this view is one meeting's page).
+    @ViewBuilder
+    private func attendees(_ meeting: PhoneMeeting) -> some View {
+        if !meeting.attendees.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(ReadLogic.attendeeLine(meeting.attendees, expanded: attendeesExpanded))
+                    .font(.subheadline).foregroundStyle(Color.theme(.textSecondary))
+                if let toggle = ReadLogic.attendeeToggle(meeting.attendees, expanded: attendeesExpanded) {
+                    Button(toggle.label) { attendeesExpanded.toggle() }
+                        .font(.subheadline)
+                        .accessibilityLabel(toggle.accessibilityLabel)
+                        .accessibilityInputLabels([toggle.label, toggle.accessibilityLabel])
+                }
+            }
+        }
     }
 
     @ViewBuilder

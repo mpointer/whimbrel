@@ -258,4 +258,34 @@ final class TodayLogicTests: XCTestCase {
         XCTAssertEqual(MeetingRowText.attendeeSummary(["A", "B"]), "A, B")
         XCTAssertEqual(MeetingRowText.attendeeSummary(["A", "B", "C", "D", "E"]), "A, B +3")
     }
+
+    // MARK: - Meeting Prep keys
+
+    private func prep(eventId: String, startUnixMs: Int64) -> CoreMeetingPrep {
+        CoreMeetingPrep(eventId: eventId, title: "x", startUnixMs: startUnixMs, generatedAtUnixMs: 0, briefJson: "{}", provider: "p", model: "m")
+    }
+
+    func testPrepKeyNamesTheOccurrenceSoARecurringMeetingRefetchesEachWeek() {
+        let start = Date(timeIntervalSince1970: 1_780_000_000)
+        XCTAssertEqual(TodayLogic.prepKey(eventId: "EK:1", start: start), "EK:1@1780000000000")
+        // Today refetches when the next occurrence's key changes: same id a week later is a new key.
+        XCTAssertNotEqual(TodayLogic.prepKey(eventId: "EK:1", start: start),
+                          TodayLogic.prepKey(eventId: "EK:1", start: start.addingTimeInterval(7 * 86_400)))
+    }
+
+    func testPrepKeyFromAMeetingPrepRunMatchesTheEventsKey() {
+        let json = #"{"event_id":"EK:1","title":"Acme","start_unix_ms":1780000000000}"#
+        XCTAssertEqual(TodayLogic.prepKey(runOutputJson: json), TodayLogic.prepKey(eventId: "EK:1", start: Date(timeIntervalSince1970: 1_780_000_000)))
+        XCTAssertNil(TodayLogic.prepKey(runOutputJson: #"{"kind":"create_calendar_event","start_unix_ms":0}"#), "not a prep run")
+        XCTAssertNil(TodayLogic.prepKey(runOutputJson: "not json"))
+    }
+
+    func testAPrepBelongsToItsOccurrenceOnly() {
+        let start = Date(timeIntervalSince1970: 1_780_000_000)
+        let event = TodayUpcoming(id: "EK:1", title: "Acme", start: start)
+        XCTAssertTrue(TodayLogic.prep(prep(eventId: "EK:1@1780000000000", startUnixMs: 1_780_000_000_000), isFor: event))
+        XCTAssertTrue(TodayLogic.prep(prep(eventId: "EK:1", startUnixMs: 1_780_000_000_000), isFor: event), "a brief stored before per-occurrence keys")
+        XCTAssertFalse(TodayLogic.prep(prep(eventId: "EK:1@1779395200000", startUnixMs: 1_779_395_200_000), isFor: event), "last week's")
+        XCTAssertFalse(TodayLogic.prep(prep(eventId: "EK:1", startUnixMs: 1_779_395_200_000), isFor: event), "last week's, old key")
+    }
 }
