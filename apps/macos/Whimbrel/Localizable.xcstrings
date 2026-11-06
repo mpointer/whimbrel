@@ -28157,6 +28157,40 @@
         }
       }
     },
+    "This removes it from all your devices." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dadurch wird es von allen Ihren Geräten entfernt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esto lo elimina de todos tus dispositivos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cela le supprime de tous vos appareils."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette action le supprimera de tous vos appareils."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Isso o remove de todos os seus dispositivos."
+          }
+        }
+      }
+    },
     "This removes the database and the data folder (%@), and this Mac's recordings and slide images in %@ (%@), then restarts Whimbrel as new. Settings, keys and downloaded models stay." : {
       "localizations" : {
         "de" : {
@@ -28187,6 +28221,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Isso apaga o banco de dados e a pasta de dados (%1$@), além das gravações e imagens de slides deste Mac em %2$@ (%3$@), e reinicia o Whimbrel do zero. Ajustes, chaves e modelos baixados são mantidos."
+          }
+        }
+      }
+    },
+    "This removes them from all your devices." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dadurch werden sie von allen Ihren Geräten entfernt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esto los elimina de todos tus dispositivos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette action les supprime de tous vos appareils."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette action les supprime de tous vos appareils."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Isso os remove de todos os seus dispositivos."
           }
         }
       }

@@ -11,6 +11,17 @@ enum MeetingLifecycle {
         NotificationCenter.default.post(name: meetingsDidChange, object: nil, userInfo: ["meetingIds": ids])
     }
 
+    /// After a content sync round, failed or not: deletes the files of the meetings other
+    /// devices forgot (the round already deleted their rows), behind the media work in flight
+    /// as `forgetMeeting` does, then tells the open meeting lists to refresh.
+    static func deleteFilesOfMeetingsForgottenElsewhere(_ forgotten: [CoreDeletedMeetingFiles], recordingsDir: URL = SpikePaths.root) {
+        guard !forgotten.isEmpty else { return }
+        MediaMover.queue.async {
+            for files in forgotten { CoreMemoryStore.deleteAllMeetingFiles(files, recordingsDir: recordingsDir) }
+            DispatchQueue.main.async { postMeetingsChanged([]) }
+        }
+    }
+
     struct SplitOutcome: Equatable {
         let newMeetingId: Int64
         /// True when the snapshot files could not be moved; they stay in the original folder.
@@ -45,25 +56,45 @@ enum MeetingLifecycle {
         recordingsDir: URL = SpikePaths.root,
         completion: @escaping (ForgetResult) -> Void
     ) {
-        MediaMover.queue.async { CoreMemoryStore.accessQueue.sync {
-            // The row delete returns every part's files and the snapshot folder (nil when the
-            // meeting kept its snapshots or another meeting still has files in it).
-            var files: CoreDeletedMeetingFiles?
-            let result = forgetMeetingSync(
-                deleteRow: {
-                    files = store.deleteMeetingReturningFiles(id: meetingId)
-                    return files != nil
-                },
-                deleteFiles: {
-                    if let files {
-                        CoreMemoryStore.deleteAllMeetingFiles(files, recordingsDir: recordingsDir)
-                    }
-                }
-            )
+        MediaMover.queue.async {
+            let result = CoreMemoryStore.accessQueue.sync { forgetOne(store: store, meetingId: meetingId, recordingsDir: recordingsDir) }
             DispatchQueue.main.async {
                 completion(result)
             }
-        } }
+        }
+    }
+
+    /// `forgetMeeting` for several meetings in one pass; calls back on main with how many went.
+    static func forgetMeetings(
+        store: CoreMemoryStore,
+        meetingIds: [Int64],
+        recordingsDir: URL = SpikePaths.root,
+        completion: @escaping (Int) -> Void
+    ) {
+        MediaMover.queue.async {
+            let count = CoreMemoryStore.accessQueue.sync {
+                meetingIds.filter { forgetOne(store: store, meetingId: $0, recordingsDir: recordingsDir) != .failed }.count
+            }
+            DispatchQueue.main.async { completion(count) }
+        }
+    }
+
+    /// On `accessQueue`. The row delete returns every part's files and the snapshot folder (nil
+    /// when the meeting kept its snapshots or another meeting still has files in it). It also
+    /// tells every other device to delete the meeting (a synced tombstone).
+    private static func forgetOne(store: CoreMemoryStore, meetingId: Int64, recordingsDir: URL) -> ForgetResult {
+        var files: CoreDeletedMeetingFiles?
+        return forgetMeetingSync(
+            deleteRow: {
+                files = store.forgetMeeting(id: meetingId)
+                return files != nil
+            },
+            deleteFiles: {
+                if let files {
+                    CoreMemoryStore.deleteAllMeetingFiles(files, recordingsDir: recordingsDir)
+                }
+            }
+        )
     }
 
     /// Splits the last part of a completed meeting into its own meeting and moves the

@@ -363,19 +363,37 @@ pub extern "C" fn whimbrel_meeting_delete_returning_files(
     }
 }
 
+/// The user's "Forget meeting": as `whimbrel_meeting_delete_returning_files` (same JSON, null
+/// if there was no such meeting), and also queues a tombstone so every other device deletes it.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meeting_forget(handle: *mut StoreHandle, id: i64) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    match unsafe { &(*handle).0 }.forget_meeting(id) {
+        Ok(Some(files)) => json_out::<_, ()>(Ok(files)),
+        _ => ptr::null_mut(),
+    }
+}
+
 /// Best-effort file deletion for a `DeletedMeetingFiles` JSON (all parts, plus the guarded
-/// snapshot folder). Same tolerance as `whimbrel_retention_delete_meeting_files`.
+/// snapshot folder). Removes only files inside `recordings_dir` or `media_dir` (NULL: none),
+/// never through a symlink (`api::retention::delete_all_meeting_files_within`).
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_retention_delete_all_meeting_files(
     files_json: *const c_char,
     recordings_dir: *const c_char,
+    media_dir: *const c_char,
 ) {
     let (Some(json), Some(dir)) = (cstr_to_string(files_json), cstr_to_string(recordings_dir))
     else {
         return;
     };
+    let media = cstr_to_string(media_dir);
+    let mut roots = vec![Path::new(&dir)];
+    roots.extend(media.as_deref().map(Path::new));
     if let Ok(files) = serde_json::from_str::<memory::DeletedMeetingFiles>(&json) {
-        api::retention::delete_all_meeting_files(&files, Path::new(&dir));
+        api::retention::delete_all_meeting_files_within(&files, &roots);
     }
 }
 
@@ -577,7 +595,7 @@ mod tests {
 
         let files = whimbrel_meeting_delete_returning_files(h, id);
         assert!(!files.is_null());
-        whimbrel_retention_delete_all_meeting_files(files, c(rec.to_str().unwrap()).as_ptr());
+        whimbrel_retention_delete_all_meeting_files(files, c(rec.to_str().unwrap()).as_ptr(), ptr::null());
         whimbrel_core_free_string(files);
         for p in [s1, m1, t1, s2, m2, t2] {
             assert!(!p.exists(), "{p:?}");
@@ -590,12 +608,90 @@ mod tests {
     }
 
     #[test]
+    fn forget_deletes_and_remembers_the_meeting() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = c(dir.path().join("t.sqlite").to_str().unwrap());
+        let h = whimbrel_memory_open(db.as_ptr(), ptr::null());
+        assert!(crate::whimbrel_memory_set_device_id(h, c("d").as_ptr()));
+        let id = meeting(h, 1_000);
+        let audio = dir.path().join("system-audio-a.m4a");
+        std::fs::write(&audio, "a").unwrap();
+        unsafe { &(*h).0 }.complete_meeting(id, 2_000, Some(audio.to_str().unwrap())).unwrap();
+
+        let files = whimbrel_meeting_forget(h, id);
+        assert!(!files.is_null());
+        whimbrel_retention_delete_all_meeting_files(files, c(dir.path().to_str().unwrap()).as_ptr(), ptr::null());
+        whimbrel_core_free_string(files);
+        assert!(!audio.exists());
+        let store = unsafe { &(*h).0 };
+        assert!(store.get_meeting(id).unwrap().is_none());
+        let epoch = store.sync_entity_epoch().unwrap();
+        assert!(store.is_meeting_forgotten("d", Some(&epoch), id).unwrap(), "a tombstone, not a plain delete");
+        assert!(whimbrel_meeting_forget(h, id).is_null(), "already gone");
+        whimbrel_memory_close(h);
+    }
+
+    /// A peer's meeting names a file of ours outside the recordings folder, then forgets it: the
+    /// tombstone deletes the meeting here, and the file stays.
+    #[test]
+    fn a_pulled_forget_never_deletes_a_file_the_peer_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let rec = dir.path().join("recordings");
+        std::fs::create_dir(&rec).unwrap();
+        let victim = dir.path().join("victim.txt");
+        std::fs::write(&victim, "keep").unwrap();
+        let db = c(dir.path().join("t.sqlite").to_str().unwrap());
+        let h = whimbrel_memory_open(db.as_ptr(), ptr::null());
+        let store = unsafe { &(*h).0 };
+        store.set_own_device_id("mac");
+        let pulled: memory::AppliedMeeting = serde_json::from_value(serde_json::json!({
+            "start_unix_ms": 1_000, "end_unix_ms": 2_000, "title": "T", "attendees": [], "trigger": "manual",
+            "status": "completed", "transcript_path": victim.to_str().unwrap(), "notes": null, "summary_tldr": null,
+            "summary_decisions": [], "summary_action_items": [], "summary_open_questions": [],
+            "summary_provider": null, "summary_model": null
+        }))
+        .unwrap();
+        let local = store.apply_synced_meeting("pc", 1, None, &pulled).unwrap();
+        store.record_sync_meeting_map_with_epoch("pc", 7, local, Some("e")).unwrap();
+
+        let t = memory::MeetingForgotten {
+            origin_device_id: "pc".into(),
+            origin_epoch: Some("e".into()),
+            source_meeting_id: 7,
+            forgotten_at_unix_ms: 1,
+            source_start_unix_ms: None,
+        };
+        let files = store.apply_meeting_forgotten(&t).unwrap().expect("deleted here");
+        assert!(store.get_meeting(local).unwrap().is_none());
+        let json = c(&serde_json::to_string(&files).unwrap());
+        // Even with the whole temp folder as the media folder: the path never reaches deletion.
+        whimbrel_retention_delete_all_meeting_files(
+            json.as_ptr(),
+            c(rec.to_str().unwrap()).as_ptr(),
+            c(dir.path().to_str().unwrap()).as_ptr(),
+        );
+        assert!(victim.exists());
+        whimbrel_memory_close(h);
+    }
+
+    #[test]
+    fn an_empty_device_id_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = c(dir.path().join("t.sqlite").to_str().unwrap());
+        let h = whimbrel_memory_open(db.as_ptr(), ptr::null());
+        assert!(!crate::whimbrel_memory_set_device_id(h, c("").as_ptr()));
+        assert_eq!(unsafe { &(*h).0 }.own_device_id(), None);
+        whimbrel_memory_close(h);
+    }
+
+    #[test]
     fn null_handle_returns_null() {
         assert!(whimbrel_meeting_begin_part(ptr::null_mut(), 1, 1, ptr::null()).is_null());
         assert!(whimbrel_meeting_parts(ptr::null_mut(), 1).is_null());
         assert!(whimbrel_meeting_transcript_text(ptr::null_mut(), 1).is_null());
         assert!(whimbrel_meeting_split(ptr::null_mut(), 1, 2).is_null());
         assert!(whimbrel_meeting_delete_returning_files(ptr::null_mut(), 1).is_null());
+        assert!(whimbrel_meeting_forget(ptr::null_mut(), 1).is_null());
         assert!(!whimbrel_meeting_reopen(ptr::null_mut(), 1));
         assert!(!whimbrel_meeting_undo_reopen(ptr::null_mut(), 1, 2));
     }

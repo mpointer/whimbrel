@@ -785,7 +785,7 @@ char *whimbrel_memory_find_meetings_without_audio(StoreHandle *handle, const cha
 /* docs/adr/0001 slice 2: tells the store which sync device id is this device's own, so
  * meeting/transcript writes enqueue outbox rows for rows this device authored. Call once
  * after whimbrel_memory_open, before any meeting mutation; until then nothing is enqueued.
- * Returns false on a null/invalid handle or device_id. */
+ * Returns false on a null/invalid handle or a NULL or empty device_id. */
 bool whimbrel_memory_set_device_id(StoreHandle *handle, const char *device_id);
 
 /* Marks a meeting completed with its actual end time and (if captured) the audio file
@@ -904,14 +904,14 @@ char *whimbrel_memory_get_transcript_segments_page(
  * capture_item_days/meeting_days/conversation_days are the window in days per data
  * class, or -1 (any negative value) to keep that class forever. now_unix_ms is the
  * caller's job to compute. After deleting the rows, every deleted meeting's audio
- * (both mic/system siblings, resolved inside recordings_dir) and transcript files are
- * removed best-effort. Returns JSON {"capture_items_deleted": <n>, "meetings_deleted":
+ * (both mic/system siblings) and transcript files inside recordings_dir or media_dir
+ * (NULL: none) are removed best-effort. Returns JSON {"capture_items_deleted": <n>, "meetings_deleted":
  * <n>, "conversations_deleted": <n>, "deleted_meeting_files": [{"audio_path":
  * <string-or-null>, "transcript_path": <string-or-null>}, ...]}, or NULL on a null
  * handle/path or a DB error. */
 char *whimbrel_retention_apply(
     StoreHandle *handle, int64_t capture_item_days, int64_t meeting_days, int64_t conversation_days,
-    int64_t now_unix_ms, const char *recordings_dir);
+    int64_t now_unix_ms, const char *recordings_dir, const char *media_dir);
 
 /* Finds recording files (.caf, .wav, .m4a) in recordings_dir and, when media_audio_dir
  * is non-NULL, in that folder too (the media folder's Audio), that no meeting.audio_path
@@ -940,9 +940,10 @@ char *whimbrel_media_plan(StoreHandle *handle, const char *policy_json, int64_t 
 int32_t whimbrel_retention_delete_orphans(const char *paths_json);
 
 /* Best-effort deletion of one meeting's on-disk files after its row is gone: the audio's
- * mic/system siblings (resolved inside recordings_dir) and the transcript. audio_path
- * and transcript_path may be NULL. A missing file is never an error. */
-void whimbrel_retention_delete_meeting_files(const char *audio_path, const char *transcript_path, const char *snapshots_dir, const char *recordings_dir);
+ * mic/system siblings and the transcript, only Whimbrel-named files inside recordings_dir or
+ * media_dir (NULL: none), never through a symlink. audio_path, transcript_path and media_dir
+ * may be NULL. A missing file is never an error. */
+void whimbrel_retention_delete_meeting_files(const char *audio_path, const char *transcript_path, const char *snapshots_dir, const char *recordings_dir, const char *media_dir);
 
 /* Meeting continue (meeting parts). JSON out, NULL on a null handle or error (free with
  * whimbrel_core_free_string); unit-returning writes return bool. */
@@ -1024,8 +1025,13 @@ bool whimbrel_store_checkpoint(StoreHandle *handle);
  * NULL if there was no such meeting. */
 char *whimbrel_meeting_delete_returning_files(StoreHandle *handle, int64_t id);
 
-/* Best-effort deletion of the files in a DeletedMeetingFiles JSON (all parts + snapshot folder). */
-void whimbrel_retention_delete_all_meeting_files(const char *files_json, const char *recordings_dir);
+/* The user's "Forget meeting": as whimbrel_meeting_delete_returning_files (same JSON, NULL if
+ * there was no such meeting), and also queues a tombstone so every other device deletes it. */
+char *whimbrel_meeting_forget(StoreHandle *handle, int64_t id);
+
+/* Best-effort deletion of the files in a DeletedMeetingFiles JSON (all parts + snapshot folder).
+ * Removes only files inside recordings_dir or media_dir (NULL: none), never through a symlink. */
+void whimbrel_retention_delete_all_meeting_files(const char *files_json, const char *recordings_dir, const char *media_dir);
 
 /* Generates a fresh device keypair (FR: device enrollment). Returns a JSON
  * object {"public_key_base64": ..., "secret_key_base64": ...}, or NULL if
@@ -1156,6 +1162,10 @@ bool whimbrel_sync_content_pull_only(StoreHandle *handle, const char *turso_url,
 char *whimbrel_sync_content_last_error(void);
 /* Whether the last content sync left rows on the relay, so another round should follow soon. */
 bool whimbrel_sync_content_more_to_pull(void);
+/* JSON array of DeletedMeetingFiles: meetings other devices forgot that content sync deleted
+ * here since the last call ("[]" if none). Call after every round, failed or not, and delete each
+ * with whimbrel_retention_delete_all_meeting_files. Caller frees with whimbrel_core_free_string. */
+char *whimbrel_sync_take_forgotten_meeting_files(void);
 
 typedef struct McpHostHandle McpHostHandle;
 

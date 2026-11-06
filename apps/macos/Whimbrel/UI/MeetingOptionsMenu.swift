@@ -197,7 +197,7 @@ struct MeetingOptionsMenu: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This permanently removes the meeting note, action items, transcript, local audio file, and search/index entries for this meeting. This does not affect calendar events.")
+            MeetingLifecycle.forgetConfirmationMessage
         }
         .alert("Couldn't move the snapshots", isPresented: $splitMoveFailed) {
             Button("OK", role: .cancel) {}
@@ -316,4 +316,11 @@ struct TrimRecordingSheet: View {
         onTrim(keep)
         dismiss()
     }
+}
+
+extension MeetingLifecycle {
+    /// Both Forget confirmations (meeting menu, meeting list). Separate keys, so the first
+    /// sentence keeps its translations.
+    static let forgetConfirmationMessage = Text("This permanently removes the meeting note, action items, transcript, local audio file, and search/index entries for this meeting. This does not affect calendar events.")
+        + Text(verbatim: "\n\n") + Text("This removes it from all your devices.")
 }

@@ -56,7 +56,10 @@ final class MediaRetentionRunner: ObservableObject {
                 compress: { AudioCompressor.compressMeeting(meetingId: $0, audioPaths: $1, store: store) },
                 // Files only: `audio_path` stays set (a NULL path would list the meeting under
                 // "Meetings without audio", which offers it for deletion).
-                deleteAudio: { CoreMemoryStore.deleteMeetingFiles(audioPath: $0, transcriptPath: nil, snapshotsDir: nil, recordingsDir: SpikePaths.root) },
+                deleteAudio: {
+                    CoreMemoryStore.deleteMeetingFiles(audioPath: $0, transcriptPath: nil, snapshotsDir: nil, recordingsDir: SpikePaths.root,
+                                                       mediaDir: MediaSettings.currentFolderURL())
+                },
                 shrink: { SnapshotThumbnailer.shrinkSnapshot($0, store: store) }
             )
         }

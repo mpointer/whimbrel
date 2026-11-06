@@ -32,9 +32,20 @@ pub fn apply(
     now_unix_ms: i64,
     recordings_dir: &Path,
 ) -> rusqlite::Result<RetentionResult> {
+    apply_within(store, policy, now_unix_ms, &[recordings_dir])
+}
+
+/// [`apply`], deleting meeting files inside any of `roots` (the Mac adds its media folder, where
+/// media retention moves audio).
+pub fn apply_within(
+    store: &Store,
+    policy: &RetentionPolicy,
+    now_unix_ms: i64,
+    roots: &[&Path],
+) -> rusqlite::Result<RetentionResult> {
     let result = store.apply_retention(policy, now_unix_ms)?;
     for deleted in &result.deleted_meeting_files {
-        delete_all_meeting_files(deleted, recordings_dir);
+        delete_all_meeting_files_within(deleted, roots);
     }
     Ok(result)
 }
@@ -68,47 +79,89 @@ pub fn preview(
     })
 }
 
-/// Best-effort deletion of a meeting's on-disk files. `audio_path`'s filename is either
-/// `system-audio-<stamp>.<ext>` or `mic-audio-<stamp>.<ext>`; both siblings are deleted
-/// from `audio_path`'s own folder (a moved recording lives outside the recordings
-/// folder) since a completed session has both and the row only stores one. An
-/// unrecognized filename is deleted at its own path. A missing file is never an error:
-/// it may already be gone, or never existed for a mic-only session.
-/// `_recordings_dir` is unused; it stays so the Windows shell's call keeps compiling.
+/// Best-effort deletion of one meeting's on-disk files: the audio (both mic/system siblings), the
+/// transcript and the marked snapshot folder, by the rules of [`delete_all_meeting_files_within`]: only
+/// Whimbrel-named regular files, not through a symlink, inside one of `roots`. A missing file is never
+/// an error: it may already be gone, or never existed for a mic-only session.
 pub fn delete_meeting_files(
     audio_path: Option<&str>,
     transcript_path: Option<&str>,
     snapshots_dir: Option<&str>,
-    _recordings_dir: &Path,
+    roots: &[&Path],
 ) {
-    if let Some(audio_path) = audio_path {
-        match sibling_audio_paths(audio_path) {
+    let deleted = memory::DeletedMeetingFiles {
+        audio_path: None,
+        transcript_path: None,
+        snapshots_dir: snapshots_dir.map(str::to_string),
+        audio_paths: audio_path.map(str::to_string).into_iter().collect(),
+        transcript_paths: transcript_path.map(str::to_string).into_iter().collect(),
+    };
+    delete_all_meeting_files_within(&deleted, roots);
+}
+
+/// [`delete_all_meeting_files_within`] the recordings folder only.
+pub fn delete_all_meeting_files(deleted: &memory::DeletedMeetingFiles, recordings_dir: &Path) {
+    delete_all_meeting_files_within(deleted, &[recordings_dir]);
+}
+
+/// Every part's audio (with its mic/system sibling) and transcript of a deleted meeting, and its
+/// snapshot folder. A file is removed only if it is not a symlink and its real location (`..` and
+/// symlinked folders resolved) is inside one of `roots`: a path can come from another device's data.
+/// The snapshot folder is not held to `roots` (it is written only by this device, under the media
+/// folder the user chose); it must not be a symlink, and [`delete_snapshots_dir`] removes only a
+/// marked folder of Whimbrel-named regular files.
+pub fn delete_all_meeting_files_within(deleted: &memory::DeletedMeetingFiles, roots: &[&Path]) {
+    let roots: Vec<PathBuf> = roots.iter().filter_map(|r| r.canonicalize().ok()).collect();
+    let remove = |p: &Path| {
+        if let Some(real) = real_path_inside(p, &roots) {
+            let _ = std::fs::remove_file(real);
+        }
+    };
+    for a in &deleted.audio_paths {
+        match sibling_audio_paths(a) {
             Some((system, mic)) => {
-                let _ = std::fs::remove_file(system);
-                let _ = std::fs::remove_file(mic);
+                remove(&system);
+                remove(&mic);
             }
-            None => {
-                let _ = std::fs::remove_file(audio_path);
-            }
+            None => remove(Path::new(a)),
         }
     }
-    if let Some(transcript_path) = transcript_path {
-        let _ = std::fs::remove_file(transcript_path);
+    for t in &deleted.transcript_paths {
+        remove(Path::new(t));
     }
-    if let Some(dir) = snapshots_dir {
-        delete_snapshots_dir(Path::new(dir));
+    if let Some(dir) = deleted.snapshots_dir.as_deref().map(Path::new) {
+        if dir.symlink_metadata().is_ok_and(|m| m.is_dir()) {
+            delete_snapshots_dir(dir);
+        }
     }
 }
 
-/// [`delete_meeting_files`] for every part of a deleted meeting.
-pub fn delete_all_meeting_files(deleted: &memory::DeletedMeetingFiles, recordings_dir: &Path) {
-    for a in &deleted.audio_paths {
-        delete_meeting_files(Some(a), None, None, recordings_dir);
+/// `path` resolved, if it is an existing non-symlink file named as Whimbrel names a meeting's
+/// files ([`is_meeting_file_name`]) inside one of `roots` (already canonical).
+/// ponytail: check-then-remove, not openat/O_NOFOLLOW. Between the check and `remove_file` a
+/// process that can write inside `roots` could swap a folder on the resolved path for a symlink;
+/// that takes a local attacker already running as this user, not a peer's synced data.
+fn real_path_inside(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
+    if !path.symlink_metadata().ok()?.is_file() {
+        return None;
     }
-    for t in &deleted.transcript_paths {
-        delete_meeting_files(None, Some(t), None, recordings_dir);
-    }
-    delete_meeting_files(None, None, deleted.snapshots_dir.as_deref(), recordings_dir);
+    let real = path.canonicalize().ok()?;
+    let named = real.file_name().and_then(|n| n.to_str()).is_some_and(is_meeting_file_name);
+    (named && roots.iter().any(|r| real.starts_with(r))).then_some(real)
+}
+
+/// `transcript-<stamp>.txt`, or `system-audio-<stamp>` / `mic-audio-<stamp>` with a
+/// [`RECORDING_EXTENSIONS`] extension: the only names a meeting's own files get. Anything else
+/// (the database, a user's file) is never removed by a meeting delete.
+fn is_meeting_file_name(name: &str) -> bool {
+    let path = Path::new(name);
+    let (Some(stem), Some(ext)) = (path.file_stem().and_then(|s| s.to_str()), path.extension().and_then(|e| e.to_str()))
+    else {
+        return false;
+    };
+    let stamped = |prefix: &str| stem.strip_prefix(prefix).is_some_and(|stamp| !stamp.is_empty());
+    (stamped("transcript-") && ext == "txt")
+        || ((stamped("system-audio-") || stamped("mic-audio-")) && RECORDING_EXTENSIONS.contains(&ext))
 }
 
 /// Marker file Whimbrel drops in every snapshot folder it creates; proves the folder is ours.
@@ -375,7 +428,7 @@ mod tests {
         std::fs::write(&mic, "mic").unwrap();
         std::fs::write(&transcript, "transcript").unwrap();
 
-        delete_meeting_files(system.to_str(), transcript.to_str(), None, dir.path());
+        delete_meeting_files(system.to_str(), transcript.to_str(), None, &[dir.path()]);
 
         assert!(!system.exists());
         assert!(!mic.exists());
@@ -386,7 +439,7 @@ mod tests {
     fn delete_files_tolerates_already_missing_files() {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("system-audio-2026-08-01T01-00-00.000Z.caf");
-        delete_meeting_files(missing.to_str(), None, None, dir.path());
+        delete_meeting_files(missing.to_str(), None, None, &[dir.path()]);
     }
 
     #[test]
@@ -394,18 +447,98 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let transcript = dir.path().join("transcript-2026-08-01T02-00-00.000Z.txt");
         std::fs::write(&transcript, "transcript").unwrap();
-        delete_meeting_files(None, transcript.to_str(), None, dir.path());
+        delete_meeting_files(None, transcript.to_str(), None, &[dir.path()]);
         assert!(!transcript.exists());
     }
 
     #[test]
-    fn delete_files_removes_an_unrecognized_filename_at_its_own_path() {
+    fn delete_files_keeps_an_unrecognized_filename() {
         let dir = tempfile::tempdir().unwrap();
         let other = dir.path().join("elsewhere").join("not-a-recording.caf");
         std::fs::create_dir_all(other.parent().unwrap()).unwrap();
         std::fs::write(&other, "x").unwrap();
-        delete_meeting_files(other.to_str(), None, None, dir.path());
-        assert!(!other.exists());
+        delete_meeting_files(other.to_str(), None, None, &[dir.path()]);
+        assert!(other.exists(), "not a name Whimbrel gives a recording");
+    }
+
+    /// Final pass 4: the single-meeting delete keeps to the given folders like the rest.
+    #[test]
+    fn delete_files_never_leaves_the_given_folders() {
+        let rec = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let system = outside.path().join("system-audio-X.caf");
+        let transcript = outside.path().join("transcript-X.txt");
+        for p in [&system, &transcript] {
+            std::fs::write(p, "keep").unwrap();
+        }
+        delete_meeting_files(system.to_str(), transcript.to_str(), None, &[rec.path()]);
+        assert!(system.exists() && transcript.exists());
+    }
+
+    fn files(audio: &[&Path], transcripts: &[&Path], snapshots_dir: Option<&Path>) -> memory::DeletedMeetingFiles {
+        let s = |p: &&Path| p.to_str().unwrap().to_string();
+        memory::DeletedMeetingFiles {
+            audio_path: None,
+            transcript_path: None,
+            snapshots_dir: snapshots_dir.map(|p| p.to_str().unwrap().to_string()),
+            audio_paths: audio.iter().map(s).collect(),
+            transcript_paths: transcripts.iter().map(s).collect(),
+        }
+    }
+
+    #[test]
+    fn delete_all_never_touches_a_file_outside_the_allowed_folders() {
+        let rec = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("victim.txt");
+        let victim_audio = outside.path().join("system-audio-X.caf");
+        std::fs::write(&victim, "keep").unwrap();
+        std::fs::write(&victim_audio, "keep").unwrap();
+        // `..` that escapes the folder after resolving.
+        let escaping = rec.path().join("..").join(outside.path().file_name().unwrap()).join("victim.txt");
+        delete_all_meeting_files(&files(&[&victim_audio], &[&victim, &escaping], None), rec.path());
+        assert!(victim.exists() && victim_audio.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_all_does_not_follow_a_symlink() {
+        let rec = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("victim.txt");
+        std::fs::write(&victim, "keep").unwrap();
+        let link = rec.path().join("transcript-L.txt");
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+        // A symlinked folder inside the recordings folder, pointing out of it.
+        let linked_dir = rec.path().join("elsewhere");
+        std::os::unix::fs::symlink(outside.path(), &linked_dir).unwrap();
+        let through_dir = linked_dir.join("victim.txt");
+        // A snapshot folder that is a symlink to a marked folder outside.
+        let snaps = outside.path().join("snaps");
+        std::fs::create_dir(&snaps).unwrap();
+        std::fs::write(snaps.join(SNAPSHOT_MARKER), "").unwrap();
+        std::fs::write(snaps.join("10.00.00.png"), "img").unwrap();
+        let snaps_link = rec.path().join("snaps");
+        std::os::unix::fs::symlink(&snaps, &snaps_link).unwrap();
+
+        delete_all_meeting_files(&files(&[], &[&link, &through_dir], Some(&snaps_link)), rec.path());
+        assert!(victim.exists());
+        assert!(link.symlink_metadata().is_ok(), "the link itself is left alone too");
+        assert!(snaps.join("10.00.00.png").exists());
+    }
+
+    #[test]
+    fn delete_all_removes_files_inside_any_allowed_folder() {
+        let rec = tempfile::tempdir().unwrap();
+        let media = tempfile::tempdir().unwrap();
+        let transcript = rec.path().join("transcript-A.txt");
+        let system = media.path().join("system-audio-A.m4a");
+        let mic = media.path().join("mic-audio-A.m4a");
+        for p in [&transcript, &system, &mic] {
+            std::fs::write(p, "x").unwrap();
+        }
+        delete_all_meeting_files_within(&files(&[&system], &[&transcript], None), &[rec.path(), media.path()]);
+        assert!(!transcript.exists() && !system.exists() && !mic.exists());
     }
 
     #[test]
@@ -450,7 +583,7 @@ mod tests {
         std::fs::write(&system, "s").unwrap();
         std::fs::write(&mic, "m").unwrap();
 
-        delete_meeting_files(system.to_str(), None, None, unrelated.path());
+        delete_meeting_files(system.to_str(), None, None, &[unrelated.path(), media.path()]);
 
         assert!(!system.exists());
         assert!(!mic.exists());
@@ -477,7 +610,7 @@ mod tests {
             std::fs::write(p, "x").unwrap();
         }
 
-        delete_meeting_files(mic.to_str(), transcript.to_str(), None, dir.path());
+        delete_meeting_files(mic.to_str(), transcript.to_str(), None, &[dir.path()]);
 
         assert!(!system.exists());
         assert!(!mic.exists());
@@ -654,6 +787,80 @@ mod tests {
         assert_eq!(scan.orphaned, vec![rec.join("mic-audio-ORPHAN.caf").to_string_lossy().into_owned()]);
     }
 
+    fn pulled_meeting(store: &Store, start_unix_ms: i64, transcript_path: &Path) -> i64 {
+        let m: memory::AppliedMeeting = serde_json::from_value(serde_json::json!({
+            "start_unix_ms": start_unix_ms, "end_unix_ms": start_unix_ms + 1, "title": "T", "attendees": [],
+            "trigger": "manual", "status": "completed", "transcript_path": transcript_path.to_str().unwrap(),
+            "notes": null, "summary_tldr": null, "summary_decisions": [], "summary_action_items": [],
+            "summary_open_questions": [], "summary_provider": null, "summary_model": null
+        }))
+        .unwrap();
+        store.apply_synced_meeting("pc", start_unix_ms, None, &m).unwrap()
+    }
+
+    /// Retention deletes another device's meetings (mapped, and map-less from a peer that sent no
+    /// source id) without touching the files their synced transcript_path names, even inside the root.
+    #[test]
+    fn retention_never_deletes_a_file_a_pulled_meeting_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("t.sqlite"), Path::new("")).unwrap();
+        store.set_own_device_id("mac");
+        let rec = dir.path().join("rec");
+        std::fs::create_dir(&rec).unwrap();
+        let db = rec.join("core-memory.sqlite");
+        let named = rec.join("transcript-MINE.txt");
+        let other = rec.join("transcript-OTHER.txt");
+        for f in [&db, &named, &other] {
+            std::fs::write(f, "keep").unwrap();
+        }
+        let mapped = pulled_meeting(&store, 1_000, &named);
+        store.record_sync_meeting_map_with_epoch("pc", 7, mapped, Some("e")).unwrap();
+        pulled_meeting(&store, 2_000, &other); // map-less
+        pulled_meeting(&store, 3_000, &db); // map-less
+
+        let policy = RetentionPolicy { capture_item_days: None, meeting_days: Some(1), conversation_days: None };
+        let result = apply(&store, &policy, 10 * 86_400_000, &rec).unwrap();
+        assert_eq!(result.meetings_deleted, 3);
+        assert!(db.exists() && named.exists() && other.exists());
+    }
+
+    #[test]
+    fn delete_all_removes_only_meeting_file_names() {
+        let rec = tempfile::tempdir().unwrap();
+        let p = |n: &str| {
+            let p = rec.path().join(n);
+            std::fs::write(&p, "x").unwrap();
+            p
+        };
+        let kept = [p("core-memory.sqlite"), p("transcript-.txt"), p("transcript-A.md"), p("system-audio-A.mp3"), p("notes.caf")];
+        let gone = [p("transcript-A.txt"), p("system-audio-B.wav"), p("mic-audio-B.wav")];
+        let all: Vec<&Path> = kept.iter().map(PathBuf::as_path).collect();
+        delete_all_meeting_files(&files(&[&gone[1], &kept[3], &kept[4]], &[&gone[0], &kept[0], &kept[1], &kept[2]], None), rec.path());
+        for k in &all {
+            assert!(k.exists(), "{k:?}");
+        }
+        for g in &gone {
+            assert!(!g.exists(), "{g:?}");
+        }
+    }
+
+    #[test]
+    fn apply_within_removes_audio_moved_to_the_media_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("t.sqlite"), Path::new("")).unwrap();
+        store.set_own_device_id("test-device");
+        let (rec, media) = (dir.path().join("rec"), dir.path().join("media"));
+        std::fs::create_dir(&rec).unwrap();
+        std::fs::create_dir(&media).unwrap();
+        let system = media.join("system-audio-M.m4a");
+        std::fs::write(&system, "a").unwrap();
+        insert_meeting(&store, 1_000, Some(system.to_str().unwrap()));
+        let policy = RetentionPolicy { capture_item_days: None, meeting_days: Some(1), conversation_days: None };
+
+        apply_within(&store, &policy, 10 * 86_400_000, &[&rec, &media]).unwrap();
+        assert!(!system.exists());
+    }
+
     #[test]
     fn scan_orphans_on_a_missing_directory_is_empty() {
         let dir = tempfile::tempdir().unwrap();
@@ -709,6 +916,7 @@ mod tests {
     fn apply_deletes_expired_meeting_rows_and_their_files() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("t.sqlite"), Path::new("")).unwrap();
+        store.set_own_device_id("test-device");
         let rec = dir.path().join("rec");
         std::fs::create_dir(&rec).unwrap();
         let day = 86_400_000i64;

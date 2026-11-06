@@ -41,6 +41,8 @@ pub mod trim;
 
 mod sync_outbox;
 pub mod skin_sync;
+mod forget;
+pub use forget::MeetingForgotten;
 /// Outbox `row_type`/`connector` values. `row_type` must equal the `sync_row.row_type`
 /// the dispatcher writes, which is also `sync-engine::content`'s constant of the same
 /// name — the outbox `UNIQUE(device_id, local_seq, row_type)` mirrors that table's key.
@@ -57,6 +59,8 @@ pub const OUTBOX_ROW_TYPE_SKIN: &str = "skin";
 pub const OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK: &str = "skin_image_chunk";
 /// Monthly AI budgets (`provider_budget`): one device's spend per provider per UTC month.
 pub const OUTBOX_ROW_TYPE_PROVIDER_SPEND: &str = "provider_spend";
+/// "Forget meeting" (`forget`): a tombstone naming a meeting every device deletes.
+pub const OUTBOX_ROW_TYPE_MEETING_FORGOTTEN: &str = "meeting_forgotten";
 /// Bounds applied to a routine run pulled from another device (see `apply_synced_routine_run`).
 const SYNCED_RUN_MAX_FUTURE_MS: i64 = 5 * 60 * 1000;
 const SYNCED_RUN_MAX_SUMMARY_CHARS: usize = 20_000;
@@ -633,6 +637,8 @@ pub enum SyncableRow {
     Meeting {
         local_seq: i64,
         source_meeting_id: i64,
+        /// This database's `sync_entity_epoch`, so a forget tombstone can name the meeting exactly.
+        origin_epoch: Option<String>,
         meeting: AppliedMeeting,
     },
     TranscriptSegment {
@@ -1307,8 +1313,9 @@ impl Store {
         })
     }
 
+    /// An empty id clears it: `""` names no device.
     pub fn set_own_device_id(&self, device_id: &str) {
-        *self.own_device_id.borrow_mut() = Some(device_id.to_string());
+        *self.own_device_id.borrow_mut() = (!device_id.is_empty()).then(|| device_id.to_string());
     }
 
     /// The device id `set_own_device_id` set, if any.
@@ -1794,6 +1801,7 @@ impl Store {
         live_alert::ensure_live_alert_table(conn)?;
         speaker_names::ensure_speaker_names_tables(conn)?;
         skin_sync::ensure_skin_sync_tables(conn)?;
+        forget::ensure_forget_tables(conn)?;
         provider_budget::ensure_provider_budget_tables(conn)?;
         meeting_parts::ensure_meeting_part_schema(conn)?;
         Self::ensure_items_app_fields_columns(conn)?;
@@ -2582,10 +2590,23 @@ impl Store {
         source_meeting_id: i64,
         local_meeting_id: i64,
     ) -> rusqlite::Result<()> {
+        self.record_sync_meeting_map_with_epoch(peer_device_id, source_meeting_id, local_meeting_id, None)
+    }
+
+    /// `record_sync_meeting_map`, also keeping the peer database's `sync_entity_epoch` (the payload's
+    /// `origin_epoch`), which names the meeting in a forget tombstone. `None` keeps any epoch already known.
+    pub fn record_sync_meeting_map_with_epoch(
+        &self,
+        peer_device_id: &str,
+        source_meeting_id: i64,
+        local_meeting_id: i64,
+        origin_epoch: Option<&str>,
+    ) -> rusqlite::Result<()> {
         self.conn.execute(
-            "INSERT INTO sync_meeting_map (peer_device_id, source_meeting_id, local_meeting_id) VALUES (?1, ?2, ?3) \
-             ON CONFLICT(peer_device_id, source_meeting_id) DO UPDATE SET local_meeting_id = excluded.local_meeting_id",
-            params![peer_device_id, source_meeting_id, local_meeting_id],
+            "INSERT INTO sync_meeting_map (peer_device_id, source_meeting_id, local_meeting_id, origin_epoch) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(peer_device_id, source_meeting_id) DO UPDATE SET local_meeting_id = excluded.local_meeting_id, \
+             origin_epoch = CASE WHEN excluded.origin_epoch = '' THEN origin_epoch ELSE excluded.origin_epoch END",
+            params![peer_device_id, source_meeting_id, local_meeting_id, origin_epoch.unwrap_or("")],
         )?;
         // A peer's live alerts can arrive before their meeting: attach them now.
         self.conn.execute(
@@ -3010,6 +3031,8 @@ impl Store {
              summary_provider, summary_model, keep_media, attendee_details, trimmed_keep_ms \
              FROM meeting WHERE device_id = ?1 AND local_seq IS NOT NULL AND local_seq > ?2 AND status IN ('completed', 'cancelled')",
         )?;
+        // As the push paths: an unreadable epoch never fails a round, the row just goes without it.
+        let epoch = self.sync_entity_epoch().ok();
         let meeting_rows = stmt.query_map(params![device_id, since_local_seq], |row| {
             let attendees_json: String = row.get(5)?;
             let trigger_str: String = row.get(6)?;
@@ -3020,6 +3043,7 @@ impl Store {
             Ok(SyncableRow::Meeting {
                 local_seq: row.get(0)?,
                 source_meeting_id: row.get(1)?,
+                origin_epoch: epoch.clone(),
                 meeting: AppliedMeeting {
                     start_unix_ms: row.get(2)?,
                     end_unix_ms: row.get(3)?,
@@ -3092,6 +3116,8 @@ impl Store {
              summary_provider, summary_model, keep_media, attendee_details, trimmed_keep_ms \
              FROM meeting WHERE device_id = ?1 AND local_seq IS NOT NULL AND local_seq > ?2 AND status IN ('completed', 'cancelled')",
         )?;
+        // As the push paths: an unreadable epoch never fails a round, the row just goes without it.
+        let epoch = self.sync_entity_epoch().ok();
         let meeting_rows = stmt.query_map(params![device_id, since_local_seq], |row| {
             let attendees_json: String = row.get(5)?;
             let trigger_str: String = row.get(6)?;
@@ -3102,6 +3128,7 @@ impl Store {
             Ok(SyncableRow::Meeting {
                 local_seq: row.get(0)?,
                 source_meeting_id: row.get(1)?,
+                origin_epoch: epoch.clone(),
                 meeting: AppliedMeeting {
                     start_unix_ms: row.get(2)?,
                     end_unix_ms: row.get(3)?,
@@ -6075,6 +6102,11 @@ impl Store {
             &format!("DELETE FROM meeting_part WHERE meeting_id IN {expired_ids}"),
             params![cutoff_unix_ms],
         )?;
+        // No tombstone follows a retention delete: nothing will delete these server rows.
+        self.conn.execute(
+            &format!("DELETE FROM pushed_meeting_row WHERE meeting_id IN {expired_ids}"),
+            params![cutoff_unix_ms],
+        )?;
         let meetings_deleted = self.conn.execute(
             &format!("DELETE FROM meeting WHERE {EXPIRED_MEETINGS}"),
             params![cutoff_unix_ms],
@@ -6101,6 +6133,18 @@ impl Store {
         transcript_path: Option<String>,
         snapshots_dir: Option<String>,
     ) -> rusqlite::Result<DeletedMeetingFiles> {
+        // Another device's meeting: its `transcript_path` (and `audio_path`, which apply stores as NULL anyway)
+        // were written by that device, so they name a file on its disk or any path it chose, never a file this
+        // device made. Pulled = mapped to a peer, or (map-less, from a peer that sent no source id) a device id
+        // other than this device's own; local capture stores this device's own id. With no own id set, no
+        // meeting can be told apart, so none hands back audio or transcript paths (fail closed).
+        let pulled: bool = self.conn.query_row(
+            "SELECT ?2 IS NULL OR EXISTS (SELECT 1 FROM sync_meeting_map WHERE local_meeting_id = ?1) \
+             OR EXISTS (SELECT 1 FROM meeting WHERE id = ?1 AND device_id != ?2)",
+            params![id, self.own_device_id()],
+            |r| r.get(0),
+        )?;
+        let (audio_path, transcript_path) = if pulled { (None, None) } else { (audio_path, transcript_path) };
         // A split can leave another meeting's snapshot rows inside this directory until the
         // files are moved; never hand the folder back then (worst case: a leaked folder).
         // Literal prefix compare via substr, not LIKE, so `%`/`_` in a path are not wildcards.
@@ -6143,6 +6187,16 @@ impl Store {
 
     /// Like [`Store::delete_meeting`], but returns the files of every part (`None` if no such meeting).
     pub fn delete_meeting_returning_files(&self, id: i64) -> rusqlite::Result<Option<DeletedMeetingFiles>> {
+        let Some(files) = self.meeting_files(id)? else { return Ok(None) };
+        let tx = self.conn.unchecked_transaction()?;
+        let rows_affected = Self::delete_meeting_rows_tx(&tx, id)?;
+        forget::prune_pushed_rows(&tx, id)?;
+        tx.commit()?;
+        Ok((rows_affected > 0).then_some(files))
+    }
+
+    /// The files deleting meeting `id` leaves for the caller to remove; `None` if no such meeting.
+    pub(crate) fn meeting_files(&self, id: i64) -> rusqlite::Result<Option<DeletedMeetingFiles>> {
         let row: Option<(Option<String>, Option<String>, Option<String>)> = self
             .conn
             .query_row(
@@ -6151,12 +6205,7 @@ impl Store {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        let Some((a, t, s)) = row else { return Ok(None) };
-        let files = self.meeting_deleted_files(id, a, t, s)?;
-        let tx = self.conn.unchecked_transaction()?;
-        let rows_affected = Self::delete_meeting_rows_tx(&tx, id)?;
-        tx.commit()?;
-        Ok((rows_affected > 0).then_some(files))
+        row.map(|(a, t, s)| self.meeting_deleted_files(id, a, t, s)).transpose()
     }
 
     /// The rows [`Store::delete_meeting`] removes, inside the caller's transaction. Files
@@ -7155,6 +7204,10 @@ impl Store {
         };
         let mut payload = serde_json::to_value(&applied).map_err(json_to_sql_error)?;
         payload["source_meeting_id"] = serde_json::json!(id);
+        // As the push paths: an unreadable epoch never blocks the enqueue, the row just goes without it.
+        if let Ok(epoch) = self.sync_entity_epoch() {
+            payload["origin_epoch"] = serde_json::json!(epoch);
+        }
         sync_outbox::enqueue_outbox_tx(
             tx,
             NewOutboxOperation {
@@ -7658,6 +7711,7 @@ impl Store {
         tx.execute("DELETE FROM meeting_note_draft WHERE meeting_id = ?1", params![drop])?;
         tx.execute("DELETE FROM meeting_snapshot WHERE meeting_id = ?1", params![drop])?;
         tx.execute("DELETE FROM meeting WHERE id = ?1", params![drop])?;
+        forget::prune_pushed_rows(&tx, drop)?;
         tx.commit()?;
         Ok(true)
     }
@@ -11754,6 +11808,7 @@ mod tests {
     #[test]
     fn delete_meetings_before_returns_the_deleted_meetings_file_paths() {
         let store = Store::open_in_memory().unwrap();
+        store.set_own_device_id("test-device");
         let old_with_both_paths = store
             .insert_meeting(&NewMeeting {
                 device_id: "test-device".into(),
@@ -11859,6 +11914,7 @@ mod tests {
     #[test]
     fn delete_meetings_before_never_deletes_a_meeting_still_recording() {
         let store = Store::open_in_memory().unwrap();
+        store.set_own_device_id("test-device");
 
         // A calendar clock-jump / late-join scenario: start_unix_ms is well before the
         // cutoff, but the meeting is still actively recording.

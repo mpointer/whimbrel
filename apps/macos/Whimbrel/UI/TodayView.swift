@@ -121,6 +121,8 @@ struct TodayView: View {
             // Forgetting a meeting from the standalone meeting window hands focus back here.
             refresh()
         }
+        // A meeting forgotten on another device was deleted here by sync.
+        .onReceive(NotificationCenter.default.publisher(for: MeetingLifecycle.meetingsDidChange)) { _ in refresh() }
         .onChange(of: appState.activeMeetingId) { _, _ in
             // Starting or ending a meeting while sitting on Today must show up at once.
             refresh()

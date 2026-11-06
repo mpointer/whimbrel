@@ -1,4 +1,5 @@
 import Combine
+import SQLite3
 import XCTest
 @testable import Whimbrel
 
@@ -31,6 +32,8 @@ final class MeetingPartTranscriptionTests: XCTestCase {
         tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         store = CoreMemoryStore(path: tempDir.appendingPathComponent("test.sqlite"), modelsDir: nil)!
+        // The meetings are this device's ("dev"): without its own id the store hands back no files to delete.
+        _ = store.setDeviceId("dev")
     }
 
     override func tearDown() {
@@ -452,5 +455,81 @@ final class MeetingPartTranscriptionTests: XCTestCase {
         for path in [m.a, m.b, micA.path, micB.path] + transcripts {
             XCTAssertFalse(FileManager.default.fileExists(atPath: path), path)
         }
+    }
+
+    /// Forget leaves a tombstone so the meeting goes from every device, not a plain row delete.
+    func test_forget_tells_every_device() throws {
+        XCTAssertTrue(store.setDeviceId("dev"))
+        let m = makeTwoPartMeeting()
+        let done = expectation(description: "forgotten")
+        MeetingLifecycle.forgetMeeting(store: store, meetingId: m.id, recordingsDir: tempDir) { result in
+            XCTAssertEqual(result, .deleted)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertNil(store.getMeeting(id: m.id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: m.a))
+
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(tempDir.appendingPathComponent("test.sqlite").path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        let sql = "SELECT COUNT(*) FROM forgotten_meeting WHERE origin_device_id = 'dev' AND source_meeting_id = \(m.id)"
+        XCTAssertEqual(sqlite3_prepare_v2(db, sql, -1, &stmt, nil), SQLITE_OK)
+        defer { sqlite3_finalize(stmt) }
+        XCTAssertEqual(sqlite3_step(stmt), SQLITE_ROW)
+        XCTAssertEqual(sqlite3_column_int64(stmt, 0), 1)
+    }
+
+    /// Settings → Retention's "Delete meetings without audio" forgets every one, everywhere.
+    func test_forgetting_several_meetings_tells_every_device() throws {
+        let a = makeTwoPartMeeting(), b = makeTwoPartMeeting()
+        let done = expectation(description: "forgotten")
+        MeetingLifecycle.forgetMeetings(store: store, meetingIds: [a.id, b.id, 999_999], recordingsDir: tempDir) { count in
+            XCTAssertEqual(count, 2, "the missing id counts for nothing")
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertNil(store.getMeeting(id: a.id))
+        XCTAssertNil(store.getMeeting(id: b.id))
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(tempDir.appendingPathComponent("test.sqlite").path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM forgotten_meeting WHERE origin_device_id = 'dev'", -1, &stmt, nil), SQLITE_OK)
+        defer { sqlite3_finalize(stmt) }
+        XCTAssertEqual(sqlite3_step(stmt), SQLITE_ROW)
+        XCTAssertEqual(sqlite3_column_int64(stmt, 0), 2)
+    }
+
+    /// Meeting file deletes stay inside the recordings and media folders and never follow a symlink.
+    func test_meeting_file_deletes_stay_inside_the_folders() throws {
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let victim = outside.appendingPathComponent("victim.txt"), linked = outside.appendingPathComponent("linked.txt")
+        try Data("keep".utf8).write(to: victim)
+        try Data("keep".utf8).write(to: linked)
+        let link = tempDir.appendingPathComponent("transcript-L.txt")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: linked)
+        let mine = touch("transcript-M.txt")
+        let files = CoreDeletedMeetingFiles(audioPath: nil, transcriptPath: nil, snapshotsDir: nil, audioPaths: [],
+                                            transcriptPaths: [victim.path, link.path, mine.path])
+        CoreMemoryStore.deleteAllMeetingFiles(files, recordingsDir: tempDir, mediaDir: tempDir)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: victim.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: linked.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: mine.path))
+    }
+
+    /// A meeting another device forgot: sync deleted the row; its files go here, then the lists refresh.
+    func test_files_of_a_meeting_forgotten_elsewhere_are_deleted() {
+        let audio = touch("system-audio-C.caf"), transcript = touch("transcript-C.txt")
+        let files = CoreDeletedMeetingFiles(audioPath: audio.path, transcriptPath: transcript.path, snapshotsDir: nil,
+                                            audioPaths: [audio.path], transcriptPaths: [transcript.path])
+        let changed = expectation(forNotification: MeetingLifecycle.meetingsDidChange, object: nil)
+        MeetingLifecycle.deleteFilesOfMeetingsForgottenElsewhere([files], recordingsDir: tempDir)
+        wait(for: [changed], timeout: 5)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audio.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcript.path))
     }
 }

@@ -22,8 +22,8 @@ struct CoreMediaPolicy: Codable, Equatable {
 /// the settings-sync field list.
 @MainActor
 final class MediaSettings: ObservableObject {
-    private static let prefix = "com.mpointer.kestrel.media."
-    private static let folderKey = prefix + "folderPath"
+    nonisolated private static let prefix = "com.mpointer.kestrel.media."
+    nonisolated private static let folderKey = prefix + "folderPath"
     private static let compressKey = prefix + "compressAfterDays"
     private static let keepFullAudioKey = prefix + "keepFullAudioForever"
     private static let deleteAudioKey = prefix + "deleteAudioAfterDays"
@@ -66,8 +66,15 @@ final class MediaSettings: ObservableObject {
         policyLock.withLock { storedPolicy = p }
     }
 
-    var folderURL: URL {
-        if let path = folderPath, !path.isEmpty { return URL(fileURLWithPath: path, isDirectory: true) }
+    var folderURL: URL { Self.folderURL(path: folderPath) }
+
+    /// `folderURL` as stored now, from any thread (meeting file deletes run off the main actor).
+    nonisolated static func currentFolderURL(defaults: UserDefaults = .standard) -> URL {
+        folderURL(path: defaults.string(forKey: folderKey))
+    }
+
+    nonisolated private static func folderURL(path: String?) -> URL {
+        if let path, !path.isEmpty { return URL(fileURLWithPath: path, isDirectory: true) }
         return FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Whimbrel", isDirectory: true)
     }

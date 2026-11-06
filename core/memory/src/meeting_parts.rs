@@ -611,6 +611,7 @@ impl Store {
             params![into, from, seq],
         )?;
         Self::delete_meeting_rows_tx(&tx, from)?;
+        crate::forget::prune_pushed_rows(&tx, from)?;
         self.enqueue_meeting_outbox(&tx, into, seq)?;
         tx.commit()
     }
@@ -991,6 +992,7 @@ mod tests {
     #[test]
     fn retention_returns_every_part_file() {
         let s = Store::open_in_memory().unwrap();
+        s.set_own_device_id("d");
         let id = two_parts(&s);
         let (n, files) = s.delete_meetings_before(i64::MAX).unwrap();
         assert_eq!(n, 1);

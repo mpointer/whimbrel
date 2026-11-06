@@ -396,11 +396,11 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
 
       {forgetting && (
         <div className="card confirm" role="alertdialog" aria-label={t("Forget meeting")}>
+          {/* Deletion sync (PR 584): forgetting removes the meeting on every device, as on the Mac. */}
           <p>
-            {t(
-              "Forget this meeting? It removes the recording, transcript and summary from this PC. Copies already synced to other devices stay.",
-            )}
+            <strong>{t("Forget this meeting?")}</strong>
           </p>
+          <p>{t("This removes it from all your devices.")}</p>
           <div className="toolbar">
             <button className="mode mode--active" disabled={busy} onClick={() => act(() => meetingForget(meetingId))}>
               {t("Forget it")}

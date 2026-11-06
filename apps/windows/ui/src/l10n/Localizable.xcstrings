@@ -8570,36 +8570,36 @@
         }
       }
     },
-    "Forget this meeting? It removes the recording, transcript and summary from this PC. Copies already synced to other devices stay." : {
+    "Forget this meeting?" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Dieses Meeting vergessen? Aufnahme, Transkript und Zusammenfassung werden von diesem PC entfernt. Bereits mit anderen Geräten synchronisierte Kopien bleiben erhalten."
+            "value" : "Dieses Meeting vergessen?"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "¿Olvidar esta reunión? Se eliminarán la grabación, la transcripción y el resumen de esta PC. Las copias ya sincronizadas con otros dispositivos se conservan."
+            "value" : "¿Olvidar esta reunión?"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Oublier cette réunion ? L'enregistrement, la transcription et le résumé seront supprimés de ce PC. Les copies déjà synchronisées sur d'autres appareils sont conservées."
+            "value" : "Oublier cette réunion ?"
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Oublier cette réunion ? Cela supprime l'enregistrement, la transcription et le résumé de ce PC. Les copies déjà synchronisées sur d'autres appareils sont conservées."
+            "value" : "Oublier cette réunion ?"
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Esquecer esta reunião? Isso remove a gravação, a transcrição e o resumo deste PC. As cópias já sincronizadas com outros dispositivos permanecem."
+            "value" : "Esquecer esta reunião?"
           }
         }
       }
@@ -25659,6 +25659,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Esta paleta é apenas clara, por isso sempre usa Claro."
+          }
+        }
+      }
+    },
+    "This removes it from all your devices." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dadurch wird es von allen Ihren Geräten entfernt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esto lo elimina de todos tus dispositivos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cela le supprime de tous vos appareils."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette action le supprimera de tous vos appareils."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Isso o remove de todos os seus dispositivos."
           }
         }
       }

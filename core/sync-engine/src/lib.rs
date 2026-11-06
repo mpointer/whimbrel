@@ -28,7 +28,9 @@ use tokio::runtime::Runtime;
 
 mod content;
 mod outbox;
-pub use content::{ensure_content_schema, more_to_pull, pull_content, push_content, PullOptions};
+pub use content::{
+    ensure_content_schema, more_to_pull, pull_content, push_content, take_forgotten_meeting_files, PullOptions,
+};
 pub use outbox::{dispatch_outbox, OutboxDispatchSummary};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -253,23 +255,38 @@ pub fn sync_content(
     let set = |p: &'static str| *phase.lock().unwrap() = p;
     let result = runtime().block_on(with_timeout(SYNC_TIMEOUT, "content sync", async {
         let conn = remote_connection(turso_url, turso_token).await?;
-        set("schema");
-        content::ensure_content_schema(&conn).await?;
-        set("push");
-        content::push_content(&conn, group_key, store, device_id).await?;
-        set("pull");
-        content::pull_content(&conn, group_key, store, device_id).await?;
-        // docs/adr/0001 slice 2: the outbox delivers alongside the legacy scan above
-        // (same keys, same plaintext). It runs last so that if its pass overruns the
-        // shared SYNC_TIMEOUT, inbound data has already been applied — a backlog can
-        // slow the outbox down, never starve the pull.
-        set("outbox");
-        outbox::dispatch_outbox(&conn, group_key, store, device_id)
-            .await
-            .map(|_| ())
+        content_round(&conn, group_key, store, device_id, &set).await
     }));
     record_content_sync_outcome(&result, *phase.lock().unwrap());
     result
+}
+
+/// One `sync_content` round after connecting; `set` names the phase it is in.
+async fn content_round(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    set: &dyn Fn(&'static str),
+) -> Result<(), SyncEngineError> {
+    set("schema");
+    content::ensure_content_schema(conn).await?;
+    set("push");
+    content::push_content(conn, group_key, store, device_id).await?;
+    set("pull");
+    content::pull_content(conn, group_key, store, device_id).await?;
+    // docs/adr/0001 slice 2: the outbox delivers alongside the legacy scan above
+    // (same keys, same plaintext). It runs after the pull so that if its pass overruns the
+    // shared SYNC_TIMEOUT, inbound data has already been applied — a backlog can
+    // slow the outbox down, never starve the pull.
+    set("outbox");
+    outbox::dispatch_outbox(conn, group_key, store, device_id).await?;
+    // Last: a tombstone this device just enqueued is on the relay before its meeting's server rows go, and
+    // a peer's tombstone for this device's meeting pulled above is cleaned up this round. Best effort and
+    // time-boxed: it never fails the round.
+    set("forgotten cleanup");
+    content::delete_forgotten_meeting_rows(conn, group_key, store, device_id).await;
+    Ok(())
 }
 
 /// [`sync_content`] for a peer that only pulls (the iPhone in M4.0, which has nothing to

@@ -102,6 +102,8 @@ struct MeetingsListView: View {
             guard let window = notification.object as? NSWindow, window.title == "Whimbrel" else { return }
             refresh()
         }
+        // A meeting forgotten on another device was deleted here by sync.
+        .onReceive(NotificationCenter.default.publisher(for: MeetingLifecycle.meetingsDidChange)) { _ in refresh() }
         .onChange(of: appState.processingMeetingId) { old, new in
             guard old != nil, new == nil else { return }
             refresh()

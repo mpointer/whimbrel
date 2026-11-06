@@ -2,6 +2,15 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.58] - 2026-11-05
+
+### Mac
+- "Forget meeting" now removes the meeting from all your devices and from the sync server, including its transcript, notes, summary, speaker names and live alerts. The same goes for deleting a meeting from the Library or the Meetings list, and for "Delete meetings without audio" in Settings → Retention. Retention by age still removes meetings only on the device where it runs.
+- A meeting forgotten on another device disappears from this Mac at the next sync, and its recordings are deleted.
+
+### Windows
+- "Forget meeting" removes the meeting from all your devices, as on the Mac. A meeting forgotten on another device disappears at the next sync, and its recordings are deleted.
+
 ## [0.9.57] - 2026-11-05
 
 ### Mac

@@ -42,6 +42,9 @@ pub struct OutboxDispatchSummary {
     /// and delivering them again as `items` after the cutover would give the peer the
     /// same segment under two row types.
     pub legacy_owned: usize,
+    /// `items` rows of a meeting that no longer exists (forgotten, or removed by retention, merge or
+    /// split): acknowledged unsent with receipt `dropped:parent_meeting_gone`.
+    pub dropped: usize,
 }
 
 pub async fn dispatch_outbox(
@@ -65,7 +68,7 @@ pub(crate) async fn dispatch_outbox_at(
     let worker_id = format!("{device_id}:{}", std::process::id());
     let items_capable = all_peers_items_capable(conn, device_id).await?;
     let mut summary = OutboxDispatchSummary::default();
-    let mut parent_terminal: HashMap<i64, bool> = HashMap::new();
+    let mut parent_terminal: HashMap<i64, Option<bool>> = HashMap::new();
     let mut processed = 0;
     let mut chunk_bytes = 0usize;
     // As `push_content`: untagged while the column is known missing or the epoch is unreadable.
@@ -130,6 +133,14 @@ pub(crate) async fn dispatch_outbox_at(
                 continue;
             }
             if let Some(code) = deferral_reason(&op, store, &mut parent_terminal) {
+                if code == PARENT_MEETING_GONE {
+                    // A line of a deleted meeting (forgotten, or by retention): nothing to send, ever.
+                    store
+                        .acknowledge_outbox_operation(&op.operation_id, &worker_id, "dropped:parent_meeting_gone", now_unix_ms)
+                        .map_err(query_error)?;
+                    summary.dropped += 1;
+                    continue;
+                }
                 store
                     .release_outbox_after_failure(
                         &op.operation_id,
@@ -155,6 +166,13 @@ pub(crate) async fn dispatch_outbox_at(
                         .acknowledge_outbox_operation(&op.operation_id, &worker_id, &receipt, now_unix_ms)
                         .map_err(query_error)?;
                     summary.delivered += 1;
+                    // So forgetting the meeting deletes this row, even when the forget came while it was
+                    // in flight (the recorder's cleanup finds it next round).
+                    if let Some(meeting_id) = op_meeting_id(&op) {
+                        store
+                            .record_pushed_meeting_row(meeting_id, op.local_seq, &op.row_type)
+                            .map_err(query_error)?;
+                    }
                     match tag {
                         Some(t) if tagged => {
                             if !tags.contains(&t) {
@@ -196,28 +214,49 @@ pub(crate) async fn dispatch_outbox_at(
     Ok(summary)
 }
 
+/// `deferral_reason` for an `items` row whose meeting no longer exists: acknowledged unsent.
+const PARENT_MEETING_GONE: &str = "parent_meeting_gone";
+
+/// The own meeting a `meeting`, transcript `items`, `live_alert` or `meeting_speaker` op belongs to. A speaker
+/// row about another device's meeting (`origin_device_id` set) names no meeting of this device.
+fn op_meeting_id(op: &ClaimedOutboxOperation) -> Option<i64> {
+    let source_meeting_id = || {
+        serde_json::from_str::<serde_json::Value>(&op.payload_json).ok()?.get("source_meeting_id")?.as_i64()
+    };
+    match op.row_type.as_str() {
+        memory::OUTBOX_ROW_TYPE_MEETING => op.aggregate_id.parse().ok(),
+        memory::OUTBOX_ROW_TYPE_ITEMS | memory::OUTBOX_ROW_TYPE_LIVE_ALERT => source_meeting_id(),
+        // Named `<origin>:<source id>:<speaker>`, with an empty origin for this device's own meeting.
+        memory::OUTBOX_ROW_TYPE_MEETING_SPEAKER if op.aggregate_id.starts_with(':') => source_meeting_id(),
+        _ => None,
+    }
+}
+
 /// `items`-format rows carry the transcript of a meeting that may still be recording;
-/// the legacy `unpushed_item_rows` scan applies the same gate at query time.
+/// the legacy `unpushed_item_rows` scan applies the same gate at query time. A meeting
+/// that is gone (forgotten while the row was in flight) gives `PARENT_MEETING_GONE`.
 fn deferral_reason(
     op: &ClaimedOutboxOperation,
     store: &Store,
-    parent_terminal: &mut HashMap<i64, bool>,
+    parent_terminal: &mut HashMap<i64, Option<bool>>,
 ) -> Option<&'static str> {
     if op.row_type != memory::OUTBOX_ROW_TYPE_ITEMS {
         return None;
     }
-    let meeting_id = serde_json::from_str::<serde_json::Value>(&op.payload_json)
-        .ok()?
-        .get("source_meeting_id")?
-        .as_i64()?;
+    let meeting_id = op_meeting_id(op)?;
     let terminal = *parent_terminal.entry(meeting_id).or_insert_with(|| {
-        store
-            .get_meeting(meeting_id)
-            .ok()
-            .flatten()
-            .is_some_and(|m| matches!(m.status, MeetingStatus::Completed | MeetingStatus::Cancelled))
+        match store.get_meeting(meeting_id) {
+            Ok(Some(m)) => Some(matches!(m.status, MeetingStatus::Completed | MeetingStatus::Cancelled)),
+            Ok(None) => None,
+            // An unreadable meeting is held, never dropped.
+            Err(_) => Some(false),
+        }
     });
-    (!terminal).then_some("parent_meeting_not_terminal")
+    match terminal {
+        None => Some(PARENT_MEETING_GONE),
+        Some(false) => Some("parent_meeting_not_terminal"),
+        Some(true) => None,
+    }
 }
 
 /// Writes one op's row. The `bool` is true when it went in with `tag`; a relay that
@@ -1068,5 +1107,397 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 2, "both versions stay, tagged");
+    }
+
+    // ---- Deletion sync (docs/superpowers/specs/2026-11-05-deletion-sync-design.md) ----
+
+    use crate::content::{delete_forgotten_meeting_rows, pull_content_without_skins, push_content, PullOptions};
+
+    const ROW_TYPE_MEETING_FORGOTTEN: &str = memory::OUTBOX_ROW_TYPE_MEETING_FORGOTTEN;
+
+    /// A's completed meeting with two transcript lines, a live alert and a speaker, all delivered.
+    async fn delivered_meeting(conn: &Connection, group_key: &GroupKey) -> (Store, i64) {
+        let (store_a, meeting_id) = own_store("device-a");
+        let line = |start_cs, text: &str| NewTranscriptSegment { meeting_id, start_cs, speaker_label: "Me".into(), text: text.into() };
+        store_a.insert_transcript_segments(&[line(0, "pelican"), line(500, "heron")]).unwrap();
+        store_a
+            .insert_live_alert(&memory::live_alert::NewLiveAlert {
+                meeting_id,
+                meeting_title: "Outbox Standup".into(),
+                quote: "Can you send the deck?".into(),
+                restatement: "Send the deck".into(),
+                asker: None,
+                at_cs: 100,
+                created_at_unix_ms: crate::now_unix_ms(),
+            })
+            .unwrap();
+        store_a.save_meeting_voices(meeting_id, &[(0, vec![1.0, 0.0])], true).unwrap();
+        store_a.complete_meeting(meeting_id, 2000, None).unwrap();
+        dispatch_outbox_at(conn, group_key, &store_a, "device-a", t0()).await.unwrap();
+        (store_a, meeting_id)
+    }
+
+    fn peer(device_id: &str) -> Store {
+        let store = Store::open_in_memory().unwrap();
+        store.set_own_device_id(device_id);
+        store
+    }
+
+    /// Whether `store` holds any trace of A's meeting `a_meeting`.
+    fn has_a_meeting(store: &Store, a_meeting: i64) -> bool {
+        store.resolve_sync_meeting_map("device-a", a_meeting).unwrap().is_some() || has_line(store, "pelican") || has_line(store, "heron")
+    }
+
+    #[tokio::test]
+    async fn forget_on_recorder_removes_meeting_everywhere() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, a_meeting) = delivered_meeting(&conn, &group_key).await;
+        let store_b = peer("device-b");
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert!(has_a_meeting(&store_b, a_meeting));
+        assert!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await >= 2);
+        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_LIVE_ALERT).await, 1);
+        assert!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_MEETING_SPEAKER).await >= 1);
+
+        store_a.forget_meeting(a_meeting).unwrap().unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+        delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
+
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 0);
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 0);
+        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_LIVE_ALERT).await, 0, "the alert quotes the meeting");
+        assert_eq!(relay_rows(&conn, "device-a", crate::content::ROW_TYPE_MEETING_SPEAKER).await, 0);
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING_FORGOTTEN).await, 1, "the tombstone stays");
+        assert!(store_a.forgotten_pushed_meeting_rows(100).unwrap().is_empty(), "records cleared once deleted");
+
+        crate::content::take_forgotten_meeting_files();
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        assert!(!has_a_meeting(&store_b, a_meeting), "B applied the tombstone");
+        assert_eq!(crate::content::take_forgotten_meeting_files().len(), 1, "B's files go to the app to delete");
+        assert!(store_b.take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000).unwrap().is_empty());
+
+        // A phone joining later (pull-only path) never sees it.
+        let phone = Store::open_in_memory().unwrap();
+        pull_content_without_skins(&conn, &group_key, &phone, "phone", &PullOptions::default()).await.unwrap();
+        assert!(!has_a_meeting(&phone, a_meeting));
+        assert!(phone.is_meeting_forgotten("device-a", None, a_meeting).unwrap());
+    }
+
+    #[tokio::test]
+    async fn forget_on_non_recorder_reaches_recorder() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, a_meeting) = delivered_meeting(&conn, &group_key).await;
+        let store_b = peer("device-b");
+        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        let b_meeting = store_b.resolve_sync_meeting_map("device-a", a_meeting).unwrap().unwrap();
+
+        store_b.forget_meeting(b_meeting).unwrap().unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0()).await.unwrap();
+        delete_forgotten_meeting_rows(&conn, &group_key, &store_b, "device-b").await;
+        assert!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await >= 2, "B never deletes A's rows");
+
+        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        assert!(store_a.get_meeting(a_meeting).unwrap().is_none(), "A applied B's tombstone");
+        delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 0);
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 0);
+        assert_eq!(relay_rows(&conn, "device-b", ROW_TYPE_MEETING_FORGOTTEN).await, 1);
+
+        let store_c = peer("device-c");
+        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
+        assert!(!has_a_meeting(&store_c, a_meeting));
+    }
+
+    /// Final pass 1: B holds A's meeting from before epochs were sent (map epoch ''), so B's tombstone has no
+    /// epoch. A takes it by id, device and start, and its server rows go; a copy with another start doesn't.
+    #[tokio::test]
+    async fn forgetting_a_pre_release_meeting_reaches_the_recorder() {
+        for (start_shift, reaches) in [(0, true), (1, false)] {
+            let (_dir, conn, group_key) = relay_and_store().await;
+            let (store_a, a_meeting) = delivered_meeting(&conn, &group_key).await;
+            let a_start = store_a.get_meeting(a_meeting).unwrap().unwrap().start_unix_ms;
+            let store_b = peer("device-b");
+            let copy = store_b
+                .insert_meeting(&NewMeeting {
+                    device_id: "device-a".into(),
+                    start_unix_ms: a_start + start_shift,
+                    end_unix_ms: None,
+                    title: "Old".into(),
+                    attendees: vec![],
+                    trigger: MeetingTrigger::Manual,
+                    audio_path: None,
+                    status: memory::MeetingStatus::Completed,
+                })
+                .unwrap();
+            store_b.record_sync_meeting_map("device-a", a_meeting, copy).unwrap();
+
+            store_b.forget_meeting(copy).unwrap().unwrap();
+            dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0()).await.unwrap();
+            pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+            delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
+
+            assert_eq!(store_a.get_meeting(a_meeting).unwrap().is_none(), reaches, "shift {start_shift}");
+            assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await == 0, reaches, "shift {start_shift}");
+            assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await == 0, reaches, "shift {start_shift}");
+        }
+    }
+
+    #[tokio::test]
+    async fn late_rows_for_forgotten_meeting_dropped() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, a_meeting) = delivered_meeting(&conn, &group_key).await;
+        let forgotten = memory::MeetingForgotten {
+            origin_device_id: "device-a".into(),
+            origin_epoch: Some(store_a.sync_entity_epoch().unwrap()),
+            source_meeting_id: a_meeting,
+            forgotten_at_unix_ms: 1,
+            source_start_unix_ms: None,
+        };
+
+        // The tombstone first, then every row of the meeting: all dropped, nothing left waiting.
+        let store_c = peer("device-c");
+        store_c.apply_meeting_forgotten(&forgotten).unwrap();
+        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
+        assert!(!has_a_meeting(&store_c, a_meeting));
+        assert!(store_c.list_sync_pending_dependencies("device-a").unwrap().is_empty());
+        assert!(store_c.take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000).unwrap().is_empty(), "the alert is dropped");
+
+        // Lines that arrived before their meeting wait for it; the tombstone ends the wait, both while the
+        // lines are still on the relay and after the recorder deleted them.
+        conn.execute("DELETE FROM sync_row WHERE device_id = 'device-a' AND row_type = 'meeting'", ()).await.unwrap();
+        for clean_up_first in [false, true] {
+            let store_d = peer("device-d");
+            pull_content(&conn, &group_key, &store_d, "device-d").await.unwrap();
+            assert_eq!(store_d.list_sync_pending_dependencies("device-a").unwrap().len(), 2, "lines wait for the meeting");
+            let waiting_alert = store_d.take_unnotified_peer_alerts(crate::now_unix_ms(), 1_800_000).unwrap();
+            assert_eq!(waiting_alert.len(), 1, "the alert waits for its meeting");
+            store_d.apply_meeting_forgotten(&forgotten).unwrap();
+            assert!(store_d.get_live_alert(waiting_alert[0].id).unwrap().is_none(), "the tombstone removes it");
+            if clean_up_first {
+                store_a.forget_meeting(a_meeting).unwrap();
+                dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
+                delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
+                assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 0);
+            }
+            pull_content(&conn, &group_key, &store_d, "device-d").await.unwrap();
+            assert!(store_d.list_sync_pending_dependencies("device-a").unwrap().is_empty(), "clean_up_first: {clean_up_first}");
+            assert!(!has_a_meeting(&store_d, a_meeting));
+        }
+    }
+
+    #[tokio::test]
+    async fn recorder_deletes_its_server_rows_by_key() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        // B has rows of its own, and A a second meeting: neither is touched.
+        let (store_b, b_meeting) = own_store("device-b");
+        store_b.complete_meeting(b_meeting, 2000, None).unwrap();
+        push_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        let (store_a, kept) = own_store("device-a");
+        let line = |meeting_id, text: &str| NewTranscriptSegment { meeting_id, start_cs: 0, speaker_label: "Me".into(), text: text.into() };
+        store_a.insert_transcript_segments(&[line(kept, "kept")]).unwrap();
+        store_a.complete_meeting(kept, 2000, None).unwrap();
+        let gone = store_a
+            .insert_meeting(&NewMeeting {
+                device_id: "device-a".into(),
+                start_unix_ms: 5000,
+                end_unix_ms: None,
+                title: "Gone".into(),
+                attendees: vec![],
+                trigger: MeetingTrigger::Manual,
+                audio_path: None,
+                status: memory::MeetingStatus::Recording,
+            })
+            .unwrap();
+        store_a.insert_transcript_segments(&[line(gone, "gone")]).unwrap();
+        store_a.complete_meeting(gone, 6000, None).unwrap();
+        // The legacy scan pushes A's rows, so only what it recorded names them for the cleanup.
+        push_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 2);
+
+        store_a.forget_meeting(gone).unwrap().unwrap();
+        delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
+
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 1, "only the kept meeting's row");
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 1);
+        assert_eq!(relay_rows(&conn, "device-b", ROW_TYPE_MEETING).await, 1, "another device's rows stay");
+        let store_c = peer("device-c");
+        pull_content(&conn, &group_key, &store_c, "device-c").await.unwrap();
+        assert!(has_line(&store_c, "kept") && !has_line(&store_c, "gone"));
+
+        // A delivery in flight at the forget (leased, acknowledged after it) is recorded and cleaned up too.
+        let (store_e, late) = own_store("device-e");
+        store_e.insert_transcript_segments(&[line(late, "late")]).unwrap();
+        store_e.complete_meeting(late, 2000, None).unwrap();
+        let now = t0();
+        store_e.claim_due_outbox_batch(memory::OUTBOX_CONNECTOR, "crashed", now, now + LEASE_MS, 100).unwrap();
+        store_e.forget_meeting(late).unwrap().unwrap();
+        let summary = dispatch_outbox_at(&conn, &group_key, &store_e, "device-e", now + LEASE_MS + 1).await.unwrap();
+        assert_eq!(summary.dropped, 1, "its line has no meeting to go with: acknowledged unsent");
+        assert_eq!(relay_rows(&conn, "device-e", ROW_TYPE_ITEMS).await, 0);
+        assert_eq!(relay_rows(&conn, "device-e", ROW_TYPE_MEETING).await, 1, "the leased row still went out");
+        delete_forgotten_meeting_rows(&conn, &group_key, &store_e, "device-e").await;
+        assert_eq!(relay_rows(&conn, "device-e", ROW_TYPE_MEETING).await, 0);
+        assert!(states(&store_e).iter().all(|s| s == "delivered"), "{:?}", states(&store_e));
+    }
+
+    /// A row leased at the forget and acknowledged only after a cleanup round already finished (tag deleted,
+    /// nothing recorded yet), with other meeting deletes in between: the next cleanup still deletes it.
+    #[tokio::test]
+    async fn a_late_acknowledged_row_is_cleaned_up_after_the_cleanup_finished() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_e, late) = own_store("device-e");
+        let line = |meeting_id, text: &str| NewTranscriptSegment { meeting_id, start_cs: 0, speaker_label: "Me".into(), text: text.into() };
+        store_e.insert_transcript_segments(&[line(late, "late")]).unwrap();
+        store_e.complete_meeting(late, 2000, None).unwrap();
+        let other = store_e
+            .insert_meeting(&NewMeeting {
+                device_id: "device-e".into(),
+                start_unix_ms: 3000,
+                end_unix_ms: None,
+                title: "Other".into(),
+                attendees: vec![],
+                trigger: MeetingTrigger::Manual,
+                audio_path: None,
+                status: memory::MeetingStatus::Completed,
+            })
+            .unwrap();
+        let now = t0();
+        store_e.claim_due_outbox_batch(memory::OUTBOX_CONNECTOR, "crashed", now, now + LEASE_MS, 100).unwrap();
+        store_e.forget_meeting(late).unwrap().unwrap();
+        delete_forgotten_meeting_rows(&conn, &group_key, &store_e, "device-e").await;
+        store_e.mark_meeting_tag_deleted(late).unwrap(); // as on a relay with entity tags
+        assert!(store_e.forgotten_pushed_meeting_rows(10).unwrap().is_empty(), "this round's work is done");
+        store_e.delete_meeting(other).unwrap(); // a delete path that prunes its own records
+
+        dispatch_outbox_at(&conn, &group_key, &store_e, "device-e", now + LEASE_MS + 1).await.unwrap();
+        assert_eq!(relay_rows(&conn, "device-e", ROW_TYPE_MEETING).await, 1, "the leased row went out late");
+        delete_forgotten_meeting_rows(&conn, &group_key, &store_e, "device-e").await;
+        assert_eq!(relay_rows(&conn, "device-e", ROW_TYPE_MEETING).await, 0);
+    }
+
+    /// A re-created database (new epoch, same device id, ids restarting) gets an old tombstone that doesn't
+    /// know its epoch for a reused meeting id: the new meeting and its server rows stay.
+    #[tokio::test]
+    async fn an_unknown_epoch_tombstone_never_reaches_the_recorders_new_meeting() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, a_meeting) = delivered_meeting(&conn, &group_key).await;
+        let old = memory::MeetingForgotten {
+            origin_device_id: "device-a".into(),
+            origin_epoch: None,
+            source_meeting_id: a_meeting,
+            forgotten_at_unix_ms: 1,
+            source_start_unix_ms: None,
+        };
+        assert!(store_a.apply_meeting_forgotten(&old).unwrap().is_none());
+        delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
+        assert!(store_a.get_meeting(a_meeting).unwrap().is_some());
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 1);
+        assert!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await >= 2);
+    }
+
+    /// Review fix A: a `meeting` row pushed before `pushed_meeting_row` existed goes by its entity tag, and an
+    /// earlier database's row with the same meeting id (another epoch, so another tag) stays.
+    #[tokio::test]
+    async fn recorder_deletes_a_legacy_meeting_row_by_its_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::content::tests::compacting_relay(&dir).await;
+        let group_key = GroupKey::generate();
+        let (store_a, id) = own_store("device-a");
+        let epoch = store_a.sync_entity_epoch().unwrap();
+        for (seq, epoch) in [(500, epoch.as_str()), (501, "an-earlier-database")] {
+            let tag = crate::content::tag_for(&group_key, "device-a", epoch, &format!("meeting:{id}"));
+            conn.execute(
+                "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms, entity_tag) \
+                 VALUES ('device-a', ?1, 'meeting', 'x', 0, ?2)",
+                params![seq, tag],
+            )
+            .await
+            .unwrap();
+        }
+        store_a.forget_meeting(id).unwrap().unwrap();
+        delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
+        let mut rows = conn.query("SELECT local_seq FROM sync_row WHERE row_type = 'meeting'", ()).await.unwrap();
+        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 501);
+        assert!(rows.next().await.unwrap().is_none());
+        assert!(store_a.meetings_awaiting_tag_delete().unwrap().is_empty(), "done once");
+    }
+
+    /// Review fix B: a re-created database reuses `local_seq`s, and the relay keeps the earlier database's row
+    /// at that key (the new INSERT was a no-op), yet the seq is recorded. That row predates the new meeting by
+    /// days, so the cleanup leaves it.
+    #[tokio::test]
+    async fn an_earlier_databases_row_at_a_reused_seq_survives() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, _) = own_store("device-a");
+        let now = crate::now_unix_ms();
+        let id = store_a
+            .insert_meeting(&NewMeeting {
+                device_id: "device-a".into(),
+                start_unix_ms: now,
+                end_unix_ms: None,
+                title: "Today".into(),
+                attendees: vec![],
+                trigger: MeetingTrigger::Manual,
+                audio_path: None,
+                status: memory::MeetingStatus::Recording,
+            })
+            .unwrap();
+        for (seq, created) in [(7, now - 2 * 86_400_000), (8, now + 1)] {
+            conn.execute(
+                "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) VALUES ('device-a', ?1, 'items', 'x', ?2)",
+                params![seq, created],
+            )
+            .await
+            .unwrap();
+            store_a.record_pushed_meeting_row(id, seq, "items").unwrap();
+        }
+        store_a.forget_meeting(id).unwrap().unwrap();
+        delete_forgotten_meeting_rows(&conn, &group_key, &store_a, "device-a").await;
+        let mut rows = conn.query("SELECT local_seq FROM sync_row WHERE row_type = 'items'", ()).await.unwrap();
+        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 7, "the earlier database's row stays");
+        assert!(rows.next().await.unwrap().is_none(), "this meeting's row is gone");
+        assert!(store_a.forgotten_pushed_meeting_rows(10).unwrap().is_empty());
+    }
+
+    /// Review fix C: an earlier database's tombstone for an id this database reuses never drops a peer's speaker
+    /// names for the new meeting.
+    #[tokio::test]
+    async fn a_stale_own_tombstone_never_drops_peer_speaker_names() {
+        use memory::speaker_names::NameStatus;
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, a_meeting) = own_store("device-a");
+        store_a.save_meeting_voices(a_meeting, &[(0, vec![1.0, 0.0])], true).unwrap();
+        let (store_b, b_meeting) = meeting_on_b(&conn, &group_key, &store_a, a_meeting).await;
+        let stale = memory::MeetingForgotten {
+            origin_device_id: "device-a".into(),
+            origin_epoch: Some("an-earlier-database".into()),
+            source_meeting_id: a_meeting,
+            forgotten_at_unix_ms: 1,
+            source_start_unix_ms: None,
+        };
+        assert!(store_a.apply_meeting_forgotten(&stale).unwrap().is_none());
+        assert!(store_a.is_meeting_forgotten("device-a", None, a_meeting).unwrap(), "matches epoch-lessly");
+
+        tick();
+        store_b.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
+        store_b.set_meeting_speaker(b_meeting, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        dispatch_outbox_at(&conn, &group_key, &store_b, "device-b", t0()).await.unwrap();
+        pull_content(&conn, &group_key, &store_a, "device-a").await.unwrap();
+        assert_eq!(store_a.meeting_speakers(a_meeting).unwrap()[0].name.as_deref(), Some("Sam"));
+    }
+
+    /// Review fix F: the cleanup runs after the outbox, so a forget's tombstone is on the relay before its
+    /// meeting's server rows go.
+    #[tokio::test]
+    async fn a_round_cleans_up_after_the_outbox() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, a_meeting) = delivered_meeting(&conn, &group_key).await;
+        store_a.forget_meeting(a_meeting).unwrap().unwrap();
+        let phases = std::sync::Mutex::new(Vec::new());
+        crate::content_round(&conn, &group_key, &store_a, "device-a", &|p| phases.lock().unwrap().push(p)).await.unwrap();
+        assert_eq!(*phases.lock().unwrap(), ["schema", "push", "pull", "outbox", "forgotten cleanup"]);
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING_FORGOTTEN).await, 1);
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_MEETING).await, 0);
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_ITEMS).await, 0);
     }
 }
