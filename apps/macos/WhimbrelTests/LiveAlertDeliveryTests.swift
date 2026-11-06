@@ -19,7 +19,7 @@ final class LiveAlertDeliveryTests: XCTestCase {
     }
 
     private func makeDelivery(
-        emailEnabled: Bool = true, alertsEnabled: Bool = true, sleep: ((UInt64) async -> Void)? = nil
+        emailEnabled: Bool = true, away: Bool = true, alertsEnabled: Bool = true, sleep: ((UInt64) async -> Void)? = nil
     ) -> LiveAlertDelivery {
         LiveAlertDelivery(
             deviceId: "mac-1",
@@ -31,6 +31,7 @@ final class LiveAlertDeliveryTests: XCTestCase {
             },
             setEmailStatus: { [unowned self] id, status in statuses.append((id, status)) },
             emailEnabled: { emailEnabled },
+            userAway: { away },
             evidence: { refs in refs.map { "Item \($0.id) · Nov 1, 2026" } },
             context: { _ in ["3:20  Them: Thanks, Sam.", "3:22  Them: So the numbers..."] },
             sleep: sleep ?? { [unowned self] seconds in slept.append(seconds) }
@@ -185,6 +186,22 @@ final class LiveAlertDeliveryTests: XCTestCase {
         XCTAssertEqual(statuses.map(\.1), ["off"])
     }
 
+    func testAtTheMacRecordsPresentAndSendsNothingButStillNotifies() async {
+        let delivery = makeDelivery(away: false)
+        delivery.alertDetected(alert())
+        delivery.alertDrafted(alert(), answer: nil)
+        await delivery.settle()
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertEqual(statuses.map(\.1), ["present"])
+        XCTAssertFalse(posted.isEmpty)
+    }
+
+    func testAwayIsAwayModeOrFiveIdleMinutes() {
+        XCTAssertTrue(LiveAlertDelivery.isAway(awayModeRunning: true, idleSeconds: 0))
+        XCTAssertTrue(LiveAlertDelivery.isAway(awayModeRunning: false, idleSeconds: 300))
+        XCTAssertFalse(LiveAlertDelivery.isAway(awayModeRunning: false, idleSeconds: 299))
+    }
+
     // MARK: - Fix round 1
 
     func testOnlyLiveAlertsPresentInTheForeground() {
@@ -192,6 +209,7 @@ final class LiveAlertDeliveryTests: XCTestCase {
         XCTAssertEqual(NotificationClickHandler.presentationOptions(forIdentifier: "live-alert-more-mac-1-3"), [.banner, .list, .sound])
         XCTAssertEqual(NotificationClickHandler.presentationOptions(forIdentifier: "recording-notice-ABC"), [])
         XCTAssertEqual(NotificationClickHandler.presentationOptions(forIdentifier: "routine-run-4"), [])
+        XCTAssertEqual(NotificationClickHandler.presentationOptions(forIdentifier: "meeting-prep-4"), [.banner, .list, .sound], "a prep brief shows with Whimbrel in front")
     }
 
     func testEmailBodyCarriesContextLinesInOrderAboveTheQuote() {

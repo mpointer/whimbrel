@@ -70,6 +70,14 @@ final class LiveAlertDelivery: AlertDelivering {
     static let peerCeiling = LiveQuestionWatcher.maxAlerts
     /// Peer alerts older than this when pulled only appear on the meeting page.
     static let peerMaxAgeMs: Int64 = 30 * 60 * 1000
+    /// No keyboard or mouse input for this long counts as away from the Mac.
+    static let awayIdleSeconds: TimeInterval = 5 * 60
+
+    /// The email is for a question the user missed: only during an Away Mode meeting, or after
+    /// the Mac has sat idle. In a meeting they're at, they heard it (Mike, 2026-11-05).
+    nonisolated static func isAway(awayModeRunning: Bool, idleSeconds: TimeInterval) -> Bool {
+        awayModeRunning || idleSeconds >= awayIdleSeconds
+    }
 
     private let deviceId: String
     private let alertsEnabled: () -> Bool
@@ -77,6 +85,7 @@ final class LiveAlertDelivery: AlertDelivering {
     private let sendEmail: (String, String) async -> Result<Void, SelfSendError>
     private let setEmailStatus: (Int64, String) async -> Void
     private let emailEnabled: () -> Bool
+    private let userAway: () -> Bool
     private let evidence: ([CoreContextItemRef]) async -> [String]
     private let context: (CoreLiveAlert) async -> [String]
     private let sleep: (UInt64) async -> Void
@@ -98,6 +107,7 @@ final class LiveAlertDelivery: AlertDelivering {
         sendEmail: @escaping (String, String) async -> Result<Void, SelfSendError>,
         setEmailStatus: @escaping (Int64, String) async -> Void,
         emailEnabled: @escaping () -> Bool,
+        userAway: @escaping () -> Bool,
         evidence: @escaping ([CoreContextItemRef]) async -> [String],
         context: @escaping (CoreLiveAlert) async -> [String],
         sleep: @escaping (UInt64) async -> Void = { try? await Task.sleep(nanoseconds: $0 * 1_000_000_000) }
@@ -108,6 +118,7 @@ final class LiveAlertDelivery: AlertDelivering {
         self.sendEmail = sendEmail
         self.setEmailStatus = setEmailStatus
         self.emailEnabled = emailEnabled
+        self.userAway = userAway
         self.evidence = evidence
         self.context = context
         self.sleep = sleep
@@ -267,9 +278,10 @@ final class LiveAlertDelivery: AlertDelivering {
 
     func alertDetected(_ alert: CoreLiveAlert) {
         post(notice(for: alert, answer: nil))
-        guard emailEnabled() else {
+        let status = !emailEnabled() ? "off" : !userAway() ? "present" : nil
+        if let status {
             // id -1: the store insert failed, so there's no row to mark.
-            if alert.id >= 0 { track { [setEmailStatus] in await setEmailStatus(alert.id, "off") } }
+            if alert.id >= 0 { track { [setEmailStatus] in await setEmailStatus(alert.id, status) } }
             return
         }
         emailPending.insert(key(alert))
@@ -386,25 +398,68 @@ final class LiveAlertDelivery: AlertDelivering {
     }
 }
 
-/// Notification clicks: an alert opens its meeting at the moment it was asked. Also lets live
-/// question alerts show while Whimbrel is the frontmost app (a meeting often is); every other
-/// notification stays hidden there, as before this delegate existed.
+/// Notification clicks: an alert opens its meeting at the moment it was asked; a budget notice
+/// opens Settings → AI Providers. Also lets live question alerts and budget notices show while
+/// Whimbrel is the frontmost app; every other notification stays hidden there, as before this
+/// delegate existed.
 final class NotificationClickHandler: NSObject, UNUserNotificationCenterDelegate {
     private let open: @MainActor (DeepLink.Target) -> Void
+    private let openPrep: @MainActor (String) -> Void
+    private let openAIProviders: @MainActor () -> Void
+    /// "Still in a meeting?"'s buttons: true for "Keep recording", false for "Stop".
+    private let stillInMeeting: @MainActor (_ keep: Bool) -> Void
 
-    init(open: @escaping @MainActor (DeepLink.Target) -> Void) {
+    /// Meeting Prep notifications carry their brief's key here, not a deep link.
+    static let prepKeyInfo = "prepKey"
+    /// Identifier prefix of Meeting Prep's "Prep ready" notifications.
+    static let prepIdentifierPrefix = "meeting-prep-"
+
+    init(open: @escaping @MainActor (DeepLink.Target) -> Void, openPrep: @escaping @MainActor (String) -> Void = { _ in },
+         openAIProviders: @escaping @MainActor () -> Void,
+         stillInMeeting: @escaping @MainActor (_ keep: Bool) -> Void = { _ in }) {
         self.open = open
+        self.openPrep = openPrep
+        self.openAIProviders = openAIProviders
+        self.stillInMeeting = stillInMeeting
     }
 
     func userNotificationCenter(
         _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        let link = (response.notification.request.content.userInfo["deepLink"] as? String).flatMap(URL.init(string:)).flatMap(DeepLink.parse)
+        let content = response.notification.request.content
+        let link = (content.userInfo["deepLink"] as? String).flatMap(URL.init(string:)).flatMap(DeepLink.parse)
+        let prepKey = content.userInfo[Self.prepKeyInfo] as? String
+        let click = prepKey != nil && response.actionIdentifier == UNNotificationDefaultActionIdentifier
+            ? .openPrep : Self.click(category: content.categoryIdentifier, action: response.actionIdentifier, hasLink: link != nil)
         let open = open
+        let openPrep = openPrep
+        let openAIProviders = openAIProviders
+        let stillInMeeting = stillInMeeting
         Task { @MainActor in
-            if let link { open(link) } else { NSApp.activate(ignoringOtherApps: true) }
+            switch click {
+            case .openAIProviders: openAIProviders()
+            case .stillInMeeting(let keep): stillInMeeting(keep)
+            case .openLink: if let link { open(link) }
+            case .openPrep: if let prepKey { openPrep(prepKey) }
+            case .activate: NSApp.activate(ignoringOtherApps: true)
+            case .ignore: break
+            }
             completionHandler()
         }
+    }
+
+    enum Click: Equatable { case openAIProviders, stillInMeeting(keep: Bool), openLink, openPrep, activate, ignore }
+
+    /// What a click does: a budget notice's body or its "Raise budget" action opens Settings →
+    /// AI Providers and dismissing it does nothing; "Still in a meeting?"'s buttons answer it
+    /// (its body brings Whimbrel forward, where the panel shows); anything else opens its deep link, or
+    /// brings Whimbrel forward.
+    static func click(category: String, action: String, hasLink: Bool) -> Click {
+        if category == BudgetNotices.category { return action == UNNotificationDismissActionIdentifier ? .ignore : .openAIProviders }
+        if category == StillInMeeting.notificationCategory, [StillInMeeting.keepAction, StillInMeeting.stopAction].contains(action) {
+            return .stillInMeeting(keep: action == StillInMeeting.keepAction)
+        }
+        return hasLink ? .openLink : .activate
     }
 
     func userNotificationCenter(
@@ -415,6 +470,8 @@ final class NotificationClickHandler: NSObject, UNUserNotificationCenterDelegate
     }
 
     static func presentationOptions(forIdentifier id: String) -> UNNotificationPresentationOptions {
-        id.hasPrefix("live-alert-") ? [.banner, .list, .sound] : []
+        // Budget notices usually follow the user's own Ask, with Whimbrel in front; a prep brief
+        // lands minutes before a meeting, often while Whimbrel is in front.
+        ["live-alert-", "budget-", prepIdentifierPrefix].contains(where: id.hasPrefix) ? [.banner, .list, .sound] : []
     }
 }

@@ -353,6 +353,7 @@ mod tests {
                 9,
                 None,
                 &AppliedMeeting {
+                    attendee_details: vec![],
                     start_unix_ms: 1_000,
                     end_unix_ms: Some(2_000),
                     title: "Pricing review".into(),
@@ -368,6 +369,7 @@ mod tests {
                     summary_provider: None,
                     summary_model: None,
                     keep_media: None,
+                    trimmed_keep_ms: None,
                 },
             )
             .unwrap();

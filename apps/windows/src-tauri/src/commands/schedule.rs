@@ -119,7 +119,7 @@ pub async fn meeting_record_start_event(app: AppHandle, event_id: String) -> Res
             .as_ref()
             .and_then(|c| c.upcoming(now).into_iter().find(|e| e.id == event_id))
             .ok_or_else(|| CommandError::invalid_input(tr("That meeting is no longer on the calendar.", &[])))?;
-        let started = state.meetings()?.start_calendar(event.title, event.attendees, Some(event.start_unix_ms), state.detected.candidate_pid());
+        let started = state.meetings()?.start_calendar(event.title, event.attendees, event.attendee_details, Some(event.start_unix_ms), state.detected.candidate_pid());
         crate::tray::refresh(&app);
         started
     })

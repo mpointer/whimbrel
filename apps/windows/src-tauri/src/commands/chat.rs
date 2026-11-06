@@ -157,13 +157,28 @@ fn run(store: &StoreHandle, ask: &Ask, send: &dyn Fn(ChatEvent)) {
     };
     match (route, prepared) {
         (Some(route), Some(Ok(prepared))) => stream(store, ask, &effective, route, prepared, history, context, send),
-        // The spend cap, checked before any provider is tried.
-        (_, Some(Err(error))) => fail(send, error.into(), false),
+        // The spend cap, checked before any provider is tried. A spent monthly budget on the
+        // provider that would stream is not the end: the preferred provider only orders the
+        // chain, so the blocking answer tries the next one (it fails with the budget message
+        // only when every provider is spent).
+        (_, Some(Err(error))) if !streams_past(&error) => fail(send, error.into(), false),
+        (_, Some(Err(_))) => {
+            // The chain picks a provider past the spent one and doesn't say which: name none.
+            send(blocking_started(&effective, &context));
+            send(ChatEvent::FellBack);
+            blocking(store, ask, &effective, history, &context, send);
+        }
         _ => {
             send(blocking_started(&effective, &context));
             blocking(store, ask, &effective, history, &context, send);
         }
     }
+}
+
+/// Whether a failed `prepare_ask` still leaves the blocking answer to try: a spent monthly budget
+/// on the streaming provider does, since the blocking chain skips it for the next provider.
+fn streams_past(error: &api::ApiError) -> bool {
+    matches!(error, api::ApiError::BudgetSpent(_))
 }
 
 /// Reports a failed question to the UI and the log (the error, never the question).
@@ -217,7 +232,7 @@ fn stream(
         }
         TerminalAction::Fail => {
             api::ask::discard_ask(&prepared.prepare_id);
-            fail(send, CommandError::ProviderFailure, true);
+            fail(send, CommandError::provider_failure(), true);
         }
     }
 }
@@ -367,6 +382,15 @@ pub async fn chat_spend(state: State<'_, AppState>) -> Result<ChatSpend, Command
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spent_budget_on_the_streaming_provider_falls_back_to_the_chain() {
+        let spent = api::ApiError::BudgetSpent(api::budget::BudgetSpent { provider: llm::Provider::Anthropic, spent_cents: 2500, budget_cents: 2500 });
+        assert!(streams_past(&spent), "the blocking chain tries the next provider");
+        let cap = api::ApiError::SpendCap(llm::SpendCapError { spent_cents: 200, cap_cents: 200, scope: llm::SpendCapScope::User });
+        assert!(!streams_past(&cap), "the daily cap stops every provider");
+        assert!(!streams_past(&api::ApiError::ProviderFailure));
+    }
 
     fn store() -> StoreHandle {
         StoreHandle::spawn(|| memory::Store::open_in_memory().map_err(|e| e.to_string())).unwrap()

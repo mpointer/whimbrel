@@ -221,7 +221,13 @@ struct MeetingDetailContentView: View {
     @State private var tab: MeetingPageTab = .notes
     @State private var isEditing = false
     @State private var segments: [CoreMeetingTranscriptSegment] = []
+    /// Raw speaker label ("Speaker 1") -> how it shows (a name, maybe a guess), per loaded page.
+    @State private var speakerNames: [String: CoreDisplayLabel] = [:]
+    @State private var invitees: [CoreAttendee] = []
+    @State private var namesChanged = false
     @State private var parts: [CoreMeetingPart] = []
+    /// Until the parts load, a continued meeting can't be told apart: no speaker menu yet.
+    @State private var partsLoaded = false
     @State private var highlightedSegmentId: Int64?
     @State private var liveAlerts: [LiveAlertsSection.Row] = []
     @State private var liveStatus: LiveTranscriptionService.Status = .idle
@@ -366,6 +372,10 @@ struct MeetingDetailContentView: View {
                             : nil,
                         onJump: segments.isEmpty ? nil : { seekTranscript(to: $0) }
                     )
+                    MeetingPrepSection(meetingId: meeting.id)
+                    if namesChanged {
+                        NamesChangedBanner(updating: isRegenerating, canUpdate: transcriptText != nil, error: regenerateError) { regenerate() }
+                    }
                     Picker("", selection: $tab) {
                         ForEach(MeetingPageTab.allCases) { Text($0.title).tag($0) }
                     }
@@ -409,6 +419,7 @@ struct MeetingDetailContentView: View {
         // change would sometimes wipe a still-relevant error the user hasn't acted on.
         .onChange(of: selectedProvider) { _, _ in
             regenerateError = nil
+            appState.clearSummaryFailure(meetingId: meeting.id)
         }
         .onReceive(LiveAlertsSection.refresh) { _ in
             let alertsOn = LiveQuestionWatcher.shouldRun(settings: appState.liveQuestionSettings, names: appState.profile.liveQuestionNames)
@@ -469,8 +480,39 @@ struct MeetingDetailContentView: View {
         guard let store = appState.coreStore else { return }
         let meetingId = meeting.id
         CoreMemoryStore.accessQueue.async {
-            let page = store.getTranscriptSegmentsPage(meetingId: meetingId, offset: 0, limit: 20_000)
-            DispatchQueue.main.async { segments = page?.segments ?? [] }
+            let loaded = store.getTranscriptSegmentsPage(meetingId: meetingId, offset: 0, limit: 20_000)?.segments ?? []
+            let names = Self.speakerNames(store: store, meetingId: meetingId, segments: loaded)
+            let people = store.meetingAttendeeDetails(meetingId: meetingId) ?? []
+            DispatchQueue.main.async {
+                segments = loaded
+                speakerNames = names
+                invitees = people
+            }
+        }
+    }
+
+    /// Each distinct raw label resolved once. Call on `accessQueue`.
+    private static func speakerNames(store: CoreMemoryStore, meetingId: Int64, segments: [CoreMeetingTranscriptSegment]) -> [String: CoreDisplayLabel] {
+        let raw = Array(Set(segments.map(\.speakerLabel)))
+        guard !raw.isEmpty, let shown = store.displayLabels(meetingId: meetingId, labels: raw), shown.count == raw.count else { return [:] }
+        return Dictionary(uniqueKeysWithValues: zip(raw, shown))
+    }
+
+    /// Mike's pick from a speaker's menu (`write` stores it: store, meeting id, speaker id):
+    /// confirm it, re-resolve the page's names, offer a new summary.
+    private func nameSpeaker(rawLabel: String, write: @escaping (CoreMemoryStore, Int64, Int) -> [CoreMeetingSpeaker]?) {
+        guard let store = appState.coreStore, let speakerId = MeetingDetailLogic.speakerId(rawLabel: rawLabel) else { return }
+        let meetingId = meeting.id
+        let loaded = segments
+        CoreMemoryStore.accessQueue.async {
+            guard write(store, meetingId, speakerId) != nil else { return }
+            let names = Self.speakerNames(store: store, meetingId: meetingId, segments: loaded)
+            DispatchQueue.main.async {
+                speakerNames = names
+                regenerateError = nil
+                appState.clearSummaryFailure(meetingId: meetingId)
+                namesChanged = true
+            }
         }
     }
 
@@ -483,6 +525,7 @@ struct MeetingDetailContentView: View {
             let loaded = store.meetingParts(meetingId: meetingId) ?? []
             DispatchQueue.main.async {
                 parts = loaded
+                partsLoaded = true
                 if reloadTranscript { transcriptText = nil }
                 loadTranscriptIfNeeded()
             }
@@ -604,7 +647,12 @@ struct MeetingDetailContentView: View {
                     if let label = dividerAt[index] { rejoinedDivider(label) }
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                         HStack(spacing: Spacing.xs) {
-                            Text(verbatim: MeetingDetailLogic.displaySpeaker(segment.speakerLabel)).font(.whimbrelBody(.caption).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+                            SpeakerMenu(
+                                shown: speakerNames[segment.speakerLabel] ?? CoreDisplayLabel(label: segment.speakerLabel, guess: false),
+                                invitees: invitees,
+                                offered: partsLoaded && MeetingDetailLogic.speakerMenuOffered(rawLabel: segment.speakerLabel, partCount: parts.count),
+                                onConfirm: { personKey in nameSpeaker(rawLabel: segment.speakerLabel) { $0.confirmMeetingSpeaker(meetingId: $1, speakerId: $2, personKey: personKey) } }
+                            ) { name, email in nameSpeaker(rawLabel: segment.speakerLabel) { $0.setMeetingSpeaker(meetingId: $1, speakerId: $2, name: name, email: email) } }
                             Text(Self.clock(segment.startCs)).font(.whimbrelBody(.caption2)).foregroundStyle(Color.whimbrelTextSecondary)
                         }
                         Text(segment.text)
@@ -638,14 +686,10 @@ struct MeetingDetailContentView: View {
     }
 
     private var fullTranscriptText: String {
-        if let t = transcriptText, !t.isEmpty { return t }
-        return segments.map { "\($0.speakerLabel) (\(Self.clock($0.startCs))): \($0.text)" }.joined(separator: "\n")
+        MeetingDetailLogic.transcriptCopyText(fileText: transcriptText, segments: segments, names: speakerNames)
     }
 
-    private static func clock(_ startCs: Int64) -> String {
-        let seconds = Int(startCs / 100)
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
+    private static func clock(_ startCs: Int64) -> String { MeetingDetailLogic.clock(startCs) }
 
     /// The empty-state placeholder shown INSIDE the summary editor when there's no
     /// TL;DR text yet -- distinct from the "no card at all" states below, which only
@@ -909,11 +953,14 @@ struct MeetingDetailContentView: View {
                         ProgressView().controlSize(.small)
                     }
                 }
-                if let regenerateError {
-                    Text(regenerateError)
+                // The last failure, automatic or Regenerate, until a summary succeeds.
+                let failure = isRegenerating ? nil : appState.summaryFailures[meeting.id]
+                if let message = regenerateError ?? failure?.userFacingMessage {
+                    Text(message)
                         .font(.whimbrelBody(.caption2))
                         .foregroundStyle(Color.whimbrelError)
                 }
+                if failure?.opensAIProvidersSettings == true { OpenAIProvidersSettingsButton() }
             }
         }
     }
@@ -1067,6 +1114,7 @@ struct MeetingDetailContentView: View {
             isRegenerating = false
             switch outcome {
             case .some(.success(let summary)):
+                namesChanged = false
                 // The FFI call above (`Store::update_meeting_summary`, unmodified) has
                 // already persisted the new summary_* columns -- this only decides what
                 // the editable-overlay layer does with the draft/action items sitting on
@@ -1399,6 +1447,55 @@ enum MeetingDetailLogic {
             }
             return stored
         }
+    }
+
+    /// A resolved label as shown: a guessed name reads "Sam?".
+    static func displaySpeaker(_ label: String, guess: Bool) -> String {
+        guess ? "\(label)?" : displaySpeaker(label)
+    }
+
+    /// "Speaker N" is speaker id N-1 (the id core names); nil for "Me", "Others" or a name.
+    static func speakerId(rawLabel: String) -> Int? {
+        guard rawLabel.hasPrefix("Speaker "), let n = Int(rawLabel.dropFirst("Speaker ".count)), n >= 1 else { return nil }
+        return n - 1
+    }
+
+    /// Only a diarized speaker of a single-part meeting can be named (parts diarize apart).
+    static func speakerMenuOffered(rawLabel: String, partCount: Int) -> Bool {
+        speakerId(rawLabel: rawLabel) != nil && partCount <= 1
+    }
+
+    enum SpeakerMenuItem: Equatable {
+        case confirm(name: String, personKey: String)
+        case invitee(CoreAttendee)
+        case someoneElse
+    }
+
+    /// "Yes, that's X" for a guess (confirming the person X is, by key: two invitees can share
+    /// a name), then each invitee, then "Someone else…".
+    static func speakerMenuItems(shown: CoreDisplayLabel, invitees: [CoreAttendee]) -> [SpeakerMenuItem] {
+        var items: [SpeakerMenuItem] = []
+        if shown.guess, let personKey = shown.personKey {
+            items.append(.confirm(name: shown.label, personKey: personKey))
+        }
+        return items + invitees.map(SpeakerMenuItem.invitee) + [.someoneElse]
+    }
+
+    static func clock(_ startCs: Int64) -> String {
+        let seconds = Int(startCs / 100)
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    /// What Copy puts on the clipboard. Once a speaker has a name, the rows as shown (guesses as
+    /// "Sam?"); otherwise the transcript file, falling back to the rows.
+    static func transcriptCopyText(fileText: String?, segments: [CoreMeetingTranscriptSegment], names: [String: CoreDisplayLabel]) -> String {
+        let named = names.contains { $0.key != $0.value.label }
+        if !named, let fileText, !fileText.isEmpty { return fileText }
+        return segments.map { segment in
+            let shown = names[segment.speakerLabel]
+            let speaker = shown.map { $0.guess ? "\($0.label)?" : $0.label } ?? segment.speakerLabel
+            return "\(speaker) (\(clock(segment.startCs))): \(segment.text)"
+        }.joined(separator: "\n")
     }
 
     /// A meeting's title is shown as stored: the "Meeting" placeholder is a sentinel, never translated.

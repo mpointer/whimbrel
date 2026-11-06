@@ -535,7 +535,7 @@ mod tests {
         let v = serde_json::to_value(done).unwrap();
         assert_eq!(v["citations"][0], serde_json::json!({"kind": "episode", "id": 7}));
         assert_eq!(v["conversationId"], 3);
-        let failed = serde_json::to_value(ChatEvent::Failed { error: CommandError::ProviderFailure, partial: true }).unwrap();
+        let failed = serde_json::to_value(ChatEvent::Failed { error: CommandError::provider_failure(), partial: true }).unwrap();
         assert_eq!(failed["error"]["kind"], "provider_failure");
     }
 }

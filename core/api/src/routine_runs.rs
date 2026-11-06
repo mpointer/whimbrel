@@ -9,6 +9,21 @@ use chrono::TimeZone;
 use crate::routing::{build_chain_for_routine, RoutineModelPref, RoutingConfig};
 use crate::util::log_usage_for;
 
+/// The routine's chain without over-budget providers; `None` when a spent budget stops the
+/// run. A pinned model that made it to the front of the chain does not fall through.
+fn routine_chain(
+    store: &memory::Store,
+    model_pref: &str,
+    ollama_model: &str,
+    routing: &RoutingConfig,
+    now_unix_ms: i64,
+) -> Option<Vec<llm::ChainLink>> {
+    let pref = RoutineModelPref::parse(model_pref);
+    let chain = build_chain_for_routine(&pref, ollama_model, routing);
+    let pinned = matches!(&pref, RoutineModelPref::Pinned { provider, .. } if chain.first().is_some_and(|l| l.provider == *provider));
+    crate::budget::apply_budgets(store, chain, pinned, now_unix_ms).ok()
+}
+
 /// Local midnight of `now_local`'s calendar day in UTC milliseconds, falling back to
 /// `now_unix_ms` when the local date can't be resolved (DST gap).
 pub(crate) fn local_midnight_ms(now_local: chrono::DateTime<chrono::Local>, now_unix_ms: i64) -> i64 {
@@ -61,7 +76,7 @@ impl From<bool> for RunGate {
 /// `Store` methods. Returns the runs that actually completed this tick (usually empty).
 ///
 /// `Err` only if the `routine` table itself could not be read, before any routine was
-/// considered. A spend-cap rejection or exhausted provider chain for one due routine does NOT fail
+/// considered. A spend-cap rejection, a spent budget or exhausted provider chain for one due routine does NOT fail
 /// the tick — that routine is skipped (no `routine_run` row) and is due again next tick.
 /// `routing` is only consulted when a routine is actually due; `gmail_connected` /
 /// `recipient_email` only by the EOD Recap and Weekly Digest arms. `gate` Off makes this a
@@ -136,7 +151,9 @@ pub fn tick(
                     continue;
                 }
 
-                let chain = build_chain_for_routine(&RoutineModelPref::parse(&routine.model_pref), ollama_model, routing);
+                let Some(chain) = routine_chain(store, &routine.model_pref, ollama_model, routing, now_unix_ms) else {
+                    continue;
+                };
                 let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
                     routines::run_daily_brief(
                         store,
@@ -215,7 +232,9 @@ pub fn tick(
                     continue;
                 }
 
-                let chain = build_chain_for_routine(&RoutineModelPref::parse(&routine.model_pref), ollama_model, routing);
+                let Some(chain) = routine_chain(store, &routine.model_pref, ollama_model, routing, now_unix_ms) else {
+                    continue;
+                };
                 let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
                     routines::run_eod_recap(
                         store,
@@ -287,7 +306,9 @@ pub fn tick(
                     continue;
                 }
 
-                let chain = build_chain_for_routine(&RoutineModelPref::parse(&routine.model_pref), ollama_model, routing);
+                let Some(chain) = routine_chain(store, &routine.model_pref, ollama_model, routing, now_unix_ms) else {
+                    continue;
+                };
                 let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
                     routines::run_weekly_digest(
                         store,
@@ -612,5 +633,41 @@ mod tests {
 
         let again = tick(&store, local_millis_at(2026, 8, 3, 9, 30), "gemma4:12b", &routing, &[], false, None, true).unwrap();
         assert!(again.iter().all(|r| r.routine_id != routine.id), "not again the same day");
+    }
+
+    /// A routine pinned to a provider with a spent budget stops; one whose pinned provider
+    /// has no key (so the pin isn't the chain's first link) or that isn't pinned falls through.
+    #[test]
+    fn routine_pinned_to_spent_provider_stops_unpinned_falls_through() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let now = crate::util::now_unix_ms();
+        store
+            .log_usage(&memory::NewUsageLogEntry {
+                user_id: None,
+                provider: "anthropic".into(),
+                model: "m".into(),
+                route: Some("routine".into()),
+                input_tokens: None,
+                output_tokens: None,
+                estimated_cost_cents: 2500,
+                cache_hit: false,
+                trace_id: "t".into(),
+                ts_unix_ms: now,
+            })
+            .unwrap();
+        store.set_provider_budgets(&[("anthropic".into(), 2500)]).unwrap();
+        let routing = RoutingConfig { anthropic_key: Some("k".into()), openai_key: Some("k".into()), ..RoutingConfig::default() };
+        let providers = |pref: &str, routing: &RoutingConfig| {
+            routine_chain(&store, pref, "gemma4:12b", routing, now).map(|c| c.iter().map(|l| l.provider).collect::<Vec<_>>())
+        };
+        assert_eq!(providers("anthropic/claude-haiku-4-5", &routing), None, "pinned: no fallthrough");
+        let unpinned = providers("default", &routing).unwrap();
+        assert!(!unpinned.is_empty() && !unpinned.contains(&llm::Provider::Anthropic), "{unpinned:?}");
+        // The pinned provider has no key: the routine runs on the default chain, minus it.
+        let no_key = RoutingConfig { anthropic_key: None, ..routing.clone() };
+        let split = providers("anthropic/claude-haiku-4-5", &no_key).unwrap();
+        assert!(!split.is_empty() && !split.contains(&llm::Provider::Anthropic), "{split:?}");
+        // A pin to a provider with budget left keeps it first.
+        assert_eq!(providers("openai/gpt-5-mini", &routing).unwrap()[0], llm::Provider::OpenAI);
     }
 }

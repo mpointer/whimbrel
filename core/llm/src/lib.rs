@@ -102,10 +102,14 @@ pub mod images;
 
 pub use backoff::is_retryable;
 pub use ledger::{
-    charge_skin_call, check_spend_cap, ChargeError, SpendCapConfig, SpendCapError, SpendCapScope, DEFAULT_GLOBAL_DAILY_CAP_CENTS,
+    charge_skin_call, charge_skin_call_for, check_spend_cap, ChargeError, SpendCapConfig, SpendCapError, SpendCapScope, DEFAULT_GLOBAL_DAILY_CAP_CENTS,
     DEFAULT_USER_DAILY_CAP_CENTS,
 };
-pub use routing::{falls_through, try_chain, ChainLink, Provider, TaskKind, Tier};
+pub use routing::{
+    falls_through, note_link_failure, set_last_chain_failures, take_last_chain_failures, try_chain, try_chain_with_failures,
+    ChainLink, Provider,
+    ProviderFailureKind, TaskKind, Tier,
+};
 
 #[derive(Debug)]
 pub enum LlmError {
@@ -1508,6 +1512,67 @@ fn parse_meeting_summary(text: &str) -> Result<MeetingSummary, LlmError> {
         .map_err(|e| LlmError::Provider(format!("failed to parse summary JSON: {e}")))
 }
 
+/// Names unnamed speakers from what the meeting conversation shows, choosing only from
+/// `invitees`. Speaker id `i` is written `Speaker {i+1}` in transcripts and in this
+/// prompt. Returns `(speaker_id, name)` pairs; anything unverifiable is dropped: a
+/// null name, a name not in `invitees`, a name given to two speakers (both dropped),
+/// and a label that isn't one of `speaker_ids`.
+pub fn name_speakers_from_conversation(
+    client: &dyn LlmClient,
+    transcript: &str,
+    speaker_ids: &[i32],
+    invitees: &[String],
+) -> Result<Vec<(i32, String)>, LlmError> {
+    let unnamed: Vec<String> = speaker_ids.iter().map(|i| format!("Speaker {}", i + 1)).collect();
+    let prompt = format!(
+        "Below is a meeting transcript, one line per utterance as `[HH:MM:SS] Label: text`; \
+         it may begin with an `Invitees:` line. Speakers already identified appear by name \
+         (or as `Name (unconfirmed)`).\n\
+         Name ONLY these unnamed speakers: {unnamed}.\n\
+         Use ONLY names from this invitee list: {invitees}.\n\
+         Use the name for a speaker only when the conversation shows it (being addressed, \
+         introducing themselves, being referred to). Use null when the conversation doesn't \
+         show it; never guess from voice or order.\n\
+         Respond with ONLY a JSON object, no other text, no markdown fences, matching \
+         exactly this shape:\n\
+         {{\"speakers\":[{{\"speaker\":\"Speaker 2\",\"name\":\"Sam\"}},{{\"speaker\":\"Speaker 3\",\"name\":null}}]}}\n\n\
+         Transcript:\n{transcript}\n",
+        unnamed = unnamed.join(", "),
+        invitees = invitees.join(", "),
+    );
+    let completion = client.complete(&prompt)?;
+    let json_str = extract_json_object(&completion.text).ok_or_else(|| {
+        LlmError::Provider(format!("model response contained no JSON object: {:?}", completion.text))
+    })?;
+    #[derive(Deserialize)]
+    struct Pick {
+        speaker: String,
+        name: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct Picks {
+        speakers: Vec<Pick>,
+    }
+    let picks: Picks = serde_json::from_str(json_str)
+        .map_err(|e| LlmError::Provider(format!("failed to parse speaker names JSON: {e}")))?;
+
+    let mut named: Vec<(i32, String)> = Vec::new();
+    for pick in picks.speakers {
+        let Some(id) = unnamed.iter().position(|l| *l == pick.speaker.trim()).map(|k| speaker_ids[k]) else {
+            continue;
+        };
+        let Some(name) = pick.name.as_deref().map(str::trim) else { continue };
+        if !invitees.iter().any(|inv| inv.trim() == name) || named.iter().any(|(i, _)| *i == id) {
+            continue;
+        }
+        named.push((id, name.to_string()));
+    }
+    // The same person can't be two speakers: if a name was given twice, neither holds.
+    let all = named.clone();
+    named.retain(|(_, n)| all.iter().filter(|(_, m)| m == n).count() == 1);
+    Ok(named)
+}
+
 /// Models sometimes wrap JSON in markdown fences or add preamble/postamble text;
 /// pull out the outermost `{...}` rather than requiring an exact-match response.
 pub(crate) fn extract_json_object(text: &str) -> Option<&str> {
@@ -2404,6 +2469,62 @@ mod tests {
                 token_usage: TokenUsage::default(),
             })
         }
+    }
+
+    fn name_speakers(
+        response: &str,
+        ids: &[i32],
+        invitees: &[&str],
+    ) -> Result<Vec<(i32, String)>, LlmError> {
+        let client = MockClient::responding_with(response);
+        let invitees: Vec<String> = invitees.iter().map(|s| s.to_string()).collect();
+        name_speakers_from_conversation(&client, "[00:00:01] Speaker 2: hi", ids, &invitees)
+    }
+
+    #[test]
+    fn name_speakers_names_from_json() {
+        let client = MockClient::responding_with(
+            "```json\n{\"speakers\":[{\"speaker\":\"Speaker 2\",\"name\":\" Sam \"},{\"speaker\":\"Speaker 4\",\"name\":\"Priya\"}]}\n```",
+        );
+        let invitees = vec!["Sam".to_string(), "Priya".to_string()];
+        let got = name_speakers_from_conversation(&client, "[00:00:01] Speaker 2: hi", &[1, 3], &invitees).unwrap();
+        assert_eq!(got, vec![(1, "Sam".to_string()), (3, "Priya".to_string())]);
+        let prompt = client.last_prompt();
+        assert!(prompt.contains("Speaker 2, Speaker 4") && prompt.contains("Sam, Priya"));
+    }
+
+    #[test]
+    fn name_speakers_not_invited_dropped() {
+        let got = name_speakers(r#"{"speakers":[{"speaker":"Speaker 1","name":"Zed"}]}"#, &[0], &["Sam"]).unwrap();
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn name_speakers_duplicate_name_dropped_from_both() {
+        let got = name_speakers(
+            r#"{"speakers":[{"speaker":"Speaker 1","name":"Sam"},{"speaker":"Speaker 2","name":"Sam"},{"speaker":"Speaker 3","name":"Priya"}]}"#,
+            &[0, 1, 2],
+            &["Sam", "Priya"],
+        )
+        .unwrap();
+        assert_eq!(got, vec![(2, "Priya".to_string())]);
+    }
+
+    #[test]
+    fn name_speakers_null_and_unknown_labels_skipped() {
+        let got = name_speakers(
+            r#"{"speakers":[{"speaker":"Speaker 1","name":null},{"speaker":"Speaker 9","name":"Sam"},{"speaker":"Dana","name":"Sam"}]}"#,
+            &[0],
+            &["Sam"],
+        )
+        .unwrap();
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn name_speakers_malformed_json_is_error() {
+        assert!(name_speakers("not json", &[0], &["Sam"]).is_err());
+        assert!(name_speakers(r#"{"speakers": 3}"#, &[0], &["Sam"]).is_err());
     }
 
     struct MockClientWithCallCount {

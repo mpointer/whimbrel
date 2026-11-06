@@ -6,7 +6,7 @@ use llm::live_question::{
     LiveQuestionVerdict,
 };
 
-use crate::envelope::{ApiError, ApiResult};
+use crate::envelope::ApiResult;
 use crate::routing::{build_chain_for, RoutingConfig};
 use crate::util::{log_usage_for, now_unix_ms};
 
@@ -33,10 +33,9 @@ pub fn detect(
     llm::check_spend_cap(store, &routing.spend_cap_config(), None, Some("live_question"), now_unix_ms())?;
 
     let prompt = build_detect_prompt(names, context_window(lines, index), candidate, following(lines, index));
-    let chain = build_chain_for(llm::TaskKind::Chat, ollama_model, routing);
-    let Some(((verdict, usage), entry)) = llm::try_chain(&chain, |e| judge(e.client.as_ref(), &prompt)) else {
-        return Err(ApiError::ProviderFailure);
-    };
+    let chain = crate::budget::apply_budgets(store, build_chain_for(llm::TaskKind::Chat, ollama_model, routing), false, now_unix_ms())?;
+    let ((verdict, usage), entry) =
+        llm::try_chain_with_failures(&chain, |e| judge(e.client.as_ref(), &prompt)).map_err(crate::chain_failed)?;
     log_usage_for(store, entry.provider, &entry.model, "live_question", usage);
     Ok(verdict)
 }
@@ -110,6 +109,6 @@ mod tests {
             .unwrap();
         let routing = RoutingConfig { global_daily_cap_cents: Some(1), ..RoutingConfig::default() };
         let r = detect(&store, &lines(), 0, &["Mike".to_string()], "gemma4:12b", &routing);
-        assert!(matches!(r, Err(ApiError::SpendCap(_))));
+        assert!(matches!(r, Err(crate::ApiError::SpendCap(_))));
     }
 }

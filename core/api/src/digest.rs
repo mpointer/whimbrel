@@ -2,7 +2,7 @@
 //! LLM call (spend-cap check → provider chain → usage logging). Moved from
 //! `core/ffi::whimbrel_llm_daily_digest` (M3.0); the C function is now a thin wrapper.
 
-use crate::envelope::{ApiError, ApiResult};
+use crate::envelope::ApiResult;
 use crate::routing::{build_chain_for, RoutingConfig};
 use crate::util::{log_usage_for, now_unix_ms};
 
@@ -39,17 +39,16 @@ pub fn daily_digest(
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("digest"), now_unix_ms())?;
 
-    let chain = build_chain_for(llm::TaskKind::Digest, ollama_model, routing);
-    let Some((digest, entry)) = llm::try_chain(&chain, |entry| {
+    let chain = crate::budget::apply_budgets(store, build_chain_for(llm::TaskKind::Digest, ollama_model, routing), false, now_unix_ms())?;
+    let (digest, entry) = llm::try_chain_with_failures(&chain, |entry| {
         llm::generate_daily_digest_from_context(
             entry.client.as_ref(),
             &items,
             &llm::profile::compose_instructions(&routing.daily_digest_instructions, &routing.profile, &routing.output_language),
             start_unix_ms,
         )
-    }) else {
-        return Err(ApiError::ProviderFailure);
-    };
+    })
+    .map_err(crate::chain_failed)?;
     log_usage_for(
         store,
         entry.provider,

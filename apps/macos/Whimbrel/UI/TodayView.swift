@@ -125,8 +125,12 @@ struct TodayView: View {
             // Starting or ending a meeting while sitting on Today must show up at once.
             refresh()
         }
-        .onChange(of: content.upcoming.first?.id) { _, _ in
-            // The prep brief belongs to the next unfinished event; refetch when that changes.
+        .onChange(of: content.upcoming.first.map { TodayLogic.prepKey(eventId: $0.id, start: $0.start) }) { _, _ in
+            // The prep brief belongs to the next unfinished occurrence; refetch when that changes.
+            refresh()
+        }
+        .onChange(of: appState.routineScheduler.recentRuns) { _, _ in
+            // Meeting Prep writes the brief minutes before the start, while Today sits open.
             refresh()
         }
         .onChange(of: content.liveMeetingId) { _, newValue in
@@ -162,9 +166,9 @@ struct TodayView: View {
 
     private func refresh() {
         guard let store = appState.coreStore else { recentLoaded = true; loadDigestIfNeeded(); return }
-        let nextEventId = content.upcoming.first?.id
+        let nextPrepKey = content.upcoming.first.map { TodayLogic.prepKey(eventId: $0.id, start: $0.start) }
         CoreMemoryStore.accessQueue.async {
-            let prep = nextEventId.flatMap { store.meetingPrep(eventId: $0) }
+            let prep = nextPrepKey.flatMap { store.meetingPrep(key: $0) }
             let meetings = store.recentMeetingsGrouped(limit: 10)
             let threads = store.threadsNeedingAttention(limit: 5) ?? []
             let pending = store.pendingApprovals() ?? []

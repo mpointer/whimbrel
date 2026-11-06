@@ -5,6 +5,24 @@ import Foundation
 import os
 import UserNotifications
 
+/// The last summary failure per meeting, until a summary succeeds or it is cleared.
+struct SummaryFailures: Equatable {
+    private var byMeeting: [Int64: CoreLLMError] = [:]
+
+    subscript(meetingId: Int64) -> CoreLLMError? { byMeeting[meetingId] }
+
+    /// A success clears, a failure replaces, a call that never ran (no store, invalid usage) leaves it.
+    mutating func record<T>(_ outcome: Result<T, CoreLLMError>?, meetingId: Int64) {
+        switch outcome {
+        case .success?: byMeeting[meetingId] = nil
+        case .failure(let error)?: byMeeting[meetingId] = error
+        case nil: break
+        }
+    }
+
+    mutating func clear(meetingId: Int64) { byMeeting[meetingId] = nil }
+}
+
 /// FR-CAP-5: global capture on/off, always reflected in the menu bar; FR-ONB-2: the app
 /// runs with partial permission grants and reports which capabilities are inactive and why.
 @MainActor
@@ -85,6 +103,20 @@ final class AppState: ObservableObject {
     /// real source of user confusion (no way to tell it was even running).
     @Published private(set) var processingMeetingId: Int64?
     @Published private(set) var processingStage: String?
+    /// Why each meeting's last summary attempt (automatic or Regenerate) failed, until one
+    /// succeeds. In memory only: core keeps no per-meeting failure, so a relaunch forgets it.
+    @Published private(set) var summaryFailures = SummaryFailures()
+
+    private func recordSummaryOutcome<T>(_ outcome: Result<T, CoreLLMError>?, meetingId: Int64) {
+        summaryFailures.record(outcome, meetingId: meetingId)
+    }
+
+    /// Drops a meeting's kept failure: the user changed what the next summary would use, or
+    /// the meeting is gone.
+    func clearSummaryFailure(meetingId: Int64) {
+        summaryFailures.clear(meetingId: meetingId)
+    }
+
     /// Bumped by every `startCapture`/`beginManualCapture`/`stopCapture` call.
     /// `finishStartingCapture`/`finishStartingManualCapture` compare their own captured
     /// value against the current one before proceeding — if they differ, a stop (or a
@@ -107,6 +139,8 @@ final class AppState: ObservableObject {
     /// Recording & Open Timeline" action. `AppState` itself has no SwiftUI environment
     /// access of its own.
     var openTimeline: (() -> Void)?
+    /// Opens the Settings window; set by `WhimbrelShellView`'s `.onAppear` alongside `openTimeline`.
+    var openSettingsWindow: (() -> Void)?
     /// Opens a meeting's window; set by `TimelineView`'s `.onAppear` alongside `openTimeline`.
     private var openMeetingWindow: ((Int64) -> Void)?
     /// A meeting asked for (alert click, `whimbrel://` link) before the opener was set.
@@ -120,9 +154,19 @@ final class AppState: ObservableObject {
     /// Flags rather than events, so a request made before Library is on screen still
     /// lands when it appears.
     @Published var pendingLibrarySearch = false
+    /// A Settings section to show the next time Settings is shown (or now, if it is open).
+    @Published var pendingSettingsSection: SettingsSection?
     @Published var pendingNewConversation = false
     /// Text from Today's composer, sent as the first message of the new conversation.
     @Published var pendingAskPrompt: String?
+    /// The Meeting Prep brief the main window shows in a sheet (a notification click, Routines' "Open brief").
+    @Published var prepBriefToShow: PrepBriefRequest?
+
+    func showPrepBrief(key: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        openTimeline?()
+        prepBriefToShow = PrepBriefRequest(key: key)
+    }
 
     /// Opens meeting `id` (an alert notification or a `whimbrel://meeting/<id>?at=` link) and
     /// leaves `atCs` (meeting-absolute) in `pendingMeetingSeek` for the meeting page.
@@ -165,6 +209,36 @@ final class AppState: ObservableObject {
                 if local == nil, activateIfUnresolved { NSApp.activate(ignoringOtherApps: true) } else { self?.openMeeting(id: local ?? -1, at: link.atCs) }
             }
         }
+    }
+
+    /// Sends `budgets` to core on the access queue, then posts `providerBudgetsPushed` once they are stored.
+    private func pushProviderBudgets(_ budgets: [String: Int]) {
+        // Used only on `accessQueue`, which serializes every store call.
+        guard let coreStore else { return }
+        nonisolated(unsafe) let store = coreStore
+        CoreMemoryStore.accessQueue.async {
+            guard store.setProviderBudgets(budgets) else { return }
+            DispatchQueue.main.async { NotificationCenter.default.post(name: AppState.providerBudgetsPushed, object: nil) }
+        }
+    }
+
+    /// Posted on the main thread after the monthly budgets reach core (launch, a change, a sync pull).
+    static let providerBudgetsPushed = Notification.Name("com.mpointer.kestrel.providerBudgetsPushed")
+
+    /// Posts budget notices after each governed AI call, each settings or content sync pull,
+    /// and each budget push to core.
+    private func startBudgetNotices() {
+        // Used only on `accessQueue`, which serializes every store call.
+        guard let coreStore else { return }
+        nonisolated(unsafe) let store = coreStore
+        BudgetNotices.registerCategory()
+        let check = { CoreMemoryStore.accessQueue.async { BudgetNotices.check(store) } }
+        CoreMemoryStore.afterGovernedCall = check
+        NotificationCenter.default.publisher(for: AppState.providerBudgetsPushed).map { _ in () }
+            .merge(with: settingsSyncCoordinator.$lastSyncedAt.dropFirst().map { _ in () },
+                   contentSyncCoordinator.$lastSyncedAt.dropFirst().map { _ in () })
+            .sink { check() }
+            .store(in: &cancellables)
     }
 
     func requestLibrarySearch() {
@@ -240,6 +314,8 @@ final class AppState: ObservableObject {
     /// "Alert me when someone asks me something" (docs/superpowers/specs/2026-11-02-live-question-alerts-design.md).
     /// Needs live transcription, so it starts it even with the live transcript setting off.
     let liveQuestionSettings = LiveQuestionSettings()
+    /// "Remember voices" for naming speakers (docs/superpowers/specs/2026-11-05-speaker-names-design.md).
+    let speakerNamesSettings = SpeakerNamesSettings()
     /// The active recording's question watcher; nil when alerts are off or no name is set.
     private var liveQuestionWatcher: LiveQuestionWatcher?
     /// Alerts go to a notification, an email to the user's own Gmail and, through sync, the
@@ -266,6 +342,10 @@ final class AppState: ObservableObject {
     /// The active meeting's check-in, polled every 5 s by `checkInTimer`; nil when no meeting.
     private var activeCheckIn: RecordingCheckIn?
     private var checkInTimer: Timer?
+    /// "Still in a meeting?" (`StillInMeeting`) for a recording started by hand, fed by the
+    /// same 5 s poll and on wake; nil for any other recording.
+    private var stillInMeeting: (promptShownAt: Date?, keptAt: Date?, polledAt: Date?)?
+    private var wakeObserver: NSObjectProtocol?
     /// "Whimbrel isn't hearing anything": silence on every track while recording, fed by the
     /// same 5 s poll. `silenceWarning` is the inline banner's text; nil while sound is arriving.
     private var silenceWatch: SilenceWatch?
@@ -297,7 +377,7 @@ final class AppState: ObservableObject {
     /// The Settings skin chat. Owned here, not by its view, so the chat survives the Settings
     /// window rebuild (`ThemedRoot`) that every skin it switches on causes.
     lazy var skinChat = SkinChatSession(
-        skinStore: .shared, userSkins: .shared, backend: CoreSkinTurnBackend(routing: routing), routing: routing
+        skinStore: .shared, userSkins: .shared, backend: CoreSkinTurnBackend(routing: routing, deviceId: deviceId), routing: routing
     )
     /// Multilingual mode transcribes live with the multilingual model, detecting the language.
     private static var liveDetectsLanguage: Bool {
@@ -448,6 +528,11 @@ final class AppState: ObservableObject {
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
 
+        // Monthly budgets live in core: pushed now, after the store's launch work queued
+        // above, and again on every change (a local edit or a sync pull).
+        routing.onBudgetsChanged = { [weak self] budgets in self?.pushProviderBudgets(budgets) }
+        pushProviderBudgets(routing.allBudgets)
+
         // Live transcript follows the active meeting: it starts when a recording becomes the
         // active meeting (if the setting is on) and stops when it ends. It reads the recording
         // files lazily, so it does not matter that audio starts before the meeting row exists.
@@ -552,6 +637,12 @@ final class AppState: ObservableObject {
             guard let volume = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL else { return }
             MainActor.assumeIsolated { self?.mediaRetention.volumeMounted(volume) }
         }
+        // A Mac that slept through 15 quiet minutes asks "Still in a meeting?" on wake.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollCheckIn() }
+        }
         routineScheduler.start(
             store: coreStore, slowStore: slowStore, meetingsProvider: { [weak self] in self?.allUpcomingMeetings ?? [] }, routing: routing,
             promptLibrary: promptLibrary, meetingPrepLeadMinutes: { [weak self] in self?.meetingPrepSettings.leadMinutes ?? 30 },
@@ -565,11 +656,30 @@ final class AppState: ObservableObject {
         )
         Task { await profileSuggestions.reload() }
         Task { await syncState.silentResumeIfPossible() }
+        // Ollama's installed models, now and every 10 minutes: they decide which one stands in
+        // for a default that isn't installed (`RoutingSettings.ollamaDefaultModel`), with no
+        // Settings or picker open. A failed read keeps the last list.
+        Task { [routing] in
+            while !Task.isCancelled {
+                await routing.refreshOllamaModels(showsLoading: false)
+                do { try await Task.sleep(for: .seconds(10 * 60)) } catch { break }
+            }
+        }
         updateChecker.start()
         settingsSyncCoordinator.observeSyncState()
-        let clickHandler = NotificationClickHandler { [weak self] link in self?.open(link, activateIfUnresolved: true) }
+        let clickHandler = NotificationClickHandler(
+            open: { [weak self] link in self?.open(link, activateIfUnresolved: true) },
+            openPrep: { [weak self] key in self?.showPrepBrief(key: key) },
+            openAIProviders: { [weak self] in
+                // Set first: SettingsView takes it on appear, or on change when already open.
+                self?.pendingSettingsSection = .ai
+                NSApp.activate(ignoringOtherApps: true)
+                self?.openSettingsWindow?()
+            },
+            stillInMeeting: { [weak self] keep in self?.answerStillInMeeting(keep: keep) })
         notificationClickHandler = clickHandler
         UNUserNotificationCenter.current().delegate = clickHandler
+        startBudgetNotices()
         contentSyncCoordinator.afterPull = { [weak self] in
             guard let self, let store = self.coreStore else { return }
             await self.liveAlertDelivery.afterPull {
@@ -1025,7 +1135,7 @@ final class AppState: ObservableObject {
             status: .recording
         )
         guard let store = coreStore else {
-            finishStartingManualCapture(insertedMeetingId: nil, partIndex: nil, start: startDate, generation: thisGeneration)
+            finishStartingManualCapture(insertedMeetingId: nil, partIndex: nil, start: startDate, trigger: newMeeting.trigger, generation: thisGeneration)
             return
         }
         CoreMemoryStore.accessQueue.async {
@@ -1033,7 +1143,7 @@ final class AppState: ObservableObject {
             // Manual meetings have no continue key, so they never continue.
             let partIndex = insertedId.flatMap { store.beginMeetingPart(meetingId: $0, startUnixMs: startMs, continueKey: nil) }
             DispatchQueue.main.async { [weak self] in
-                self?.finishStartingManualCapture(insertedMeetingId: insertedId, partIndex: partIndex, start: startDate, generation: thisGeneration)
+                self?.finishStartingManualCapture(insertedMeetingId: insertedId, partIndex: partIndex, start: startDate, trigger: newMeeting.trigger, generation: thisGeneration)
             }
         }
     }
@@ -1043,7 +1153,7 @@ final class AppState: ObservableObject {
     /// above (`generation != captureGeneration`), the just-inserted row (if any) is
     /// immediately completed with a null `audioPath` — no audio ever started for that
     /// already-cancelled session — rather than left stuck at `.recording` forever.
-    private func finishStartingManualCapture(insertedMeetingId: Int64?, partIndex: Int64?, start: Date, generation: Int) {
+    private func finishStartingManualCapture(insertedMeetingId: Int64?, partIndex: Int64?, start: Date, trigger: CoreMeetingTrigger, generation: Int) {
         isStartingMeeting = false
         guard generation == captureGeneration else {
             completeAbandonedStart(meetingId: insertedMeetingId, partIndex: partIndex)
@@ -1063,6 +1173,7 @@ final class AppState: ObservableObject {
             startMeetingSnapshots(meetingId: insertedMeetingId, start: start, title: "Meeting",
                                   appBundleID: nil, provider: nil, browserWindowProvider: { nil })
             startCheckIn(startedAt: start)
+            if StillInMeeting.applies(to: trigger) { stillInMeeting = (promptShownAt: nil, keptAt: nil, polledAt: nil) }
         }
         // No app, tab or schedule, and audio always "active" so a quiet room never trips the
         // silence rule: only max duration (4 h, core) ends a manual meeting here.
@@ -1152,6 +1263,8 @@ final class AppState: ObservableObject {
         silenceWatch = nil
         silenceWarning = nil
         recordingCheckInPanel.hide()
+        if stillInMeeting != nil { removeStillInMeetingNotice() }
+        stillInMeeting = nil
     }
 
     private func pollSilence() {
@@ -1179,6 +1292,9 @@ final class AppState: ObservableObject {
 
     private func pollCheckIn() {
         pollSilence()
+        // Both due: "Still in a meeting?" shows and the hourly check-in waits (it is time-based,
+        // so it only defers). An hourly prompt already showing goes first.
+        if activeCheckIn?.promptShownAt == nil, pollStillInMeeting() { return }
         guard var checkIn = activeCheckIn else { return }
         let action = checkIn.poll(now: Date())
         activeCheckIn = checkIn
@@ -1196,6 +1312,84 @@ final class AppState: ObservableObject {
             recordingCheckInPanel.hide()
             endActiveMeetingIfNeeded(reason: .checkInTimeout)
         }
+    }
+
+    /// True while its prompt shows or it stopped the recording.
+    private func pollStillInMeeting() -> Bool {
+        guard let watch = stillInMeeting, let startedAt = activeMeetingStartedAt, activeMeetingId != nil else { return false }
+        let now = Date()
+        // A prompt whose answer window ran out while the Mac slept was never seen: ask again.
+        let shown = StillInMeeting.promptShownAt(now: now, lastPollAt: watch.polledAt, promptShownAt: watch.promptShownAt)
+        stillInMeeting?.polledAt = now
+        if let shown, shown != watch.promptShownAt {
+            stillInMeeting?.promptShownAt = shown
+            showStillInMeetingPrompt(now: now)
+        }
+        // Late (backlogged) live lines count as speech when they arrive; off live, nothing does.
+        let arrived = liveTranscript.status == .listening ? liveTranscript.lastSpeechArrivedAt : nil
+        let action = StillInMeeting.state(now: now, recordingStartedAt: startedAt, lastSpeechAt: lastSpeechAt(startedAt: startedAt),
+                                          speechArrivedAt: arrived, promptShownAt: shown, keptAt: watch.keptAt)
+        switch action {
+        case .none:
+            if shown != nil {   // someone spoke while it asked
+                stillInMeeting?.promptShownAt = nil
+                recordingCheckInPanel.hide()
+                removeStillInMeetingNotice()
+            }
+            return false
+        case .prompt:
+            guard shown == nil else { return true }
+            stillInMeeting?.promptShownAt = now
+            showStillInMeetingPrompt(now: now)
+            return true
+        case .stop:
+            stopQuietRecording(reason: .checkInTimeout)
+            return true
+        }
+    }
+
+    private func showStillInMeetingPrompt(now: Date) {
+        recordingCheckInPanel.show(
+            deadline: now.addingTimeInterval(Double(StillInMeeting.answerSeconds)), stillInMeeting: true,
+            onKeep: { [weak self] in self?.answerStillInMeeting(keep: true) },
+            onStop: { [weak self] in self?.answerStillInMeeting(keep: false) })
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "Still in a meeting?")
+        content.body = String(localized: "No one has spoken for 15 minutes.")
+        content.sound = .default
+        content.categoryIdentifier = StillInMeeting.notificationCategory
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: Self.stillInMeetingNoticeId, content: content, trigger: nil))
+    }
+
+    private func lastSpeechAt(startedAt: Date) -> Date? {
+        StillInMeeting.lastSpeechAt(recordingStartedAt: startedAt, liveListening: liveTranscript.status == .listening,
+                                    liveSegments: liveTranscript.segments, lastNonSilentAt: audio.lastNonSilentAt)
+    }
+
+    /// The panel's or the notification's button. Only while its prompt shows, so a stale
+    /// notification can't touch the hourly prompt or a later recording.
+    private func answerStillInMeeting(keep: Bool) {
+        guard stillInMeeting?.promptShownAt != nil else { return }
+        if keep {
+            stillInMeeting?.promptShownAt = nil
+            stillInMeeting?.keptAt = Date()   // re-arms only this timer
+            recordingCheckInPanel.hide()
+            removeStillInMeetingNotice()
+        } else {
+            stopQuietRecording(reason: .checkInStop)
+        }
+    }
+
+    /// Stops untrimmed; the transcription queue trims it once the full transcript is stored.
+    private func stopQuietRecording(reason: MeetingEndDetector.EndReason) {
+        guard activeMeetingId != nil else { return }
+        endMeeting(reason: reason, autoTrim: true)   // stopCheckIn hides the panel and notice
+    }
+
+    private static let stillInMeetingNoticeId = "still-in-meeting"
+
+    private func removeStillInMeetingNotice() {
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Self.stillInMeetingNoticeId])
     }
 
     /// Snapshots go to `<media>/Snapshots`, falling back to the data folder when the media folder
@@ -1230,7 +1424,9 @@ final class AppState: ObservableObject {
     /// FR-MTG-14: ends the active meeting -- audio + completion/transcription only,
     /// independent of activity capture (never touches `activityCaptureEnabled`/
     /// `screenText`).
-    private func endMeeting(reason: MeetingEndDetector.EndReason?) {
+    /// `autoTrim` ("Still in a meeting?"): the transcription job trims the meeting back to its
+    /// last stored speech once the full transcript is stored, before naming and the summary.
+    private func endMeeting(reason: MeetingEndDetector.EndReason?, autoTrim: Bool = false) {
         captureGeneration += 1
         audio.stop()
         meetingEndDetector.stop()
@@ -1273,7 +1469,7 @@ final class AppState: ObservableObject {
             }
             switch MeetingContinuation.partEnding(partIndex: partIndex, continued: continued, hasAudio: audioPath != nil) {
             case .transcribe(let index):
-                transcribePart(meetingId: id, partIndex: index, audioPath: audioPath, notes: notes)
+                transcribePart(meetingId: id, partIndex: index, audioPath: audioPath, notes: notes, autoTrim: autoTrim)
             case .nothing:
                 break
             case .unknownContinuedPart:
@@ -1415,7 +1611,7 @@ final class AppState: ObservableObject {
 
     /// FR-MTG-5: queues one part's transcription (`MeetingTranscriptionQueue`, one part at
     /// a time, in order); the last part to land summarizes the whole meeting.
-    private func transcribePart(meetingId: Int64, partIndex: Int64, audioPath: String?, notes: String) {
+    private func transcribePart(meetingId: Int64, partIndex: Int64, audioPath: String?, notes: String, autoTrim: Bool = false) {
         guard let transcriptionQueue else {
             // No queue means no store, so there is nothing to recover this launch. Marking the
             // meeting lets the next launch's reconcile pick it up (it checks for audio and status).
@@ -1426,7 +1622,7 @@ final class AppState: ObservableObject {
             return
         }
         if audioPath != nil { markProcessing(meetingId) }
-        transcriptionQueue.enqueue(.init(meetingId: meetingId, partIndex: partIndex, audioPath: audioPath, notes: notes))
+        transcriptionQueue.enqueue(.init(meetingId: meetingId, partIndex: partIndex, audioPath: audioPath, notes: notes, autoTrim: autoTrim))
     }
 
     /// "Keep media" switch: exempts this device's own copy of the meeting from the
@@ -1487,6 +1683,44 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// "Trim recording": keeps the first `keepMs` (transcript clock) of a meeting this Mac
+    /// recorded. Core trims the rows and syncs the trim; then the spanning part's audio is cut,
+    /// the removed parts' and snapshots' files go, and the summary is regenerated as the
+    /// Regenerate action does it, with the routing defaults.
+    /// `onFailure` runs on main when the store couldn't trim, `onNothingToTrim` when it had
+    /// nothing to cut (`keepMs` not inside the meeting, or the meeting changed meanwhile).
+    func trimMeeting(_ meeting: CoreMeeting, keepMs: Int64, onFailure: @escaping () -> Void = {},
+                     onNothingToTrim: @escaping () -> Void = {}) {
+        let id = meeting.id
+        guard processingMeetingId == nil, meeting.deviceId == deviceId, let store = coreStore,
+              mediaRetention.workingMeetingId != id else { return }
+        markProcessing(id)
+        processingStage = "Trimming…"
+        CoreMemoryStore.accessQueue.async { [weak self] in
+            let trim: AudioTrimmer.CoreTrim?
+            do { trim = try AudioTrimmer.trimStored(store: store, meetingId: id, keepMs: keepMs) } catch {
+                DispatchQueue.main.async { onFailure(); self?.clearProcessingState(for: id) }
+                return
+            }
+            let hasTranscript = trim != nil
+                && !(store.meetingTranscriptText(meetingId: id) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            Task { @MainActor in
+                if let trim { await trim.applyToFiles() } else { onNothingToTrim() }
+                guard let self else { return }
+                MeetingLifecycle.postMeetingsChanged([id])
+                guard hasTranscript else { return self.clearProcessingState(for: id) }
+                self.processingStage = "Summarizing…"
+                self.regenerateMeetingSummary(
+                    meetingId: id, notes: meeting.notes ?? "", transcript: "",
+                    ollamaModel: self.routing.ollamaDefaultModel,
+                    routing: self.routing.routingConfig(preferredProvider: self.routing.preferredProvider,
+                                                        preferredModel: self.routing.preferredModel),
+                    customInstructions: self.promptLibrary.instructions[.meetingSummary] ?? ""
+                ) { [weak self] _ in self?.clearProcessingState(for: id) }
+            }
+        }
+    }
+
     private func markProcessing(_ meetingId: Int64) {
         guard processingMeetingId == nil else { return }
         processingMeetingId = meetingId
@@ -1528,10 +1762,38 @@ final class AppState: ObservableObject {
                     let slow = self.slowStore
                     CoreMemoryStore.slowLaneQueue.async { [weak self] in
                         let slides = slow?.meetingSlidesText(meetingId: meetingId) ?? ""
-                        _ = slow?.summarizeMeeting(meetingId: meetingId, notes: notes, transcript: transcript, slides: slides, model: ollamaModel, routing: routingConfig.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: instructions)
-                        DispatchQueue.main.async { self?.clearProcessingState(for: meetingId) }
+                        let outcome = slow?.summarizeMeeting(meetingId: meetingId, notes: notes, transcript: transcript, slides: slides, model: ollamaModel, routing: routingConfig.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: instructions)
+                        DispatchQueue.main.async {
+                            self?.recordSummaryOutcome(outcome, meetingId: meetingId)
+                            self?.clearProcessingState(for: meetingId)
+                        }
                     }
                 }
+            },
+            // The summary's model and routing. A failure names nobody and the summary still runs.
+            nameSpeakers: { [weak self] meetingId, voices in
+                typealias Naming = (store: CoreMemoryStore, model: String, routing: CoreRoutingConfig, remember: Bool)
+                let naming = DispatchQueue.main.sync { () -> Naming? in
+                    guard let self, let slow = self.slowStore else { return nil }
+                    let routing = self.routing.routingConfig(preferredProvider: self.routing.preferredProvider, preferredModel: self.routing.preferredModel)
+                    return (slow, self.routing.ollamaDefaultModel, routing, self.speakerNamesSettings.rememberVoices)
+                }
+                guard let naming else { return }
+                let named = CoreMemoryStore.slowLaneQueue.sync {
+                    naming.store.assignMeetingSpeakers(meetingId: meetingId, voices: voices, model: naming.model, routing: naming.routing, remember: naming.remember)
+                }
+                if named == nil {
+                    Logger(subsystem: "com.mpointer.kestrel", category: "transcription-queue").error("meeting \(meetingId): speakers not named")
+                }
+            },
+            // "Still in a meeting?": the rows, then the files, before naming and the summary.
+            trim: { meetingId, keepMs in
+                let trim = CoreMemoryStore.accessQueue.sync { try? AudioTrimmer.trimStored(store: store, meetingId: meetingId, keepMs: keepMs) }
+                guard let trim = trim ?? nil else { return }
+                let done = DispatchSemaphore(value: 0)
+                Task.detached { await trim.applyToFiles(); done.signal() }
+                done.wait()
+                DispatchQueue.main.async { MeetingLifecycle.postMeetingsChanged([meetingId]) }
             },
             onStage: { [weak self] meetingId, stage in
                 guard let self else { return }
@@ -1645,6 +1907,12 @@ final class AppState: ObservableObject {
                 _ = await AppState.run(on: CoreMemoryStore.accessQueue) { store.setLiveAlertEmailStatus(id: id, status: status) }
             },
             emailEnabled: { settings.emailEnabled },
+            userAway: { [weak self] in
+                LiveAlertDelivery.isAway(
+                    awayModeRunning: self?.awayCoordinator.isRunning ?? false,
+                    idleSeconds: CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .null)
+                )
+            },
             evidence: { refs in
                 guard let store, !refs.isEmpty else { return [] }
                 return await AppState.run(on: CoreMemoryStore.accessQueue) { LiveAlertDelivery.evidenceLines(refs, store: store, origin: deviceId) }
@@ -1881,9 +2149,13 @@ final class AppState: ObservableObject {
         regeneratingSummaryIds.insert(meetingId)
         CoreMemoryStore.slowLaneQueue.async { [weak self] in
             let slides = slow.meetingSlidesText(meetingId: meetingId)
-            let outcome = slow.summarizeMeeting(meetingId: meetingId, notes: notes, transcript: transcript, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions)
+            // The stored segments with speaker names (as the first summary used); the caller's text without them.
+            let named = slow.meetingTranscriptText(meetingId: meetingId) ?? ""
+            let text = named.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? transcript : named
+            let outcome = slow.summarizeMeeting(meetingId: meetingId, notes: notes, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions)
             DispatchQueue.main.async {
                 self?.regeneratingSummaryIds.remove(meetingId)
+                self?.recordSummaryOutcome(outcome, meetingId: meetingId)
                 completion(outcome)
             }
         }
@@ -1953,6 +2225,7 @@ final class AppState: ObservableObject {
                 return
             }
             let insertedId = store.insertMeeting(newMeeting)
+            if let insertedId, !meeting.attendeeDetails.isEmpty { store.setMeetingAttendeeDetails(meetingId: insertedId, attendees: meeting.attendeeDetails) }
             let partIndex = insertedId.flatMap { store.beginMeetingPart(meetingId: $0, startUnixMs: partStartMs, continueKey: continueKey) }
             DispatchQueue.main.async { [weak self] in
                 self?.finishStartingCapture(for: meeting, insertedMeetingId: insertedId, partIndex: partIndex, partStartMs: partStartMs, generation: thisGeneration)
@@ -1982,6 +2255,7 @@ final class AppState: ObservableObject {
                 store.undoMeetingReopen(meetingId: id, partIndex: 0)
                 MeetingContinuation.log.error("meeting \(id): could not add a part; starting a new meeting instead")
                 let insertedId = store.insertMeeting(newMeeting)
+                if let insertedId, !meeting.attendeeDetails.isEmpty { store.setMeetingAttendeeDetails(meetingId: insertedId, attendees: meeting.attendeeDetails) }
                 let newPart = insertedId.flatMap { store.beginMeetingPart(meetingId: $0, startUnixMs: partStartMs, continueKey: continueKey) }
                 DispatchQueue.main.async { [weak self] in
                     self?.finishStartingCapture(for: meeting, insertedMeetingId: insertedId, partIndex: newPart, partStartMs: partStartMs, generation: generation)
@@ -2289,7 +2563,12 @@ extension AppState {
                 audioPath: nil,
                 status: .completed
             )
-            return await AppState.onAccessQueue { store.insertMeeting(row) }
+            let details = m.attendeeDetails
+            return await AppState.onAccessQueue {
+                let id = store.insertMeeting(row)
+                if let id, !details.isEmpty { store.setMeetingAttendeeDetails(meetingId: id, attendees: details) }
+                return id
+            }
         }
 
         func setOutcome(meetingId: Int64, outcome: AwayOutcome, at: Date) async {

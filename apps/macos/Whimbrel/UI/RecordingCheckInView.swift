@@ -16,7 +16,7 @@ struct RecordingCheckInView: View {
                         .frame(width: 32, height: 32)
 
                     VStack(alignment: .leading, spacing: Spacing.xs) {
-                        Text("Still recording?")
+                        Text(controller.asksStillInMeeting ? "Still in a meeting?" as LocalizedStringKey : "Still recording?")
                             .font(.whimbrelBody(.callout).bold())
                             .foregroundStyle(Color.whimbrelTextPrimary)
                         Text("Stopping in \(Duration.seconds(seconds).formatted(.time(pattern: .minuteSecond)))")
@@ -31,7 +31,7 @@ struct RecordingCheckInView: View {
                         Button("Keep recording") { controller.keepTapped() }
                             .buttonStyle(.whimbrelPrimary)
                             .font(.whimbrelBody(.callout).weight(.medium))
-                        Button("Stop now") { controller.stopTapped() }
+                        Button(controller.asksStillInMeeting ? "Stop" as LocalizedStringKey : "Stop now") { controller.stopTapped() }
                             .buttonStyle(.whimbrelSecondary)
                             .font(.whimbrelBody(.caption2))
                     }

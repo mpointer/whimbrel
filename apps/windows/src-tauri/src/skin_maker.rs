@@ -225,8 +225,9 @@ fn intent_name(intent: SkinIntent) -> &'static str {
     }
 }
 
-/// One turn's model call: the cap on route `"skin"` first, the call (with its one retry), then the usage
-/// row the next cap check sums. The FFI's `skin_turn`, on this app's store.
+/// One turn's model call: the cap on route `"skin"` and the provider's monthly budget first (the turn
+/// is pinned to that provider, so a spent budget stops it), the call (with its one retry), then the
+/// usage row the next check sums. The FFI's `skin_turn`, on this app's store.
 pub fn call_model(
     store: &memory::Store,
     caps: &llm::SpendCapConfig,
@@ -236,9 +237,10 @@ pub fn call_model(
     input: &SkinTurnInput,
 ) -> Result<SkinTurnReply, CommandError> {
     llm::check_spend_cap(store, caps, None, Some("skin"), now_ms()).map_err(|e| CommandError::from(api::ApiError::SpendCap(e)))?;
+    api::budget::check_provider(store, provider, now_ms()).map_err(|e| CommandError::from(api::ApiError::BudgetSpent(e)))?;
     let (reply, usage) = llm::skin_maker::run_skin_turn(client, input).map_err(|e| {
         tracing::warn!(error = %e, "skin turn failed");
-        CommandError::ProviderFailure
+        CommandError::provider_failure()
     })?;
     api::util::log_usage_for(store, provider, model, "skin", usage);
     Ok(reply)
@@ -247,10 +249,22 @@ pub fn call_model(
 /// Charges a flat-priced image call (`"skin-image-search"`, `"skin-image-generate"`) before it is made,
 /// failing closed when the charge can't be recorded.
 pub fn charge(store: &memory::Store, caps: &llm::SpendCapConfig, route: &str, cents: i64) -> Result<(), CommandError> {
-    llm::charge_skin_call(store, caps, route, cents, now_ms()).map_err(|e| match e {
+    llm::charge_skin_call(store, caps, route, cents, now_ms()).map_err(charge_error)
+}
+
+/// [`charge`] for a call `provider` bills (image generation): its monthly budget is checked first and
+/// the charge counts toward it.
+pub fn charge_for(store: &memory::Store, caps: &llm::SpendCapConfig, provider: llm::Provider, route: &str, cents: i64) -> Result<(), CommandError> {
+    let now = now_ms();
+    api::budget::check_provider(store, provider, now).map_err(|e| CommandError::from(api::ApiError::BudgetSpent(e)))?;
+    llm::charge_skin_call_for(store, caps, provider.as_str(), route, cents, now).map_err(charge_error)
+}
+
+fn charge_error(e: llm::ChargeError) -> CommandError {
+    match e {
         llm::ChargeError::SpendCap(cap) => api::ApiError::SpendCap(cap).into(),
-        llm::ChargeError::Ledger(_) => CommandError::ProviderFailure,
-    })
+        llm::ChargeError::Ledger(_) => CommandError::provider_failure(),
+    }
 }
 
 /// Saves the reply (a new skin, a fork of a built-in, or a new version of yours) and stores the chat.
@@ -929,7 +943,7 @@ mod tests {
         let store = memory::Store::open(&scratch.0.join("db.sqlite"), Path::new("")).unwrap();
         let input = turn_input(&user, &origin, "a skin", "");
         let err = call_model(&store, &llm::SpendCapConfig::default(), llm::Provider::Ollama, "m", &Garbage, &input).unwrap_err();
-        assert_eq!(err, CommandError::ProviderFailure);
+        assert_eq!(err, CommandError::provider_failure());
         assert!(user.skin_ids().is_empty());
     }
 
@@ -965,6 +979,36 @@ mod tests {
         let err = call_model(&store, &caps, llm::Provider::Anthropic, "m", &Unreachable, &input).unwrap_err();
         assert!(matches!(err, CommandError::SpendCap { .. }), "{err:?}");
         assert!(matches!(charge(&store, &caps, "skin-image-search", 1), Err(CommandError::SpendCap { .. })));
+    }
+
+    #[test]
+    fn a_spent_budget_stops_turns_and_images_and_images_count_toward_it() {
+        let scratch = Scratch::new("budget");
+        let store = memory::Store::open(&scratch.0.join("db.sqlite"), Path::new("")).unwrap();
+        let caps = llm::SpendCapConfig::default();
+        store.set_provider_budgets(&[("openai".into(), 10), ("anthropic".into(), 5)]).unwrap();
+        // Two generated images (5¢ each) bill OpenAI and spend its 10¢; a third is refused.
+        charge_for(&store, &caps, llm::Provider::OpenAI, "skin-image-generate", 5).unwrap();
+        charge_for(&store, &caps, llm::Provider::OpenAI, "skin-image-generate", 5).unwrap();
+        let month = memory::provider_budget::month_label(now_ms());
+        assert!(store.month_spend_by_provider(&month).unwrap().contains(&("openai".to_string(), 10)));
+        let refused = charge_for(&store, &caps, llm::Provider::OpenAI, "skin-image-generate", 5).unwrap_err();
+        assert_eq!(refused, CommandError::BudgetSpent { provider: "openai".into(), spent_cents: 10, budget_cents: 10 });
+        // An image search stays off every budget.
+        charge(&store, &caps, "skin-image-search", 1).unwrap();
+        assert!(!store.month_spend_by_provider(&month).unwrap().iter().any(|(p, _)| p == "image"));
+
+        struct Unreachable;
+        impl llm::LlmClient for Unreachable {
+            fn complete(&self, _prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+                panic!("the budget is checked before any provider call")
+            }
+        }
+        charge_for(&store, &caps, llm::Provider::Anthropic, "skin-image-generate", 5).unwrap();
+        let user = scratch.store();
+        let input = turn_input(&user, &built_in(&user, "whimbrel"), "a skin", "");
+        let err = call_model(&store, &caps, llm::Provider::Anthropic, "m", &Unreachable, &input).unwrap_err();
+        assert!(matches!(err, CommandError::BudgetSpent { .. }), "{err:?}");
     }
 
     #[test]

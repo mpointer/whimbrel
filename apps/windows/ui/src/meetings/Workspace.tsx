@@ -11,10 +11,12 @@ import {
   meetingSeedActionItems,
   meetingSetSpokenLanguage,
   meetingTranscribeAgain,
+  meetingTrimInfo,
   meetingWorkspace,
 } from "../api";
 import { describeError, isCommandError } from "../errors";
-import type { ActionItemView, WorkspaceView } from "../generated/types";
+import type { ActionItemView, TrimInfo, WorkspaceView } from "../generated/types";
+import { TrimSheet } from "./TrimSheet";
 import { useL10n } from "../l10n";
 import { DeviceChip } from "../library/LibraryView";
 import { spanLabel } from "../library/rows";
@@ -65,7 +67,12 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
   const [summary, setSummary] = useState<string | null>(null);
   const [items, setItems] = useState<ActionItemView[]>([]);
   const [conflict, setConflict] = useState(false);
+  // A speaker's name changed: the summary may still use the old one.
+  const [namesChanged, setNamesChanged] = useState(false);
   const [forgetting, setForgetting] = useState(false);
+  // "Trim recording…": whether it's offered here, and the sheet while it's open.
+  const [trim, setTrim] = useState<TrimInfo | null>(null);
+  const [trimming, setTrimming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
@@ -125,6 +132,14 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
     }, 2_000);
     return () => clearInterval(timer);
   }, [load]);
+
+  // Re-asked when the meeting's phase or stage changes: trim waits for the recording to stop.
+  const phase = view?.phase;
+  const stage = view?.processingStage ?? null;
+  useEffect(() => {
+    setTrimming(false);
+    meetingTrimInfo(meetingId).then(setTrim, () => setTrim(null));
+  }, [meetingId, phase, stage]);
 
   const saveNotes = useCallback((value: string) => meetingSaveNotes(meetingId, value), [meetingId]);
   useAutosave(notes, saveNotes, setError, loadedNotes);
@@ -283,7 +298,28 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
           {/* After the meeting it keeps polling for half an hour, while drafts may still land. */}
           <LiveAlertsSection meetingId={meetingId} recording={false} endedUnixMs={view.row.endUnixMs ?? null} />
 
-          <TranscriptPanel key={transcriptRound} meetingId={meetingId} hasTranscript={view.hasTranscript} />
+          {namesChanged && !view.readOnly && (
+            <div className="field-row" role="status">
+              <span>{t("Names changed. Update the summary?")}</span>
+              <button
+                className="mode mode--active"
+                disabled={busy || view.processingStage != null}
+                onClick={() => {
+                  setNamesChanged(false);
+                  askThenRegenerate();
+                }}
+              >
+                {t("Update the summary")}
+              </button>
+            </div>
+          )}
+
+          <TranscriptPanel
+            key={transcriptRound}
+            meetingId={meetingId}
+            hasTranscript={view.hasTranscript}
+            onNamesChanged={() => setNamesChanged(true)}
+          />
 
           {view.canChooseLanguage && (
             <label className="field-row">
@@ -315,10 +351,28 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
                 {t("Regenerate summary")}
               </button>
             )}
+            {trim?.offered && !view.readOnly && (
+              <button className="mode" disabled={busy || view.processingStage != null} onClick={() => setTrimming(true)}>
+                {t("Trim recording…")}
+              </button>
+            )}
             <button className="mode" disabled={busy} onClick={() => setForgetting(true)}>
               {t("Forget meeting")}
             </button>
           </div>
+          {trimming && trim && (
+            <TrimSheet
+              meetingId={meetingId}
+              lengthMs={trim.lengthMs}
+              onCancel={() => setTrimming(false)}
+              onTrimmed={() => {
+                setTrimming(false);
+                setTranscriptRound((n) => n + 1);
+                // The summary is redone from what's left, as Regenerate does.
+                askThenRegenerate();
+              }}
+            />
+          )}
           {view.readOnly && <p className="muted small">{t("Recorded on another device, so its audio and summary live there.")}</p>}
         </>
       )}

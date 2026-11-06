@@ -1,20 +1,68 @@
 import { useEffect, useState } from "react";
 import {
   chooseMeetingSnapshotsFolder,
+  forgetVoice,
   meetingSettings,
   meetingSnapshotSettings,
   resetMeetingSnapshotsFolder,
   setMeetingSettings,
   setMeetingSnapshotsEnabled,
+  voicePeople,
 } from "../api";
 import { describeError, isCommandError } from "../errors";
-import type { MeetingSettings, SnapshotSettings } from "../generated/types";
+import type { MeetingSettings, SnapshotSettings, VoicePersonView } from "../generated/types";
 import { t } from "../l10n";
 import { noticeText, saveNoticeSettings, useRecordingNotice } from "../meetings/recordingNotice";
 import { PROFILE_SAVED_EVENT } from "./ProfileCard";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
+}
+
+/** "Remembered voices…": the people with a voice print, each forgettable (speaker names). */
+export function RememberedVoices({ onError }: { onError: (message: string) => void }) {
+  const [people, setPeople] = useState<VoicePersonView[] | null>(null);
+  const show = () =>
+    voicePeople()
+      .then(setPeople)
+      .catch((e: unknown) => onError(message(e)));
+  const forget = (personKey: string) =>
+    forgetVoice(personKey)
+      .then(setPeople)
+      .catch((e: unknown) => onError(message(e)));
+
+  if (people == null) {
+    return (
+      <div className="toolbar">
+        <button className="mode" onClick={show}>
+          {t("Remembered voices…")}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="field" aria-label={t("Remembered voices…")}>
+      {people.length === 0 ? (
+        <p className="muted small">{t("No remembered voices yet.")}</p>
+      ) : (
+        <ul className="bullets">
+          {people.map((p) => (
+            <li key={p.personKey} className="field-row">
+              <span className="grow">{p.name}</span>
+              <button className="mode" onClick={() => forget(p.personKey)}>
+                {t("Remove")}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="toolbar">
+        <button className="mode" onClick={() => setPeople(null)}>
+          {t("Hide")}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** Settings → Meetings (M3.3 Task 6): how calls are noticed and started. */
@@ -115,6 +163,18 @@ export function MeetingsCard() {
         />
       </label>
       <p className="muted small">{t("Lines that mention you, and the minutes before them, go to your Ask model.")}</p>
+      <label className="toggle">
+        <input
+          type="checkbox"
+          checked={settings.rememberVoices}
+          onChange={(e) => save({ ...settings, rememberVoices: e.target.checked })}
+        />
+        {t("Remember people's voices")}
+      </label>
+      <p className="muted small">
+        {t("Whimbrel learns a voice when you confirm or fix a name. Voices stay on your devices and in your encrypted sync.")}
+      </p>
+      <RememberedVoices onError={setError} />
       <label className="field-row">
         <span>{t("Ask this many minutes before a calendar meeting")}</span>
         <input

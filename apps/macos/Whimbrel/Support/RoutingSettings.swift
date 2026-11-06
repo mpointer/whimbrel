@@ -57,6 +57,11 @@ final class RoutingSettings: ObservableObject {
     private static let cheapFirstKey = "com.mpointer.kestrel.routingCheapFirst"
     private static let useLocalModelKey = "com.mpointer.kestrel.routingUseLocalModel"
     private static let customPromptInstructionsKey = "com.mpointer.kestrel.summaryCustomPromptInstructions"
+    private static let monthlyBudgetCentsKey = "com.mpointer.kestrel.routingMonthlyBudgetCents"
+
+    /// The providers a monthly budget applies to (core's paid `Provider::as_str` ids).
+    nonisolated static let budgetProviders = ["anthropic", "openai", "google", "openrouter"]
+    nonisolated static func budgetFieldKey(_ provider: String) -> String { "budget.monthlyCents.\(provider)" }
 
     @Published var preferredProvider: Provider {
         didSet {
@@ -67,11 +72,36 @@ final class RoutingSettings: ObservableObject {
     /// Each provider gets its own persisted default model — a single shared field would
     /// mean picking a default Anthropic model overwrites the remembered Ollama default
     /// (and vice versa) the moment the default provider switches.
-    @Published var ollamaDefaultModel: String {
+    /// The Ollama model as stored (else the built-in default): what syncs, never the stand-in.
+    @Published var storedOllamaModel: String {
         didSet {
-            UserDefaults.standard.set(ollamaDefaultModel, forKey: Self.ollamaDefaultModelKey)
+            UserDefaults.standard.set(storedOllamaModel, forKey: Self.ollamaDefaultModelKey)
             SettingsFieldTimestamps.touch("routing.ollamaDefaultModel")
         }
+    }
+    static let builtInOllamaModel = "gemma4:12b"
+    /// The Ollama model every call uses: the stored one when it's installed (or the list
+    /// can't be read), else the first installed model (core's `installed_ollama_choice`,
+    /// Windows' first support case). Unlike Windows, a model the user chose gives way too
+    /// (Mike, PR #581), with a warning in Settings (`ollamaMissingChoice`), so `userChose` is
+    /// always false here. The stand-in lives in memory only: the stored model syncs, and
+    /// another Mac may have other models. Setting it is the user's pick, and is saved.
+    var ollamaDefaultModel: String {
+        get {
+            let stored = storedOllamaModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            return CoreMemoryStore.installedOllamaChoice(configured: stored, userChose: false, installed: ollamaModels) ?? storedOllamaModel
+        }
+        set { storedOllamaModel = newValue }
+    }
+
+    /// The model the user chose and the installed one used meanwhile, when the chosen one
+    /// isn't installed. Nil for the built-in default (nobody chose it) or when nothing
+    /// stands in.
+    var ollamaMissingChoice: (chosen: String, using: String)? {
+        let stored = storedOllamaModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !stored.isEmpty, stored != Self.builtInOllamaModel else { return nil }
+        let using = ollamaDefaultModel
+        return using == storedOllamaModel ? nil : (stored, using)
     }
     @Published var anthropicDefaultModel: String {
         didSet {
@@ -136,6 +166,56 @@ final class RoutingSettings: ObservableObject {
             SettingsFieldTimestamps.touch("routing.userDailyCapCents")
         }
     }
+    /// Monthly budget in cents per paid provider, only those that have one
+    /// (docs/superpowers/specs/2026-11-05-provider-budgets-design.md). Synced per provider as
+    /// `budget.monthlyCents.<provider>`; every change reaches core through `onBudgetsChanged`.
+    @Published private(set) var monthlyBudgetCents: [String: Int] {
+        didSet {
+            guard monthlyBudgetCents != oldValue else { return }
+            UserDefaults.standard.set(monthlyBudgetCents, forKey: Self.monthlyBudgetCentsKey)
+            // Only the changed keys: a pulled value must not re-stamp the others as local edits.
+            for provider in Self.budgetProviders where monthlyBudgetCents[provider] != oldValue[provider] {
+                SettingsFieldTimestamps.touch(Self.budgetFieldKey(provider))
+            }
+            onBudgetsChanged?(allBudgets)
+        }
+    }
+    /// $1,000,000, the most a budget can be (core clamps to the same).
+    nonisolated static let maxBudgetCents = 100_000_000
+    /// Sets one provider's budget, at most `maxBudgetCents`; nil or 0 removes it.
+    func setBudget(_ provider: String, cents: Int?) {
+        monthlyBudgetCents[provider] = cents.flatMap { $0 > 0 ? min($0, Self.maxBudgetCents) : nil }
+    }
+    /// The budget field's dollars as cents: nil for none, zero or less, or not a number;
+    /// at most `maxBudgetCents`. Never traps on a huge or infinite entry.
+    nonisolated static func budgetCents(dollars: Double?) -> Int? {
+        guard let dollars, dollars.isFinite, dollars > 0 else { return nil }
+        return Int((min(dollars, Double(maxBudgetCents) / 100) * 100).rounded())
+    }
+    /// Pushes the budgets to core; set by `AppState`, which also calls it at launch.
+    var onBudgetsChanged: (([String: Int]) -> Void)?
+    /// Every paid provider's budget, 0 for none: what core's `set_provider_budgets` replaces.
+    var allBudgets: [String: Int] {
+        Dictionary(uniqueKeysWithValues: Self.budgetProviders.map { ($0, monthlyBudgetCents[$0] ?? 0) })
+    }
+
+    /// The budget fields settings sync pushes: cents, or "" for none.
+    func budgetSyncValues() -> [(key: String, value: String)] {
+        Self.budgetProviders.map { (Self.budgetFieldKey($0), monthlyBudgetCents[$0].map(String.init) ?? "") }
+    }
+
+    /// Applies one pulled budget field; false for another key or a value that does not parse.
+    func applyBudget(fieldKey: String, value: String) -> Bool {
+        guard let provider = Self.budgetProviders.first(where: { Self.budgetFieldKey($0) == fieldKey }) else { return false }
+        if value.isEmpty {
+            setBudget(provider, cents: nil)
+        } else {
+            guard let cents = Int(value), cents >= 0 else { return false }
+            setBudget(provider, cents: cents)
+        }
+        return true
+    }
+
     @Published var globalDailyCapCents: Int? {
         didSet {
             if let globalDailyCapCents {
@@ -247,7 +327,7 @@ final class RoutingSettings: ObservableObject {
         let defaults = UserDefaults.standard
         let storedProvider = defaults.string(forKey: Self.preferredProviderKey).flatMap(Provider.init(rawValue:))
         preferredProvider = storedProvider ?? .ollama
-        ollamaDefaultModel = defaults.string(forKey: Self.ollamaDefaultModelKey) ?? "gemma4:12b"
+        storedOllamaModel = defaults.string(forKey: Self.ollamaDefaultModelKey) ?? Self.builtInOllamaModel
         // Bug fixed 2026-08-06: these two used to default to "" until the user picked a
         // model from Settings' fetched-model dropdown. An empty model name reaches
         // core/ffi's build_chain() unchanged and gets sent as `"model": ""` in the real
@@ -266,6 +346,7 @@ final class RoutingSettings: ObservableObject {
             .flatMap { try? JSONDecoder().decode([String: CoreRoutingConfig.Price].self, from: $0) } ?? [:]
         userDailyCapCents = defaults.object(forKey: Self.userDailyCapCentsKey) as? Int
         globalDailyCapCents = defaults.object(forKey: Self.globalDailyCapCentsKey) as? Int
+        monthlyBudgetCents = defaults.dictionary(forKey: Self.monthlyBudgetCentsKey) as? [String: Int] ?? [:]
         localOnlyMode = defaults.bool(forKey: Self.localOnlyModeKey)
         // `bool(forKey:)` reads an unset key as false; these two default to true.
         cheapFirst = defaults.object(forKey: Self.cheapFirstKey) as? Bool ?? true
@@ -427,14 +508,18 @@ final class RoutingSettings: ObservableObject {
     /// needed; fails gracefully (leaving `ollamaModels` empty, setting
     /// `ollamaModelsError`) if Ollama isn't running — callers should fall back to
     /// free-text model entry in that case.
-    func refreshOllamaModels() async {
-        isLoadingOllamaModels = true
-        ollamaModelsError = nil
-        defer { isLoadingOllamaModels = false }
+    /// `showsLoading` false (the background check) leaves the spinner alone. Each published
+    /// value is assigned only when it changes, so an unchanged list republishes nothing.
+    func refreshOllamaModels(showsLoading: Bool = true) async {
+        if showsLoading { isLoadingOllamaModels = true }
+        defer { if showsLoading { isLoadingOllamaModels = false } }
         do {
-            ollamaModels = try await HostedModelsService.fetchOllamaModels()
+            let models = try await HostedModelsService.fetchOllamaModels()
+            if ollamaModels != models { ollamaModels = models }
+            if ollamaModelsError != nil { ollamaModelsError = nil }
         } catch {
-            ollamaModelsError = error.localizedDescription
+            let message = error.localizedDescription
+            if ollamaModelsError != message { ollamaModelsError = message }
         }
     }
 

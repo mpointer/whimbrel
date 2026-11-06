@@ -24,6 +24,7 @@
 //! dispatch queue on macOS, an actor task on Windows).
 
 pub mod ask;
+pub mod budget;
 pub mod local_model;
 pub mod import;
 pub mod citations;
@@ -49,6 +50,7 @@ pub mod media_retention;
 pub mod meetings;
 pub mod routine_runs;
 pub mod routing;
+pub mod speaker_names;
 pub mod spend;
 pub mod store;
 pub mod summary;
@@ -62,5 +64,6 @@ pub mod util;
 pub mod write_action;
 pub mod your_data;
 
-pub use envelope::{ApiError, ApiResult};
+pub use envelope::{last_provider_failure, ApiError, ApiResult};
+pub(crate) use envelope::chain_failed;
 pub use routing::RoutingConfig;

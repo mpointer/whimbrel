@@ -51,6 +51,19 @@ final class TodayModelTests: XCTestCase {
         XCTAssertTrue(model.loaded)
     }
 
+    func testPrepIsLookedUpByOccurrenceKeyThenBareId() throws {
+        let store = FakeStore()
+        let event = PhoneCalendarEvent(externalId: "weekly", source: "calendar", title: "Weekly", startUnixMs: 5_000, attendees: [])
+        func prep(_ id: String) throws -> PhoneMeetingPrep {
+            try JSONDecoder().decode(PhoneMeetingPrep.self, from: Data(#"{"event_id":"\#(id)","title":"Weekly","start_unix_ms":5000,"brief_json":"{}"}"#.utf8))
+        }
+        XCTAssertNil(TodayModel.prep(for: event, in: store))
+        store.preps["weekly"] = try prep("weekly")
+        XCTAssertEqual(TodayModel.prep(for: event, in: store)?.eventId, "weekly", "an older brief under the bare id")
+        store.preps["weekly@5000"] = try prep("weekly@5000")
+        XCTAssertEqual(TodayModel.prep(for: event, in: store)?.eventId, "weekly@5000", "this occurrence's brief wins")
+    }
+
     func testReloadWithNoStoreLeavesEverythingEmpty() async {
         let (model, sync) = model(store: nil)
         await model.reload(sync: sync, now: now, calendar: calendar)

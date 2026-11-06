@@ -222,9 +222,13 @@ pub fn summarize_meeting(
         return Err(ApiError::SpendCap(cap_err));
     }
 
-    let chain = build_chain_for(llm::TaskKind::MeetingSummary, ollama_model, routing);
+    let chain = crate::budget::apply_budgets(store, build_chain_for(llm::TaskKind::MeetingSummary, ollama_model, routing), false, now_unix_ms())?;
     let mut result: Option<(llm::MeetingSummary, llm::Provider, String)> = None;
     let mut last_cap_error: Option<llm::SpendCapError> = None;
+    let mut failures = Vec::new();
+    if chain.is_empty() {
+        failures.push(llm::ProviderFailureKind::NoProviderConfigured);
+    }
     for entry in &chain {
         let outcome = summarize_meeting_governed(
             store,
@@ -244,10 +248,15 @@ pub fn summarize_meeting(
             }
             Err(err) => err,
         };
-        // Captured before `err` is consumed by `chain_loop_action_for`, purely so the
-        // log lines below can still include the original error text.
-        let llm_err_text = match &err {
-            GovernedSummaryError::Llm(e) => Some(e.to_string()),
+        // Classified (and logged) before `err` is consumed by `chain_loop_action_for`. The
+        // lines below print the kind, never the error text: a transport error's URL can
+        // carry a key (`?key=`).
+        let kind = match &err {
+            GovernedSummaryError::Llm(e) => {
+                let kind = llm::note_link_failure(entry.provider, &entry.model, e);
+                failures.push(kind.clone());
+                Some(kind)
+            }
             GovernedSummaryError::SpendCap(_) => None,
         };
         match chain_loop_action_for(err) {
@@ -258,19 +267,19 @@ pub fn summarize_meeting(
             }
             ChainLoopAction::TryNextLink => {
                 eprintln!(
-                    "[summarize_meeting] {} ({}) failed retryably, trying next link: {}",
+                    "[summarize_meeting] {} ({}) failed retryably, trying next link: {:?}",
                     entry.provider.as_str(),
                     entry.model,
-                    llm_err_text.unwrap_or_default()
+                    kind
                 );
                 continue;
             }
             ChainLoopAction::StopWithProviderFailure => {
                 eprintln!(
-                    "[summarize_meeting] {} ({}) failed non-retryably, aborting chain: {}",
+                    "[summarize_meeting] {} ({}) failed non-retryably, aborting chain: {:?}",
                     entry.provider.as_str(),
                     entry.model,
-                    llm_err_text.unwrap_or_default()
+                    kind
                 );
                 break;
             }
@@ -279,7 +288,7 @@ pub fn summarize_meeting(
     let Some((summary, provider, model)) = result else {
         return Err(match last_cap_error {
             Some(cap_err) => ApiError::SpendCap(cap_err),
-            None => ApiError::ProviderFailure,
+            None => crate::chain_failed(failures),
         });
     };
     let _ = store.update_meeting_summary(
@@ -477,6 +486,39 @@ mod tests {
         let routing = RoutingConfig { global_daily_cap_cents: Some(1), ..RoutingConfig::default() };
         let result = summarize_meeting(&store, 1, " ", "\n", "", "gemma4:12b", &routing, "");
         assert!(matches!(result, Err(ApiError::ProviderFailure)), "{result:?}");
+        assert_eq!(store.count_usage_log_rows().unwrap(), 1);
+    }
+
+    /// The summary's own chain loop: an OpenAI-only chain whose budget is spent fails with
+    /// BudgetSpent before any provider is tried (no network: the usage log is unchanged).
+    #[test]
+    fn summary_loop_respects_budget() {
+        let store = memory::Store::open_in_memory().unwrap();
+        store
+            .log_usage(&memory::NewUsageLogEntry {
+                user_id: None,
+                provider: "openai".into(),
+                model: "gpt-5-mini".into(),
+                route: Some("ask".into()),
+                input_tokens: None,
+                output_tokens: None,
+                estimated_cost_cents: 2500,
+                cache_hit: false,
+                trace_id: "t".into(),
+                ts_unix_ms: now_unix_ms(),
+            })
+            .unwrap();
+        store.set_provider_budgets(&[("openai".into(), 2500)]).unwrap();
+        let routing = RoutingConfig {
+            openai_key: Some("k".into()),
+            use_local_model: false,
+            user_daily_cap_cents: Some(0),
+            global_daily_cap_cents: Some(0),
+            ..RoutingConfig::default()
+        };
+        let result = summarize_meeting(&store, 1, "notes", "transcript", "", "gemma4:12b", &routing, "");
+        let Err(ApiError::BudgetSpent(spent)) = result else { panic!("{result:?}") };
+        assert_eq!((spent.provider, spent.spent_cents, spent.budget_cents), (llm::Provider::OpenAI, 2500, 2500));
         assert_eq!(store.count_usage_log_rows().unwrap(), 1);
     }
 }

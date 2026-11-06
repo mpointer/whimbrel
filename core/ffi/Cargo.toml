@@ -49,9 +49,8 @@ serde_json = "1"
 base64 = "0.22"
 
 [dev-dependencies]
-tempfile = "3"
-# Same version as core/memory; tests read usage_log rows by route.
 rusqlite = "0.32"
+tempfile = "3"
 chrono = "0.4"
 # Encodes a test image for whimbrel_skin_downscale; same as core/skins.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }

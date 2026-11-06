@@ -18,6 +18,9 @@ final class LiveTranscriptionService: ObservableObject {
 
     @Published private(set) var segments: [CoreLiveSegment] = []
     @Published private(set) var status: Status = .idle
+    /// When a live line with new text last arrived (wall clock): late, backlogged speech
+    /// still counts as someone speaking now.
+    private(set) var lastSpeechArrivedAt: Date?
     /// The live meeting's Ask. Here, not in the bar, so a window rebuild (a skin switch) keeps an
     /// answer streaming; torn down with the rest of the live state in `stop()`.
     let askSession = MeetingAskSession()
@@ -59,6 +62,7 @@ final class LiveTranscriptionService: ObservableObject {
         }
         generation += 1
         segments = []
+        lastSpeechArrivedAt = nil
         status = .listening
         runner = Runner(meetingId: meetingId, engine: engine, detectLanguage: detectLanguage(), store: store())
         interval = Self.baseInterval
@@ -75,6 +79,7 @@ final class LiveTranscriptionService: ObservableObject {
         inFlight = false
         // Live text must not linger in memory (or behind the UI) once live transcription stops.
         segments = []
+        lastSpeechArrivedAt = nil
         askSession.teardown()
         if status != .idle { status = .idle }
     }
@@ -114,7 +119,10 @@ final class LiveTranscriptionService: ObservableObject {
         switch outcome {
         case .listening(let rows, let slowest):
             status = .listening
-            if let rows { segments = rows }
+            if let rows {
+                if StillInMeeting.hasNewSpeech(old: segments, new: rows) { lastSpeechArrivedAt = Date() }
+                segments = rows
+            }
             if let slowest {
                 let next = LiveCadence.nextInterval(
                     base: Self.baseInterval, current: interval,

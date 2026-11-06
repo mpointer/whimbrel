@@ -44,6 +44,9 @@ pub struct QualifyingMeeting {
     pub start_unix_ms: i64,
     pub end_unix_ms: i64,
     pub attendees: Vec<String>,
+    /// The same invitees with their emails, when the source has them (speaker names).
+    #[serde(default)]
+    pub attendee_details: Vec<memory::speaker_names::Attendee>,
     pub conference_link: Option<ConferenceLink>,
     pub source: MeetingSource,
     pub app_bundle_id: Option<String>,
@@ -180,6 +183,13 @@ fn qualify(event: &Event) -> Option<QualifyingMeeting> {
         start_unix_ms: start,
         end_unix_ms: end,
         attendees: others.iter().filter_map(|a| a.display_name.clone().or_else(|| a.email.clone())).collect(),
+        attendee_details: others
+            .iter()
+            .filter_map(|a| {
+                let name = a.display_name.clone().or_else(|| a.email.clone())?;
+                Some(memory::speaker_names::Attendee { name, email: a.email.clone() })
+            })
+            .collect(),
         conference_link: link,
         source: MeetingSource::GoogleCalendar,
         app_bundle_id: None,
@@ -378,6 +388,7 @@ mod tests {
             start_unix_ms,
             end_unix_ms: start_unix_ms + 1_800_000,
             attendees: vec![],
+            attendee_details: Vec::new(),
             conference_link: None,
             source,
             app_bundle_id: None,
@@ -445,6 +456,11 @@ mod tests {
         let meetings = qualifying_meetings_from_list_events(json);
         assert_eq!(meetings.len(), 1);
         assert_eq!(meetings[0].attendees, ["Alice"]);
+        assert_eq!(
+            meetings[0].attendee_details,
+            [memory::speaker_names::Attendee { name: "Alice".into(), email: Some("alice@example.com".into()) }],
+            "the invitee keeps their email and the user is left out"
+        );
     }
 
     #[test]
@@ -589,6 +605,7 @@ mod tests {
             start_unix_ms: 1_000_000,
             end_unix_ms: 2_000_000,
             attendees: vec!["alice@x.com".into(), "bob@x.com".into()],
+            attendee_details: Vec::new(),
             conference_link: None,
             source,
             app_bundle_id: None,

@@ -156,6 +156,13 @@ struct CorePrepareMeetingAskData: Decodable {
     }
 }
 
+/// `whimbrel_llm_answer_meeting`'s success payload.
+struct CoreMeetingAnswer: Decodable {
+    let text: String
+    let citations: [CoreContextItemRef]
+    let narrowed: Bool
+}
+
 /// #74: `whimbrel_llm_finalize_ask`'s plain (non-envelope) response shape.
 private struct CoreFinalizeAskData: Decodable {
     let citations: [CoreContextItemRef]
@@ -824,17 +831,26 @@ struct CoreUsageTotals: Codable, Equatable {
     let last30DaysCents: Int64
     let monthToDateCents: Int64
     let last30DaysByProvider: [ProviderSpend]
+    /// This UTC month's spend per paid provider, the user's other computers included; nil
+    /// from a core without it.
+    var monthToDateByProvider: [ProviderSpend]? = nil
 
     enum CodingKeys: String, CodingKey {
         case todayCents = "today_cents"
         case last30DaysCents = "last_30_days_cents"
         case monthToDateCents = "month_to_date_cents"
         case last30DaysByProvider = "last_30_days_by_provider"
+        case monthToDateByProvider = "month_to_date_by_provider"
     }
 
     /// Last-30-day spend for one provider id, zero when it made no calls.
     func cents(for provider: String) -> Int64 {
         last30DaysByProvider.first { $0.provider == provider }?.cents ?? 0
+    }
+
+    /// This month's spend for one provider id, zero when it made no calls.
+    func monthCents(for provider: String) -> Int64 {
+        monthToDateByProvider?.first { $0.provider == provider }?.cents ?? 0
     }
 }
 
@@ -971,17 +987,46 @@ struct CoreSpendToday: Codable {
 enum CoreLLMError: Error, Equatable, Decodable {
     case spendCap(scope: Scope, spentCents: Int64, capCents: Int64)
     case providerFailure
+    /// A provider failure core could explain (the envelope's optional `reason`).
+    case providerFailureBecause(ProviderFailureReason)
     case noTranscript
+    /// Every provider left is over its monthly budget (`provider` is a core id such as "openai").
+    case budgetSpent(provider: String, spentCents: Int64, budgetCents: Int64)
 
     enum Scope: String, Decodable {
         case user
         case global
     }
 
+    /// Why every provider failed, from `llm::ProviderFailureKind`. Kinds without their own
+    /// message (network, other) and unknown ones fail to decode, leaving `.providerFailure`.
+    enum ProviderFailureReason: Equatable, Decodable {
+        case ollamaNotRunning
+        case ollamaModelMissing(model: String)
+        case noProviderConfigured
+        case unauthorized(provider: String)
+        case rateLimited(provider: String)
+
+        private enum CodingKeys: String, CodingKey { case kind, model, provider }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            switch try container.decode(String.self, forKey: .kind) {
+            case "ollama_not_running": self = .ollamaNotRunning
+            case "ollama_model_missing": self = .ollamaModelMissing(model: try container.decode(String.self, forKey: .model))
+            case "no_provider_configured": self = .noProviderConfigured
+            case "unauthorized": self = .unauthorized(provider: try container.decode(String.self, forKey: .provider))
+            case "rate_limited": self = .rateLimited(provider: try container.decode(String.self, forKey: .provider))
+            default: throw DecodingError.dataCorruptedError(forKey: .kind, in: container, debugDescription: "no message of its own")
+            }
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case kind, scope
+        case kind, scope, provider, reason
         case spentCents = "spent_cents"
         case capCents = "cap_cents"
+        case budgetCents = "budget_cents"
     }
 
     init(from decoder: Decoder) throws {
@@ -995,12 +1040,18 @@ enum CoreLLMError: Error, Equatable, Decodable {
             self = .spendCap(scope: scope, spentCents: spentCents, capCents: capCents)
         case "no_transcript":
             self = .noTranscript
+        case "budget_spent":
+            self = .budgetSpent(
+                provider: try container.decode(String.self, forKey: .provider),
+                spentCents: try container.decode(Int64.self, forKey: .spentCents),
+                budgetCents: try container.decode(Int64.self, forKey: .budgetCents))
         default:
             // "provider_failure", or any future kind this build doesn't recognize yet
             // -- falls back to the generic case rather than failing to decode,
             // matching this codebase's forward-compat convention for unrecognized
             // string enums (e.g. core/memory's MeetingTrigger::from_str).
-            self = .providerFailure
+            let reason = try? container.decode(ProviderFailureReason.self, forKey: .reason)
+            self = reason.map { .providerFailureBecause($0) } ?? .providerFailure
         }
     }
 
@@ -1014,9 +1065,62 @@ enum CoreLLMError: Error, Equatable, Decodable {
             return String(localized: "The app-wide daily spend limit was reached (\(String(spentCents))¢/\(String(capCents))¢). This isn't specific to you — try again later.")
         case .providerFailure:
             return String(localized: "Couldn't reach the AI provider. Try again.")
+        case .providerFailureBecause(.ollamaModelMissing(let model)):
+            return String(localized: "Ollama doesn't have the model \(model). Pick one you have in Settings → AI Providers, or run: ollama pull \(model)")
+        case .providerFailureBecause(.ollamaNotRunning):
+            return String(localized: "Ollama isn't running on this computer. Start Ollama, or add an API key in Settings → AI Providers.")
+        case .providerFailureBecause(.noProviderConfigured):
+            return String(localized: "No AI provider is set up. Add one in Settings → AI Providers.")
+        case .providerFailureBecause(.unauthorized(let provider)):
+            let name = Self.providerNames[provider] ?? provider
+            return String(localized: "\(name) rejected the API key. Check it in Settings → AI Providers.")
+        case .providerFailureBecause(.rateLimited(let provider)):
+            let name = Self.providerNames[provider] ?? provider
+            return String(localized: "\(name) is busy or out of credit. Try again shortly.")
         case .noTranscript:
             return String(localized: "There is no transcript for this meeting to ask about.")
+        case let .budgetSpent(provider, spentCents, budgetCents):
+            let name = Self.providerNames[provider] ?? provider
+            return String(localized: "Your \(name) budget for this month is spent (\(AIProvidersSettingsPane.dollars(spentCents)) of \(AIProvidersSettingsPane.dollars(budgetCents))). Raise it in Settings → AI Providers.")
         }
+    }
+
+    /// Ask streams against one provider. When that provider's budget is spent, Ask answers
+    /// through the governed chain instead (the next provider with budget left), and shows
+    /// the message only when that also fails.
+    func fallsBackToGovernedAsk(alreadyFellBack: Bool) -> Bool {
+        if case .budgetSpent = self { return !alreadyFellBack }
+        return false
+    }
+
+    /// Whether the message's fix is in Settings → AI Providers, so the surface offers a way there.
+    var opensAIProvidersSettings: Bool {
+        switch self {
+        case .budgetSpent, .providerFailureBecause(.ollamaModelMissing), .providerFailureBecause(.ollamaNotRunning),
+             .providerFailureBecause(.noProviderConfigured), .providerFailureBecause(.unauthorized):
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Display names for core's paid provider ids (`RoutingSettings.Provider.displayName`).
+    static let providerNames = ["anthropic": "Anthropic", "openai": "OpenAI", "google": "Google", "openrouter": "OpenRouter"]
+}
+
+/// A provider reached 80 or 100 percent of its monthly budget (`memory::provider_budget::BudgetNotice`).
+struct CoreBudgetNotice: Decodable, Equatable {
+    let provider: String
+    let threshold: Int
+    let spentCents: Int64
+    let budgetCents: Int64
+    /// UTC calendar month, "YYYY-MM".
+    let month: String
+
+    enum CodingKeys: String, CodingKey {
+        case provider, threshold, month
+        case spentCents = "spent_cents"
+        case budgetCents = "budget_cents"
     }
 }
 
@@ -1125,6 +1229,71 @@ struct CoreSpeakerSegment: Codable {
     }
 }
 
+/// One diarized speaker's voice (core/diarize's `SpeakerVoice`); sent back as-is to name speakers.
+struct CoreVoice: Codable, Equatable {
+    let speakerId: Int
+    let embedding: [Float]
+    let speechCs: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case speakerId = "speaker_id"
+        case embedding
+        case speechCs = "speech_cs"
+    }
+}
+
+/// `whimbrel_diarize_wav_voices`: the segments plus one voice per speaker.
+struct CoreDiarization: Decodable {
+    let segments: [CoreSpeakerSegment]
+    let voices: [CoreVoice]
+}
+
+/// A calendar invitee (core `speaker_names::Attendee`).
+struct CoreAttendee: Codable, Equatable {
+    let name: String
+    let email: String?
+}
+
+/// A meeting's speaker and who it was assigned to; `status` is "confirmed", "guess" or nil.
+struct CoreMeetingSpeaker: Decodable, Equatable {
+    let speakerId: Int
+    let personKey: String?
+    let name: String?
+    let status: String?
+
+    enum CodingKeys: String, CodingKey {
+        case speakerId = "speaker_id"
+        case personKey = "person_key"
+        case name, status
+    }
+}
+
+/// A transcript label as shown: "Speaker N" becomes its assigned name; `guess` when unconfirmed.
+/// `personKey` is the named person's, so confirming a guess confirms that person.
+struct CoreDisplayLabel: Decodable, Equatable {
+    let label: String
+    let guess: Bool
+    var personKey: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case label, guess
+        case personKey = "person_key"
+    }
+}
+
+/// A person with a remembered voice.
+struct CoreVoicePerson: Decodable, Equatable {
+    let personKey: String
+    let name: String
+    let confirmedCount: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case personKey = "person_key"
+        case name
+        case confirmedCount = "confirmed_count"
+    }
+}
+
 /// JSON shape matching core/diarize's `LabeledSegment`. `speakerId` is nil when no
 /// diarization speaker segment overlapped this transcript segment's midpoint — callers
 /// treat that as "keep the pre-diarization label," not an error.
@@ -1210,6 +1379,29 @@ struct CoreMeetingPart: Decodable, Equatable {
         case audioPath = "audio_path"
         case transcriptPath = "transcript_path"
         case transcribed
+    }
+}
+
+/// core's `TrimResult`: the parts a trim removed, the part it cut (with how much of it is
+/// kept), and the removed snapshots' files, which the caller deletes.
+struct CoreTrimResult: Decodable {
+    let removedParts: [Int64]
+    let spanningPart: (partIndex: Int64, keepMs: Int64)?
+    let removedSnapshotPaths: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case removedParts = "removed_parts"
+        case spanningPart = "spanning_part"
+        case removedSnapshotPaths = "removed_snapshot_paths"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        removedParts = try c.decode([Int64].self, forKey: .removedParts)
+        removedSnapshotPaths = try c.decode([String].self, forKey: .removedSnapshotPaths)
+        // `[part_index, keep_ms]` or null.
+        let pair = try c.decodeIfPresent([Int64].self, forKey: .spanningPart)
+        spanningPart = pair.flatMap { $0.count == 2 ? ($0[0], $0[1]) : nil }
     }
 }
 
@@ -1561,6 +1753,10 @@ final class CoreMemoryStore {
     /// otherwise run truly concurrently on different threads against the same handle.
     static let accessQueue = DispatchQueue(label: "com.mpointer.kestrel.corestore-access", qos: .userInitiated)
     private static let log = Logger(subsystem: "com.mpointer.kestrel", category: "core-bridge")
+    /// Runs after each governed AI call returns (on the caller's thread); AppState uses it to
+    /// post budget notices. Nil in tests. `nonisolated(unsafe)`: set once on the main thread at
+    /// launch, before any governed call can run, and only read after that.
+    nonisolated(unsafe) static var afterGovernedCall: (() -> Void)?
 
     private let handle: OpaquePointer
 
@@ -1812,6 +2008,29 @@ final class CoreMemoryStore {
         return decodeLLMResult(json)
     }
 
+    /// The blocking, governed counterpart of `prepareMeetingAsk` (not pinned to one
+    /// provider), for when the streamed provider's budget is spent. Holds the store across a
+    /// model call, so call it on the slow lane.
+    func answerMeetingQuestion(
+        meetingId: Int64, query: String, model: String, history: [CoreChatTurn] = [], routing: CoreRoutingConfig
+    ) -> Result<CoreMeetingAnswer, CoreLLMError>? {
+        guard let historyJSON = try? JSONEncoder().encode(history),
+              let historyString = String(data: historyJSON, encoding: .utf8) else { return nil }
+        guard let routingJSON = try? JSONEncoder().encode(routing),
+              let routingString = String(data: routingJSON, encoding: .utf8) else { return nil }
+        guard let json = query.withCString({ q in
+            model.withCString { m in
+                historyString.withCString { h in
+                    routingString.withCString { r in
+                        whimbrel_llm_answer_meeting(handle, meetingId, q, m, h, r)
+                    }
+                }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decodeLLMResult(json)
+    }
+
     /// #74: the citation-extraction half, called once a streaming run started from
     /// `prepareAsk`'s prompt reaches a `.completed` terminal event — see
     /// `whimbrel_llm_finalize_ask`'s doc comment. Pass -1 for either token count to omit
@@ -1826,6 +2045,7 @@ final class CoreMemoryStore {
             }
         }) else { return nil }
         defer { whimbrel_core_free_string(json) }
+        Self.afterGovernedCall?()
         let data: CoreFinalizeAskData? = decode(json)
         return data?.citations
     }
@@ -1883,6 +2103,7 @@ final class CoreMemoryStore {
             }
         }) else { return nil }
         defer { whimbrel_core_free_string(json) }
+        Self.afterGovernedCall?()
         guard let envelope: CoreLLMEnvelope<[CoreRoutineRun]> = decode(json), envelope.ok else { return nil }
         return envelope.data ?? []
     }
@@ -1905,6 +2126,7 @@ final class CoreMemoryStore {
             }
         }) else { return nil }
         defer { whimbrel_core_free_string(json) }
+        Self.afterGovernedCall?()
         guard let envelope: CoreLLMEnvelope<[CoreRoutineRun]> = decode(json), envelope.ok else { return nil }
         return envelope.data ?? []
     }
@@ -1932,9 +2154,16 @@ final class CoreMemoryStore {
         whimbrel_memory_complete_followup(handle, id, Int64(Date().timeIntervalSince1970 * 1000))
     }
 
-    /// The stored brief for a calendar event id, or nil.
-    func meetingPrep(eventId: String) -> CoreMeetingPrep? {
-        guard let json = eventId.withCString({ whimbrel_meeting_prep_get(handle, $0) }) else { return nil }
+    /// The stored brief for a `TodayLogic.prepKey`, or nil.
+    func meetingPrep(key: String) -> CoreMeetingPrep? {
+        guard let json = key.withCString({ whimbrel_meeting_prep_get(handle, $0) }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
+    /// The brief prepared for a recorded meeting (by its calendar event, else by title and start), or nil.
+    func meetingPrep(meetingId: Int64) -> CoreMeetingPrep? {
+        guard let json = whimbrel_meeting_prep_for_meeting(handle, meetingId) else { return nil }
         defer { whimbrel_core_free_string(json) }
         return decode(json)
     }
@@ -2146,6 +2375,32 @@ final class CoreMemoryStore {
         guard let json = whimbrel_usage_totals(handle) else { return nil }
         defer { whimbrel_core_free_string(json) }
         return decode(json)
+    }
+
+    /// Replaces every monthly provider budget (cents; 0 for none). False on a store error.
+    @discardableResult
+    func setProviderBudgets(_ budgets: [String: Int]) -> Bool {
+        guard let data = try? JSONEncoder().encode(budgets), let json = String(data: data, encoding: .utf8),
+              let out = json.withCString({ whimbrel_set_provider_budgets(handle, $0) }) else { return false }
+        defer { whimbrel_core_free_string(out) }
+        // `data` is `{}`.
+        let ok = (try? CoreLLMEnvelope<[String: Int]>.result(out).get()) != nil
+        if !ok { Self.log.error("provider budgets not stored") }
+        return ok
+    }
+
+    /// Every monthly provider budget core holds, in cents. Nil on a store error.
+    func providerBudgets() -> [String: Int64]? {
+        guard let json = whimbrel_provider_budgets(handle) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return try? CoreLLMEnvelope<[String: Int64]>.result(json).get()
+    }
+
+    /// Budget thresholds newly reached; core returns each notice once. Empty on a store error.
+    func takeBudgetNotices() -> [CoreBudgetNotice] {
+        guard let json = whimbrel_take_budget_notices(handle) else { return [] }
+        defer { whimbrel_core_free_string(json) }
+        return (try? CoreLLMEnvelope<[CoreBudgetNotice]>.result(json).get()) ?? []
     }
 
     /// Rows per kind for the Your data pane (`memory::Store::data_counts`). Nil on a
@@ -2363,6 +2618,31 @@ final class CoreMemoryStore {
     func previousMergeableMeeting(meetingId: Int64, deviceId: String) -> Int64? {
         let id = deviceId.withCString { whimbrel_meeting_previous_mergeable(handle, meetingId, $0) }
         return id == 0 ? nil : id
+    }
+
+    /// "Trim recording": keeps the first `keepMs` (transcript clock) of a meeting this device
+    /// recorded. nil when nothing changed (recording, not this device's, keep not shorter);
+    /// throws on a store error, when nothing changed either.
+    func trimMeeting(meetingId: Int64, keepMs: Int64) throws -> CoreTrimResult? {
+        guard let json = whimbrel_trim_meeting(handle, meetingId, keepMs) else { throw CocoaError(.fileWriteUnknown) }
+        defer { whimbrel_core_free_string(json) }
+        // Not `CoreLLMEnvelope.result`: a no-op is `"ok":true` with `"data":null`.
+        guard let envelope: CoreLLMEnvelope<CoreTrimResult> = decode(json), envelope.ok else {
+            Self.log.error("meeting \(meetingId): trim failed in the store")
+            throw CocoaError(.fileWriteUnknown)
+        }
+        return envelope.data
+    }
+
+    /// A trimmed meeting can't be continued or merged.
+    func meetingIsTrimmed(meetingId: Int64) -> Bool {
+        whimbrel_meeting_is_trimmed(handle, meetingId)
+    }
+
+    /// The meeting's length on the transcript clock, in ms; nil on a store error.
+    func meetingLengthMs(meetingId: Int64) -> Int64? {
+        let ms = whimbrel_meeting_length_ms(handle, meetingId)
+        return ms < 0 ? nil : ms
     }
 
     /// After `absorbSplitMeeting`: `from`'s parts join `into`, and `from` is deleted.
@@ -2683,6 +2963,80 @@ final class CoreMemoryStore {
         return decodeLLMResult(json)
     }
 
+    /// Speaker names: the `{"ok","data"}` envelope's data, nil (logged) on a store error or NULL.
+    private func speakerNamesResult<T: Decodable>(_ json: UnsafeMutablePointer<CChar>?) -> T? {
+        guard let json else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        switch CoreLLMEnvelope<T>.result(json) {
+        case .success(let value): return value
+        case .failure(let error):
+            Self.log.error("speaker names: \(String(describing: error), privacy: .public)")
+            return nil
+        }
+    }
+
+    /// The meeting's invitees with their emails, for naming its speakers.
+    @discardableResult
+    func setMeetingAttendeeDetails(meetingId: Int64, attendees: [CoreAttendee]) -> Bool {
+        guard let data = try? JSONEncoder().encode(attendees), let json = String(data: data, encoding: .utf8),
+              let out = json.withCString({ whimbrel_set_meeting_attendee_details(handle, meetingId, $0) }) else { return false }
+        defer { whimbrel_core_free_string(out) }
+        let ok = String(cString: out).hasPrefix(#"{"ok":true"#)
+        if !ok { Self.log.error("meeting \(meetingId): attendee details not stored") }
+        return ok
+    }
+
+    /// Names the meeting's unnamed speakers from `voices`; nil on failure (the summary goes on).
+    /// Holds the store across a model call: slow lane only.
+    func assignMeetingSpeakers(meetingId: Int64, voices: [CoreVoice], model: String, routing: CoreRoutingConfig, remember: Bool) -> [CoreMeetingSpeaker]? {
+        guard let voicesData = try? JSONEncoder().encode(voices), let voicesJSON = String(data: voicesData, encoding: .utf8),
+              let routingData = try? JSONEncoder().encode(routing), let routingJSON = String(data: routingData, encoding: .utf8) else { return nil }
+        defer { Self.afterGovernedCall?() }
+        return speakerNamesResult(voicesJSON.withCString { v in
+            model.withCString { m in
+                routingJSON.withCString { r in whimbrel_assign_meeting_speakers(handle, meetingId, v, m, r, remember) }
+            }
+        })
+    }
+
+    func meetingSpeakers(meetingId: Int64) -> [CoreMeetingSpeaker]? {
+        speakerNamesResult(whimbrel_meeting_speakers(handle, meetingId))
+    }
+
+    /// Mike names a speaker (confirmed). Returns the meeting's speakers.
+    func setMeetingSpeaker(meetingId: Int64, speakerId: Int, name: String, email: String?) -> [CoreMeetingSpeaker]? {
+        let out = name.withCString { n in
+            email.map { $0.withCString { e in whimbrel_set_meeting_speaker(handle, meetingId, Int32(speakerId), n, e) } }
+                ?? whimbrel_set_meeting_speaker(handle, meetingId, Int32(speakerId), n, nil)
+        }
+        return speakerNamesResult(out)
+    }
+
+    /// Confirms a guessed speaker as the person it was shown as (never re-resolved by name).
+    func confirmMeetingSpeaker(meetingId: Int64, speakerId: Int, personKey: String) -> [CoreMeetingSpeaker]? {
+        personKey.withCString { speakerNamesResult(whimbrel_confirm_meeting_speaker(handle, meetingId, Int32(speakerId), $0)) }
+    }
+
+    /// The meeting's invitees with their emails (names only when none were stored).
+    func meetingAttendeeDetails(meetingId: Int64) -> [CoreAttendee]? {
+        speakerNamesResult(whimbrel_meeting_attendee_details(handle, meetingId))
+    }
+
+    /// Raw transcript labels as shown, in the same order.
+    func displayLabels(meetingId: Int64, labels: [String]) -> [CoreDisplayLabel]? {
+        guard let data = try? JSONEncoder().encode(labels), let json = String(data: data, encoding: .utf8) else { return nil }
+        return json.withCString { speakerNamesResult(whimbrel_display_labels(handle, meetingId, $0)) }
+    }
+
+    func voicePeople() -> [CoreVoicePerson]? {
+        speakerNamesResult(whimbrel_voice_people(handle))
+    }
+
+    /// Forgets one person's voice; returns who is left.
+    func forgetVoice(personKey: String) -> [CoreVoicePerson]? {
+        personKey.withCString { speakerNamesResult(whimbrel_forget_voice(handle, $0)) }
+    }
+
     /// Most recent meetings, newest first.
     /// `recentMeetings` for display: copies of one call collapse into one entry whose
     /// `alsoRecorded` lists the others.
@@ -2981,6 +3335,7 @@ final class CoreMemoryStore {
         guard let routingJson = try? JSONEncoder().encode(routing), let routingJsonString = String(data: routingJson, encoding: .utf8) else { return nil }
         guard let json = whimbrel_llm_generate_conversation_title(handle, model, query, answer, routingJsonString) else { return nil }
         defer { whimbrel_core_free_string(json) }
+        Self.afterGovernedCall?()
         struct Envelope: Decodable { let ok: Bool; let data: TitleData?; struct TitleData: Decodable { let title: String } }
         guard let envelope: Envelope = decode(json), envelope.ok, let title = envelope.data?.title else { return nil }
         return title
@@ -3280,17 +3635,16 @@ final class CoreMemoryStore {
     /// threshold-based auto-clustering. Returns nil on any failure (missing/corrupt
     /// models, sample-rate mismatch, processing failure) — callers must degrade to
     /// their pre-diarization behavior on nil, never lose the transcript over this.
-    static func diarizeWav(segmentationModelPath: URL, embeddingModelPath: URL, wavPath: URL, expectedSpeakerCount: Int?) -> [CoreSpeakerSegment]? {
+    static func diarizeWavVoices(segmentationModelPath: URL, embeddingModelPath: URL, wavPath: URL, expectedSpeakerCount: Int?) -> CoreDiarization? {
         guard let json = segmentationModelPath.path.withCString({ seg in
             embeddingModelPath.path.withCString { emb in
                 wavPath.path.withCString { wav in
-                    whimbrel_diarize_wav(seg, emb, wav, Int32(expectedSpeakerCount ?? -1))
+                    whimbrel_diarize_wav_voices(seg, emb, wav, Int32(expectedSpeakerCount ?? -1))
                 }
             }
         }) else { return nil }
         defer { whimbrel_core_free_string(json) }
-        let data = Data(String(cString: json).utf8)
-        return try? JSONDecoder().decode([CoreSpeakerSegment].self, from: data)
+        return try? JSONDecoder().decode(CoreDiarization.self, from: Data(String(cString: json).utf8))
     }
 
     /// Merges transcript segments with speaker segments (from `transcribeWav`/
@@ -3487,6 +3841,17 @@ final class CoreMemoryStore {
     /// slower local model (core/api::prompts::is_time_critical).
     static func isTimeCritical(_ query: String) -> Bool {
         query.withCString { whimbrel_ask_is_time_critical($0) }
+    }
+
+    /// The installed Ollama model standing in for `configured`, or nil to keep it
+    /// (core/api::hosted_models::installed_ollama_choice). Pure, safe on the main actor.
+    static func installedOllamaChoice(configured: String, userChose: Bool, installed: [String]) -> String? {
+        guard let data = try? JSONEncoder().encode(installed), let installedJSON = String(data: data, encoding: .utf8) else { return nil }
+        guard let pick = configured.withCString({ c in
+            installedJSON.withCString { whimbrel_installed_ollama_choice(c, userChose, $0) }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(pick) }
+        return String(cString: pick)
     }
 
     /// Fetches the sorted model ids for `provider` ("anthropic", "openai", "google",
@@ -3754,8 +4119,10 @@ final class CoreMemoryStore {
     /// at this point would mean the Rust side produced invalid JSON, which shouldn't
     /// happen in practice; falls back to `.providerFailure` defensively rather than
     /// crashing.
+    /// Every caller is a governed AI call, so this also runs `afterGovernedCall`.
     private func decodeLLMResult<T: Decodable>(_ json: UnsafeMutablePointer<CChar>) -> Result<T, CoreLLMError> {
-        CoreLLMEnvelope<T>.result(json)
+        Self.afterGovernedCall?()
+        return CoreLLMEnvelope<T>.result(json)
     }
 
     private func decode<T: Decodable>(_ json: UnsafeMutablePointer<CChar>) -> T? {
@@ -4206,6 +4573,7 @@ extension CoreMemoryStore {
               })
         else { return nil }
         defer { whimbrel_core_free_string(out) }
+        Self.afterGovernedCall?()
         return CoreLiveQuestion.detectResult(String(cString: out))
     }
 
@@ -4234,7 +4602,7 @@ extension CoreMemoryStore {
         return j.withCString { whimbrel_live_alert_set_draft(handle, id, $0) }
     }
 
-    /// "sent", "failed:<reason>" or "off"; local to this device.
+    /// "sent", "failed:<reason>", "off" or "present" (not emailed: the user was at the Mac); local to this device.
     @discardableResult
     func setLiveAlertEmailStatus(id: Int64, status: String) -> Bool {
         status.withCString { whimbrel_live_alert_set_email_status(handle, id, $0) }
@@ -4297,6 +4665,7 @@ extension CoreMemoryStore {
             }
         }) else { return nil }
         defer { whimbrel_core_free_string(out) }
+        Self.afterGovernedCall?()
         struct Reply: Decodable { let added: Int }
         return (try? JSONDecoder().decode(Reply.self, from: Data(String(cString: out).utf8)))?.added
     }
@@ -4308,6 +4677,7 @@ extension CoreMemoryStore {
 /// `.providerFailure`; image bytes arrive base64-encoded and are decoded here.
 enum CoreSkinMaker {
     private static func call<T: Decodable>(_ json: UnsafeMutablePointer<CChar>?) -> Result<T, CoreLLMError> {
+        CoreMemoryStore.afterGovernedCall?()
         guard let json else { return .failure(.providerFailure) }
         defer { whimbrel_core_free_string(json) }
         return CoreLLMEnvelope<T>.result(json)
@@ -4321,16 +4691,19 @@ enum CoreSkinMaker {
         (try? JSONEncoder().encode(routing)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 
-    static func turn(dbPath: String, provider: String, model: String, apiKey: String?, input: Data, routing: CoreRoutingConfig)
-        -> Result<SkinTurnReplyDTO, CoreLLMError> {
+    /// `deviceId` is this device's sync id, so the call's spend counts and syncs as its own.
+    static func turn(dbPath: String, deviceId: String, provider: String, model: String, apiKey: String?, input: Data,
+                     routing: CoreRoutingConfig) -> Result<SkinTurnReplyDTO, CoreLLMError> {
         let inputString = String(decoding: input, as: UTF8.self)
         let out: UnsafeMutablePointer<CChar>? = dbPath.withCString { db in
-            provider.withCString { p in
-                model.withCString { m in
-                    inputString.withCString { i in
-                        json(routing).withCString { r in
-                            if let apiKey { return apiKey.withCString { k in whimbrel_skin_turn(db, p, m, k, i, r) } }
-                            return whimbrel_skin_turn(db, p, m, nil, i, r)
+            deviceId.withCString { d in
+                provider.withCString { p in
+                    model.withCString { m in
+                        inputString.withCString { i in
+                            json(routing).withCString { r in
+                                if let apiKey { return apiKey.withCString { k in whimbrel_skin_turn(db, d, p, m, k, i, r) } }
+                                return whimbrel_skin_turn(db, d, p, m, nil, i, r)
+                            }
                         }
                     }
                 }
@@ -4345,10 +4718,13 @@ enum CoreSkinMaker {
         })
     }
 
-    static func generateImage(dbPath: String, provider: String, apiKey: String, prompt: String, routing: CoreRoutingConfig) -> Result<Data, CoreLLMError> {
+    static func generateImage(dbPath: String, deviceId: String, provider: String, apiKey: String, prompt: String,
+                              routing: CoreRoutingConfig) -> Result<Data, CoreLLMError> {
         bytes(call(dbPath.withCString { db in
-            provider.withCString { p in
-                apiKey.withCString { k in prompt.withCString { q in json(routing).withCString { r in whimbrel_skin_image_generate(db, p, k, q, r) } } }
+            deviceId.withCString { d in
+                provider.withCString { p in
+                    apiKey.withCString { k in prompt.withCString { q in json(routing).withCString { r in whimbrel_skin_image_generate(db, d, p, k, q, r) } } }
+                }
             }
         }))
     }

@@ -11,6 +11,8 @@ memory = { path = "../memory" }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Chain-link failures (routing::note_link_failure); the Windows shell writes tracing to its log file.
+tracing = "0.1"
 ureq = { version = "2", features = ["json"] }
 base64 = "0.22"
 # Streaming inference (core/llm/src/streaming.rs, docs/adr/0002) — additive alongside

@@ -42,6 +42,8 @@ struct QualifyingMeeting: Identifiable, Equatable {
     let selfIsOrganizer: Bool
     /// The current user's own RSVP; nil when they aren't in the attendee list.
     let selfResponse: SelfResponse?
+    /// `attendees` with their emails, for naming the recording's speakers.
+    var attendeeDetails: [CoreAttendee] = []
 }
 
 /// Mirrors core's `SelfResponse` (snake_case on the wire).
@@ -63,6 +65,7 @@ extension QualifyingMeeting: Codable {
         case organizerName = "organizer_name"
         case selfIsOrganizer = "self_is_organizer"
         case selfResponse = "self_response"
+        case attendeeDetails = "attendee_details"
     }
 
     init(from decoder: Decoder) throws {
@@ -79,7 +82,8 @@ extension QualifyingMeeting: Codable {
             organizerEmail: try c.decodeIfPresent(String.self, forKey: .organizerEmail),
             organizerName: try c.decodeIfPresent(String.self, forKey: .organizerName),
             selfIsOrganizer: try c.decodeIfPresent(Bool.self, forKey: .selfIsOrganizer) ?? false,
-            selfResponse: try c.decodeIfPresent(SelfResponse.self, forKey: .selfResponse)
+            selfResponse: try c.decodeIfPresent(SelfResponse.self, forKey: .selfResponse),
+            attendeeDetails: try c.decodeIfPresent([CoreAttendee].self, forKey: .attendeeDetails) ?? []
         )
     }
 
@@ -97,6 +101,7 @@ extension QualifyingMeeting: Codable {
         try c.encode(organizerName, forKey: .organizerName)
         try c.encode(selfIsOrganizer, forKey: .selfIsOrganizer)
         try c.encode(selfResponse, forKey: .selfResponse)
+        try c.encode(attendeeDetails, forKey: .attendeeDetails)
     }
 }
 
@@ -221,8 +226,18 @@ final class CalendarService: ObservableObject {
             organizerEmail: event.organizer?.url.absoluteString.replacingOccurrences(of: "mailto:", with: "", options: [.anchored, .caseInsensitive]),
             organizerName: event.organizer?.name,
             selfIsOrganizer: event.organizer?.isCurrentUser ?? false,
-            selfResponse: (event.attendees ?? []).first(where: \.isCurrentUser).flatMap { selfResponse(from: $0.participantStatus) }
+            selfResponse: (event.attendees ?? []).first(where: \.isCurrentUser).flatMap { selfResponse(from: $0.participantStatus) },
+            attendeeDetails: otherAttendees.map(attendee(from:))
         )
+    }
+
+    nonisolated static func attendee(from p: EKParticipant) -> CoreAttendee { attendee(name: p.name, url: p.url) }
+
+    /// The name, else the address; the email is the `mailto:` address (none for another URL).
+    nonisolated static func attendee(name: String?, url: URL) -> CoreAttendee {
+        let raw = url.absoluteString
+        let email = raw.range(of: "mailto:", options: [.anchored, .caseInsensitive]).map { String(raw[$0.upperBound...]) }
+        return CoreAttendee(name: name ?? email ?? raw, email: email.flatMap { $0.isEmpty ? nil : $0 })
     }
 
     /// EventKit's RSVP for the current user, in core's vocabulary. Statuses with no

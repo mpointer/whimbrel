@@ -68,7 +68,10 @@ final class TodayRowsTests: XCTestCase {
         XCTAssertEqual(next.attendees, "Priya Nair, Tom Becker")
         XCTAssertEqual(next.prep, .missing, "no prep data: 'No prep yet'")
         var content = sample
-        content.nextPrep = CoreMeetingPrep(eventId: next.id, title: "x", startUnixMs: 0, generatedAtUnixMs: 0, briefJson: "{}", provider: "p", model: "m")
+        content.nextPrep = CoreMeetingPrep(
+            eventId: TodayLogic.prepKey(eventId: next.id, start: next.start), title: "x",
+            startUnixMs: Int64(next.start.timeIntervalSince1970 * 1000), generatedAtUnixMs: 0, briefJson: "{}", provider: "p", model: "m"
+        )
         XCTAssertEqual(try XCTUnwrap(TodayRows.upNext(content)).prep, .missing, "a prep without a decodable brief is not ready")
         let later = TodayRows.schedule(sample, upNextPlaced: true).upcoming[0]
         XCTAssertNil(later.prep, "only the next event carries prep state")

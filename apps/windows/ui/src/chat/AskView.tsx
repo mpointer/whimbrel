@@ -11,6 +11,7 @@ import {
   chatStarterPrompts,
   chatStop,
   getRoutingSettings,
+  openAiSettings,
 } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { ChatSpend, ConversationRow, StarterPromptView } from "../generated/types";
@@ -276,6 +277,13 @@ function TurnView({ turn, onOpen }: { turn: Turn; onOpen: (s: Selection) => void
           </p>
         )}
         {turn.error && <p role="alert">{turn.error}</p>}
+        {turn.budgetSpent && (
+          <div className="toolbar">
+            <button className="mode" onClick={() => void openAiSettings()}>
+              {t("Open AI Providers settings")}
+            </button>
+          </div>
+        )}
         {cited.length > 0 && (
           <div className="citations">
             <span className="muted small">{t("Sources")}</span>

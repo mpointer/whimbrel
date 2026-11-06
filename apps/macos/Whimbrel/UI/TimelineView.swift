@@ -727,6 +727,8 @@ struct TimelineView: View {
         ) { result in
             if case .failed = result {
                 Self.log.error("Failed to delete meeting id \(meeting.id, privacy: .public)")
+            } else {
+                appState.clearSummaryFailure(meetingId: meeting.id)
             }
             refresh()
         }

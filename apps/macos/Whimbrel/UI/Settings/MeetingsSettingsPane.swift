@@ -19,8 +19,56 @@ private struct RecordingNoticeSettingsView: View {
     }
 }
 
+/// "Remembered voices…": everyone Whimbrel can name by voice, each with a delete button.
+private struct RememberedVoicesSheet: View {
+    let store: CoreMemoryStore?
+    @Environment(\.dismiss) private var dismiss
+    @State private var people: [CoreVoicePerson] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            if people.isEmpty {
+                Text("No remembered voices yet.").foregroundStyle(Color.whimbrelTextSecondary)
+            } else {
+                List(people, id: \.personKey) { person in
+                    HStack {
+                        Text(person.name)
+                        Spacer()
+                        Button("Delete", role: .destructive) { people = store?.forgetVoice(personKey: person.personKey) ?? people }
+                    }
+                }
+                .frame(minHeight: 160)
+            }
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(Spacing.lg)
+        .frame(width: 380)
+        .onAppear { people = store?.voicePeople() ?? [] }
+    }
+}
+
 struct MeetingsSettingsPane: View {
     @EnvironmentObject var appState: AppState
+    @State private var showingVoices = false
+
+    @ViewBuilder private var rememberVoicesSection: some View {
+        Toggle("Remember people's voices", isOn: Binding(
+            get: { appState.speakerNamesSettings.rememberVoices },
+            set: { appState.speakerNamesSettings.rememberVoices = $0 }
+        ))
+        .tint(Color.whimbrelAccentPrimary)
+
+        Text("Whimbrel learns a voice when you confirm or fix a name. Voices stay on your devices and in your encrypted sync.")
+            .font(.whimbrelBody(.caption))
+            .foregroundStyle(Color.whimbrelTextSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+        Button("Remembered voices…") { showingVoices = true }
+            .sheet(isPresented: $showingVoices) { RememberedVoicesSheet(store: appState.coreStore) }
+    }
 
     /// "Forward me a live question". Shown off, and locked, until there is a name to listen for.
     @ViewBuilder private var liveQuestionSection: some View {
@@ -104,6 +152,10 @@ struct MeetingsSettingsPane: View {
             Divider().overlay(Color.whimbrelBorder)
 
             liveQuestionSection
+
+            Divider().overlay(Color.whimbrelBorder)
+
+            rememberVoicesSection
 
             Divider().overlay(Color.whimbrelBorder)
 

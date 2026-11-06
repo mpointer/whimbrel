@@ -53,7 +53,7 @@ pub fn run_gated(
     let gate = gate.into();
     // Show a peer's brief under our own calendar id even when this device will not generate.
     for m in meetings {
-        store.alias_synced_meeting_prep(&m.id, m.start_unix_ms, &m.title)?;
+        store.alias_synced_meeting_prep(&memory::prep::prep_key(&m.id, m.start_unix_ms), m.start_unix_ms, &m.title)?;
     }
     if gate == RunGate::Off {
         return Ok(Vec::new());
@@ -94,7 +94,7 @@ pub fn run_gated(
 
         let Ok(brief_json) = serde_json::to_string(&brief) else { continue };
         store.save_meeting_prep(&memory::prep::MeetingPrepRow {
-            event_id: meeting.id.clone(),
+            event_id: memory::prep::prep_key(&meeting.id, meeting.start_unix_ms),
             title: meeting.title.clone(),
             start_unix_ms: meeting.start_unix_ms,
             generated_at_unix_ms: now_unix_ms,
@@ -139,11 +139,13 @@ pub fn run_with_chain(
     gate: impl Into<RunGate>,
 ) -> rusqlite::Result<Vec<memory::RoutineRun>> {
     let cap_config = routing.spend_cap_config();
-    let chain = crate::routing::build_chain_for(llm::TaskKind::MeetingPrep, ollama_model, routing);
     let mut complete = |prompt: &str| -> Option<Completed> {
         if llm::check_spend_cap(store, &cap_config, None, Some("routine"), now_unix_ms).is_err() {
             return None;
         }
+        // Built per meeting: spend from the previous one can put a provider over budget.
+        let chain = crate::routing::build_chain_for(llm::TaskKind::MeetingPrep, ollama_model, routing);
+        let chain = crate::budget::apply_budgets(store, chain, false, now_unix_ms).ok()?;
         let (completion, link) = llm::try_chain(&chain, |link| link.client.complete(prompt))?;
         crate::util::log_usage_for(store, link.provider, &link.model, "routine", completion.token_usage);
         Some(Completed { text: completion.text, provider: link.provider.as_str().to_string(), model: link.model.clone() })
@@ -166,6 +168,7 @@ mod tests {
             start_unix_ms: start,
             end_unix_ms: start + 30 * MIN,
             attendees: attendees.iter().map(|s| s.to_string()).collect(),
+            attendee_details: Vec::new(),
             conference_link: None,
             source: MeetingSource::GoogleCalendar,
             app_bundle_id: None,
@@ -235,7 +238,8 @@ mod tests {
         assert_eq!(runs[0].output_summary, "Prep ready for evt-1 sync");
         let json: serde_json::Value = serde_json::from_str(&runs[0].output_json).unwrap();
         assert_eq!(json["event_id"], "evt-1");
-        let stored = store.get_meeting_prep("evt-1").unwrap().expect("stored by event id");
+        let stored = store.get_meeting_prep(&memory::prep::prep_key("evt-1", 100 * MIN)).unwrap().expect("stored per occurrence");
+        assert_eq!(stored.event_id, "evt-1@6000000");
         assert_eq!((stored.provider.as_str(), stored.model.as_str()), ("ollama", "gemma4:12b"));
         assert!(stored.brief_json.contains("Follow up."));
 
@@ -270,7 +274,7 @@ mod tests {
         let runs = run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut never).unwrap();
 
         assert_eq!(runs.len(), 1);
-        let stored = store.get_meeting_prep("evt-2").unwrap().unwrap();
+        let stored = store.get_meeting_prep(&memory::prep::prep_key("evt-2", 100 * MIN)).unwrap().unwrap();
         assert!(stored.brief_json.contains("No earlier meetings or email with these people."));
         assert_eq!(stored.provider, "none");
     }
@@ -284,7 +288,7 @@ mod tests {
         let runs = run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut never).unwrap();
 
         assert!(runs.is_empty());
-        assert!(store.get_meeting_prep("evt-3").unwrap().is_none());
+        assert!(store.get_meeting_prep(&memory::prep::prep_key("evt-3", 100 * MIN)).unwrap().is_none());
     }
 
     #[test]
@@ -302,7 +306,7 @@ mod tests {
 
         let mut none = |_: &str| -> Option<Completed> { None };
         assert!(run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut none).unwrap().is_empty());
-        assert!(store.get_meeting_prep("evt-5").unwrap().is_none(), "nothing stored: it will retry");
+        assert!(store.get_meeting_prep(&memory::prep::prep_key("evt-5", 100 * MIN)).unwrap().is_none(), "nothing stored: it will retry");
 
         let mut ok = |_: &str| Some(good_answer());
         assert_eq!(run(&store, &meetings, 81 * MIN, 30.0, "", "", &mut ok).unwrap().len(), 1, "prepared on the next tick");
@@ -316,7 +320,7 @@ mod tests {
         let mut garbled = |_: &str| Some(Completed { text: "sorry".into(), provider: "ollama".into(), model: "m".into() });
 
         assert!(run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut garbled).unwrap().is_empty());
-        assert!(store.get_meeting_prep("evt-6").unwrap().is_none());
+        assert!(store.get_meeting_prep(&memory::prep::prep_key("evt-6", 100 * MIN)).unwrap().is_none());
     }
 
     #[test]
@@ -377,8 +381,40 @@ mod tests {
         for gate in [RunGate::Full, RunGate::Failover] {
             assert!(run_gated(&store, &meetings, 95 * MIN, 30.0, "", "", gate, &mut never).unwrap().is_empty());
         }
-        assert!(store.get_meeting_prep("evt-i").unwrap().is_some(), "Today looks the brief up by the local id");
+        assert!(store.get_meeting_prep(&memory::prep::prep_key("evt-i", 100 * MIN)).unwrap().is_some(), "Today looks the brief up by the local id");
         assert!(store.list_outbox_operations().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_recurring_meeting_gets_a_fresh_brief_for_each_occurrence() {
+        let store = store(true);
+        earlier_meeting_with(&store, "Ben Lawrick");
+        let week = 7 * 24 * 60 * MIN;
+        let mut model = |_: &str| Some(good_answer());
+        let first = [upcoming("series", 100 * MIN, &["Ben Lawrick"])];
+        assert_eq!(run(&store, &first, 80 * MIN, 30.0, "", "", &mut model).unwrap().len(), 1);
+        // Same calendar id a week later (EventKit shares it across a series).
+        let next = [upcoming("series", 100 * MIN + week, &["Ben Lawrick"])];
+        assert_eq!(run(&store, &next, 80 * MIN + week, 30.0, "", "", &mut model).unwrap().len(), 1, "not skipped as prepared");
+        let row = store.get_meeting_prep(&memory::prep::prep_key("series", 100 * MIN + week)).unwrap().unwrap();
+        assert_eq!(row.start_unix_ms, 100 * MIN + week, "not last week's brief");
+        assert_eq!(store.get_meeting_prep("series").unwrap().unwrap().start_unix_ms, 100 * MIN + week, "bare id: newest occurrence");
+    }
+
+    #[test]
+    fn a_brief_stored_under_the_bare_event_id_still_counts_and_is_found_by_key() {
+        let store = store(true);
+        earlier_meeting_with(&store, "Ben Lawrick");
+        store
+            .save_meeting_prep(&memory::prep::MeetingPrepRow {
+                event_id: "legacy".into(), title: "legacy sync".into(), start_unix_ms: 100 * MIN, generated_at_unix_ms: 75 * MIN,
+                brief_json: "{}".into(), provider: "p".into(), model: "m".into(),
+            })
+            .unwrap();
+        let meetings = [upcoming("legacy", 100 * MIN, &["Ben Lawrick"])];
+        assert!(run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut never).unwrap().is_empty());
+        assert_eq!(store.get_meeting_prep(&memory::prep::prep_key("legacy", 100 * MIN)).unwrap().unwrap().event_id, "legacy");
+        assert!(store.get_meeting_prep(&memory::prep::prep_key("legacy", 200 * MIN)).unwrap().is_none(), "another occurrence");
     }
 
     #[test]

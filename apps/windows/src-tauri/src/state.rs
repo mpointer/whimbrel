@@ -167,12 +167,16 @@ impl AppState {
                                 let s = settings.lock().unwrap();
                                 (live_transcribe_config(&paths, &s), s.live_question_armed())
                             };
-                            with_question_watcher(config, armed, || {
+                            let config = with_question_watcher(config, armed, || {
                                 // Blank becomes core's English placeholder, which every device
                                 // translates at display time (`sentinels.ts`), never a translation.
                                 let title = Some(meeting.title.trim()).filter(|t| !t.is_empty()).unwrap_or("Meeting");
                                 questions.listener(meeting.meeting_id, title.to_string())
-                            })
+                            });
+                            // "Still in a meeting?" hears words through the live transcript.
+                            let tracking = config.model.is_file();
+                            let listener = crate::meetings::still_here::speech_listener(config.listener.clone(), tracking);
+                            crate::meetings::live::Config { listener: Some(listener), ..config }
                         })
                     }),
                     snapshots,
@@ -182,7 +186,12 @@ impl AppState {
                 // repair below then picks it up for transcription.
                 controller.reconcile_at_launch();
                 pipeline.repair_at_launch(&identity.device_id);
-                (Some(Arc::new(controller)), Some(pipeline))
+                let controller = Arc::new(controller);
+                // A PC going to sleep ends its recording there (Mike, 2026-11-05): nothing is heard
+                // while it sleeps, and a recording left running counted hours of sleep as meeting.
+                let sleeping = controller.clone();
+                crate::capture::events::on_suspend(move || sleeping.stop_for_sleep());
+                (Some(controller), Some(pipeline))
             }
             _ => (None, None),
         };
@@ -249,6 +258,10 @@ impl AppState {
             crate::meetings::service::start(app.clone(), controller.clone(), self.settings.clone(), self.detected.clone());
         }
         crate::question_alert::watch(app.clone(), self.question_alerts.clone());
+        crate::ollama_default::watch(self.settings.clone());
+        if let Some(store) = &self.store {
+            crate::budget_alert::watch(app.clone(), store.clone(), self.settings.clone());
+        }
         let (Some(store), Ok(config)) = (&self.store, crate::syncing::config::SyncConfig::embedded()) else {
             tracing::info!("calendar syncing is off: no Google client in Secrets.toml");
             return;

@@ -1,4 +1,6 @@
-//! The post-meeting pipeline (M3.3 Task 4): transcript, then summary, then speaker labels.
+//! The post-meeting pipeline (M3.3 Task 4): transcript, then summary, then speaker labels,
+//! then speaker names and, when a speaker got one, the summary again with the names (speaker
+//! names, Mike 2026-11-05: the first summary keeps the speed described below).
 //!
 //! The order is M3.3 Decision 5(a). Transcription runs at about 0.09× real time here,
 //! diarization at about 0.27× even with 8 threads, so waiting for speaker labels would
@@ -83,6 +85,8 @@ pub struct Pipeline {
     /// Held for each meeting's whole run, so a recording that ends during an import's
     /// summaries waits its turn instead of sharing the one `Processing` slot (W-1.6).
     work: Mutex<()>,
+    /// Meetings stopped by "Still in a meeting?": trimmed to their last words once transcribed.
+    trim_after: Mutex<std::collections::HashSet<i64>>,
 }
 
 /// The most summaries one import starts, newest first, so a long history can't run up a
@@ -104,6 +108,38 @@ pub fn segments_text(segments: &[memory::MeetingTranscriptSegment], start_unix_m
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The summary's transcript with speaker names, as core's `meeting_transcript_text` writes
+/// it: each "Speaker N" reads as its name (a guess as "Sam (unconfirmed)"), and a transcript
+/// with lines starts with `Invitees: a, b`. Works on the file's own lines, so the times stay
+/// the recording's wall clock (a calendar row starts at the event, not the recording).
+pub fn named_transcript(raw: &str, speakers: &[memory::speaker_names::MeetingSpeaker], invitees: &[memory::speaker_names::Attendee]) -> String {
+    let lines: Vec<String> = raw
+        .lines()
+        .map(|line| {
+            let Some((stamp, rest)) = line.split_once("] ") else { return line.to_string() };
+            let Some((label, text)) = rest.split_once(": ") else { return line.to_string() };
+            if !stamp.starts_with('[') || !label.starts_with("Speaker ") {
+                return line.to_string();
+            }
+            format!("{stamp}] {}: {text}", memory::speaker_names::transcript_label(label, speakers))
+        })
+        .collect();
+    if lines.iter().all(|l| l.trim().is_empty()) || invitees.is_empty() {
+        return lines.join("\n");
+    }
+    let names: Vec<&str> = invitees.iter().map(|a| a.name.as_str()).collect();
+    format!("Invitees: {}\n{}", names.join(", "), lines.join("\n"))
+}
+
+/// [`named_transcript`] with the meeting's speakers and invitees from the store; a store
+/// error leaves the text as it was.
+fn with_names(s: &memory::Store, meeting_id: i64, raw: &str) -> String {
+    match (s.meeting_speakers(meeting_id), s.meeting_attendee_details(meeting_id)) {
+        (Ok(speakers), Ok(invitees)) => named_transcript(raw, &speakers, &invitees),
+        _ => raw.to_string(),
+    }
 }
 
 /// The text of the meeting's saved slides, for the summary's "Slides shown" input: one
@@ -298,7 +334,22 @@ impl Pipeline {
         secrets: Arc<dyn SecretStore>,
         paths: Paths,
     ) -> Self {
-        Pipeline { store, slow_store, settings, secrets, paths, state: Mutex::new((None, None)), work: Mutex::new(()) }
+        Pipeline {
+            store,
+            slow_store,
+            settings,
+            secrets,
+            paths,
+            state: Mutex::new((None, None)),
+            work: Mutex::new(()),
+            trim_after: Mutex::new(Default::default()),
+        }
+    }
+
+    /// The next run of `meeting_id` trims it to 30 s after its last words, right after
+    /// transcription ("Still in a meeting?" stopped it).
+    pub fn trim_after_transcription(&self, meeting_id: i64) {
+        self.trim_after.lock().unwrap().insert(meeting_id);
     }
 
     pub fn processing(&self) -> Option<Processing> {
@@ -485,6 +536,7 @@ impl Pipeline {
         let (transcript, notes) = (transcript.to_string(), notes.to_string());
         self.slow_store
             .call_blocking(move |s| {
+                let transcript = with_names(s, meeting_id, &transcript);
                 api::summary::summarize_meeting(s, meeting_id, &notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom)
                     .map(|_| ())
                     .map_err(|e| crate::error::CommandError::from(e).to_string())
@@ -575,7 +627,8 @@ impl Pipeline {
         let threads = pipeline_threads();
         let transcribing = Instant::now();
         let transcriber = transcribe::Transcriber::load(&whisper_model).map_err(|e| tr("The transcription model didn't load: {error}", &[("error", &e.to_string())]))?;
-        let slices = self.paths.live_slices();
+        // Not the live worker's folder: it may still be deleting it (`Paths::pipeline_slices`).
+        let slices = self.paths.pipeline_slices();
         // System first: when it has speech it locks the language, and the mic is forced to it
         // (the Mac's `transcribeSession`).
         let system_segments = finish_channel(
@@ -623,6 +676,15 @@ impl Pipeline {
             return Err(tr("Nothing was said in this recording.", &[]));
         }
 
+        // "Still in a meeting?" stopped it: trim to 30 s after the last words now, before the
+        // summary, diarization and the stored segments read anything (spec: after the full
+        // transcription, before anything reads the transcript).
+        let (system_segments, mic_segments) = if self.trim_after.lock().unwrap().remove(&meeting_id) {
+            self.auto_trim(meeting_id, system_segments, mic_segments)
+        } else {
+            (system_segments, mic_segments)
+        };
+
         let mic_lines = lines_from(&mic_segments, |_| ME.to_string());
         let system_lines = lines_from(&system_segments, |_| OTHERS.to_string());
         let (lines, _) = transcribe::postprocess::postprocess(&mic_lines, &system_lines);
@@ -653,10 +715,12 @@ impl Pipeline {
         let keys = ApiKeys::load(&*self.secrets).map_err(|e| e.to_string())?;
         let config = routing.routing_config(&keys, &instructions);
         let summary_notes = notes.unwrap_or_default();
+        let named_notes = summary_notes.clone();
         let custom = instructions.custom.clone();
         let summary = self
             .slow_store
             .call_blocking(move |s| {
+                let transcript = with_names(s, meeting_id, &transcript);
                 api::summary::summarize_meeting(s, meeting_id, &summary_notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom)
                     .map_err(|e| crate::error::CommandError::from(e).to_string())
             })
@@ -672,7 +736,7 @@ impl Pipeline {
         // Speaker labels last: they cost more than everything above put together.
         self.set_stage(meeting_id, Stage::IdentifyingSpeakers);
         let diarizing = Instant::now();
-        let labelled = self.label_system_channel(&system_segments, files.system.as_deref(), speakers);
+        let (labelled, voices) = self.label_system_channel(&system_segments, files.system.as_deref(), speakers);
         let (final_lines, _) = transcribe::postprocess::postprocess(&mic_lines, &labelled);
         std::fs::write(&path, transcript_text(&final_lines, started)).map_err(|e| tr("The transcript didn't save: {error}", &[("error", &e.to_string())]))?;
         let segments: Vec<NewTranscriptSegment> = final_lines
@@ -707,6 +771,39 @@ impl Pipeline {
             }
         }
 
+        // Speaker names after the summary, then that summary once more with them (Mike,
+        // 2026-11-05: the summary keeps M3.3's speed; names cost one more summary call).
+        let mut resummarized = None;
+        if self.name_speakers(meeting_id, &voices) {
+            self.set_stage(meeting_id, Stage::Summarizing);
+            let raw = transcript_text(&final_lines, started);
+            let outcome = self.summarize(meeting_id, &raw, &named_notes);
+            // A failure here leaves the first summary standing, so it doesn't mark the
+            // meeting's summary failed; it does replace the first run's failure message.
+            if outcome.is_ok() || summary.is_err() {
+                record_summary(meeting_id, Some(audio), &outcome);
+            }
+            if outcome.is_ok() {
+                // What Regenerate gives: with no edits, the new summary's action items replace
+                // the first one's (seeded if the meeting was opened meanwhile); edits are kept.
+                let now = now_ms();
+                let applied = self.store.call_blocking(move |s| -> Result<(), String> {
+                    if !crate::commands::workspace::regeneration_conflict(s, meeting_id)? {
+                        let generated = s.get_meeting(meeting_id).map_err(|e| e.to_string())?.map(|m| m.summary_action_items).unwrap_or_default();
+                        s.replace_meeting_action_items_from_generated(meeting_id, &generated, now).map_err(|e| e.to_string())?;
+                    }
+                    s.mark_meeting_regeneration_seen(meeting_id, now).map_err(|e| e.to_string())
+                });
+                if let Err(e) | Ok(Err(e)) = applied.map_err(|e| e.to_string()) {
+                    tracing::warn!(meeting_id, error = %e, "could not apply the named summary's action items");
+                }
+            }
+            if let Err(e) = &outcome {
+                tracing::warn!(meeting_id, error = %e, "the summary with speaker names failed; the first one stays");
+            }
+            resummarized = Some(outcome.is_ok());
+        }
+
         tracing::info!(
             meeting_id,
             audio_s = audio_seconds,
@@ -716,20 +813,99 @@ impl Pipeline {
             diarize_ms = diarizing.elapsed().as_millis() as u64,
             segments = count,
             summarized = summary.is_ok(),
+            voices = voices.len(),
+            resummarized = ?resummarized,
             "meeting pipeline timings"
         );
         Ok(audio_seconds)
     }
 
-    /// Diarizes the system channel and relabels its segments "Speaker N". Any failure
-    /// keeps "Others": a missing model, an unreadable WAV, or no speech at all.
+    /// Trims a meeting "Still in a meeting?" stopped to 30 s after its last words and drops the
+    /// segments past the cut (starting at or after it, as core cuts). Nothing said, or nothing to
+    /// cut: unchanged. A failed trim keeps the whole recording.
+    fn auto_trim(
+        &self,
+        meeting_id: i64,
+        system: Vec<transcribe::TranscriptSegment>,
+        mic: Vec<transcribe::TranscriptSegment>,
+    ) -> (Vec<transcribe::TranscriptSegment>, Vec<transcribe::TranscriptSegment>) {
+        let all: Vec<Line> = lines_from(&system, |_| String::new()).into_iter().chain(lines_from(&mic, |_| String::new())).collect();
+        let Some(keep_ms) = super::trim::auto_keep_ms(&all) else {
+            tracing::info!(meeting_id, "nothing was said, so the quiet recording isn't trimmed");
+            return (system, mic);
+        };
+        let recordings = self.paths.recordings.clone();
+        let cut = self.store.call_blocking(move |s| super::trim::cut(s, &recordings, meeting_id, keep_ms));
+        match cut.map_err(|e| e.to_string()) {
+            Ok(Ok(Some(_))) => {
+                tracing::info!(meeting_id, keep_ms, "trimmed the quiet end of the recording");
+                let keep = |s: &transcribe::TranscriptSegment| s.start_cs * 10 < keep_ms;
+                (system.into_iter().filter(keep).collect(), mic.into_iter().filter(keep).collect())
+            }
+            Ok(Ok(None)) => (system, mic),
+            Ok(Err(e)) | Err(e) => {
+                tracing::warn!(meeting_id, error = %e, "could not trim the quiet end; keeping the whole recording");
+                (system, mic)
+            }
+        }
+    }
+
+    /// Names the meeting's diarized speakers (speaker names spec): a known voice is confirmed,
+    /// the rest guessed from the invitees, on the slow lane with the summary's model and
+    /// routing. True when some speaker has a name to put in the summary. Never fails the
+    /// meeting: any error leaves "Speaker N". A meeting of several parts isn't named, since
+    /// speaker ids restart in each part (Windows records one part; a merged one has more).
+    fn name_speakers(&self, meeting_id: i64, voices: &[(i32, Vec<f32>)]) -> bool {
+        if voices.is_empty() {
+            return false;
+        }
+        let (routing, ollama_model, instructions, remember) = {
+            let settings = self.settings.lock().unwrap();
+            let routing = settings.routing();
+            (routing.clone(), routing.ollama_model.clone(), settings.instructions(PromptSurface::MeetingSummary), settings.remember_voices())
+        };
+        let keys = match ApiKeys::load(&*self.secrets) {
+            Ok(keys) => keys,
+            Err(e) => {
+                tracing::warn!(meeting_id, error = %e, "speaker names: the API keys didn't load; naming from voices and invitees only");
+                ApiKeys::default()
+            }
+        };
+        let config = routing.routing_config(&keys, &instructions);
+        let voices = voices.to_vec();
+        let named = self.slow_store.call_blocking(move |s| -> Result<Option<usize>, String> {
+            if s.meeting_parts(meeting_id).map_err(|e| e.to_string())?.len() > 1 {
+                return Ok(None);
+            }
+            let speakers = api::speaker_names::assign_meeting_speakers(s, meeting_id, &voices, &ollama_model, &config, remember).map_err(|e| e.to_string())?;
+            Ok(Some(speakers.iter().filter(|sp| sp.name.is_some()).count()))
+        });
+        match named.map_err(|e| e.to_string()) {
+            Ok(Ok(Some(count))) => {
+                tracing::info!(meeting_id, named = count, remember, "named the meeting's speakers");
+                count > 0
+            }
+            Ok(Ok(None)) => {
+                tracing::info!(meeting_id, "a meeting of several parts keeps \"Speaker N\"");
+                false
+            }
+            Ok(Err(e)) | Err(e) => {
+                tracing::warn!(meeting_id, error = %e, "naming the speakers failed; they stay \"Speaker N\"");
+                false
+            }
+        }
+    }
+
+    /// Diarizes the system channel and relabels its segments "Speaker N", with each
+    /// speaker's voice for naming. Any failure keeps "Others" and no voices: a missing
+    /// model, an unreadable WAV, or no speech at all.
     fn label_system_channel(
         &self,
         segments: &[transcribe::TranscriptSegment],
         wav: Option<&Path>,
         speakers: Option<i32>,
-    ) -> Vec<Line> {
-        let keep_others = || lines_from(segments, |_| OTHERS.to_string());
+    ) -> (Vec<Line>, Vec<(i32, Vec<f32>)>) {
+        let keep_others = || (lines_from(segments, |_| OTHERS.to_string()), Vec::new());
         let (Some(wav), false) = (wav, segments.is_empty()) else { return keep_others() };
         let models = diarize::DiarizationModelPaths {
             segmentation_model_path: self.paths.segmentation_model(),
@@ -739,12 +915,13 @@ impl Pipeline {
             tracing::info!("no diarization models installed; the system channel stays \"Others\"");
             return keep_others();
         }
-        match diarize::diarize_with_threads(wav, &models, speakers, Some(pipeline_threads())) {
-            Ok(speaker_segments) => {
+        match diarize::diarize_with_voices(wav, &models, speakers, Some(pipeline_threads())) {
+            Ok(diarization) => {
+                let speaker_segments = diarization.segments;
                 let labelled = diarize::label_speakers(segments, &speaker_segments);
                 let speakers_found: std::collections::HashSet<i32> = speaker_segments.iter().map(|s| s.speaker_id).collect();
-                tracing::info!(speakers = speakers_found.len(), turns = speaker_segments.len(), "diarized the system channel");
-                labelled
+                tracing::info!(speakers = speakers_found.len(), voices = diarization.voices.len(), turns = speaker_segments.len(), "diarized the system channel");
+                let lines = labelled
                     .iter()
                     .map(|l| Line {
                         speaker_label: l.speaker_id.map_or_else(|| OTHERS.to_string(), speaker_label),
@@ -752,7 +929,8 @@ impl Pipeline {
                         end_cs: l.end_cs,
                         text: l.text.clone(),
                     })
-                    .collect()
+                    .collect();
+                (lines, diarization.voices.into_iter().map(|v| (v.speaker_id, v.embedding)).collect())
             }
             Err(e) => {
                 tracing::warn!(error = %e, "diarization failed; the system channel stays \"Others\"");
@@ -852,6 +1030,21 @@ mod tests {
         let text = super::segments_text(&[segment(0, "Ana", "Morning."), segment(6_150, "Speaker", "Hi.")], start);
         assert_eq!(text, "[09:30:00] Ana: Morning.\n[09:31:01] Speaker: Hi.");
         assert_eq!(super::segments_text(&[], start), "");
+    }
+
+    #[test]
+    fn the_summary_transcript_names_speakers_and_lists_the_invitees() {
+        use memory::speaker_names::{Attendee, MeetingSpeaker, NameStatus};
+        let named = |id, name: &str, status| MeetingSpeaker { speaker_id: id, person_key: Some(name.to_lowercase()), name: Some(name.into()), status: Some(status) };
+        let speakers = [named(0, "Sam", NameStatus::Confirmed), named(1, "Ana", NameStatus::Guess)];
+        let invitees = [Attendee { name: "Sam".into(), email: None }, Attendee { name: "Ana".into(), email: Some("ana@x.test".into()) }];
+        let raw = "[10:00:01] Me: Hi.\n[10:00:03] Speaker 1: Hello: all.\n[10:00:05] Speaker 2: Hey.\n[10:00:07] Speaker 3: Late.";
+        assert_eq!(
+            super::named_transcript(raw, &speakers, &invitees),
+            "Invitees: Sam, Ana\n[10:00:01] Me: Hi.\n[10:00:03] Sam: Hello: all.\n[10:00:05] Ana (unconfirmed): Hey.\n[10:00:07] Speaker 3: Late."
+        );
+        assert_eq!(super::named_transcript(raw, &[], &[]), raw, "no names and no invitees: as written");
+        assert_eq!(super::named_transcript("", &speakers, &invitees), "", "an empty transcript gets no header");
     }
 
     use super::*;

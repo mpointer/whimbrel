@@ -26,14 +26,18 @@ pub mod keywords;
 pub mod l10n;
 pub mod live;
 pub mod live_alert;
+pub mod speaker_match;
+pub mod speaker_names;
 pub mod copies;
 pub mod meeting_parts;
 pub mod profile;
+pub mod provider_budget;
 pub mod prep;
 pub mod priority;
 pub mod redact;
 pub mod token;
 pub mod topics;
+pub mod trim;
 
 mod sync_outbox;
 pub mod skin_sync;
@@ -45,9 +49,14 @@ pub const OUTBOX_ROW_TYPE_ROUTINE_RUN: &str = "routine_run";
 pub const OUTBOX_ROW_TYPE_MEETING_PREP: &str = "meeting_prep";
 pub const OUTBOX_ROW_TYPE_PROFILE_SUGGESTION: &str = "profile_suggestion";
 pub const OUTBOX_ROW_TYPE_LIVE_ALERT: &str = "live_alert";
+/// Speaker names (`speaker_names`): the people known by voice, and who each meeting's speakers are.
+pub const OUTBOX_ROW_TYPE_PERSON: &str = "person";
+pub const OUTBOX_ROW_TYPE_MEETING_SPEAKER: &str = "meeting_speaker";
 /// Skin sync (`skin_sync`): one row per version of a user skin, and its images in chunks.
 pub const OUTBOX_ROW_TYPE_SKIN: &str = "skin";
 pub const OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK: &str = "skin_image_chunk";
+/// Monthly AI budgets (`provider_budget`): one device's spend per provider per UTC month.
+pub const OUTBOX_ROW_TYPE_PROVIDER_SPEND: &str = "provider_spend";
 /// Bounds applied to a routine run pulled from another device (see `apply_synced_routine_run`).
 const SYNCED_RUN_MAX_FUTURE_MS: i64 = 5 * 60 * 1000;
 const SYNCED_RUN_MAX_SUMMARY_CHARS: usize = 20_000;
@@ -544,6 +553,9 @@ pub struct AppliedMeeting {
     pub end_unix_ms: Option<i64>,
     pub title: String,
     pub attendees: Vec<String>,
+    /// The `meeting.attendee_details` column. Absent from an older peer's payload.
+    #[serde(default)]
+    pub attendee_details: Vec<speaker_names::Attendee>,
     pub trigger: MeetingTrigger,
     pub status: MeetingStatus,
     pub transcript_path: Option<String>,
@@ -558,6 +570,10 @@ pub struct AppliedMeeting {
     /// value untouched, so a pre-`keep_media` peer can never reset it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_media: Option<bool>,
+    /// The owner trimmed the meeting to its first this-many ms (transcript clock). `None`
+    /// (never trimmed, or an older peer's payload) leaves the local value untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trimmed_keep_ms: Option<i64>,
     // `estimated_speaker_count` (the `meeting` table column backing the heuristic
     // speaker-count-hint feature) is deliberately absent here: it's a device-local
     // diarization hint derived from that device's own Accessibility reads, not
@@ -1761,6 +1777,7 @@ impl Store {
         Self::ensure_meeting_local_seq_column(conn)?;
         Self::ensure_meeting_estimated_speaker_count_column(conn)?;
         Self::ensure_meeting_away_outcome_column(conn)?;
+        Self::ensure_meeting_trimmed_keep_ms_column(conn)?;
         Self::ensure_transcript_segment_local_seq_column(conn)?;
         Self::ensure_routine_auto_approve_column(conn)?;
         Self::ensure_routine_model_pref_column(conn)?;
@@ -1775,7 +1792,9 @@ impl Store {
         live::ensure_live_table(conn)?;
     profile::ensure_profile_suggestion_table(conn)?;
         live_alert::ensure_live_alert_table(conn)?;
+        speaker_names::ensure_speaker_names_tables(conn)?;
         skin_sync::ensure_skin_sync_tables(conn)?;
+        provider_budget::ensure_provider_budget_tables(conn)?;
         meeting_parts::ensure_meeting_part_schema(conn)?;
         Self::ensure_items_app_fields_columns(conn)?;
         Self::ensure_items_app_fields_backfilled(conn)?;
@@ -2125,6 +2144,8 @@ impl Store {
             ("keep_media", "INTEGER NOT NULL DEFAULT 0"),
             // Device-local: the language the audio was transcribed in (Task 20).
             ("spoken_language", "TEXT"),
+            // `Vec<Attendee>` JSON (names and emails), see `speaker_names`; `attendees` keeps the names.
+            ("attendee_details", "TEXT"),
         ];
         for (name, sql_type) in columns_to_add {
             if !existing_columns.iter().any(|c| c == name) {
@@ -2247,6 +2268,20 @@ impl Store {
             if !existing_columns.iter().any(|c| c == col) {
                 conn.execute(&format!("ALTER TABLE meeting ADD COLUMN {col} {ty}"), [])?;
             }
+        }
+        Ok(())
+    }
+
+    /// `trimmed_keep_ms`: how much of the meeting a trim kept (see `trim`). NULL = never trimmed.
+    fn ensure_meeting_trimmed_keep_ms_column(conn: &Connection) -> rusqlite::Result<()> {
+        let has = conn
+            .prepare("PRAGMA table_info(meeting)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter()
+            .any(|c| c == "trimmed_keep_ms");
+        if !has {
+            conn.execute("ALTER TABLE meeting ADD COLUMN trimmed_keep_ms INTEGER", [])?;
         }
         Ok(())
     }
@@ -2557,7 +2592,8 @@ impl Store {
             "UPDATE live_alert SET meeting_id = ?3 WHERE origin_device_id = ?1 AND source_meeting_id = ?2 AND meeting_id IS NULL",
             params![peer_device_id, source_meeting_id, local_meeting_id],
         )?;
-        Ok(())
+        // So can speaker names, from the recorder or any device that edited them.
+        self.attach_pending_meeting_speakers(peer_device_id, source_meeting_id, local_meeting_id)
     }
 
     /// Looks up the local meeting id already applied for a peer's `source_meeting_id`,
@@ -2643,7 +2679,8 @@ impl Store {
                 "UPDATE meeting SET start_unix_ms = ?1, end_unix_ms = ?2, title = ?3, attendees = ?4, trigger = ?5, status = ?6, \
                  transcript_path = ?7, notes = ?8, summary_tldr = ?9, summary_decisions_json = ?10, summary_action_items_json = ?11, \
                  summary_open_questions_json = ?12, summary_provider = ?13, summary_model = ?14, local_seq = ?15, \
-                 keep_media = COALESCE(?17, keep_media) WHERE id = ?16",
+                 keep_media = COALESCE(?17, keep_media), attendee_details = ?18, \
+                 trimmed_keep_ms = COALESCE(?19, trimmed_keep_ms) WHERE id = ?16",
                 params![
                     meeting.start_unix_ms,
                     meeting.end_unix_ms,
@@ -2662,9 +2699,14 @@ impl Store {
                     local_seq,
                     id,
                     meeting.keep_media,
+                    serde_json::to_string(&meeting.attendee_details).unwrap_or_else(|_| "[]".to_string()),
+                    meeting.trimmed_keep_ms,
                 ],
             )?;
             if changed > 0 {
+                if let Some(keep_ms) = meeting.trimmed_keep_ms {
+                    Self::delete_transcript_past_tx(&self.conn, id, keep_ms)?;
+                }
                 return Ok(id);
             }
             // The mapped local row was deleted: a locally deleted peer meeting comes back
@@ -2682,8 +2724,8 @@ impl Store {
         self.conn.execute(
             "INSERT INTO meeting (device_id, start_unix_ms, end_unix_ms, title, attendees, trigger, audio_path, status, \
              transcript_path, notes, summary_tldr, summary_decisions_json, summary_action_items_json, summary_open_questions_json, \
-             summary_provider, summary_model, local_seq, keep_media) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, COALESCE(?17, 0))",
+             summary_provider, summary_model, local_seq, keep_media, attendee_details, trimmed_keep_ms) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, COALESCE(?17, 0), ?18, ?19)",
             params![
                 device_id,
                 meeting.start_unix_ms,
@@ -2702,6 +2744,8 @@ impl Store {
                 meeting.summary_model,
                 local_seq,
                 meeting.keep_media,
+                serde_json::to_string(&meeting.attendee_details).unwrap_or_else(|_| "[]".to_string()),
+                meeting.trimmed_keep_ms,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -2963,7 +3007,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT local_seq, id, start_unix_ms, end_unix_ms, title, attendees, trigger, status, \
              transcript_path, notes, summary_tldr, summary_decisions_json, summary_action_items_json, summary_open_questions_json, \
-             summary_provider, summary_model, keep_media \
+             summary_provider, summary_model, keep_media, attendee_details, trimmed_keep_ms \
              FROM meeting WHERE device_id = ?1 AND local_seq IS NOT NULL AND local_seq > ?2 AND status IN ('completed', 'cancelled')",
         )?;
         let meeting_rows = stmt.query_map(params![device_id, since_local_seq], |row| {
@@ -3000,6 +3044,8 @@ impl Store {
                     summary_provider: row.get(14)?,
                     summary_model: row.get(15)?,
                     keep_media: Some(row.get(16)?),
+                    attendee_details: speaker_names::attendee_details_from(row.get(17)?),
+                    trimmed_keep_ms: row.get(18)?,
                 },
             })
         })?;
@@ -3043,7 +3089,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT local_seq, id, start_unix_ms, end_unix_ms, title, attendees, trigger, status, \
              transcript_path, notes, summary_tldr, summary_decisions_json, summary_action_items_json, summary_open_questions_json, \
-             summary_provider, summary_model, keep_media \
+             summary_provider, summary_model, keep_media, attendee_details, trimmed_keep_ms \
              FROM meeting WHERE device_id = ?1 AND local_seq IS NOT NULL AND local_seq > ?2 AND status IN ('completed', 'cancelled')",
         )?;
         let meeting_rows = stmt.query_map(params![device_id, since_local_seq], |row| {
@@ -3080,6 +3126,8 @@ impl Store {
                     summary_provider: row.get(14)?,
                     summary_model: row.get(15)?,
                     keep_media: Some(row.get(16)?),
+                    attendee_details: speaker_names::attendee_details_from(row.get(17)?),
+                    trimmed_keep_ms: row.get(18)?,
                 },
             })
         })?;
@@ -3356,18 +3404,23 @@ impl Store {
         let Some(first) = segments.first() else {
             return Ok(());
         };
-        let meeting_row: Option<(String, i64)> = tx
+        let meeting_row: Option<(String, i64, Option<i64>)> = tx
             .query_row(
-                "SELECT device_id, start_unix_ms FROM meeting WHERE id = ?1",
+                "SELECT device_id, start_unix_ms, trimmed_keep_ms FROM meeting WHERE id = ?1",
                 params![first.meeting_id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        let Some((meeting_device_id, meeting_start_unix_ms)) = meeting_row else {
+        let Some((meeting_device_id, meeting_start_unix_ms, trimmed_keep_ms)) = meeting_row else {
             return Ok(());
         };
         let now_unix_ms = now_unix_ms();
         for seg in segments {
+            // A trimmed meeting never gets lines back past its cut ("Transcribe again" on
+            // audio whose truncation failed).
+            if trimmed_keep_ms.is_some_and(|keep| seg.start_cs * 10 >= keep) {
+                continue;
+            }
             let local_seq = Self::next_local_seq_tx(tx)?;
             tx.execute(
                 "INSERT INTO transcript_segment (meeting_id, start_cs, speaker_label, text, local_seq) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -5993,6 +6046,13 @@ impl Store {
             "DELETE FROM live_alert WHERE meeting_id IS NULL AND origin_device_id IS NOT NULL AND created_at_unix_ms < ?1",
             params![cutoff_unix_ms],
         )?;
+        // Voices and names assigned in the meeting go with it (`person` rows stay).
+        self.conn.execute(
+            &format!("DELETE FROM meeting_speaker WHERE meeting_id IN {expired_ids}"),
+            params![cutoff_unix_ms],
+        )?;
+        // A peer's speaker rows whose meeting never arrived age out on the same cutoff.
+        self.conn.execute("DELETE FROM meeting_speaker_pending WHERE updated_at_unix_ms < ?1", params![cutoff_unix_ms])?;
         // The workspace's device-local edits go with the meeting; left behind they
         // would reattach to nothing (and to a reused id, never, since ids autoincrement).
         self.conn.execute(
@@ -6115,6 +6175,7 @@ impl Store {
         tx.execute("DELETE FROM live_transcript_segment WHERE meeting_id = ?1", params![id])?;
         tx.execute("DELETE FROM profile_suggestion WHERE source_meeting_id = ?1", params![id])?;
         tx.execute("DELETE FROM live_alert WHERE meeting_id = ?1", params![id])?;
+        tx.execute("DELETE FROM meeting_speaker WHERE meeting_id = ?1", params![id])?;
         tx.execute("DELETE FROM meeting_note_draft WHERE meeting_id = ?1", params![id])?;
         tx.execute("DELETE FROM meeting_action_item WHERE meeting_id = ?1", params![id])?;
         tx.execute("DELETE FROM items WHERE kind = 'snapshot' AND thread_id = ?1", params![id])?;
@@ -7074,6 +7135,7 @@ impl Store {
             end_unix_ms: meeting.end_unix_ms,
             title: meeting.title,
             attendees: meeting.attendees,
+            attendee_details: self.stored_attendee_details_tx(tx, id)?,
             trigger: meeting.trigger,
             status: meeting.status,
             transcript_path: meeting.transcript_path,
@@ -7085,6 +7147,11 @@ impl Store {
             summary_provider: meeting.summary_provider,
             summary_model: meeting.summary_model,
             keep_media: Some(meeting.keep_media),
+            trimmed_keep_ms: tx.query_row(
+                "SELECT trimmed_keep_ms FROM meeting WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )?,
         };
         let mut payload = serde_json::to_value(&applied).map_err(json_to_sql_error)?;
         payload["source_meeting_id"] = serde_json::json!(id);
@@ -7578,6 +7645,9 @@ impl Store {
         tx.execute("UPDATE OR IGNORE meeting_note_draft SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
         tx.execute("UPDATE profile_suggestion SET source_meeting_id = ?1 WHERE source_meeting_id = ?2", params![keep, drop])?;
         tx.execute("UPDATE live_alert SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
+        // A speaker id the kept copy already has stays the kept copy's.
+        tx.execute("UPDATE OR IGNORE meeting_speaker SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
+        tx.execute("DELETE FROM meeting_speaker WHERE meeting_id = ?1", params![drop])?;
         tx.execute("UPDATE meeting_followup SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
         tx.execute("UPDATE sync_meeting_map SET local_meeting_id = ?1 WHERE local_meeting_id = ?2", params![keep, drop])?;
         // What's left is the copy's own: the same rows `delete_meeting` removes.
@@ -7655,7 +7725,8 @@ impl Store {
     }
 
     fn log_usage_inner(&self, e: &NewUsageLogEntry, parent_trace_id: Option<&str>) -> rusqlite::Result<i64> {
-        self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO usage_log (user_id, provider, model, route, input_tokens, output_tokens, estimated_cost_cents, cache_hit, trace_id, ts_unix_ms, parent_trace_id) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
@@ -7672,7 +7743,16 @@ impl Store {
                 parent_trace_id,
             ],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let id = tx.last_insert_rowid();
+        // Best effort: the usage row is the record of what was spent and must never be lost to
+        // a budget-bookkeeping error. The month total still counts it (it reads `usage_log`).
+        if e.estimated_cost_cents > 0 {
+            if let Err(err) = self.record_provider_spend_tx(&tx, &e.provider, e.ts_unix_ms) {
+                eprintln!("[budgets] provider_spend not updated: {err}");
+            }
+        }
+        tx.commit()?;
+        Ok(id)
     }
 
     /// Calls, cents and tokens of every row whose `parent_trace_id` is `parent`.
@@ -8186,6 +8266,46 @@ impl Store {
                 row_type: OUTBOX_ROW_TYPE_LIVE_ALERT.to_string(),
                 aggregate_type: "live_alert".to_string(),
                 aggregate_id: id.to_string(),
+                operation_kind: OutboxOperationKind::Upsert,
+                payload_json: serde_json::to_string(payload).map_err(json_to_sql_error)?,
+                connector: OUTBOX_CONNECTOR.to_string(),
+            },
+            now_unix_ms(),
+        )?;
+        Ok(())
+    }
+
+    /// Enqueues an upsert of a `person` row, in the caller's transaction. A store with no
+    /// device id enqueues nothing.
+    pub(crate) fn enqueue_person_outbox(&self, tx: &rusqlite::Transaction<'_>, payload: &speaker_names::AppliedPerson) -> rusqlite::Result<()> {
+        self.enqueue_upsert_tx(tx, OUTBOX_ROW_TYPE_PERSON, payload.person_key.clone(), payload)
+    }
+
+    /// Enqueues an upsert of a `meeting_speaker` row, in the caller's transaction. A store
+    /// with no device id enqueues nothing.
+    pub(crate) fn enqueue_meeting_speaker_outbox(&self, tx: &rusqlite::Transaction<'_>, payload: &speaker_names::AppliedMeetingSpeaker) -> rusqlite::Result<()> {
+        let origin = payload.origin_device_id.as_deref().unwrap_or("");
+        let id = format!("{origin}:{}:{}", payload.source_meeting_id, payload.speaker_id);
+        self.enqueue_upsert_tx(tx, OUTBOX_ROW_TYPE_MEETING_SPEAKER, id, payload)
+    }
+
+    fn enqueue_upsert_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        row_type: &str,
+        aggregate_id: String,
+        payload: &impl serde::Serialize,
+    ) -> rusqlite::Result<()> {
+        let Some(own) = self.own_device_id.borrow().clone() else { return Ok(()) };
+        let local_seq = Self::next_local_seq_tx(tx)?;
+        sync_outbox::enqueue_outbox_tx(
+            tx,
+            NewOutboxOperation {
+                device_id: own,
+                local_seq,
+                row_type: row_type.to_string(),
+                aggregate_type: row_type.to_string(),
+                aggregate_id,
                 operation_kind: OutboxOperationKind::Upsert,
                 payload_json: serde_json::to_string(payload).map_err(json_to_sql_error)?,
                 connector: OUTBOX_CONNECTOR.to_string(),
@@ -9682,6 +9802,7 @@ mod tests {
 
     fn keep_media_peer_meeting(keep_media: Option<bool>) -> AppliedMeeting {
         AppliedMeeting {
+            attendee_details: vec![],
             start_unix_ms: 1000,
             end_unix_ms: Some(2000),
             title: "Peer".to_string(),
@@ -9697,6 +9818,7 @@ mod tests {
             summary_provider: None,
             summary_model: None,
             keep_media,
+            trimmed_keep_ms: None,
         }
     }
 
@@ -12236,6 +12358,7 @@ mod tests {
     fn apply_synced_meeting_never_carries_a_local_audio_path() {
         let store = Store::open_in_memory().unwrap();
         let peer_meeting = AppliedMeeting {
+            attendee_details: vec![],
             start_unix_ms: 1000,
             end_unix_ms: Some(2000),
             title: "Peer Standup".to_string(),
@@ -12251,6 +12374,7 @@ mod tests {
             summary_provider: Some("anthropic".to_string()),
             summary_model: Some("claude-haiku-4-5".to_string()),
             keep_media: None,
+            trimmed_keep_ms: None,
         };
         let local_id = store
             .apply_synced_meeting("peer-device", 5, None, &peer_meeting)
@@ -12271,6 +12395,7 @@ mod tests {
     fn apply_synced_meeting_upsert_keeps_the_same_local_id_and_every_snapshot_stays_resolvable() {
         let store = Store::open_in_memory().unwrap();
         let first_snapshot = AppliedMeeting {
+            attendee_details: vec![],
             start_unix_ms: 1000,
             end_unix_ms: Some(2000),
             title: "Genesys".to_string(),
@@ -12286,6 +12411,7 @@ mod tests {
             summary_provider: None,
             summary_model: None,
             keep_media: None,
+            trimmed_keep_ms: None,
         };
         let first_local_id = store
             .apply_synced_meeting("device-a", 5, None, &first_snapshot)
@@ -14824,6 +14950,7 @@ mod tests {
 
     fn sample_applied_meeting_for_dup_test(title: &str, start_unix_ms: i64) -> AppliedMeeting {
         AppliedMeeting {
+            attendee_details: vec![],
             start_unix_ms,
             end_unix_ms: Some(start_unix_ms + 1000),
             title: title.to_string(),
@@ -14839,6 +14966,7 @@ mod tests {
             summary_provider: None,
             summary_model: None,
             keep_media: None,
+            trimmed_keep_ms: None,
         }
     }
 

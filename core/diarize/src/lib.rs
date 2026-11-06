@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use sherpa_onnx::{
     FastClusteringConfig, OfflineSpeakerDiarization, OfflineSpeakerDiarizationConfig,
     OfflineSpeakerSegmentationModelConfig, OfflineSpeakerSegmentationPyannoteModelConfig,
-    SpeakerEmbeddingExtractorConfig,
+    SpeakerEmbeddingExtractor, SpeakerEmbeddingExtractorConfig,
 };
 
 #[derive(Debug)]
@@ -48,6 +48,49 @@ pub struct SpeakerSegment {
     pub start_cs: i64,
     pub end_cs: i64,
     pub speaker_id: i32,
+}
+
+/// One speaker's voice: an L2-normalised embedding of their longest speech, plus how
+/// much they spoke in total.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SpeakerVoice {
+    pub speaker_id: i32,
+    pub embedding: Vec<f32>,
+    pub speech_cs: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Diarization {
+    pub segments: Vec<SpeakerSegment>,
+    pub voices: Vec<SpeakerVoice>,
+}
+
+/// Seconds of speech (in centiseconds) fed to the extractor per speaker.
+const VOICE_MAX_CS: i64 = 3000;
+
+/// That speaker's longest segments, longest first, as `(start_cs, end_cs)`, stopping
+/// once the running total reaches `max_cs`.
+pub(crate) fn voice_spans(
+    segments: &[SpeakerSegment],
+    speaker_id: i32,
+    max_cs: i64,
+) -> Vec<(i64, i64)> {
+    let mut spans: Vec<(i64, i64)> = segments
+        .iter()
+        .filter(|s| s.speaker_id == speaker_id)
+        .map(|s| (s.start_cs, s.end_cs))
+        .collect();
+    spans.sort_by_key(|(a, b)| std::cmp::Reverse(b - a));
+    let mut total = 0;
+    let mut out = Vec::new();
+    for (a, b) in spans {
+        if total >= max_cs {
+            break;
+        }
+        total += b - a;
+        out.push((a, b));
+    }
+    out
 }
 
 /// Threshold used when no exact speaker count is known (`expected_speaker_count` is
@@ -104,6 +147,17 @@ pub fn diarize_with_threads(
     expected_speaker_count: Option<i32>,
     threads: Option<i32>,
 ) -> Result<Vec<SpeakerSegment>, DiarizeError> {
+    Ok(diarize_with_voices(wav_path, models, expected_speaker_count, threads)?.segments)
+}
+
+/// [`diarize_with_threads`] plus one voice embedding per speaker. A speaker whose
+/// embedding cannot be computed is left out of `voices`.
+pub fn diarize_with_voices(
+    wav_path: &Path,
+    models: &DiarizationModelPaths,
+    expected_speaker_count: Option<i32>,
+    threads: Option<i32>,
+) -> Result<Diarization, DiarizeError> {
     let seg_path = models.segmentation_model_path.to_str().ok_or_else(|| {
         DiarizeError::Model("segmentation model path is not valid UTF-8".to_string())
     })?;
@@ -137,6 +191,7 @@ pub fn diarize_with_threads(
         embedding.num_threads = n;
     }
 
+    let embedding_config = embedding.clone();
     let config = OfflineSpeakerDiarizationConfig {
         segmentation,
         embedding,
@@ -178,7 +233,7 @@ pub fn diarize_with_threads(
         .process(&float_samples)
         .ok_or_else(|| DiarizeError::Audio("diarization processing failed".to_string()))?;
 
-    Ok(result
+    let segments: Vec<SpeakerSegment> = result
         .sort_by_start_time()
         .into_iter()
         .map(|s| SpeakerSegment {
@@ -186,7 +241,54 @@ pub fn diarize_with_threads(
             end_cs: (s.end as f64 * 100.0).round() as i64,
             speaker_id: s.speaker,
         })
-        .collect())
+        .collect();
+
+    let voices = speaker_voices(&segments, &float_samples, expected_rate, &embedding_config);
+    Ok(Diarization { segments, voices })
+}
+
+fn speaker_voices(
+    segments: &[SpeakerSegment],
+    samples: &[f32],
+    sample_rate: i32,
+    config: &SpeakerEmbeddingExtractorConfig,
+) -> Vec<SpeakerVoice> {
+    let Some(extractor) = SpeakerEmbeddingExtractor::create(config) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<i32> = segments.iter().map(|s| s.speaker_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids.into_iter()
+        .filter_map(|speaker_id| {
+            let stream = extractor.create_stream()?;
+            for (a, b) in voice_spans(segments, speaker_id, VOICE_MAX_CS) {
+                let from = ((a * sample_rate as i64 / 100) as usize).min(samples.len());
+                let to = ((b * sample_rate as i64 / 100) as usize).min(samples.len());
+                stream.accept_waveform(sample_rate, &samples[from..to]);
+            }
+            stream.input_finished();
+            if !extractor.is_ready(&stream) {
+                return None;
+            }
+            let mut embedding = extractor.compute(&stream)?;
+            let norm = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm == 0.0 {
+                return None;
+            }
+            embedding.iter_mut().for_each(|x| *x /= norm);
+            let speech_cs = segments
+                .iter()
+                .filter(|s| s.speaker_id == speaker_id)
+                .map(|s| s.end_cs - s.start_cs)
+                .sum();
+            Some(SpeakerVoice {
+                speaker_id,
+                embedding,
+                speech_cs,
+            })
+        })
+        .collect()
 }
 
 /// One transcript segment enriched with a speaker label, or `None` if diarization
@@ -352,6 +454,47 @@ mod tests {
         assert_eq!(labeled[0].speaker_id, Some(1));
     }
 
+    #[test]
+    fn voice_spans_takes_longest_first_up_to_cap() {
+        let s = vec![
+            speaker(0, 500, 0),
+            speaker(1000, 4000, 0),
+            speaker(5000, 6200, 0),
+            speaker(7000, 16000, 1),
+        ];
+        assert_eq!(voice_spans(&s, 0, 4000), vec![(1000, 4000), (5000, 6200)]);
+    }
+
+    fn cosine(a: &[f32], b: &[f32]) -> f32 {
+        a.iter().zip(b).map(|(x, y)| x * y).sum()
+    }
+
+    /// Needs the README's models and `two-speakers.wav`.
+    #[test]
+    #[ignore]
+    fn diarize_with_voices_two_speakers() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("models");
+        let models = DiarizationModelPaths {
+            segmentation_model_path: dir.join("sherpa-onnx-pyannote-segmentation-3-0/model.onnx"),
+            embedding_model_path: dir.join("wespeaker_en_voxceleb_resnet34_LM.onnx"),
+        };
+        let wav_path = dir.join("test-fixtures/two-speakers.wav");
+        let d = diarize_with_voices(&wav_path, &models, Some(2), None).expect("diarization failed");
+        assert_eq!(d.voices.len(), 2);
+        let dim = SpeakerEmbeddingExtractor::create(&SpeakerEmbeddingExtractorConfig {
+            model: Some(models.embedding_model_path.to_str().unwrap().to_string()),
+            ..Default::default()
+        })
+        .unwrap()
+        .dim() as usize;
+        for v in &d.voices {
+            assert_eq!(v.embedding.len(), dim);
+            assert!(v.speech_cs > 0);
+        }
+        let (v0, v1) = (&d.voices[0].embedding, &d.voices[1].embedding);
+        assert!(cosine(v0, v0) > cosine(v0, v1));
+    }
+
     /// Requires the two ONNX models to be present (see README.md) and a real
     /// multi-speaker WAV fixture. Not part of the default test run — run with
     /// `cargo test -- --ignored` once models are fetched, matching
@@ -409,7 +552,10 @@ mod tests {
         let threaded =
             diarize_with_threads(&wav_path, &models, Some(2), Some(4)).expect("diarization failed");
         let speakers = |segs: &[SpeakerSegment]| {
-            segs.iter().map(|s| s.speaker_id).collect::<std::collections::HashSet<_>>().len()
+            segs.iter()
+                .map(|s| s.speaker_id)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
         };
         assert_eq!(speakers(&single), speakers(&threaded));
         assert_eq!(single.len(), threaded.len());

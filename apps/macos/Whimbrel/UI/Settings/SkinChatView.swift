@@ -28,6 +28,11 @@ struct SkinChatView: View {
             }
             if !session.status.isEmpty { statusList }
             if !session.candidates.isEmpty { candidateStrip }
+            if session.offersAIProvidersSettings {
+                Button("Open AI Providers settings", action: setUp)
+                    .buttonStyle(.whimbrelSecondary)
+                    .controlSize(.small)
+            }
             if session.available { inputRow } else { SetUpAIProviderButton(action: setUp) }
             HStack(spacing: Spacing.sm) {
                 Button("Add your own image…", action: pickImage)

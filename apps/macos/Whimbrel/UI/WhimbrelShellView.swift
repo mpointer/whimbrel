@@ -121,6 +121,7 @@ struct WhimbrelShellView: View {
             // too so the meeting-alert panel's "Start Recording & Open Timeline" action
             // works from app launch, same target window either way.
             appState.openTimeline = { openWindow(id: "timeline") }
+            appState.openSettingsWindow = { openSettings() }
             showFirstRun = FirstRun.shouldShow(
                 done: UserDefaults.standard.bool(forKey: FirstRun.doneKey),
                 microphoneGranted: appState.permissions.microphoneGranted,
@@ -132,6 +133,10 @@ struct WhimbrelShellView: View {
                     await appState.modelBootstrap.start()
                     DispatchQueue.global(qos: .utility).async { EngineBenchmark.runIfNeeded() }
                 } }
+        }
+        .sheet(item: $appState.prepBriefToShow) { request in
+            PrepBriefSheet(key: request.key)
+                .environmentObject(appState)
         }
         .sheet(isPresented: $showFirstRun) {
             FirstRunView {

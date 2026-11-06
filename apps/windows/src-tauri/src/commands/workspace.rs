@@ -82,9 +82,26 @@ pub struct WorkspaceView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptTurn {
+    /// The label as stored: "Me", "Others", "Speaker 2".
     pub speaker: String,
+    /// What to show: the speaker's name when one is assigned, else `speaker`.
+    pub label: String,
+    /// The name is a guess, shown as "Name?".
+    pub guess: bool,
+    /// The diarized speaker ("Speaker 2" is 1), the ones the speaker menu can name.
+    pub speaker_id: Option<i32>,
+    /// The named person, for "Yes, that's {name}".
+    pub person_key: Option<String>,
     pub timestamp: String,
     pub text: String,
+}
+
+/// A calendar invitee, for the speaker menu.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct InviteeView {
+    pub name: String,
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -95,6 +112,18 @@ pub struct TranscriptView {
     pub source: &'static str,
     /// More segments remain beyond this page.
     pub more: bool,
+    /// The speaker menu is offered: see [`can_name_speakers`].
+    pub can_name: bool,
+    pub invitees: Vec<InviteeView>,
+}
+
+/// A person with a remembered voice (Settings → Meetings → Remembered voices…).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct VoicePersonView {
+    pub person_key: String,
+    pub name: String,
+    pub confirmed_count: i64,
 }
 
 /// How many transcript segments one page fetches (the Mac's page size).
@@ -116,11 +145,67 @@ pub(crate) fn trigger_text(trigger: memory::MeetingTrigger) -> String {
     .to_string()
 }
 
-fn turns(raw: &str) -> Vec<TranscriptTurn> {
+fn turns(raw: &str, speakers: &[memory::speaker_names::MeetingSpeaker]) -> Vec<TranscriptTurn> {
     transcribe::postprocess::parse_turns(raw)
         .into_iter()
-        .map(|t| TranscriptTurn { speaker: t.speaker, timestamp: t.timestamp, text: t.text })
+        .map(|t| {
+            let (label, guess) = memory::speaker_names::display_label(&t.speaker, speakers);
+            let person_key = memory::speaker_names::labelled_speaker(&t.speaker, speakers)
+                .filter(|s| s.name.is_some())
+                .and_then(|s| s.person_key.clone());
+            TranscriptTurn {
+                speaker_id: diarized_speaker_id(&t.speaker),
+                speaker: t.speaker,
+                label,
+                guess,
+                person_key,
+                timestamp: t.timestamp,
+                text: t.text,
+            }
+        })
         .collect()
+}
+
+/// "Speaker N" (written as `Speaker {id + 1}`) is diarized speaker N-1; "Me" and "Others" aren't.
+fn diarized_speaker_id(label: &str) -> Option<i32> {
+    label.strip_prefix("Speaker ").and_then(|n| n.parse::<i32>().ok()).filter(|n| *n >= 1).map(|n| n - 1)
+}
+
+/// Speakers can be named in a meeting of one part: diarization restarts in each part, so
+/// "Speaker 2" of a merged meeting is no one person. Parts don't sync, so a meeting from
+/// another device can be named only once its recorder has named it (it then has speaker
+/// rows); a multi-part one there never gets them.
+fn can_name_speakers(own: bool, parts: usize, named_speakers: usize) -> bool {
+    if own {
+        parts <= 1
+    } else {
+        named_speakers > 0
+    }
+}
+
+/// The meeting's speakers, invitees, and whether the menu is offered, in one store call.
+async fn speaker_context(
+    state: &State<'_, AppState>,
+    id: i64,
+    own: bool,
+) -> Result<(Vec<memory::speaker_names::MeetingSpeaker>, Vec<InviteeView>, bool), CommandError> {
+    state
+        .store()?
+        .call(move |s| -> Result<_, String> {
+            let speakers = s.meeting_speakers(id).map_err(|e| e.to_string())?;
+            let invitees = s
+                .meeting_attendee_details(id)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .filter(|a| !a.name.trim().is_empty())
+                .map(|a| InviteeView { name: a.name, email: a.email })
+                .collect();
+            let parts = s.meeting_parts(id).map_err(|e| e.to_string())?.len();
+            let offered = can_name_speakers(own, parts, speakers.len());
+            Ok((speakers, invitees, offered))
+        })
+        .await?
+        .map_err(CommandError::store)
 }
 
 /// The meeting list: newest first, optionally filtered by title (the Mac's search box).
@@ -280,9 +365,13 @@ pub async fn meeting_transcript(state: State<'_, AppState>, id: i64) -> Result<T
         .call(move |s| s.get_meeting(id).map_err(|e| e.to_string()))
         .await?
         .map_err(CommandError::store)?;
+    let own_device_id = state.identity.as_ref().map(|i| i.device_id.clone());
+    let own = meeting.as_ref().is_some_and(|m| own_device_id.as_deref().is_none_or(|own| m.device_id == own));
+    let (speakers, invitees, can_name) = speaker_context(&state, id, own).await?;
+    let view = |turns, source, more| TranscriptView { turns, source, more, can_name, invitees: invitees.clone() };
     if let Some(path) = meeting.as_ref().and_then(|m| m.transcript_path.clone()) {
         if let Ok(raw) = std::fs::read_to_string(Path::new(&path)) {
-            return Ok(TranscriptView { turns: turns(&raw), source: "file", more: false });
+            return Ok(view(turns(&raw, &speakers), "file", false));
         }
     }
     let (segments, total) = state
@@ -296,7 +385,111 @@ pub async fn meeting_transcript(state: State<'_, AppState>, id: i64) -> Result<T
         .map(|s| format!("[{}] {}: {}", centiseconds_label(s.start_cs), s.speaker_label, s.text))
         .collect::<Vec<_>>()
         .join("\n");
-    Ok(TranscriptView { turns: turns(&raw), source: "segments", more })
+    Ok(view(turns(&raw, &speakers), "segments", more))
+}
+
+/// The speaker menu's pick: an invitee (with their email) or a typed name, confirmed and
+/// learned. Returns the transcript with the new name.
+#[tauri::command]
+pub async fn set_meeting_speaker(
+    state: State<'_, AppState>,
+    id: i64,
+    speaker_id: i32,
+    name: String,
+    email: Option<String>,
+) -> Result<TranscriptView, CommandError> {
+    // The menu's Save is off for a blank name; one arriving anyway changes nothing.
+    if name.trim().is_empty() {
+        return meeting_transcript(state, id).await;
+    }
+    state
+        .store()?
+        .call(move |s| api::speaker_names::confirm_speaker(s, id, speaker_id, &name, email.as_deref()).map_err(|e| e.to_string()))
+        .await?
+        .map_err(CommandError::store)?;
+    meeting_transcript(state, id).await
+}
+
+/// Whether "Trim recording…" is offered for a meeting, and its length on the transcript clock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TrimInfo {
+    pub offered: bool,
+    pub length_ms: i64,
+}
+
+/// Trim is offered on the PC that recorded the meeting (it owns the row and the audio), once the
+/// recording has stopped, for a meeting over a minute long (the sheet's smallest step).
+pub fn trim_offered(own: bool, recording: bool, length_ms: i64) -> bool {
+    own && !recording && length_ms > 60_000
+}
+
+#[tauri::command]
+pub async fn meeting_trim_info(state: State<'_, AppState>, id: i64) -> Result<TrimInfo, CommandError> {
+    let own_device_id = state.identity.as_ref().map(|i| i.device_id.clone());
+    state
+        .store()?
+        .call(move |s| -> Result<TrimInfo, String> {
+            let Some(meeting) = s.get_meeting(id).map_err(|e| e.to_string())? else {
+                return Ok(TrimInfo { offered: false, length_ms: 0 });
+            };
+            let length_ms = api::meetings::meeting_length_ms(s, id).map_err(|e| e.to_string())?;
+            let own = own_device_id.as_deref() == Some(meeting.device_id.as_str());
+            let recording = meeting.status == memory::MeetingStatus::Recording;
+            Ok(TrimInfo { offered: trim_offered(own, recording, length_ms), length_ms })
+        })
+        .await?
+        .map_err(CommandError::store)
+}
+
+/// Trims the meeting to its first `keep_ms`: core cuts the transcript (on every device), this PC
+/// shortens the audio, deletes the cut snapshots and rewrites the transcript file. False is
+/// "Nothing to trim." The page then regenerates the summary as Regenerate does.
+#[tauri::command]
+pub async fn meeting_trim(state: State<'_, AppState>, id: i64, keep_ms: i64) -> Result<bool, CommandError> {
+    let recordings = state.paths.recordings.clone();
+    let trimmed = state
+        .store()?
+        .call(move |s| crate::meetings::trim::trim(s, &recordings, id, keep_ms))
+        .await?
+        .map_err(|e| CommandError::store(format!("{}: {e}", tr("Couldn't trim the recording", &[]))))?;
+    Ok(trimmed.is_some())
+}
+
+/// "Yes, that's {name}": confirms the guess as the person it was shown as. A guess that
+/// changed meanwhile (a sync, a rerun) is left as it now is.
+#[tauri::command]
+pub async fn confirm_meeting_speaker(state: State<'_, AppState>, id: i64, speaker_id: i32, person_key: String) -> Result<TranscriptView, CommandError> {
+    state
+        .store()?
+        .call(move |s| s.confirm_meeting_speaker(id, speaker_id, &person_key).map_err(|e| e.to_string()))
+        .await?
+        .map_err(CommandError::store)?;
+    meeting_transcript(state, id).await
+}
+
+fn voice_people_view(people: Vec<memory::speaker_names::VoicePerson>) -> Vec<VoicePersonView> {
+    people
+        .into_iter()
+        .map(|p| VoicePersonView { person_key: p.person_key, name: p.name, confirmed_count: p.confirmed_count })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn voice_people(state: State<'_, AppState>) -> Result<Vec<VoicePersonView>, CommandError> {
+    let people = state.store()?.call(|s| s.voice_people().map_err(|e| e.to_string())).await?.map_err(CommandError::store)?;
+    Ok(voice_people_view(people))
+}
+
+/// Forgets one person's voice everywhere (through sync); names in past transcripts stay.
+#[tauri::command]
+pub async fn forget_voice(state: State<'_, AppState>, person_key: String) -> Result<Vec<VoicePersonView>, CommandError> {
+    let people = state
+        .store()?
+        .call(move |s| s.forget_voice(&person_key).and_then(|()| s.voice_people()).map_err(|e| e.to_string()))
+        .await?
+        .map_err(CommandError::store)?;
+    Ok(voice_people_view(people))
 }
 
 /// `HH:MM:SS` from a segment's offset — a synced meeting has no file to take wall-clock
@@ -499,21 +692,18 @@ pub async fn meeting_live_alerts(state: State<'_, AppState>, id: i64) -> Result<
 /// The Mac's `regenerationNeedsConflictPrompt` plus `actionItemsHaveUserInteraction`.
 #[tauri::command]
 pub async fn meeting_regeneration_conflict(state: State<'_, AppState>, id: i64) -> Result<bool, CommandError> {
-    state
-        .store()?
-        .call(move |s| {
-            let draft = s.get_meeting_note_draft(id).map_err(|e| e.to_string())?;
-            let items = s.list_meeting_action_items(id).map_err(|e| e.to_string())?;
-            let has_override = draft.as_ref().is_some_and(|d| {
-                d.summary_edited.is_some() || d.decisions_edited.is_some() || d.open_questions_edited.is_some()
-            });
-            let touched_items = items
-                .iter()
-                .any(|a| a.source == "user" || a.completed || a.updated_unix_ms != a.created_unix_ms);
-            Ok::<bool, String>(has_override || touched_items)
-        })
-        .await?
-        .map_err(CommandError::store)
+    state.store()?.call(move |s| regeneration_conflict(s, id)).await?.map_err(CommandError::store)
+}
+
+/// Whether the user has edited the meeting's summary or touched its action items.
+pub(crate) fn regeneration_conflict(s: &memory::Store, id: i64) -> Result<bool, String> {
+    let draft = s.get_meeting_note_draft(id).map_err(|e| e.to_string())?;
+    let items = s.list_meeting_action_items(id).map_err(|e| e.to_string())?;
+    let has_override = draft
+        .as_ref()
+        .is_some_and(|d| d.summary_edited.is_some() || d.decisions_edited.is_some() || d.open_questions_edited.is_some());
+    let touched_items = items.iter().any(|a| a.source == "user" || a.completed || a.updated_unix_ms != a.created_unix_ms);
+    Ok(has_override || touched_items)
 }
 
 /// "Forget meeting": the row and its device-local files. Refused while it records.
@@ -572,6 +762,59 @@ pub async fn meeting_most_relevant(state: State<'_, AppState>) -> Result<Option<
 mod tests {
     use super::*;
     use memory::{MeetingTrigger, NewMeeting, Store};
+
+    fn speaker(id: i32, name: &str, status: memory::speaker_names::NameStatus) -> memory::speaker_names::MeetingSpeaker {
+        memory::speaker_names::MeetingSpeaker {
+            speaker_id: id,
+            person_key: Some(format!("{}@x.test", name.to_lowercase())),
+            name: Some(name.into()),
+            status: Some(status),
+        }
+    }
+
+    #[test]
+    fn turns_show_names_and_mark_guesses() {
+        use memory::speaker_names::NameStatus;
+        let raw = "[10:00:01] Me: Hi.\n[10:00:03] Speaker 1: Hello.\n[10:00:05] Speaker 2: Hey.\n[10:00:07] Speaker 3: Late.";
+        let speakers = [speaker(0, "Sam", NameStatus::Confirmed), speaker(1, "Ana", NameStatus::Guess)];
+        let t = turns(raw, &speakers);
+        let shown: Vec<(&str, bool, Option<i32>, Option<&str>)> =
+            t.iter().map(|t| (t.label.as_str(), t.guess, t.speaker_id, t.person_key.as_deref())).collect();
+        assert_eq!(
+            shown,
+            [
+                ("Me", false, None, None),
+                ("Sam", false, Some(0), Some("sam@x.test")),
+                ("Ana", true, Some(1), Some("ana@x.test")),
+                ("Speaker 3", false, Some(2), None),
+            ]
+        );
+        assert_eq!(t[1].speaker, "Speaker 1", "the stored label stays as written");
+    }
+
+    #[test]
+    fn trim_is_offered_on_the_recording_pc_once_stopped_and_over_a_minute() {
+        assert!(trim_offered(true, false, 10 * 60_000));
+        assert!(!trim_offered(false, false, 10 * 60_000), "another device owns its audio");
+        assert!(!trim_offered(true, true, 10 * 60_000), "not while recording");
+        assert!(!trim_offered(true, false, 60_000), "nothing shorter than the sheet's minute");
+    }
+
+    #[test]
+    fn only_diarized_labels_have_a_speaker_id() {
+        assert_eq!(diarized_speaker_id("Speaker 1"), Some(0));
+        assert_eq!(diarized_speaker_id("Speaker 0"), None);
+        assert_eq!(diarized_speaker_id("Others"), None);
+        assert_eq!(diarized_speaker_id("Speaker x"), None);
+    }
+
+    #[test]
+    fn the_speaker_menu_needs_one_part_or_names_from_the_recorder() {
+        assert!(can_name_speakers(true, 1, 0), "this PC's meeting, before naming ran");
+        assert!(!can_name_speakers(true, 2, 3), "several parts: \"Speaker 2\" is no one person");
+        assert!(!can_name_speakers(false, 1, 0), "another device's meeting it never named (parts don't sync)");
+        assert!(can_name_speakers(false, 1, 2), "another device named it, so it was one part");
+    }
 
     fn store_with(rows: &[(MeetingStatus, i64)]) -> (Store, Vec<i64>) {
         let store = Store::open_in_memory().unwrap();
@@ -663,7 +906,7 @@ mod tests {
 
     #[test]
     fn a_transcript_parses_into_turns() {
-        let view = turns("[08:24:45] Me: morning\n[08:24:50] Speaker 1: morning");
+        let view = turns("[08:24:45] Me: morning\n[08:24:50] Speaker 1: morning", &[]);
         assert_eq!(view.len(), 2);
         assert_eq!((view[0].speaker.as_str(), view[0].text.as_str()), ("Me", "morning"));
     }

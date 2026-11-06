@@ -147,9 +147,11 @@ pub fn run_naming_batch(
     limit: usize,
 ) -> ApiResult<NamingReport> {
     let cap = routing.spend_cap_config();
-    let chain = chain_for(routing, ollama_model);
     run_naming_batch_with_complete(store, limit, &routing.output_language, |prompt| {
         llm::check_spend_cap(store, &cap, None, Some("topic_name"), now_ms)
+            .map_err(|e| format!("{e:?}"))?;
+        // Built per topic: spend from the previous one can put a provider over budget.
+        let chain = crate::budget::apply_budgets(store, chain_for(routing, ollama_model), false, now_ms)
             .map_err(|e| format!("{e:?}"))?;
         let (completion, link) = llm::try_chain(&chain, |l| l.client.complete(prompt))
             .ok_or_else(|| "provider failure".to_string())?;

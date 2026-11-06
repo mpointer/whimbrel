@@ -62,6 +62,7 @@ fn meeting_prep_citation_contract(seed: u64) -> rusqlite::Result<bool> {
             "Priya <priya@example.test>".into(),
             "Tomas <tomas@example.test>".into(),
         ],
+        attendee_details: Vec::new(),
         conference_link: None,
         source: MeetingSource::GoogleCalendar,
         app_bundle_id: None,

@@ -30,6 +30,20 @@ final class CoreLLMErrorDecodingTests: XCTestCase {
         XCTAssertEqual(error, .providerFailure)
     }
 
+    func testDecodesProviderFailureReasonAndSaysWhy() {
+        let missing = decode(#"{"kind":"provider_failure","reason":{"kind":"ollama_model_missing","model":"gemma4:12b"}}"#, as: CoreLLMError.self)
+        XCTAssertEqual(missing, .providerFailureBecause(.ollamaModelMissing(model: "gemma4:12b")))
+        XCTAssertEqual(missing?.userFacingMessage, "Ollama doesn't have the model gemma4:12b. Pick one you have in Settings → AI Providers, or run: ollama pull gemma4:12b")
+        XCTAssertEqual(missing?.opensAIProvidersSettings, true)
+        let unauthorized = decode(#"{"kind":"provider_failure","reason":{"kind":"unauthorized","provider":"anthropic"}}"#, as: CoreLLMError.self)
+        XCTAssertEqual(unauthorized?.userFacingMessage, "Anthropic rejected the API key. Check it in Settings → AI Providers.")
+        let notRunning = decode(#"{"kind":"provider_failure","reason":{"kind":"ollama_not_running"}}"#, as: CoreLLMError.self)
+        XCTAssertEqual(notRunning, .providerFailureBecause(.ollamaNotRunning))
+        // A reason with no message of its own keeps the generic text.
+        let other = decode(#"{"kind":"provider_failure","reason":{"kind":"other","provider":"openai","status":500}}"#, as: CoreLLMError.self)
+        XCTAssertEqual(other, .providerFailure)
+    }
+
     func testUnrecognizedKindFallsBackToProviderFailure() {
         let json = #"{"kind":"something_a_future_build_might_add"}"#
         let error = decode(json, as: CoreLLMError.self)
@@ -78,5 +92,24 @@ final class CoreLLMErrorDecodingTests: XCTestCase {
         XCTAssertEqual(try userMessage(#"{"code":"server_error","params":{"status":502},"message":"x"}"#).localized(),
                        "Sync is temporarily unavailable (server error 502).")
         XCTAssertEqual(try userMessage(#"{"code":"key_refused","params":{},"message":"core text"}"#).localized(), "core text")
+    }
+
+    /// The automatic summary keeps its failure for the meeting page, as Regenerate shows it.
+    func testSummaryFailuresKeepTheLastFailureUntilASuccessOrAClear() {
+        let missing = CoreLLMError.providerFailureBecause(.ollamaModelMissing(model: "gemma4:12b"))
+        var failures = SummaryFailures()
+        failures.record(Result<Int, CoreLLMError>?.some(.failure(.providerFailure)), meetingId: 1)
+        failures.record(Result<Int, CoreLLMError>?.some(.failure(missing)), meetingId: 1)
+        XCTAssertEqual(failures[1], missing, "a failure replaces the last one")
+        failures.record(Result<Int, CoreLLMError>?.none, meetingId: 1)
+        XCTAssertEqual(failures[1], missing, "a call that never ran keeps it")
+        failures.record(Result<Int, CoreLLMError>?.some(.failure(.providerFailure)), meetingId: 2)
+        failures.record(Result<Int, CoreLLMError>?.some(.success(1)), meetingId: 1)
+        XCTAssertNil(failures[1], "a success clears it")
+        XCTAssertEqual(failures[2], .providerFailure, "per meeting")
+        failures.clear(meetingId: 2)
+        XCTAssertNil(failures[2], "a provider or speaker-name change, or forgetting the meeting, clears it")
+        XCTAssertTrue(missing.opensAIProvidersSettings)
+        XCTAssertFalse(CoreLLMError.providerFailureBecause(.rateLimited(provider: "openai")).opensAIProvidersSettings)
     }
 }

@@ -73,6 +73,10 @@ export function hostedNotice(routing: RoutingSettings, keys: ProviderKey[]): str
 
 export const formatDollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
+/** A chosen Ollama model that isn't installed, and what Whimbrel uses meanwhile (the Mac's #581). */
+export const ollamaWarningLine = (w: { model: string; fallback: string }): string =>
+  t("{model} isn't installed. Whimbrel is using {fallback} until you install it or choose another model.", w);
+
 /**
  * The cost line under a key row: the light-task model, then the user's own figure once
  * there is one, else the one general claim doc 16 makes. The Mac's `costLine`.
@@ -88,6 +92,25 @@ export function costLine(info: ProviderInfoView, usage: UsageView | null | undef
   }
   return parts.join(" ");
 }
+
+/**
+ * A paid provider's month under its key row: "This month: $12.40 of $25.00 (50%)", or with no
+ * budget "This month: $12.40". `fill` is the bar's share (0-1, capped), `over` turns it red at 100%.
+ */
+export function thisMonth(spentCents: number, budgetCents: number | null | undefined): { text: string; fill: number | null; over: boolean } {
+  const spent = formatDollars(spentCents);
+  if (!budgetCents || budgetCents <= 0) return { text: t("This month: {spent}", { spent }), fill: null, over: false };
+  const percent = Math.floor((spentCents * 100) / budgetCents);
+  return {
+    text: t("This month: {spent} of {budget} ({percent}%)", { spent, budget: formatDollars(budgetCents), percent: String(percent) }),
+    fill: Math.min(1, spentCents / budgetCents),
+    over: spentCents >= budgetCents,
+  };
+}
+
+/** This month's spend for `provider`, other computers included. */
+export const monthSpent = (usage: UsageView | null | undefined, provider: Provider): number =>
+  usage?.monthByProvider.find((p) => p.provider === provider)?.cents ?? 0;
 
 /** The dated data-terms note, where the provider's free tier may use prompts. */
 export const dataTermsLine = (info: ProviderInfoView): string | null =>

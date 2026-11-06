@@ -174,6 +174,77 @@ final class MeetingDetailViewLogicTests: XCTestCase {
         XCTAssertEqual(stored, "[10:00:00] Speaker 2: hi")
     }
 
+    // MARK: - Speaker names
+
+    func testDisplaySpeakerShowsGuessMark() {
+        XCTAssertEqual(MeetingDetailLogic.displaySpeaker("Sam", guess: true), "Sam?")
+        XCTAssertEqual(MeetingDetailLogic.displaySpeaker("Sam", guess: false), "Sam")
+        XCTAssertEqual(MeetingDetailLogic.displaySpeaker("Speaker 2", guess: false), "Speaker 2")
+    }
+
+    func testSpeakerIdIsTheLabelNumberMinusOne() {
+        XCTAssertEqual(MeetingDetailLogic.speakerId(rawLabel: "Speaker 1"), 0)
+        XCTAssertEqual(MeetingDetailLogic.speakerId(rawLabel: "Speaker 10"), 9)
+        XCTAssertNil(MeetingDetailLogic.speakerId(rawLabel: "Speaker 0"))
+        XCTAssertNil(MeetingDetailLogic.speakerId(rawLabel: "Me"))
+        XCTAssertNil(MeetingDetailLogic.speakerId(rawLabel: "Others"))
+    }
+
+    func testMenuOnlyForSpeakerLabelsInSinglePartMeetings() {
+        XCTAssertTrue(MeetingDetailLogic.speakerMenuOffered(rawLabel: "Speaker 1", partCount: 1))
+        XCTAssertTrue(MeetingDetailLogic.speakerMenuOffered(rawLabel: "Speaker 1", partCount: 0))
+        XCTAssertFalse(MeetingDetailLogic.speakerMenuOffered(rawLabel: "Speaker 1", partCount: 2))
+        XCTAssertFalse(MeetingDetailLogic.speakerMenuOffered(rawLabel: "Me", partCount: 1))
+        XCTAssertFalse(MeetingDetailLogic.speakerMenuOffered(rawLabel: "Others", partCount: 1))
+    }
+
+    func testMenuListsInviteesPlusSomeoneElse() {
+        let ana = CoreAttendee(name: "Ana", email: "ana@x.com"), bo = CoreAttendee(name: "Bo", email: nil)
+        let items = MeetingDetailLogic.speakerMenuItems(shown: CoreDisplayLabel(label: "Speaker 1", guess: false), invitees: [ana, bo])
+        XCTAssertEqual(items, [.invitee(ana), .invitee(bo), .someoneElse])
+    }
+
+    func testConfirmItemOnlyForGuess() {
+        let samA = CoreAttendee(name: "Sam", email: "sam@a.com")
+        let samB = CoreAttendee(name: "Sam", email: "sam@b.com")
+        // Two invitees named Sam: the guess confirms the Sam it is (B), not the first one listed.
+        let guessed = MeetingDetailLogic.speakerMenuItems(
+            shown: CoreDisplayLabel(label: "Sam", guess: true, personKey: "sam@b.com"), invitees: [samA, samB])
+        XCTAssertEqual(guessed, [.confirm(name: "Sam", personKey: "sam@b.com"), .invitee(samA), .invitee(samB), .someoneElse])
+        let confirmed = MeetingDetailLogic.speakerMenuItems(
+            shown: CoreDisplayLabel(label: "Sam", guess: false, personKey: "sam@b.com"), invitees: [samA])
+        XCTAssertEqual(confirmed, [.invitee(samA), .someoneElse])
+        // No person behind the label: nothing to confirm.
+        let unnamed = MeetingDetailLogic.speakerMenuItems(shown: CoreDisplayLabel(label: "Lee", guess: true), invitees: [samA])
+        XCTAssertEqual(unnamed, [.invitee(samA), .someoneElse])
+    }
+
+    func testDisplayLabelDecodesPersonKey() throws {
+        let json = Data(#"[{"label":"Sam","guess":true,"person_key":"sam@b.com"},{"label":"Me","guess":false,"person_key":null}]"#.utf8)
+        let labels = try JSONDecoder().decode([CoreDisplayLabel].self, from: json)
+        XCTAssertEqual(labels, [CoreDisplayLabel(label: "Sam", guess: true, personKey: "sam@b.com"), CoreDisplayLabel(label: "Me", guess: false)])
+    }
+
+    func testCopyTextMarksGuesses() {
+        let segments = [
+            CoreMeetingTranscriptSegment(id: 1, meetingId: 1, meetingTitle: "", startCs: 500, speakerLabel: "Speaker 1", text: "hi"),
+            CoreMeetingTranscriptSegment(id: 2, meetingId: 1, meetingTitle: "", startCs: 6_100, speakerLabel: "Speaker 2", text: "hey"),
+            CoreMeetingTranscriptSegment(id: 3, meetingId: 1, meetingTitle: "", startCs: 7_000, speakerLabel: "Me", text: "yo"),
+        ]
+        let names = [
+            "Speaker 1": CoreDisplayLabel(label: "Sam", guess: true),
+            "Speaker 2": CoreDisplayLabel(label: "Ana", guess: false),
+            "Me": CoreDisplayLabel(label: "Me", guess: false),
+        ]
+        let expected = "Sam? (0:05): hi\nAna (1:01): hey\nMe (1:10): yo"
+        XCTAssertEqual(MeetingDetailLogic.transcriptCopyText(fileText: "[00:00:05] Speaker 1: hi", segments: segments, names: names), expected)
+        // No names on the page: the transcript file, as before.
+        XCTAssertEqual(MeetingDetailLogic.transcriptCopyText(fileText: "file", segments: segments, names: [:]), "file")
+        XCTAssertEqual(
+            MeetingDetailLogic.transcriptCopyText(fileText: nil, segments: Array(segments.prefix(1)), names: [:]),
+            "Speaker 1 (0:05): hi")
+    }
+
     func test_placeholder_title_renders_verbatim() {
         XCTAssertEqual(MeetingDetailLogic.displayTitle("Meeting"), "Meeting")
     }

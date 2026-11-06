@@ -102,6 +102,8 @@ protocol SkinTurnBackend {
 /// Errors are `CoreLLMError` (`.spendCap` when the daily cap stops a call).
 struct CoreSkinTurnBackend: SkinTurnBackend {
     let routing: RoutingSettings
+    /// This device's sync id: the calls' spend is this device's own.
+    let deviceId: String
     var dbPath = SpikePaths.database.path
 
     /// The FFI calls block for the whole network call (up to 120 s), so they run here, never on Swift's cooperative
@@ -133,9 +135,9 @@ struct CoreSkinTurnBackend: SkinTurnBackend {
         case .google: key = config.googleKey
         case .openrouter: key = config.openrouterKey
         }
-        let dbPath = dbPath
+        let dbPath = dbPath, deviceId = deviceId
         return try await Self.offPool {
-            CoreSkinMaker.turn(dbPath: dbPath, provider: provider.rawValue, model: model, apiKey: key, input: input, routing: config)
+            CoreSkinMaker.turn(dbPath: dbPath, deviceId: deviceId, provider: provider.rawValue, model: model, apiKey: key, input: input, routing: config)
         }
     }
 
@@ -153,9 +155,9 @@ struct CoreSkinTurnBackend: SkinTurnBackend {
         let preferGoogle = config.preferredProvider == RoutingSettings.Provider.google.rawValue && config.googleKey != nil
         let pick = preferGoogle ? ("google", config.googleKey) : config.openaiKey != nil ? ("openai", config.openaiKey) : ("google", config.googleKey)
         guard let key = pick.1 else { throw CoreLLMError.providerFailure }
-        let dbPath = dbPath, provider = pick.0
+        let dbPath = dbPath, deviceId = deviceId, provider = pick.0
         return try await Self.offPool {
-            CoreSkinMaker.generateImage(dbPath: dbPath, provider: provider, apiKey: key, prompt: prompt, routing: config)
+            CoreSkinMaker.generateImage(dbPath: dbPath, deviceId: deviceId, provider: provider, apiKey: key, prompt: prompt, routing: config)
         }
     }
 
@@ -175,6 +177,8 @@ final class SkinChatSession: ObservableObject {
     @Published private(set) var turns: [SkinChatTurn] = []
     @Published private(set) var candidates: [ImageCandidateDTO] = []
     @Published private(set) var isRunning = false
+    /// The last turn stopped on a spent monthly budget: the chat offers Settings → AI Providers.
+    @Published private(set) var offersAIProvidersSettings = false
     /// The chat field's text, kept here so typing survives the window rebuild a skin switch causes.
     @Published var draft = ""
 
@@ -240,6 +244,7 @@ final class SkinChatSession: ObservableObject {
         run += 1
         let myRun = run
         isRunning = true
+        offersAIProvidersSettings = false
         let history = turns.map { ["role": $0.role, "text": $0.text] }
         let userTurn = SkinChatTurn(role: "user", text: request, date: Date())
         turns.append(userTurn)
@@ -272,7 +277,8 @@ final class SkinChatSession: ObservableObject {
         } catch {
             guard run == myRun else { return }
             Self.log.error("skin turn failed: \(String(describing: error), privacy: .public)")
-            post(Self.isSpendCap(error) ? Self.spendCapLine : String(localized: "Whimbrel couldn't make that skin, so nothing changed. Try again or say it another way."),
+            offerSettings(for: error)
+            post(Self.limitLine(for: error) ?? String(localized: "Whimbrel couldn't make that skin, so nothing changed. Try again or say it another way."),
                  to: origin.id, store: false)
             return
         }
@@ -324,7 +330,8 @@ final class SkinChatSession: ObservableObject {
                     show(Array(fresh), for: skinId)
                 } catch {
                     guard run == myRun else { return }
-                    if Self.isSpendCap(error) { post(Self.spendCapLine, to: skinId, store: true); return }
+                    offerSettings(for: error)
+                if let line = Self.limitLine(for: error) { post(line, to: skinId, store: true); return }
                     Self.log.error("image search failed: \(String(describing: error), privacy: .public)")
                 }
             }
@@ -341,7 +348,8 @@ final class SkinChatSession: ObservableObject {
                 show([ImageCandidateDTO(url: url, thumbnailUrl: url, title: prompt, source: "generated")], for: skinId)
             } catch {
                 guard run == myRun else { return }
-                if Self.isSpendCap(error) { post(Self.spendCapLine, to: skinId, store: true); return }
+                offerSettings(for: error)
+                if let line = Self.limitLine(for: error) { post(line, to: skinId, store: true); return }
                 Self.log.error("image generation failed: \(String(describing: error), privacy: .public)")
             }
         }
@@ -359,9 +367,19 @@ final class SkinChatSession: ObservableObject {
         text.range(of: #"\b(image|picture|photo|banner|logo|art|background)"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
-    private static func isSpendCap(_ error: Error) -> Bool {
-        if case .spendCap? = error as? CoreLLMError { return true }
-        return false
+    /// The chat line for an error a limit caused (the daily cap, a spent monthly budget), nil for
+    /// any other.
+    private static func limitLine(for error: Error) -> String? {
+        switch error as? CoreLLMError {
+        case .spendCap?: return spendCapLine
+        case let error? where error.opensAIProvidersSettings: return error.userFacingMessage
+        default: return nil
+        }
+    }
+
+    /// Offers the AI Providers button when `error` is a spent budget.
+    private func offerSettings(for error: Error) {
+        if (error as? CoreLLMError)?.opensAIProvidersSettings == true { offersAIProvidersSettings = true }
     }
 
     // MARK: saving a reply

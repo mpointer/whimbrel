@@ -2,6 +2,26 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.57] - 2026-11-05
+
+### Mac
+- Speaker names: Whimbrel names meeting speakers from the calendar invitees, remembers voices, and lets you fix a name from a menu. Names sync across your devices.
+- Monthly AI budgets per provider, counted across all your devices. You get a notice at 80% and 100%; at 100% Whimbrel stops using that provider and falls back to others, Ask included. You can raise a budget any time.
+- Trim a recording: cut a meeting at a time you pick, for example at 1:05 when you know it ended there.
+- "Still in a meeting?": when a recording keeps going after the talking stops, Whimbrel asks before ending it.
+- Meeting Prep briefs you can see: a banner and a sheet when a brief is ready, "Open brief" in Routines, and "Prep brief" on the meeting page. Each meeting in a recurring series gets its own brief (iPhone too).
+- When every AI provider fails, Whimbrel says why: the Ollama model isn't installed, Ollama isn't running, or no provider is set up. A failed automatic summary shows the reason.
+- When the Ollama model you use isn't installed, Whimbrel uses an installed one in the background and says so in Settings. Your choice is kept and doesn't sync.
+- Long participant lists are collapsed (iPhone too).
+- The question-alert email is sent only when you're away (Away Mode on, or 5 minutes idle).
+
+### Windows
+- Speaker names, monthly AI budgets, trim, and "Still in a meeting?", as on the Mac. Browser calls get the "Still in a meeting?" question too.
+- A recording stops when the PC goes to sleep, instead of counting the sleep as meeting time.
+- When every AI provider fails, Whimbrel says why, and it uses an installed Ollama model when the one you use isn't installed.
+- Each meeting in a recurring series gets its own prep brief.
+- Fixed a "file not found" error at the end of a recording.
+
 ## [0.9.56] - 2026-11-04
 
 ### Windows

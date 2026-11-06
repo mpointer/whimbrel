@@ -188,6 +188,14 @@ impl Paths {
         self.root.join("cache").join("live")
     }
 
+    /// The pipeline's own scratch folder for the tail slice. Never [`Paths::live_slices`]: a stopped
+    /// recording's live worker finishes its slice in flight and then deletes that whole folder,
+    /// which once took the pipeline's `tail.wav` with it ("The system cannot find the path
+    /// specified", first support case, 2026-11-05).
+    pub fn pipeline_slices(&self) -> PathBuf {
+        self.root.join("cache").join("pipeline")
+    }
+
     /// Creates the directories (not the files) if missing.
     pub fn ensure_dirs(&self) -> io::Result<()> {
         for dir in [&self.root, &self.models, &self.minilm, &self.logs, &self.recordings, &self.skins, &self.diagnostics] {
@@ -210,6 +218,15 @@ mod tests {
         for child in [&p.db, &p.models, &p.minilm, &p.logs, &p.settings, &p.recordings, &p.skins, &p.diagnostics] {
             assert!(child.starts_with(&p.root));
         }
+    }
+
+    #[test]
+    fn the_pipelines_scratch_is_not_inside_the_live_workers() {
+        let p = Paths::under(r"C:\data");
+        // The live worker deletes its whole folder when it ends, maybe after the pipeline starts.
+        assert!(!p.pipeline_slices().starts_with(p.live_slices()));
+        assert!(!p.live_slices().starts_with(p.pipeline_slices()));
+        assert!(p.pipeline_slices().starts_with(&p.root));
     }
 
     #[test]

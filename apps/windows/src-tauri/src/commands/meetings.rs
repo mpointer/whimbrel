@@ -55,6 +55,9 @@ pub struct MeetingSettings {
     pub prep_lead_minutes: f64,
     /// "Alert me when someone asks me something". On by default.
     pub live_question_alerts: bool,
+    /// "Remember people's voices" (speaker names). On by default, kept on this PC.
+    #[serde(default = "remember_voices_default")]
+    pub remember_voices: bool,
     /// "Other names people call you", comma-separated, as typed.
     #[serde(default)]
     pub other_names: String,
@@ -64,6 +67,10 @@ pub struct MeetingSettings {
     pub has_names: bool,
 }
 
+fn remember_voices_default() -> bool {
+    true
+}
+
 fn read_settings(settings: &crate::settings::SettingsFile) -> MeetingSettings {
     MeetingSettings {
         heuristic_detection: settings.heuristic_detection_enabled(),
@@ -71,6 +78,7 @@ fn read_settings(settings: &crate::settings::SettingsFile) -> MeetingSettings {
         lead_minutes: settings.lead_minutes(),
         prep_lead_minutes: settings.prep_lead_minutes(),
         live_question_alerts: settings.live_question_enabled(),
+        remember_voices: settings.remember_voices(),
         other_names: settings.other_names(),
         has_names: !settings.live_question_names().is_empty(),
     }
@@ -80,6 +88,7 @@ fn apply_settings(file: &mut crate::settings::SettingsFile, settings: MeetingSet
     file.set_meeting_settings(settings.heuristic_detection, settings.auto_start, settings.lead_minutes);
     file.set_prep_lead_minutes(settings.prep_lead_minutes);
     file.set_live_question_enabled(settings.live_question_alerts);
+    file.set_remember_voices(settings.remember_voices);
     crate::syncing::settings::edit(file, |f| f.set_other_names(&settings.other_names));
 }
 
@@ -156,6 +165,7 @@ mod settings_tests {
                 lead_minutes: 3.0,
                 prep_lead_minutes: 90.0,
                 live_question_alerts: true,
+                remember_voices: true,
                 other_names: String::new(),
                 has_names: false,
             },
@@ -168,6 +178,10 @@ mod settings_tests {
         let current = read_settings(&file);
         apply_settings(&mut file, MeetingSettings { live_question_alerts: false, ..current });
         assert!(!read_settings(&file).live_question_alerts);
+        let current = read_settings(&file);
+        assert!(current.remember_voices, "remembering voices is on by default");
+        apply_settings(&mut file, MeetingSettings { remember_voices: false, ..current });
+        assert!(!file.remember_voices(), "turned off, the pipeline keeps no voices");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

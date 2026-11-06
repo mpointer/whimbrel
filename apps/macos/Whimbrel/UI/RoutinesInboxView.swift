@@ -14,6 +14,8 @@ struct RoutinesInboxView: View {
     @EnvironmentObject var appState: AppState
     @State private var expandedRunId: Int64?
     @State private var runs: [CoreRoutineRunWithName] = []
+    /// Meeting Prep routines' ids: only their runs (or, from another device, runs named Meeting Prep) get "Open brief".
+    @State private var prepRoutineIds: Set<Int64> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -48,10 +50,17 @@ struct RoutinesInboxView: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        Text(run.outputSummary)
-                            .font(.whimbrelBody(.body))
-                            .foregroundStyle(Color.whimbrelTextPrimary)
-                            .lineLimit(expandedRunId == run.id ? nil : 2)
+                        HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
+                            Text(run.outputSummary)
+                                .font(.whimbrelBody(.body))
+                                .foregroundStyle(Color.whimbrelTextPrimary)
+                                .lineLimit(expandedRunId == run.id ? nil : 2)
+                            if run.status == "success", prepRoutineIds.contains(run.routineId) || run.routineName == "Meeting Prep", let key = TodayLogic.prepKey(runOutputJson: run.outputJson) {
+                                Spacer()
+                                Button("Open brief") { appState.showPrepBrief(key: key) }
+                                    .buttonStyle(.whimbrelQuiet)
+                            }
+                        }
                     }
                     Divider().overlay(Color.whimbrelBorder)
                 }
@@ -67,7 +76,9 @@ struct RoutinesInboxView: View {
         guard let store = appState.coreStore else { return }
         CoreMemoryStore.accessQueue.async {
             let result = store.recentRoutineRuns(limit: 50)
+            let prepIds = Set((store.listRoutines() ?? []).filter { $0.template == "meeting_prep" }.map(\.id))
             DispatchQueue.main.async {
+                prepRoutineIds = prepIds
                 if let result {
                     runs = result
                 }

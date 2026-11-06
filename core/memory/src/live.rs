@@ -54,8 +54,18 @@ pub(crate) fn ensure_live_table(conn: &Connection) -> rusqlite::Result<()> {
 impl Store {
     pub fn insert_live_segments(&self, segments: &[NewLiveSegment]) -> rusqlite::Result<()> {
         let now = crate::now_unix_ms();
+        // A trimmed meeting keeps nothing past its cut; live rows are timed from its last part.
+        let mut cuts = std::collections::HashMap::new();
+        for s in segments {
+            if !cuts.contains_key(&s.meeting_id) {
+                cuts.insert(s.meeting_id, self.live_cut_ms(s.meeting_id)?);
+            }
+        }
         let tx = self.conn.unchecked_transaction()?;
         for s in segments {
+            if cuts[&s.meeting_id].is_some_and(|cut| s.start_cs * 10 >= cut) {
+                continue;
+            }
             tx.execute(
                 "INSERT INTO live_transcript_segment
                     (meeting_id, channel, chunk_index, start_cs, end_cs, speaker_label, text, created_at_unix_ms)

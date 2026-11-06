@@ -45,6 +45,7 @@ mod tests {
             start_unix_ms: start,
             end_unix_ms: end,
             attendees: Vec::new(),
+            attendee_details: Vec::new(),
             conference_link: None,
             source: MeetingSource::GoogleCalendar,
             app_bundle_id: None,

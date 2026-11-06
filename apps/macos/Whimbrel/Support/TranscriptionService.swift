@@ -93,8 +93,8 @@ enum TranscriptionService {
     /// would silently transcribe the wrong meeting.
     /// `language`: "en" is today's path (the English model); any other code is forced with the
     /// multilingual model, and nil detects on the system track (then forces it on the mic).
-    /// Returns the language used.
-    static func transcribe(meetingAudioPath: String, expectedSpeakerCount: Int?, language: String?) throws -> (url: URL, lines: [Line], language: String?) {
+    /// Returns the language used, and the system track's voices (empty when it wasn't diarized).
+    static func transcribe(meetingAudioPath: String, expectedSpeakerCount: Int?, language: String?) throws -> (url: URL, lines: [Line], language: String?, voices: [CoreVoice]) {
         guard let tracks = trackURLs(forAudioPath: meetingAudioPath) else {
             throw TranscriptionError.noRecordingFound
         }
@@ -127,7 +127,7 @@ enum TranscriptionService {
         return (dir.appendingPathComponent("system-audio-" + stem), dir.appendingPathComponent("mic-audio-" + stem))
     }
 
-    private static func transcribeSession(system systemURL: URL, mic micURL: URL, stamp: String, expectedSpeakerCount: Int?, language: String?) throws -> (url: URL, lines: [Line], language: String?) {
+    private static func transcribeSession(system systemURL: URL, mic micURL: URL, stamp: String, expectedSpeakerCount: Int?, language: String?) throws -> (url: URL, lines: [Line], language: String?, voices: [CoreVoice]) {
         guard TranscriptionEngines.batch(language: language).isReady else {
             throw TranscriptionError.modelMissing(language == "en" ? modelPath : multilingualModelPath)
         }
@@ -140,9 +140,11 @@ enum TranscriptionService {
 
         var language = language
         var systemLines: [Line] = []
+        var voices: [CoreVoice] = []
         if hasSystemAudio {
             let system = try transcribeSystemAudioWithDiarization(systemURL, expectedSpeakerCount: expectedSpeakerCount, language: language)
             systemLines = system.lines
+            voices = system.voices
             if language == nil, !systemLines.isEmpty { language = system.language }
         }
         var micLines: [Line] = []
@@ -160,7 +162,7 @@ enum TranscriptionService {
         if hasSystemAudio, hasMicAudio {
             log.info("filterBleedThrough: \(micLines.count) mic lines before, \(micLinesKept) after")
         }
-        return (url: try writeTranscript(lines, stamp: stamp), lines: lines, language: language)
+        return (url: try writeTranscript(lines, stamp: stamp), lines: lines, language: language, voices: voices)
     }
 
     private static func timestamp(from url: URL, prefix: String) -> String {
@@ -175,8 +177,8 @@ enum TranscriptionService {
     /// pre-diarization behavior — if diarization models aren't configured, diarization
     /// fails for any reason, or the merge step fails; never throws over a diarization
     /// problem specifically, only over a transcription failure (matching
-    /// `transcribeFile`'s existing contract).
-    private static func transcribeSystemAudioWithDiarization(_ source: URL, expectedSpeakerCount: Int?, language: String?) throws -> (lines: [Line], language: String?) {
+    /// `transcribeFile`'s existing contract). Voices come back only with labeled lines.
+    private static func transcribeSystemAudioWithDiarization(_ source: URL, expectedSpeakerCount: Int?, language: String?) throws -> (lines: [Line], language: String?, voices: [CoreVoice]) {
         let wavURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
         defer { try? FileManager.default.removeItem(at: wavURL) }
         do {
@@ -187,7 +189,7 @@ enum TranscriptionService {
 
         var transcriptSegments: [CoreTranscriptSegment]?
         var detected: String?
-        var speakerSegments: [CoreSpeakerSegment]?
+        var diarization: CoreDiarization?
         let group = DispatchGroup()
 
         group.enter()
@@ -201,7 +203,7 @@ enum TranscriptionService {
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
             if DiarizationService.modelsAvailable {
-                speakerSegments = CoreMemoryStore.diarizeWav(
+                diarization = CoreMemoryStore.diarizeWavVoices(
                     segmentationModelPath: DiarizationService.segmentationModelPath,
                     embeddingModelPath: DiarizationService.embeddingModelPath,
                     wavPath: wavURL,
@@ -217,10 +219,10 @@ enum TranscriptionService {
             throw TranscriptionError.transcriptionFailed(source.lastPathComponent)
         }
 
-        guard let speakerSegments,
+        guard let diarization,
               let transcriptData = try? JSONEncoder().encode(transcriptSegments),
               let transcriptJSON = String(data: transcriptData, encoding: .utf8),
-              let speakerData = try? JSONEncoder().encode(speakerSegments),
+              let speakerData = try? JSONEncoder().encode(diarization.segments),
               let speakerJSON = String(data: speakerData, encoding: .utf8),
               let labeled = CoreMemoryStore.labelSpeakers(transcriptSegmentsJSON: transcriptJSON, speakerSegmentsJSON: speakerJSON)
         else {
@@ -232,13 +234,13 @@ enum TranscriptionService {
             } else {
                 log.info("Diarization models not configured — system-audio channel labeled 'Others'.")
             }
-            return (transcriptSegments.map { Line(speakerLabel: Speaker.others.rawValue, startCs: $0.startCs, endCs: $0.endCs, text: $0.text) }, detected)
+            return (transcriptSegments.map { Line(speakerLabel: Speaker.others.rawValue, startCs: $0.startCs, endCs: $0.endCs, text: $0.text) }, detected, [])
         }
 
         return (labeled.map { segment in
             let label = segment.speakerId.map { "Speaker \($0 + 1)" } ?? Speaker.others.rawValue
             return Line(speakerLabel: label, startCs: segment.startCs, endCs: segment.endCs, text: segment.text)
-        }, detected)
+        }, detected, diarization.voices)
     }
 
     private static func transcribeFile(_ source: URL, speaker: Speaker, language: String?) throws -> (lines: [Line], language: String?) {
@@ -269,16 +271,21 @@ enum TranscriptionService {
     }
 
     private static func writeTranscript(_ lines: [Line], stamp: String) throws -> URL {
-        let sessionStart = SpikePaths.sessionStartDate(from: stamp)
-        let timeFormatter = timeLabelFormatter()
-        let body = lines.map { line -> String in
-            let label = timeLabel(for: line.startCs, sessionStart: sessionStart, formatter: timeFormatter)
-            return "[\(label)] \(line.speakerLabel): \(line.text)"
-        }.joined(separator: "\n")
+        let body = transcriptText(lines, stamp: stamp)
         let url = SpikePaths.root.appendingPathComponent("transcript-\(stamp).txt")
         try body.write(to: url, atomically: true, encoding: .utf8)
         log.notice("Wrote transcript to \(url.path, privacy: .public) (\(lines.count) segments)")
         return url
+    }
+
+    /// A transcript file's text: one line per segment, timed from the session `stamp`.
+    static func transcriptText(_ lines: [Line], stamp: String) -> String {
+        let sessionStart = SpikePaths.sessionStartDate(from: stamp)
+        let timeFormatter = timeLabelFormatter()
+        return lines.map { line -> String in
+            let label = timeLabel(for: line.startCs, sessionStart: sessionStart, formatter: timeFormatter)
+            return "[\(label)] \(line.speakerLabel): \(line.text)"
+        }.joined(separator: "\n")
     }
 
     /// `sessionStart` is nil only if `stamp` fails to parse (shouldn't happen — it's

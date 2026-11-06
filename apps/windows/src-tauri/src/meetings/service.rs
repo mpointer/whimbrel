@@ -38,6 +38,10 @@ pub struct DetectedMeeting {
     pub source: String,
     /// A calendar meeting's invitees, which become the expected speaker count.
     pub attendees: Vec<String>,
+    /// The same invitees with their emails, stored on the meeting for speaker names.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub attendee_details: Vec<memory::speaker_names::Attendee>,
     /// A calendar meeting's own start, so the row spans the event, not the moment Accept
     /// was pressed.
     pub start_unix_ms: Option<i64>,
@@ -116,6 +120,7 @@ impl Pending {
             prompted_unix_ms: now_unix_ms,
             source: "calendar".into(),
             attendees: meeting.attendees,
+            attendee_details: meeting.attendee_details,
             start_unix_ms: Some(meeting.start_unix_ms),
         }))
     }
@@ -187,10 +192,21 @@ impl Detection {
                         *watched = (meeting_id, found.clone().unwrap_or_else(|| watched.1.clone()));
                         end_state = EndState::default();
                     }
-                    self.check_end(meeting_id, &watched.1.clone(), &processes, &sessions, &mut end_state);
+                    // A browser call: is a window of it showing the meeting's page? Windows reads
+                    // only each window's front tab, so this is a sign the call is on, never proof
+                    // it ended ("Still in a meeting?" asks instead).
+                    let on_meeting_tab = watched.1.via_browser.then(|| {
+                        let tree = proc_stats::process_tree(watched.1.root_pid, &processes);
+                        uia.as_ref().and_then(|uia| detect::browser_address(uia, watched.1.root_pid, &tree)).is_some()
+                    });
+                    self.check_end(meeting_id, &watched.1.clone(), &processes, &sessions, on_meeting_tab, &mut end_state);
                     debounce = Debounce::default();
                 }
                 None => {
+                    if recording_meeting.is_some() {
+                        // It ended some other way (Stop, sleep): a "Still in a meeting?" left up goes.
+                        super::still_here::hide(&self.app);
+                    }
                     recording_meeting = None;
                     end_state = EndState::default();
                     self.offer(&mut debounce, found);
@@ -220,6 +236,7 @@ impl Detection {
             prompted_unix_ms: now_ms(),
             source: "detected".into(),
             attendees: Vec::new(),
+            attendee_details: Vec::new(),
             start_unix_ms: None,
         };
         tracing::info!(id = %detected.id, title = ?detected.title, pid = detected.root_pid, "meeting detected");
@@ -234,9 +251,35 @@ impl Detection {
         watched: &Candidate,
         processes: &[proc_stats::ProcInfo],
         sessions: &detect::Sessions,
+        on_meeting_tab: Option<bool>,
         state: &mut EndState,
     ) {
         let Some(started) = self.controller.status().started_unix_ms else { return };
+        let audible = self.controller.audio_active(now_ms()).unwrap_or(false);
+        // A recording started by hand never ends on 60 s of silence: after 15 quiet minutes it
+        // asks "Still in a meeting?" instead (trim spec). The 4 h cap still applies.
+        let manual = self.controller.recording_is_manual();
+        // A browser call is asked about the same way once no meeting tab is in front and no one
+        // has spoken for 15 minutes; its other end rules stay as they are (Mike, 2026-11-05).
+        if manual || on_meeting_tab.is_some() {
+            match super::still_here::poll(meeting_id, started, now_ms(), audible, on_meeting_tab == Some(true)) {
+                super::still_here::Action::Ask => {
+                    tracing::info!(meeting_id, "no words for 15 minutes: asking if the meeting is still on");
+                    super::still_here::show(&self.app);
+                }
+                super::still_here::Action::Close => super::still_here::hide(&self.app),
+                super::still_here::Action::Stop => {
+                    tracing::info!(meeting_id, "no answer to \"Still in a meeting?\": stopping");
+                    super::still_here::hide(&self.app);
+                    if let Err(e) = self.controller.stop_quiet() {
+                        tracing::error!(meeting_id, error = %e, "could not stop the quiet recording");
+                    }
+                    crate::tray::refresh(&self.app);
+                    return;
+                }
+                super::still_here::Action::Nothing => {}
+            }
+        }
         // A manual recording watches no app: it ends when the user says so.
         let watching = watched.root_pid != 0;
         let tree = watching.then(|| proc_stats::process_tree(watched.root_pid, processes)).unwrap_or_default();
@@ -247,7 +290,7 @@ impl Detection {
             app_running,
             on_meeting_tab: None,
             scheduled_end_unix_ms: None,
-            audio_active: self.controller.audio_active(now_ms()).unwrap_or(false),
+            audio_active: manual || audible,
             capture_session_active: (watching && app_running).then(|| sessions.tree_captures(&tree)),
         };
         if let Some(reason) = end_rule::evaluate(&signals, &EndThresholds::default(), state) {
@@ -299,6 +342,7 @@ mod tests {
             prompted_unix_ms,
             source: "detected".into(),
             attendees: Vec::new(),
+            attendee_details: Vec::new(),
             start_unix_ms: None,
         }
     }
@@ -310,6 +354,7 @@ mod tests {
             start_unix_ms: 5_000,
             end_unix_ms: 9_000,
             attendees: vec!["me@x".into(), "you@x".into()],
+            attendee_details: vec![memory::speaker_names::Attendee { name: "You".into(), email: Some("you@x".into()) }],
             conference_link: None,
             source: api::connectors::calendar::MeetingSource::GoogleCalendar,
             app_bundle_id: None,
@@ -325,6 +370,7 @@ mod tests {
         assert_eq!((offered.source.as_str(), offered.title.as_str()), ("calendar", "Standup"));
         assert_eq!(offered.start_unix_ms, Some(5_000), "the row spans the event, not the moment Accept was pressed");
         assert_eq!(offered.attendees.len(), 2, "the invitees become the expected speaker count");
+        assert_eq!(offered.attendee_details[0].email.as_deref(), Some("you@x"), "their emails ride along for speaker names");
         assert_eq!(pending.candidate_pid(), None, "no app in a call right now");
         pending.note_candidate(Some(42));
         assert_eq!(pending.candidate_pid(), Some(42), "a calendar meeting records that app");

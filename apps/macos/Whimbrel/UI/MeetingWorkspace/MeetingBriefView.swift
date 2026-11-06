@@ -12,6 +12,9 @@ struct MeetingBriefView: View {
     let suggestedQuestions: [String]
     let onStart: () -> Void
 
+    /// The meeting whose long attendee list is expanded; any other meeting shows it collapsed.
+    @State private var expandedAttendeesMeetingId: Int64?
+
     private var meeting: CoreMeeting { model.meeting }
 
     var body: some View {
@@ -59,9 +62,16 @@ struct MeetingBriefView: View {
                     .font(.whimbrelBody(.caption))
                     .foregroundStyle(Color.whimbrelTextSecondary)
             } else {
-                Text(meeting.attendees.joined(separator: ", "))
+                let expanded = expandedAttendeesMeetingId == meeting.id
+                Text(ReadLogic.attendeeLine(meeting.attendees, expanded: expanded))
                     .font(.whimbrelBody(.body))
                     .foregroundStyle(Color.whimbrelTextPrimary)
+                if let toggle = ReadLogic.attendeeToggle(meeting.attendees, expanded: expanded) {
+                    Button(toggle.label) { expandedAttendeesMeetingId = expanded ? nil : meeting.id }
+                        .buttonStyle(.link)
+                        .accessibilityLabel(toggle.accessibilityLabel)
+                        .accessibilityInputLabels([toggle.label, toggle.accessibilityLabel])
+                }
             }
         }
     }

@@ -176,6 +176,8 @@ pub struct MeetingController {
     start_snapshots: StartSnapshots,
     pipeline: Arc<Pipeline>,
     lifecycle: Mutex<Lifecycle<Active>>,
+    /// The recording was started by hand ("Still in a meeting?" applies, not the silence rule).
+    manual: std::sync::atomic::AtomicBool,
 }
 
 fn now_ms() -> i64 {
@@ -199,7 +201,33 @@ impl MeetingController {
             start_snapshots,
             pipeline,
             lifecycle: Mutex::new(Lifecycle::default()),
+            manual: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Whether the recording now running was started by hand.
+    pub fn recording_is_manual(&self) -> bool {
+        self.manual.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The PC is going to sleep: a recording stops here, so the meeting ends at the moment of
+    /// sleep (first support case: a laptop closed an hour into a call came back 4.5 h later to a
+    /// 5 h 26 min "meeting"). Runs on the power-event thread before Windows suspends.
+    pub fn stop_for_sleep(&self) {
+        let Some(meeting_id) = self.status().meeting_id else { return };
+        tracing::info!(meeting_id, "the PC is going to sleep: stopping the recording");
+        if let Err(e) = self.stop() {
+            tracing::error!(meeting_id, error = %e, "could not stop the recording before sleep");
+        }
+    }
+
+    /// "Still in a meeting?" answered Stop, or not at all: stops the recording, and once it is
+    /// transcribed the pipeline trims it to 30 s after the last words.
+    pub fn stop_quiet(&self) -> Result<MeetingRecordingView, CommandError> {
+        if let Some(meeting_id) = self.status().meeting_id {
+            self.pipeline.trim_after_transcription(meeting_id);
+        }
+        self.stop()
     }
 
     /// Completes rows a previous run left `recording` (the Mac's
@@ -247,11 +275,20 @@ impl MeetingController {
         &self,
         title: String,
         attendees: Vec<String>,
+        attendee_details: Vec<memory::speaker_names::Attendee>,
         start_unix_ms: Option<i64>,
         root_pid: Option<u32>,
     ) -> Result<MeetingRecordingView, CommandError> {
         let target = root_pid.map_or(AudioTarget::Endpoint, AudioTarget::Process);
-        self.start(MeetingTrigger::Calendar, title, attendees, target, start_unix_ms)
+        let started = self.start(MeetingTrigger::Calendar, title, attendees, target, start_unix_ms)?;
+        // The invitees' emails, for speaker names. A failure costs only the email match.
+        if let (Some(meeting_id), false) = (started.meeting_id, attendee_details.is_empty()) {
+            let stored = self.store.call_blocking(move |s| s.set_meeting_attendee_details(meeting_id, &attendee_details).map_err(|e| e.to_string()));
+            if let Err(e) | Ok(Err(e)) = stored.map_err(|e| e.to_string()) {
+                tracing::warn!(meeting_id, error = %e, "could not store the invitees' emails");
+            }
+        }
+        Ok(started)
     }
 
     fn start(
@@ -268,6 +305,7 @@ impl MeetingController {
             .unwrap()
             .begin_start()
             .ok_or_else(|| CommandError::invalid_input(tr("A meeting is already recording.", &[])))?;
+        self.manual.store(matches!(trigger, MeetingTrigger::Manual), std::sync::atomic::Ordering::Relaxed);
         let now = now_ms();
         // A calendar meeting's row spans its event; everything else starts now. The
         // recording's own clock still runs from this moment.
@@ -322,6 +360,8 @@ impl MeetingController {
     pub fn stop(&self) -> Result<MeetingRecordingView, CommandError> {
         let stopped = self.lifecycle.lock().unwrap().begin_stop();
         if let Some((meeting_id, started, active)) = stopped {
+            super::still_here::reset();
+            self.manual.store(false, std::sync::atomic::Ordering::Relaxed);
             let Stopped { files, transcribed } = active.stop();
             tracing::info!(meeting_id, seconds = (now_ms() - started) / 1000, degraded = ?files.degraded, "meeting recording stopped");
             self.complete(meeting_id, files, transcribed);

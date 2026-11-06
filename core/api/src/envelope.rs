@@ -8,8 +8,8 @@
 
 use serde::Serialize;
 
-/// Why a governed call produced no result. Deliberately just two variants — LB0-5
-/// distinguishes cap-vs-provider, not per-provider detail.
+/// Why a governed call produced no result: LB0-5's cap-vs-provider distinction, plus a
+/// provider's monthly budget being spent.
 #[derive(Debug, Clone, Copy)]
 pub enum ApiError {
     /// The spend-cap pre-check (or a mid-operation re-check on a multi-chunk call)
@@ -19,6 +19,15 @@ pub enum ApiError {
     /// Every link in the provider chain failed for a reason other than the spend cap
     /// (e.g. no local Ollama server running and no hosted fallback configured).
     ProviderFailure,
+    /// Every provider the call could use is over its monthly budget, or the one provider
+    /// it is pinned to is (`crate::budget`).
+    BudgetSpent(crate::budget::BudgetSpent),
+}
+
+impl From<crate::budget::BudgetSpent> for ApiError {
+    fn from(err: crate::budget::BudgetSpent) -> Self {
+        ApiError::BudgetSpent(err)
+    }
 }
 
 impl From<llm::SpendCapError> for ApiError {
@@ -47,9 +56,45 @@ pub fn spend_cap_error_envelope(err: &llm::SpendCapError) -> String {
     )
 }
 
-/// The `provider_failure` half of the envelope — see [`ok_envelope`].
+/// The `provider_failure` half of the envelope — see [`ok_envelope`]. Carries a
+/// `reason` object ([`last_provider_failure`]) when this thread's latest chain walk
+/// said why, e.g. `"reason":{"kind":"ollama_model_missing","model":"gemma4:12b"}`;
+/// a shell that predates it ignores the extra key.
 pub fn provider_failure_envelope() -> String {
-    r#"{"ok":false,"error":{"kind":"provider_failure"}}"#.to_string()
+    match last_provider_failure().and_then(|reason| serde_json::to_string(&reason).ok()) {
+        Some(reason) => format!(r#"{{"ok":false,"error":{{"kind":"provider_failure","reason":{reason}}}}}"#),
+        None => r#"{"ok":false,"error":{"kind":"provider_failure"}}"#.to_string(),
+    }
+}
+
+/// Why the provider chain behind this thread's latest [`ApiError::ProviderFailure`]
+/// failed, and forgets it: the first link's reason that names a fix (the provider the user
+/// set up first), else the first. `None` when that failure never walked a chain. A Rust
+/// shell calls this right after the error and shows
+/// [`llm::ProviderFailureKind::user_message`].
+pub fn last_provider_failure() -> Option<llm::ProviderFailureKind> {
+    let failures = llm::take_last_chain_failures();
+    let actionable = |k: &&llm::ProviderFailureKind| {
+        !matches!(k, llm::ProviderFailureKind::Network { .. } | llm::ProviderFailureKind::Other { .. })
+    };
+    failures.iter().find(actionable).or(failures.first()).cloned()
+}
+
+/// The [`ApiError::ProviderFailure`] for a chain walk that failed, recording why for
+/// [`last_provider_failure`]. The only way a reason is recorded.
+pub fn chain_failed(failures: Vec<llm::ProviderFailureKind>) -> ApiError {
+    llm::set_last_chain_failures(failures);
+    ApiError::ProviderFailure
+}
+
+/// The `budget_spent` half of the envelope — see [`ok_envelope`].
+pub fn budget_spent_error_envelope(err: &crate::budget::BudgetSpent) -> String {
+    format!(
+        r#"{{"ok":false,"error":{{"kind":"budget_spent","provider":"{}","spent_cents":{},"budget_cents":{}}}}}"#,
+        err.provider.as_str(),
+        err.spent_cents,
+        err.budget_cents
+    )
 }
 
 /// Encodes a typed result as the envelope. Returns `None` only if `data` fails to
@@ -62,6 +107,7 @@ pub fn envelope_json<T: Serialize>(result: &ApiResult<T>) -> Option<String> {
             .map(|json| ok_envelope(&json)),
         Err(ApiError::SpendCap(err)) => Some(spend_cap_error_envelope(err)),
         Err(ApiError::ProviderFailure) => Some(provider_failure_envelope()),
+        Err(ApiError::BudgetSpent(err)) => Some(budget_spent_error_envelope(err)),
     }
 }
 
@@ -104,6 +150,46 @@ mod tests {
     }
 
     #[test]
+    fn provider_failure_envelope_says_why_once() {
+        let _ = chain_failed(vec![
+            llm::ProviderFailureKind::OllamaModelMissing { model: "gemma4:12b".into() },
+            llm::ProviderFailureKind::OllamaNotRunning,
+        ]);
+        let failed: ApiResult<()> = Err(ApiError::ProviderFailure);
+        assert_eq!(
+            envelope_json(&failed).unwrap(),
+            r#"{"ok":false,"error":{"kind":"provider_failure","reason":{"kind":"ollama_model_missing","model":"gemma4:12b"}}}"#
+        );
+        assert_eq!(
+            envelope_json(&failed).unwrap(),
+            r#"{"ok":false,"error":{"kind":"provider_failure"}}"#,
+            "the reason is taken, so a later unrelated failure doesn't repeat it"
+        );
+    }
+
+    #[test]
+    fn last_provider_failure_prefers_a_reason_with_a_fix() {
+        let network = llm::ProviderFailureKind::Network { provider: llm::Provider::Anthropic };
+        let _ = chain_failed(vec![network.clone(), llm::ProviderFailureKind::OllamaNotRunning]);
+        assert_eq!(last_provider_failure(), Some(llm::ProviderFailureKind::OllamaNotRunning));
+        let _ = chain_failed(vec![network.clone()]);
+        assert_eq!(last_provider_failure(), Some(network));
+    }
+
+    #[test]
+    fn a_swallowed_walk_leaves_no_reason_for_an_unrelated_failure() {
+        let chain = [llm::ChainLink {
+            provider: llm::Provider::Ollama,
+            model: "gemma4:12b".into(),
+            client: Box::new(llm::OllamaClient::with_base_url("http://127.0.0.1:9", "gemma4:12b")),
+        }];
+        // A caller like topics or speaker names: the walk fails and the caller moves on.
+        assert!(llm::try_chain(&chain, |l| l.client.complete("q")).is_none());
+        let failed: ApiResult<()> = Err(ApiError::ProviderFailure);
+        assert_eq!(envelope_json(&failed).unwrap(), r#"{"ok":false,"error":{"kind":"provider_failure"}}"#);
+    }
+
+    #[test]
     fn provider_failure_envelope_is_the_fixed_shape() {
         assert_eq!(
             provider_failure_envelope(),
@@ -139,6 +225,17 @@ mod tests {
         assert_eq!(
             envelope_json(&failed).unwrap(),
             r#"{"ok":false,"error":{"kind":"provider_failure"}}"#
+        );
+
+        let spent: ApiResult<Payload> = Err(crate::budget::BudgetSpent {
+            provider: llm::Provider::OpenRouter,
+            spent_cents: 2512,
+            budget_cents: 2500,
+        }
+        .into());
+        assert_eq!(
+            envelope_json(&spent).unwrap(),
+            r#"{"ok":false,"error":{"kind":"budget_spent","provider":"openrouter","spent_cents":2512,"budget_cents":2500}}"#
         );
     }
 }
