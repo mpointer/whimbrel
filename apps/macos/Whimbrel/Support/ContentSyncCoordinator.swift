@@ -124,6 +124,7 @@ final class ContentSyncCoordinator: ObservableObject {
                     groupKeyBase64: groupKeyBase64,
                     deviceId: deviceId
                 )
+                MeetingLifecycle.deleteFilesOfMeetingsForgottenElsewhere(CoreMemoryStore.takeForgottenMeetingFiles())
                 continuation.resume(returning: result)
             }
         }

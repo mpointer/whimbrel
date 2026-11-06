@@ -33,6 +33,8 @@ pub(crate) const ROW_TYPE_PROVIDER_SPEND: &str = memory::OUTBOX_ROW_TYPE_PROVIDE
 pub(crate) const ROW_TYPE_PERSON: &str = memory::OUTBOX_ROW_TYPE_PERSON;
 pub(crate) const ROW_TYPE_MEETING_SPEAKER: &str = memory::OUTBOX_ROW_TYPE_MEETING_SPEAKER;
 pub(crate) const ROW_TYPE_ITEMS_CAPABILITY: &str = "items_capability";
+/// Deletion sync (docs/superpowers/specs/2026-11-05-deletion-sync-design.md): "Forget meeting"'s tombstone.
+pub(crate) const ROW_TYPE_MEETING_FORGOTTEN: &str = memory::OUTBOX_ROW_TYPE_MEETING_FORGOTTEN;
 /// Skin sync (docs/superpowers/plans/2026-10-22-skins-windows-and-sync.md, Task 13): a user skin's
 /// version, its images in chunks, and the marker a device pushes once it applies them.
 pub(crate) const ROW_TYPE_SKIN: &str = memory::OUTBOX_ROW_TYPE_SKIN;
@@ -72,6 +74,9 @@ pub(crate) struct TranscriptSegmentPayload {
 pub(crate) struct MeetingPayload {
     #[serde(default)]
     pub source_meeting_id: Option<i64>,
+    /// The recording database's `sync_entity_epoch` (deletion sync); absent from older builds' rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_epoch: Option<String>,
     #[serde(flatten)]
     pub meeting: memory::AppliedMeeting,
 }
@@ -250,10 +255,12 @@ pub(crate) fn encode_row(row: &SyncableRow) -> Result<(i64, &'static str, String
         SyncableRow::Meeting {
             local_seq,
             source_meeting_id,
+            origin_epoch,
             meeting,
         } => {
             let payload = MeetingPayload {
                 source_meeting_id: Some(*source_meeting_id),
+                origin_epoch: origin_epoch.clone(),
                 meeting: meeting.clone(),
             };
             (
@@ -485,6 +492,17 @@ fn row_local_seq(row: &SyncableRow) -> i64 {
     }
 }
 
+/// The own meeting a pushed row belongs to: the meeting itself, or a transcript line of it.
+fn row_meeting_id(row: &SyncableRow) -> Option<i64> {
+    match row {
+        SyncableRow::Meeting { source_meeting_id, .. } | SyncableRow::TranscriptSegment { source_meeting_id, .. } => {
+            Some(*source_meeting_id)
+        }
+        SyncableRow::Item { source_meeting_id, .. } => *source_meeting_id,
+        SyncableRow::CaptureItem { .. } => None,
+    }
+}
+
 /// This pass's rows: oldest `local_seq` first, at most `cap`. Ascending order is what
 /// makes saving the cursor after each chunk safe: every row at or below the saved
 /// value has been sent.
@@ -560,8 +578,12 @@ pub async fn push_content(
         let mut encoded = Vec::with_capacity(chunk.len());
         let mut tags: Vec<String> = Vec::new();
         let mut chunk_highest = highest;
+        let mut meeting_rows: Vec<(i64, i64, &str)> = Vec::new();
         for row in chunk {
             let (local_seq, row_type, payload_json) = encode_row(row)?;
+            if let Some(meeting_id) = row_meeting_id(row) {
+                meeting_rows.push((meeting_id, local_seq, row_type));
+            }
             let aad = content_row_aad(device_id, local_seq, row_type);
             let ciphertext = sync::encrypt_payload(group_key, payload_json.as_bytes(), &aad);
             let tag = epoch
@@ -593,6 +615,10 @@ pub async fn push_content(
             }
         };
         inserted.map_err(|e| SyncEngineError::Query(e.to_string()))?;
+        // So forgetting the meeting can delete these rows (deletion sync).
+        store
+            .record_pushed_meeting_rows(&meeting_rows)
+            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
         // Before the cursor save (spec D8.1): a pass cut short here re-sends the chunk
         // (a no-op INSERT) and the DELETE runs then. Rows stay tagged without the index;
         // only the DELETE waits for it.
@@ -954,6 +980,16 @@ fn apply_parent_row(
         ROW_TYPE_MEETING => {
             let payload: MeetingPayload =
                 serde_json::from_slice(plaintext).map_err(|_| SyncEngineError::Crypto)?;
+            // A late version of a forgotten meeting is dropped. A legacy row without a source id can't be
+            // named, so it applies as before.
+            if let Some(source_id) = payload.source_meeting_id {
+                if store
+                    .is_meeting_forgotten(peer_device_id, payload.origin_epoch.as_deref(), source_id)
+                    .map_err(|e| SyncEngineError::Query(e.to_string()))?
+                {
+                    return Ok(());
+                }
+            }
             // For a legacy row with no source_meeting_id (pushed before Task 1), fall
             // back to sync_row_map keyed by this exact local_seq — this is what makes
             // a re-fetch of the SAME already-applied local_seq idempotent (e.g. a
@@ -988,7 +1024,7 @@ fn apply_parent_row(
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             if let Some(source_id) = payload.source_meeting_id {
                 store
-                    .record_sync_meeting_map(peer_device_id, source_id, local_id)
+                    .record_sync_meeting_map_with_epoch(peer_device_id, source_id, local_id, payload.origin_epoch.as_deref())
                     .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             }
             local_id
@@ -1069,6 +1105,10 @@ fn apply_parent_row(
             let Ok(alert) = serde_json::from_slice::<memory::live_alert::AppliedLiveAlert>(plaintext) else {
                 return Ok(());
             };
+            // Named by its meeting's identity even while its `meeting_id` is still NULL here.
+            if forgotten_child(store, peer_device_id, Some(alert.source_meeting_id))? {
+                return Ok(());
+            }
             store
                 .apply_synced_live_alert(peer_device_id, &alert)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
@@ -1089,6 +1129,11 @@ fn apply_parent_row(
             let Ok(speaker) = serde_json::from_slice::<memory::speaker_names::AppliedMeetingSpeaker>(plaintext) else {
                 return Ok(());
             };
+            // Else it would wait in `meeting_speaker_pending` for a meeting that never comes.
+            let origin = speaker.origin_device_id.as_deref().unwrap_or(peer_device_id);
+            if forgotten_child(store, origin, Some(speaker.source_meeting_id))? {
+                return Ok(());
+            }
             store
                 .apply_synced_meeting_speaker(peer_device_id, &speaker)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
@@ -1104,6 +1149,21 @@ fn apply_parent_row(
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             return Ok(());
         }
+        ROW_TYPE_MEETING_FORGOTTEN => {
+            // Deletes the meeting here and remembers it, so its late rows are dropped. Kept on the relay
+            // forever (untagged, never compacted), so a device joining later learns it too. If it names this
+            // device's own meeting, `delete_forgotten_meeting_rows` removes the server rows next.
+            let Ok(forgotten) = serde_json::from_slice::<memory::MeetingForgotten>(plaintext) else {
+                return Ok(());
+            };
+            if let Some(files) = store
+                .apply_meeting_forgotten(&forgotten)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?
+            {
+                push_forgotten_meeting_files(files);
+            }
+            return Ok(());
+        }
         _ => return Ok(()), // unknown row_type (including items_capability): forward-compatibility no-op, not an error
     };
     // Unconditional for BOTH branches above (insert and update) — required so a
@@ -1112,6 +1172,117 @@ fn apply_parent_row(
     store
         .record_sync_row_map(peer_device_id, local_seq, row_type, local_id)
         .map_err(|e| SyncEngineError::Query(e.to_string()))
+}
+
+/// A row of a peer's meeting that a tombstone forgot: dropped, never applied or left waiting. Child rows carry
+/// no epoch, so a meeting still mapped here (alive, e.g. a re-created database's reused id) wins over an older
+/// tombstone. `None` (a row from before source ids) can't be named.
+fn forgotten_child(store: &Store, origin_device_id: &str, source_meeting_id: Option<i64>) -> Result<bool, SyncEngineError> {
+    let Some(source_id) = source_meeting_id else {
+        return Ok(false);
+    };
+    // This device's own meetings have no map row, and an epoch-less match could name a meeting of an earlier
+    // database; their child rows apply (or wait) against the meeting row itself.
+    if store.own_device_id().as_deref() == Some(origin_device_id) {
+        return Ok(false);
+    }
+    let q = |e: &dyn std::fmt::Display| SyncEngineError::Query(e.to_string());
+    Ok(store.resolve_sync_meeting_map(origin_device_id, source_id).map_err(|e| q(&e))?.is_none()
+        && store.is_meeting_forgotten(origin_device_id, None, source_id).map_err(|e| q(&e))?)
+}
+
+/// Files of meetings a pulled tombstone deleted here, for the app to remove (sync-engine knows no recordings
+/// folder). Drained by [`take_forgotten_meeting_files`]; per thread under test, like the other counters.
+#[cfg(not(test))]
+static FORGOTTEN_MEETING_FILES: std::sync::Mutex<Vec<memory::DeletedMeetingFiles>> = std::sync::Mutex::new(Vec::new());
+#[cfg(test)]
+thread_local! {
+    static FORGOTTEN_MEETING_FILES_CELL: std::cell::RefCell<Vec<memory::DeletedMeetingFiles>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn push_forgotten_meeting_files(files: memory::DeletedMeetingFiles) {
+    #[cfg(not(test))]
+    FORGOTTEN_MEETING_FILES.lock().unwrap_or_else(|e| e.into_inner()).push(files);
+    #[cfg(test)]
+    FORGOTTEN_MEETING_FILES_CELL.with(|c| c.borrow_mut().push(files));
+}
+
+/// The files of every meeting a pulled tombstone deleted since the last call. The app deletes them the way
+/// it deletes a forgotten meeting's own (`api::retention::delete_all_meeting_files`). Not persisted: a crash
+/// before the app takes them leaves them on disk.
+pub fn take_forgotten_meeting_files() -> Vec<memory::DeletedMeetingFiles> {
+    #[cfg(not(test))]
+    return std::mem::take(&mut *FORGOTTEN_MEETING_FILES.lock().unwrap_or_else(|e| e.into_inner()));
+    #[cfg(test)]
+    return FORGOTTEN_MEETING_FILES_CELL.with(|c| c.take());
+}
+
+/// Most `pushed_meeting_row` records one round's cleanup handles; the rest wait for the next round.
+const FORGOTTEN_ROWS_PER_ROUND: i64 = 1000;
+
+/// The most one round spends deleting forgotten meetings' rows, so it can never eat `SYNC_TIMEOUT`.
+const FORGOTTEN_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Deletes these exact `local_seq`s of one `row_type` of `?1`'s rows, created at or after `?3`: a primary-key
+/// seek per key. The time bound keeps an earlier database's row at a reused `local_seq` (the relay INSERT was a
+/// no-op for the new one) out of the delete.
+fn forgotten_rows_delete_sql(count: usize) -> String {
+    let placeholders: Vec<String> = (4..count + 4).map(|i| format!("?{i}")).collect();
+    format!(
+        "DELETE FROM sync_row WHERE device_id = ?1 AND row_type = ?2 AND created_at_unix_ms >= ?3 AND local_seq IN ({})",
+        placeholders.join(", ")
+    )
+}
+
+/// A forgotten meeting's `meeting` rows by their entity tag (epoch-scoped, so never an earlier database's):
+/// a seek on the ops index. Catches versions pushed before `pushed_meeting_row` existed.
+const FORGOTTEN_MEETING_TAG_DELETE_SQL: &str = "DELETE FROM sync_row WHERE device_id = ?1 AND entity_tag = ?2";
+
+/// The recorder's cleanup: deletes this device's own server rows of meetings it deleted for a tombstone (its
+/// own forget, or a peer's naming its meeting): by primary key from `pushed_meeting_row`, then the `meeting`
+/// row by entity tag once the ops index exists. Only `device_id = own` rows, so another device's rows are never
+/// touched. Best effort: a failure or timeout is logged, what is left stays recorded, and the next round retries.
+pub(crate) async fn delete_forgotten_meeting_rows(conn: &Connection, group_key: &GroupKey, store: &Store, own_device_id: &str) {
+    let delete_all = async {
+        let rows = store.forgotten_pushed_meeting_rows(FORGOTTEN_ROWS_PER_ROUND).map_err(|e| e.to_string())?;
+        let mut groups: std::collections::BTreeMap<(i64, &str, i64), Vec<i64>> = Default::default();
+        for (meeting_id, local_seq, row_type, not_before) in &rows {
+            groups.entry((*meeting_id, row_type.as_str(), *not_before)).or_default().push(*local_seq);
+        }
+        for ((meeting_id, row_type, not_before), seqs) in groups {
+            for chunk in seqs.chunks(PENDING_LOOKUP_CHUNK) {
+                let mut values = vec![
+                    Value::Text(own_device_id.to_string()),
+                    Value::Text(row_type.to_string()),
+                    Value::Integer(not_before),
+                ];
+                values.extend(chunk.iter().map(|seq| Value::Integer(*seq)));
+                conn.execute(&forgotten_rows_delete_sql(chunk.len()), Params::Positional(values))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let done: Vec<(i64, i64, String)> = chunk.iter().map(|seq| (meeting_id, *seq, row_type.to_string())).collect();
+                store.clear_pushed_meeting_rows(&done).map_err(|e| e.to_string())?;
+            }
+        }
+        let pending_tags = store.meetings_awaiting_tag_delete().map_err(|e| e.to_string())?;
+        if pending_tags.is_empty() || !ENTITY_TAG_COLUMN_SEEN.get() || !compaction_index_ready(conn).await {
+            return Ok(());
+        }
+        let epoch = store.sync_entity_epoch().map_err(|e| e.to_string())?;
+        for meeting_id in pending_tags {
+            let tag = tag_for(group_key, own_device_id, &epoch, &format!("{ROW_TYPE_MEETING}:{meeting_id}"));
+            conn.execute(FORGOTTEN_MEETING_TAG_DELETE_SQL, params![own_device_id, tag])
+                .await
+                .map_err(|e| e.to_string())?;
+            store.mark_meeting_tag_deleted(meeting_id).map_err(|e| e.to_string())?;
+        }
+        Ok::<(), String>(())
+    };
+    match tokio::time::timeout(FORGOTTEN_CLEANUP_TIMEOUT, delete_all).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => eprintln!("[sync] forgotten meeting rows kept for the next round: {e}"),
+        Err(_) => eprintln!("[sync] forgotten meeting rows kept for the next round: no reply within {FORGOTTEN_CLEANUP_TIMEOUT:?}"),
+    }
 }
 
 /// Discovers every peer device with rows in `sync_row` and applies everything new
@@ -1398,10 +1569,19 @@ async fn pull_content_with_budget(
             if i > 0 && pending_started.elapsed() >= budget {
                 break;
             }
-            // A vanished row is absent and an undecodable one is dropped here: both stay
-            // pending and are retried next round rather than lost.
-            let pending = fetch_rows_by_key(conn, &peer, chunk)
-                .await?
+            // An undecodable row is dropped here: it stays pending and is retried next round
+            // rather than lost. A vanished row is gone for good (a forgotten meeting's recorder
+            // deletes it, the relay compacts it, or a fresh start wipes the database), so it
+            // stops waiting.
+            let fetched = fetch_rows_by_key(conn, &peer, chunk).await?;
+            for (seq, row_type) in chunk {
+                if !fetched.iter().any(|env| env.local_seq == *seq && env.row_type == *row_type) {
+                    store
+                        .delete_sync_pending_dependency(&peer, *seq, row_type)
+                        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+                }
+            }
+            let pending = fetched
                 .into_iter()
                 .filter_map(|env| decode_pending_segment(group_key, &peer, &env).map(|p| (env, p)))
                 .collect();
@@ -1511,9 +1691,20 @@ async fn resolve_segments(
         }
     };
 
-    let mut missing_meetings: Vec<(i64, String)> = Vec::new();
+    // Lines of a forgotten meeting: dropped before any fetch of their meeting, and never left pending.
+    // ponytail: lines carry no epoch, so an earlier database's tombstone also drops a re-created database's
+    // lines for a reused meeting id; upgrade: carry `origin_epoch` in line payloads and match it exactly.
+    let mut forgotten = Vec::with_capacity(segments.len());
     for (_, pending) in &segments {
+        forgotten.push(forgotten_child(store, peer, fallback(pending).0)?);
+    }
+
+    let mut missing_meetings: Vec<(i64, String)> = Vec::new();
+    for ((_, pending), forgotten) in segments.iter().zip(&forgotten) {
         let (source_meeting_id, fallback_local_seq) = fallback(pending);
+        if *forgotten {
+            continue;
+        }
         if let Some(seq) = fallback_local_seq {
             if resolve(source_meeting_id, fallback_local_seq)?.is_none()
                 && !missing_meetings.iter().any(|(s, _)| *s == seq)
@@ -1530,9 +1721,16 @@ async fn resolve_segments(
         }
     }
 
-    for (env, pending) in &segments {
+    for ((env, pending), forgotten) in segments.iter().zip(forgotten) {
         let (source_meeting_id, fallback_local_seq) = fallback(pending);
-
+        if forgotten {
+            store
+                .delete_sync_pending_dependency(peer, env.local_seq, &env.row_type)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            continue;
+        }
+        // No forgotten check once resolved: a tombstone deletes the meeting and its map entry, so a
+        // meeting that still resolves is alive, and an epoch-less check here could only over-drop.
         let resolved_meeting_id = resolve(source_meeting_id, fallback_local_seq)?;
         match resolved_meeting_id {
             Some(local_meeting_id) => {
@@ -2039,6 +2237,7 @@ pub(crate) mod tests {
     fn meeting_payload_round_trips_source_meeting_id() {
         let payload = MeetingPayload {
             source_meeting_id: Some(100),
+            origin_epoch: None,
             meeting: sample_applied_meeting("Standup"),
         };
         let json = serde_json::to_string(&payload).unwrap();
@@ -3266,6 +3465,7 @@ pub(crate) mod tests {
         // Meeting pushed once at local_seq=1 (source_meeting_id=100).
         let meeting_payload = MeetingPayload {
             source_meeting_id: Some(100),
+            origin_epoch: None,
             meeting: sample_applied_meeting("Standup"),
         };
         seed_content_row(
@@ -3609,6 +3809,7 @@ pub(crate) mod tests {
         // Now the meeting arrives, under the same source_meeting_id.
         let meeting_payload = MeetingPayload {
             source_meeting_id: Some(100),
+            origin_epoch: None,
             meeting: sample_applied_meeting("Standup"),
         };
         seed_content_row(
@@ -4179,6 +4380,7 @@ pub(crate) mod tests {
         meeting.end_unix_ms = Some(old + 1000);
         let meeting_json = serde_json::to_string(&MeetingPayload {
             source_meeting_id: Some(100),
+            origin_epoch: None,
             meeting,
         })
         .unwrap();
@@ -4671,6 +4873,8 @@ mod relay_query_tests {
             assert_seeks(&conn, sql).await;
         }
         assert_seeks(&conn, &compaction_delete_sql(3)).await;
+        assert_seeks(&conn, &forgotten_rows_delete_sql(3)).await;
+        assert_seeks(&conn, FORGOTTEN_MEETING_TAG_DELETE_SQL).await;
         assert_seeks(&conn, "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq IN (?2, ?3)").await;
     }
 

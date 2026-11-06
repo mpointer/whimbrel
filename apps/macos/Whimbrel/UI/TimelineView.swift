@@ -609,6 +609,10 @@ struct TimelineView: View {
             appState.openTimeline = { openWindow(id: "timeline") }
             appState.setMeetingWindowOpener { openWindow(id: "meeting-detail", value: $0) }
         }
+        // A meeting forgotten on another device was deleted here by sync.
+        .onReceive(NotificationCenter.default.publisher(for: MeetingLifecycle.meetingsDidChange)) { _ in
+            if mode == .recent || mode == .episodes { refresh() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             guard let window = notification.object as? NSWindow, window.title == "Whimbrel" else { return }
             // Task 10: Episodes mode needs the same re-fetch-on-refocus as Recent --
@@ -632,7 +636,7 @@ struct TimelineView: View {
                 meetingPendingDeletion = nil
             }
         } message: {
-            Text("This permanently removes the meeting note, action items, transcript, local audio file, and search/index entries for this meeting. This does not affect calendar events.")
+            MeetingLifecycle.forgetConfirmationMessage
         }
 
         Divider().overlay(Color.whimbrelBorder)

@@ -477,10 +477,20 @@ final class AppState: ObservableObject {
                 if n < 0 { log.error("Re-rooting stored file paths from \(old, privacy: .public) failed; it retries on the next launch.") }
                 else if n > 0 { log.notice("Re-rooted \(n) stored file-path rows from \(old, privacy: .public).") }
             }
-            store?.setDeviceId(ownDeviceId)
+            // Without its own id the store can't name this device's meetings: Forget then removes a
+            // meeting here only, and no other device hears of it.
+            if let store, !store.setDeviceId(ownDeviceId) {
+                Logger(subsystem: "com.mpointer.kestrel", category: "sync")
+                    .error("This Mac's device id isn't set on the store; Forget meeting won't reach other devices.")
+            }
         }
         let slow = slowStore
-        CoreMemoryStore.slowLaneQueue.async { slow?.setDeviceId(ownDeviceId) }
+        CoreMemoryStore.slowLaneQueue.async {
+            if let slow, !slow.setDeviceId(ownDeviceId) {
+                Logger(subsystem: "com.mpointer.kestrel", category: "sync")
+                    .error("This Mac's device id isn't set on the slow-lane store.")
+            }
+        }
         for key in ["com.mpointer.kestrel.transcriptionModelPath",
                     "com.mpointer.kestrel.diarizationSegmentationModelPath",
                     "com.mpointer.kestrel.diarizationEmbeddingModelPath"] {

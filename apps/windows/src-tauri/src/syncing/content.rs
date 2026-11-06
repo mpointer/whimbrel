@@ -83,6 +83,19 @@ impl Schedule {
     }
 }
 
+/// Deletes the files of every meeting a pulled tombstone removed since the last call, inside the
+/// recordings folder only (core's allowlist). Returns how many meetings' files it deleted.
+pub fn delete_forgotten_files(recordings: &std::path::Path) -> usize {
+    let forgotten = sync_engine::take_forgotten_meeting_files();
+    for files in &forgotten {
+        api::retention::delete_all_meeting_files(files, recordings);
+    }
+    if !forgotten.is_empty() {
+        tracing::info!(meetings = forgotten.len(), "deleted the files of meetings another device forgot");
+    }
+    forgotten.len()
+}
+
 /// One round on the store actor. The account key is read from Credential Manager
 /// inside the job; `sync` is `sync_engine::sync_content` in production, a fake in tests.
 pub fn run_round<F>(store: &StoreHandle, secrets: Arc<dyn SecretStore>, device_id: String, sync: F) -> Result<(), String>
@@ -129,6 +142,7 @@ pub fn start(
     skins_root: PathBuf,
     alerts: Arc<QuestionAlerts>,
     settings: Arc<Mutex<SettingsFile>>,
+    recordings: PathBuf,
 ) {
     let spawned = std::thread::Builder::new().name("whimbrel-content-sync".into()).spawn(move || {
         let purged = crate::skin_sync::purge_deleted(&skins_root);
@@ -162,6 +176,9 @@ pub fn start(
                 Ok(()) => tracing::info!(?trigger, "content sync round ok"),
                 Err(e) => tracing::warn!(?trigger, error = %e, "content sync round failed"),
             }
+            // Meetings another device forgot (deletion sync, #584): their rows went in the round,
+            // even one that failed later; their files here go now. The list reloads on its own.
+            delete_forgotten_files(&recordings);
             if let Err(message) = &result {
                 if is_auth_error(message) {
                     controller.reauth_now();

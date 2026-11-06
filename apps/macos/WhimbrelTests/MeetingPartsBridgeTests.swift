@@ -12,6 +12,8 @@ final class MeetingPartsBridgeTests: XCTestCase {
         tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try! FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         store = CoreMemoryStore(path: tempDir.appendingPathComponent("test.sqlite"), modelsDir: nil)!
+        // The meetings are this device's ("dev"): without its own id the store hands back no files to delete.
+        _ = store.setDeviceId("dev")
     }
 
     override func tearDown() {

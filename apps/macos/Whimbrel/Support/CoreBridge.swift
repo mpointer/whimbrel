@@ -2696,6 +2696,14 @@ final class CoreMemoryStore {
         return decode(json)
     }
 
+    /// The user's "Forget meeting": `deleteMeetingReturningFiles`, plus a tombstone so every
+    /// other device deletes it too. Needs `setDeviceId` first (else it is forgotten here only).
+    func forgetMeeting(id: Int64) -> CoreDeletedMeetingFiles? {
+        guard let json = whimbrel_meeting_forget(handle, id) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
     // MARK: Meeting snapshots (slide images; device-local)
 
     /// Returns the new snapshot id, or nil on failure or a missing meeting.
@@ -3116,11 +3124,15 @@ final class CoreMemoryStore {
     /// rows are deleted, each deleted meeting's audio (both mic/system siblings inside
     /// `recordingsDir`) and transcript files are removed best-effort. Returns nil on a
     /// DB error.
-    func applyRetention(captureItemDays: Int?, meetingDays: Int?, conversationDays: Int?, nowUnixMs: Int64, recordingsDir: URL) -> CoreRetentionResult? {
+    /// `mediaDir` (default: the media folder in Settings) holds audio media retention moved.
+    func applyRetention(captureItemDays: Int?, meetingDays: Int?, conversationDays: Int?, nowUnixMs: Int64, recordingsDir: URL,
+                        mediaDir: URL = MediaSettings.currentFolderURL()) -> CoreRetentionResult? {
         guard let json = recordingsDir.path.withCString({ dir in
-            whimbrel_retention_apply(
-                handle, Int64(captureItemDays ?? -1), Int64(meetingDays ?? -1), Int64(conversationDays ?? -1), nowUnixMs, dir
-            )
+            mediaDir.path.withCString { media in
+                whimbrel_retention_apply(
+                    handle, Int64(captureItemDays ?? -1), Int64(meetingDays ?? -1), Int64(conversationDays ?? -1), nowUnixMs, dir, media
+                )
+            }
         }) else { return nil }
         defer { whimbrel_core_free_string(json) }
         return decode(json)
@@ -3154,16 +3166,18 @@ final class CoreMemoryStore {
     }
 
     /// Best-effort deletion of one meeting's on-disk files after its row is gone: the
-    /// audio's mic/system siblings (resolved inside `recordingsDir`), the transcript and,
-    /// when `snapshotsDir` is non-nil, the marked snapshot folder.
+    /// audio's mic/system siblings, the transcript and, when `snapshotsDir` is non-nil, the
+    /// marked snapshot folder. Only Whimbrel-named files inside `recordingsDir` or `mediaDir`
+    /// (default: the media folder in Settings) go, never through a symlink.
     /// A missing file is never an error (it may already be gone, or never existed for a
     /// mic-only degraded session, FR-MTG-10).
-    static func deleteMeetingFiles(audioPath: String?, transcriptPath: String?, snapshotsDir: String?, recordingsDir: URL) {
+    static func deleteMeetingFiles(audioPath: String?, transcriptPath: String?, snapshotsDir: String?, recordingsDir: URL,
+                                   mediaDir: URL = MediaSettings.currentFolderURL()) {
         recordingsDir.path.withCString { dir in
             withOptionalCString(audioPath) { audio in
                 withOptionalCString(transcriptPath) { transcript in
                     withOptionalCString(snapshotsDir) { snaps in
-                        whimbrel_retention_delete_meeting_files(audio, transcript, snaps, dir)
+                        mediaDir.path.withCString { whimbrel_retention_delete_meeting_files(audio, transcript, snaps, dir, $0) }
                     }
                 }
             }
@@ -3171,11 +3185,15 @@ final class CoreMemoryStore {
     }
 
     /// Best-effort deletion of every part's on-disk files (audio siblings, transcripts) and the
-    /// guarded snapshot folder, from `deleteMeetingReturningFiles`.
-    static func deleteAllMeetingFiles(_ files: CoreDeletedMeetingFiles, recordingsDir: URL) {
+    /// guarded snapshot folder, from `deleteMeetingReturningFiles`. Only files inside
+    /// `recordingsDir` or `mediaDir` (default: the media folder in Settings) go, never through a symlink.
+    static func deleteAllMeetingFiles(_ files: CoreDeletedMeetingFiles, recordingsDir: URL,
+                                      mediaDir: URL = MediaSettings.currentFolderURL()) {
         guard let data = try? JSONEncoder().encode(files) else { return }
         String(decoding: data, as: UTF8.self).withCString { json in
-            recordingsDir.path.withCString { whimbrel_retention_delete_all_meeting_files(json, $0) }
+            recordingsDir.path.withCString { rec in
+                mediaDir.path.withCString { whimbrel_retention_delete_all_meeting_files(json, rec, $0) }
+            }
         }
     }
 
@@ -3587,6 +3605,21 @@ final class CoreMemoryStore {
         guard let json = skinsRoot.path.withCString({ whimbrel_skin_sync_reconcile(handle, $0) }) else { return nil }
         defer { whimbrel_core_free_string(json) }
         return try? CoreLLMEnvelope<SkinReconcileReport>.result(json).get()
+    }
+
+    /// Files of the meetings other devices forgot, deleted here by the last `syncContent`
+    /// (taken once, even after a failed round). Delete each with `deleteAllMeetingFiles`.
+    static func takeForgottenMeetingFiles() -> [CoreDeletedMeetingFiles] {
+        guard let json = whimbrel_sync_take_forgotten_meeting_files() else { return [] }
+        defer { whimbrel_core_free_string(json) }
+        do {
+            return try JSONDecoder().decode([CoreDeletedMeetingFiles].self, from: Data(String(cString: json).utf8))
+        } catch {
+            // Their rows are gone already; the files stay on disk until the orphan sweep.
+            Logger(subsystem: "com.mpointer.kestrel", category: "sync")
+                .error("couldn't read the files of meetings forgotten elsewhere (\(strlen(json), privacy: .public) bytes); they stay on disk")
+            return []
+        }
     }
 
     /// Why the most recent `syncContent` failed and in which phase; nil if it succeeded.

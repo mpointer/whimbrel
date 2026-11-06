@@ -446,6 +446,14 @@ pub extern "C" fn whimbrel_sync_content_last_error() -> *mut c_char {
     sync_engine::last_content_sync_error().map_or(ptr::null_mut(), json_to_c_string)
 }
 
+/// JSON array of `DeletedMeetingFiles`: the meetings other devices forgot that content sync
+/// deleted here since the last call (`[]` if none). Call after every round, failed or not; the
+/// caller deletes each with `whimbrel_retention_delete_all_meeting_files`. Caller frees.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_take_forgotten_meeting_files() -> *mut c_char {
+    serde_json::to_string(&sync_engine::take_forgotten_meeting_files()).map_or(ptr::null_mut(), json_to_c_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +461,16 @@ mod tests {
 
     fn to_cstring(s: &str) -> std::ffi::CString {
         std::ffi::CString::new(s).unwrap()
+    }
+
+    #[test]
+    fn take_forgotten_meeting_files_is_an_empty_array_when_nothing_was_forgotten() {
+        // The list is process-wide: drain whatever another test left, then take again.
+        crate::whimbrel_core_free_string(whimbrel_sync_take_forgotten_meeting_files());
+        let p = whimbrel_sync_take_forgotten_meeting_files();
+        assert!(!p.is_null());
+        assert_eq!(unsafe { CStr::from_ptr(p) }.to_str().unwrap(), "[]");
+        crate::whimbrel_core_free_string(p);
     }
 
     #[test]

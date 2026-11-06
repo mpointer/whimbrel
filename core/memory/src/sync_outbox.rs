@@ -105,7 +105,9 @@ pub(crate) fn ensure_sync_outbox_schema(conn: &Connection) -> rusqlite::Result<(
          CREATE INDEX IF NOT EXISTS idx_sync_outbox_dispatch
            ON sync_outbox(connector, state, next_attempt_at_unix_ms, created_at_unix_ms);
          CREATE INDEX IF NOT EXISTS idx_sync_outbox_lease
-           ON sync_outbox(state, lease_expires_at_unix_ms);",
+           ON sync_outbox(state, lease_expires_at_unix_ms);
+         CREATE INDEX IF NOT EXISTS idx_sync_outbox_aggregate
+           ON sync_outbox(row_type, aggregate_id);",
     )
 }
 

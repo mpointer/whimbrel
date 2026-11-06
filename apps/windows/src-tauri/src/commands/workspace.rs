@@ -706,8 +706,9 @@ pub(crate) fn regeneration_conflict(s: &memory::Store, id: i64) -> Result<bool, 
     Ok(has_override || touched_items)
 }
 
-/// "Forget meeting": the row and its device-local files. Refused while it records.
-/// Copies already synced to other devices stay (M3.3 Decision 13).
+/// "Forget meeting": the row and this PC's files, and a tombstone so every other device forgets
+/// it too (deletion sync, #584; it replaces M3.3 Decision 13's this-device-only forget). Refused
+/// while it records.
 #[tauri::command]
 pub async fn meeting_forget(state: State<'_, AppState>, id: i64) -> Result<(), CommandError> {
     if state.meetings.as_ref().and_then(|m| m.status().meeting_id) == Some(id) {
@@ -718,7 +719,8 @@ pub async fn meeting_forget(state: State<'_, AppState>, id: i64) -> Result<(), C
     // leave a meeting pointing at files that aren't there.
     let deleted = state
         .store()?
-        .call(move |s| s.delete_meeting_returning_files(id).map_err(|e| e.to_string()))
+        // Forget on every device (deletion sync, #584): core leaves a tombstone that syncs.
+        .call(move |s| s.forget_meeting(id).map_err(|e| e.to_string()))
         .await?
         .map_err(CommandError::store)?;
     // Every part's audio and transcript, and the snapshot folder unless the meeting is

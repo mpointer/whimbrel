@@ -227,6 +227,7 @@ struct RetentionSettingsPane: View {
             Button("Cancel", role: .cancel) {}
         } message: { results in
             Text("This will permanently delete \(results.count) meeting(s) with no recorded audio, along with any transcript/notes/summary they have. This cannot be undone.")
+                + Text(verbatim: "\n\n") + Text("This removes them from all your devices.")
         }
     }
 
@@ -389,21 +390,10 @@ struct RetentionSettingsPane: View {
 
     private func cleanUpMeetingsWithoutAudio() {
         guard let results = noAudioScanResult, let store = appState.coreStore else { return }
-        CoreMemoryStore.accessQueue.async {
-            var deletedCount = 0
-            for result in results {
-                // Plain row delete, same as cleanUpDuplicateMeetings above -- these
-                // meetings have no audio_path by definition (that's the scan's whole
-                // criterion), so there is no local audio file for deleteMeeting's
-                // caller-owns-file-cleanup contract to worry about here.
-                if store.deleteMeeting(id: result.id) {
-                    deletedCount += 1
-                }
-            }
-            DispatchQueue.main.async {
-                noAudioStatus = String(localized: "Deleted \(deletedCount) meeting(s).")
-                noAudioScanResult = nil
-            }
+        // Forgotten, not just deleted: they go from every device, with any transcript or snapshot files.
+        MeetingLifecycle.forgetMeetings(store: store, meetingIds: results.map(\.id)) { deletedCount in
+            noAudioStatus = String(localized: "Deleted \(deletedCount) meeting(s).")
+            noAudioScanResult = nil
         }
     }
 

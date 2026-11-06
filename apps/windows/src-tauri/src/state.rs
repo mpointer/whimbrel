@@ -245,6 +245,7 @@ impl AppState {
                 self.paths.skins.clone(),
                 self.question_alerts.clone(),
                 self.settings.clone(),
+                self.paths.recordings.clone(),
             );
         }
         self.sync = Some(controller);

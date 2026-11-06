@@ -3523,7 +3523,7 @@ pub extern "C" fn whimbrel_memory_set_device_id(
     if handle.is_null() {
         return false;
     }
-    let Some(device_id) = cstr_to_string(device_id) else {
+    let Some(device_id) = cstr_to_string(device_id).filter(|d| !d.is_empty()) else {
         return false;
     };
     let store = unsafe { &(*handle).0 };
@@ -4046,8 +4046,8 @@ pub extern "C" fn whimbrel_citations_resolve(
 /// `capture_item_days`/`meeting_days`/`conversation_days` are the window in days per
 /// data class, or `-1` (any negative value) to keep that class forever. `now_unix_ms` is
 /// the caller's job to compute so runs stay deterministic. After deleting the rows, the
-/// audio (both mic/system siblings, resolved inside `recordings_dir`) and transcript
-/// files of every deleted meeting are removed best-effort. Returns the same JSON
+/// audio (both mic/system siblings) and transcript files of every deleted meeting inside
+/// `recordings_dir` or `media_dir` (NULL: none) are removed best-effort. Returns the same JSON
 /// `{"capture_items_deleted","meetings_deleted","conversations_deleted",
 /// "deleted_meeting_files":[{"audio_path","transcript_path"},…]}` the old
 /// `whimbrel_memory_apply_retention` did, or null on a null handle/path or a DB error.
@@ -4059,6 +4059,7 @@ pub extern "C" fn whimbrel_retention_apply(
     conversation_days: i64,
     now_unix_ms: i64,
     recordings_dir: *const c_char,
+    media_dir: *const c_char,
 ) -> *mut c_char {
     if handle.is_null() {
         return ptr::null_mut();
@@ -4066,14 +4067,16 @@ pub extern "C" fn whimbrel_retention_apply(
     let Some(recordings_dir) = cstr_to_string(recordings_dir) else {
         return ptr::null_mut();
     };
+    let media_dir = cstr_to_string(media_dir);
+    let mut roots = vec![Path::new(&recordings_dir)];
+    roots.extend(media_dir.as_deref().map(Path::new));
     let policy = memory::RetentionPolicy {
         capture_item_days: (capture_item_days >= 0).then_some(capture_item_days as u32),
         meeting_days: (meeting_days >= 0).then_some(meeting_days as u32),
         conversation_days: (conversation_days >= 0).then_some(conversation_days as u32),
     };
     let store = unsafe { &(*handle).0 };
-    let Ok(result) = api::retention::apply(store, &policy, now_unix_ms, Path::new(&recordings_dir))
-    else {
+    let Ok(result) = api::retention::apply_within(store, &policy, now_unix_ms, &roots) else {
         return ptr::null_mut();
     };
     match serde_json::to_string(&result) {
@@ -4183,26 +4186,30 @@ pub extern "C" fn whimbrel_retention_delete_orphans(paths_json: *const c_char) -
 }
 
 /// M3.0 Task 2: best-effort deletion of one meeting's on-disk files
-/// (`api::retention::delete_meeting_files`), for the shell's "forget this meeting"
-/// path after it deleted the row. `audio_path` and `transcript_path` may be null; the
-/// audio's mic/system siblings are resolved inside `recordings_dir`. `snapshots_dir` (nullable)
-/// is removed only if it carries the Whimbrel marker and holds nothing but PNGs. A missing file
-/// is never an error.
+/// (`api::retention::delete_meeting_files`). `audio_path` and `transcript_path` may be null;
+/// the audio's mic/system siblings go too. Only Whimbrel-named files inside `recordings_dir` or
+/// `media_dir` (nullable) are removed, never through a symlink. `snapshots_dir` (nullable) is
+/// removed only if it carries the Whimbrel marker and holds nothing but snapshots. A missing
+/// file is never an error.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_retention_delete_meeting_files(
     audio_path: *const c_char,
     transcript_path: *const c_char,
     snapshots_dir: *const c_char,
     recordings_dir: *const c_char,
+    media_dir: *const c_char,
 ) {
     let Some(recordings_dir) = cstr_to_string(recordings_dir) else {
         return;
     };
+    let media_dir = cstr_to_string(media_dir);
+    let mut roots = vec![Path::new(&recordings_dir)];
+    roots.extend(media_dir.as_deref().map(Path::new));
     api::retention::delete_meeting_files(
         cstr_to_string(audio_path).as_deref(),
         cstr_to_string(transcript_path).as_deref(),
         cstr_to_string(snapshots_dir).as_deref(),
-        Path::new(&recordings_dir),
+        &roots,
     );
 }
 
@@ -5172,7 +5179,7 @@ mod tests {
         let db_path_c = to_cstring(dir.path().join("test.sqlite").to_str().unwrap());
         let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
         let rec = to_cstring(dir.path().to_str().unwrap());
-        let result_json = whimbrel_retention_apply(handle, -1, -1, 30, 1_000_000, rec.as_ptr());
+        let result_json = whimbrel_retention_apply(handle, -1, -1, 30, 1_000_000, rec.as_ptr(), ptr::null());
         assert!(!result_json.is_null());
         let result_str = unsafe { CStr::from_ptr(result_json) }
             .to_str()
@@ -6309,7 +6316,7 @@ mod tests {
         assert!(whimbrel_memory_capture_activity_by_device(ptr::null_mut(), 0, 1).is_null());
         assert!(whimbrel_memory_get_capture_item(ptr::null_mut(), 1).is_null());
         let rec = to_cstring("/tmp");
-        assert!(whimbrel_retention_apply(ptr::null_mut(), 7, 30, 90, 0, rec.as_ptr()).is_null());
+        assert!(whimbrel_retention_apply(ptr::null_mut(), 7, 30, 90, 0, rec.as_ptr(), ptr::null()).is_null());
         assert!(whimbrel_retention_scan_orphans(ptr::null_mut(), rec.as_ptr(), ptr::null(), rec.as_ptr()).is_null());
         assert!(whimbrel_llm_spend_today(ptr::null_mut(), ptr::null()).is_null());
         assert!(!whimbrel_memory_set_meeting_transcript(
@@ -7142,6 +7149,7 @@ mod tests {
         let db_path = to_cstring(dir.path().join("retention-test.sqlite").to_str().unwrap());
         let handle = whimbrel_memory_open(db_path.as_ptr(), ptr::null());
         assert!(!handle.is_null());
+        assert!(whimbrel_memory_set_device_id(handle, to_cstring("test-device").as_ptr()));
 
         let now: i64 = 100 * 86_400_000;
         let old_meeting_c = to_cstring(&format!(
@@ -7159,7 +7167,7 @@ mod tests {
         // capture_item_days = -1 (keep forever), meeting_days = 7 (deletes the 30-day-old one),
         // conversation_days = -1 (keep forever).
         let rec = to_cstring(dir.path().to_str().unwrap());
-        let result_json = whimbrel_retention_apply(handle, -1, 7, -1, now, rec.as_ptr());
+        let result_json = whimbrel_retention_apply(handle, -1, 7, -1, now, rec.as_ptr(), ptr::null());
         assert!(!result_json.is_null());
         let result_str = unsafe { CStr::from_ptr(result_json) }
             .to_str()
@@ -7311,13 +7319,13 @@ mod tests {
         let rec = to_cstring(dir.path().to_str().unwrap());
         let audio_c = to_cstring(mic.to_str().unwrap());
         let transcript_c = to_cstring(transcript.to_str().unwrap());
-        whimbrel_retention_delete_meeting_files(audio_c.as_ptr(), transcript_c.as_ptr(), ptr::null(), rec.as_ptr());
+        whimbrel_retention_delete_meeting_files(audio_c.as_ptr(), transcript_c.as_ptr(), ptr::null(), rec.as_ptr(), ptr::null());
         assert!(!system.exists());
         assert!(!mic.exists());
         assert!(!transcript.exists());
         // Nulls and already-missing files are fine.
-        whimbrel_retention_delete_meeting_files(ptr::null(), ptr::null(), ptr::null(), rec.as_ptr());
-        whimbrel_retention_delete_meeting_files(audio_c.as_ptr(), transcript_c.as_ptr(), ptr::null(), ptr::null());
+        whimbrel_retention_delete_meeting_files(ptr::null(), ptr::null(), ptr::null(), rec.as_ptr(), ptr::null());
+        whimbrel_retention_delete_meeting_files(audio_c.as_ptr(), transcript_c.as_ptr(), ptr::null(), ptr::null(), ptr::null());
     }
 
     #[test]

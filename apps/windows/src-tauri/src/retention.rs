@@ -268,8 +268,12 @@ mod tests {
 
     const DAY: i64 = 86_400_000;
 
+    /// Knows this PC's device id, as `AppState` sets it at startup: core deletes a meeting's files
+    /// only for a store that knows whose they are (deletion sync, #584).
     fn store_handle() -> StoreHandle {
-        StoreHandle::spawn(|| memory::Store::open_in_memory().map_err(|e| e.to_string())).unwrap()
+        let store = StoreHandle::spawn(|| memory::Store::open_in_memory().map_err(|e| e.to_string())).unwrap();
+        store.call_blocking(|s| s.set_own_device_id("this-pc")).unwrap();
+        store
     }
 
     /// Ages a file past the orphan guard, as last month's leftover recording would be.
