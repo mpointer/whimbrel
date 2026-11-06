@@ -25,6 +25,8 @@ import {
   canChooseHost,
   canToggle,
   description,
+  fastHostPoll,
+  HOST_FAST_POLL_MS,
   hasModelPicker,
   hasSchedule,
   hostAny,
@@ -37,6 +39,7 @@ import {
   noRoutines,
   noRuns,
   outcomeLabel,
+  routinesIntro,
   runHeading,
   scheduleChanged,
   unavailableNote,
@@ -89,6 +92,17 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
     const timer = setInterval(refresh, REFRESH_MS);
     return () => clearInterval(timer);
   }, [refresh]);
+
+  // The device list can still be arriving when the page opens (after launch or sign-in), so the
+  // picker re-checks every few seconds for its first minute until there is something to choose.
+  const [openedAt] = useState(() => Date.now());
+  useEffect(() => {
+    if (!fastHostPoll(host, Date.now() - openedAt)) return;
+    const timer = setTimeout(() => {
+      routinesHost().then(setHost, () => {});
+    }, HOST_FAST_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [host, openedAt]);
 
   /** A change that returns the refreshed list; a refusal is shown and nothing changes. */
   const change = (request: Promise<RoutineView[]>) =>
@@ -161,7 +175,7 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
           {t("Routines")}
         </h2>
         <p className="muted small">
-          {t("Routines run on this PC while Whimbrel is running. A routine that would send or add something waits for your approval first, unless you turn on approving it automatically for that routine.")}
+          {routinesIntro(host)}
         </p>
         {host && (
           <div className="stack-sm">

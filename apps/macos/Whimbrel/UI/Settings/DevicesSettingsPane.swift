@@ -174,7 +174,7 @@ struct DevicesSettingsPane: View {
             ForEach(appState.syncState.devices) { device in
                 HStack {
                     VStack(alignment: .leading) {
-                        Text(device.name ?? device.platform ?? "Unnamed device")
+                        Text(DeviceDisplayName.name(device.name, platform: device.platform) ?? device.platform ?? "Unnamed device")
                             .font(.whimbrelBody(.body))
                             .foregroundStyle(Color.whimbrelTextPrimary)
                         Text(device.status == "resetting" ? "Resetting…" : device.status.capitalized)
@@ -232,6 +232,13 @@ struct DevicesSettingsPane: View {
                 .foregroundStyle(Color.whimbrelTextSecondary)
         } else if let lastSyncedAt = appState.contentSyncCoordinator.lastSyncedAt {
             Text("Content last synced \(lastSyncedAt, format: .relative(presentation: .named))")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+        }
+
+        if let backlog = appState.contentSyncCoordinator.outboxBacklog, let oldest = backlog.oldest,
+           SyncTiming.backlogIsStalled(pending: backlog.pending, oldest: oldest, now: Date()) {
+            Text("Changes waiting to send: \(backlog.pending), the oldest from \(oldest, format: .dateTime.month().day().hour().minute())")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
         }

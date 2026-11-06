@@ -25,7 +25,7 @@ describe("budget notices", () => {
       error: { kind: "budget_spent", provider: "anthropic", spent_cents: 2500, budget_cents: 2500 },
     });
     expect(spent.budgetSpent).toBe(true);
-    expect(spent.error).toBe("Your Anthropic budget for this month is spent ($25.00 of $25.00). Raise it in Settings → AI Providers.");
+    expect(spent.error).toBe("Your Anthropic budget for this month is spent ($25.00 of $25.00). Raise it in Settings → AI.");
     const other = applyEvent(newTurn("q"), { kind: "failed", partial: false, error: { kind: "provider_failure" } });
     expect(other.budgetSpent).toBe(false);
   });

@@ -75,11 +75,14 @@ export function AiCard() {
 
   const info = (provider: Provider) => settings.providers.find((p) => p.id === provider);
 
+  // Three cards on one state: routing and keys, the instructions, and what the models cost.
   return (
+    <>
     <section className="card about" aria-labelledby="ai-heading">
       <h2 id="ai-heading" className="section-label">
         {t("AI & routing")}
       </h2>
+      {error && <p role="alert">{error}</p>}
       {showsOnRamp(settings.routing, settings.keys, ollamaUp, !!local?.installed) && <OnRamp google={info("google")} />}
       {local?.installed && (
         <div className="toolbar">
@@ -141,8 +144,17 @@ export function AiCard() {
             .catch((e: unknown) => setError(message(e)))
         }
       />
-      <h3 className="section-label">{t("Instructions")}</h3>
+    </section>
+    <section className="card about" aria-labelledby="ai-instructions-heading">
+      <h2 id="ai-instructions-heading" className="section-label">
+        {t("Instructions")}
+      </h2>
       <Instructions settings={settings} onError={setError} />
+    </section>
+    <section className="card about" aria-labelledby="ai-usage-heading">
+      <h2 id="ai-usage-heading" className="section-label">
+        {t("Model usage")}
+      </h2>
       {settings.spend && (
         <p className="muted small">
           {t("Spent today: {amount} across hosted providers (resets at midnight UTC).", {
@@ -150,10 +162,9 @@ export function AiCard() {
           })}
         </p>
       )}
-      <h3 className="section-label">{t("Model usage")}</h3>
       <Usage usage={settings.usage} onError={setError} />
-      {error && <p role="alert">{error}</p>}
     </section>
+    </>
   );
 }
 

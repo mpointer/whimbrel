@@ -10,14 +10,26 @@
 pub fn any_keyword(text: &str, table: &[(&str, &[&str])]) -> bool {
     let t = text.to_lowercase().replace('\u{2019}', "'");
     table.iter().any(|(lang, kws)| {
-        kws.iter().any(|kw| if *lang == "en" { t.contains(kw) } else { contains_word(&t, kw) })
+        kws.iter().any(|kw| {
+            if *lang == "en" {
+                t.contains(kw)
+            } else {
+                contains_word(&t, kw)
+            }
+        })
     })
 }
 
 fn contains_word(t: &str, kw: &str) -> bool {
     t.match_indices(kw).any(|(i, m)| {
-        let before = t[..i].chars().next_back().is_none_or(|c| !c.is_alphanumeric());
-        let after = t[i + m.len()..].chars().next().is_none_or(|c| !c.is_alphanumeric());
+        let before = t[..i]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric());
+        let after = t[i + m.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric());
         before && after
     })
 }
@@ -25,7 +37,11 @@ fn contains_word(t: &str, kw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const T: &[(&str, &[&str])] = &[("en", &["today"]), ("es", &["ayer"]), ("fr", &["aujourd'hui"])];
+    const T: &[(&str, &[&str])] = &[
+        ("en", &["today"]),
+        ("es", &["ayer"]),
+        ("fr", &["aujourd'hui"]),
+    ];
 
     #[test]
     fn en_is_substring_others_are_whole_word() {

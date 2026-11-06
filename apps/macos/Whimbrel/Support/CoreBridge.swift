@@ -1654,6 +1654,18 @@ struct CoreMeetingActionItem: Codable, Identifiable, Equatable {
 
 /// JSON shape matching core/memory's `DeletedMeetingFiles`; round-trips to JSON so it can be
 /// handed back to `CoreMemoryStore.deleteAllMeetingFiles`.
+struct CoreOutboxBacklog: Decodable, Equatable {
+    let pending: Int64
+    let oldestUnixMs: Int64?
+
+    var oldest: Date? { oldestUnixMs.map { Date(timeIntervalSince1970: Double($0) / 1000) } }
+
+    enum CodingKeys: String, CodingKey {
+        case pending
+        case oldestUnixMs = "oldest_unix_ms"
+    }
+}
+
 struct CoreDeletedMeetingFiles: Codable, Equatable {
     let audioPath: String?
     let transcriptPath: String?
@@ -3624,6 +3636,13 @@ final class CoreMemoryStore {
 
     /// Why the most recent `syncContent` failed and in which phase; nil if it succeeded.
     static var syncContentHasMoreToPull: Bool { whimbrel_sync_content_more_to_pull() }
+
+    /// What waits in the outbox to be sent (`whimbrel_sync_outbox_backlog`); nil on a store error.
+    func outboxBacklog() -> CoreOutboxBacklog? {
+        guard let json = whimbrel_sync_outbox_backlog(handle) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return try? JSONDecoder().decode(CoreOutboxBacklog.self, from: Data(String(cString: json).utf8))
+    }
 
     static func lastSyncContentError() -> String? {
         guard let msg = whimbrel_sync_content_last_error() else { return nil }

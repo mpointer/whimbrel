@@ -667,6 +667,40 @@
         }
       }
     },
+    "A routine that would send or add something waits for your approval first, unless you turn on approving it automatically for that routine." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eine Routine, die etwas senden oder hinzufügen würde, wartet zuerst auf Ihre Genehmigung, es sei denn, Sie aktivieren für diese Routine die automatische Genehmigung."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Una rutina que enviaría o agregaría algo espera primero tu aprobación, a menos que actives la aprobación automática para esa rutina."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une routine qui enverrait ou ajouterait quelque chose attend d'abord votre approbation, sauf si vous activez l'approbation automatique pour cette routine."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une routine qui enverrait ou ajouterait quelque chose attend d’abord votre approbation, à moins que vous n’activiez l’approbation automatique pour cette routine."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uma rotina que enviaria ou adicionaria algo aguarda antes a sua aprovação, a menos que você ative a aprovação automática para ela."
+          }
+        }
+      }
+    },
     "A short brief shortly before each calendar meeting." : {
       "localizations" : {
         "de" : {
@@ -765,6 +799,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Uma tarefa do armazenamento falhou: {error}"
+          }
+        }
+      }
+    },
+    "AI" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "KI"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "IA"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "IA"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "IA"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "IA"
           }
         }
       }
@@ -2982,6 +3050,40 @@
         }
       }
     },
+    "Capture & Privacy" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aufnahme & Datenschutz"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Captura y privacidad"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capture et confidentialité"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Capture et confidentialité"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Captura e privacidade"
+          }
+        }
+      }
+    },
     "Capture off" : {
       "localizations" : {
         "de" : {
@@ -5020,6 +5122,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Conectando a {model}…"
+          }
+        }
+      }
+    },
+    "Connectors" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connectors"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conectores"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connecteurs"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Connecteurs"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conectores"
           }
         }
       }
@@ -13360,36 +13496,36 @@
         }
       }
     },
-    "No AI provider is set up. Add one in Settings → AI Providers." : {
+    "No AI provider is set up. Add one in Settings → AI." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Kein KI-Anbieter eingerichtet. Fügen Sie einen unter Einstellungen → KI-Anbieter hinzu."
+            "value" : "Kein KI-Anbieter eingerichtet. Fügen Sie einen unter Einstellungen → KI hinzu."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "No hay ningún proveedor de IA configurado. Agrega uno en Ajustes → Proveedores de IA."
+            "value" : "No hay ningún proveedor de IA configurado. Agrega uno en Ajustes → IA."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Aucun fournisseur d’IA n’est configuré. Ajoutez-en un dans Réglages → Fournisseurs d’IA."
+            "value" : "Aucun fournisseur d’IA n’est configuré. Ajoutez-en un dans Réglages → IA."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Aucun fournisseur d'IA n'est configuré. Ajoutez-en un dans Réglages → Fournisseurs d'IA."
+            "value" : "Aucun fournisseur d'IA n'est configuré. Ajoutez-en un dans Réglages → IA."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Nenhum provedor de IA está configurado. Adicione um em Configurações → Provedores de IA."
+            "value" : "Nenhum provedor de IA está configurado. Adicione um em Configurações → IA."
           }
         }
       }
@@ -15570,36 +15706,36 @@
         }
       }
     },
-    "Ollama doesn't have the model {model}. Pick one you have in Settings → AI Providers, or run: ollama pull {model}" : {
+    "Ollama doesn't have the model {model}. Pick one you have in Settings → AI, or run: ollama pull {model}" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ollama hat das Modell {model} nicht. Wählen Sie unter Einstellungen → KI-Anbieter ein vorhandenes Modell oder führen Sie aus: ollama pull {model}"
+            "value" : "Ollama hat das Modell {model} nicht. Wählen Sie unter Einstellungen → KI ein vorhandenes Modell oder führen Sie aus: ollama pull {model}"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ollama no tiene el modelo {model}. Elige uno que tengas en Ajustes → Proveedores de IA, o ejecuta: ollama pull {model}"
+            "value" : "Ollama no tiene el modelo {model}. Elige uno que tengas en Ajustes → IA, o ejecuta: ollama pull {model}"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ollama n’a pas le modèle {model}. Choisissez-en un que vous avez dans Réglages → Fournisseurs d’IA, ou exécutez : ollama pull {model}"
+            "value" : "Ollama n’a pas le modèle {model}. Choisissez-en un que vous avez dans Réglages → IA, ou exécutez : ollama pull {model}"
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ollama n'a pas le modèle {model}. Choisissez-en un que vous avez dans Réglages → Fournisseurs d'IA, ou exécutez : ollama pull {model}"
+            "value" : "Ollama n'a pas le modèle {model}. Choisissez-en un que vous avez dans Réglages → IA, ou exécutez : ollama pull {model}"
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O Ollama não tem o modelo {model}. Escolha um que você tenha em Configurações → Provedores de IA ou execute: ollama pull {model}"
+            "value" : "O Ollama não tem o modelo {model}. Escolha um que você tenha em Configurações → IA ou execute: ollama pull {model}"
           }
         }
       }
@@ -15672,36 +15808,36 @@
         }
       }
     },
-    "Ollama isn't running on this computer. Start Ollama, or add an API key in Settings → AI Providers." : {
+    "Ollama isn't running on this computer. Start Ollama, or add an API key in Settings → AI." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ollama läuft auf diesem Computer nicht. Starten Sie Ollama oder fügen Sie unter Einstellungen → KI-Anbieter einen API-Schlüssel hinzu."
+            "value" : "Ollama läuft auf diesem Computer nicht. Starten Sie Ollama oder fügen Sie unter Einstellungen → KI einen API-Schlüssel hinzu."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ollama no se está ejecutando en esta computadora. Inicia Ollama o agrega una clave de API en Ajustes → Proveedores de IA."
+            "value" : "Ollama no se está ejecutando en esta computadora. Inicia Ollama o agrega una clave de API en Ajustes → IA."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ollama n’est pas lancé sur cet ordinateur. Démarrez Ollama ou ajoutez une clé d’API dans Réglages → Fournisseurs d’IA."
+            "value" : "Ollama n’est pas lancé sur cet ordinateur. Démarrez Ollama ou ajoutez une clé d’API dans Réglages → IA."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ollama n'est pas en cours d'exécution sur cet ordinateur. Démarrez Ollama ou ajoutez une clé API dans Réglages → Fournisseurs d'IA."
+            "value" : "Ollama n'est pas en cours d'exécution sur cet ordinateur. Démarrez Ollama ou ajoutez une clé API dans Réglages → IA."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "O Ollama não está em execução neste computador. Inicie o Ollama ou adicione uma chave de API em Configurações → Provedores de IA."
+            "value" : "O Ollama não está em execução neste computador. Inicie o Ollama ou adicione uma chave de API em Configurações → IA."
           }
         }
       }
@@ -15876,36 +16012,36 @@
         }
       }
     },
-    "Open AI Providers settings" : {
+    "Open AI settings" : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Einstellungen für KI-Anbieter öffnen"
+            "value" : "KI-Einstellungen öffnen"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Abrir ajustes de proveedores de IA"
+            "value" : "Abrir ajustes de IA"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Paramètres des fournisseurs d'IA"
+            "value" : "Ouvrir les réglages IA"
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ouvrir les réglages des fournisseurs IA"
+            "value" : "Ouvrir les réglages IA"
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Abrir configurações de provedores de IA"
+            "value" : "Abrir configurações de IA"
           }
         }
       }
@@ -22705,6 +22841,40 @@
         }
       }
     },
+    "Sync & Devices" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sync & Geräte"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronización y dispositivos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchro et appareils"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchro et appareils"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronização e dispositivos"
+          }
+        }
+      }
+    },
     "Sync error" : {
       "localizations" : {
         "de" : {
@@ -29144,36 +29314,36 @@
         }
       }
     },
-    "Your {provider} budget for this month is spent ({spent} of {budget}). Raise it in Settings → AI Providers." : {
+    "Your {provider} budget for this month is spent ({spent} of {budget}). Raise it in Settings → AI." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Ihr {provider}-Budget für diesen Monat ist aufgebraucht ({spent} von {budget}). Erhöhen Sie es unter Einstellungen → KI-Anbieter."
+            "value" : "Ihr {provider}-Budget für diesen Monat ist aufgebraucht ({spent} von {budget}). Erhöhen Sie es unter Einstellungen → KI."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Se agotó tu presupuesto de {provider} para este mes ({spent} de {budget}). Auméntalo en Ajustes → Proveedores de IA."
+            "value" : "Se agotó tu presupuesto de {provider} para este mes ({spent} de {budget}). Auméntalo en Ajustes → IA."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Votre budget {provider} pour ce mois-ci est épuisé ({spent} sur {budget}). Augmentez-le dans Réglages → Fournisseurs d’IA."
+            "value" : "Votre budget {provider} pour ce mois-ci est épuisé ({spent} sur {budget}). Augmentez-le dans Réglages → IA."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Votre budget {provider} pour ce mois est épuisé ({spent} sur {budget}). Augmentez-le dans Réglages → Fournisseurs d’IA."
+            "value" : "Votre budget {provider} pour ce mois est épuisé ({spent} sur {budget}). Augmentez-le dans Réglages → IA."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "Seu orçamento de {provider} deste mês foi totalmente usado ({spent} de {budget}). Aumente-o em Configurações → Provedores de IA."
+            "value" : "Seu orçamento de {provider} deste mês foi totalmente usado ({spent} de {budget}). Aumente-o em Configurações → IA."
           }
         }
       }
@@ -31765,36 +31935,36 @@
         }
       }
     },
-    "{provider} rejected the API key. Check it in Settings → AI Providers." : {
+    "{provider} rejected the API key. Check it in Settings → AI." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "{provider} hat den API-Schlüssel abgelehnt. Prüfen Sie ihn unter Einstellungen → KI-Anbieter."
+            "value" : "{provider} hat den API-Schlüssel abgelehnt. Prüfen Sie ihn unter Einstellungen → KI."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "{provider} rechazó la clave de API. Revísala en Ajustes → Proveedores de IA."
+            "value" : "{provider} rechazó la clave de API. Revísala en Ajustes → IA."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "{provider} a rejeté la clé d’API. Vérifiez-la dans Réglages → Fournisseurs d’IA."
+            "value" : "{provider} a rejeté la clé d’API. Vérifiez-la dans Réglages → IA."
           }
         },
         "fr-CA" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "{provider} a refusé la clé API. Vérifiez-la dans Réglages → Fournisseurs d'IA."
+            "value" : "{provider} a refusé la clé API. Vérifiez-la dans Réglages → IA."
           }
         },
         "pt" : {
           "stringUnit" : {
             "state" : "needs_review",
-            "value" : "{provider} rejeitou a chave de API. Verifique em Configurações → Provedores de IA."
+            "value" : "{provider} rejeitou a chave de API. Verifique em Configurações → IA."
           }
         }
       }

@@ -137,6 +137,8 @@ final class DemoSyncStore: MeetingSyncStore {
     private let store: CoreMemoryStore
     init(store: CoreMemoryStore) { self.store = store }
 
+    func moreToPull() -> Bool { false }
+
     func pullOnly(_ credentials: SyncCredentials, captureWindowDays: Int32) -> Bool {
         guard store.groupedMeetingCount() == 0 else { return true }
         let day: Int64 = 86_400_000

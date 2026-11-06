@@ -19,7 +19,7 @@ export interface Turn {
   context: ContextEntry[];
   citations: ContextItemRef[];
   error: string | null;
-  /** The error was a spent monthly budget: the turn offers "Open AI Providers settings". */
+  /** The error was a spent monthly budget: the turn offers "Open AI settings". */
   budgetSpent?: boolean;
 }
 

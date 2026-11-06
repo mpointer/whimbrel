@@ -43,6 +43,8 @@ export function ProfileCard() {
   const [draft, setDraft] = useState<FieldsDraft | null>(null);
   const [suggestions, setSuggestions] = useState<SuggestionView[]>([]);
   const [newFact, setNewFact] = useState("");
+  /** Suggestions whose Add or Dismiss is on its way, so the row shows the click registered. */
+  const [busy, setBusy] = useState<ReadonlySet<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -81,18 +83,35 @@ export function ProfileCard() {
 
   const setField = (key: keyof FieldsDraft, value: string) => setDraft({ ...draft, [key]: value });
 
+  /** Marks the row busy for the length of `work`; a second click while it's busy does nothing. */
+  const whileBusy = (id: number, work: () => Promise<void>): Promise<void> => {
+    if (busy.has(id)) return Promise.resolve();
+    setBusy((all) => new Set(all).add(id));
+    return work().finally(() =>
+      setBusy((all) => {
+        const next = new Set(all);
+        next.delete(id);
+        return next;
+      }),
+    );
+  };
+
   const accept = (s: SuggestionView) =>
-    run(profileAcceptSuggestion(s.id)).then((saved) => {
-      if (saved) setSuggestions((all) => all.filter((x) => x.id !== s.id));
-    });
+    whileBusy(s.id, () =>
+      run(profileAcceptSuggestion(s.id)).then((saved) => {
+        if (saved) setSuggestions((all) => all.filter((x) => x.id !== s.id));
+      }),
+    );
 
   const dismiss = (s: SuggestionView) =>
-    profileDismissSuggestion(s.id).then(
-      () => {
-        setSuggestions((all) => all.filter((x) => x.id !== s.id));
-        setError(null);
-      },
-      (e: unknown) => setError(message(e)),
+    whileBusy(s.id, () =>
+      profileDismissSuggestion(s.id).then(
+        () => {
+          setSuggestions((all) => all.filter((x) => x.id !== s.id));
+          setError(null);
+        },
+        (e: unknown) => setError(message(e)),
+      ),
     );
 
   const addBlocker = addFactBlocker(view, newFact);
@@ -199,15 +218,15 @@ export function ProfileCard() {
       ) : (
         <ul className="fact-list">
           {suggestions.map((s) => (
-            <li key={s.id} className="fact-row">
+            <li key={s.id} className="fact-row" aria-busy={busy.has(s.id)}>
               <div className="fact-text">
                 <span>{s.text}</span>
                 {sourceLabel(s) && <span className="muted small">{sourceLabel(s)}</span>}
               </div>
-              <button className="mode" onClick={() => void accept(s)}>
+              <button className="mode" disabled={busy.has(s.id)} onClick={() => void accept(s)}>
                 {t("Add")}
               </button>
-              <button className="mode" onClick={() => void dismiss(s)}>
+              <button className="mode" disabled={busy.has(s.id)} onClick={() => void dismiss(s)}>
                 {t("Dismiss")}
               </button>
             </li>

@@ -2492,7 +2492,7 @@ extension AppState {
     /// or a short id for a device this Mac hasn't seen a name for.
     func deviceLabel(for deviceId: String) -> String {
         if let matched = syncState.devices.first(where: { $0.publicKey == deviceId }),
-           let name = matched.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+           let name = DeviceDisplayName.name(matched.name, platform: matched.platform) {
             return name
         }
         if deviceId == self.deviceId {

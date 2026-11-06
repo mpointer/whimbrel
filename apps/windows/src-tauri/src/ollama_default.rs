@@ -1,7 +1,7 @@
 //! An installed Ollama model when the configured one isn't there (first support case, 2026-11-05:
 //! the default `gemma4:12b` wasn't pulled, so every summary failed though other models were). Mike,
 //! 2026-11-05 (Mac #581): a model the user chose is kept, never overwritten or saved, and the
-//! first installed model stands in while it's missing, with a warning in AI Providers; the built-in
+//! first installed model stands in while it's missing, with a warning in Settings → AI; the built-in
 //! default gets the stand-in with no warning. The pick lives in memory only: the Ollama model
 //! setting syncs, and another computer may have other models. `SettingsFile::routing` uses it.
 
@@ -49,7 +49,7 @@ pub fn update(settings: &SettingsFile, installed: &[String]) {
     }
 }
 
-/// What AI Providers warns about: a model the user chose that isn't installed, and the stand-in.
+/// What Settings → AI warns about: a model the user chose that isn't installed, and the stand-in.
 pub fn warning(settings: &SettingsFile) -> Option<(String, String)> {
     let (configured, chose) = settings.ollama_model_choice();
     chose.then(|| pick_for(&configured).map(|pick| (configured, pick))).flatten()

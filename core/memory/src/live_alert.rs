@@ -11,7 +11,8 @@ use crate::Store;
 
 const MAX_TEXT_CHARS: usize = 2_000;
 const MAX_DRAFT_BYTES: usize = 64 * 1024;
-const COLUMNS: &str = "id, meeting_id, origin_device_id, source_id, source_meeting_id, meeting_title, quote, \
+const COLUMNS: &str =
+    "id, meeting_id, origin_device_id, source_id, source_meeting_id, meeting_title, quote, \
     restatement, asker, at_cs, created_at_unix_ms, draft_json, email_status, notified_at_unix_ms";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -129,7 +130,10 @@ impl Store {
             params![a.meeting_id, a.meeting_title, a.quote, a.restatement, a.asker, a.at_cs, a.created_at_unix_ms],
         )?;
         let id = tx.last_insert_rowid();
-        tx.execute("UPDATE live_alert SET source_id = id WHERE id = ?1", params![id])?;
+        tx.execute(
+            "UPDATE live_alert SET source_id = id WHERE id = ?1",
+            params![id],
+        )?;
         let row = Self::live_alert_tx(&tx, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         self.enqueue_live_alert_outbox(&tx, id, &payload(&row))?;
         tx.commit()?;
@@ -139,7 +143,11 @@ impl Store {
     /// Stores a draft. On this device's own alert it re-enqueues the upsert so peers get it.
     pub fn set_live_alert_draft(&self, id: i64, draft_json: &str) -> rusqlite::Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
-        if tx.execute("UPDATE live_alert SET draft_json = ?1 WHERE id = ?2", params![draft_json, id])? == 0 {
+        if tx.execute(
+            "UPDATE live_alert SET draft_json = ?1 WHERE id = ?2",
+            params![draft_json, id],
+        )? == 0
+        {
             return Ok(false);
         }
         let row = Self::live_alert_tx(&tx, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
@@ -152,38 +160,61 @@ impl Store {
 
     /// `sent`, `failed:<reason>` or `off`. Local only, never synced.
     pub fn set_live_alert_email_status(&self, id: i64, status: &str) -> rusqlite::Result<bool> {
-        Ok(self.conn.execute("UPDATE live_alert SET email_status = ?1 WHERE id = ?2", params![status, id])? > 0)
+        Ok(self.conn.execute(
+            "UPDATE live_alert SET email_status = ?1 WHERE id = ?2",
+            params![status, id],
+        )? > 0)
     }
 
     pub fn get_live_alert(&self, id: i64) -> rusqlite::Result<Option<LiveAlert>> {
         self.conn
-            .query_row(&format!("SELECT {COLUMNS} FROM live_alert WHERE id = ?1"), params![id], row_to_alert)
+            .query_row(
+                &format!("SELECT {COLUMNS} FROM live_alert WHERE id = ?1"),
+                params![id],
+                row_to_alert,
+            )
             .optional()
     }
 
-    fn live_alert_tx(tx: &rusqlite::Transaction<'_>, id: i64) -> rusqlite::Result<Option<LiveAlert>> {
-        tx.query_row(&format!("SELECT {COLUMNS} FROM live_alert WHERE id = ?1"), params![id], row_to_alert)
-            .optional()
+    fn live_alert_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: i64,
+    ) -> rusqlite::Result<Option<LiveAlert>> {
+        tx.query_row(
+            &format!("SELECT {COLUMNS} FROM live_alert WHERE id = ?1"),
+            params![id],
+            row_to_alert,
+        )
+        .optional()
     }
 
     /// A meeting's alerts, in meeting order.
     pub fn list_live_alerts(&self, meeting_id: i64) -> rusqlite::Result<Vec<LiveAlert>> {
-        let mut stmt = self
-            .conn
-            .prepare(&format!("SELECT {COLUMNS} FROM live_alert WHERE meeting_id = ?1 ORDER BY at_cs, id"))?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM live_alert WHERE meeting_id = ?1 ORDER BY at_cs, id"
+        ))?;
         let rows = stmt.query_map(params![meeting_id], row_to_alert)?;
         rows.collect()
     }
 
     /// Peer alerts not yet notified on this device and no older than `max_age_ms`. Every
     /// unnotified peer alert is marked in the same statement, so older ones are skipped for good.
-    pub fn take_unnotified_peer_alerts(&self, now_ms: i64, max_age_ms: i64) -> rusqlite::Result<Vec<LiveAlert>> {
+    pub fn take_unnotified_peer_alerts(
+        &self,
+        now_ms: i64,
+        max_age_ms: i64,
+    ) -> rusqlite::Result<Vec<LiveAlert>> {
         let mut stmt = self.conn.prepare(&format!(
             "UPDATE live_alert SET notified_at_unix_ms = ?1 \
              WHERE origin_device_id IS NOT NULL AND notified_at_unix_ms IS NULL RETURNING {COLUMNS}"
         ))?;
-        let rows = stmt.query_map(params![now_ms], row_to_alert)?.collect::<rusqlite::Result<Vec<_>>>()?;
-        let mut fresh: Vec<LiveAlert> = rows.into_iter().filter(|a| a.created_at_unix_ms >= now_ms - max_age_ms).collect();
+        let rows = stmt
+            .query_map(params![now_ms], row_to_alert)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut fresh: Vec<LiveAlert> = rows
+            .into_iter()
+            .filter(|a| a.created_at_unix_ms >= now_ms - max_age_ms)
+            .collect();
         fresh.sort_by_key(|a| (a.created_at_unix_ms, a.id));
         Ok(fresh)
     }
@@ -191,13 +222,22 @@ impl Store {
     /// Applies an alert pulled from another device, upserting on `(origin, source_id)` so a
     /// later draft replaces it. Never enqueued. Email status and the notified mark are kept.
     /// `None` when the payload carries no quote.
-    pub fn apply_synced_live_alert(&self, origin_device_id: &str, a: &AppliedLiveAlert) -> rusqlite::Result<Option<i64>> {
+    pub fn apply_synced_live_alert(
+        &self,
+        origin_device_id: &str,
+        a: &AppliedLiveAlert,
+    ) -> rusqlite::Result<Option<i64>> {
         let quote = bounded(&a.quote);
         if quote.is_empty() {
             return Ok(None);
         }
-        let created = a.created_at_unix_ms.min(crate::now_unix_ms() + crate::SYNCED_RUN_MAX_FUTURE_MS);
-        let draft = a.draft_json.as_deref().filter(|d| d.len() <= MAX_DRAFT_BYTES);
+        let created = a
+            .created_at_unix_ms
+            .min(crate::now_unix_ms() + crate::SYNCED_RUN_MAX_FUTURE_MS);
+        let draft = a
+            .draft_json
+            .as_deref()
+            .filter(|d| d.len() <= MAX_DRAFT_BYTES);
         let meeting_id: Option<i64> = self
             .conn
             .query_row(
@@ -285,7 +325,12 @@ mod tests {
     }
 
     fn outbox_count(store: &Store) -> usize {
-        store.list_outbox_operations().unwrap().iter().filter(|o| o.1 == "live_alert").count()
+        store
+            .list_outbox_operations()
+            .unwrap()
+            .iter()
+            .filter(|o| o.1 == "live_alert")
+            .count()
     }
 
     #[test]
@@ -296,7 +341,8 @@ mod tests {
         let id = store.insert_live_alert(&new_alert(m, 5_000)).unwrap();
         assert_eq!(outbox_count(&store), 1);
         let ops = store.list_outbox_operations().unwrap();
-        let payload: AppliedLiveAlert = serde_json::from_str(&ops.iter().find(|o| o.1 == "live_alert").unwrap().3).unwrap();
+        let payload: AppliedLiveAlert =
+            serde_json::from_str(&ops.iter().find(|o| o.1 == "live_alert").unwrap().3).unwrap();
         assert_eq!((payload.source_id, payload.source_meeting_id), (id, m));
         let listed = store.list_live_alerts(m).unwrap();
         assert_eq!(listed.len(), 1);
@@ -313,22 +359,37 @@ mod tests {
         store.set_own_device_id("dev-a");
         let m = meeting(&store);
         let id = store.insert_live_alert(&new_alert(m, 5_000)).unwrap();
-        assert!(store.set_live_alert_draft(id, r#"{"body":"Here are the numbers"}"#).unwrap());
+        assert!(store
+            .set_live_alert_draft(id, r#"{"body":"Here are the numbers"}"#)
+            .unwrap());
         assert_eq!(outbox_count(&store), 2);
         let ops = store.list_outbox_operations().unwrap();
-        let last: AppliedLiveAlert = serde_json::from_str(&ops.iter().rev().find(|o| o.1 == "live_alert").unwrap().3).unwrap();
-        assert_eq!(last.draft_json.as_deref(), Some(r#"{"body":"Here are the numbers"}"#));
+        let last: AppliedLiveAlert =
+            serde_json::from_str(&ops.iter().rev().find(|o| o.1 == "live_alert").unwrap().3)
+                .unwrap();
+        assert_eq!(
+            last.draft_json.as_deref(),
+            Some(r#"{"body":"Here are the numbers"}"#)
+        );
         // Email status is local only.
         assert!(store.set_live_alert_email_status(id, "sent").unwrap());
         assert_eq!(outbox_count(&store), 2);
-        assert_eq!(store.list_live_alerts(m).unwrap()[0].email_status.as_deref(), Some("sent"));
+        assert_eq!(
+            store.list_live_alerts(m).unwrap()[0]
+                .email_status
+                .as_deref(),
+            Some("sent")
+        );
     }
 
     #[test]
     fn peer_alert_without_meeting_keeps_title_and_null_meeting() {
         let store = Store::open_in_memory().unwrap();
         store.set_own_device_id("dev-b");
-        let id = store.apply_synced_live_alert("dev-a", &peer_alert(3, 77, 5_000)).unwrap().unwrap();
+        let id = store
+            .apply_synced_live_alert("dev-a", &peer_alert(3, 77, 5_000))
+            .unwrap()
+            .unwrap();
         let row = store.get_live_alert(id).unwrap().unwrap();
         assert_eq!(row.meeting_id, None);
         assert_eq!(row.meeting_title, "Pricing review");
@@ -339,14 +400,28 @@ mod tests {
         // A later draft from the origin replaces the row in place.
         let mut updated = peer_alert(3, 77, 5_000);
         updated.draft_json = Some("{}".into());
-        assert_eq!(store.apply_synced_live_alert("dev-a", &updated).unwrap(), Some(id));
-        assert_eq!(store.get_live_alert(id).unwrap().unwrap().draft_json.as_deref(), Some("{}"));
+        assert_eq!(
+            store.apply_synced_live_alert("dev-a", &updated).unwrap(),
+            Some(id)
+        );
+        assert_eq!(
+            store
+                .get_live_alert(id)
+                .unwrap()
+                .unwrap()
+                .draft_json
+                .as_deref(),
+            Some("{}")
+        );
     }
 
     #[test]
     fn meeting_arrival_backfills_alert_meeting_id() {
         let store = Store::open_in_memory().unwrap();
-        let id = store.apply_synced_live_alert("dev-a", &peer_alert(3, 77, 5_000)).unwrap().unwrap();
+        let id = store
+            .apply_synced_live_alert("dev-a", &peer_alert(3, 77, 5_000))
+            .unwrap()
+            .unwrap();
         let local = store
             .apply_synced_meeting(
                 "dev-a",
@@ -374,30 +449,59 @@ mod tests {
             )
             .unwrap();
         store.record_sync_meeting_map("dev-a", 77, local).unwrap();
-        assert_eq!(store.get_live_alert(id).unwrap().unwrap().meeting_id, Some(local));
+        assert_eq!(
+            store.get_live_alert(id).unwrap().unwrap().meeting_id,
+            Some(local)
+        );
         assert_eq!(store.list_live_alerts(local).unwrap().len(), 1);
 
         // An alert arriving after its meeting resolves straight away.
-        let later = store.apply_synced_live_alert("dev-a", &peer_alert(4, 77, 6_000)).unwrap().unwrap();
-        assert_eq!(store.get_live_alert(later).unwrap().unwrap().meeting_id, Some(local));
+        let later = store
+            .apply_synced_live_alert("dev-a", &peer_alert(4, 77, 6_000))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            store.get_live_alert(later).unwrap().unwrap().meeting_id,
+            Some(local)
+        );
     }
 
     #[test]
     fn take_unnotified_returns_fresh_once_and_skips_old() {
         let store = Store::open_in_memory().unwrap();
         let now = 100 * MIN;
-        let fresh = store.apply_synced_live_alert("dev-a", &peer_alert(1, 77, now - 10 * MIN)).unwrap().unwrap();
-        let old = store.apply_synced_live_alert("dev-a", &peer_alert(2, 77, now - 40 * MIN)).unwrap().unwrap();
+        let fresh = store
+            .apply_synced_live_alert("dev-a", &peer_alert(1, 77, now - 10 * MIN))
+            .unwrap()
+            .unwrap();
+        let old = store
+            .apply_synced_live_alert("dev-a", &peer_alert(2, 77, now - 40 * MIN))
+            .unwrap()
+            .unwrap();
         let taken = store.take_unnotified_peer_alerts(now, 1_800_000).unwrap();
         assert_eq!(taken.iter().map(|a| a.id).collect::<Vec<_>>(), vec![fresh]);
-        assert!(store.take_unnotified_peer_alerts(now, 1_800_000).unwrap().is_empty());
-        assert!(store.get_live_alert(old).unwrap().unwrap().notified_at_unix_ms.is_some(), "old rows are marked");
+        assert!(store
+            .take_unnotified_peer_alerts(now, 1_800_000)
+            .unwrap()
+            .is_empty());
+        assert!(
+            store
+                .get_live_alert(old)
+                .unwrap()
+                .unwrap()
+                .notified_at_unix_ms
+                .is_some(),
+            "old rows are marked"
+        );
 
         // A later draft update does not re-notify.
         let mut updated = peer_alert(1, 77, now - 10 * MIN);
         updated.draft_json = Some("{}".into());
         store.apply_synced_live_alert("dev-a", &updated).unwrap();
-        assert!(store.take_unnotified_peer_alerts(now, 1_800_000).unwrap().is_empty());
+        assert!(store
+            .take_unnotified_peer_alerts(now, 1_800_000)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

@@ -20,7 +20,7 @@ export function describeError(err: CommandError): string {
       );
     case "budget_spent": {
       const known = providers().find((p) => p.id === err.provider);
-      return t("Your {provider} budget for this month is spent ({spent} of {budget}). Raise it in Settings → AI Providers.", {
+      return t("Your {provider} budget for this month is spent ({spent} of {budget}). Raise it in Settings → AI.", {
         provider: known?.label ?? err.provider,
         spent: formatDollars(err.spent_cents),
         budget: formatDollars(err.budget_cents),
@@ -36,15 +36,15 @@ export function providerFailureReason(reason: ProviderFailureReason): string | n
   const name = (p: string) => providers().find((x) => x.id === p)?.label ?? p;
   switch (reason.kind) {
     case "ollama_model_missing":
-      return t("Ollama doesn't have the model {model}. Pick one you have in Settings → AI Providers, or run: ollama pull {model}", {
+      return t("Ollama doesn't have the model {model}. Pick one you have in Settings → AI, or run: ollama pull {model}", {
         model: reason.model,
       });
     case "ollama_not_running":
-      return t("Ollama isn't running on this computer. Start Ollama, or add an API key in Settings → AI Providers.");
+      return t("Ollama isn't running on this computer. Start Ollama, or add an API key in Settings → AI.");
     case "no_provider_configured":
-      return t("No AI provider is set up. Add one in Settings → AI Providers.");
+      return t("No AI provider is set up. Add one in Settings → AI.");
     case "unauthorized":
-      return t("{provider} rejected the API key. Check it in Settings → AI Providers.", { provider: name(reason.provider) });
+      return t("{provider} rejected the API key. Check it in Settings → AI.", { provider: name(reason.provider) });
     case "rate_limited":
       return t("{provider} is busy or out of credit. Try again shortly.", { provider: name(reason.provider) });
     default:

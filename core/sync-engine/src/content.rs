@@ -26,6 +26,7 @@ pub(crate) const ROW_TYPE_ITEMS: &str = "items";
 pub(crate) const ROW_TYPE_ROUTINE_RUN: &str = "routine_run";
 pub(crate) const ROW_TYPE_MEETING_PREP: &str = "meeting_prep";
 pub(crate) const ROW_TYPE_PROFILE_SUGGESTION: &str = "profile_suggestion";
+pub(crate) const ROW_TYPE_PROFILE_SUGGESTION_STATUS: &str = "profile_suggestion_status";
 pub(crate) const ROW_TYPE_LIVE_ALERT: &str = "live_alert";
 pub(crate) const ROW_TYPE_PROVIDER_SPEND: &str = memory::OUTBOX_ROW_TYPE_PROVIDER_SPEND;
 /// Speaker names (docs/superpowers/specs/2026-11-05-speaker-names-design.md): people and who each
@@ -245,7 +246,9 @@ pub(crate) fn content_row_aad(device_id: &str, local_seq: i64, row_type: &str) -
     aad
 }
 
-pub(crate) fn encode_row(row: &SyncableRow) -> Result<(i64, &'static str, String), SyncEngineError> {
+pub(crate) fn encode_row(
+    row: &SyncableRow,
+) -> Result<(i64, &'static str, String), SyncEngineError> {
     let (local_seq, row_type, json) = match row {
         SyncableRow::CaptureItem { local_seq, item } => (
             *local_seq,
@@ -310,12 +313,18 @@ pub(crate) fn encode_row(row: &SyncableRow) -> Result<(i64, &'static str, String
 /// docs/superpowers/specs/2026-10-30-sync-row-compaction-design.md).
 pub(crate) fn entity_identity(row: &SyncableRow) -> Option<String> {
     match row {
-        SyncableRow::Meeting { source_meeting_id, .. } => Some(format!("{ROW_TYPE_MEETING}:{source_meeting_id}")),
+        SyncableRow::Meeting {
+            source_meeting_id, ..
+        } => Some(format!("{ROW_TYPE_MEETING}:{source_meeting_id}")),
         // `source` is a colon-free token, so a `:` inside `external_id` cannot collide.
-        SyncableRow::Item { item, .. } if item.kind == "calendar_event" => match (&item.source, &item.external_id) {
-            (Some(source), Some(external_id)) => Some(format!("{ROW_TYPE_ITEMS}:calendar_event:{source}:{external_id}")),
-            _ => None,
-        },
+        SyncableRow::Item { item, .. } if item.kind == "calendar_event" => {
+            match (&item.source, &item.external_id) {
+                (Some(source), Some(external_id)) => Some(format!(
+                    "{ROW_TYPE_ITEMS}:calendar_event:{source}:{external_id}"
+                )),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -324,10 +333,14 @@ pub(crate) fn entity_identity(row: &SyncableRow) -> Option<String> {
 /// stable id as `aggregate_id`.
 pub(crate) fn outbox_entity_identity(op: &memory::ClaimedOutboxOperation) -> Option<String> {
     match op.row_type.as_str() {
-        ROW_TYPE_MEETING | ROW_TYPE_ROUTINE_RUN | ROW_TYPE_MEETING_PREP | ROW_TYPE_SKIN | ROW_TYPE_SKIN_IMAGE_CHUNK
-        | ROW_TYPE_PERSON | ROW_TYPE_MEETING_SPEAKER | ROW_TYPE_PROVIDER_SPEND => {
-            Some(format!("{}:{}", op.row_type, op.aggregate_id))
-        }
+        ROW_TYPE_MEETING
+        | ROW_TYPE_ROUTINE_RUN
+        | ROW_TYPE_MEETING_PREP
+        | ROW_TYPE_SKIN
+        | ROW_TYPE_SKIN_IMAGE_CHUNK
+        | ROW_TYPE_PERSON
+        | ROW_TYPE_MEETING_SPEAKER
+        | ROW_TYPE_PROVIDER_SPEND => Some(format!("{}:{}", op.row_type, op.aggregate_id)),
         _ => None,
     }
 }
@@ -336,7 +349,12 @@ pub(crate) fn outbox_entity_identity(op: &memory::ClaimedOutboxOperation) -> Opt
 /// push paths make tags only through here, with `Store::sync_entity_epoch`.
 /// The epoch keeps a wiped database's reused ids (same Keychain `device_id`, restarted
 /// `local_seq` and meeting ids) from matching an earlier database's rows on the relay.
-pub(crate) fn tag_for(group_key: &GroupKey, device_id: &str, epoch: &str, identity: &str) -> String {
+pub(crate) fn tag_for(
+    group_key: &GroupKey,
+    device_id: &str,
+    epoch: &str,
+    identity: &str,
+) -> String {
     sync::entity_tag(group_key, device_id, &format!("{epoch}:{identity}"))
 }
 
@@ -495,10 +513,15 @@ fn row_local_seq(row: &SyncableRow) -> i64 {
 /// The own meeting a pushed row belongs to: the meeting itself, or a transcript line of it.
 fn row_meeting_id(row: &SyncableRow) -> Option<i64> {
     match row {
-        SyncableRow::Meeting { source_meeting_id, .. } | SyncableRow::TranscriptSegment { source_meeting_id, .. } => {
-            Some(*source_meeting_id)
+        SyncableRow::Meeting {
+            source_meeting_id, ..
         }
-        SyncableRow::Item { source_meeting_id, .. } => *source_meeting_id,
+        | SyncableRow::TranscriptSegment {
+            source_meeting_id, ..
+        } => Some(*source_meeting_id),
+        SyncableRow::Item {
+            source_meeting_id, ..
+        } => *source_meeting_id,
         SyncableRow::CaptureItem { .. } => None,
     }
 }
@@ -684,7 +707,11 @@ async fn restore_own_provider_spend(
     store: &Store,
     own_device_id: &str,
 ) -> Result<(), SyncEngineError> {
-    if own_device_id.is_empty() || store.own_provider_spend_restored().map_err(|e| SyncEngineError::Query(e.to_string()))? {
+    if own_device_id.is_empty()
+        || store
+            .own_provider_spend_restored()
+            .map_err(|e| SyncEngineError::Query(e.to_string()))?
+    {
         return Ok(());
     }
     let rows = conn
@@ -692,8 +719,12 @@ async fn restore_own_provider_spend(
         .await
         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
     for env in read_envelopes(rows).await? {
-        let Some(plaintext) = decrypt_row(group_key, own_device_id, &env) else { continue };
-        let Ok(spend) = serde_json::from_slice::<memory::provider_budget::AppliedProviderSpend>(&plaintext) else {
+        let Some(plaintext) = decrypt_row(group_key, own_device_id, &env) else {
+            continue;
+        };
+        let Ok(spend) =
+            serde_json::from_slice::<memory::provider_budget::AppliedProviderSpend>(&plaintext)
+        else {
             continue;
         };
         store
@@ -729,6 +760,51 @@ const MAX_ROWS_PER_PULL_PASS: i64 = 500;
 /// rounds. Per peer, so one peer's backlog can't starve another's pulls.
 const PULL_PEER_TIME_BUDGET: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// How much one pull round fetches and applies: rows per peer page, time per peer, and
+/// (catch-up only) a cap on the whole round's forward passes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Pace {
+    rows: i64,
+    peer_budget: std::time::Duration,
+    round_budget: Option<std::time::Duration>,
+}
+
+/// Every desktop pull, and a pull-only peer that is caught up.
+const NORMAL_PACE: Pace = Pace {
+    rows: MAX_ROWS_PER_PULL_PASS,
+    peer_budget: PULL_PEER_TIME_BUDGET,
+    round_budget: None,
+};
+
+/// A pull-only peer (the phone) whose last round left rows behind (#572): a first sync
+/// of ~3.5M seq per peer took ~2 h at 500 rows a round. Bigger pages and budgets, but
+/// the round's forward passes stop starting new work after 20 s, and the pending pass
+/// keeps its 3 s, so a round with several busy peers still ends inside `SYNC_TIMEOUT`
+/// (30 s). A later peer then gets its one row this round and its full turn once the
+/// earlier ones catch up. The page is still one primary-key seek, just a bigger LIMIT.
+const CATCH_UP_PACE: Pace = Pace {
+    rows: 2000,
+    peer_budget: std::time::Duration::from_secs(10),
+    round_budget: Some(std::time::Duration::from_secs(20)),
+};
+
+/// The pace for a pull-only round, from whether the previous round reported more to pull.
+fn pull_only_pace(catching_up: bool) -> Pace {
+    if catching_up {
+        CATCH_UP_PACE
+    } else {
+        NORMAL_PACE
+    }
+}
+
+#[cfg(test)]
+fn budget_only(peer_budget: std::time::Duration) -> Pace {
+    Pace {
+        peer_budget,
+        ..NORMAL_PACE
+    }
+}
+
 /// Most pending-dependency rows fetched by one batched query (keeps the SQL well under
 /// SQLite's bound-parameter limit).
 const PENDING_LOOKUP_CHUNK: usize = 200;
@@ -763,8 +839,14 @@ pub(crate) fn take_compaction_deletes() -> usize {
 /// Push paths go through `CompactionBudget` instead, which adds the index check and the
 /// per-round time budget; this single unbudgeted call is for tests.
 #[cfg(test)]
-pub(crate) async fn compact_entity_tags(conn: &Connection, device_id: &str, tags: &[String]) -> u64 {
-    compact_within(conn, device_id, tags, COMPACTION_TIMEOUT).await.unwrap_or(0)
+pub(crate) async fn compact_entity_tags(
+    conn: &Connection,
+    device_id: &str,
+    tags: &[String],
+) -> u64 {
+    compact_within(conn, device_id, tags, COMPACTION_TIMEOUT)
+        .await
+        .unwrap_or(0)
 }
 
 /// One pass's compaction (the legacy push and the outbox each make their own): checks the
@@ -781,7 +863,12 @@ pub(crate) struct CompactionBudget {
 }
 
 impl CompactionBudget {
-    pub(crate) async fn compact(&mut self, conn: &Connection, device_id: &str, tags: &[String]) -> u64 {
+    pub(crate) async fn compact(
+        &mut self,
+        conn: &Connection,
+        device_id: &str,
+        tags: &[String],
+    ) -> u64 {
         if tags.is_empty() {
             return 0;
         }
@@ -793,11 +880,16 @@ impl CompactionBudget {
         }
         // A timeout uses up exactly what was left, so it also ends compaction for the round.
         let now = tokio::time::Instant::now();
-        let left = self.deadline.get_or_insert(now + COMPACTION_TIMEOUT).saturating_duration_since(now);
+        let left = self
+            .deadline
+            .get_or_insert(now + COMPACTION_TIMEOUT)
+            .saturating_duration_since(now);
         if left.is_zero() {
             return 0;
         }
-        compact_within(conn, device_id, tags, left).await.unwrap_or(0)
+        compact_within(conn, device_id, tags, left)
+            .await
+            .unwrap_or(0)
     }
 }
 
@@ -891,7 +983,11 @@ async fn fetch_rows_since(
     limit: i64,
     skip_skins: bool,
 ) -> Result<Vec<RowEnvelope>, SyncEngineError> {
-    let sql = if skip_skins { FETCH_ROWS_NO_SKINS_SQL } else { FETCH_ROWS_SQL };
+    let sql = if skip_skins {
+        FETCH_ROWS_NO_SKINS_SQL
+    } else {
+        FETCH_ROWS_SQL
+    };
     let rows = conn
         .query(sql, params![peer_device_id, since_local_seq, limit])
         .await
@@ -932,7 +1028,10 @@ async fn fetch_rows_by_key(
     peer_device_id: &str,
     keys: &[(i64, String)],
 ) -> Result<Vec<RowEnvelope>, SyncEngineError> {
-    let placeholders = (0..keys.len()).map(|i| format!("?{}", i + 2)).collect::<Vec<_>>().join(", ");
+    let placeholders = (0..keys.len())
+        .map(|i| format!("?{}", i + 2))
+        .collect::<Vec<_>>()
+        .join(", ");
     let sql = format!(
         "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq IN ({placeholders})"
     );
@@ -944,7 +1043,10 @@ async fn fetch_rows_by_key(
         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
     let mut envelopes = read_envelopes(rows).await?;
     // The key is (local_seq, row_type); drop a same-seq row of another type.
-    envelopes.retain(|env| keys.iter().any(|(seq, ty)| *seq == env.local_seq && *ty == env.row_type));
+    envelopes.retain(|env| {
+        keys.iter()
+            .any(|(seq, ty)| *seq == env.local_seq && *ty == env.row_type)
+    });
     Ok(envelopes)
 }
 
@@ -984,7 +1086,11 @@ fn apply_parent_row(
             // named, so it applies as before.
             if let Some(source_id) = payload.source_meeting_id {
                 if store
-                    .is_meeting_forgotten(peer_device_id, payload.origin_epoch.as_deref(), source_id)
+                    .is_meeting_forgotten(
+                        peer_device_id,
+                        payload.origin_epoch.as_deref(),
+                        source_id,
+                    )
                     .map_err(|e| SyncEngineError::Query(e.to_string()))?
                 {
                     return Ok(());
@@ -1024,7 +1130,12 @@ fn apply_parent_row(
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             if let Some(source_id) = payload.source_meeting_id {
                 store
-                    .record_sync_meeting_map_with_epoch(peer_device_id, source_id, local_id, payload.origin_epoch.as_deref())
+                    .record_sync_meeting_map_with_epoch(
+                        peer_device_id,
+                        source_id,
+                        local_id,
+                        payload.origin_epoch.as_deref(),
+                    )
                     .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             }
             local_id
@@ -1073,7 +1184,9 @@ fn apply_parent_row(
         }
         ROW_TYPE_SKIN => {
             // Kept in the store, not the skins folder: `core/skins` writes it once its images are whole.
-            let Ok(payload) = serde_json::from_slice::<memory::skin_sync::SkinSyncPayload>(plaintext) else {
+            let Ok(payload) =
+                serde_json::from_slice::<memory::skin_sync::SkinSyncPayload>(plaintext)
+            else {
                 return Ok(());
             };
             store
@@ -1082,7 +1195,8 @@ fn apply_parent_row(
             return Ok(());
         }
         ROW_TYPE_SKIN_IMAGE_CHUNK => {
-            let Ok(chunk) = serde_json::from_slice::<memory::skin_sync::SkinImageChunk>(plaintext) else {
+            let Ok(chunk) = serde_json::from_slice::<memory::skin_sync::SkinImageChunk>(plaintext)
+            else {
                 return Ok(());
             };
             store
@@ -1091,7 +1205,9 @@ fn apply_parent_row(
             return Ok(());
         }
         ROW_TYPE_PROFILE_SUGGESTION => {
-            let Ok(suggestion) = serde_json::from_slice::<memory::profile::AppliedProfileSuggestion>(plaintext) else {
+            let Ok(suggestion) =
+                serde_json::from_slice::<memory::profile::AppliedProfileSuggestion>(plaintext)
+            else {
                 return Ok(());
             };
             store
@@ -1099,14 +1215,28 @@ fn apply_parent_row(
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             return Ok(());
         }
+        ROW_TYPE_PROFILE_SUGGESTION_STATUS => {
+            // Dismissed or added on another device: resolve the copy here (and any that arrives later).
+            let Ok(status) =
+                serde_json::from_slice::<memory::profile::AppliedProfileSuggestionStatus>(plaintext)
+            else {
+                return Ok(());
+            };
+            store
+                .apply_synced_profile_suggestion_status(&status)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
         ROW_TYPE_LIVE_ALERT => {
             // Upserts on (origin, source_id); its meeting is resolved (or back-filled later)
             // through `sync_meeting_map`, so there is no `sync_row_map` entry to record.
-            let Ok(alert) = serde_json::from_slice::<memory::live_alert::AppliedLiveAlert>(plaintext) else {
+            let Ok(alert) =
+                serde_json::from_slice::<memory::live_alert::AppliedLiveAlert>(plaintext)
+            else {
                 return Ok(());
             };
             // Named by its meeting's identity even while its `meeting_id` is still NULL here.
-            if forgotten_child(store, peer_device_id, Some(alert.source_meeting_id))? {
+            if forgotten_child(store, peer_device_id, origin_epoch_of(plaintext).as_deref(), Some(alert.source_meeting_id))? {
                 return Ok(());
             }
             store
@@ -1116,7 +1246,9 @@ fn apply_parent_row(
         }
         ROW_TYPE_PERSON => {
             // Last write wins on `updated_at_unix_ms`; no local row id to map.
-            let Ok(person) = serde_json::from_slice::<memory::speaker_names::AppliedPerson>(plaintext) else {
+            let Ok(person) =
+                serde_json::from_slice::<memory::speaker_names::AppliedPerson>(plaintext)
+            else {
                 return Ok(());
             };
             store
@@ -1126,12 +1258,17 @@ fn apply_parent_row(
         }
         ROW_TYPE_MEETING_SPEAKER => {
             // Its meeting is resolved (or back-filled later) through `sync_meeting_map`.
-            let Ok(speaker) = serde_json::from_slice::<memory::speaker_names::AppliedMeetingSpeaker>(plaintext) else {
+            let Ok(speaker) =
+                serde_json::from_slice::<memory::speaker_names::AppliedMeetingSpeaker>(plaintext)
+            else {
                 return Ok(());
             };
             // Else it would wait in `meeting_speaker_pending` for a meeting that never comes.
-            let origin = speaker.origin_device_id.as_deref().unwrap_or(peer_device_id);
-            if forgotten_child(store, origin, Some(speaker.source_meeting_id))? {
+            let origin = speaker
+                .origin_device_id
+                .as_deref()
+                .unwrap_or(peer_device_id);
+            if forgotten_child(store, origin, origin_epoch_of(plaintext).as_deref(), Some(speaker.source_meeting_id))? {
                 return Ok(());
             }
             store
@@ -1141,7 +1278,9 @@ fn apply_parent_row(
         }
         ROW_TYPE_PROVIDER_SPEND => {
             // The highest cents per (peer, install, month, provider) wins; no local row id to map.
-            let Ok(spend) = serde_json::from_slice::<memory::provider_budget::AppliedProviderSpend>(plaintext) else {
+            let Ok(spend) =
+                serde_json::from_slice::<memory::provider_budget::AppliedProviderSpend>(plaintext)
+            else {
                 return Ok(());
             };
             store
@@ -1153,7 +1292,8 @@ fn apply_parent_row(
             // Deletes the meeting here and remembers it, so its late rows are dropped. Kept on the relay
             // forever (untagged, never compacted), so a device joining later learns it too. If it names this
             // device's own meeting, `delete_forgotten_meeting_rows` removes the server rows next.
-            let Ok(forgotten) = serde_json::from_slice::<memory::MeetingForgotten>(plaintext) else {
+            let Ok(forgotten) = serde_json::from_slice::<memory::MeetingForgotten>(plaintext)
+            else {
                 return Ok(());
             };
             if let Some(files) = store
@@ -1174,10 +1314,16 @@ fn apply_parent_row(
         .map_err(|e| SyncEngineError::Query(e.to_string()))
 }
 
-/// A row of a peer's meeting that a tombstone forgot: dropped, never applied or left waiting. Child rows carry
-/// no epoch, so a meeting still mapped here (alive, e.g. a re-created database's reused id) wins over an older
-/// tombstone. `None` (a row from before source ids) can't be named.
-fn forgotten_child(store: &Store, origin_device_id: &str, source_meeting_id: Option<i64>) -> Result<bool, SyncEngineError> {
+/// A row of a peer's meeting that a tombstone forgot: dropped, never applied or left waiting. The row's
+/// `origin_epoch` (newer senders) must match the tombstone's when both are known, so an earlier database's
+/// forget never drops a re-created database's rows for a reused meeting id; a meeting still mapped here wins
+/// either way. `None` (a row from before source ids) can't be named.
+fn forgotten_child(
+    store: &Store,
+    origin_device_id: &str,
+    origin_epoch: Option<&str>,
+    source_meeting_id: Option<i64>,
+) -> Result<bool, SyncEngineError> {
     let Some(source_id) = source_meeting_id else {
         return Ok(false);
     };
@@ -1187,14 +1333,20 @@ fn forgotten_child(store: &Store, origin_device_id: &str, source_meeting_id: Opt
         return Ok(false);
     }
     let q = |e: &dyn std::fmt::Display| SyncEngineError::Query(e.to_string());
-    Ok(store.resolve_sync_meeting_map(origin_device_id, source_id).map_err(|e| q(&e))?.is_none()
-        && store.is_meeting_forgotten(origin_device_id, None, source_id).map_err(|e| q(&e))?)
+    Ok(store
+        .resolve_sync_meeting_map(origin_device_id, source_id)
+        .map_err(|e| q(&e))?
+        .is_none()
+        && store
+            .is_meeting_forgotten(origin_device_id, origin_epoch, source_id)
+            .map_err(|e| q(&e))?)
 }
 
 /// Files of meetings a pulled tombstone deleted here, for the app to remove (sync-engine knows no recordings
 /// folder). Drained by [`take_forgotten_meeting_files`]; per thread under test, like the other counters.
 #[cfg(not(test))]
-static FORGOTTEN_MEETING_FILES: std::sync::Mutex<Vec<memory::DeletedMeetingFiles>> = std::sync::Mutex::new(Vec::new());
+static FORGOTTEN_MEETING_FILES: std::sync::Mutex<Vec<memory::DeletedMeetingFiles>> =
+    std::sync::Mutex::new(Vec::new());
 #[cfg(test)]
 thread_local! {
     static FORGOTTEN_MEETING_FILES_CELL: std::cell::RefCell<Vec<memory::DeletedMeetingFiles>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -1202,7 +1354,10 @@ thread_local! {
 
 fn push_forgotten_meeting_files(files: memory::DeletedMeetingFiles) {
     #[cfg(not(test))]
-    FORGOTTEN_MEETING_FILES.lock().unwrap_or_else(|e| e.into_inner()).push(files);
+    FORGOTTEN_MEETING_FILES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(files);
     #[cfg(test)]
     FORGOTTEN_MEETING_FILES_CELL.with(|c| c.borrow_mut().push(files));
 }
@@ -1212,7 +1367,11 @@ fn push_forgotten_meeting_files(files: memory::DeletedMeetingFiles) {
 /// before the app takes them leaves them on disk.
 pub fn take_forgotten_meeting_files() -> Vec<memory::DeletedMeetingFiles> {
     #[cfg(not(test))]
-    return std::mem::take(&mut *FORGOTTEN_MEETING_FILES.lock().unwrap_or_else(|e| e.into_inner()));
+    return std::mem::take(
+        &mut *FORGOTTEN_MEETING_FILES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()),
+    );
     #[cfg(test)]
     return FORGOTTEN_MEETING_FILES_CELL.with(|c| c.take());
 }
@@ -1236,18 +1395,29 @@ fn forgotten_rows_delete_sql(count: usize) -> String {
 
 /// A forgotten meeting's `meeting` rows by their entity tag (epoch-scoped, so never an earlier database's):
 /// a seek on the ops index. Catches versions pushed before `pushed_meeting_row` existed.
-const FORGOTTEN_MEETING_TAG_DELETE_SQL: &str = "DELETE FROM sync_row WHERE device_id = ?1 AND entity_tag = ?2";
+const FORGOTTEN_MEETING_TAG_DELETE_SQL: &str =
+    "DELETE FROM sync_row WHERE device_id = ?1 AND entity_tag = ?2";
 
 /// The recorder's cleanup: deletes this device's own server rows of meetings it deleted for a tombstone (its
 /// own forget, or a peer's naming its meeting): by primary key from `pushed_meeting_row`, then the `meeting`
 /// row by entity tag once the ops index exists. Only `device_id = own` rows, so another device's rows are never
 /// touched. Best effort: a failure or timeout is logged, what is left stays recorded, and the next round retries.
-pub(crate) async fn delete_forgotten_meeting_rows(conn: &Connection, group_key: &GroupKey, store: &Store, own_device_id: &str) {
+pub(crate) async fn delete_forgotten_meeting_rows(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    own_device_id: &str,
+) {
     let delete_all = async {
-        let rows = store.forgotten_pushed_meeting_rows(FORGOTTEN_ROWS_PER_ROUND).map_err(|e| e.to_string())?;
+        let rows = store
+            .forgotten_pushed_meeting_rows(FORGOTTEN_ROWS_PER_ROUND)
+            .map_err(|e| e.to_string())?;
         let mut groups: std::collections::BTreeMap<(i64, &str, i64), Vec<i64>> = Default::default();
         for (meeting_id, local_seq, row_type, not_before) in &rows {
-            groups.entry((*meeting_id, row_type.as_str(), *not_before)).or_default().push(*local_seq);
+            groups
+                .entry((*meeting_id, row_type.as_str(), *not_before))
+                .or_default()
+                .push(*local_seq);
         }
         for ((meeting_id, row_type, not_before), seqs) in groups {
             for chunk in seqs.chunks(PENDING_LOOKUP_CHUNK) {
@@ -1257,24 +1427,47 @@ pub(crate) async fn delete_forgotten_meeting_rows(conn: &Connection, group_key: 
                     Value::Integer(not_before),
                 ];
                 values.extend(chunk.iter().map(|seq| Value::Integer(*seq)));
-                conn.execute(&forgotten_rows_delete_sql(chunk.len()), Params::Positional(values))
-                    .await
+                conn.execute(
+                    &forgotten_rows_delete_sql(chunk.len()),
+                    Params::Positional(values),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                let done: Vec<(i64, i64, String)> = chunk
+                    .iter()
+                    .map(|seq| (meeting_id, *seq, row_type.to_string()))
+                    .collect();
+                store
+                    .clear_pushed_meeting_rows(&done)
                     .map_err(|e| e.to_string())?;
-                let done: Vec<(i64, i64, String)> = chunk.iter().map(|seq| (meeting_id, *seq, row_type.to_string())).collect();
-                store.clear_pushed_meeting_rows(&done).map_err(|e| e.to_string())?;
             }
         }
-        let pending_tags = store.meetings_awaiting_tag_delete().map_err(|e| e.to_string())?;
-        if pending_tags.is_empty() || !ENTITY_TAG_COLUMN_SEEN.get() || !compaction_index_ready(conn).await {
+        let pending_tags = store
+            .meetings_awaiting_tag_delete()
+            .map_err(|e| e.to_string())?;
+        if pending_tags.is_empty()
+            || !ENTITY_TAG_COLUMN_SEEN.get()
+            || !compaction_index_ready(conn).await
+        {
             return Ok(());
         }
         let epoch = store.sync_entity_epoch().map_err(|e| e.to_string())?;
         for meeting_id in pending_tags {
-            let tag = tag_for(group_key, own_device_id, &epoch, &format!("{ROW_TYPE_MEETING}:{meeting_id}"));
-            conn.execute(FORGOTTEN_MEETING_TAG_DELETE_SQL, params![own_device_id, tag])
-                .await
+            let tag = tag_for(
+                group_key,
+                own_device_id,
+                &epoch,
+                &format!("{ROW_TYPE_MEETING}:{meeting_id}"),
+            );
+            conn.execute(
+                FORGOTTEN_MEETING_TAG_DELETE_SQL,
+                params![own_device_id, tag],
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            store
+                .mark_meeting_tag_deleted(meeting_id)
                 .map_err(|e| e.to_string())?;
-            store.mark_meeting_tag_deleted(meeting_id).map_err(|e| e.to_string())?;
         }
         Ok::<(), String>(())
     };
@@ -1304,7 +1497,14 @@ pub async fn pull_content(
     store: &Store,
     own_device_id: &str,
 ) -> Result<(), SyncEngineError> {
-    pull_content_with_options(conn, group_key, store, own_device_id, &PullOptions::default()).await
+    pull_content_with_options(
+        conn,
+        group_key,
+        store,
+        own_device_id,
+        &PullOptions::default(),
+    )
+    .await
 }
 
 /// Knobs a puller can set on [`pull_content_with_options`]. `Default` is exactly what
@@ -1327,7 +1527,10 @@ pub(crate) async fn pull_content_without_skins(
     own_device_id: &str,
     options: &PullOptions,
 ) -> Result<(), SyncEngineError> {
-    pull_content_with_budget(conn, group_key, store, own_device_id, PULL_PEER_TIME_BUDGET, options, true)
+    let pace = pull_only_pace(more_to_pull());
+    // Cleared up front, so a failed or timed-out round falls back to the normal pace next time.
+    MORE_TO_PULL.store(false, std::sync::atomic::Ordering::Relaxed);
+    pull_content_with_budget(conn, group_key, store, own_device_id, pace, options, true)
         .await
         .map(|more| MORE_TO_PULL.store(more, std::sync::atomic::Ordering::Relaxed))
 }
@@ -1340,9 +1543,17 @@ pub async fn pull_content_with_options(
     own_device_id: &str,
     options: &PullOptions,
 ) -> Result<(), SyncEngineError> {
-    pull_content_with_budget(conn, group_key, store, own_device_id, PULL_PEER_TIME_BUDGET, options, false)
-        .await
-        .map(|more| MORE_TO_PULL.store(more, std::sync::atomic::Ordering::Relaxed))
+    pull_content_with_budget(
+        conn,
+        group_key,
+        store,
+        own_device_id,
+        NORMAL_PACE,
+        options,
+        false,
+    )
+    .await
+    .map(|more| MORE_TO_PULL.store(more, std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Set by each pull: it stopped with rows still waiting, so the shell can come back soon.
@@ -1353,18 +1564,84 @@ pub fn more_to_pull() -> bool {
     MORE_TO_PULL.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// [`pull_content`] with the per-peer time budget as a parameter. Each peer's pass
-/// always processes at least one row, so a zero budget (tests) still makes progress.
+/// One peer's pass in the last pull round (#572: tells slow progress from a loop).
+/// `peer` is a short hash tag, never the device id.
+#[derive(Debug, Default, serde::Serialize)]
+struct PeerPullStats {
+    peer: String,
+    cursor_before: i64,
+    processed_through: i64,
+    fetched: usize,
+    fetched_through: i64,
+    applied: usize,
+    already_applied: usize,
+    skipped_window: usize,
+    deferred: usize,
+    pending_before: usize,
+    pending_after: usize,
+    undecodable: usize,
+    budget_stopped: bool,
+}
+
+/// Set by each pull round: one entry per peer, as JSON.
+static LAST_PULL_STATS: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// The last pull round's per-peer stats as a JSON array (empty string before any pull).
+/// Holds counts, local_seqs and hashed peer tags only: no ids, URLs or content.
+pub fn last_pull_stats_json() -> String {
+    LAST_PULL_STATS
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default()
+}
+
+fn peer_tag(peer: &str) -> String {
+    memory::skin_sync::sha256_hex(peer.as_bytes())[..6].to_string()
+}
+
+/// [`pull_content`] with the [`Pace`] as a parameter. Each peer's pass always processes
+/// at least one row, so a zero budget (tests) still makes progress.
+/// Publishes the round's stats (even a failed round's, up to the failure).
 async fn pull_content_with_budget(
     conn: &Connection,
     group_key: &GroupKey,
     store: &Store,
     own_device_id: &str,
-    budget: std::time::Duration,
+    pace: Pace,
     options: &PullOptions,
     skip_skins: bool,
 ) -> Result<bool, SyncEngineError> {
+    let mut stats = Vec::new();
+    let result = pull_round(
+        conn,
+        group_key,
+        store,
+        own_device_id,
+        pace,
+        options,
+        skip_skins,
+        &mut stats,
+    )
+    .await;
+    if let (Ok(json), Ok(mut last)) = (serde_json::to_string(&stats), LAST_PULL_STATS.lock()) {
+        *last = json;
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn pull_round(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    own_device_id: &str,
+    pace: Pace,
+    options: &PullOptions,
+    skip_skins: bool,
+    all_stats: &mut Vec<PeerPullStats>,
+) -> Result<bool, SyncEngineError> {
     let mut more = false;
+    let round_started = std::time::Instant::now();
     // Capture window (the phone's storage budget). Decided AFTER decrypting, on the
     // item's own `ts_unix_ms`: the remote row's `created_at_unix_ms` is push time, not
     // capture time, so a backlog pushed today would all look new, and an `items` row's
@@ -1379,6 +1656,11 @@ async fn pull_content_with_budget(
     let outside_window = |ts_unix_ms: i64| capture_cutoff.is_some_and(|cutoff| ts_unix_ms < cutoff);
     restore_own_provider_spend(conn, group_key, store, own_device_id).await?;
     for peer in distinct_peer_device_ids(conn, own_device_id).await? {
+        // This peer's forward budget: its own, cut to what's left of the round's.
+        let budget = pace.round_budget.map_or(pace.peer_budget, |round| {
+            pace.peer_budget
+                .min(round.saturating_sub(round_started.elapsed()))
+        });
         let cursor = store
             .get_sync_cursor(&peer)
             .map_err(|e| SyncEngineError::Query(e.to_string()))?;
@@ -1387,7 +1669,10 @@ async fn pull_content_with_budget(
             .map_err(|e| SyncEngineError::Query(e.to_string()))?;
         if !skip_skins && !known_skin_peer {
             let mut marker = conn
-                .query(PEER_MARKER_SQL, params![peer.as_str(), ROW_TYPE_SKINS_CAPABILITY])
+                .query(
+                    PEER_MARKER_SQL,
+                    params![peer.as_str(), ROW_TYPE_SKINS_CAPABILITY],
+                )
                 .await
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             if marker
@@ -1406,9 +1691,22 @@ async fn pull_content_with_budget(
         let pending_before = store
             .list_sync_pending_dependencies(&peer)
             .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-        let envelopes =
-            fetch_rows_since(conn, &peer, cursor, MAX_ROWS_PER_PULL_PASS, skip_skins).await?;
-        more |= envelopes.len() as i64 >= MAX_ROWS_PER_PULL_PASS;
+        all_stats.push(PeerPullStats {
+            peer: peer_tag(&peer),
+            cursor_before: cursor,
+            processed_through: cursor,
+            pending_before: pending_before.len(),
+            ..Default::default()
+        });
+        let stats = all_stats.last_mut().expect("just pushed");
+        // The round is spent: fetch only the one row this peer still applies (every peer progresses),
+        // not a page it can't apply, which costs rows read and data for nothing.
+        let spent = pace.round_budget.is_some() && budget.is_zero();
+        let rows = if spent { 1 } else { pace.rows };
+        let envelopes = fetch_rows_since(conn, &peer, cursor, rows, skip_skins).await?;
+        more |= spent || envelopes.len() as i64 >= rows;
+        stats.fetched = envelopes.len();
+        stats.fetched_through = envelopes.last().map_or(cursor, |e| e.local_seq);
         let peer_started = std::time::Instant::now();
         let mut chunk_bytes = 0usize;
         // The highest local_seq this pass handled (applied, skipped, or deferred to the
@@ -1424,9 +1722,10 @@ async fn pull_content_with_budget(
         // envelope shapes are now decrypted here rather than lazily in the second pass.
         let mut segments: Vec<(RowEnvelope, PendingSegment)> = Vec::new();
         for env in &envelopes {
-            // PULL_PEER_TIME_BUDGET: stop once it's spent, having handled at least one row.
+            // The pace's time budget: stop once it's spent, having handled at least one row.
             if processed_through > cursor && peer_started.elapsed() >= budget {
                 more = true;
+                stats.budget_stopped = true;
                 break;
             }
             if env.row_type == ROW_TYPE_SKIN_IMAGE_CHUNK {
@@ -1444,20 +1743,22 @@ async fn pull_content_with_budget(
                     .map_err(|e| SyncEngineError::Query(e.to_string()))?
                     .is_some()
                 {
+                    stats.already_applied += 1;
                     continue; // already applied
                 }
-                let Some(plaintext) = decrypt_row(group_key, &peer, env) else {
+                let Some((decoded, origin_epoch)) = decrypt_row(group_key, &peer, env).and_then(|p| {
+                    serde_json::from_slice::<TranscriptSegmentPayload>(&p).ok().map(|d| (d, origin_epoch_of(&p)))
+                }) else {
+                    stats.undecodable += 1;
                     continue;
                 };
-                let Ok(decoded) = serde_json::from_slice::<TranscriptSegmentPayload>(&plaintext)
-                else {
-                    continue;
-                };
+                stats.deferred += 1;
                 segments.push((
                     env.clone(),
                     PendingSegment::Legacy {
                         source_meeting_id: decoded.source_meeting_id,
                         meeting_local_seq: decoded.meeting_local_seq,
+                        origin_epoch,
                         segment: decoded.segment,
                     },
                 ));
@@ -1469,18 +1770,21 @@ async fn pull_content_with_budget(
                     .map_err(|e| SyncEngineError::Query(e.to_string()))?
                     .is_some()
                 {
+                    stats.already_applied += 1;
                     continue; // already applied in a prior cycle
                 }
-                let Some(plaintext) = decrypt_row(group_key, &peer, env) else {
-                    continue;
-                };
-                let Ok(decoded) = serde_json::from_slice::<ItemPayload>(&plaintext) else {
+                let Some((decoded, origin_epoch)) = decrypt_row(group_key, &peer, env)
+                    .and_then(|p| serde_json::from_slice::<ItemPayload>(&p).ok().map(|d| (d, origin_epoch_of(&p))))
+                else {
+                    stats.undecodable += 1;
                     continue;
                 };
                 if decoded.item.kind == "capture" && outside_window(decoded.item.ts_unix_ms) {
+                    stats.skipped_window += 1;
                     continue;
                 }
                 if decoded.item.kind == "transcript" {
+                    stats.deferred += 1;
                     // Never apply here: apply_synced_item would stamp a NULL thread_id,
                     // permanently orphaning the row. Defer to the resolution pass below.
                     segments.push((
@@ -1488,6 +1792,7 @@ async fn pull_content_with_budget(
                         PendingSegment::Item {
                             source_meeting_id: decoded.source_meeting_id,
                             meeting_local_seq: decoded.meeting_local_seq,
+                            origin_epoch,
                             item: decoded.item,
                         },
                     ));
@@ -1498,6 +1803,7 @@ async fn pull_content_with_budget(
                     store
                         .record_sync_row_map(&peer, env.local_seq, &env.row_type, local_id)
                         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+                    stats.applied += 1;
                 }
                 continue;
             }
@@ -1512,9 +1818,11 @@ async fn pull_content_with_budget(
                     .map_err(|e| SyncEngineError::Query(e.to_string()))?
                     .is_some()
             {
+                stats.already_applied += 1;
                 continue; // already applied in a prior cycle
             }
             let Some(plaintext) = decrypt_row(group_key, &peer, env) else {
+                stats.undecodable += 1;
                 continue;
             };
             if env.row_type == ROW_TYPE_CAPTURE_ITEM
@@ -1522,9 +1830,11 @@ async fn pull_content_with_budget(
                 && serde_json::from_slice::<memory::AppliedCaptureItem>(&plaintext)
                     .is_ok_and(|item| outside_window(item.ts_unix_ms))
             {
+                stats.skipped_window += 1;
                 continue;
             }
             apply_parent_row(store, &peer, env.local_seq, &env.row_type, &plaintext)?;
+            stats.applied += 1;
         }
 
         resolve_segments(conn, group_key, store, &peer, segments).await?;
@@ -1538,6 +1848,7 @@ async fn pull_content_with_budget(
         store
             .set_sync_cursor(&peer, new_cursor)
             .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+        stats.processed_through = new_cursor;
 
         // Retry every row still waiting on a dependency from an earlier pass. These can sit
         // well behind the cursor's window (the cursor no longer waits for them), so they're
@@ -1548,6 +1859,8 @@ async fn pull_content_with_budget(
         // it doesn't reach stays pending for the next round. Always one chunk, like the
         // forward pass's one row, so a zero budget still progresses.
         let pending_started = std::time::Instant::now();
+        // Never more than the normal 3 s, even when catching up (see CATCH_UP_PACE).
+        let pending_budget = budget.min(PULL_PEER_TIME_BUDGET);
         let mut retry = Vec::new();
         for (dep_local_seq, dep_row_type) in pending_before {
             if store
@@ -1566,7 +1879,7 @@ async fn pull_content_with_budget(
         for (i, chunk) in retry.chunks(PENDING_LOOKUP_CHUNK).enumerate() {
             // ponytail: the budget is checked per chunk, so one chunk's applies run to the end
             // (fine without embedding; with it, check the budget per row in resolve_segments).
-            if i > 0 && pending_started.elapsed() >= budget {
+            if i > 0 && pending_started.elapsed() >= pending_budget {
                 break;
             }
             // An undecodable row is dropped here: it stays pending and is retried next round
@@ -1575,7 +1888,10 @@ async fn pull_content_with_budget(
             // stops waiting.
             let fetched = fetch_rows_by_key(conn, &peer, chunk).await?;
             for (seq, row_type) in chunk {
-                if !fetched.iter().any(|env| env.local_seq == *seq && env.row_type == *row_type) {
+                if !fetched
+                    .iter()
+                    .any(|env| env.local_seq == *seq && env.row_type == *row_type)
+                {
                     store
                         .delete_sync_pending_dependency(&peer, *seq, row_type)
                         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
@@ -1587,6 +1903,10 @@ async fn pull_content_with_budget(
                 .collect();
             resolve_segments(conn, group_key, store, &peer, pending).await?;
         }
+        stats.pending_after = store
+            .list_sync_pending_dependencies(&peer)
+            .map_err(|e| SyncEngineError::Query(e.to_string()))?
+            .len();
     }
     Ok(more)
 }
@@ -1604,13 +1924,27 @@ enum PendingSegment {
     Legacy {
         source_meeting_id: Option<i64>,
         meeting_local_seq: i64,
+        origin_epoch: Option<String>,
         segment: memory::AppliedTranscriptSegment,
     },
     Item {
         source_meeting_id: Option<i64>,
         meeting_local_seq: Option<i64>,
+        origin_epoch: Option<String>,
         item: memory::AppliedItem,
     },
+}
+
+/// The recording database's epoch a child row carries (`origin_epoch`, added by its sender), so a forget
+/// names exactly that database's meeting. Rows from older builds have none.
+#[derive(serde::Deserialize)]
+struct OriginEpoch {
+    #[serde(default)]
+    origin_epoch: Option<String>,
+}
+
+fn origin_epoch_of(plaintext: &[u8]) -> Option<String> {
+    serde_json::from_slice::<OriginEpoch>(plaintext).ok().and_then(|e| e.origin_epoch).filter(|e| !e.is_empty())
 }
 
 /// Decrypts and decodes one row known (or suspected) to need FK resolution before
@@ -1629,6 +1963,7 @@ fn decode_pending_segment(
             Some(PendingSegment::Legacy {
                 source_meeting_id: decoded.source_meeting_id,
                 meeting_local_seq: decoded.meeting_local_seq,
+                origin_epoch: origin_epoch_of(&plaintext),
                 segment: decoded.segment,
             })
         }
@@ -1640,6 +1975,7 @@ fn decode_pending_segment(
             Some(PendingSegment::Item {
                 source_meeting_id: decoded.source_meeting_id,
                 meeting_local_seq: decoded.meeting_local_seq,
+                origin_epoch: origin_epoch_of(&plaintext),
                 item: decoded.item,
             })
         }
@@ -1674,7 +2010,9 @@ async fn resolve_segments(
     // Prefer the stable source_meeting_id (via sync_meeting_map). Fall back to the legacy
     // meeting_local_seq + sync_row_map lookup for historical rows pushed before
     // source_meeting_id existed, or if the primary lookup misses.
-    let resolve = |source_meeting_id: Option<i64>, fallback_local_seq: Option<i64>| -> Result<Option<i64>, SyncEngineError> {
+    let resolve = |source_meeting_id: Option<i64>,
+                   fallback_local_seq: Option<i64>|
+     -> Result<Option<i64>, SyncEngineError> {
         if let Some(source_id) = source_meeting_id {
             if let Some(id) = store
                 .resolve_sync_meeting_map(peer, source_id)
@@ -1692,11 +2030,12 @@ async fn resolve_segments(
     };
 
     // Lines of a forgotten meeting: dropped before any fetch of their meeting, and never left pending.
-    // ponytail: lines carry no epoch, so an earlier database's tombstone also drops a re-created database's
-    // lines for a reused meeting id; upgrade: carry `origin_epoch` in line payloads and match it exactly.
     let mut forgotten = Vec::with_capacity(segments.len());
     for (_, pending) in &segments {
-        forgotten.push(forgotten_child(store, peer, fallback(pending).0)?);
+        let epoch = match pending {
+            PendingSegment::Legacy { origin_epoch, .. } | PendingSegment::Item { origin_epoch, .. } => origin_epoch.as_deref(),
+        };
+        forgotten.push(forgotten_child(store, peer, epoch, fallback(pending).0)?);
     }
 
     let mut missing_meetings: Vec<(i64, String)> = Vec::new();
@@ -1716,7 +2055,13 @@ async fn resolve_segments(
     for chunk in missing_meetings.chunks(PENDING_LOOKUP_CHUNK) {
         for meeting_env in fetch_rows_by_key(conn, peer, chunk).await? {
             if let Some(plaintext) = decrypt_row(group_key, peer, &meeting_env) {
-                apply_parent_row(store, peer, meeting_env.local_seq, &meeting_env.row_type, &plaintext)?;
+                apply_parent_row(
+                    store,
+                    peer,
+                    meeting_env.local_seq,
+                    &meeting_env.row_type,
+                    &plaintext,
+                )?;
             }
         }
     }
@@ -1751,11 +2096,7 @@ async fn resolve_segments(
                 }
                 let local_id = match pending {
                     PendingSegment::Legacy { segment, .. } => store
-                        .apply_synced_transcript_segment(
-                            env.local_seq,
-                            local_meeting_id,
-                            segment,
-                        )
+                        .apply_synced_transcript_segment(env.local_seq, local_meeting_id, segment)
                         .map_err(|e| SyncEngineError::Query(e.to_string()))?,
                     // The ONLY call site that may pass a transcript-kind item to
                     // apply_synced_item, and it is unreachable unless the meeting
@@ -1927,7 +2268,10 @@ pub(crate) mod tests {
 
         // Excludes the items_capability sentinel, which push_content now always writes.
         let mut rows = conn
-            .query("SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND local_seq != 0", ())
+            .query(
+                "SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND local_seq != 0",
+                (),
+            )
             .await
             .unwrap();
         let count: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
@@ -1977,21 +2321,38 @@ pub(crate) mod tests {
 
         let mut expected = 0;
         for pass in 1..=3 {
-            push_content(&conn, &group_key, &store, "device-a").await.unwrap();
+            push_content(&conn, &group_key, &store, "device-a")
+                .await
+                .unwrap();
             expected = (expected + MAX_ROWS_PER_PUSH_PASS).min(backlog);
             let (count, max_seq) = count_pushed(&conn, "device-a").await;
-            assert_eq!(count as usize, expected, "pass {pass} sends at most one bounded pass");
-            assert_eq!(store.get_sync_push_cursor().unwrap(), max_seq, "pass {pass}: the cursor is the highest row sent");
+            assert_eq!(
+                count as usize, expected,
+                "pass {pass} sends at most one bounded pass"
+            );
+            assert_eq!(
+                store.get_sync_push_cursor().unwrap(),
+                max_seq,
+                "pass {pass}: the cursor is the highest row sent"
+            );
         }
         let cursor = store.get_sync_push_cursor().unwrap();
-        push_content(&conn, &group_key, &store, "device-a").await.unwrap();
-        assert_eq!(count_pushed(&conn, "device-a").await.0 as usize, backlog, "nothing left to send");
+        push_content(&conn, &group_key, &store, "device-a")
+            .await
+            .unwrap();
+        assert_eq!(
+            count_pushed(&conn, "device-a").await.0 as usize,
+            backlog,
+            "nothing left to send"
+        );
         assert_eq!(store.get_sync_push_cursor().unwrap(), cursor);
 
         // A peer pulls every row (the pull side caps its own passes too) and decrypts them.
         let store_b = Store::open_in_memory().unwrap();
         for _ in 0..(backlog / 500 + 2) {
-            pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+            pull_content(&conn, &group_key, &store_b, "device-b")
+                .await
+                .unwrap();
         }
         assert_eq!(store_b.recent(backlog + 10).unwrap().len(), backlog);
     }
@@ -2030,7 +2391,10 @@ pub(crate) mod tests {
             .unwrap();
 
         let mut rows = conn
-            .query("SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND local_seq != 0", ())
+            .query(
+                "SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND local_seq != 0",
+                (),
+            )
             .await
             .unwrap();
         let count: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
@@ -2067,10 +2431,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let mut rows = conn
-            .query(
-                "SELECT COUNT(*) FROM sync_row WHERE local_seq != 0",
-                (),
-            )
+            .query("SELECT COUNT(*) FROM sync_row WHERE local_seq != 0", ())
             .await
             .unwrap();
         let count: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
@@ -2121,7 +2482,15 @@ pub(crate) mod tests {
 
     async fn seed_rows(conn: &Connection, device_id: &str, count: i64) {
         for seq in 1..=count {
-            seed_content_row(conn, &GroupKey::from_bytes([7; 32]), device_id, seq, "items", "{}").await;
+            seed_content_row(
+                conn,
+                &GroupKey::from_bytes([7; 32]),
+                device_id,
+                seq,
+                "items",
+                "{}",
+            )
+            .await;
         }
     }
 
@@ -2135,7 +2504,10 @@ pub(crate) mod tests {
         }
         let peers = distinct_peer_device_ids(&conn, "dev-own").await.unwrap();
         assert_eq!(peers, ["dev-a", "dev-b", "dev-c"]);
-        assert!(distinct_peer_device_ids(&conn, "dev-a").await.unwrap().contains(&"dev-own".to_string()));
+        assert!(distinct_peer_device_ids(&conn, "dev-a")
+            .await
+            .unwrap()
+            .contains(&"dev-own".to_string()));
     }
 
     #[tokio::test]
@@ -2144,7 +2516,10 @@ pub(crate) mod tests {
         let conn = local_connection(&dir.path().join("remote.db")).await;
         ensure_content_schema(&conn).await.unwrap();
         seed_rows(&conn, "dev-own", 2).await;
-        assert!(all_peers_items_capable(&conn, "dev-own").await.unwrap(), "no peers is vacuously true");
+        assert!(
+            all_peers_items_capable(&conn, "dev-own").await.unwrap(),
+            "no peers is vacuously true"
+        );
 
         seed_rows(&conn, "dev-a", 2).await;
         assert!(!all_peers_items_capable(&conn, "dev-own").await.unwrap());
@@ -2152,7 +2527,10 @@ pub(crate) mod tests {
         assert!(all_peers_items_capable(&conn, "dev-own").await.unwrap());
 
         seed_rows(&conn, "dev-b", 2).await;
-        assert!(!all_peers_items_capable(&conn, "dev-own").await.unwrap(), "a second peer without a marker");
+        assert!(
+            !all_peers_items_capable(&conn, "dev-own").await.unwrap(),
+            "a second peer without a marker"
+        );
     }
 
     /// Turso bills rows read, so a per-sync query must seek the primary key, not scan.
@@ -2165,7 +2543,10 @@ pub(crate) mod tests {
         let by_key = "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq IN (?2, ?3)";
         for sql in [NEXT_PEER_SQL, PEER_MARKER_SQL, by_key] {
             let args = vec![libsql::Value::Text("x".into()); sql.matches('?').count()];
-            let mut rows = conn.query(&format!("EXPLAIN QUERY PLAN {sql}"), args).await.unwrap();
+            let mut rows = conn
+                .query(&format!("EXPLAIN QUERY PLAN {sql}"), args)
+                .await
+                .unwrap();
             let mut plan = Vec::new();
             while let Some(row) = rows.next().await.unwrap() {
                 plan.push(row.get::<String>(3).unwrap());
@@ -2318,24 +2699,58 @@ pub(crate) mod tests {
             output_json: "{}".into(),
         })
         .unwrap();
-        seed_content_row(&conn, &group_key, "device-a", 1, ROW_TYPE_ROUTINE_RUN, &first).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            1,
+            ROW_TYPE_ROUTINE_RUN,
+            &first,
+        )
+        .await;
         let updated = first.replace("first brief", "revised brief");
-        seed_content_row(&conn, &group_key, "device-a", 2, ROW_TYPE_ROUTINE_RUN, &updated).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            2,
+            ROW_TYPE_ROUTINE_RUN,
+            &updated,
+        )
+        .await;
         let unknown = serde_json::json!({
             "source_run_id": 5, "template": "from_the_future", "ran_at_unix_ms": 1,
             "status": "success", "output_summary": "x", "output_json": "{}"
         })
         .to_string();
-        seed_content_row(&conn, &group_key, "device-a", 3, ROW_TYPE_ROUTINE_RUN, &unknown).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            3,
+            ROW_TYPE_ROUTINE_RUN,
+            &unknown,
+        )
+        .await;
 
         let store = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store, "device-b").await.unwrap();
+        pull_content(&conn, &group_key, &store, "device-b")
+            .await
+            .unwrap();
 
         let runs = store.recent_routine_runs_across_all(10).unwrap();
-        assert_eq!(runs.len(), 1, "the same origin run twice is one run; an unknown template is ignored");
+        assert_eq!(
+            runs.len(),
+            1,
+            "the same origin run twice is one run; an unknown template is ignored"
+        );
         assert_eq!(runs[0].output_summary, "revised brief");
         assert_eq!(runs[0].origin_device_id.as_deref(), Some("device-a"));
-        assert_eq!(store.get_sync_cursor("device-a").unwrap(), 3, "the cursor still advances past an ignored row");
+        assert_eq!(
+            store.get_sync_cursor("device-a").unwrap(),
+            3,
+            "the cursor still advances past an ignored row"
+        );
     }
 
     #[tokio::test]
@@ -2350,8 +2765,24 @@ pub(crate) mod tests {
             "status": "levitating", "output_summary": "x", "output_json": "{}"
         })
         .to_string();
-        seed_content_row(&conn, &group_key, "device-a", 1, ROW_TYPE_ROUTINE_RUN, &future_status).await;
-        seed_content_row(&conn, &group_key, "device-a", 2, ROW_TYPE_ROUTINE_RUN, "not json at all").await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            1,
+            ROW_TYPE_ROUTINE_RUN,
+            &future_status,
+        )
+        .await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            2,
+            ROW_TYPE_ROUTINE_RUN,
+            "not json at all",
+        )
+        .await;
         let good = serde_json::to_string(&memory::AppliedRoutineRun {
             source_run_id: 3,
             template: "daily_brief".into(),
@@ -2361,10 +2792,20 @@ pub(crate) mod tests {
             output_json: "{}".into(),
         })
         .unwrap();
-        seed_content_row(&conn, &group_key, "device-a", 3, ROW_TYPE_ROUTINE_RUN, &good).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            3,
+            ROW_TYPE_ROUTINE_RUN,
+            &good,
+        )
+        .await;
 
         let store = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store, "device-b").await.expect("a bad routine_run row must not fail the pull");
+        pull_content(&conn, &group_key, &store, "device-b")
+            .await
+            .expect("a bad routine_run row must not fail the pull");
         let runs = store.recent_routine_runs_across_all(10).unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].output_summary, "good");
@@ -2382,12 +2823,37 @@ pub(crate) mod tests {
             "brief_json": "{}", "provider": "p", "model": "m"
         })
         .to_string();
-        seed_content_row(&conn, &group_key, "device-a", 1, ROW_TYPE_MEETING_PREP, "not json at all").await;
-        seed_content_row(&conn, &group_key, "device-a", 2, ROW_TYPE_MEETING_PREP, &good).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            1,
+            ROW_TYPE_MEETING_PREP,
+            "not json at all",
+        )
+        .await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            2,
+            ROW_TYPE_MEETING_PREP,
+            &good,
+        )
+        .await;
 
         let store = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store, "device-b").await.expect("a bad meeting_prep row must not fail the pull");
-        assert_eq!(store.get_meeting_prep("ev1").unwrap().unwrap().generated_at_unix_ms, 5);
+        pull_content(&conn, &group_key, &store, "device-b")
+            .await
+            .expect("a bad meeting_prep row must not fail the pull");
+        assert_eq!(
+            store
+                .get_meeting_prep("ev1")
+                .unwrap()
+                .unwrap()
+                .generated_at_unix_ms,
+            5
+        );
         assert_eq!(store.get_sync_cursor("device-a").unwrap(), 2);
     }
 
@@ -2398,11 +2864,29 @@ pub(crate) mod tests {
         ensure_content_schema(&conn).await.unwrap();
         let group_key = GroupKey::generate();
         let good = serde_json::json!({"source_id": 4, "text": "Prefers mornings", "created_at_unix_ms": 5}).to_string();
-        seed_content_row(&conn, &group_key, "device-a", 1, ROW_TYPE_PROFILE_SUGGESTION, "not json at all").await;
-        seed_content_row(&conn, &group_key, "device-a", 2, ROW_TYPE_PROFILE_SUGGESTION, &good).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            1,
+            ROW_TYPE_PROFILE_SUGGESTION,
+            "not json at all",
+        )
+        .await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            2,
+            ROW_TYPE_PROFILE_SUGGESTION,
+            &good,
+        )
+        .await;
 
         let store = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &store, "device-b").await.expect("a bad profile_suggestion row must not fail the pull");
+        pull_content(&conn, &group_key, &store, "device-b")
+            .await
+            .expect("a bad profile_suggestion row must not fail the pull");
         let pending = store.list_profile_suggestions("pending").unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].text, "Prefers mornings");
@@ -2582,7 +3066,10 @@ pub(crate) mod tests {
 
         assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), 999);
         assert!(
-            store_b.list_sync_pending_dependencies("device-a").unwrap().is_empty(),
+            store_b
+                .list_sync_pending_dependencies("device-a")
+                .unwrap()
+                .is_empty(),
             "the segment must resolve and clear from the pending set"
         );
         let results = store_b
@@ -2627,27 +3114,207 @@ pub(crate) mod tests {
         let found = |text: &str| store_b.search_keyword(text, 10).unwrap().len();
         let zero = std::time::Duration::ZERO;
 
-        let more = pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
+        let more = pull_content_with_budget(
+            &conn,
+            &group_key,
+            &store_b,
+            "device-b",
+            budget_only(zero),
+            &PullOptions::default(),
+            false,
+        )
+        .await
+        .unwrap();
         assert!(more, "a pass cut short says rows are waiting");
-        assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), 1, "the cursor stops at the last row handled");
-        assert_eq!(store_b.get_sync_cursor("device-c").unwrap(), 1, "the other peer progresses in the same call");
+        assert_eq!(
+            store_b.get_sync_cursor("device-a").unwrap(),
+            1,
+            "the cursor stops at the last row handled"
+        );
+        assert_eq!(
+            store_b.get_sync_cursor("device-c").unwrap(),
+            1,
+            "the other peer progresses in the same call"
+        );
         assert_eq!((found("alpha row 1"), found("alpha row 2")), (1, 0));
 
         for _ in 0..2 {
-            pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
+            pull_content_with_budget(
+                &conn,
+                &group_key,
+                &store_b,
+                "device-b",
+                budget_only(zero),
+                &PullOptions::default(),
+                false,
+            )
+            .await
+            .unwrap();
         }
         assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), 3);
         assert_eq!(store_b.get_sync_cursor("device-c").unwrap(), 2);
-        let more = pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
+        let more = pull_content_with_budget(
+            &conn,
+            &group_key,
+            &store_b,
+            "device-b",
+            budget_only(zero),
+            &PullOptions::default(),
+            false,
+        )
+        .await
+        .unwrap();
         assert!(!more, "a caught-up device has nothing waiting");
         for text in ["alpha row 2", "alpha row 3", "gamma row 1", "gamma row 2"] {
             assert_eq!(found(text), 1, "{text} applied exactly once");
         }
     }
 
+    async fn seed_peer_captures(
+        conn: &Connection,
+        group_key: &GroupKey,
+        device: &str,
+        word: &str,
+        rows: i64,
+    ) {
+        for local_seq in 1..=rows {
+            let capture_json = serde_json::to_string(&AppliedCaptureItem {
+                ts_unix_ms: local_seq,
+                app_bundle_id: "com.apple.Safari".to_string(),
+                window_title: "Peer Window".to_string(),
+                url: None,
+                text: format!("{word} row {local_seq}"),
+                hash: local_seq,
+                source: Some("ax".to_string()),
+            })
+            .unwrap();
+            seed_content_row(
+                conn,
+                group_key,
+                device,
+                local_seq,
+                ROW_TYPE_CAPTURE_ITEM,
+                &capture_json,
+            )
+            .await;
+        }
+    }
+
+    /// #572: a pull-only round after one that left rows behind takes the bigger catch-up
+    /// page; a caught-up one (and every desktop pull) keeps the normal page.
+    #[tokio::test]
+    async fn a_pull_only_round_catches_up_with_bigger_pages_after_more_to_pull() {
+        assert_eq!(pull_only_pace(false), NORMAL_PACE);
+        assert_eq!(pull_only_pace(true), CATCH_UP_PACE);
+        assert!(
+            CATCH_UP_PACE.rows > NORMAL_PACE.rows
+                && CATCH_UP_PACE.peer_budget > NORMAL_PACE.peer_budget
+        );
+        assert!(
+            CATCH_UP_PACE.round_budget.unwrap() + PULL_PEER_TIME_BUDGET * 2 < crate::SYNC_TIMEOUT
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let group_key = GroupKey::generate();
+        let conn = local_connection(&dir.path().join("shared.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let total = CATCH_UP_PACE.rows + NORMAL_PACE.rows + 3;
+        seed_peer_captures(&conn, &group_key, "device-a", "alpha", total).await;
+        let store_b = Store::open_in_memory().unwrap();
+        let options = PullOptions::default();
+
+        let more = pull_content_with_budget(
+            &conn,
+            &group_key,
+            &store_b,
+            "device-b",
+            pull_only_pace(false),
+            &options,
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(more);
+        assert_eq!(
+            store_b.get_sync_cursor("device-a").unwrap(),
+            NORMAL_PACE.rows
+        );
+        let more = pull_content_with_budget(
+            &conn,
+            &group_key,
+            &store_b,
+            "device-b",
+            pull_only_pace(more),
+            &options,
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(more, "a full catch-up page still says rows are waiting");
+        assert_eq!(
+            store_b.get_sync_cursor("device-a").unwrap(),
+            NORMAL_PACE.rows + CATCH_UP_PACE.rows
+        );
+        let more = pull_content_with_budget(
+            &conn,
+            &group_key,
+            &store_b,
+            "device-b",
+            pull_only_pace(more),
+            &options,
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(!more);
+        assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), total);
+        assert_eq!(
+            store_b
+                .search_keyword(&format!("alpha row {total}"), 10)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    /// A catch-up round whose round budget is spent still moves every peer by a row.
+    #[tokio::test]
+    async fn a_spent_catch_up_round_still_progresses_every_peer() {
+        let dir = tempfile::tempdir().unwrap();
+        let group_key = GroupKey::generate();
+        let conn = local_connection(&dir.path().join("shared.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        seed_peer_captures(&conn, &group_key, "device-a", "alpha", 3).await;
+        seed_peer_captures(&conn, &group_key, "device-c", "gamma", 3).await;
+        let store_b = Store::open_in_memory().unwrap();
+        let spent = Pace {
+            round_budget: Some(std::time::Duration::ZERO),
+            ..CATCH_UP_PACE
+        };
+        let more = pull_content_with_budget(
+            &conn,
+            &group_key,
+            &store_b,
+            "device-b",
+            spent,
+            &PullOptions::default(),
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(more);
+        assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), 1);
+        assert_eq!(store_b.get_sync_cursor("device-c").unwrap(), 1);
+    }
+
     /// Seeds `count` transcript segments (local_seq 1..=count) whose meeting
     /// (meeting_local_seq 999) isn't on the relay, and pulls once so they all go pending.
-    async fn seed_pending_segments(conn: &Connection, group_key: &GroupKey, store: &Store, count: i64) {
+    async fn seed_pending_segments(
+        conn: &Connection,
+        group_key: &GroupKey,
+        store: &Store,
+        count: i64,
+    ) {
         for local_seq in 1..=count {
             let payload = serde_json::to_string(&TranscriptSegmentPayload {
                 meeting_local_seq: 999,
@@ -2659,17 +3326,39 @@ pub(crate) mod tests {
                 },
             })
             .unwrap();
-            seed_content_row(conn, group_key, "device-a", local_seq, ROW_TYPE_TRANSCRIPT_SEGMENT, &payload).await;
+            seed_content_row(
+                conn,
+                group_key,
+                "device-a",
+                local_seq,
+                ROW_TYPE_TRANSCRIPT_SEGMENT,
+                &payload,
+            )
+            .await;
         }
-        pull_content(conn, group_key, store, "device-b").await.unwrap();
-        assert_eq!(store.list_sync_pending_dependencies("device-a").unwrap().len() as i64, count);
+        pull_content(conn, group_key, store, "device-b")
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .list_sync_pending_dependencies("device-a")
+                .unwrap()
+                .len() as i64,
+            count
+        );
     }
 
     fn take_row_queries() -> usize {
         ROW_QUERIES.with(|c| c.replace(0))
     }
 
-    async fn seed_tagged_row(conn: &Connection, device_id: &str, local_seq: i64, row_type: &str, tag: &str) {
+    async fn seed_tagged_row(
+        conn: &Connection,
+        device_id: &str,
+        local_seq: i64,
+        row_type: &str,
+        tag: &str,
+    ) {
         conn.execute(
             "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms, entity_tag) \
              VALUES (?1, ?2, ?3, 'x', 0, ?4)",
@@ -2735,10 +3424,15 @@ pub(crate) mod tests {
         let key = GroupKey::generate();
         let store = Store::open_in_memory().unwrap();
 
-        store.insert_capture_item(&sample_new_capture_item("first capture")).unwrap();
+        store
+            .insert_capture_item(&sample_new_capture_item("first capture"))
+            .unwrap();
         // A distinct hash, or the per-app dedup drops it.
         store
-            .insert_capture_item(&memory::NewCaptureItem { hash: 10, ..sample_new_capture_item("second capture") })
+            .insert_capture_item(&memory::NewCaptureItem {
+                hash: 10,
+                ..sample_new_capture_item("second capture")
+            })
             .unwrap();
         let mut event = memory::NewCalendarEventItem {
             device_id: "dev-a".to_string(),
@@ -2748,14 +3442,20 @@ pub(crate) mod tests {
             title: "Planning".to_string(),
             actors: vec![],
         };
-        store.upsert_calendar_event_items(std::slice::from_ref(&event)).unwrap();
+        store
+            .upsert_calendar_event_items(std::slice::from_ref(&event))
+            .unwrap();
         push_content(&conn, &key, &store, "dev-a").await.unwrap();
         event.title = "Planning (moved)".to_string();
-        store.upsert_calendar_event_items(std::slice::from_ref(&event)).unwrap();
+        store
+            .upsert_calendar_event_items(std::slice::from_ref(&event))
+            .unwrap();
         push_content(&conn, &key, &store, "dev-a").await.unwrap();
 
-        let tagged = "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND entity_tag IS NOT NULL";
-        let untagged = "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND entity_tag IS NULL";
+        let tagged =
+            "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND entity_tag IS NOT NULL";
+        let untagged =
+            "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND entity_tag IS NULL";
         assert_eq!(single_i64(&conn, tagged).await, 1);
         assert_eq!(single_i64(&conn, untagged).await, 2);
     }
@@ -2765,12 +3465,23 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = compacting_relay(&dir).await;
         let store = Store::open_in_memory().unwrap();
-        store.insert_capture_item(&sample_new_capture_item("only a capture")).unwrap();
+        store
+            .insert_capture_item(&sample_new_capture_item("only a capture"))
+            .unwrap();
         take_compaction_deletes();
 
-        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a")
+            .await
+            .unwrap();
 
-        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 1);
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'"
+            )
+            .await,
+            1
+        );
         assert_eq!(take_compaction_deletes(), 0);
     }
 
@@ -2817,10 +3528,23 @@ pub(crate) mod tests {
         store.upsert_calendar_event_items(&events).unwrap();
         FAILED_TAGGED_INSERTS.with(|c| c.set(0));
 
-        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a")
+            .await
+            .unwrap();
 
-        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 120);
-        assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 1, "three chunks, one doomed INSERT");
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'"
+            )
+            .await,
+            120
+        );
+        assert_eq!(
+            FAILED_TAGGED_INSERTS.with(|c| c.get()),
+            1,
+            "three chunks, one doomed INSERT"
+        );
     }
 
     #[tokio::test]
@@ -2853,7 +3577,12 @@ pub(crate) mod tests {
         let store = Store::open_in_memory().unwrap();
 
         let id = completed_meeting(&store, "device-a");
-        let forged = tag_for(&key, "device-a", &store.sync_entity_epoch().unwrap(), &format!("meeting:{id}"));
+        let forged = tag_for(
+            &key,
+            "device-a",
+            &store.sync_entity_epoch().unwrap(),
+            &format!("meeting:{id}"),
+        );
         // Two versions, so device-b's older row would go if the DELETE lost its device scope.
         seed_tagged_row(&conn, "device-b", 1, "meeting", &forged).await;
         seed_tagged_row(&conn, "device-b", 2, "meeting", &forged).await;
@@ -2863,10 +3592,22 @@ pub(crate) mod tests {
         store.set_meeting_title(id, "Renamed").unwrap();
         push_content(&conn, &key, &store, "device-a").await.unwrap();
 
-        assert_eq!(meeting_rows(&conn, "device-a").await, 1, "device-a's own old version is compacted");
-        assert_eq!(meeting_rows(&conn, "device-b").await, 2, "device-b's rows survive");
         assert_eq!(
-            single_i64(&conn, "SELECT COUNT(DISTINCT entity_tag) FROM sync_row WHERE row_type = 'meeting'").await,
+            meeting_rows(&conn, "device-a").await,
+            1,
+            "device-a's own old version is compacted"
+        );
+        assert_eq!(
+            meeting_rows(&conn, "device-b").await,
+            2,
+            "device-b's rows survive"
+        );
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(DISTINCT entity_tag) FROM sync_row WHERE row_type = 'meeting'"
+            )
+            .await,
             1,
             "the forged tag really collides with device-a's"
         );
@@ -2879,9 +3620,13 @@ pub(crate) mod tests {
         let store = Store::open_in_memory().unwrap();
 
         let id = completed_meeting(&store, "device-a");
-        push_content(&conn, &GroupKey::generate(), &store, "device-a").await.unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "device-a")
+            .await
+            .unwrap();
         store.set_meeting_title(id, "Renamed").unwrap();
-        push_content(&conn, &GroupKey::generate(), &store, "device-a").await.unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "device-a")
+            .await
+            .unwrap();
 
         assert_eq!(meeting_rows(&conn, "device-a").await, 2);
     }
@@ -2895,11 +3640,23 @@ pub(crate) mod tests {
             seed_tagged_row(&conn, "device-a", seq, "meeting", "a").await;
         }
         seed_tagged_row(&conn, "device-a", 2, "meeting", "b").await;
-        seed_content_row(&conn, &GroupKey::from_bytes([7; 32]), "device-a", 3, "items", "{}").await;
+        seed_content_row(
+            &conn,
+            &GroupKey::from_bytes([7; 32]),
+            "device-a",
+            3,
+            "items",
+            "{}",
+        )
+        .await;
 
         let tags = ["a".to_string(), "b".to_string(), "unseen".to_string()];
         assert_eq!(compact_entity_tags(&conn, "device-a", &tags).await, 2);
-        assert_eq!(compact_entity_tags(&conn, "device-a", &tags).await, 0, "idempotent");
+        assert_eq!(
+            compact_entity_tags(&conn, "device-a", &tags).await,
+            0,
+            "idempotent"
+        );
         assert_eq!(compact_entity_tags(&conn, "device-a", &[]).await, 0);
 
         let mut rows = conn
@@ -2916,8 +3673,18 @@ pub(crate) mod tests {
     #[test]
     fn two_databases_under_one_device_id_tag_the_same_meeting_differently() {
         let key = GroupKey::generate();
-        let (old_db, new_db) = (Store::open_in_memory().unwrap(), Store::open_in_memory().unwrap());
-        let tag = |store: &Store| tag_for(&key, "device-a", &store.sync_entity_epoch().unwrap(), "meeting:1");
+        let (old_db, new_db) = (
+            Store::open_in_memory().unwrap(),
+            Store::open_in_memory().unwrap(),
+        );
+        let tag = |store: &Store| {
+            tag_for(
+                &key,
+                "device-a",
+                &store.sync_entity_epoch().unwrap(),
+                "meeting:1",
+            )
+        };
         assert_ne!(tag(&old_db), tag(&new_db));
         assert_eq!(tag(&old_db), tag(&old_db));
     }
@@ -2935,24 +3702,43 @@ pub(crate) mod tests {
         for title in ["b", "c", "d", "e"] {
             old_db.set_meeting_title(old_id, title).unwrap();
         }
-        push_content(&conn, &key, &old_db, "device-a").await.unwrap();
-        let old_seq = single_i64(&conn, "SELECT local_seq FROM sync_row WHERE row_type = 'meeting'").await;
+        push_content(&conn, &key, &old_db, "device-a")
+            .await
+            .unwrap();
+        let old_seq = single_i64(
+            &conn,
+            "SELECT local_seq FROM sync_row WHERE row_type = 'meeting'",
+        )
+        .await;
 
         let new_db = Store::open_in_memory().unwrap();
         let new_id = completed_meeting(&new_db, "device-a");
         assert_eq!(new_id, old_id, "the wipe reuses the meeting id");
-        push_content(&conn, &key, &new_db, "device-a").await.unwrap();
+        push_content(&conn, &key, &new_db, "device-a")
+            .await
+            .unwrap();
 
-        assert_eq!(meeting_rows(&conn, "device-a").await, 2, "neither database's meeting is deleted");
-        assert!(new_db.get_sync_push_cursor().unwrap() < old_seq, "the new row sits below the old MAX");
+        assert_eq!(
+            meeting_rows(&conn, "device-a").await,
+            2,
+            "neither database's meeting is deleted"
+        );
+        assert!(
+            new_db.get_sync_push_cursor().unwrap() < old_seq,
+            "the new row sits below the old MAX"
+        );
     }
 
     #[test]
     fn missing_entity_tag_column_is_recognized() {
-        assert!(is_missing_entity_tag_column("table sync_row has no column named entity_tag"));
+        assert!(is_missing_entity_tag_column(
+            "table sync_row has no column named entity_tag"
+        ));
         assert!(!is_missing_entity_tag_column("database is locked"));
         // Mentions the column but is not the missing-column error: must not trigger the retry.
-        assert!(!is_missing_entity_tag_column("CHECK constraint failed: entity_tag"));
+        assert!(!is_missing_entity_tag_column(
+            "CHECK constraint failed: entity_tag"
+        ));
     }
 
     /// A relay as ops leaves it: the column plus the out-of-band index.
@@ -2999,7 +3785,11 @@ pub(crate) mod tests {
         create_ops_index(&conn).await;
         store.set_meeting_title(id, "Renamed again").unwrap();
         push_content(&conn, &key, &store, "device-a").await.unwrap();
-        assert_eq!(take_compaction_deletes(), 1, "the next round compacts, no restart");
+        assert_eq!(
+            take_compaction_deletes(),
+            1,
+            "the next round compacts, no restart"
+        );
         assert_eq!(meeting_rows(&conn, "device-a").await, 1);
     }
 
@@ -3013,11 +3803,17 @@ pub(crate) mod tests {
         take_compaction_deletes();
 
         completed_meeting(&store, "device-a");
-        push_content(&conn, &GroupKey::generate(), &store, "device-a").await.unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "device-a")
+            .await
+            .unwrap();
 
         assert_eq!(meeting_rows(&conn, "device-a").await, 1);
         assert_eq!(
-            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE entity_tag IS NOT NULL").await,
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE entity_tag IS NOT NULL"
+            )
+            .await,
             0,
             "no tagged INSERT was sent"
         );
@@ -3048,18 +3844,35 @@ pub(crate) mod tests {
         INJECTED_DELETE_DELAY.with(|d| d.set(Some(std::time::Duration::from_secs(60))));
 
         let started = tokio::time::Instant::now();
-        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a")
+            .await
+            .unwrap();
         let spent = started.elapsed();
 
-        assert!(spent <= COMPACTION_TIMEOUT + std::time::Duration::from_secs(1), "{spent:?}");
-        assert_eq!(take_compaction_deletes(), 1, "after the timeout, the round stops compacting");
+        assert!(
+            spent <= COMPACTION_TIMEOUT + std::time::Duration::from_secs(1),
+            "{spent:?}"
+        );
         assert_eq!(
-            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND entity_tag IS NOT NULL").await,
+            take_compaction_deletes(),
+            1,
+            "after the timeout, the round stops compacting"
+        );
+        assert_eq!(
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND entity_tag IS NOT NULL"
+            )
+            .await,
             120,
             "every chunk is still inserted, tagged"
         );
         assert_eq!(
-            single_i64(&conn, "SELECT MAX(local_seq) FROM sync_row WHERE device_id = 'dev-a'").await,
+            single_i64(
+                &conn,
+                "SELECT MAX(local_seq) FROM sync_row WHERE device_id = 'dev-a'"
+            )
+            .await,
             store.get_sync_push_cursor().unwrap(),
             "the cursor reaches the last chunk"
         );
@@ -3072,7 +3885,10 @@ pub(crate) mod tests {
         let conn = compacting_relay(&dir).await;
         let sql = compaction_delete_sql(3);
         let args = vec![libsql::Value::Text("x".into()); 4];
-        let mut rows = conn.query(&format!("EXPLAIN QUERY PLAN {sql}"), args).await.unwrap();
+        let mut rows = conn
+            .query(&format!("EXPLAIN QUERY PLAN {sql}"), args)
+            .await
+            .unwrap();
         let mut plan = Vec::new();
         while let Some(row) = rows.next().await.unwrap() {
             plan.push(row.get::<String>(3).unwrap());
@@ -3080,7 +3896,10 @@ pub(crate) mod tests {
         // A bare "USING COVERING INDEX idx_sync_row_entity" with no key terms walks the whole index.
         let seek = "INDEX idx_sync_row_entity (device_id=? AND entity_tag=?)";
         let seeks = plan.iter().filter(|step| step.contains(seek)).count();
-        assert_eq!(seeks, 2, "the outer DELETE and the MAX subquery both seek: {plan:?}");
+        assert_eq!(
+            seeks, 2,
+            "the outer DELETE and the MAX subquery both seek: {plan:?}"
+        );
         assert!(!plan.iter().any(|step| step.contains("SCAN")), "{plan:?}");
     }
 
@@ -3096,18 +3915,52 @@ pub(crate) mod tests {
         seed_pending_segments(&conn, &group_key, &store_b, 300).await;
 
         take_row_queries();
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         let queries = take_row_queries();
-        assert!(queries <= 5, "300 pending entries took {queries} sync_row queries");
-        assert_eq!(store_b.list_sync_pending_dependencies("device-a").unwrap().len(), 300, "still waiting on the meeting");
+        assert!(
+            queries <= 5,
+            "300 pending entries took {queries} sync_row queries"
+        );
+        assert_eq!(
+            store_b
+                .list_sync_pending_dependencies("device-a")
+                .unwrap()
+                .len(),
+            300,
+            "still waiting on the meeting"
+        );
 
         let meeting_json = serde_json::to_string(&sample_applied_meeting("Standup")).unwrap();
-        seed_content_row(&conn, &group_key, "device-a", 999, ROW_TYPE_MEETING, &meeting_json).await;
-        pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            999,
+            ROW_TYPE_MEETING,
+            &meeting_json,
+        )
+        .await;
+        pull_content(&conn, &group_key, &store_b, "device-b")
+            .await
+            .unwrap();
         let queries = take_row_queries();
-        assert!(queries <= 5, "resolving 300 pending entries took {queries} sync_row queries");
-        assert!(store_b.list_sync_pending_dependencies("device-a").unwrap().is_empty());
-        assert_eq!(store_b.search_transcript_keyword("pending segment", 500).unwrap().len(), 300);
+        assert!(
+            queries <= 5,
+            "resolving 300 pending entries took {queries} sync_row queries"
+        );
+        assert!(store_b
+            .list_sync_pending_dependencies("device-a")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store_b
+                .search_transcript_keyword("pending segment", 500)
+                .unwrap()
+                .len(),
+            300
+        );
     }
 
     /// A spent budget stops the pending pass after one chunk, but never before the forward
@@ -3122,7 +3975,15 @@ pub(crate) mod tests {
         seed_pending_segments(&conn, &group_key, &store_b, 450).await;
         // The meeting arrives in this round's forward fetch, plus a new capture after it.
         let meeting_json = serde_json::to_string(&sample_applied_meeting("Standup")).unwrap();
-        seed_content_row(&conn, &group_key, "device-a", 999, ROW_TYPE_MEETING, &meeting_json).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            999,
+            ROW_TYPE_MEETING,
+            &meeting_json,
+        )
+        .await;
         let capture_json = serde_json::to_string(&AppliedCaptureItem {
             ts_unix_ms: 1000,
             app_bundle_id: "com.apple.Safari".to_string(),
@@ -3133,20 +3994,68 @@ pub(crate) mod tests {
             source: Some("ax".to_string()),
         })
         .unwrap();
-        seed_content_row(&conn, &group_key, "device-a", 1000, ROW_TYPE_CAPTURE_ITEM, &capture_json).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "device-a",
+            1000,
+            ROW_TYPE_CAPTURE_ITEM,
+            &capture_json,
+        )
+        .await;
 
         let zero = std::time::Duration::ZERO;
         let pending = |s: &Store| s.list_sync_pending_dependencies("device-a").unwrap().len();
         // A zero budget still handles one forward row per round; two rounds reach 1000.
         for _ in 0..2 {
-            pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
+            pull_content_with_budget(
+                &conn,
+                &group_key,
+                &store_b,
+                "device-b",
+                budget_only(zero),
+                &PullOptions::default(),
+                false,
+            )
+            .await
+            .unwrap();
         }
-        assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), 1000, "the forward cursor advances");
-        assert_eq!(store_b.search_keyword("fresh forward row", 10).unwrap().len(), 1);
-        assert_eq!(pending(&store_b), 450 - 2 * PENDING_LOOKUP_CHUNK, "each round retries one chunk");
-        pull_content_with_budget(&conn, &group_key, &store_b, "device-b", zero, &PullOptions::default(), false).await.unwrap();
+        assert_eq!(
+            store_b.get_sync_cursor("device-a").unwrap(),
+            1000,
+            "the forward cursor advances"
+        );
+        assert_eq!(
+            store_b
+                .search_keyword("fresh forward row", 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            pending(&store_b),
+            450 - 2 * PENDING_LOOKUP_CHUNK,
+            "each round retries one chunk"
+        );
+        pull_content_with_budget(
+            &conn,
+            &group_key,
+            &store_b,
+            "device-b",
+            budget_only(zero),
+            &PullOptions::default(),
+            false,
+        )
+        .await
+        .unwrap();
         assert_eq!(pending(&store_b), 0, "a later round drains the rest");
-        assert_eq!(store_b.search_transcript_keyword("pending segment", 500).unwrap().len(), 450);
+        assert_eq!(
+            store_b
+                .search_transcript_keyword("pending segment", 500)
+                .unwrap()
+                .len(),
+            450
+        );
     }
 
     #[tokio::test]
@@ -3282,7 +4191,10 @@ pub(crate) mod tests {
         );
         assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), 2);
         assert!(
-            store_b.list_sync_pending_dependencies("device-a").unwrap().is_empty(),
+            store_b
+                .list_sync_pending_dependencies("device-a")
+                .unwrap()
+                .is_empty(),
             "resolving the segment must clear its pending-dependency entry"
         );
     }
@@ -4002,10 +4914,20 @@ pub(crate) mod tests {
                 text: "selfrepair transcript line".to_string(),
             }])
             .unwrap();
-        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
-        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        push_content(&conn, &key, &store_a, "device-a")
+            .await
+            .unwrap();
+        pull_content(&conn, &key, &store_b, "device-b")
+            .await
+            .unwrap();
         let old_local = store_b.recent_meetings(10).unwrap()[0].id;
-        assert_eq!(store_b.search_transcript_keyword("selfrepair", 10).unwrap().len(), 1);
+        assert_eq!(
+            store_b
+                .search_transcript_keyword("selfrepair", 10)
+                .unwrap()
+                .len(),
+            1
+        );
 
         store_b.delete_meeting(old_local).unwrap();
         assert!(store_b.recent_meetings(10).unwrap().is_empty());
@@ -4013,8 +4935,12 @@ pub(crate) mod tests {
         store_a
             .update_meeting_transcript_and_notes(id, "/path/transcript.txt", Some("later notes"))
             .unwrap();
-        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
-        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        push_content(&conn, &key, &store_a, "device-a")
+            .await
+            .unwrap();
+        pull_content(&conn, &key, &store_b, "device-b")
+            .await
+            .unwrap();
 
         let meetings = store_b.recent_meetings(10).unwrap();
         assert_eq!(meetings.len(), 1, "the deleted meeting comes back");
@@ -4029,7 +4955,9 @@ pub(crate) mod tests {
 
         // Its transcript lines re-apply when pulled again (a cursor rewind).
         store_b.set_sync_cursor("device-a", 0).unwrap();
-        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &key, &store_b, "device-b")
+            .await
+            .unwrap();
         let hits = store_b.search_transcript_keyword("selfrepair", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].meeting_id, new_local);
@@ -4047,10 +4975,16 @@ pub(crate) mod tests {
         seed_content_row(&conn, &key, "device-a", 1, ROW_TYPE_MEETING, &legacy_json).await;
         // Already applied earlier, but its sync_row_map stamp is gone.
         let store_b = Store::open_in_memory().unwrap();
-        store_b.apply_synced_meeting("device-a", 99, None, &meeting).unwrap();
-        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        store_b
+            .apply_synced_meeting("device-a", 99, None, &meeting)
+            .unwrap();
+        pull_content(&conn, &key, &store_b, "device-b")
+            .await
+            .unwrap();
         store_b.set_sync_cursor("device-a", 0).unwrap();
-        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &key, &store_b, "device-b")
+            .await
+            .unwrap();
         assert_eq!(store_b.recent_meetings(10).unwrap().len(), 1);
     }
 
@@ -4063,25 +4997,42 @@ pub(crate) mod tests {
         let store_b = Store::open_in_memory().unwrap();
 
         let id = completed_meeting(&store_a, "device-a");
-        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
-        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        push_content(&conn, &key, &store_a, "device-a")
+            .await
+            .unwrap();
+        pull_content(&conn, &key, &store_b, "device-b")
+            .await
+            .unwrap();
         store_a
             .update_meeting_transcript_and_notes(id, "/path/transcript.txt", Some("some notes"))
             .unwrap();
-        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
+        push_content(&conn, &key, &store_a, "device-a")
+            .await
+            .unwrap();
         store_a
             .update_meeting_summary(id, "tl;dr", &[], &[], &[], "anthropic", "claude-haiku-4-5")
             .unwrap();
-        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
-        assert_eq!(meeting_rows(&conn, "device-a").await, 1, "precondition: the older versions were compacted");
+        push_content(&conn, &key, &store_a, "device-a")
+            .await
+            .unwrap();
+        assert_eq!(
+            meeting_rows(&conn, "device-a").await,
+            1,
+            "precondition: the older versions were compacted"
+        );
 
-        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &key, &store_b, "device-b")
+            .await
+            .unwrap();
 
         let meetings = store_b.recent_meetings(10).unwrap();
         assert_eq!(meetings.len(), 1);
         assert_eq!(meetings[0].notes.as_deref(), Some("some notes"));
         assert_eq!(meetings[0].summary_tldr.as_deref(), Some("tl;dr"));
-        assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), store_a.get_sync_push_cursor().unwrap());
+        assert_eq!(
+            store_b.get_sync_cursor("device-a").unwrap(),
+            store_a.get_sync_push_cursor().unwrap()
+        );
     }
 
     #[tokio::test]
@@ -4100,20 +5051,36 @@ pub(crate) mod tests {
             actors: vec![],
         };
 
-        store_a.upsert_calendar_event_items(std::slice::from_ref(&event)).unwrap();
-        push_content(&conn, &key, &store_a, "device-a").await.unwrap();
-        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        store_a
+            .upsert_calendar_event_items(std::slice::from_ref(&event))
+            .unwrap();
+        push_content(&conn, &key, &store_a, "device-a")
+            .await
+            .unwrap();
+        pull_content(&conn, &key, &store_b, "device-b")
+            .await
+            .unwrap();
         for title in ["v2", "v3"] {
             event.title = title.to_string();
-            store_a.upsert_calendar_event_items(std::slice::from_ref(&event)).unwrap();
-            push_content(&conn, &key, &store_a, "device-a").await.unwrap();
+            store_a
+                .upsert_calendar_event_items(std::slice::from_ref(&event))
+                .unwrap();
+            push_content(&conn, &key, &store_a, "device-a")
+                .await
+                .unwrap();
         }
         assert_eq!(
-            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND row_type = 'items'").await,
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND row_type = 'items'"
+            )
+            .await,
             1,
             "precondition: v1 and v2 were compacted"
         );
-        pull_content(&conn, &key, &store_b, "device-b").await.unwrap();
+        pull_content(&conn, &key, &store_b, "device-b")
+            .await
+            .unwrap();
 
         let events = store_b.upcoming_calendar_events(0, i64::MAX, 10).unwrap();
         assert_eq!(events.len(), 1);
@@ -4138,18 +5105,40 @@ pub(crate) mod tests {
             }])
             .unwrap();
         push_content(&conn, &key, &store_a, "dev-a").await.unwrap();
-        let o = single_i64(&conn, "SELECT local_seq FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'").await;
+        let o = single_i64(
+            &conn,
+            "SELECT local_seq FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'",
+        )
+        .await;
         store_a
-            .update_meeting_summary(meeting_id, "tl;dr", &[], &[], &[], "anthropic", "claude-haiku-4-5")
+            .update_meeting_summary(
+                meeting_id,
+                "tl;dr",
+                &[],
+                &[],
+                &[],
+                "anthropic",
+                "claude-haiku-4-5",
+            )
             .unwrap();
         push_content(&conn, &key, &store_a, "dev-a").await.unwrap();
         assert_eq!(
-            single_i64(&conn, &format!("SELECT COUNT(*) FROM sync_row WHERE device_id = 'dev-a' AND local_seq = {o}")).await,
+            single_i64(
+                &conn,
+                &format!(
+                    "SELECT COUNT(*) FROM sync_row WHERE device_id = 'dev-a' AND local_seq = {o}"
+                )
+            )
+            .await,
             0,
             "precondition: the meeting version the item points at was compacted"
         );
         assert_eq!(
-            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'items'").await,
+            single_i64(
+                &conn,
+                "SELECT COUNT(*) FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'items'"
+            )
+            .await,
             1,
             "precondition: the transcript item is still on the relay"
         );
@@ -4158,11 +5147,23 @@ pub(crate) mod tests {
         pull_content(&conn, &key, &store_b, "dev-b").await.unwrap();
         pull_content(&conn, &key, &store_b, "dev-b").await.unwrap();
 
-        let n = single_i64(&conn, "SELECT local_seq FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'").await;
-        let local_meeting = store_b.resolve_sync_row_map("dev-a", n, ROW_TYPE_MEETING).unwrap().unwrap();
-        let hits = store_b.search_transcript_keyword("backfilled transcript line", 10).unwrap();
+        let n = single_i64(
+            &conn,
+            "SELECT local_seq FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'",
+        )
+        .await;
+        let local_meeting = store_b
+            .resolve_sync_row_map("dev-a", n, ROW_TYPE_MEETING)
+            .unwrap()
+            .unwrap();
+        let hits = store_b
+            .search_transcript_keyword("backfilled transcript line", 10)
+            .unwrap();
         assert_eq!((hits.len(), hits[0].meeting_id), (1, local_meeting));
-        assert!(store_b.list_sync_pending_dependencies("dev-a").unwrap().is_empty());
+        assert!(store_b
+            .list_sync_pending_dependencies("dev-a")
+            .unwrap()
+            .is_empty());
         assert_eq!(store_b.get_sync_cursor("dev-a").unwrap(), n);
     }
 
@@ -4186,12 +5187,27 @@ pub(crate) mod tests {
             }])
             .unwrap();
         push_content(&conn, &key, &store_a, "dev-a").await.unwrap();
-        let meeting_seq = single_i64(&conn, "SELECT local_seq FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'").await;
-        conn.execute("DELETE FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'", params![])
-            .await
-            .unwrap();
+        let meeting_seq = single_i64(
+            &conn,
+            "SELECT local_seq FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'",
+        )
+        .await;
+        conn.execute(
+            "DELETE FROM sync_row WHERE device_id = 'dev-a' AND row_type = 'meeting'",
+            params![],
+        )
+        .await
+        .unwrap();
         let legacy_json = serde_json::to_string(&sample_applied_meeting("Standup")).unwrap();
-        seed_content_row(&conn, &key, "dev-a", meeting_seq, ROW_TYPE_MEETING, &legacy_json).await;
+        seed_content_row(
+            &conn,
+            &key,
+            "dev-a",
+            meeting_seq,
+            ROW_TYPE_MEETING,
+            &legacy_json,
+        )
+        .await;
 
         store_a.set_meeting_title(meeting_id, "Renamed").unwrap();
         push_content(&conn, &key, &store_a, "dev-a").await.unwrap();
@@ -4213,10 +5229,18 @@ pub(crate) mod tests {
         // Pull applies parents first, so the item resolves through the tagged version's
         // source_meeting_id. The legacy envelope also yields its own copy on C, as it does
         // with no compaction at all: it carries no source_meeting_id to merge on.
-        let local_meeting = store_c.resolve_sync_meeting_map("dev-a", meeting_id).unwrap().unwrap();
-        let hits = store_c.search_transcript_keyword("backfilled transcript line", 10).unwrap();
+        let local_meeting = store_c
+            .resolve_sync_meeting_map("dev-a", meeting_id)
+            .unwrap()
+            .unwrap();
+        let hits = store_c
+            .search_transcript_keyword("backfilled transcript line", 10)
+            .unwrap();
         assert_eq!((hits.len(), hits[0].meeting_id), (1, local_meeting));
-        assert!(store_c.list_sync_pending_dependencies("dev-a").unwrap().is_empty());
+        assert!(store_c
+            .list_sync_pending_dependencies("dev-a")
+            .unwrap()
+            .is_empty());
     }
 
     const DAY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -4267,7 +5291,132 @@ pub(crate) mod tests {
     }
 
     fn applied(store: &Store, local_seq: i64, row_type: &str) -> bool {
-        store.resolve_sync_row_map("dev-a", local_seq, row_type).unwrap().is_some()
+        store
+            .resolve_sync_row_map("dev-a", local_seq, row_type)
+            .unwrap()
+            .is_some()
+    }
+
+    #[tokio::test]
+    async fn a_peer_with_no_round_budget_left_fetches_one_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("shared.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let group_key = GroupKey::generate();
+        seed_old_and_new_captures(&conn, &group_key).await;
+        let store = Store::open_in_memory().unwrap();
+        let spent = Pace {
+            round_budget: Some(std::time::Duration::ZERO),
+            ..NORMAL_PACE
+        };
+        let mut stats = Vec::new();
+        let more = pull_round(
+            &conn, &group_key, &store, "dev-b", spent, &PullOptions::default(), true, &mut stats,
+        )
+        .await
+        .unwrap();
+        assert!(more, "the peer still has rows");
+        assert_eq!(stats[0].fetched, 1, "one row, not a page the spent round can't apply");
+    }
+
+    #[tokio::test]
+    async fn pull_round_reports_per_peer_stats() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("shared.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let group_key = GroupKey::generate();
+        seed_old_and_new_captures(&conn, &group_key).await; // seqs 1-4: 2 old, 2 new
+                                                            // seq 5: a segment whose meeting never arrives; seq 6: undecryptable.
+        let segment = serde_json::to_string(&TranscriptSegmentPayload {
+            meeting_local_seq: 999,
+            source_meeting_id: None,
+            segment: AppliedTranscriptSegment {
+                start_cs: 1,
+                speaker_label: "A".to_string(),
+                text: "s".to_string(),
+            },
+        })
+        .unwrap();
+        seed_content_row(
+            &conn,
+            &group_key,
+            "dev-a",
+            5,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &segment,
+        )
+        .await;
+        seed_content_row(
+            &conn,
+            &GroupKey::generate(),
+            "dev-a",
+            6,
+            ROW_TYPE_ITEMS,
+            "{}",
+        )
+        .await;
+
+        let store = Store::open_in_memory().unwrap();
+        let options = PullOptions {
+            capture_window_ms: Some(7 * DAY_MS),
+        };
+        let budget = NORMAL_PACE;
+        let mut stats = Vec::new();
+        pull_round(
+            &conn, &group_key, &store, "dev-b", budget, &options, true, &mut stats,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stats.len(), 1);
+        let s = &stats[0];
+        assert_eq!(s.peer, peer_tag("dev-a"));
+        assert_eq!(s.peer.len(), 6);
+        assert_eq!(
+            (
+                s.cursor_before,
+                s.processed_through,
+                s.fetched,
+                s.fetched_through
+            ),
+            (0, 6, 6, 6)
+        );
+        assert_eq!(
+            (s.applied, s.skipped_window, s.deferred, s.undecodable),
+            (2, 2, 1, 1)
+        );
+        assert_eq!(
+            (
+                s.pending_before,
+                s.pending_after,
+                s.already_applied,
+                s.budget_stopped
+            ),
+            (0, 1, 0, false)
+        );
+
+        // A caught-up round fetches nothing and the cursor stays put.
+        let mut stats = Vec::new();
+        pull_round(
+            &conn, &group_key, &store, "dev-b", budget, &options, true, &mut stats,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            (
+                stats[0].cursor_before,
+                stats[0].processed_through,
+                stats[0].fetched
+            ),
+            (6, 6, 0)
+        );
+        assert_eq!((stats[0].pending_before, stats[0].pending_after), (1, 1));
+
+        // The public wrapper publishes JSON without the raw device id.
+        pull_content_with_options(&conn, &group_key, &store, "dev-b", &options)
+            .await
+            .unwrap();
+        let json = last_pull_stats_json();
+        assert!(json.starts_with('[') && !json.contains("dev-a"), "{json}");
     }
 
     #[tokio::test]
@@ -4279,17 +5428,48 @@ pub(crate) mod tests {
         seed_old_and_new_captures(&conn, &group_key).await;
 
         let store = Store::open_in_memory().unwrap();
-        let options = PullOptions { capture_window_ms: Some(7 * DAY_MS) };
-        pull_content_with_options(&conn, &group_key, &store, "dev-b", &options).await.unwrap();
+        let options = PullOptions {
+            capture_window_ms: Some(7 * DAY_MS),
+        };
+        pull_content_with_options(&conn, &group_key, &store, "dev-b", &options)
+            .await
+            .unwrap();
 
-        assert!(!applied(&store, 1, ROW_TYPE_CAPTURE_ITEM), "legacy capture older than the window");
-        assert!(applied(&store, 2, ROW_TYPE_CAPTURE_ITEM), "legacy capture inside the window");
-        assert!(!applied(&store, 3, ROW_TYPE_ITEMS), "items capture older than the window");
-        assert!(applied(&store, 4, ROW_TYPE_ITEMS), "items capture inside the window");
-        assert!(store.search_keyword("legacy old capture", 10).unwrap().is_empty());
-        assert!(store.search_keyword("items old capture", 10).unwrap().is_empty());
-        assert_eq!(store.search_keyword("legacy new capture", 10).unwrap().len(), 1);
-        assert_eq!(store.search_keyword("items new capture", 10).unwrap().len(), 1);
+        assert!(
+            !applied(&store, 1, ROW_TYPE_CAPTURE_ITEM),
+            "legacy capture older than the window"
+        );
+        assert!(
+            applied(&store, 2, ROW_TYPE_CAPTURE_ITEM),
+            "legacy capture inside the window"
+        );
+        assert!(
+            !applied(&store, 3, ROW_TYPE_ITEMS),
+            "items capture older than the window"
+        );
+        assert!(
+            applied(&store, 4, ROW_TYPE_ITEMS),
+            "items capture inside the window"
+        );
+        assert!(store
+            .search_keyword("legacy old capture", 10)
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .search_keyword("items old capture", 10)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .search_keyword("legacy new capture", 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store.search_keyword("items new capture", 10).unwrap().len(),
+            1
+        );
         assert_eq!(
             store.get_sync_cursor("dev-a").unwrap(),
             4,
@@ -4326,18 +5506,67 @@ pub(crate) mod tests {
         };
         // seq 1 is the only applied row; every later row is skipped, and the HIGHEST
         // (seq 5) is a skipped one, so the cursor only reaches it if skips advance it.
-        seed_content_row(&conn, &group_key, "dev-a", 1, ROW_TYPE_ITEMS, &items(now - DAY_MS, "new")).await;
-        seed_content_row(&conn, &group_key, "dev-a", 2, ROW_TYPE_ITEMS, &items(now - 30 * DAY_MS, "old")).await;
-        seed_content_row(&conn, &group_key, "dev-a", 3, ROW_TYPE_ITEMS, &items(0, "items ts zero")).await;
-        seed_content_row(&conn, &group_key, "dev-a", 4, ROW_TYPE_CAPTURE_ITEM, &legacy(0, "legacy ts zero", 4)).await;
-        seed_content_row(&conn, &group_key, "dev-a", 5, ROW_TYPE_CAPTURE_ITEM, &legacy(now - 30 * DAY_MS, "legacy old", 5)).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "dev-a",
+            1,
+            ROW_TYPE_ITEMS,
+            &items(now - DAY_MS, "new"),
+        )
+        .await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "dev-a",
+            2,
+            ROW_TYPE_ITEMS,
+            &items(now - 30 * DAY_MS, "old"),
+        )
+        .await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "dev-a",
+            3,
+            ROW_TYPE_ITEMS,
+            &items(0, "items ts zero"),
+        )
+        .await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "dev-a",
+            4,
+            ROW_TYPE_CAPTURE_ITEM,
+            &legacy(0, "legacy ts zero", 4),
+        )
+        .await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "dev-a",
+            5,
+            ROW_TYPE_CAPTURE_ITEM,
+            &legacy(now - 30 * DAY_MS, "legacy old", 5),
+        )
+        .await;
 
         let store = Store::open_in_memory().unwrap();
-        let options = PullOptions { capture_window_ms: Some(7 * DAY_MS) };
-        pull_content_with_options(&conn, &group_key, &store, "dev-b", &options).await.unwrap();
+        let options = PullOptions {
+            capture_window_ms: Some(7 * DAY_MS),
+        };
+        pull_content_with_options(&conn, &group_key, &store, "dev-b", &options)
+            .await
+            .unwrap();
 
         assert!(applied(&store, 1, ROW_TYPE_ITEMS));
-        for (seq, rt) in [(2, ROW_TYPE_ITEMS), (3, ROW_TYPE_ITEMS), (4, ROW_TYPE_CAPTURE_ITEM), (5, ROW_TYPE_CAPTURE_ITEM)] {
+        for (seq, rt) in [
+            (2, ROW_TYPE_ITEMS),
+            (3, ROW_TYPE_ITEMS),
+            (4, ROW_TYPE_CAPTURE_ITEM),
+            (5, ROW_TYPE_CAPTURE_ITEM),
+        ] {
             assert!(!applied(&store, seq, rt), "seq {seq} is outside the window");
         }
         assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 5);
@@ -4360,8 +5589,12 @@ pub(crate) mod tests {
             seed_content_row(&conn, &group_key, "dev-a", seq, ROW_TYPE_ITEMS, &json).await;
         }
         let store = Store::open_in_memory().unwrap();
-        let options = PullOptions { capture_window_ms: Some(7 * DAY_MS) };
-        pull_content_with_options(&conn, &group_key, &store, "dev-b", &options).await.unwrap();
+        let options = PullOptions {
+            capture_window_ms: Some(7 * DAY_MS),
+        };
+        pull_content_with_options(&conn, &group_key, &store, "dev-b", &options)
+            .await
+            .unwrap();
         assert!(applied(&store, 1, ROW_TYPE_ITEMS));
         assert!(!applied(&store, 2, ROW_TYPE_ITEMS));
         assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 2);
@@ -4384,7 +5617,15 @@ pub(crate) mod tests {
             meeting,
         })
         .unwrap();
-        seed_content_row(&conn, &group_key, "dev-a", 1, ROW_TYPE_MEETING, &meeting_json).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "dev-a",
+            1,
+            ROW_TYPE_MEETING,
+            &meeting_json,
+        )
+        .await;
         let segment_json = serde_json::to_string(&TranscriptSegmentPayload {
             meeting_local_seq: 1,
             source_meeting_id: Some(100),
@@ -4395,30 +5636,64 @@ pub(crate) mod tests {
             },
         })
         .unwrap();
-        seed_content_row(&conn, &group_key, "dev-a", 2, ROW_TYPE_TRANSCRIPT_SEGMENT, &segment_json).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "dev-a",
+            2,
+            ROW_TYPE_TRANSCRIPT_SEGMENT,
+            &segment_json,
+        )
+        .await;
         let transcript_json = serde_json::to_string(&ItemPayload {
             source_meeting_id: Some(100),
             meeting_local_seq: Some(1),
             item: applied_item("transcript", old, "old transcript item"),
         })
         .unwrap();
-        seed_content_row(&conn, &group_key, "dev-a", 3, ROW_TYPE_ITEMS, &transcript_json).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "dev-a",
+            3,
+            ROW_TYPE_ITEMS,
+            &transcript_json,
+        )
+        .await;
         let calendar_json = serde_json::to_string(&ItemPayload {
             source_meeting_id: None,
             meeting_local_seq: None,
             item: applied_item("calendar_event", old, "old calendar event"),
         })
         .unwrap();
-        seed_content_row(&conn, &group_key, "dev-a", 4, ROW_TYPE_ITEMS, &calendar_json).await;
+        seed_content_row(
+            &conn,
+            &group_key,
+            "dev-a",
+            4,
+            ROW_TYPE_ITEMS,
+            &calendar_json,
+        )
+        .await;
 
         let store = Store::open_in_memory().unwrap();
-        let options = PullOptions { capture_window_ms: Some(7 * DAY_MS) };
-        pull_content_with_options(&conn, &group_key, &store, "dev-b", &options).await.unwrap();
+        let options = PullOptions {
+            capture_window_ms: Some(7 * DAY_MS),
+        };
+        pull_content_with_options(&conn, &group_key, &store, "dev-b", &options)
+            .await
+            .unwrap();
 
         assert!(applied(&store, 1, ROW_TYPE_MEETING), "meeting");
-        assert!(applied(&store, 2, ROW_TYPE_TRANSCRIPT_SEGMENT), "legacy transcript segment");
+        assert!(
+            applied(&store, 2, ROW_TYPE_TRANSCRIPT_SEGMENT),
+            "legacy transcript segment"
+        );
         assert!(applied(&store, 3, ROW_TYPE_ITEMS), "transcript-kind item");
-        assert!(applied(&store, 4, ROW_TYPE_ITEMS), "calendar_event-kind item");
+        assert!(
+            applied(&store, 4, ROW_TYPE_ITEMS),
+            "calendar_event-kind item"
+        );
     }
 
     #[tokio::test]
@@ -4430,11 +5705,19 @@ pub(crate) mod tests {
         seed_old_and_new_captures(&conn, &group_key).await;
 
         let via_default = Store::open_in_memory().unwrap();
-        pull_content(&conn, &group_key, &via_default, "dev-b").await.unwrap();
-        let via_none = Store::open_in_memory().unwrap();
-        pull_content_with_options(&conn, &group_key, &via_none, "dev-b", &PullOptions::default())
+        pull_content(&conn, &group_key, &via_default, "dev-b")
             .await
             .unwrap();
+        let via_none = Store::open_in_memory().unwrap();
+        pull_content_with_options(
+            &conn,
+            &group_key,
+            &via_none,
+            "dev-b",
+            &PullOptions::default(),
+        )
+        .await
+        .unwrap();
 
         for store in [&via_default, &via_none] {
             assert!(applied(store, 1, ROW_TYPE_CAPTURE_ITEM));
@@ -4450,17 +5733,34 @@ pub(crate) mod tests {
         let mut item = applied_item("calendar_event", 1, "standup");
         item.source = Some("google_calendar".to_string());
         item.external_id = Some("evt-1".to_string());
-        let row = SyncableRow::Item { local_seq: 1, source_meeting_id: None, meeting_local_seq: None, item };
-        assert_eq!(entity_identity(&row), Some("items:calendar_event:google_calendar:evt-1".to_string()));
+        let row = SyncableRow::Item {
+            local_seq: 1,
+            source_meeting_id: None,
+            meeting_local_seq: None,
+            item,
+        };
+        assert_eq!(
+            entity_identity(&row),
+            Some("items:calendar_event:google_calendar:evt-1".to_string())
+        );
     }
 
     #[test]
     fn a_calendar_item_missing_source_or_external_id_is_untagged() {
-        for (source, external_id) in [(None, Some("evt-1")), (Some("google_calendar"), None), (None, None)] {
+        for (source, external_id) in [
+            (None, Some("evt-1")),
+            (Some("google_calendar"), None),
+            (None, None),
+        ] {
             let mut item = applied_item("calendar_event", 1, "standup");
             item.source = source.map(str::to_string);
             item.external_id = external_id.map(str::to_string);
-            let row = SyncableRow::Item { local_seq: 1, source_meeting_id: None, meeting_local_seq: None, item };
+            let row = SyncableRow::Item {
+                local_seq: 1,
+                source_meeting_id: None,
+                meeting_local_seq: None,
+                item,
+            };
             assert_eq!(entity_identity(&row), None, "{source:?} {external_id:?}");
         }
     }
@@ -4470,7 +5770,12 @@ pub(crate) mod tests {
         for kind in ["capture", "transcript"] {
             let mut item = applied_item(kind, 1, "x");
             item.external_id = Some("e".to_string());
-            let row = SyncableRow::Item { local_seq: 1, source_meeting_id: Some(7), meeting_local_seq: Some(2), item };
+            let row = SyncableRow::Item {
+                local_seq: 1,
+                source_meeting_id: Some(7),
+                meeting_local_seq: Some(2),
+                item,
+            };
             assert_eq!(entity_identity(&row), None, "{kind}");
         }
         let capture = SyncableRow::CaptureItem {
@@ -4490,7 +5795,11 @@ pub(crate) mod tests {
             local_seq: 2,
             meeting_local_seq: 1,
             source_meeting_id: 7,
-            segment: AppliedTranscriptSegment { start_cs: 0, speaker_label: "A".to_string(), text: "hi".to_string() },
+            segment: AppliedTranscriptSegment {
+                start_cs: 0,
+                speaker_label: "A".to_string(),
+                text: "hi".to_string(),
+            },
         };
         assert_eq!(entity_identity(&segment), None);
     }
@@ -4516,10 +5825,17 @@ pub(crate) mod tests {
             (ROW_TYPE_SKIN, "user-1", "skin:user-1"),
             (ROW_TYPE_SKIN_IMAGE_CHUNK, "abc:0", "skin_image_chunk:abc:0"),
         ] {
-            assert_eq!(outbox_entity_identity(&op(row_type, id)), Some(expected.to_string()));
+            assert_eq!(
+                outbox_entity_identity(&op(row_type, id)),
+                Some(expected.to_string())
+            );
         }
         for row_type in [ROW_TYPE_ITEMS, ROW_TYPE_PROFILE_SUGGESTION] {
-            assert_eq!(outbox_entity_identity(&op(row_type, "9")), None, "{row_type}");
+            assert_eq!(
+                outbox_entity_identity(&op(row_type, "9")),
+                None,
+                "{row_type}"
+            );
         }
     }
 }
@@ -4533,7 +5849,10 @@ mod skin_tests {
 
     async fn relay() -> (tempfile::TempDir, Connection, GroupKey) {
         let dir = tempfile::tempdir().unwrap();
-        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         let conn = db.connect().unwrap();
         ensure_content_schema(&conn).await.unwrap();
         (dir, conn, GroupKey::generate())
@@ -4550,7 +5869,10 @@ mod skin_tests {
             skin_id: id.into(),
             name: "Stadium".into(),
             manifest: serde_json::json!({ "id": id, "name": "Stadium", "palettes": [format!("{id}-p1")] }),
-            palettes: vec![(format!("{id}-p1"), serde_json::json!({ "id": format!("{id}-p1"), "name": "Navy" }))],
+            palettes: vec![(
+                format!("{id}-p1"),
+                serde_json::json!({ "id": format!("{id}-p1"), "name": "Navy" }),
+            )],
             images,
             updated_at_unix_ms: at,
             device_id: "device-a".into(),
@@ -4569,7 +5891,10 @@ mod skin_tests {
 
     async fn rows_of(conn: &Connection, row_type: &str) -> i64 {
         let mut rows = conn
-            .query("SELECT COUNT(*) FROM sync_row WHERE row_type = ?1", params![row_type])
+            .query(
+                "SELECT COUNT(*) FROM sync_row WHERE row_type = ?1",
+                params![row_type],
+            )
             .await
             .unwrap();
         rows.next().await.unwrap().unwrap().get(0).unwrap()
@@ -4579,17 +5904,33 @@ mod skin_tests {
     async fn skin_row_roundtrips() {
         let (_dir, conn, key) = relay().await;
         let (a, b) = (device("device-a"), device("device-b"));
-        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES + 77).map(|i| (i % 253) as u8).collect();
+        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES + 77)
+            .map(|i| (i % 253) as u8)
+            .collect();
         let payload = save_on_a(&a, &bytes);
-        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a")
+            .await
+            .unwrap();
         pull_content(&conn, &key, &b, "device-b").await.unwrap();
         assert_eq!(b.synced_skins_ready().unwrap(), vec![payload.clone()]);
-        assert_eq!(b.synced_image(&payload.images[0].1).unwrap().as_deref(), Some(&bytes[..]));
+        assert_eq!(
+            b.synced_image(&payload.images[0].1).unwrap().as_deref(),
+            Some(&bytes[..])
+        );
         // Pulled again: nothing new, and B writes nothing to the relay.
         pull_content(&conn, &key, &b, "device-b").await.unwrap();
         assert_eq!(b.synced_skins_ready().unwrap().len(), 1);
-        let mut rows = conn.query("SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-b'", ()).await.unwrap();
-        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0);
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-b'",
+                (),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            0
+        );
     }
 
     /// The puller's LWW rule, across devices (plan ruling 7): compaction keeps each device's
@@ -4600,9 +5941,17 @@ mod skin_tests {
         let (_dir, conn, key) = relay().await;
         let (a, b, c) = (device("device-a"), device("device-b"), device("device-c"));
         a.enqueue_skin_row(&skin("user-x-1", 200, vec![])).unwrap();
-        c.enqueue_skin_row(&SkinSyncPayload { device_id: "device-c".into(), ..skin("user-x-1", 100, vec![]) }).unwrap();
-        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
-        crate::outbox::dispatch_outbox(&conn, &key, &c, "device-c").await.unwrap();
+        c.enqueue_skin_row(&SkinSyncPayload {
+            device_id: "device-c".into(),
+            ..skin("user-x-1", 100, vec![])
+        })
+        .unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a")
+            .await
+            .unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &c, "device-c")
+            .await
+            .unwrap();
         pull_content(&conn, &key, &b, "device-b").await.unwrap();
         let ready = b.synced_skins_ready().unwrap();
         assert_eq!(ready.len(), 1);
@@ -4616,14 +5965,33 @@ mod skin_tests {
         let conn = super::tests::compacting_relay(&dir).await;
         let a = device("device-a");
         let saved = save_on_a(&a, &[1, 2, 3]);
-        a.enqueue_skin_row(&SkinSyncPayload { deleted: true, updated_at_unix_ms: 200, ..saved }).unwrap();
+        a.enqueue_skin_row(&SkinSyncPayload {
+            deleted: true,
+            updated_at_unix_ms: 200,
+            ..saved
+        })
+        .unwrap();
 
-        crate::outbox::dispatch_outbox(&conn, &GroupKey::generate(), &a, "device-a").await.unwrap();
+        crate::outbox::dispatch_outbox(&conn, &GroupKey::generate(), &a, "device-a")
+            .await
+            .unwrap();
 
         assert_eq!(rows_of(&conn, ROW_TYPE_SKIN).await, 1);
-        let newest = a.list_outbox_operations().unwrap().into_iter().filter(|r| r.1 == ROW_TYPE_SKIN).map(|r| r.0).max();
-        let mut rows = conn.query("SELECT local_seq FROM sync_row WHERE row_type = 'skin'", ()).await.unwrap();
-        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).ok(), newest);
+        let newest = a
+            .list_outbox_operations()
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.1 == ROW_TYPE_SKIN)
+            .map(|r| r.0)
+            .max();
+        let mut rows = conn
+            .query("SELECT local_seq FROM sync_row WHERE row_type = 'skin'", ())
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).ok(),
+            newest
+        );
     }
 
     #[tokio::test]
@@ -4634,9 +6002,12 @@ mod skin_tests {
         let sha = sha256_hex(&bytes);
         for id in ["user-a-1", "user-b-1"] {
             a.enqueue_skin_chunks(&sha, &bytes).unwrap();
-            a.enqueue_skin_row(&skin(id, 1, vec![("same.png".into(), sha.clone())])).unwrap();
+            a.enqueue_skin_row(&skin(id, 1, vec![("same.png".into(), sha.clone())]))
+                .unwrap();
         }
-        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a")
+            .await
+            .unwrap();
         assert_eq!(rows_of(&conn, ROW_TYPE_SKIN_IMAGE_CHUNK).await, 1);
         assert_eq!(rows_of(&conn, ROW_TYPE_SKIN).await, 2);
         let b = device("device-b");
@@ -4648,9 +6019,13 @@ mod skin_tests {
     async fn partial_chunks_hold_skin() {
         let (_dir, conn, key) = relay().await;
         let a = device("device-a");
-        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES * 2 + 10).map(|i| (i % 241) as u8).collect();
+        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES * 2 + 10)
+            .map(|i| (i % 241) as u8)
+            .collect();
         let payload = save_on_a(&a, &bytes);
-        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a")
+            .await
+            .unwrap();
         // The relay is missing the middle chunk (a pass cut short, say): the skin arrives but stays held.
         conn.execute(
             "DELETE FROM sync_row WHERE row_type = 'skin_image_chunk' AND local_seq = (SELECT MIN(local_seq) + 1 FROM sync_row WHERE row_type = 'skin_image_chunk')",
@@ -4678,17 +6053,23 @@ mod skin_tests {
         let (_dir, conn, key) = relay().await;
         let a = device("device-a");
         // 30 full chunks, about 10 MB on the relay: more than two passes' worth each way.
-        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES * 30).map(|i| (i * 7 % 256) as u8).collect();
+        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES * 30)
+            .map(|i| (i * 7 % 256) as u8)
+            .collect();
         let payload = save_on_a(&a, &bytes);
         let t = crate::now_unix_ms() + 1;
-        let first = crate::outbox::dispatch_outbox_at(&conn, &key, &a, "device-a", t).await.unwrap();
+        let first = crate::outbox::dispatch_outbox_at(&conn, &key, &a, "device-a", t)
+            .await
+            .unwrap();
         let sent = rows_of(&conn, ROW_TYPE_SKIN_IMAGE_CHUNK).await;
         assert!(sent > 0 && sent < 30, "{sent} chunks in one pass");
         assert!(first.deferred > 0);
         let mut at = t;
         while rows_of(&conn, ROW_TYPE_SKIN_IMAGE_CHUNK).await < 30 {
             at += 2;
-            crate::outbox::dispatch_outbox_at(&conn, &key, &a, "device-a", at).await.unwrap();
+            crate::outbox::dispatch_outbox_at(&conn, &key, &a, "device-a", at)
+                .await
+                .unwrap();
             assert!(at - t < 40, "the chunks never all went");
         }
         assert_eq!(rows_of(&conn, ROW_TYPE_SKIN).await, 1);
@@ -4705,7 +6086,12 @@ mod skin_tests {
         }
         assert!(passes >= 3, "{passes} passes");
         assert!(after_one < b.get_sync_cursor("device-a").unwrap());
-        assert_eq!(b.synced_image(&payload.images[0].1).unwrap().map(|b| b.len()), Some(bytes.len()));
+        assert_eq!(
+            b.synced_image(&payload.images[0].1)
+                .unwrap()
+                .map(|b| b.len()),
+            Some(bytes.len())
+        );
     }
 
     #[tokio::test]
@@ -4714,7 +6100,10 @@ mod skin_tests {
         let (a, b) = (device("device-a"), device("device-b"));
         push_content(&conn, &key, &a, "device-a").await.unwrap();
         pull_content(&conn, &key, &b, "device-b").await.unwrap();
-        assert!(b.take_skin_repush_request().unwrap(), "a newly seen peer asks for every skin");
+        assert!(
+            b.take_skin_repush_request().unwrap(),
+            "a newly seen peer asks for every skin"
+        );
         pull_content(&conn, &key, &b, "device-b").await.unwrap();
         assert!(!b.take_skin_repush_request().unwrap(), "once per peer");
         // A peer with rows but no skin marker (a build from before skins synced) asks for nothing.
@@ -4739,13 +6128,18 @@ mod skin_tests {
         let a = device("device-a");
         push_content(&conn, &key, &a, "device-a").await.unwrap();
         save_on_a(&a, &[1, 2, 3]);
-        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a")
+            .await
+            .unwrap();
         let phone = device("phone");
         crate::pull_only_with_connection(&conn, &key, &phone, "phone", &PullOptions::default())
             .await
             .unwrap();
         assert!(phone.synced_skins_ready().unwrap().is_empty());
-        assert!(!phone.take_skin_repush_request().unwrap(), "the phone ignores the skin marker too");
+        assert!(
+            !phone.take_skin_repush_request().unwrap(),
+            "the phone ignores the skin marker too"
+        );
         // A full peer gets them from the same relay.
         let b = device("device-b");
         pull_content(&conn, &key, &b, "device-b").await.unwrap();
@@ -4759,21 +6153,37 @@ mod skin_tests {
         let (_dir, conn, key) = relay().await;
         let (a, b) = (device("device-a"), device("device-b"));
         let payload = save_on_a(&a, &[7, 7, 7]);
-        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a")
+            .await
+            .unwrap();
         // B, on its old build, pulled past everything A had sent.
-        let mut rows = conn.query("SELECT MAX(local_seq) FROM sync_row WHERE device_id = 'device-a'", ()).await.unwrap();
+        let mut rows = conn
+            .query(
+                "SELECT MAX(local_seq) FROM sync_row WHERE device_id = 'device-a'",
+                (),
+            )
+            .await
+            .unwrap();
         let sent_through: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
         b.set_sync_cursor("device-a", sent_through).unwrap();
         // B updates: it pushes its marker, and A sees it.
         push_content(&conn, &key, &b, "device-b").await.unwrap();
         pull_content(&conn, &key, &a, "device-a").await.unwrap();
         let sha = payload.images[0].1.clone();
-        assert!(!a.enqueue_skin_chunks(&sha, &[7, 7, 7]).unwrap(), "sent once already");
+        assert!(
+            !a.enqueue_skin_chunks(&sha, &[7, 7, 7]).unwrap(),
+            "sent once already"
+        );
         assert!(a.take_skin_repush_request().unwrap());
         // A enqueues every skin again, as core/skins' enqueue_all will: the chunks, then the row.
-        assert!(a.enqueue_skin_chunks(&sha, &[7, 7, 7]).unwrap(), "resent for the repush");
+        assert!(
+            a.enqueue_skin_chunks(&sha, &[7, 7, 7]).unwrap(),
+            "resent for the repush"
+        );
         a.enqueue_skin_row(&payload).unwrap();
-        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a")
+            .await
+            .unwrap();
         pull_content(&conn, &key, &b, "device-b").await.unwrap();
         assert_eq!(b.synced_skins_ready().unwrap(), vec![payload]);
     }
@@ -4783,22 +6193,34 @@ mod skin_tests {
     async fn a_large_image_does_not_hold_up_later_rows() {
         let (_dir, conn, key) = relay().await;
         let a = device("device-a");
-        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES * 150).map(|i| (i * 13 % 256) as u8).collect();
+        let bytes: Vec<u8> = (0..SKIN_CHUNK_BYTES * 150)
+            .map(|i| (i * 13 % 256) as u8)
+            .collect();
         save_on_a(&a, &bytes);
-        a.enqueue_skin_row(&skin("user-later-1", 5, vec![])).unwrap();
-        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        a.enqueue_skin_row(&skin("user-later-1", 5, vec![]))
+            .unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a")
+            .await
+            .unwrap();
         let mut rows = conn
             .query("SELECT COUNT(*) FROM sync_row WHERE row_type = 'skin' AND local_seq = (SELECT MAX(local_seq) FROM sync_row)", ())
             .await
             .unwrap();
-        assert_eq!(rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 1, "the later row went out");
+        assert_eq!(
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+            1,
+            "the later row went out"
+        );
         assert!(rows_of(&conn, ROW_TYPE_SKIN_IMAGE_CHUNK).await < 150);
     }
 
     #[test]
     fn the_skin_row_types_match_the_phone_query() {
         let sql = "AND row_type NOT IN ('skin', 'skin_image_chunk')";
-        assert_eq!(sql, format!("AND row_type NOT IN ('{ROW_TYPE_SKIN}', '{ROW_TYPE_SKIN_IMAGE_CHUNK}')"));
+        assert_eq!(
+            sql,
+            format!("AND row_type NOT IN ('{ROW_TYPE_SKIN}', '{ROW_TYPE_SKIN_IMAGE_CHUNK}')")
+        );
     }
 
     /// A skin row this build can't read (a newer shape, or a corrupt one) is skipped, and the peer's
@@ -4824,13 +6246,21 @@ mod skin_tests {
         // Use up A's sequence numbers 1 to 3, which the rows above already hold on the relay (these
         // three are dropped there as duplicates), so its real rows land after them.
         for _ in 0..3 {
-            a.enqueue_skin_row(&skin("user-filler-1", 1, vec![])).unwrap();
+            a.enqueue_skin_row(&skin("user-filler-1", 1, vec![]))
+                .unwrap();
         }
         save_on_a(&a, &[4, 5, 6]);
-        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a").await.unwrap();
+        crate::outbox::dispatch_outbox(&conn, &key, &a, "device-a")
+            .await
+            .unwrap();
         let b = device("device-b");
         pull_content(&conn, &key, &b, "device-b").await.unwrap();
-        let ready: Vec<String> = b.synced_skins_ready().unwrap().into_iter().map(|p| p.skin_id).collect();
+        let ready: Vec<String> = b
+            .synced_skins_ready()
+            .unwrap()
+            .into_iter()
+            .map(|p| p.skin_id)
+            .collect();
         assert!(ready.contains(&"user-stadium-1".to_string()), "{ready:?}");
     }
 }
@@ -4843,7 +6273,10 @@ mod relay_query_tests {
 
     async fn relay() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().unwrap();
-        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db"))
+            .build()
+            .await
+            .unwrap();
         let conn = db.connect().unwrap();
         ensure_content_schema(&conn).await.unwrap();
         ensure_entity_tag_column(&conn).await;
@@ -4856,7 +6289,10 @@ mod relay_query_tests {
     }
 
     async fn assert_seeks(conn: &Connection, sql: &str) {
-        let mut rows = conn.query(&format!("EXPLAIN QUERY PLAN {sql}"), ()).await.unwrap();
+        let mut rows = conn
+            .query(&format!("EXPLAIN QUERY PLAN {sql}"), ())
+            .await
+            .unwrap();
         let mut steps = 0;
         while let Some(row) = rows.next().await.unwrap() {
             let detail: String = row.get(3).unwrap();
@@ -4869,7 +6305,13 @@ mod relay_query_tests {
     #[tokio::test]
     async fn no_relay_query_scans_the_table() {
         let (_dir, conn) = relay().await;
-        for sql in [NEXT_PEER_SQL, PEER_MARKER_SQL, FETCH_ROWS_SQL, FETCH_ROWS_NO_SKINS_SQL, OWN_PROVIDER_SPEND_SQL] {
+        for sql in [
+            NEXT_PEER_SQL,
+            PEER_MARKER_SQL,
+            FETCH_ROWS_SQL,
+            FETCH_ROWS_NO_SKINS_SQL,
+            OWN_PROVIDER_SPEND_SQL,
+        ] {
             assert_seeks(&conn, sql).await;
         }
         assert_seeks(&conn, &compaction_delete_sql(3)).await;

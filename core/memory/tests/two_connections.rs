@@ -44,8 +44,10 @@ fn a_second_open_waits_for_an_in_flight_write_to_commit() {
     drop(Store::open(&path, Path::new("")).unwrap());
 
     let raw = rusqlite::Connection::open(&path).unwrap();
-    raw.execute_batch("BEGIN IMMEDIATE; UPDATE sync_local_seq_counter SET next_seq = next_seq WHERE id = 1;")
-        .unwrap();
+    raw.execute_batch(
+        "BEGIN IMMEDIATE; UPDATE sync_local_seq_counter SET next_seq = next_seq WHERE id = 1;",
+    )
+    .unwrap();
     let committer = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(300));
         raw.execute_batch("COMMIT").unwrap();
@@ -55,7 +57,10 @@ fn a_second_open_waits_for_an_in_flight_write_to_commit() {
     let second = Store::open(&path, Path::new(""));
     committer.join().unwrap();
     assert!(second.is_ok(), "{:?}", second.err());
-    assert!(started.elapsed() >= std::time::Duration::from_millis(250), "the open waited for the commit");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(250),
+        "the open waited for the commit"
+    );
 }
 
 /// How long the two writers get before the test calls it a deadlock. Generous for a
@@ -74,7 +79,11 @@ fn concurrent_writers_on_two_connections_never_fail_and_local_seq_stays_unique()
     let main_store = Store::open(&path, Path::new("")).unwrap();
     main_store.set_own_device_id(DEVICE);
     let meeting_ids: Vec<i64> = (0..ROUNDS)
-        .map(|i| main_store.insert_meeting(&meeting(i, MeetingStatus::Recording)).unwrap())
+        .map(|i| {
+            main_store
+                .insert_meeting(&meeting(i, MeetingStatus::Recording))
+                .unwrap()
+        })
         .collect();
     drop(main_store);
 
@@ -101,7 +110,9 @@ fn concurrent_writers_on_two_connections_never_fail_and_local_seq_stays_unique()
                         source: "uia".to_string(),
                     })
                     .expect("capture insert");
-                store.complete_meeting(*id, 2_000 + i, None).expect("complete_meeting");
+                store
+                    .complete_meeting(*id, 2_000 + i, None)
+                    .expect("complete_meeting");
             }
         })
     };
@@ -117,7 +128,9 @@ fn concurrent_writers_on_two_connections_never_fail_and_local_seq_stays_unique()
                 store
                     .update_meeting_summary(*id, "tl;dr", &[], &[], &[], "ollama", "m")
                     .expect("update_meeting_summary");
-                store.set_meeting_title_if_placeholder(*id, "Generated").expect("retitle");
+                store
+                    .set_meeting_title_if_placeholder(*id, "Generated")
+                    .expect("retitle");
             }
         })
     };
@@ -132,7 +145,9 @@ fn concurrent_writers_on_two_connections_never_fail_and_local_seq_stays_unique()
     match finished.recv_timeout(WRITERS_DEADLINE) {
         Ok(Ok(())) => {}
         Ok(Err(panic)) => std::panic::resume_unwind(panic),
-        Err(_) => panic!("two writers on two connections did not finish within {WRITERS_DEADLINE:?}"),
+        Err(_) => {
+            panic!("two writers on two connections did not finish within {WRITERS_DEADLINE:?}")
+        }
     }
 
     let store = Store::open(&path, Path::new("")).unwrap();
@@ -146,10 +161,23 @@ fn concurrent_writers_on_two_connections_never_fail_and_local_seq_stays_unique()
         .unwrap();
     assert_eq!(capture_seqs.len() as i64, ROUNDS);
 
-    let outbox_seqs: Vec<i64> = store.list_outbox_operations().unwrap().into_iter().map(|(seq, ..)| seq).collect();
-    let all: Vec<i64> = capture_seqs.iter().chain(outbox_seqs.iter()).copied().collect();
+    let outbox_seqs: Vec<i64> = store
+        .list_outbox_operations()
+        .unwrap()
+        .into_iter()
+        .map(|(seq, ..)| seq)
+        .collect();
+    let all: Vec<i64> = capture_seqs
+        .iter()
+        .chain(outbox_seqs.iter())
+        .copied()
+        .collect();
     let distinct: HashSet<i64> = all.iter().copied().collect();
-    assert_eq!(distinct.len(), all.len(), "a local_seq was handed out twice across the two connections");
+    assert_eq!(
+        distinct.len(),
+        all.len(),
+        "a local_seq was handed out twice across the two connections"
+    );
 
     for id in meeting_ids {
         let m = store.get_meeting(id).unwrap().unwrap();
@@ -182,7 +210,9 @@ fn simultaneous_opens_of_one_database_all_succeed() {
                 let (path, barrier) = (path.clone(), barrier.clone());
                 std::thread::spawn(move || {
                     barrier.wait();
-                    Store::open(&path, Path::new("")).map(|_| ()).map_err(|e| e.to_string())
+                    Store::open(&path, Path::new(""))
+                        .map(|_| ())
+                        .map_err(|e| e.to_string())
                 })
             })
             .collect();

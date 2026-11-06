@@ -462,7 +462,7 @@ impl SettingsFile {
         RoutingSettings {
             preferred_provider: self.get(keys::PREFERRED_PROVIDER).unwrap_or(d.preferred_provider),
             // An installed model stands in for a configured one that isn't installed, chosen or
-            // the default (`ollama_default`); AI Providers still shows a chosen one, with a warning.
+            // the default (`ollama_default`); Settings → AI still shows a chosen one, with a warning.
             ollama_model: {
                 let (configured, _) = self.ollama_model_choice();
                 crate::ollama_default::pick_for(&configured).unwrap_or(configured)

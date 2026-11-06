@@ -29,7 +29,7 @@ export function budgetNoticeText(n: BudgetNoticeView, locale: string): string {
 
 /**
  * The budget alert window (provider budgets): a provider reached 80% or 100% of this month's
- * budget. Raise budget opens Settings → AI Providers; Dismiss clears every notice.
+ * budget. Raise budget opens Settings → AI; Dismiss clears every notice.
  */
 export function BudgetAlertView() {
   const { locale } = useL10n();

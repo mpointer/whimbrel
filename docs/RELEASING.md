@@ -13,7 +13,8 @@ A release has **two publish steps**, one per platform. Both must run, or that pl
 5. **Verify**: `version.json` and `windows/latest.json` serve X on both `updates.whimbrelapp.com` and `kestrel-updates-worker.mpointer.workers.dev` (shipped builds poll the second until the rename lands in a release).
 6. **Public mirror**: from the same clean tree at the tag, `scripts/publish-public.sh vX`. It pushes the tree without `docs/superpowers/` to `mpointer/whimbrel` as one commit, tags it `vX`, and creates the public GitHub release with the private release's notes (private pull-request links stripped).
 7. **iPhone (TestFlight)**, optional per release: from the same clean tree at the tag, `apps/mobile/ios/scripts/testflight-upload.sh`. The build number is the UTC upload time (`YYYYMMDD.HHMM`, HHMM without leading zeros), set at archive time, so it always increases and needs no bump in the release PR. One-time setup: `apps/mobile/ios/README.md`, TestFlight.
+8. **Android**, optional per release: from the same clean tree at the tag, after step 6, `apps/mobile/android/scripts/release-apk.sh`. It uploads `Whimbrel-X.apk` to the public `mpointer/whimbrel` release for `vX`; on the phone, open that release page in the browser and install. One-time setup: `apps/mobile/android/README.md`.
 
 The website's changelog reads the mirror's releases and the manifest's `release_notes_url` links to them (switched after the first publish, v0.9.35), so step 6 is not optional: skipping it leaves the changelog one release behind and the update dialog's link dead until it runs.
 
-The GitHub release page carries no installers; the Worker serves them.
+The GitHub release page carries no Mac or Windows installers (the Worker serves them); the only asset on it is the optional Android APK from step 8.

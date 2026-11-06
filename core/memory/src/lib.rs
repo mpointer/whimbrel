@@ -17,31 +17,31 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 mod embedding;
 pub use embedding::{
-    Embedder, EmbeddingError, EmbeddingModel, LazyModelEmbedder, EMBEDDING_OUTPUT_DIM,
-    embedding_model_dir, prune_stale_embedding_models, EMBEDDING_MODEL_FILES, EMBEDDING_MODEL_ID,
-    EMBEDDING_MODEL_REPO, EMBEDDING_MODEL_REVISION,
+    embedding_model_dir, prune_stale_embedding_models, Embedder, EmbeddingError, EmbeddingModel,
+    LazyModelEmbedder, EMBEDDING_MODEL_FILES, EMBEDDING_MODEL_ID, EMBEDDING_MODEL_REPO,
+    EMBEDDING_MODEL_REVISION, EMBEDDING_OUTPUT_DIM,
 };
 
+pub mod copies;
 pub mod keywords;
 pub mod l10n;
 pub mod live;
 pub mod live_alert;
-pub mod speaker_match;
-pub mod speaker_names;
-pub mod copies;
 pub mod meeting_parts;
-pub mod profile;
-pub mod provider_budget;
 pub mod prep;
 pub mod priority;
+pub mod profile;
+pub mod provider_budget;
 pub mod redact;
+pub mod speaker_match;
+pub mod speaker_names;
 pub mod token;
 pub mod topics;
 pub mod trim;
 
-mod sync_outbox;
-pub mod skin_sync;
 mod forget;
+pub mod skin_sync;
+mod sync_outbox;
 pub use forget::MeetingForgotten;
 /// Outbox `row_type`/`connector` values. `row_type` must equal the `sync_row.row_type`
 /// the dispatcher writes, which is also `sync-engine::content`'s constant of the same
@@ -50,6 +50,8 @@ pub const OUTBOX_ROW_TYPE_MEETING: &str = "meeting";
 pub const OUTBOX_ROW_TYPE_ROUTINE_RUN: &str = "routine_run";
 pub const OUTBOX_ROW_TYPE_MEETING_PREP: &str = "meeting_prep";
 pub const OUTBOX_ROW_TYPE_PROFILE_SUGGESTION: &str = "profile_suggestion";
+/// A suggestion dismissed or added on one device, so every device resolves it (profile.rs).
+pub const OUTBOX_ROW_TYPE_PROFILE_SUGGESTION_STATUS: &str = "profile_suggestion_status";
 pub const OUTBOX_ROW_TYPE_LIVE_ALERT: &str = "live_alert";
 /// Speaker names (`speaker_names`): the people known by voice, and who each meeting's speakers are.
 pub const OUTBOX_ROW_TYPE_PERSON: &str = "person";
@@ -132,8 +134,8 @@ fn json_to_sql_error(err: serde_json::Error) -> rusqlite::Error {
 }
 pub use sync_outbox::{
     acknowledge_outbox_operation, claim_due_outbox_batch, outbox_operation_state,
-    release_outbox_after_failure, ClaimedOutboxOperation, DeliveryFailureClass,
-    NewOutboxOperation, OutboxOperationKind,
+    release_outbox_after_failure, ClaimedOutboxOperation, DeliveryFailureClass, NewOutboxOperation,
+    OutboxBacklog, OutboxOperationKind, SyncRound,
 };
 
 const EMBEDDING_DIM: usize = embedding::EMBEDDING_OUTPUT_DIM;
@@ -522,13 +524,36 @@ pub struct NewEmailItem {
 /// filed it under a non-primary category, it carries `List-Unsubscribe`, or the
 /// sender's local part is a no-reply style address. `from` may be `Name <addr>`.
 pub fn email_is_bulk(from: &str, gmail_labels: &[String], list_unsubscribe: bool) -> bool {
-    const BULK_LABELS: [&str; 4] = ["CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_SOCIAL", "CATEGORY_FORUMS"];
-    const NO_REPLY: [&str; 6] = ["noreply", "no-reply", "donotreply", "do-not-reply", "notifications", "mailer-daemon"];
-    if list_unsubscribe || gmail_labels.iter().any(|l| BULK_LABELS.contains(&l.as_str())) {
+    const BULK_LABELS: [&str; 4] = [
+        "CATEGORY_PROMOTIONS",
+        "CATEGORY_UPDATES",
+        "CATEGORY_SOCIAL",
+        "CATEGORY_FORUMS",
+    ];
+    const NO_REPLY: [&str; 6] = [
+        "noreply",
+        "no-reply",
+        "donotreply",
+        "do-not-reply",
+        "notifications",
+        "mailer-daemon",
+    ];
+    if list_unsubscribe
+        || gmail_labels
+            .iter()
+            .any(|l| BULK_LABELS.contains(&l.as_str()))
+    {
         return true;
     }
-    let addr = from.rsplit_once('<').map_or(from, |(_, rest)| rest.split('>').next().unwrap_or(rest));
-    let local = addr.split('@').next().unwrap_or("").trim().to_ascii_lowercase();
+    let addr = from
+        .rsplit_once('<')
+        .map_or(from, |(_, rest)| rest.split('>').next().unwrap_or(rest));
+    let local = addr
+        .split('@')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     NO_REPLY.iter().any(|p| local.contains(p))
 }
 
@@ -1292,7 +1317,9 @@ impl Store {
         embedding::prune_stale_embedding_models(models_dir);
         Ok(Store {
             conn,
-            embedder: std::sync::Arc::new(LazyModelEmbedder::new(embedding::embedding_model_dir(models_dir))),
+            embedder: std::sync::Arc::new(LazyModelEmbedder::new(embedding::embedding_model_dir(
+                models_dir,
+            ))),
             own_device_id: Default::default(),
         })
     }
@@ -1323,6 +1350,21 @@ impl Store {
         self.own_device_id.borrow().clone()
     }
 
+    /// What waits in the outbox to be sent, for "N changes waiting since …".
+    pub fn outbox_backlog(&self) -> rusqlite::Result<OutboxBacklog> {
+        sync_outbox::outbox_backlog(&self.conn, OUTBOX_CONNECTOR)
+    }
+
+    /// Records one content-sync round on disk (newest 500 kept); `error` is `None` on success.
+    pub fn record_sync_round(&self, at_unix_ms: i64, error: Option<&str>) -> rusqlite::Result<()> {
+        sync_outbox::record_sync_round(&self.conn, OUTBOX_CONNECTOR, at_unix_ms, error)
+    }
+
+    /// The newest recorded sync rounds, newest first.
+    pub fn recent_sync_rounds(&self, limit: i64) -> rusqlite::Result<Vec<SyncRound>> {
+        sync_outbox::recent_sync_rounds(&self.conn, limit)
+    }
+
     // Outbox lease/ack/release, exposed for `sync-engine`'s dispatcher (the free
     // functions in `sync_outbox` take a raw connection this struct keeps private).
     pub fn claim_due_outbox_batch(
@@ -1333,7 +1375,24 @@ impl Store {
         lease_until_unix_ms: i64,
         limit: i64,
     ) -> rusqlite::Result<Vec<ClaimedOutboxOperation>> {
-        sync_outbox::claim_due_outbox_batch(&self.conn, connector, worker_id, now_unix_ms, lease_until_unix_ms, limit)
+        sync_outbox::claim_due_outbox_batch(
+            &self.conn,
+            connector,
+            worker_id,
+            now_unix_ms,
+            lease_until_unix_ms,
+            limit,
+        )
+    }
+
+    /// Gives a claimed operation the next `local_seq`, so it lands above every puller's cursor (#600): an op
+    /// that waited in the outbox would otherwise reach the relay below rows the legacy push already sent.
+    pub fn restamp_outbox_operation(&self, operation_id: &str) -> rusqlite::Result<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        let seq = Self::next_local_seq_tx(&tx)?;
+        tx.execute("UPDATE sync_outbox SET local_seq = ?1 WHERE operation_id = ?2", params![seq, operation_id])?;
+        tx.commit()?;
+        Ok(seq)
     }
 
     pub fn acknowledge_outbox_operation(
@@ -1343,7 +1402,13 @@ impl Store {
         remote_receipt: &str,
         now_unix_ms: i64,
     ) -> rusqlite::Result<bool> {
-        sync_outbox::acknowledge_outbox_operation(&self.conn, operation_id, worker_id, remote_receipt, now_unix_ms)
+        sync_outbox::acknowledge_outbox_operation(
+            &self.conn,
+            operation_id,
+            worker_id,
+            remote_receipt,
+            now_unix_ms,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1376,9 +1441,9 @@ impl Store {
     /// Every outbox row's `(local_seq, row_type, state, payload_json)`, oldest first —
     /// a diagnostics/test seam, not a dispatch API.
     pub fn list_outbox_operations(&self) -> rusqlite::Result<Vec<(i64, String, String, String)>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT local_seq, row_type, state, payload_json FROM sync_outbox ORDER BY local_seq")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT local_seq, row_type, state, payload_json FROM sync_outbox ORDER BY local_seq",
+        )?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
         rows.collect()
     }
@@ -1797,7 +1862,7 @@ impl Store {
         Self::ensure_thread_priority_table(conn)?;
         prep::ensure_meeting_prep_table(conn)?;
         live::ensure_live_table(conn)?;
-    profile::ensure_profile_suggestion_table(conn)?;
+        profile::ensure_profile_suggestion_table(conn)?;
         live_alert::ensure_live_alert_table(conn)?;
         speaker_names::ensure_speaker_names_tables(conn)?;
         skin_sync::ensure_skin_sync_tables(conn)?;
@@ -2194,7 +2259,10 @@ impl Store {
             .iter()
             .any(|c| c == "model");
         if !has_model {
-            conn.execute("ALTER TABLE conversation_exchange ADD COLUMN model TEXT", [])?;
+            conn.execute(
+                "ALTER TABLE conversation_exchange ADD COLUMN model TEXT",
+                [],
+            )?;
         }
         Ok(())
     }
@@ -2272,7 +2340,10 @@ impl Store {
             let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
             names.collect::<rusqlite::Result<Vec<_>>>()?
         };
-        for (col, ty) in [("away_outcome", "TEXT"), ("away_outcome_at_unix_ms", "INTEGER")] {
+        for (col, ty) in [
+            ("away_outcome", "TEXT"),
+            ("away_outcome_at_unix_ms", "INTEGER"),
+        ] {
             if !existing_columns.iter().any(|c| c == col) {
                 conn.execute(&format!("ALTER TABLE meeting ADD COLUMN {col} {ty}"), [])?;
             }
@@ -2347,7 +2418,10 @@ impl Store {
             names.collect::<rusqlite::Result<Vec<_>>>()?
         };
         if !existing_columns.iter().any(|c| c == "model_pref") {
-            conn.execute("ALTER TABLE routine ADD COLUMN model_pref TEXT NOT NULL DEFAULT 'default'", [])?;
+            conn.execute(
+                "ALTER TABLE routine ADD COLUMN model_pref TEXT NOT NULL DEFAULT 'default'",
+                [],
+            )?;
         }
         Ok(())
     }
@@ -2365,7 +2439,10 @@ impl Store {
         };
         if !existing_columns.iter().any(|c| c == "parent_trace_id") {
             conn.execute("ALTER TABLE usage_log ADD COLUMN parent_trace_id TEXT", [])?;
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_log_parent ON usage_log(parent_trace_id)", [])?;
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_usage_log_parent ON usage_log(parent_trace_id)",
+                [],
+            )?;
         }
         Ok(())
     }
@@ -2398,9 +2475,16 @@ impl Store {
             let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
             names.collect::<rusqlite::Result<Vec<_>>>()?
         };
-        for (name, ty) in [("origin_device_id", "TEXT"), ("source_run_id", "INTEGER"), ("local_seq", "INTEGER")] {
+        for (name, ty) in [
+            ("origin_device_id", "TEXT"),
+            ("source_run_id", "INTEGER"),
+            ("local_seq", "INTEGER"),
+        ] {
             if !existing_columns.iter().any(|c| c == name) {
-                conn.execute(&format!("ALTER TABLE routine_run ADD COLUMN {name} {ty}"), [])?;
+                conn.execute(
+                    &format!("ALTER TABLE routine_run ADD COLUMN {name} {ty}"),
+                    [],
+                )?;
             }
         }
         conn.execute(
@@ -2421,7 +2505,10 @@ impl Store {
             names.collect::<rusqlite::Result<Vec<_>>>()?
         };
         if !existing_columns.iter().any(|c| c == "hidden") {
-            conn.execute("ALTER TABLE episodes ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0", [])?;
+            conn.execute(
+                "ALTER TABLE episodes ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
         }
         Ok(())
     }
@@ -2590,7 +2677,12 @@ impl Store {
         source_meeting_id: i64,
         local_meeting_id: i64,
     ) -> rusqlite::Result<()> {
-        self.record_sync_meeting_map_with_epoch(peer_device_id, source_meeting_id, local_meeting_id, None)
+        self.record_sync_meeting_map_with_epoch(
+            peer_device_id,
+            source_meeting_id,
+            local_meeting_id,
+            None,
+        )
     }
 
     /// `record_sync_meeting_map`, also keeping the peer database's `sync_entity_epoch` (the payload's
@@ -2949,7 +3041,11 @@ impl Store {
         // database could refuse (which would push that round untagged).
         let existing: Option<String> = self
             .conn
-            .query_row("SELECT value FROM kv_meta WHERE key = 'sync_entity_epoch'", [], |row| row.get(0))
+            .query_row(
+                "SELECT value FROM kv_meta WHERE key = 'sync_entity_epoch'",
+                [],
+                |row| row.get(0),
+            )
             .optional()?;
         if let Some(epoch) = existing {
             return Ok(epoch);
@@ -2988,7 +3084,10 @@ impl Store {
     /// later asks for one itself).
     pub fn reset_sync_push_cursor(&self) -> rusqlite::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute("UPDATE sync_push_cursor SET last_pushed_seq = 0 WHERE id = 1", [])?;
+        tx.execute(
+            "UPDATE sync_push_cursor SET last_pushed_seq = 0 WHERE id = 1",
+            [],
+        )?;
         tx.execute("UPDATE synced_skin_peer SET repush = 1", [])?;
         tx.commit()
     }
@@ -3301,7 +3400,10 @@ impl Store {
     /// chunk 2 against chunk 1 and dropped every chunk after the first.) All chunks must
     /// share `app_bundle_id` and `hash`. Returns the new row ids in order, or `None` if
     /// the record was a consecutive duplicate.
-    pub fn insert_capture_record(&self, chunks: &[NewCaptureItem]) -> rusqlite::Result<Option<Vec<i64>>> {
+    pub fn insert_capture_record(
+        &self,
+        chunks: &[NewCaptureItem],
+    ) -> rusqlite::Result<Option<Vec<i64>>> {
         let Some(first) = chunks.first() else {
             return Ok(Some(Vec::new()));
         };
@@ -3482,7 +3584,13 @@ impl Store {
                 local_seq,
             );
             if let Some(items_id) = items_id {
-                self.enqueue_transcript_item_outbox(tx, items_id, &meeting_device_id, local_seq, now_unix_ms)?;
+                self.enqueue_transcript_item_outbox(
+                    tx,
+                    items_id,
+                    &meeting_device_id,
+                    local_seq,
+                    now_unix_ms,
+                )?;
             }
         }
         Ok(())
@@ -3539,6 +3647,9 @@ impl Store {
         let mut payload = serde_json::to_value(&item).map_err(json_to_sql_error)?;
         payload["source_meeting_id"] = serde_json::json!(meeting_id);
         payload["meeting_local_seq"] = serde_json::json!(meeting_local_seq);
+        if let Ok(epoch) = self.sync_entity_epoch() {
+            payload["origin_epoch"] = serde_json::json!(epoch);
+        }
         sync_outbox::enqueue_outbox_tx(
             tx,
             NewOutboxOperation {
@@ -3571,17 +3682,26 @@ impl Store {
                AND ts_unix_ms >= ?1 AND ts_unix_ms < ?2 \
              ORDER BY ts_unix_ms ASC, id ASC LIMIT ?3",
         )?;
-        let rows = stmt.query_map(params![from_unix_ms, until_unix_ms, limit.min(i64::MAX as usize) as i64], |row| {
-            let actors: Option<String> = row.get(4)?;
-            Ok(CalendarEventRow {
-                external_id: row.get(0)?,
-                // A synced row may carry no source: it must not fail the whole read.
-                source: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                title: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                start_unix_ms: row.get(3)?,
-                attendees: actors.and_then(|a| serde_json::from_str(&a).ok()).unwrap_or_default(),
-            })
-        })?;
+        let rows = stmt.query_map(
+            params![
+                from_unix_ms,
+                until_unix_ms,
+                limit.min(i64::MAX as usize) as i64
+            ],
+            |row| {
+                let actors: Option<String> = row.get(4)?;
+                Ok(CalendarEventRow {
+                    external_id: row.get(0)?,
+                    // A synced row may carry no source: it must not fail the whole read.
+                    source: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    title: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    start_unix_ms: row.get(3)?,
+                    attendees: actors
+                        .and_then(|a| serde_json::from_str(&a).ok())
+                        .unwrap_or_default(),
+                })
+            },
+        )?;
         rows.collect()
     }
 
@@ -3838,18 +3958,27 @@ impl Store {
             .query_map(params![account_email], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         for id in &thread_ids {
-            tx.execute("DELETE FROM thread_priority WHERE thread_id = ?1", params![id])?;
+            tx.execute(
+                "DELETE FROM thread_priority WHERE thread_id = ?1",
+                params![id],
+            )?;
             tx.execute(
                 "DELETE FROM jobs WHERE (job_type = 'thread_summarize' AND content_hash = ?1) OR (job_type = 'thread_priority' AND content_hash = ?2)",
                 params![format!("thread_summarize:{id}"), format!("thread_priority:{id}")],
             )?;
         }
-        tx.execute("DELETE FROM threads WHERE source = 'gmail' AND account_email = ?1", params![account_email])?;
+        tx.execute(
+            "DELETE FROM threads WHERE source = 'gmail' AND account_email = ?1",
+            params![account_email],
+        )?;
         let removed = tx.execute(
             "DELETE FROM items WHERE kind = 'email' AND source = 'gmail' AND json_extract(refs, '$.account_email') = ?1",
             params![account_email],
         )?;
-        tx.execute("DELETE FROM kv_meta WHERE key = ?1", params![format!("gmail_history_id:{account_email}")])?;
+        tx.execute(
+            "DELETE FROM kv_meta WHERE key = ?1",
+            params![format!("gmail_history_id:{account_email}")],
+        )?;
         tx.commit()?;
         Ok(removed)
     }
@@ -3959,7 +4088,10 @@ impl Store {
             params![sanitize_fts5_query(query), limit as i64],
             Self::row_to_transcript_segment,
         )?;
-        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |h: &MeetingTranscriptSegment| h.meeting_id)
+        self.drop_copy_hits(
+            rows.collect::<rusqlite::Result<_>>()?,
+            |h: &MeetingTranscriptSegment| h.meeting_id,
+        )
     }
 
     /// FR-CHAT-1 follow-on (semantic half): nearest-neighbor search over transcript
@@ -3989,11 +4121,17 @@ impl Store {
             params![embedding_to_json(&embedding), k, limit as i64],
             Self::row_to_transcript_segment,
         )?;
-        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |h: &MeetingTranscriptSegment| h.meeting_id)
+        self.drop_copy_hits(
+            rows.collect::<rusqlite::Result<_>>()?,
+            |h: &MeetingTranscriptSegment| h.meeting_id,
+        )
     }
 
     /// One transcript segment by id (a citation's `transcript` ref), with its meeting's title.
-    pub fn get_transcript_segment(&self, id: i64) -> rusqlite::Result<Option<MeetingTranscriptSegment>> {
+    pub fn get_transcript_segment(
+        &self,
+        id: i64,
+    ) -> rusqlite::Result<Option<MeetingTranscriptSegment>> {
         self.conn
             .query_row(
                 "SELECT i.id, i.thread_id, m.title, (i.ts_unix_ms - m.start_unix_ms) / 10, json_extract(i.actors, '$[0]'), i.body_text \
@@ -4042,7 +4180,10 @@ impl Store {
             params![sanitize_fts5_query(query), limit as i64],
             Self::row_to_transcript_segment_with_ts,
         )?;
-        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |(h, _): &(MeetingTranscriptSegment, i64)| h.meeting_id)
+        self.drop_copy_hits(
+            rows.collect::<rusqlite::Result<_>>()?,
+            |(h, _): &(MeetingTranscriptSegment, i64)| h.meeting_id,
+        )
     }
 
     /// Semantic-search counterpart to `search_transcript_keyword_with_meeting_ts` -- see its
@@ -4072,7 +4213,10 @@ impl Store {
             params![embedding_to_json(&embedding), k, limit as i64],
             Self::row_to_transcript_segment_with_ts,
         )?;
-        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |(h, _): &(MeetingTranscriptSegment, i64)| h.meeting_id)
+        self.drop_copy_hits(
+            rows.collect::<rusqlite::Result<_>>()?,
+            |(h, _): &(MeetingTranscriptSegment, i64)| h.meeting_id,
+        )
     }
 
     fn row_to_transcript_segment_with_ts(
@@ -4113,7 +4257,10 @@ impl Store {
             params![sanitize_fts5_query(query), limit as i64],
             Self::row_to_snapshot_hit,
         )?;
-        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |(h, _): &(MeetingSnapshotHit, i64)| h.meeting_id)
+        self.drop_copy_hits(
+            rows.collect::<rusqlite::Result<_>>()?,
+            |(h, _): &(MeetingSnapshotHit, i64)| h.meeting_id,
+        )
     }
 
     /// Semantic counterpart to `search_snapshot_keyword_with_meeting_ts`.
@@ -4143,7 +4290,10 @@ impl Store {
             params![embedding_to_json(&embedding), k, limit as i64],
             Self::row_to_snapshot_hit,
         )?;
-        self.drop_copy_hits(rows.collect::<rusqlite::Result<_>>()?, |(h, _): &(MeetingSnapshotHit, i64)| h.meeting_id)
+        self.drop_copy_hits(
+            rows.collect::<rusqlite::Result<_>>()?,
+            |(h, _): &(MeetingSnapshotHit, i64)| h.meeting_id,
+        )
     }
 
     fn row_to_snapshot_hit(row: &rusqlite::Row) -> rusqlite::Result<(MeetingSnapshotHit, i64)> {
@@ -4419,7 +4569,11 @@ impl Store {
     /// ones that do have captures back to the queue with fresh attempts.
     fn ensure_failed_episode_summaries_requeued(conn: &Connection) -> rusqlite::Result<()> {
         let done: Option<String> = conn
-            .query_row("SELECT value FROM kv_meta WHERE key = 'failed_episode_summaries_requeued_v1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM kv_meta WHERE key = 'failed_episode_summaries_requeued_v1'",
+                [],
+                |r| r.get(0),
+            )
             .optional()?;
         if done.is_some() {
             return Ok(());
@@ -4450,20 +4604,31 @@ impl Store {
     /// any that's a no-reply address becomes `fyi`.
     fn ensure_bulk_waiting_threads_reclassified(conn: &Connection) -> rusqlite::Result<()> {
         let done: Option<String> = conn
-            .query_row("SELECT value FROM kv_meta WHERE key = 'bulk_waiting_threads_reclassified_v1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM kv_meta WHERE key = 'bulk_waiting_threads_reclassified_v1'",
+                [],
+                |r| r.get(0),
+            )
             .optional()?;
         if done.is_some() {
             return Ok(());
         }
         let tx = conn.unchecked_transaction()?;
         let rows: Vec<(i64, String)> = {
-            let mut stmt = tx.prepare("SELECT id, last_message_from FROM threads WHERE status = 'waiting_on_me'")?;
-            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let mut stmt = tx.prepare(
+                "SELECT id, last_message_from FROM threads WHERE status = 'waiting_on_me'",
+            )?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
             rows
         };
         for (id, from) in rows {
             if email_is_bulk(&from, &[], false) {
-                tx.execute("UPDATE threads SET status = 'fyi' WHERE id = ?1", params![id])?;
+                tx.execute(
+                    "UPDATE threads SET status = 'fyi' WHERE id = ?1",
+                    params![id],
+                )?;
             }
         }
         tx.execute(
@@ -5000,7 +5165,10 @@ impl Store {
                     .get("gmail_labels")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
-                let list_unsubscribe = refs.get("list_unsubscribe").and_then(|v| v.as_bool()).unwrap_or(false);
+                let list_unsubscribe = refs
+                    .get("list_unsubscribe")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
 
                 // Whether the thread's latest message is bulk. This message decides it
                 // when it's the latest; otherwise the prior row already holds the
@@ -5018,7 +5186,9 @@ impl Store {
                     )
                     .optional()?;
                 let latest_is_bulk = match prior {
-                    Some((last_ts, status, addressed)) if ts_unix_ms < last_ts => status == "fyi" && addressed == 1,
+                    Some((last_ts, status, addressed)) if ts_unix_ms < last_ts => {
+                        status == "fyi" && addressed == 1
+                    }
                     _ => email_is_bulk(&from, &labels, list_unsubscribe),
                 };
 
@@ -5289,7 +5459,12 @@ impl Store {
     /// have, so its episode starts at a different item and the mark never matches —
     /// that episode stays visible there. Upgrade path: key marks on the start item's
     /// `(device_id, local_seq)` and re-key episodes when segmentation re-runs.
-    pub fn set_episode_hidden(&self, id: i64, hidden: bool, now_unix_ms: i64) -> rusqlite::Result<bool> {
+    pub fn set_episode_hidden(
+        &self,
+        id: i64,
+        hidden: bool,
+        now_unix_ms: i64,
+    ) -> rusqlite::Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
         let rows = tx.execute(
             "UPDATE episodes SET hidden = ?1, updated_at_unix_ms = ?2 WHERE id = ?3",
@@ -5334,7 +5509,10 @@ impl Store {
     /// Applies marks pulled from settings sync. Last writer wins per mark (a stale
     /// mark is ignored even if the engine let it through), and any local episode with
     /// the same identity takes the new flag. Returns how many marks were applied.
-    pub fn apply_hidden_episode_sync_fields(&self, marks: &[HiddenEpisodeMark]) -> rusqlite::Result<usize> {
+    pub fn apply_hidden_episode_sync_fields(
+        &self,
+        marks: &[HiddenEpisodeMark],
+    ) -> rusqlite::Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
         let mut applied = 0;
         for mark in marks {
@@ -5413,7 +5591,11 @@ impl Store {
     /// row already exists, deduped by `content_hash = "episode_summarize:{id}"`, so this
     /// updates it in place rather than inserting a second row that `INSERT OR IGNORE`
     /// would silently drop). `claim_episode_summarize_jobs` picks it up on its next pass.
-    pub fn regenerate_episode_summary(&self, episode_id: i64, now_unix_ms: i64) -> rusqlite::Result<bool> {
+    pub fn regenerate_episode_summary(
+        &self,
+        episode_id: i64,
+        now_unix_ms: i64,
+    ) -> rusqlite::Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
         let content_hash = format!("episode_summarize:{episode_id}");
         let rows = tx.execute(
@@ -5580,7 +5762,13 @@ impl Store {
         judgments: &priority::PriorityJudgments,
         now_unix_ms: i64,
     ) -> rusqlite::Result<()> {
-        Self::upsert_thread_priority(&self.conn, thread_id, scored_message_count, judgments, now_unix_ms)
+        Self::upsert_thread_priority(
+            &self.conn,
+            thread_id,
+            scored_message_count,
+            judgments,
+            now_unix_ms,
+        )
     }
 
     fn upsert_thread_priority(
@@ -5601,7 +5789,10 @@ impl Store {
         Ok(())
     }
 
-    pub fn get_thread_priority(&self, thread_id: i64) -> rusqlite::Result<Option<ThreadPriorityRow>> {
+    pub fn get_thread_priority(
+        &self,
+        thread_id: i64,
+    ) -> rusqlite::Result<Option<ThreadPriorityRow>> {
         self.conn
             .query_row(
                 "SELECT scored_message_count, asks_reply, urgency, person, bulk, automated FROM thread_priority WHERE thread_id = ?1",
@@ -5693,7 +5884,11 @@ impl Store {
     /// Revives (or creates) the single `thread_priority` job for `thread_id`. Same upsert
     /// shape as the `thread_summarize` revival: a 'done' or 'running' row goes back to
     /// 'pending'; an already-pending row is left alone.
-    fn enqueue_thread_priority_job(conn: &Connection, thread_id: i64, now_unix_ms: i64) -> rusqlite::Result<()> {
+    fn enqueue_thread_priority_job(
+        conn: &Connection,
+        thread_id: i64,
+        now_unix_ms: i64,
+    ) -> rusqlite::Result<()> {
         conn.execute(
             "INSERT INTO jobs (job_type, payload_json, priority, not_before, attempts, content_hash, status, created_at_unix_ms, updated_at_unix_ms) \
              VALUES ('thread_priority', ?1, 0, 0, 0, ?2, 'pending', ?3, ?3) \
@@ -5744,7 +5939,9 @@ impl Store {
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .optional()?;
-            let Some((job_id, payload_json, attempts)) = job else { break };
+            let Some((job_id, payload_json, attempts)) = job else {
+                break;
+            };
             let thread_id: i64 = serde_json::from_str::<serde_json::Value>(&payload_json)
                 .ok()
                 .and_then(|v| v.get("thread_id").and_then(|t| t.as_i64()))
@@ -5836,7 +6033,12 @@ impl Store {
     }
 
     /// Counts one failed attempt: back off 30 s per attempt, and give up at the ceiling.
-    pub fn fail_thread_priority_job(&self, job_id: i64, attempts: i64, now_unix_ms: i64) -> rusqlite::Result<()> {
+    pub fn fail_thread_priority_job(
+        &self,
+        job_id: i64,
+        attempts: i64,
+        now_unix_ms: i64,
+    ) -> rusqlite::Result<()> {
         let next_attempts = attempts + 1;
         if next_attempts >= THREAD_PRIORITY_MAX_ATTEMPTS {
             self.conn.execute(
@@ -5854,7 +6056,12 @@ impl Store {
 
     /// Puts a claimed job back to 'pending' after `delay_ms` without consuming an attempt
     /// (service unreachable, rate-limited, or key rejected).
-    pub fn retry_thread_priority_job_later(&self, job_id: i64, delay_ms: i64, now_unix_ms: i64) -> rusqlite::Result<()> {
+    pub fn retry_thread_priority_job_later(
+        &self,
+        job_id: i64,
+        delay_ms: i64,
+        now_unix_ms: i64,
+    ) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE jobs SET status = 'pending', not_before = ?1, updated_at_unix_ms = ?2 WHERE id = ?3",
             params![now_unix_ms + delay_ms, now_unix_ms, job_id],
@@ -5893,7 +6100,9 @@ impl Store {
              ORDER BY rank \
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![sanitize_fts5_query(query), limit as i64], |row| row.get(0))?;
+        let rows = stmt.query_map(params![sanitize_fts5_query(query), limit as i64], |row| {
+            row.get(0)
+        })?;
         rows.collect()
     }
 
@@ -5925,7 +6134,11 @@ impl Store {
              GROUP BY device_id ORDER BY COUNT(*) DESC, device_id ASC",
         )?;
         let rows = stmt.query_map(params![start_unix_ms, end_unix_ms], |row| {
-            Ok(DeviceActivity { device_id: row.get(0)?, captures: row.get(1)?, last_ts_unix_ms: row.get(2)? })
+            Ok(DeviceActivity {
+                device_id: row.get(0)?,
+                captures: row.get(1)?,
+                last_ts_unix_ms: row.get(2)?,
+            })
         })?;
         rows.collect()
     }
@@ -5959,7 +6172,11 @@ impl Store {
 
     /// The meeting and timestamp behind an `items` row of `kind` (`transcript` or
     /// `snapshot`) — the id a citation carries. `Ok(None)` for a missing row.
-    pub fn get_meeting_item_ref(&self, item_id: i64, kind: &str) -> rusqlite::Result<Option<(i64, i64)>> {
+    pub fn get_meeting_item_ref(
+        &self,
+        item_id: i64,
+        kind: &str,
+    ) -> rusqlite::Result<Option<(i64, i64)>> {
         self.conn
             .query_row(
                 "SELECT thread_id, ts_unix_ms FROM items WHERE id = ?1 AND kind = ?2 AND thread_id IS NOT NULL",
@@ -5970,7 +6187,10 @@ impl Store {
     }
 
     /// One routine run by id, with its routine's name. `Ok(None)` for a missing run.
-    pub fn get_routine_run_with_name(&self, id: i64) -> rusqlite::Result<Option<RoutineRunWithName>> {
+    pub fn get_routine_run_with_name(
+        &self,
+        id: i64,
+    ) -> rusqlite::Result<Option<RoutineRunWithName>> {
         self.conn
             .query_row(
                 "SELECT rr.id, rr.routine_id, r.name, rr.ran_at_unix_ms, rr.status, rr.output_summary, rr.output_json, rr.origin_device_id \
@@ -6079,7 +6299,10 @@ impl Store {
             params![cutoff_unix_ms],
         )?;
         // A peer's speaker rows whose meeting never arrived age out on the same cutoff.
-        self.conn.execute("DELETE FROM meeting_speaker_pending WHERE updated_at_unix_ms < ?1", params![cutoff_unix_ms])?;
+        self.conn.execute(
+            "DELETE FROM meeting_speaker_pending WHERE updated_at_unix_ms < ?1",
+            params![cutoff_unix_ms],
+        )?;
         // The workspace's device-local edits go with the meeting; left behind they
         // would reattach to nothing (and to a reused id, never, since ids autoincrement).
         self.conn.execute(
@@ -6144,7 +6367,11 @@ impl Store {
             params![id, self.own_device_id()],
             |r| r.get(0),
         )?;
-        let (audio_path, transcript_path) = if pulled { (None, None) } else { (audio_path, transcript_path) };
+        let (audio_path, transcript_path) = if pulled {
+            (None, None)
+        } else {
+            (audio_path, transcript_path)
+        };
         // A split can leave another meeting's snapshot rows inside this directory until the
         // files are moved; never hand the folder back then (worst case: a leaked folder).
         // Literal prefix compare via substr, not LIKE, so `%`/`_` in a path are not wildcards.
@@ -6182,12 +6409,23 @@ impl Store {
             push(&mut audio_paths, a);
             push(&mut transcript_paths, t);
         }
-        Ok(DeletedMeetingFiles { audio_path, transcript_path, snapshots_dir, audio_paths, transcript_paths })
+        Ok(DeletedMeetingFiles {
+            audio_path,
+            transcript_path,
+            snapshots_dir,
+            audio_paths,
+            transcript_paths,
+        })
     }
 
     /// Like [`Store::delete_meeting`], but returns the files of every part (`None` if no such meeting).
-    pub fn delete_meeting_returning_files(&self, id: i64) -> rusqlite::Result<Option<DeletedMeetingFiles>> {
-        let Some(files) = self.meeting_files(id)? else { return Ok(None) };
+    pub fn delete_meeting_returning_files(
+        &self,
+        id: i64,
+    ) -> rusqlite::Result<Option<DeletedMeetingFiles>> {
+        let Some(files) = self.meeting_files(id)? else {
+            return Ok(None);
+        };
         let tx = self.conn.unchecked_transaction()?;
         let rows_affected = Self::delete_meeting_rows_tx(&tx, id)?;
         forget::prune_pushed_rows(&tx, id)?;
@@ -6205,13 +6443,20 @@ impl Store {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        row.map(|(a, t, s)| self.meeting_deleted_files(id, a, t, s)).transpose()
+        row.map(|(a, t, s)| self.meeting_deleted_files(id, a, t, s))
+            .transpose()
     }
 
     /// The rows [`Store::delete_meeting`] removes, inside the caller's transaction. Files
     /// are the caller's. Returns how many `meeting` rows went (0 or 1).
-    pub(crate) fn delete_meeting_rows_tx(tx: &rusqlite::Transaction<'_>, id: i64) -> rusqlite::Result<usize> {
-        tx.execute("DELETE FROM meeting_part WHERE meeting_id = ?1", params![id])?;
+    pub(crate) fn delete_meeting_rows_tx(
+        tx: &rusqlite::Transaction<'_>,
+        id: i64,
+    ) -> rusqlite::Result<usize> {
+        tx.execute(
+            "DELETE FROM meeting_part WHERE meeting_id = ?1",
+            params![id],
+        )?;
         tx.execute(
             "DELETE FROM items WHERE kind = 'transcript' AND thread_id = ?1",
             params![id],
@@ -6221,14 +6466,35 @@ impl Store {
             params![id],
         )?;
         // Provisional live-transcript text goes with the meeting (see `live`).
-        tx.execute("DELETE FROM live_transcript_segment WHERE meeting_id = ?1", params![id])?;
-        tx.execute("DELETE FROM profile_suggestion WHERE source_meeting_id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM live_transcript_segment WHERE meeting_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM profile_suggestion WHERE source_meeting_id = ?1",
+            params![id],
+        )?;
         tx.execute("DELETE FROM live_alert WHERE meeting_id = ?1", params![id])?;
-        tx.execute("DELETE FROM meeting_speaker WHERE meeting_id = ?1", params![id])?;
-        tx.execute("DELETE FROM meeting_note_draft WHERE meeting_id = ?1", params![id])?;
-        tx.execute("DELETE FROM meeting_action_item WHERE meeting_id = ?1", params![id])?;
-        tx.execute("DELETE FROM items WHERE kind = 'snapshot' AND thread_id = ?1", params![id])?;
-        tx.execute("DELETE FROM meeting_snapshot WHERE meeting_id = ?1", params![id])?;
+        tx.execute(
+            "DELETE FROM meeting_speaker WHERE meeting_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM meeting_note_draft WHERE meeting_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM meeting_action_item WHERE meeting_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM items WHERE kind = 'snapshot' AND thread_id = ?1",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM meeting_snapshot WHERE meeting_id = ?1",
+            params![id],
+        )?;
         tx.execute("DELETE FROM meeting WHERE id = ?1", params![id])
     }
 
@@ -6240,7 +6506,11 @@ impl Store {
     pub fn insert_meeting_snapshot(&self, s: &NewMeetingSnapshot) -> rusqlite::Result<Option<i64>> {
         let device_id: Option<String> = self
             .conn
-            .query_row("SELECT device_id FROM meeting WHERE id = ?1", params![s.meeting_id], |r| r.get(0))
+            .query_row(
+                "SELECT device_id FROM meeting WHERE id = ?1",
+                params![s.meeting_id],
+                |r| r.get(0),
+            )
             .optional()?;
         let Some(device_id) = device_id else {
             return Ok(None);
@@ -6252,7 +6522,13 @@ impl Store {
             params![s.meeting_id, s.captured_unix_ms, s.file_path, s.width, s.height, s.ocr_text],
         )?;
         let id = tx.last_insert_rowid();
-        self.write_snapshot_item(&device_id, s.meeting_id, id, s.captured_unix_ms, &s.ocr_text)?;
+        self.write_snapshot_item(
+            &device_id,
+            s.meeting_id,
+            id,
+            s.captured_unix_ms,
+            &s.ocr_text,
+        )?;
         tx.commit()?;
         Ok(Some(id))
     }
@@ -6326,17 +6602,27 @@ impl Store {
     pub fn delete_meeting_snapshot(&self, id: i64) -> rusqlite::Result<Option<String>> {
         let tx = self.conn.unchecked_transaction()?;
         let path: Option<String> = tx
-            .query_row("SELECT file_path FROM meeting_snapshot WHERE id = ?1", params![id], |r| r.get(0))
+            .query_row(
+                "SELECT file_path FROM meeting_snapshot WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
             .optional()?;
         if path.is_some() {
-            tx.execute("DELETE FROM items WHERE source_table = 'meeting_snapshot' AND source_id = ?1", params![id])?;
+            tx.execute(
+                "DELETE FROM items WHERE source_table = 'meeting_snapshot' AND source_id = ?1",
+                params![id],
+            )?;
             tx.execute("DELETE FROM meeting_snapshot WHERE id = ?1", params![id])?;
         }
         tx.commit()?;
         Ok(path)
     }
 
-    pub fn list_meeting_snapshots(&self, meeting_id: i64) -> rusqlite::Result<Vec<MeetingSnapshot>> {
+    pub fn list_meeting_snapshots(
+        &self,
+        meeting_id: i64,
+    ) -> rusqlite::Result<Vec<MeetingSnapshot>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, meeting_id, captured_unix_ms, file_path, width, height, ocr_text \
              FROM meeting_snapshot WHERE meeting_id = ?1 ORDER BY captured_unix_ms ASC, id ASC",
@@ -6356,19 +6642,26 @@ impl Store {
     }
 
     pub fn set_meeting_snapshots_dir(&self, meeting_id: i64, dir: &str) -> rusqlite::Result<()> {
-        self.conn
-            .execute("UPDATE meeting SET snapshots_dir = ?2 WHERE id = ?1", params![meeting_id, dir])?;
+        self.conn.execute(
+            "UPDATE meeting SET snapshots_dir = ?2 WHERE id = ?1",
+            params![meeting_id, dir],
+        )?;
         Ok(())
     }
 
     pub fn set_keep_snapshots(&self, meeting_id: i64, keep: bool) -> rusqlite::Result<()> {
-        self.conn
-            .execute("UPDATE meeting SET keep_snapshots = ?2 WHERE id = ?1", params![meeting_id, keep])?;
+        self.conn.execute(
+            "UPDATE meeting SET keep_snapshots = ?2 WHERE id = ?1",
+            params![meeting_id, keep],
+        )?;
         Ok(())
     }
 
     /// `(snapshots_dir, keep_snapshots)`, or `None` if the meeting doesn't exist.
-    pub fn meeting_snapshots_info(&self, meeting_id: i64) -> rusqlite::Result<Option<(Option<String>, bool)>> {
+    pub fn meeting_snapshots_info(
+        &self,
+        meeting_id: i64,
+    ) -> rusqlite::Result<Option<(Option<String>, bool)>> {
         self.conn
             .query_row(
                 "SELECT snapshots_dir, keep_snapshots FROM meeting WHERE id = ?1",
@@ -6616,9 +6909,17 @@ impl Store {
             )
         };
         Ok(RetentionCounts {
-            capture_items: count("capture_item", EXPIRED_CAPTURE_ITEMS, policy.capture_item_days)?,
+            capture_items: count(
+                "capture_item",
+                EXPIRED_CAPTURE_ITEMS,
+                policy.capture_item_days,
+            )?,
             meetings: count("meeting", EXPIRED_MEETINGS, policy.meeting_days)?,
-            conversations: count("conversation", EXPIRED_CONVERSATIONS, policy.conversation_days)?,
+            conversations: count(
+                "conversation",
+                EXPIRED_CONVERSATIONS,
+                policy.conversation_days,
+            )?,
         })
     }
 
@@ -6630,7 +6931,10 @@ impl Store {
 
     /// In connection order. Tokens live in the shell's secret store, keyed by
     /// `(connector, email)`; this row is identity and default only.
-    pub fn list_connector_accounts(&self, connector: &str) -> rusqlite::Result<Vec<ConnectorAccount>> {
+    pub fn list_connector_accounts(
+        &self,
+        connector: &str,
+    ) -> rusqlite::Result<Vec<ConnectorAccount>> {
         let mut stmt = self.conn.prepare(
             "SELECT connector, email, is_default, position, connected_at_unix_ms FROM connector_account \
              WHERE connector = ?1 ORDER BY position ASC",
@@ -6673,7 +6977,11 @@ impl Store {
 
     /// Makes `email` the connector's only default (a no-op on the default flag of a
     /// row that doesn't exist; callers check membership first).
-    pub fn set_default_connector_account(&self, connector: &str, email: &str) -> rusqlite::Result<()> {
+    pub fn set_default_connector_account(
+        &self,
+        connector: &str,
+        email: &str,
+    ) -> rusqlite::Result<()> {
         self.conn.execute(
             "UPDATE connector_account SET is_default = (email = ?2) WHERE connector = ?1",
             params![connector, email],
@@ -6682,12 +6990,10 @@ impl Store {
     }
 
     pub fn all_referenced_meeting_audio_paths(&self) -> rusqlite::Result<Vec<String>> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT audio_path FROM meeting WHERE audio_path IS NOT NULL \
+        let mut stmt = self.conn.prepare(
+            "SELECT audio_path FROM meeting WHERE audio_path IS NOT NULL \
                  UNION SELECT audio_path FROM meeting_part WHERE audio_path IS NOT NULL",
-            )?;
+        )?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         rows.collect()
     }
@@ -6707,9 +7013,14 @@ impl Store {
     /// own the folders and add sizes. `items` is counted by kind, so a capture and its
     /// `capture_item` source row count once.
     pub fn data_counts(&self) -> rusqlite::Result<DataCounts> {
-        let count = |sql: &str| -> rusqlite::Result<i64> { self.conn.query_row(sql, [], |row| row.get(0)) };
+        let count =
+            |sql: &str| -> rusqlite::Result<i64> { self.conn.query_row(sql, [], |row| row.get(0)) };
         let kind = |k: &str| -> rusqlite::Result<i64> {
-            self.conn.query_row("SELECT COUNT(*) FROM items WHERE kind = ?1", params![k], |row| row.get(0))
+            self.conn.query_row(
+                "SELECT COUNT(*) FROM items WHERE kind = ?1",
+                params![k],
+                |row| row.get(0),
+            )
         };
         Ok(DataCounts {
             captures: kind("capture")?,
@@ -6733,7 +7044,12 @@ impl Store {
     /// One keyset page of `items` of one kind, ascending by id from `after_id`
     /// (exclusive), for "export everything". Every column a reader needs and nothing
     /// that is sync bookkeeping.
-    pub fn export_items_page(&self, kind: &str, after_id: i64, limit: usize) -> rusqlite::Result<Vec<ExportItemRow>> {
+    pub fn export_items_page(
+        &self,
+        kind: &str,
+        after_id: i64,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<ExportItemRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, device_id, kind, source, ts_unix_ms, app_bundle_id, title, url, actors, body_text, refs, external_id \
              FROM items WHERE kind = ?1 AND id > ?2 ORDER BY id ASC LIMIT ?3",
@@ -6749,7 +7065,9 @@ impl Store {
                 app_bundle_id: row.get(5)?,
                 title: row.get(6)?,
                 url: row.get(7)?,
-                actors: actors_json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default(),
+                actors: actors_json
+                    .and_then(|j| serde_json::from_str(&j).ok())
+                    .unwrap_or_default(),
                 body_text: row.get(9)?,
                 refs: row.get(10)?,
                 external_id: row.get(11)?,
@@ -6932,7 +7250,11 @@ impl Store {
     pub fn redact_stored_secrets_batch(&self, max_rows: usize) -> rusqlite::Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
         let cursor: String = tx
-            .query_row("SELECT value FROM kv_meta WHERE key = 'secrets_redact_cursor'", [], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM kv_meta WHERE key = 'secrets_redact_cursor'",
+                [],
+                |r| r.get(0),
+            )
             .optional()?
             .unwrap_or_else(|| "capture_item:0".to_string());
         let (table, after) = cursor.split_once(':').unwrap_or(("capture_item", "0"));
@@ -6944,7 +7266,11 @@ impl Store {
                 .query_map(params![after, max_rows as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
                 .collect::<rusqlite::Result<_>>()?;
             for (id, text, title, url) in &rows {
-                let (new_text, new_title, new_url) = (redact::redact_secrets(text), redact::redact_secrets(title), opt(url));
+                let (new_text, new_title, new_url) = (
+                    redact::redact_secrets(text),
+                    redact::redact_secrets(title),
+                    opt(url),
+                );
                 if new_text == *text && new_title == *title && new_url == *url {
                     continue;
                 }
@@ -7023,7 +7349,12 @@ impl Store {
     /// and items only) resumes at episodes.
     fn ensure_secrets_redact_job_seeded(conn: &Connection) -> rusqlite::Result<()> {
         let flag = |key: &str| -> rusqlite::Result<bool> {
-            Ok(conn.query_row("SELECT value FROM kv_meta WHERE key = ?1", [key], |r| r.get::<_, String>(0)).optional()?.is_some())
+            Ok(conn
+                .query_row("SELECT value FROM kv_meta WHERE key = ?1", [key], |r| {
+                    r.get::<_, String>(0)
+                })
+                .optional()?
+                .is_some())
         };
         if flag("secrets_redacted_v2")? {
             return Ok(());
@@ -7083,7 +7414,12 @@ impl Store {
 
     /// Retitles only if the title is still `expected_current` (a single UPDATE), so a rename
     /// made while a slow check ran is never overwritten. Returns whether a row changed.
-    pub fn set_meeting_title_if_equals(&self, id: i64, expected_current: &str, new_title: &str) -> rusqlite::Result<bool> {
+    pub fn set_meeting_title_if_equals(
+        &self,
+        id: i64,
+        expected_current: &str,
+        new_title: &str,
+    ) -> rusqlite::Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
         let local_seq = Self::next_local_seq_tx(&tx)?;
         let rows_affected = tx.execute(
@@ -7119,19 +7455,26 @@ impl Store {
     /// The language a meeting's audio was transcribed in (a whisper code), local to this
     /// device and not synced; `None` clears it.
     pub fn set_meeting_spoken_language(&self, id: i64, lang: Option<&str>) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE meeting SET spoken_language = ?1 WHERE id = ?2", params![lang, id])?;
+        self.conn.execute(
+            "UPDATE meeting SET spoken_language = ?1 WHERE id = ?2",
+            params![lang, id],
+        )?;
         Ok(())
     }
 
     pub fn meeting_spoken_language(&self, id: i64) -> rusqlite::Result<Option<String>> {
         Ok(self
             .conn
-            .query_row("SELECT spoken_language FROM meeting WHERE id = ?1", [id], |r| r.get::<_, Option<String>>(0))
+            .query_row(
+                "SELECT spoken_language FROM meeting WHERE id = ?1",
+                [id],
+                |r| r.get::<_, Option<String>>(0),
+            )
             .optional()?
             .flatten())
     }
 
-        pub fn set_keep_media(&self, id: i64, keep: bool) -> rusqlite::Result<bool> {
+    pub fn set_keep_media(&self, id: i64, keep: bool) -> rusqlite::Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
         let local_seq = Self::next_local_seq_tx(&tx)?;
         let rows_affected = tx.execute(
@@ -7175,7 +7518,10 @@ impl Store {
             return Ok(());
         };
         if self.own_device_id.borrow().as_deref() != Some(meeting.device_id.as_str())
-            || !matches!(meeting.status, MeetingStatus::Completed | MeetingStatus::Cancelled)
+            || !matches!(
+                meeting.status,
+                MeetingStatus::Completed | MeetingStatus::Cancelled
+            )
         {
             return Ok(());
         }
@@ -7394,7 +7740,13 @@ impl Store {
     }
 
     /// Adds a user-authored action item, `source = "user"`.
-    pub fn insert_meeting_followup(&self, meeting_id: i64, text: &str, routine_run_id: Option<i64>, now: i64) -> rusqlite::Result<i64> {
+    pub fn insert_meeting_followup(
+        &self,
+        meeting_id: i64,
+        text: &str,
+        routine_run_id: Option<i64>,
+        now: i64,
+    ) -> rusqlite::Result<i64> {
         self.conn.execute(
             "INSERT INTO meeting_followup (meeting_id, text, routine_run_id, created_at_unix_ms) VALUES (?1, ?2, ?3, ?4)",
             params![meeting_id, text, routine_run_id, now],
@@ -7410,7 +7762,10 @@ impl Store {
 
     /// Attaches the pending approval draft to a follow-up recorded without one.
     pub fn link_meeting_followup_run(&self, id: i64, routine_run_id: i64) -> rusqlite::Result<()> {
-        self.conn.execute("UPDATE meeting_followup SET routine_run_id = ?1 WHERE id = ?2", params![routine_run_id, id])?;
+        self.conn.execute(
+            "UPDATE meeting_followup SET routine_run_id = ?1 WHERE id = ?2",
+            params![routine_run_id, id],
+        )?;
         Ok(())
     }
 
@@ -7542,17 +7897,32 @@ impl Store {
     /// `snapshots_dir`, `meeting_part.audio_path` / `transcript_path` and
     /// `meeting_snapshot.file_path`. Local only: no outbox entry, since these paths only
     /// resolve on the device that wrote them. Returns how many rows changed.
-    pub fn replace_meeting_path_prefix(&self, old_prefix: &str, new_prefix: &str) -> rusqlite::Result<usize> {
+    pub fn replace_meeting_path_prefix(
+        &self,
+        old_prefix: &str,
+        new_prefix: &str,
+    ) -> rusqlite::Result<usize> {
         // One CASE per column; the WHERE keeps untouched rows out of the count.
         let reroot = |table: &str, cols: &[&str]| {
-            let col = |c: &&str| format!("{c} = CASE WHEN substr({c}, 1, length(?1)) = ?1 THEN ?2 || substr({c}, length(?1) + 1) ELSE {c} END");
+            let col = |c: &&str| {
+                format!("{c} = CASE WHEN substr({c}, 1, length(?1)) = ?1 THEN ?2 || substr({c}, length(?1) + 1) ELSE {c} END")
+            };
             let set = cols.iter().map(col).collect::<Vec<_>>().join(", ");
-            let any = cols.iter().map(|c| format!("substr({c}, 1, length(?1)) = ?1")).collect::<Vec<_>>().join(" OR ");
-            self.conn.execute(&format!("UPDATE {table} SET {set} WHERE {any}"), params![old_prefix, new_prefix])
+            let any = cols
+                .iter()
+                .map(|c| format!("substr({c}, 1, length(?1)) = ?1"))
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            self.conn.execute(
+                &format!("UPDATE {table} SET {set} WHERE {any}"),
+                params![old_prefix, new_prefix],
+            )
         };
         let tx = self.conn.unchecked_transaction()?;
-        let n = reroot("meeting", &["audio_path", "transcript_path", "snapshots_dir"])?
-            + reroot("meeting_part", &["audio_path", "transcript_path"])?
+        let n = reroot(
+            "meeting",
+            &["audio_path", "transcript_path", "snapshots_dir"],
+        )? + reroot("meeting_part", &["audio_path", "transcript_path"])?
             + reroot("meeting_snapshot", &["file_path"])?;
         tx.commit()?;
         Ok(n)
@@ -7616,6 +7986,21 @@ impl Store {
         rows.collect()
     }
 
+    /// How many meetings the list shows once copies are grouped (`copies::group_copies`),
+    /// over EVERY meeting (no list cap), so two devices can compare exact counts.
+    /// Reads only what grouping looks at (span, status, title): it runs after every sync round, so it
+    /// must not load every meeting's notes and summaries.
+    pub fn grouped_meeting_count(&self) -> rusqlite::Result<usize> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, device_id, start_unix_ms, end_unix_ms, title, '[]', trigger, NULL, status, \
+             transcript_path, NULL, NULL, NULL, NULL, NULL, \
+             NULL, NULL, local_seq, NULL, NULL, NULL, keep_media \
+             FROM meeting ORDER BY start_unix_ms DESC",
+        )?;
+        let meetings = stmt.query_map([], Self::row_to_meeting)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(copies::group_copies(meetings).len())
+    }
+
     /// Finds duplicate `meeting` rows for peer-sourced meetings (`device_id !=
     /// own_device_id`) — a device only ever updates its own meeting row in place via
     /// `UPDATE ... WHERE id = ?`, so a device's own meetings structurally cannot
@@ -7677,8 +8062,11 @@ impl Store {
     /// with nothing changed, when either meeting is missing or they're the same.
     pub fn fold_duplicate_meeting(&self, keep: i64, drop: i64) -> rusqlite::Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
-        let both: i64 =
-            tx.query_row("SELECT COUNT(*) FROM meeting WHERE id IN (?1, ?2)", params![keep, drop], |r| r.get(0))?;
+        let both: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM meeting WHERE id IN (?1, ?2)",
+            params![keep, drop],
+            |r| r.get(0),
+        )?;
         if keep == drop || both != 2 {
             return Ok(false);
         }
@@ -7687,29 +8075,83 @@ impl Store {
             "SELECT EXISTS (SELECT 1 FROM transcript_segment WHERE meeting_id = ?1) \
              OR EXISTS (SELECT 1 FROM items WHERE kind = 'transcript' AND thread_id = ?1)",
         )? {
-            tx.execute("UPDATE items SET thread_id = ?1 WHERE kind = 'transcript' AND thread_id = ?2", params![keep, drop])?;
-            tx.execute("UPDATE transcript_segment SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
+            tx.execute(
+                "UPDATE items SET thread_id = ?1 WHERE kind = 'transcript' AND thread_id = ?2",
+                params![keep, drop],
+            )?;
+            tx.execute(
+                "UPDATE transcript_segment SET meeting_id = ?1 WHERE meeting_id = ?2",
+                params![keep, drop],
+            )?;
         }
         if !keep_has("SELECT EXISTS (SELECT 1 FROM meeting_snapshot WHERE meeting_id = ?1)")? {
-            tx.execute("UPDATE items SET thread_id = ?1 WHERE kind = 'snapshot' AND thread_id = ?2", params![keep, drop])?;
-            tx.execute("UPDATE meeting_snapshot SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
+            tx.execute(
+                "UPDATE items SET thread_id = ?1 WHERE kind = 'snapshot' AND thread_id = ?2",
+                params![keep, drop],
+            )?;
+            tx.execute(
+                "UPDATE meeting_snapshot SET meeting_id = ?1 WHERE meeting_id = ?2",
+                params![keep, drop],
+            )?;
         }
-        tx.execute("UPDATE meeting_action_item SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
-        tx.execute("UPDATE OR IGNORE meeting_note_draft SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
-        tx.execute("UPDATE profile_suggestion SET source_meeting_id = ?1 WHERE source_meeting_id = ?2", params![keep, drop])?;
-        tx.execute("UPDATE live_alert SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
+        tx.execute(
+            "UPDATE meeting_action_item SET meeting_id = ?1 WHERE meeting_id = ?2",
+            params![keep, drop],
+        )?;
+        tx.execute(
+            "UPDATE OR IGNORE meeting_note_draft SET meeting_id = ?1 WHERE meeting_id = ?2",
+            params![keep, drop],
+        )?;
+        tx.execute(
+            "UPDATE profile_suggestion SET source_meeting_id = ?1 WHERE source_meeting_id = ?2",
+            params![keep, drop],
+        )?;
+        tx.execute(
+            "UPDATE live_alert SET meeting_id = ?1 WHERE meeting_id = ?2",
+            params![keep, drop],
+        )?;
         // A speaker id the kept copy already has stays the kept copy's.
-        tx.execute("UPDATE OR IGNORE meeting_speaker SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
-        tx.execute("DELETE FROM meeting_speaker WHERE meeting_id = ?1", params![drop])?;
-        tx.execute("UPDATE meeting_followup SET meeting_id = ?1 WHERE meeting_id = ?2", params![keep, drop])?;
-        tx.execute("UPDATE sync_meeting_map SET local_meeting_id = ?1 WHERE local_meeting_id = ?2", params![keep, drop])?;
+        tx.execute(
+            "UPDATE OR IGNORE meeting_speaker SET meeting_id = ?1 WHERE meeting_id = ?2",
+            params![keep, drop],
+        )?;
+        tx.execute(
+            "DELETE FROM meeting_speaker WHERE meeting_id = ?1",
+            params![drop],
+        )?;
+        tx.execute(
+            "UPDATE meeting_followup SET meeting_id = ?1 WHERE meeting_id = ?2",
+            params![keep, drop],
+        )?;
+        tx.execute(
+            "UPDATE sync_meeting_map SET local_meeting_id = ?1 WHERE local_meeting_id = ?2",
+            params![keep, drop],
+        )?;
         // What's left is the copy's own: the same rows `delete_meeting` removes.
-        tx.execute("DELETE FROM meeting_part WHERE meeting_id = ?1", params![drop])?;
-        tx.execute("DELETE FROM items WHERE kind IN ('transcript', 'snapshot') AND thread_id = ?1", params![drop])?;
-        tx.execute("DELETE FROM transcript_segment WHERE meeting_id = ?1", params![drop])?;
-        tx.execute("DELETE FROM live_transcript_segment WHERE meeting_id = ?1", params![drop])?;
-        tx.execute("DELETE FROM meeting_note_draft WHERE meeting_id = ?1", params![drop])?;
-        tx.execute("DELETE FROM meeting_snapshot WHERE meeting_id = ?1", params![drop])?;
+        tx.execute(
+            "DELETE FROM meeting_part WHERE meeting_id = ?1",
+            params![drop],
+        )?;
+        tx.execute(
+            "DELETE FROM items WHERE kind IN ('transcript', 'snapshot') AND thread_id = ?1",
+            params![drop],
+        )?;
+        tx.execute(
+            "DELETE FROM transcript_segment WHERE meeting_id = ?1",
+            params![drop],
+        )?;
+        tx.execute(
+            "DELETE FROM live_transcript_segment WHERE meeting_id = ?1",
+            params![drop],
+        )?;
+        tx.execute(
+            "DELETE FROM meeting_note_draft WHERE meeting_id = ?1",
+            params![drop],
+        )?;
+        tx.execute(
+            "DELETE FROM meeting_snapshot WHERE meeting_id = ?1",
+            params![drop],
+        )?;
         tx.execute("DELETE FROM meeting WHERE id = ?1", params![drop])?;
         forget::prune_pushed_rows(&tx, drop)?;
         tx.commit()?;
@@ -7728,7 +8170,10 @@ impl Store {
     /// Only this device's own meetings (`own_device_id`): a meeting synced from another
     /// device never has local audio (`apply_synced_meeting` stores `audio_path = NULL`),
     /// so it is not "missing" audio and must never be offered for deletion.
-    pub fn find_meetings_without_audio(&self, own_device_id: &str) -> rusqlite::Result<Vec<MeetingWithoutAudioSummary>> {
+    pub fn find_meetings_without_audio(
+        &self,
+        own_device_id: &str,
+    ) -> rusqlite::Result<Vec<MeetingWithoutAudioSummary>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, start_unix_ms FROM meeting \
              WHERE (audio_path IS NULL OR audio_path = '') AND status != 'recording' \
@@ -7774,11 +8219,19 @@ impl Store {
     /// [`log_usage`] with a span parent: every call made for one operation (a routine
     /// run, an eval run) passes the same `parent_trace_id`, and `sum_usage_by_parent`
     /// rolls them up.
-    pub fn log_usage_with_parent(&self, e: &NewUsageLogEntry, parent_trace_id: &str) -> rusqlite::Result<i64> {
+    pub fn log_usage_with_parent(
+        &self,
+        e: &NewUsageLogEntry,
+        parent_trace_id: &str,
+    ) -> rusqlite::Result<i64> {
         self.log_usage_inner(e, Some(parent_trace_id))
     }
 
-    fn log_usage_inner(&self, e: &NewUsageLogEntry, parent_trace_id: Option<&str>) -> rusqlite::Result<i64> {
+    fn log_usage_inner(
+        &self,
+        e: &NewUsageLogEntry,
+        parent_trace_id: Option<&str>,
+    ) -> rusqlite::Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "INSERT INTO usage_log (user_id, provider, model, route, input_tokens, output_tokens, estimated_cost_cents, cache_hit, trace_id, ts_unix_ms, parent_trace_id) \
@@ -7855,7 +8308,12 @@ impl Store {
     /// the identity in question genuinely IS "no identity," not "every identity."
     /// Usage rows with `since_unix_ms <= ts < until_unix_ms`, newest first, at most
     /// `limit`: the Model usage screen's list.
-    pub fn list_usage(&self, since_unix_ms: i64, until_unix_ms: i64, limit: usize) -> rusqlite::Result<Vec<UsageLogEntry>> {
+    pub fn list_usage(
+        &self,
+        since_unix_ms: i64,
+        until_unix_ms: i64,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<UsageLogEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, user_id, provider, model, route, input_tokens, output_tokens, estimated_cost_cents, cache_hit, trace_id, ts_unix_ms, parent_trace_id \
              FROM usage_log WHERE ts_unix_ms >= ?1 AND ts_unix_ms < ?2 ORDER BY ts_unix_ms DESC, id DESC LIMIT ?3",
@@ -7882,7 +8340,10 @@ impl Store {
 
     /// Spend at or after `since_unix_ms` summed per provider, as `(provider, cents)`
     /// sorted by provider name: the "in the last 30 days you spent" line on each key row.
-    pub fn sum_spend_cents_by_provider(&self, since_unix_ms: i64) -> rusqlite::Result<Vec<(String, i64)>> {
+    pub fn sum_spend_cents_by_provider(
+        &self,
+        since_unix_ms: i64,
+    ) -> rusqlite::Result<Vec<(String, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT provider, COALESCE(SUM(estimated_cost_cents), 0) FROM usage_log WHERE ts_unix_ms >= ?1 GROUP BY provider ORDER BY provider",
         )?;
@@ -8184,7 +8645,9 @@ impl Store {
             ),
         };
         if !valid {
-            return Err(rusqlite::Error::InvalidParameterName(format!("model_pref {model_pref:?}")));
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "model_pref {model_pref:?}"
+            )));
         }
         self.conn.execute(
             "UPDATE routine SET model_pref = ?1 WHERE id = ?2",
@@ -8250,8 +8713,14 @@ impl Store {
     /// Stamps a fresh `local_seq` and enqueues a finished, locally-created run for sync, in the
     /// caller's transaction. Pending, executing and rejected runs, runs pulled from another device,
     /// and a store with no device id enqueue nothing.
-    fn enqueue_routine_run_outbox(&self, tx: &rusqlite::Transaction<'_>, id: i64) -> rusqlite::Result<()> {
-        let Some(own) = self.own_device_id.borrow().clone() else { return Ok(()) };
+    fn enqueue_routine_run_outbox(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        id: i64,
+    ) -> rusqlite::Result<()> {
+        let Some(own) = self.own_device_id.borrow().clone() else {
+            return Ok(());
+        };
         let row = tx
             .query_row(
                 "SELECT rr.ran_at_unix_ms, rr.status, rr.output_summary, rr.output_json, r.template, rr.origin_device_id \
@@ -8260,14 +8729,26 @@ impl Store {
                 |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?, r.get::<_, Option<String>>(5)?)),
             )
             .optional()?;
-        let Some((ran_at, status, summary, json, template, origin)) = row else { return Ok(()) };
+        let Some((ran_at, status, summary, json, template, origin)) = row else {
+            return Ok(());
+        };
         let status = RunStatus::from_str(&status).unwrap_or(RunStatus::Failed);
         if origin.is_some() || !matches!(status, RunStatus::Success | RunStatus::Failed) {
             return Ok(());
         }
         let local_seq = Self::next_local_seq_tx(tx)?;
-        tx.execute("UPDATE routine_run SET local_seq = ?1 WHERE id = ?2", params![local_seq, id])?;
-        let payload = AppliedRoutineRun { source_run_id: id, template, ran_at_unix_ms: ran_at, status, output_summary: summary, output_json: json };
+        tx.execute(
+            "UPDATE routine_run SET local_seq = ?1 WHERE id = ?2",
+            params![local_seq, id],
+        )?;
+        let payload = AppliedRoutineRun {
+            source_run_id: id,
+            template,
+            ran_at_unix_ms: ran_at,
+            status,
+            output_summary: summary,
+            output_json: json,
+        };
         sync_outbox::enqueue_outbox_tx(
             tx,
             NewOutboxOperation {
@@ -8287,8 +8768,14 @@ impl Store {
 
     /// Enqueues a locally written brief for sync, in the caller's transaction. A store with no
     /// device id enqueues nothing.
-    pub(crate) fn enqueue_meeting_prep_outbox(&self, tx: &rusqlite::Transaction<'_>, row: &prep::MeetingPrepRow) -> rusqlite::Result<()> {
-        let Some(own) = self.own_device_id.borrow().clone() else { return Ok(()) };
+    pub(crate) fn enqueue_meeting_prep_outbox(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        row: &prep::MeetingPrepRow,
+    ) -> rusqlite::Result<()> {
+        let Some(own) = self.own_device_id.borrow().clone() else {
+            return Ok(());
+        };
         let local_seq = Self::next_local_seq_tx(tx)?;
         sync_outbox::enqueue_outbox_tx(
             tx,
@@ -8309,9 +8796,21 @@ impl Store {
 
     /// Enqueues an upsert of this device's live alert, in the caller's transaction. A store with
     /// no device id enqueues nothing.
-    pub(crate) fn enqueue_live_alert_outbox(&self, tx: &rusqlite::Transaction<'_>, id: i64, payload: &live_alert::AppliedLiveAlert) -> rusqlite::Result<()> {
-        let Some(own) = self.own_device_id.borrow().clone() else { return Ok(()) };
+    pub(crate) fn enqueue_live_alert_outbox(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        id: i64,
+        payload: &live_alert::AppliedLiveAlert,
+    ) -> rusqlite::Result<()> {
+        let Some(own) = self.own_device_id.borrow().clone() else {
+            return Ok(());
+        };
         let local_seq = Self::next_local_seq_tx(tx)?;
+        // This device's own alert: the meeting's epoch is this database's.
+        let mut json = serde_json::to_value(payload).map_err(json_to_sql_error)?;
+        if let Ok(epoch) = self.sync_entity_epoch() {
+            json["origin_epoch"] = serde_json::json!(epoch);
+        }
         sync_outbox::enqueue_outbox_tx(
             tx,
             NewOutboxOperation {
@@ -8321,7 +8820,7 @@ impl Store {
                 aggregate_type: "live_alert".to_string(),
                 aggregate_id: id.to_string(),
                 operation_kind: OutboxOperationKind::Upsert,
-                payload_json: serde_json::to_string(payload).map_err(json_to_sql_error)?,
+                payload_json: json.to_string(),
                 connector: OUTBOX_CONNECTOR.to_string(),
             },
             now_unix_ms(),
@@ -8331,16 +8830,49 @@ impl Store {
 
     /// Enqueues an upsert of a `person` row, in the caller's transaction. A store with no
     /// device id enqueues nothing.
-    pub(crate) fn enqueue_person_outbox(&self, tx: &rusqlite::Transaction<'_>, payload: &speaker_names::AppliedPerson) -> rusqlite::Result<()> {
-        self.enqueue_upsert_tx(tx, OUTBOX_ROW_TYPE_PERSON, payload.person_key.clone(), payload)
+    pub(crate) fn enqueue_person_outbox(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        payload: &speaker_names::AppliedPerson,
+    ) -> rusqlite::Result<()> {
+        self.enqueue_upsert_tx(
+            tx,
+            OUTBOX_ROW_TYPE_PERSON,
+            payload.person_key.clone(),
+            payload,
+        )
     }
 
     /// Enqueues an upsert of a `meeting_speaker` row, in the caller's transaction. A store
     /// with no device id enqueues nothing.
-    pub(crate) fn enqueue_meeting_speaker_outbox(&self, tx: &rusqlite::Transaction<'_>, payload: &speaker_names::AppliedMeetingSpeaker) -> rusqlite::Result<()> {
+    pub(crate) fn enqueue_meeting_speaker_outbox(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        payload: &speaker_names::AppliedMeetingSpeaker,
+    ) -> rusqlite::Result<()> {
         let origin = payload.origin_device_id.as_deref().unwrap_or("");
-        let id = format!("{origin}:{}:{}", payload.source_meeting_id, payload.speaker_id);
-        self.enqueue_upsert_tx(tx, OUTBOX_ROW_TYPE_MEETING_SPEAKER, id, payload)
+        let id = format!(
+            "{origin}:{}:{}",
+            payload.source_meeting_id, payload.speaker_id
+        );
+        // The meeting's recording database: this one for an own meeting, else what its map row learned.
+        let epoch = if origin.is_empty() || self.own_device_id().as_deref() == Some(origin) {
+            self.sync_entity_epoch().ok()
+        } else {
+            tx.query_row(
+                "SELECT origin_epoch FROM sync_meeting_map WHERE peer_device_id = ?1 AND source_meeting_id = ?2",
+                params![origin, payload.source_meeting_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten()
+            .filter(|e| !e.is_empty())
+        };
+        let mut json = serde_json::to_value(payload).map_err(json_to_sql_error)?;
+        if let Some(epoch) = epoch {
+            json["origin_epoch"] = serde_json::json!(epoch);
+        }
+        self.enqueue_upsert_tx(tx, OUTBOX_ROW_TYPE_MEETING_SPEAKER, id, &json)
     }
 
     fn enqueue_upsert_tx(
@@ -8350,7 +8882,9 @@ impl Store {
         aggregate_id: String,
         payload: &impl serde::Serialize,
     ) -> rusqlite::Result<()> {
-        let Some(own) = self.own_device_id.borrow().clone() else { return Ok(()) };
+        let Some(own) = self.own_device_id.borrow().clone() else {
+            return Ok(());
+        };
         let local_seq = Self::next_local_seq_tx(tx)?;
         sync_outbox::enqueue_outbox_tx(
             tx,
@@ -8371,8 +8905,15 @@ impl Store {
 
     /// Enqueues a locally added profile suggestion for sync, in the caller's transaction. A store
     /// with no device id enqueues nothing.
-    pub(crate) fn enqueue_profile_suggestion_outbox(&self, tx: &rusqlite::Transaction<'_>, id: i64, payload: &profile::AppliedProfileSuggestion) -> rusqlite::Result<()> {
-        let Some(own) = self.own_device_id.borrow().clone() else { return Ok(()) };
+    pub(crate) fn enqueue_profile_suggestion_outbox(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        id: i64,
+        payload: &profile::AppliedProfileSuggestion,
+    ) -> rusqlite::Result<()> {
+        let Some(own) = self.own_device_id.borrow().clone() else {
+            return Ok(());
+        };
         let local_seq = Self::next_local_seq_tx(tx)?;
         sync_outbox::enqueue_outbox_tx(
             tx,
@@ -8394,10 +8935,19 @@ impl Store {
     /// The Away Mode routine's id, creating it (disabled, no schedule) on first use. Not seeded:
     /// only the Mac records away follow-ups, so other platforms never see the row.
     pub fn ensure_away_routine(&self) -> rusqlite::Result<i64> {
-        if let Some(r) = self.list_routines()?.into_iter().find(|r| r.template == RoutineTemplate::AwayFollowUp) {
+        if let Some(r) = self
+            .list_routines()?
+            .into_iter()
+            .find(|r| r.template == RoutineTemplate::AwayFollowUp)
+        {
             return Ok(r.id);
         }
-        self.insert_routine(&NewRoutine { name: "Away Mode".to_string(), template: RoutineTemplate::AwayFollowUp, schedule_hhmm: "00:00".to_string(), enabled: false })
+        self.insert_routine(&NewRoutine {
+            name: "Away Mode".to_string(),
+            template: RoutineTemplate::AwayFollowUp,
+            schedule_hhmm: "00:00".to_string(),
+            enabled: false,
+        })
     }
 
     /// Seeds any missing built-in routine, per template (idempotent, self-healing; see the
@@ -8406,15 +8956,45 @@ impl Store {
     pub fn seed_builtin_routines(&self) -> rusqlite::Result<()> {
         let existing = self.list_routines()?;
         for seed in [
-            NewRoutine { name: "Daily Brief".to_string(), template: RoutineTemplate::DailyBrief, schedule_hhmm: "08:30".to_string(), enabled: true },
+            NewRoutine {
+                name: "Daily Brief".to_string(),
+                template: RoutineTemplate::DailyBrief,
+                schedule_hhmm: "08:30".to_string(),
+                enabled: true,
+            },
             // write-capable routines below are never silently on
-            NewRoutine { name: "Focus Time".to_string(), template: RoutineTemplate::FocusTime, schedule_hhmm: "09:00".to_string(), enabled: false },
-            NewRoutine { name: "EOD Recap".to_string(), template: RoutineTemplate::EodRecap, schedule_hhmm: "17:30".to_string(), enabled: false },
-            NewRoutine { name: "Weekly Digest".to_string(), template: RoutineTemplate::WeeklyDigest, schedule_hhmm: "17:30".to_string(), enabled: false },
+            NewRoutine {
+                name: "Focus Time".to_string(),
+                template: RoutineTemplate::FocusTime,
+                schedule_hhmm: "09:00".to_string(),
+                enabled: false,
+            },
+            NewRoutine {
+                name: "EOD Recap".to_string(),
+                template: RoutineTemplate::EodRecap,
+                schedule_hhmm: "17:30".to_string(),
+                enabled: false,
+            },
+            NewRoutine {
+                name: "Weekly Digest".to_string(),
+                template: RoutineTemplate::WeeklyDigest,
+                schedule_hhmm: "17:30".to_string(),
+                enabled: false,
+            },
             // sends email excerpts to a third party once scoring is on
-            NewRoutine { name: "Reply Priorities".to_string(), template: RoutineTemplate::ReplyPriorities, schedule_hhmm: "08:00".to_string(), enabled: false },
+            NewRoutine {
+                name: "Reply Priorities".to_string(),
+                template: RoutineTemplate::ReplyPriorities,
+                schedule_hhmm: "08:00".to_string(),
+                enabled: false,
+            },
             // event-driven; the time is unused and hidden in the UI
-            NewRoutine { name: "Meeting Prep".to_string(), template: RoutineTemplate::MeetingPrep, schedule_hhmm: "00:00".to_string(), enabled: false },
+            NewRoutine {
+                name: "Meeting Prep".to_string(),
+                template: RoutineTemplate::MeetingPrep,
+                schedule_hhmm: "00:00".to_string(),
+                enabled: false,
+            },
         ] {
             if !existing.iter().any(|r| r.template == seed.template) {
                 let _ = self.insert_routine(&seed);
@@ -8426,7 +9006,11 @@ impl Store {
     /// Applies a finished run pulled from another device. Returns the local run id, or None for a
     /// template this build does not know (forward compatibility). Seeds the built-in routines first
     /// so the run always has this device's own routine to attach to; never creates a placeholder.
-    pub fn apply_synced_routine_run(&self, origin_device_id: &str, run: &AppliedRoutineRun) -> rusqlite::Result<Option<i64>> {
+    pub fn apply_synced_routine_run(
+        &self,
+        origin_device_id: &str,
+        run: &AppliedRoutineRun,
+    ) -> rusqlite::Result<Option<i64>> {
         if !matches!(run.status, RunStatus::Success | RunStatus::Failed) {
             return Ok(None);
         }
@@ -8435,21 +9019,43 @@ impl Store {
         // re-run (and spend model calls) every tick; run text feeds chat and digest prompts, so it is
         // capped, and an oversized payload is dropped rather than stored.
         let run = &AppliedRoutineRun {
-            ran_at_unix_ms: run.ran_at_unix_ms.min(now_unix_ms() + SYNCED_RUN_MAX_FUTURE_MS),
-            output_summary: run.output_summary.chars().take(SYNCED_RUN_MAX_SUMMARY_CHARS).collect(),
-            output_json: if run.output_json.len() > SYNCED_RUN_MAX_JSON_BYTES { "{}".to_string() } else { run.output_json.clone() },
+            ran_at_unix_ms: run
+                .ran_at_unix_ms
+                .min(now_unix_ms() + SYNCED_RUN_MAX_FUTURE_MS),
+            output_summary: run
+                .output_summary
+                .chars()
+                .take(SYNCED_RUN_MAX_SUMMARY_CHARS)
+                .collect(),
+            output_json: if run.output_json.len() > SYNCED_RUN_MAX_JSON_BYTES {
+                "{}".to_string()
+            } else {
+                run.output_json.clone()
+            },
             ..run.clone()
         };
-        let Some(template) = RoutineTemplate::from_str(&run.template) else { return Ok(None) };
+        let Some(template) = RoutineTemplate::from_str(&run.template) else {
+            return Ok(None);
+        };
         self.seed_builtin_routines()?;
         let routine_id: Option<i64> = self
             .conn
-            .query_row("SELECT id FROM routine WHERE template = ?1 ORDER BY id LIMIT 1", params![template.as_str()], |r| r.get(0))
+            .query_row(
+                "SELECT id FROM routine WHERE template = ?1 ORDER BY id LIMIT 1",
+                params![template.as_str()],
+                |r| r.get(0),
+            )
             .optional()?;
-        let Some(routine_id) = routine_id else { return Ok(None) };
+        let Some(routine_id) = routine_id else {
+            return Ok(None);
+        };
         let existing: Option<i64> = self
             .conn
-            .query_row("SELECT id FROM routine_run WHERE origin_device_id = ?1 AND source_run_id = ?2", params![origin_device_id, run.source_run_id], |r| r.get(0))
+            .query_row(
+                "SELECT id FROM routine_run WHERE origin_device_id = ?1 AND source_run_id = ?2",
+                params![origin_device_id, run.source_run_id],
+                |r| r.get(0),
+            )
             .optional()?;
         if let Some(id) = existing {
             self.conn.execute(
@@ -8740,7 +9346,12 @@ impl Store {
     /// first. A score counts only while `scored_message_count` equals the thread's
     /// current `message_count`. `resolved`/`fyi` threads are excluded.
     pub fn threads_needing_attention(&self, limit: usize) -> rusqlite::Result<Vec<Thread>> {
-        Ok(self.rank_waiting_threads()?.into_iter().map(|(thread, _)| thread).take(limit).collect())
+        Ok(self
+            .rank_waiting_threads()?
+            .into_iter()
+            .map(|(thread, _)| thread)
+            .take(limit)
+            .collect())
     }
 
     /// Only the scored `waiting_on_me` threads with their priority, highest first.
@@ -8765,7 +9376,9 @@ impl Store {
             let thread = Self::row_to_thread(row)?;
             let scored_count: Option<i64> = row.get(11)?;
             let priority = match scored_count {
-                Some(count) if count == thread.message_count && thread.status == "waiting_on_me" => {
+                Some(count)
+                    if count == thread.message_count && thread.status == "waiting_on_me" =>
+                {
                     Some(
                         priority::PriorityJudgments {
                             asks_reply: row.get(12)?,
@@ -8788,7 +9401,10 @@ impl Store {
         scored.sort_by(|a, b| {
             b.1.unwrap_or_default()
                 .total_cmp(&a.1.unwrap_or_default())
-                .then_with(|| b.0.last_activity_ts_unix_ms.cmp(&a.0.last_activity_ts_unix_ms))
+                .then_with(|| {
+                    b.0.last_activity_ts_unix_ms
+                        .cmp(&a.0.last_activity_ts_unix_ms)
+                })
         });
         scored.extend(unscored); // already newest-first from the query
         Ok(scored)
@@ -8969,8 +9585,18 @@ mod tests {
             store.conn.execute("UPDATE kv_meta SET value = 'items:62508186' WHERE key = 'embedding_reindex_cursor'", []).unwrap();
         }
         let store = Store::open(&path, dir.path()).unwrap();
-        let get = |k: &str| -> String { store.conn.query_row("SELECT value FROM kv_meta WHERE key = ?1", [k], |r| r.get(0)).unwrap() };
-        assert_eq!(get("embedding_model_version"), "paraphrase-multilingual-minilm-l12-v2-v1");
+        let get = |k: &str| -> String {
+            store
+                .conn
+                .query_row("SELECT value FROM kv_meta WHERE key = ?1", [k], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            get("embedding_model_version"),
+            "paraphrase-multilingual-minilm-l12-v2-v1"
+        );
         assert_eq!(get("embedding_reindex_cursor"), "0");
     }
 
@@ -9734,7 +10360,12 @@ mod tests {
             .unwrap();
         stmt.query_map([], |r| {
             let payload: String = r.get(3)?;
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, serde_json::from_str(&payload).unwrap()))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                serde_json::from_str(&payload).unwrap(),
+            ))
         })
         .unwrap()
         .map(Result::unwrap)
@@ -9755,17 +10386,32 @@ mod tests {
             .update_meeting_transcript_and_notes(meeting_id, "/tmp/transcript.txt", Some("notes"))
             .unwrap();
         store
-            .update_meeting_summary(meeting_id, "Discussed roadmap.", &["Ship v1".to_string()], &[], &[], "anthropic", "claude-haiku-4-5")
+            .update_meeting_summary(
+                meeting_id,
+                "Discussed roadmap.",
+                &["Ship v1".to_string()],
+                &[],
+                &[],
+                "anthropic",
+                "claude-haiku-4-5",
+            )
             .unwrap();
 
         let rows = outbox_rows(&store);
         assert_eq!(rows.len(), 3, "one outbox row per stamp");
         let meeting_local_seq: i64 = store
             .conn
-            .query_row("SELECT local_seq FROM meeting WHERE id = ?1", params![meeting_id], |r| r.get(0))
+            .query_row(
+                "SELECT local_seq FROM meeting WHERE id = ?1",
+                params![meeting_id],
+                |r| r.get(0),
+            )
             .unwrap();
         let (local_seq, row_type, state, payload) = rows.last().unwrap();
-        assert_eq!(*local_seq, meeting_local_seq, "outbox row and legacy stamp share the sequence number");
+        assert_eq!(
+            *local_seq, meeting_local_seq,
+            "outbox row and legacy stamp share the sequence number"
+        );
         assert_eq!(row_type, "meeting");
         assert_eq!(state, "pending");
         assert_eq!(payload["source_meeting_id"], serde_json::json!(meeting_id));
@@ -9774,7 +10420,11 @@ mod tests {
         assert_eq!(payload["transcript_path"], "/tmp/transcript.txt");
         assert_eq!(payload["summary_tldr"], "Discussed roadmap.");
         assert_eq!(payload["summary_decisions"], serde_json::json!(["Ship v1"]));
-        assert_eq!(rows[0].3["transcript_path"], serde_json::Value::Null, "each row snapshots the meeting as of its own stamp");
+        assert_eq!(
+            rows[0].3["transcript_path"],
+            serde_json::Value::Null,
+            "each row snapshots the meeting as of its own stamp"
+        );
     }
 
     /// The outbox mirrors the legacy push scan's gates exactly: no own device id set,
@@ -9790,14 +10440,30 @@ mod tests {
 
         store.set_own_device_id("test-device");
         store.complete_meeting(foreign, 6000, None).unwrap();
-        store.update_meeting_summary(foreign, "t", &[], &[], &[], "ollama", "m").unwrap();
-        assert!(outbox_rows(&store).is_empty(), "another device's meeting is never ours to push");
+        store
+            .update_meeting_summary(foreign, "t", &[], &[], &[], "ollama", "m")
+            .unwrap();
+        assert!(
+            outbox_rows(&store).is_empty(),
+            "another device's meeting is never ours to push"
+        );
 
         let scheduled = recording_meeting(&store, "test-device");
-        store.update_meeting_status(scheduled, MeetingStatus::Recording).unwrap();
-        assert!(outbox_rows(&store).is_empty(), "a non-terminal status is not pushable yet");
-        store.update_meeting_status(scheduled, MeetingStatus::Cancelled).unwrap();
-        assert_eq!(outbox_rows(&store).len(), 1, "cancelled is the other terminal status");
+        store
+            .update_meeting_status(scheduled, MeetingStatus::Recording)
+            .unwrap();
+        assert!(
+            outbox_rows(&store).is_empty(),
+            "a non-terminal status is not pushable yet"
+        );
+        store
+            .update_meeting_status(scheduled, MeetingStatus::Cancelled)
+            .unwrap();
+        assert_eq!(
+            outbox_rows(&store).len(),
+            1,
+            "cancelled is the other terminal status"
+        );
     }
 
     #[test]
@@ -9813,7 +10479,10 @@ mod tests {
             id
         };
         let store = Store::open(&path, dir.path()).unwrap();
-        assert_eq!(store.meeting_spoken_language(id).unwrap(), Some("es".to_string()));
+        assert_eq!(
+            store.meeting_spoken_language(id).unwrap(),
+            Some("es".to_string())
+        );
         store.set_meeting_spoken_language(id, None).unwrap();
         assert_eq!(store.meeting_spoken_language(id).unwrap(), None);
         assert_eq!(store.meeting_spoken_language(id + 999).unwrap(), None);
@@ -9831,7 +10500,10 @@ mod tests {
         assert!(store.get_meeting(id).unwrap().unwrap().keep_media);
         let latest = outbox_rows(&store).pop().unwrap();
         assert_eq!(latest.3["keep_media"], serde_json::json!(true));
-        assert!(!store.set_keep_media(id + 999, true).unwrap(), "no such meeting");
+        assert!(
+            !store.set_keep_media(id + 999, true).unwrap(),
+            "no such meeting"
+        );
 
         for rows in [
             store.unpushed_rows("test-device", 0).unwrap(),
@@ -9844,14 +10516,22 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert_eq!(carried, vec![Some(true)], "legacy push scans carry the flag");
+            assert_eq!(
+                carried,
+                vec![Some(true)],
+                "legacy push scans carry the flag"
+            );
         }
 
         let foreign = recording_meeting(&store, "other-device");
         store.complete_meeting(foreign, 6000, None).unwrap();
         let before = outbox_rows(&store).len();
         assert!(store.set_keep_media(foreign, true).unwrap());
-        assert_eq!(outbox_rows(&store).len(), before, "another device's meeting is never ours to push");
+        assert_eq!(
+            outbox_rows(&store).len(),
+            before,
+            "another device's meeting is never ours to push"
+        );
     }
 
     fn keep_media_peer_meeting(keep_media: Option<bool>) -> AppliedMeeting {
@@ -9879,10 +10559,14 @@ mod tests {
     #[test]
     fn apply_synced_meeting_without_keep_media_keeps_the_local_value() {
         let store = Store::open_in_memory().unwrap();
-        let id = store.apply_synced_meeting("peer", 1, None, &keep_media_peer_meeting(None)).unwrap();
+        let id = store
+            .apply_synced_meeting("peer", 1, None, &keep_media_peer_meeting(None))
+            .unwrap();
         assert!(!store.get_meeting(id).unwrap().unwrap().keep_media);
         store.set_keep_media(id, true).unwrap();
-        store.apply_synced_meeting("peer", 2, Some(id), &keep_media_peer_meeting(None)).unwrap();
+        store
+            .apply_synced_meeting("peer", 2, Some(id), &keep_media_peer_meeting(None))
+            .unwrap();
         assert!(store.get_meeting(id).unwrap().unwrap().keep_media);
     }
 
@@ -9896,7 +10580,10 @@ mod tests {
         store
             .apply_synced_meeting("peer", 2, Some(id), &keep_media_peer_meeting(Some(false)))
             .unwrap();
-        assert!(!store.get_meeting(id).unwrap().unwrap().keep_media, "update");
+        assert!(
+            !store.get_meeting(id).unwrap().unwrap().keep_media,
+            "update"
+        );
         store
             .apply_synced_meeting("peer", 3, Some(id), &keep_media_peer_meeting(Some(true)))
             .unwrap();
@@ -9990,7 +10677,10 @@ mod tests {
         assert!(outbox_rows(&store).is_empty());
 
         store
-            .insert_transcript_segments(&[segment(meeting_id, 100, "first"), segment(meeting_id, 200, "second")])
+            .insert_transcript_segments(&[
+                segment(meeting_id, 100, "first"),
+                segment(meeting_id, 200, "second"),
+            ])
             .unwrap();
         let rows = outbox_rows(&store);
         assert_eq!(rows.len(), 2);
@@ -9999,9 +10689,16 @@ mod tests {
                 .conn
                 .prepare("SELECT local_seq FROM items WHERE thread_id = ?1 AND kind = 'transcript' ORDER BY local_seq")
                 .unwrap();
-            stmt.query_map(params![meeting_id], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+            stmt.query_map(params![meeting_id], |r| r.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
         };
-        assert_eq!(rows.iter().map(|r| r.0).collect::<Vec<_>>(), item_seqs, "outbox rows key on the items mirror's local_seq");
+        assert_eq!(
+            rows.iter().map(|r| r.0).collect::<Vec<_>>(),
+            item_seqs,
+            "outbox rows key on the items mirror's local_seq"
+        );
         for (_, row_type, _, payload) in &rows {
             assert_eq!(row_type, "items");
             assert_eq!(payload["kind"], "transcript");
@@ -10469,9 +11166,22 @@ mod tests {
             .unwrap();
         let segments = store.search_transcript_keyword("hello", 10).unwrap();
         assert_eq!(segments.len(), 1);
-        let found = store.get_transcript_segment(segments[0].id).unwrap().unwrap();
-        assert_eq!((found.meeting_id, found.meeting_title.as_str(), found.text.as_str()), (meeting_id, "Standup", "hello"));
-        assert!(store.get_transcript_segment(segments[0].id + 1_000).unwrap().is_none());
+        let found = store
+            .get_transcript_segment(segments[0].id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                found.meeting_id,
+                found.meeting_title.as_str(),
+                found.text.as_str()
+            ),
+            (meeting_id, "Standup", "hello")
+        );
+        assert!(store
+            .get_transcript_segment(segments[0].id + 1_000)
+            .unwrap()
+            .is_none());
         // Both segments must have DIFFERENT local_seq values — verified indirectly via
         // the shared counter continuing to advance (checked by inserting a third row
         // and confirming it's 2 higher than the meeting's own local_seq).
@@ -10580,7 +11290,12 @@ mod tests {
     #[test]
     fn capture_activity_by_device_counts_each_device_in_range() {
         let store = Store::open_in_memory().unwrap();
-        for (device, text, hash, ts) in [("MAC", "a", 1, 1000), ("MAC", "b", 2, 2500), ("PC", "c", 3, 2000), ("PC", "late", 4, 9000)] {
+        for (device, text, hash, ts) in [
+            ("MAC", "a", 1, 1000),
+            ("MAC", "b", 2, 2500),
+            ("PC", "c", 3, 2000),
+            ("PC", "late", 4, 9000),
+        ] {
             let mut capture = item("com.example.App", text, hash, ts);
             capture.device_id = device.into();
             store.insert_capture_item(&capture).unwrap();
@@ -10588,11 +11303,22 @@ mod tests {
         assert_eq!(
             store.capture_activity_by_device(0, 3000).unwrap(),
             vec![
-                DeviceActivity { device_id: "MAC".into(), captures: 2, last_ts_unix_ms: 2500 },
-                DeviceActivity { device_id: "PC".into(), captures: 1, last_ts_unix_ms: 2000 },
+                DeviceActivity {
+                    device_id: "MAC".into(),
+                    captures: 2,
+                    last_ts_unix_ms: 2500
+                },
+                DeviceActivity {
+                    device_id: "PC".into(),
+                    captures: 1,
+                    last_ts_unix_ms: 2000
+                },
             ]
         );
-        assert!(store.capture_activity_by_device(10_000, 20_000).unwrap().is_empty());
+        assert!(store
+            .capture_activity_by_device(10_000, 20_000)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -10646,9 +11372,16 @@ mod tests {
             hash: 42,
             source: "ax".into(),
         };
-        let record = vec![chunk("first chunk text"), chunk("second chunk text"), chunk("third chunk text")];
+        let record = vec![
+            chunk("first chunk text"),
+            chunk("second chunk text"),
+            chunk("third chunk text"),
+        ];
 
-        let ids = store.insert_capture_record(&record).unwrap().expect("a new record is stored");
+        let ids = store
+            .insert_capture_record(&record)
+            .unwrap()
+            .expect("a new record is stored");
         assert_eq!(ids.len(), 3, "every chunk is stored, not just the first");
         assert_eq!(store.recent(10).unwrap().len(), 3);
 
@@ -10660,7 +11393,12 @@ mod tests {
         assert_eq!(store.recent(10).unwrap().len(), 3);
 
         // insert_capture_item keeps its per-item semantics.
-        assert_eq!(store.insert_capture_item(&chunk("same hash as the last row")).unwrap(), None);
+        assert_eq!(
+            store
+                .insert_capture_item(&chunk("same hash as the last row"))
+                .unwrap(),
+            None
+        );
         assert_eq!(store.insert_capture_record(&[]).unwrap(), Some(Vec::new()));
     }
 
@@ -11111,7 +11849,10 @@ mod tests {
         assert_eq!(convo.exchanges.len(), 2);
         assert_eq!(convo.exchanges[0].query, "q1");
         assert_eq!(convo.exchanges[0].model, None);
-        assert_eq!(convo.exchanges[1].model.as_deref(), Some("gemini-2.5-flash"));
+        assert_eq!(
+            convo.exchanges[1].model.as_deref(),
+            Some("gemini-2.5-flash")
+        );
         assert_eq!(
             convo.exchanges[1].citations_json,
             "[{\"kind\":\"capture\",\"id\":5}]"
@@ -11244,18 +11985,39 @@ mod tests {
             trace_id: trace.into(),
             ts_unix_ms: 1_000,
         };
-        store.log_usage_with_parent(&entry("a", 3), "run-1").unwrap();
-        store.log_usage_with_parent(&entry("b", 4), "run-1").unwrap();
+        store
+            .log_usage_with_parent(&entry("a", 3), "run-1")
+            .unwrap();
+        store
+            .log_usage_with_parent(&entry("b", 4), "run-1")
+            .unwrap();
         store.log_usage(&entry("c", 5)).unwrap();
 
         let rolled = store.sum_usage_by_parent("run-1").unwrap();
-        assert_eq!(rolled, UsageByParent { calls: 2, estimated_cost_cents: 7, input_tokens: 200, output_tokens: 40 });
-        assert_eq!(store.sum_usage_by_parent("nothing").unwrap(), UsageByParent::default());
+        assert_eq!(
+            rolled,
+            UsageByParent {
+                calls: 2,
+                estimated_cost_cents: 7,
+                input_tokens: 200,
+                output_tokens: 40
+            }
+        );
+        assert_eq!(
+            store.sum_usage_by_parent("nothing").unwrap(),
+            UsageByParent::default()
+        );
 
         let rows = store.list_usage(0, 2_000, 10).unwrap();
         let parents: Vec<Option<String>> = rows.iter().map(|r| r.parent_trace_id.clone()).collect();
         assert!(parents.contains(&None));
-        assert_eq!(parents.iter().filter(|p| p.as_deref() == Some("run-1")).count(), 2);
+        assert_eq!(
+            parents
+                .iter()
+                .filter(|p| p.as_deref() == Some("run-1"))
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -11447,20 +12209,35 @@ mod tests {
     fn away_outcome_round_trips() {
         let store = Store::open_in_memory().unwrap();
         let id = store
-            .insert_meeting(&new_meeting("Standup", 1000, MeetingTrigger::Away, MeetingStatus::Recording))
+            .insert_meeting(&new_meeting(
+                "Standup",
+                1000,
+                MeetingTrigger::Away,
+                MeetingStatus::Recording,
+            ))
             .unwrap();
         let m = store.get_meeting(id).unwrap().unwrap();
         assert_eq!((m.trigger, m.away_outcome), (MeetingTrigger::Away, None));
 
-        store.set_meeting_away_outcome(id, AwayOutcome::WaitingRoom, 5000).unwrap();
+        store
+            .set_meeting_away_outcome(id, AwayOutcome::WaitingRoom, 5000)
+            .unwrap();
         let m = store.get_meeting(id).unwrap().unwrap();
         assert_eq!(m.away_outcome, Some(AwayOutcome::WaitingRoom));
         assert_eq!(m.away_outcome_at_unix_ms, None);
 
-        store.set_meeting_away_outcome(id, AwayOutcome::Removed, 6000).unwrap();
+        store
+            .set_meeting_away_outcome(id, AwayOutcome::Removed, 6000)
+            .unwrap();
         let m = store.get_meeting(id).unwrap().unwrap();
-        assert_eq!((m.away_outcome, m.away_outcome_at_unix_ms), (Some(AwayOutcome::Removed), Some(6000)));
-        assert_eq!(serde_json::to_value(AwayOutcome::PasscodeRequired).unwrap(), "passcode_required");
+        assert_eq!(
+            (m.away_outcome, m.away_outcome_at_unix_ms),
+            (Some(AwayOutcome::Removed), Some(6000))
+        );
+        assert_eq!(
+            serde_json::to_value(AwayOutcome::PasscodeRequired).unwrap(),
+            "passcode_required"
+        );
     }
 
     #[test]
@@ -11470,7 +12247,12 @@ mod tests {
         let id = {
             let store = Store::open(&path, std::path::Path::new("")).unwrap();
             let id = store
-                .insert_meeting(&new_meeting("Old", 1000, MeetingTrigger::Manual, MeetingStatus::Completed))
+                .insert_meeting(&new_meeting(
+                    "Old",
+                    1000,
+                    MeetingTrigger::Manual,
+                    MeetingStatus::Completed,
+                ))
                 .unwrap();
             store.conn.execute_batch(
                 "ALTER TABLE meeting DROP COLUMN away_outcome; ALTER TABLE meeting DROP COLUMN away_outcome_at_unix_ms;",
@@ -11480,21 +12262,37 @@ mod tests {
         let store = Store::open(&path, std::path::Path::new("")).unwrap();
         let m = store.get_meeting(id).unwrap().unwrap();
         assert_eq!((m.away_outcome, m.away_outcome_at_unix_ms), (None, None));
-        store.set_meeting_away_outcome(id, AwayOutcome::AppFailed, 1).unwrap();
-        assert_eq!(store.get_meeting(id).unwrap().unwrap().away_outcome, Some(AwayOutcome::AppFailed));
+        store
+            .set_meeting_away_outcome(id, AwayOutcome::AppFailed, 1)
+            .unwrap();
+        assert_eq!(
+            store.get_meeting(id).unwrap().unwrap().away_outcome,
+            Some(AwayOutcome::AppFailed)
+        );
     }
 
     #[test]
     fn away_sync_payload_excludes_away_columns() {
         let store = Store::open_in_memory().unwrap();
         let id = store
-            .insert_meeting(&new_meeting("Away", 1000, MeetingTrigger::Away, MeetingStatus::Recording))
+            .insert_meeting(&new_meeting(
+                "Away",
+                1000,
+                MeetingTrigger::Away,
+                MeetingStatus::Recording,
+            ))
             .unwrap();
-        store.update_meeting_status(id, MeetingStatus::Completed).unwrap();
-        store.set_meeting_away_outcome(id, AwayOutcome::Removed, 2000).unwrap();
+        store
+            .update_meeting_status(id, MeetingStatus::Completed)
+            .unwrap();
+        store
+            .set_meeting_away_outcome(id, AwayOutcome::Removed, 2000)
+            .unwrap();
         let rows = store.unpushed_meeting_rows("test-device", 0).unwrap();
         assert_eq!(rows.len(), 1);
-        let SyncableRow::Meeting { meeting, .. } = &rows[0] else { panic!("not a meeting row") };
+        let SyncableRow::Meeting { meeting, .. } = &rows[0] else {
+            panic!("not a meeting row")
+        };
         let json = serde_json::to_string(meeting).unwrap();
         assert!(!json.contains("away_outcome"), "{json}");
     }
@@ -11551,12 +12349,21 @@ mod tests {
     #[test]
     fn delete_meeting_removes_its_note_draft_and_action_items() {
         let store = Store::open_in_memory().unwrap();
-        let new = |title| new_meeting(title, 1000, MeetingTrigger::Manual, MeetingStatus::Completed);
+        let new = |title| {
+            new_meeting(
+                title,
+                1000,
+                MeetingTrigger::Manual,
+                MeetingStatus::Completed,
+            )
+        };
         let id = store.insert_meeting(&new("Forget me")).unwrap();
         let kept = store.insert_meeting(&new("Keep me")).unwrap();
         for m in [id, kept] {
             store.save_meeting_personal_notes(m, "notes", 2000).unwrap();
-            store.insert_meeting_action_item(m, "follow up", 0, 2000).unwrap();
+            store
+                .insert_meeting_action_item(m, "follow up", 0, 2000)
+                .unwrap();
         }
 
         assert!(store.delete_meeting(id).unwrap());
@@ -11571,17 +12378,34 @@ mod tests {
     fn delete_meetings_before_removes_note_drafts_and_action_items_of_deleted_meetings_only() {
         let store = Store::open_in_memory().unwrap();
         let old = store
-            .insert_meeting(&new_meeting("Old", 1000, MeetingTrigger::Manual, MeetingStatus::Completed))
+            .insert_meeting(&new_meeting(
+                "Old",
+                1000,
+                MeetingTrigger::Manual,
+                MeetingStatus::Completed,
+            ))
             .unwrap();
         let recording = store
-            .insert_meeting(&new_meeting("Live", 1000, MeetingTrigger::Manual, MeetingStatus::Recording))
+            .insert_meeting(&new_meeting(
+                "Live",
+                1000,
+                MeetingTrigger::Manual,
+                MeetingStatus::Recording,
+            ))
             .unwrap();
         let new = store
-            .insert_meeting(&new_meeting("New", 9000, MeetingTrigger::Manual, MeetingStatus::Completed))
+            .insert_meeting(&new_meeting(
+                "New",
+                9000,
+                MeetingTrigger::Manual,
+                MeetingStatus::Completed,
+            ))
             .unwrap();
         for m in [old, recording, new] {
             store.save_meeting_personal_notes(m, "notes", 2000).unwrap();
-            store.insert_meeting_action_item(m, "follow up", 0, 2000).unwrap();
+            store
+                .insert_meeting_action_item(m, "follow up", 0, 2000)
+                .unwrap();
         }
 
         let (deleted, _) = store.delete_meetings_before(5000).unwrap();
@@ -12191,29 +13015,47 @@ mod tests {
     #[test]
     fn sync_pending_dependency_round_trips_and_is_idempotent() {
         let store = Store::open_in_memory().unwrap();
-        assert!(store.list_sync_pending_dependencies("device-a").unwrap().is_empty());
+        assert!(store
+            .list_sync_pending_dependencies("device-a")
+            .unwrap()
+            .is_empty());
 
-        store.record_sync_pending_dependency("device-a", 5, "transcript_segment").unwrap();
+        store
+            .record_sync_pending_dependency("device-a", 5, "transcript_segment")
+            .unwrap();
         // Recording the same entry twice must not duplicate it.
-        store.record_sync_pending_dependency("device-a", 5, "transcript_segment").unwrap();
-        store.record_sync_pending_dependency("device-a", 9, "items").unwrap();
+        store
+            .record_sync_pending_dependency("device-a", 5, "transcript_segment")
+            .unwrap();
+        store
+            .record_sync_pending_dependency("device-a", 9, "items")
+            .unwrap();
         // A different peer's pending set is independent.
-        store.record_sync_pending_dependency("device-b", 1, "items").unwrap();
+        store
+            .record_sync_pending_dependency("device-b", 1, "items")
+            .unwrap();
 
         let mut pending = store.list_sync_pending_dependencies("device-a").unwrap();
         pending.sort();
         assert_eq!(
             pending,
-            vec![(5, "transcript_segment".to_string()), (9, "items".to_string())]
+            vec![
+                (5, "transcript_segment".to_string()),
+                (9, "items".to_string())
+            ]
         );
 
-        store.delete_sync_pending_dependency("device-a", 5, "transcript_segment").unwrap();
+        store
+            .delete_sync_pending_dependency("device-a", 5, "transcript_segment")
+            .unwrap();
         assert_eq!(
             store.list_sync_pending_dependencies("device-a").unwrap(),
             vec![(9, "items".to_string())]
         );
         // Deleting an entry that isn't present is a harmless no-op.
-        store.delete_sync_pending_dependency("device-a", 5, "transcript_segment").unwrap();
+        store
+            .delete_sync_pending_dependency("device-a", 5, "transcript_segment")
+            .unwrap();
 
         assert_eq!(
             store.list_sync_pending_dependencies("device-b").unwrap(),
@@ -12638,12 +13480,23 @@ mod tests {
         let epoch = store.sync_entity_epoch().unwrap();
         assert_eq!(epoch.len(), 32);
         assert!(epoch.chars().all(|c| c.is_ascii_hexdigit()));
-        assert_eq!(store.sync_entity_epoch().unwrap(), epoch, "never regenerated");
+        assert_eq!(
+            store.sync_entity_epoch().unwrap(),
+            epoch,
+            "never regenerated"
+        );
         drop(store);
 
         let reopened = Store::open(&path, &models_dir_for_tests()).unwrap();
         assert_eq!(reopened.sync_entity_epoch().unwrap(), epoch);
-        assert_ne!(Store::open_in_memory().unwrap().sync_entity_epoch().unwrap(), epoch, "a new database, a new epoch");
+        assert_ne!(
+            Store::open_in_memory()
+                .unwrap()
+                .sync_entity_epoch()
+                .unwrap(),
+            epoch,
+            "a new database, a new epoch"
+        );
     }
 
     /// A busy database refuses writes; reading an existing epoch must not need one, or
@@ -12659,18 +13512,37 @@ mod tests {
     #[test]
     fn reset_push_cursor_reuploads_all_local_rows() {
         let store = Store::open_in_memory().unwrap();
-        store.insert_capture_item(&item("com.a", "first", 1, 1000)).unwrap();
-        let last_id = store.insert_capture_item(&item("com.a", "second", 2, 2000)).unwrap().unwrap();
-        store.set_sync_push_cursor(capture_item_local_seq(&store, last_id).unwrap()).unwrap();
-        assert!(store.unpushed_rows("test-device", store.get_sync_push_cursor().unwrap()).unwrap().is_empty());
+        store
+            .insert_capture_item(&item("com.a", "first", 1, 1000))
+            .unwrap();
+        let last_id = store
+            .insert_capture_item(&item("com.a", "second", 2, 2000))
+            .unwrap()
+            .unwrap();
+        store
+            .set_sync_push_cursor(capture_item_local_seq(&store, last_id).unwrap())
+            .unwrap();
+        assert!(store
+            .unpushed_rows("test-device", store.get_sync_push_cursor().unwrap())
+            .unwrap()
+            .is_empty());
         store.record_skin_peer("old-mac").unwrap();
         assert!(store.take_skin_repush_request().unwrap());
 
         store.reset_sync_push_cursor().unwrap();
 
         assert_eq!(store.get_sync_push_cursor().unwrap(), 0);
-        assert_eq!(store.unpushed_rows("test-device", store.get_sync_push_cursor().unwrap()).unwrap().len(), 2);
-        assert!(store.take_skin_repush_request().unwrap(), "skins go up again too");
+        assert_eq!(
+            store
+                .unpushed_rows("test-device", store.get_sync_push_cursor().unwrap())
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(
+            store.take_skin_repush_request().unwrap(),
+            "skins go up again too"
+        );
     }
 
     #[test]
@@ -13450,27 +14322,49 @@ mod tests {
             title: title.into(),
             actors: Vec::new(),
         };
-        store.upsert_calendar_event_items(&[make("Standup")]).unwrap();
+        store
+            .upsert_calendar_event_items(&[make("Standup")])
+            .unwrap();
         while store.reindex_batch(100).unwrap() > 0 {}
         let item_id: i64 = store
             .conn
-            .query_row("SELECT id FROM items WHERE external_id = 'evt-1'", [], |r| r.get(0))
+            .query_row(
+                "SELECT id FROM items WHERE external_id = 'evt-1'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let cursor = |store: &Store| -> String {
             store
                 .conn
-                .query_row("SELECT value FROM kv_meta WHERE key = 'embedding_reindex_cursor'", [], |r| r.get(0))
+                .query_row(
+                    "SELECT value FROM kv_meta WHERE key = 'embedding_reindex_cursor'",
+                    [],
+                    |r| r.get(0),
+                )
                 .unwrap()
         };
-        assert_eq!(cursor(&store), format!("items:{item_id}"), "caught up past the row");
+        assert_eq!(
+            cursor(&store),
+            format!("items:{item_id}"),
+            "caught up past the row"
+        );
 
         store.upsert_calendar_event_items(&[make("Retro")]).unwrap();
-        assert_eq!(cursor(&store), format!("items:{}", item_id - 1), "the edit rewinds the cursor");
+        assert_eq!(
+            cursor(&store),
+            format!("items:{}", item_id - 1),
+            "the edit rewinds the cursor"
+        );
 
         assert_eq!(store.reindex_batch(100).unwrap(), 1);
         let vec_count: i64 = store
             .conn
-            .query_row("SELECT COUNT(*) FROM items_vec WHERE rowid = ?1", params![item_id], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM items_vec WHERE rowid = ?1",
+                params![item_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(vec_count, 1, "the edited row is embedded again");
     }
@@ -14240,13 +15134,23 @@ mod tests {
     }
 
     fn run(routine_id: i64, status: RunStatus, ran_at: i64) -> NewRoutineRun {
-        NewRoutineRun { routine_id, ran_at_unix_ms: ran_at, status, output_summary: "brief".into(), output_json: "{}".into() }
+        NewRoutineRun {
+            routine_id,
+            ran_at_unix_ms: ran_at,
+            status,
+            output_summary: "brief".into(),
+            output_json: "{}".into(),
+        }
     }
 
     fn outbox_count(store: &Store) -> i64 {
         store
             .conn
-            .query_row("SELECT COUNT(*) FROM sync_outbox WHERE row_type = ?1", params![OUTBOX_ROW_TYPE_ROUTINE_RUN], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM sync_outbox WHERE row_type = ?1",
+                params![OUTBOX_ROW_TYPE_ROUTINE_RUN],
+                |r| r.get(0),
+            )
             .unwrap()
     }
 
@@ -14257,7 +15161,11 @@ mod tests {
         s.seed_builtin_routines().unwrap();
         let routines = s.list_routines().unwrap();
         assert_eq!(routines.len(), 6);
-        let enabled: Vec<_> = routines.iter().filter(|r| r.enabled).map(|r| r.template.clone()).collect();
+        let enabled: Vec<_> = routines
+            .iter()
+            .filter(|r| r.enabled)
+            .map(|r| r.template.clone())
+            .collect();
         assert_eq!(enabled, vec![RoutineTemplate::DailyBrief]);
     }
 
@@ -14266,19 +15174,43 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         s.set_own_device_id("dev-a");
         s.seed_builtin_routines().unwrap();
-        let brief = s.list_routines().unwrap().into_iter().find(|r| r.template == RoutineTemplate::DailyBrief).unwrap();
-        s.insert_routine_run(&run(brief.id, RunStatus::Success, 1_000)).unwrap();
+        let brief = s
+            .list_routines()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.template == RoutineTemplate::DailyBrief)
+            .unwrap();
+        s.insert_routine_run(&run(brief.id, RunStatus::Success, 1_000))
+            .unwrap();
         assert_eq!(outbox_count(&s), 1);
 
-        let focus = s.list_routines().unwrap().into_iter().find(|r| r.template == RoutineTemplate::FocusTime).unwrap();
+        let focus = s
+            .list_routines()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.template == RoutineTemplate::FocusTime)
+            .unwrap();
         let pending = s
-            .insert_pending_routine_run(&NewPendingRoutineRun { routine_id: focus.id, ran_at_unix_ms: 2_000, output_summary: "draft".into(), pending_action_json: "{}".into() })
+            .insert_pending_routine_run(&NewPendingRoutineRun {
+                routine_id: focus.id,
+                ran_at_unix_ms: 2_000,
+                output_summary: "draft".into(),
+                pending_action_json: "{}".into(),
+            })
             .unwrap();
         assert_eq!(outbox_count(&s), 1, "a pending approval never syncs");
-        s.finalize_routine_run(pending, RunStatus::Success, "done".into(), "{}".into()).unwrap();
+        s.finalize_routine_run(pending, RunStatus::Success, "done".into(), "{}".into())
+            .unwrap();
         assert_eq!(outbox_count(&s), 2, "finishing it does");
 
-        let other = s.insert_pending_routine_run(&NewPendingRoutineRun { routine_id: focus.id, ran_at_unix_ms: 3_000, output_summary: "d".into(), pending_action_json: "{}".into() }).unwrap();
+        let other = s
+            .insert_pending_routine_run(&NewPendingRoutineRun {
+                routine_id: focus.id,
+                ran_at_unix_ms: 3_000,
+                output_summary: "d".into(),
+                pending_action_json: "{}".into(),
+            })
+            .unwrap();
         assert!(s.reject_routine_run(other).unwrap());
         assert_eq!(outbox_count(&s), 2, "a rejected draft never syncs");
     }
@@ -14288,26 +15220,50 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         s.seed_builtin_routines().unwrap();
         let brief = s.list_routines().unwrap().remove(0);
-        s.insert_routine_run(&run(brief.id, RunStatus::Success, 1_000)).unwrap();
+        s.insert_routine_run(&run(brief.id, RunStatus::Success, 1_000))
+            .unwrap();
         assert_eq!(outbox_count(&s), 0);
     }
 
     fn applied(source: i64, template: &str, status: RunStatus, summary: &str) -> AppliedRoutineRun {
-        AppliedRoutineRun { source_run_id: source, template: template.into(), ran_at_unix_ms: 5_000, status, output_summary: summary.into(), output_json: "{}".into() }
+        AppliedRoutineRun {
+            source_run_id: source,
+            template: template.into(),
+            ran_at_unix_ms: 5_000,
+            status,
+            output_summary: summary.into(),
+            output_json: "{}".into(),
+        }
     }
 
     #[test]
     fn a_pulled_run_lands_once_under_this_devices_routine_and_an_update_replaces_it() {
         let s = Store::open_in_memory().unwrap();
         // No routines exist yet: apply must seed them first rather than drop the run.
-        let id = s.apply_synced_routine_run("dev-b", &applied(7, "daily_brief", RunStatus::Success, "first")).unwrap().unwrap();
-        let again = s.apply_synced_routine_run("dev-b", &applied(7, "daily_brief", RunStatus::Success, "second")).unwrap().unwrap();
+        let id = s
+            .apply_synced_routine_run(
+                "dev-b",
+                &applied(7, "daily_brief", RunStatus::Success, "first"),
+            )
+            .unwrap()
+            .unwrap();
+        let again = s
+            .apply_synced_routine_run(
+                "dev-b",
+                &applied(7, "daily_brief", RunStatus::Success, "second"),
+            )
+            .unwrap()
+            .unwrap();
         assert_eq!(id, again);
         let runs = s.recent_routine_runs_across_all(10).unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].output_summary, "second");
         assert_eq!(runs[0].origin_device_id.as_deref(), Some("dev-b"));
-        assert_eq!(s.list_routines().unwrap().len(), 6, "seeding was not blocked by the apply");
+        assert_eq!(
+            s.list_routines().unwrap().len(),
+            6,
+            "seeding was not blocked by the apply"
+        );
         assert_eq!(outbox_count(&s), 0, "an applied run is never pushed back");
     }
 
@@ -14319,18 +15275,36 @@ mod tests {
         far.output_json = "y".repeat(1_000_000);
         s.apply_synced_routine_run("dev-b", &far).unwrap();
         let stored = s.recent_routine_runs_across_all(10).unwrap().remove(0);
-        assert!(stored.ran_at_unix_ms <= now_unix_ms() + 5 * 60 * 1000, "a future timestamp is pulled back to now");
-        assert!(stored.output_summary.chars().count() <= 20_000, "the summary is capped");
-        assert_eq!(stored.output_json, "{}", "an oversized payload is dropped, not stored");
+        assert!(
+            stored.ran_at_unix_ms <= now_unix_ms() + 5 * 60 * 1000,
+            "a future timestamp is pulled back to now"
+        );
+        assert!(
+            stored.output_summary.chars().count() <= 20_000,
+            "the summary is capped"
+        );
+        assert_eq!(
+            stored.output_json, "{}",
+            "an oversized payload is dropped, not stored"
+        );
     }
 
     #[test]
     fn two_devices_may_use_the_same_run_number_and_an_unknown_template_is_ignored() {
         let s = Store::open_in_memory().unwrap();
-        s.apply_synced_routine_run("dev-b", &applied(1, "daily_brief", RunStatus::Success, "b")).unwrap();
-        s.apply_synced_routine_run("dev-c", &applied(1, "daily_brief", RunStatus::Success, "c")).unwrap();
+        s.apply_synced_routine_run("dev-b", &applied(1, "daily_brief", RunStatus::Success, "b"))
+            .unwrap();
+        s.apply_synced_routine_run("dev-c", &applied(1, "daily_brief", RunStatus::Success, "c"))
+            .unwrap();
         assert_eq!(s.recent_routine_runs_across_all(10).unwrap().len(), 2);
-        assert_eq!(s.apply_synced_routine_run("dev-b", &applied(2, "from_the_future", RunStatus::Success, "x")).unwrap(), None);
+        assert_eq!(
+            s.apply_synced_routine_run(
+                "dev-b",
+                &applied(2, "from_the_future", RunStatus::Success, "x")
+            )
+            .unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -14338,12 +15312,20 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         s.seed_builtin_routines().unwrap();
         let brief = s.list_routines().unwrap().remove(0);
-        s.insert_routine_run(&run(brief.id, RunStatus::Failed, 1_000)).unwrap();
-        s.apply_synced_routine_run("dev-b", &applied(3, "daily_brief", RunStatus::PendingApproval, "hostile")).unwrap();
+        s.insert_routine_run(&run(brief.id, RunStatus::Failed, 1_000))
+            .unwrap();
+        s.apply_synced_routine_run(
+            "dev-b",
+            &applied(3, "daily_brief", RunStatus::PendingApproval, "hostile"),
+        )
+        .unwrap();
         let runs = s.recent_routine_runs_across_all(10).unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].origin_device_id, None);
-        assert!(s.pending_routine_runs().unwrap().is_empty(), "a pulled non-terminal status is stored as nothing pending");
+        assert!(
+            s.pending_routine_runs().unwrap().is_empty(),
+            "a pulled non-terminal status is stored as nothing pending"
+        );
     }
 
     #[test]
@@ -14833,18 +15815,40 @@ mod tests {
     fn routine_model_pref_defaults_round_trips_and_rejects_bad_values() {
         let store = Store::open_in_memory().unwrap();
         let id = store
-            .insert_routine(&NewRoutine { name: "Daily Brief".into(), template: RoutineTemplate::DailyBrief, schedule_hhmm: "08:30".into(), enabled: true })
+            .insert_routine(&NewRoutine {
+                name: "Daily Brief".into(),
+                template: RoutineTemplate::DailyBrief,
+                schedule_hhmm: "08:30".into(),
+                enabled: true,
+            })
             .unwrap();
-        let pref = |store: &Store| store.list_routines().unwrap().into_iter().find(|r| r.id == id).unwrap().model_pref;
+        let pref = |store: &Store| {
+            store
+                .list_routines()
+                .unwrap()
+                .into_iter()
+                .find(|r| r.id == id)
+                .unwrap()
+                .model_pref
+        };
         assert_eq!(pref(&store), "default");
 
-        for good in ["cheapest", "anthropic/claude-sonnet-5", "ollama/gemma4:12b", " default "] {
+        for good in [
+            "cheapest",
+            "anthropic/claude-sonnet-5",
+            "ollama/gemma4:12b",
+            " default ",
+        ] {
             store.set_routine_model_pref(id, good).unwrap();
             assert_eq!(pref(&store), good.trim());
         }
         for bad in ["", "cheap", "anthropic", "anthropic/", "venice/llama"] {
             assert!(store.set_routine_model_pref(id, bad).is_err(), "{bad:?}");
-            assert_eq!(pref(&store), "default", "a refused value leaves the row alone");
+            assert_eq!(
+                pref(&store),
+                "default",
+                "a refused value leaves the row alone"
+            );
         }
     }
 
@@ -14867,21 +15871,35 @@ mod tests {
         .unwrap();
         Store::ensure_routine_model_pref_column(&conn).unwrap();
         Store::ensure_routine_model_pref_column(&conn).unwrap();
-        let pref: String = conn.query_row("SELECT model_pref FROM routine", [], |r| r.get(0)).unwrap();
+        let pref: String = conn
+            .query_row("SELECT model_pref FROM routine", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(pref, "default");
     }
 
     #[test]
     fn reply_priorities_template_round_trips_its_string_form() {
-        assert_eq!(RoutineTemplate::ReplyPriorities.as_str(), "reply_priorities");
-        assert_eq!(RoutineTemplate::from_str("reply_priorities"), Some(RoutineTemplate::ReplyPriorities));
+        assert_eq!(
+            RoutineTemplate::ReplyPriorities.as_str(),
+            "reply_priorities"
+        );
+        assert_eq!(
+            RoutineTemplate::from_str("reply_priorities"),
+            Some(RoutineTemplate::ReplyPriorities)
+        );
     }
 
     #[test]
     fn meeting_prep_template_round_trips_its_string_form() {
         assert_eq!(RoutineTemplate::MeetingPrep.as_str(), "meeting_prep");
-        assert_eq!(RoutineTemplate::from_str("away_follow_up"), Some(RoutineTemplate::AwayFollowUp));
-        assert_eq!(RoutineTemplate::from_str("meeting_prep"), Some(RoutineTemplate::MeetingPrep));
+        assert_eq!(
+            RoutineTemplate::from_str("away_follow_up"),
+            Some(RoutineTemplate::AwayFollowUp)
+        );
+        assert_eq!(
+            RoutineTemplate::from_str("meeting_prep"),
+            Some(RoutineTemplate::MeetingPrep)
+        );
     }
 
     #[test]
@@ -15041,7 +16059,9 @@ mod tests {
                 status: MeetingStatus::Recording,
             })
             .unwrap();
-        store.complete_meeting(with_audio, 2000, Some("/tmp/a.wav")).unwrap();
+        store
+            .complete_meeting(with_audio, 2000, Some("/tmp/a.wav"))
+            .unwrap();
 
         let no_audio_completed = store
             .insert_meeting(&NewMeeting {
@@ -15055,7 +16075,9 @@ mod tests {
                 status: MeetingStatus::Recording,
             })
             .unwrap();
-        store.complete_meeting(no_audio_completed, 4000, None).unwrap();
+        store
+            .complete_meeting(no_audio_completed, 4000, None)
+            .unwrap();
 
         // Still actively recording -- audio_path legitimately not stamped yet, must not
         // be treated as "missing" audio.
@@ -15083,7 +16105,10 @@ mod tests {
         // A meeting synced from another device never has local audio by design; the
         // cleanup must not offer it for deletion.
         let store = Store::open_in_memory().unwrap();
-        for (device, title, start) in [("peer-device", "Peer meeting", 1000), ("this-device", "My meeting", 3000)] {
+        for (device, title, start) in [
+            ("peer-device", "Peer meeting", 1000),
+            ("this-device", "My meeting", 3000),
+        ] {
             let id = store
                 .insert_meeting(&NewMeeting {
                     device_id: device.into(),
@@ -15099,7 +16124,10 @@ mod tests {
             store.complete_meeting(id, start + 1000, None).unwrap();
         }
         let results = store.find_meetings_without_audio("this-device").unwrap();
-        assert_eq!(results.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(), ["My meeting"]);
+        assert_eq!(
+            results.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(),
+            ["My meeting"]
+        );
     }
 
     #[test]
@@ -15138,8 +16166,12 @@ mod tests {
     fn fold_duplicate_meeting_moves_the_transcript_to_the_kept_copy() {
         let store = Store::open_in_memory().unwrap();
         let meeting = sample_applied_meeting_for_dup_test("Genesys", 1000);
-        let first = store.apply_synced_meeting("device-a", 5, None, &meeting).unwrap();
-        let second = store.apply_synced_meeting("device-a", 20, None, &meeting).unwrap();
+        let first = store
+            .apply_synced_meeting("device-a", 5, None, &meeting)
+            .unwrap();
+        let second = store
+            .apply_synced_meeting("device-a", 20, None, &meeting)
+            .unwrap();
         store
             .insert_transcript_segments(&[NewTranscriptSegment {
                 meeting_id: first,
@@ -15153,10 +16185,17 @@ mod tests {
 
         assert!(store.get_meeting(first).unwrap().is_none());
         let hits = store.search_transcript_keyword("quarterly", 10).unwrap();
-        assert_eq!(hits.iter().map(|h| h.meeting_id).collect::<Vec<_>>(), [second]);
+        assert_eq!(
+            hits.iter().map(|h| h.meeting_id).collect::<Vec<_>>(),
+            [second]
+        );
         let segs: i64 = store
             .conn
-            .query_row("SELECT COUNT(*) FROM transcript_segment WHERE meeting_id = ?1", [second], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM transcript_segment WHERE meeting_id = ?1",
+                [second],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(segs, 1);
     }
@@ -15165,8 +16204,12 @@ mod tests {
     fn fold_duplicate_meeting_drops_the_copy_when_the_kept_one_has_its_own_transcript() {
         let store = Store::open_in_memory().unwrap();
         let meeting = sample_applied_meeting_for_dup_test("Genesys", 1000);
-        let first = store.apply_synced_meeting("device-a", 5, None, &meeting).unwrap();
-        let second = store.apply_synced_meeting("device-a", 20, None, &meeting).unwrap();
+        let first = store
+            .apply_synced_meeting("device-a", 5, None, &meeting)
+            .unwrap();
+        let second = store
+            .apply_synced_meeting("device-a", 20, None, &meeting)
+            .unwrap();
         for id in [first, second] {
             store
                 .insert_transcript_segments(&[NewTranscriptSegment {
@@ -15178,8 +16221,18 @@ mod tests {
                 .unwrap();
         }
         assert!(store.fold_duplicate_meeting(second, first).unwrap());
-        assert_eq!(store.search_transcript_keyword("quarterly", 10).unwrap().len(), 1, "no doubled lines");
-        assert!(!store.fold_duplicate_meeting(second, first).unwrap(), "already gone");
+        assert_eq!(
+            store
+                .search_transcript_keyword("quarterly", 10)
+                .unwrap()
+                .len(),
+            1,
+            "no doubled lines"
+        );
+        assert!(
+            !store.fold_duplicate_meeting(second, first).unwrap(),
+            "already gone"
+        );
     }
 
     #[test]
@@ -15469,7 +16522,12 @@ mod tests {
         );
     }
 
-    fn calendar_item(external_id: &str, ts: i64, title: &str, actors: &[&str]) -> NewCalendarEventItem {
+    fn calendar_item(
+        external_id: &str,
+        ts: i64,
+        title: &str,
+        actors: &[&str],
+    ) -> NewCalendarEventItem {
         NewCalendarEventItem {
             device_id: "dev".into(),
             source: "google_calendar".into(),
@@ -15492,7 +16550,13 @@ mod tests {
             ])
             .unwrap();
         let events = store.upcoming_calendar_events(1000, 5000, 10).unwrap();
-        assert_eq!(events.iter().map(|e| e.external_id.as_str()).collect::<Vec<_>>(), ["sooner", "later"]);
+        assert_eq!(
+            events
+                .iter()
+                .map(|e| e.external_id.as_str())
+                .collect::<Vec<_>>(),
+            ["sooner", "later"]
+        );
         assert_eq!(events[1].title, "Later");
         assert_eq!(events[1].start_unix_ms, 3000);
         assert_eq!(events[1].attendees, ["a@x.com", "b@x.com"]);
@@ -15503,10 +16567,19 @@ mod tests {
     fn upcoming_calendar_events_respects_limit() {
         let store = Store::open_in_memory().unwrap();
         store
-            .upsert_calendar_event_items(&[calendar_item("a", 1000, "A", &[]), calendar_item("b", 2000, "B", &[])])
+            .upsert_calendar_event_items(&[
+                calendar_item("a", 1000, "A", &[]),
+                calendar_item("b", 2000, "B", &[]),
+            ])
             .unwrap();
         let events = store.upcoming_calendar_events(0, 5000, 1).unwrap();
-        assert_eq!(events.iter().map(|e| e.external_id.as_str()).collect::<Vec<_>>(), ["a"]);
+        assert_eq!(
+            events
+                .iter()
+                .map(|e| e.external_id.as_str())
+                .collect::<Vec<_>>(),
+            ["a"]
+        );
     }
 
     #[test]
@@ -15574,7 +16647,11 @@ mod tests {
         assert_eq!((count, title.as_str()), (1, "From account one"));
 
         store.upsert_calendar_event_items(&batch).unwrap();
-        assert_eq!(read(&store).2, seq, "a repeated batch must not re-stamp: no relay row per poll");
+        assert_eq!(
+            read(&store).2,
+            seq,
+            "a repeated batch must not re-stamp: no relay row per poll"
+        );
     }
 
     #[test]
@@ -16016,8 +17093,28 @@ mod tests {
     #[test]
     fn delete_email_data_for_account_removes_everything_derived_from_that_account_only() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "a-1", "thread-a", "a@x.com", "ben@x.com", "a@x.com", "For A", 1000);
-        insert_email_item(&store, "dev-1", "b-1", "thread-b", "b@x.com", "ben@x.com", "b@x.com", "For B", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "a-1",
+            "thread-a",
+            "a@x.com",
+            "ben@x.com",
+            "a@x.com",
+            "For A",
+            1000,
+        );
+        insert_email_item(
+            &store,
+            "dev-1",
+            "b-1",
+            "thread-b",
+            "b@x.com",
+            "ben@x.com",
+            "b@x.com",
+            "For B",
+            1000,
+        );
         store
             .upsert_calendar_event_items(&[NewCalendarEventItem {
                 device_id: "dev-1".into(),
@@ -16031,36 +17128,100 @@ mod tests {
         assert!(store.run_thread_state_sync_job(2000).unwrap());
         store.set_gmail_history_id("a@x.com", "100").unwrap();
         store.set_gmail_history_id("b@x.com", "200").unwrap();
-        let judged = priority::PriorityJudgments { asks_reply: 1.0, urgency: 1.0, person: 1.0, bulk: 0.0, automated: 0.0 };
-        let thread_id = |ext: &str| -> i64 {
-            store.conn.query_row("SELECT id FROM threads WHERE external_thread_id = ?1", params![ext], |r| r.get(0)).unwrap()
+        let judged = priority::PriorityJudgments {
+            asks_reply: 1.0,
+            urgency: 1.0,
+            person: 1.0,
+            bulk: 0.0,
+            automated: 0.0,
         };
-        store.save_thread_priority(thread_id("thread-a"), 1, &judged, 2000).unwrap();
-        store.save_thread_priority(thread_id("thread-b"), 1, &judged, 2000).unwrap();
+        let thread_id = |ext: &str| -> i64 {
+            store
+                .conn
+                .query_row(
+                    "SELECT id FROM threads WHERE external_thread_id = ?1",
+                    params![ext],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        store
+            .save_thread_priority(thread_id("thread-a"), 1, &judged, 2000)
+            .unwrap();
+        store
+            .save_thread_priority(thread_id("thread-b"), 1, &judged, 2000)
+            .unwrap();
         let count = |sql: &str| -> i64 { store.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
         assert_eq!(count("SELECT COUNT(*) FROM jobs WHERE job_type IN ('thread_summarize', 'thread_priority') "), 4, "the setup should queue a summarize and a priority job per thread");
 
         let removed = store.delete_email_data_for_account("a@x.com").unwrap();
 
         assert_eq!(removed, 1);
-        assert_eq!(count("SELECT COUNT(*) FROM items WHERE kind = 'email' AND title = 'For A'"), 0);
-        assert_eq!(count("SELECT COUNT(*) FROM items WHERE kind = 'email' AND title = 'For B'"), 1, "the other account keeps its mail");
-        assert_eq!(count("SELECT COUNT(*) FROM items WHERE kind = 'calendar_event'"), 1, "other kinds sharing an external id stay");
-        assert_eq!(count("SELECT COUNT(*) FROM items_fts WHERE items_fts MATCH 'For'"), 1, "search forgets the deleted mail");
-        assert_eq!(count("SELECT COUNT(*) FROM threads WHERE account_email = 'a@x.com'"), 0, "the summaries go with it");
-        assert_eq!(count("SELECT COUNT(*) FROM threads WHERE account_email = 'b@x.com'"), 1);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM items WHERE kind = 'email' AND title = 'For A'"),
+            0
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM items WHERE kind = 'email' AND title = 'For B'"),
+            1,
+            "the other account keeps its mail"
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM items WHERE kind = 'calendar_event'"),
+            1,
+            "other kinds sharing an external id stay"
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM items_fts WHERE items_fts MATCH 'For'"),
+            1,
+            "search forgets the deleted mail"
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM threads WHERE account_email = 'a@x.com'"),
+            0,
+            "the summaries go with it"
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM threads WHERE account_email = 'b@x.com'"),
+            1
+        );
         assert_eq!(count("SELECT COUNT(*) FROM thread_priority"), 1);
         assert_eq!(count("SELECT COUNT(*) FROM jobs WHERE job_type IN ('thread_summarize', 'thread_priority')"), 2, "only the other account's jobs remain");
-        assert_eq!(store.get_gmail_history_id("a@x.com").unwrap(), None, "the next sync re-baselines");
-        assert_eq!(store.get_gmail_history_id("b@x.com").unwrap().as_deref(), Some("200"));
+        assert_eq!(
+            store.get_gmail_history_id("a@x.com").unwrap(),
+            None,
+            "the next sync re-baselines"
+        );
+        assert_eq!(
+            store.get_gmail_history_id("b@x.com").unwrap().as_deref(),
+            Some("200")
+        );
     }
 
     #[test]
     fn delete_email_data_for_an_unknown_account_changes_nothing() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "b-1", "thread-b", "b@x.com", "ben@x.com", "b@x.com", "For B", 1000);
-        assert_eq!(store.delete_email_data_for_account("nobody@x.com").unwrap(), 0);
-        let kept: i64 = store.conn.query_row("SELECT COUNT(*) FROM items WHERE kind = 'email'", [], |r| r.get(0)).unwrap();
+        insert_email_item(
+            &store,
+            "dev-1",
+            "b-1",
+            "thread-b",
+            "b@x.com",
+            "ben@x.com",
+            "b@x.com",
+            "For B",
+            1000,
+        );
+        assert_eq!(
+            store.delete_email_data_for_account("nobody@x.com").unwrap(),
+            0
+        );
+        let kept: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM items WHERE kind = 'email'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(kept, 1);
     }
 
@@ -16668,13 +17829,20 @@ mod tests {
         insert_test_item(&store, "dev-1", "com.app.a", 0);
         insert_test_item(&store, "dev-1", "com.app.a", 60_000);
         insert_test_item(&store, "dev-1", "com.app.b", 180_000);
-        let mark = HiddenEpisodeMark::from_field("episode.hidden.dev-1|com.app.a|0", "1", 999).unwrap();
+        let mark =
+            HiddenEpisodeMark::from_field("episode.hidden.dev-1|com.app.a|0", "1", 999).unwrap();
         store.apply_hidden_episode_sync_fields(&[mark]).unwrap();
 
-        assert!(store.run_episode_segment_job(180_000 + EPISODE_IDLE_GAP_MS + 1).unwrap());
+        assert!(store
+            .run_episode_segment_job(180_000 + EPISODE_IDLE_GAP_MS + 1)
+            .unwrap());
         let (app, hidden): (String, i64) = store
             .conn
-            .query_row("SELECT app_bundle_id, hidden FROM episodes LIMIT 1", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_row(
+                "SELECT app_bundle_id, hidden FROM episodes LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .unwrap();
         assert_eq!((app.as_str(), hidden), ("com.app.a", 1));
         assert_eq!(store.list_hidden_episodes("ignored").unwrap().len(), 1);
@@ -17489,13 +18657,29 @@ mod tests {
     #[test]
     fn recovery_revives_a_thread_priority_job_stranded_in_running() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "msg-1", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Hello", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Hello",
+            1000,
+        );
         store.run_thread_state_sync_job(2000).unwrap();
         let claimed = store.claim_thread_priority_jobs(1, 5000).unwrap();
-        assert_eq!(priority_job_status(&store, claimed[0].thread_id).as_deref(), Some("running"));
+        assert_eq!(
+            priority_job_status(&store, claimed[0].thread_id).as_deref(),
+            Some("running")
+        );
 
         Store::ensure_episode_summarize_jobs_recovered(&store.conn).unwrap();
-        assert_eq!(priority_job_status(&store, claimed[0].thread_id).as_deref(), Some("pending"));
+        assert_eq!(
+            priority_job_status(&store, claimed[0].thread_id).as_deref(),
+            Some("pending")
+        );
     }
 
     #[test]
@@ -17981,18 +19165,44 @@ mod tests {
 
     #[test]
     fn email_is_bulk_checks_categories_unsubscribe_and_no_reply_senders() {
-        assert!(email_is_bulk("shop@x.com", &["INBOX".into(), "CATEGORY_PROMOTIONS".into()], false));
-        assert!(email_is_bulk("shop@x.com", &["CATEGORY_FORUMS".into()], false));
+        assert!(email_is_bulk(
+            "shop@x.com",
+            &["INBOX".into(), "CATEGORY_PROMOTIONS".into()],
+            false
+        ));
+        assert!(email_is_bulk(
+            "shop@x.com",
+            &["CATEGORY_FORUMS".into()],
+            false
+        ));
         assert!(email_is_bulk("news@x.com", &[], true));
-        assert!(email_is_bulk("GitHub <Notifications@github.com>", &[], false));
+        assert!(email_is_bulk(
+            "GitHub <Notifications@github.com>",
+            &[],
+            false
+        ));
         assert!(email_is_bulk("no-reply+abc@x.com", &[], false));
         assert!(email_is_bulk("MAILER-DAEMON@x.com", &[], false));
-        assert!(!email_is_bulk("Alice <alice@x.com>", &["INBOX".into(), "CATEGORY_PERSONAL".into()], false));
-        assert!(!email_is_bulk("alice@noreply.example", &[], false), "only the local part counts");
+        assert!(!email_is_bulk(
+            "Alice <alice@x.com>",
+            &["INBOX".into(), "CATEGORY_PERSONAL".into()],
+            false
+        ));
+        assert!(
+            !email_is_bulk("alice@noreply.example", &[], false),
+            "only the local part counts"
+        );
     }
 
     fn thread_status(store: &Store) -> String {
-        store.conn.query_row("SELECT status FROM threads WHERE external_thread_id = 'thread-1'", [], |r| r.get(0)).unwrap()
+        store
+            .conn
+            .query_row(
+                "SELECT status FROM threads WHERE external_thread_id = 'thread-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
     }
 
     #[test]
@@ -18009,18 +19219,37 @@ mod tests {
             gmail_labels: labels.iter().map(|l| l.to_string()).collect(),
             ..Default::default()
         };
-        store.upsert_email_items(&[email("msg-1", "shop@example.com", 1000, &["CATEGORY_UPDATES"])]).unwrap();
+        store
+            .upsert_email_items(&[email(
+                "msg-1",
+                "shop@example.com",
+                1000,
+                &["CATEGORY_UPDATES"],
+            )])
+            .unwrap();
         store.run_thread_state_sync_job(2000).unwrap();
-        assert_eq!(thread_status(&store), "fyi", "an Updates-category message to me needs no reply");
+        assert_eq!(
+            thread_status(&store),
+            "fyi",
+            "an Updates-category message to me needs no reply"
+        );
 
         // An older personal message arriving late doesn't override the newer bulk one.
-        store.upsert_email_items(&[email("msg-0", "alice@example.com", 500, &[])]).unwrap();
+        store
+            .upsert_email_items(&[email("msg-0", "alice@example.com", 500, &[])])
+            .unwrap();
         store.run_thread_state_sync_job(3000).unwrap();
         assert_eq!(thread_status(&store), "fyi");
 
-        store.upsert_email_items(&[email("msg-2", "alice@example.com", 4000, &[])]).unwrap();
+        store
+            .upsert_email_items(&[email("msg-2", "alice@example.com", 4000, &[])])
+            .unwrap();
         store.run_thread_state_sync_job(5000).unwrap();
-        assert_eq!(thread_status(&store), "waiting_on_me", "a later personal message flips it back");
+        assert_eq!(
+            thread_status(&store),
+            "waiting_on_me",
+            "a later personal message flips it back"
+        );
     }
 
     #[test]
@@ -18028,15 +19257,45 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let personal = insert_test_thread(&store, Some("Lunch?"), 1000, "waiting_on_me");
         let bulk = insert_test_thread(&store, Some("Your receipt"), 2000, "waiting_on_me");
-        store.conn.execute("UPDATE threads SET last_message_from = 'Shop <no-reply@shop.com>' WHERE id = ?1", params![bulk]).unwrap();
-        store.conn.execute("DELETE FROM kv_meta WHERE key = 'bulk_waiting_threads_reclassified_v1'", []).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE threads SET last_message_from = 'Shop <no-reply@shop.com>' WHERE id = ?1",
+                params![bulk],
+            )
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "DELETE FROM kv_meta WHERE key = 'bulk_waiting_threads_reclassified_v1'",
+                [],
+            )
+            .unwrap();
 
         Store::ensure_bulk_waiting_threads_reclassified(&store.conn).unwrap();
-        let status = |id: i64| -> String { store.conn.query_row("SELECT status FROM threads WHERE id = ?1", params![id], |r| r.get(0)).unwrap() };
-        assert_eq!((status(personal), status(bulk)), ("waiting_on_me".into(), "fyi".into()));
+        let status = |id: i64| -> String {
+            store
+                .conn
+                .query_row(
+                    "SELECT status FROM threads WHERE id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(
+            (status(personal), status(bulk)),
+            ("waiting_on_me".into(), "fyi".into())
+        );
 
         // The flag makes it one-time.
-        store.conn.execute("UPDATE threads SET status = 'waiting_on_me' WHERE id = ?1", params![bulk]).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE threads SET status = 'waiting_on_me' WHERE id = ?1",
+                params![bulk],
+            )
+            .unwrap();
         Store::ensure_bulk_waiting_threads_reclassified(&store.conn).unwrap();
         assert_eq!(status(bulk), "waiting_on_me");
     }
@@ -18599,17 +19858,40 @@ mod tests {
     fn failed_summaries_are_requeued_once_and_failures_are_recorded() {
         let store = Store::open_in_memory().unwrap();
         insert_email_item(
-            &store, "dev-1", "msg-1", "thread-1", "me@example.com", "alice@example.com",
-            "me@example.com", "Hello", 1000,
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Hello",
+            1000,
         );
         store.run_thread_state_sync_job(2000).unwrap();
         let job_id: i64 = store
             .conn
-            .query_row("SELECT id FROM jobs WHERE job_type = 'thread_summarize'", [], |r| r.get(0))
+            .query_row(
+                "SELECT id FROM jobs WHERE job_type = 'thread_summarize'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let fail = |store: &Store| {
-            store.conn.execute("UPDATE jobs SET status = 'failed', attempts = 5 WHERE id = ?1", params![job_id]).unwrap();
-            store.conn.execute("UPDATE threads SET summarize_status = 'summarize_failed'", []).unwrap();
+            store
+                .conn
+                .execute(
+                    "UPDATE jobs SET status = 'failed', attempts = 5 WHERE id = ?1",
+                    params![job_id],
+                )
+                .unwrap();
+            store
+                .conn
+                .execute(
+                    "UPDATE threads SET summarize_status = 'summarize_failed'",
+                    [],
+                )
+                .unwrap();
         };
         let state = |store: &Store| -> (String, i64, String) {
             store
@@ -18624,19 +19906,35 @@ mod tests {
 
         // A database from before this migration: failed rows, no flag yet.
         fail(&store);
-        store.conn.execute("DELETE FROM kv_meta WHERE key = 'summaries_requeued_v1'", []).unwrap();
+        store
+            .conn
+            .execute(
+                "DELETE FROM kv_meta WHERE key = 'summaries_requeued_v1'",
+                [],
+            )
+            .unwrap();
         Store::ensure_failed_summaries_requeued(&store.conn).unwrap();
-        assert_eq!(state(&store), ("pending".into(), 0, "pending_summary".into()));
+        assert_eq!(
+            state(&store),
+            ("pending".into(), 0, "pending_summary".into())
+        );
 
         // A later genuine failure stays failed: the requeue never runs twice.
         fail(&store);
         Store::ensure_failed_summaries_requeued(&store.conn).unwrap();
-        assert_eq!(state(&store), ("failed".into(), 5, "summarize_failed".into()));
+        assert_eq!(
+            state(&store),
+            ("failed".into(), 5, "summarize_failed".into())
+        );
 
         store.record_summarize_error("thread_summarize", "HTTP 404: model 'x' not found", 42);
         let recorded: String = store
             .conn
-            .query_row("SELECT value FROM kv_meta WHERE key = 'last_error:thread_summarize'", [], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM kv_meta WHERE key = 'last_error:thread_summarize'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(recorded, "42: HTTP 404: model 'x' not found");
     }
@@ -18782,20 +20080,55 @@ mod tests {
                 .unwrap()
         };
         let mine = meeting(&format!("{old}mic-audio-1.caf"));
-        store.update_meeting_transcript_and_notes(mine, &format!("{old}transcript-1.txt"), None).unwrap();
-        let other_mac = meeting("/Users/other/Library/Application Support/littlebird/spike/mic-audio-2.caf");
+        store
+            .update_meeting_transcript_and_notes(mine, &format!("{old}transcript-1.txt"), None)
+            .unwrap();
+        let other_mac =
+            meeting("/Users/other/Library/Application Support/littlebird/spike/mic-audio-2.caf");
         let nested = meeting(&format!("/backup{old}mic-audio-3.caf"));
-        let outbox = |s: &Store| s.conn.query_row("SELECT count(*) FROM sync_outbox", [], |r| r.get::<_, i64>(0)).unwrap();
+        let outbox = |s: &Store| {
+            s.conn
+                .query_row("SELECT count(*) FROM sync_outbox", [], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap()
+        };
         let outbox_before = outbox(&store);
 
         assert_eq!(store.replace_meeting_path_prefix(old, new).unwrap(), 1);
         let m = store.get_meeting(mine).unwrap().unwrap();
-        assert_eq!(m.audio_path.as_deref(), Some(format!("{new}mic-audio-1.caf").as_str()));
-        assert_eq!(m.transcript_path.as_deref(), Some(format!("{new}transcript-1.txt").as_str()));
-        assert!(store.get_meeting(other_mac).unwrap().unwrap().audio_path.unwrap().contains("/Users/other/"));
-        assert!(store.get_meeting(nested).unwrap().unwrap().audio_path.unwrap().starts_with("/backup/"));
-        assert_eq!(outbox(&store), outbox_before, "paths are device-local; no sync entry");
-        assert_eq!(store.replace_meeting_path_prefix(old, new).unwrap(), 0, "a second run changes nothing");
+        assert_eq!(
+            m.audio_path.as_deref(),
+            Some(format!("{new}mic-audio-1.caf").as_str())
+        );
+        assert_eq!(
+            m.transcript_path.as_deref(),
+            Some(format!("{new}transcript-1.txt").as_str())
+        );
+        assert!(store
+            .get_meeting(other_mac)
+            .unwrap()
+            .unwrap()
+            .audio_path
+            .unwrap()
+            .contains("/Users/other/"));
+        assert!(store
+            .get_meeting(nested)
+            .unwrap()
+            .unwrap()
+            .audio_path
+            .unwrap()
+            .starts_with("/backup/"));
+        assert_eq!(
+            outbox(&store),
+            outbox_before,
+            "paths are device-local; no sync entry"
+        );
+        assert_eq!(
+            store.replace_meeting_path_prefix(old, new).unwrap(),
+            0,
+            "a second run changes nothing"
+        );
     }
 
     #[test]
@@ -18816,9 +20149,15 @@ mod tests {
             })
             .unwrap();
         let part = store.begin_meeting_part(id, 1, None).unwrap();
-        store.complete_meeting_part(id, part, 2, Some(&format!("{old}mic-audio-1.caf"))).unwrap();
-        store.set_meeting_part_transcript(id, part, &format!("{old}transcript-1.txt")).unwrap();
-        store.set_meeting_snapshots_dir(id, &format!("{old}Snapshots/1")).unwrap();
+        store
+            .complete_meeting_part(id, part, 2, Some(&format!("{old}mic-audio-1.caf")))
+            .unwrap();
+        store
+            .set_meeting_part_transcript(id, part, &format!("{old}transcript-1.txt"))
+            .unwrap();
+        store
+            .set_meeting_snapshots_dir(id, &format!("{old}Snapshots/1"))
+            .unwrap();
         store
             .insert_meeting_snapshot(&NewMeetingSnapshot {
                 meeting_id: id,
@@ -18830,12 +20169,33 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(store.replace_meeting_path_prefix(old, new).unwrap(), 3, "part, snapshot and meeting rows");
+        assert_eq!(
+            store.replace_meeting_path_prefix(old, new).unwrap(),
+            3,
+            "part, snapshot and meeting rows"
+        );
         let p = &store.meeting_parts(id).unwrap()[0];
-        assert_eq!(p.audio_path.as_deref(), Some(format!("{new}mic-audio-1.caf").as_str()));
-        assert_eq!(p.transcript_path.as_deref(), Some(format!("{new}transcript-1.txt").as_str()));
-        assert_eq!(store.list_meeting_snapshots(id).unwrap()[0].file_path, format!("{new}Snapshots/1/a.png"));
-        assert_eq!(store.meeting_snapshots_info(id).unwrap().unwrap().0.as_deref(), Some(format!("{new}Snapshots/1").as_str()));
+        assert_eq!(
+            p.audio_path.as_deref(),
+            Some(format!("{new}mic-audio-1.caf").as_str())
+        );
+        assert_eq!(
+            p.transcript_path.as_deref(),
+            Some(format!("{new}transcript-1.txt").as_str())
+        );
+        assert_eq!(
+            store.list_meeting_snapshots(id).unwrap()[0].file_path,
+            format!("{new}Snapshots/1/a.png")
+        );
+        assert_eq!(
+            store
+                .meeting_snapshots_info(id)
+                .unwrap()
+                .unwrap()
+                .0
+                .as_deref(),
+            Some(format!("{new}Snapshots/1").as_str())
+        );
         assert_eq!(store.replace_meeting_path_prefix(old, new).unwrap(), 0);
     }
 
@@ -18855,9 +20215,16 @@ mod tests {
                 status: MeetingStatus::Completed,
             })
             .unwrap();
-        store.conn.execute("DROP TABLE meeting_snapshot", []).unwrap(); // the last UPDATE now fails
+        store
+            .conn
+            .execute("DROP TABLE meeting_snapshot", [])
+            .unwrap(); // the last UPDATE now fails
         assert!(store.replace_meeting_path_prefix(old, "/new/").is_err());
-        assert_eq!(store.get_meeting(id).unwrap().unwrap().audio_path, Some(format!("{old}a.caf")), "earlier updates rolled back");
+        assert_eq!(
+            store.get_meeting(id).unwrap().unwrap().audio_path,
+            Some(format!("{old}a.caf")),
+            "earlier updates rolled back"
+        );
     }
 
     #[test]
@@ -18878,16 +20245,38 @@ mod tests {
             .unwrap()
             .unwrap();
         while store.redact_stored_secrets_batch(1).unwrap() {}
-        let text: String = store.conn.query_row("SELECT text FROM capture_item WHERE id = ?1", [id], |r| r.get(0)).unwrap();
-        assert!(!text.contains(secret) && text.contains("[REDACTED"), "{text}");
+        let text: String = store
+            .conn
+            .query_row("SELECT text FROM capture_item WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(
+            !text.contains(secret) && text.contains("[REDACTED"),
+            "{text}"
+        );
         let fts_hits: i64 = store
             .conn
             .query_row("SELECT count(*) FROM capture_item_fts WHERE capture_item_fts MATCH '\"ABCDEFGHIJKLMNOPQRSTUVWX12\"'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(fts_hits, 0, "the secret must not stay searchable");
-        let item_body: String = store.conn.query_row("SELECT body_text FROM items WHERE source_id = ?1", [id], |r| r.get(0)).unwrap();
+        let item_body: String = store
+            .conn
+            .query_row(
+                "SELECT body_text FROM items WHERE source_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert!(!item_body.contains(secret));
-        let done: String = store.conn.query_row("SELECT value FROM kv_meta WHERE key = 'secrets_redacted_v2'", [], |r| r.get(0)).unwrap();
+        let done: String = store
+            .conn
+            .query_row(
+                "SELECT value FROM kv_meta WHERE key = 'secrets_redacted_v2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(done, "1");
     }
 
@@ -18910,17 +20299,47 @@ mod tests {
         )
         .unwrap();
         Store::ensure_secrets_redact_job_seeded(c).unwrap();
-        let status: String = c.query_row("SELECT status FROM jobs WHERE job_type = 'secrets_redact'", [], |r| r.get(0)).unwrap();
-        assert_eq!(status, "pending", "a job a quit left running must be revived");
-        let cursor: String = c.query_row("SELECT value FROM kv_meta WHERE key = 'secrets_redact_cursor'", [], |r| r.get(0)).unwrap();
+        let status: String = c
+            .query_row(
+                "SELECT status FROM jobs WHERE job_type = 'secrets_redact'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            status, "pending",
+            "a job a quit left running must be revived"
+        );
+        let cursor: String = c
+            .query_row(
+                "SELECT value FROM kv_meta WHERE key = 'secrets_redact_cursor'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(cursor, "episodes:0");
         while store.redact_stored_secrets_batch(500).unwrap() {}
-        let (title, refs): (String, String) =
-            c.query_row("SELECT window_title, refs FROM episodes", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-        assert!(!title.contains("AKIA") && !refs.contains("AKIA"), "{title} {refs}");
+        let (title, refs): (String, String) = c
+            .query_row("SELECT window_title, refs FROM episodes", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert!(
+            !title.contains("AKIA") && !refs.contains("AKIA"),
+            "{title} {refs}"
+        );
         Store::ensure_secrets_redact_job_seeded(c).unwrap();
-        let status: String = c.query_row("SELECT status FROM jobs WHERE job_type = 'secrets_redact'", [], |r| r.get(0)).unwrap();
-        assert_eq!(status, "pending", "once v2 is set the seed leaves the job alone");
+        let status: String = c
+            .query_row(
+                "SELECT status FROM jobs WHERE job_type = 'secrets_redact'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            status, "pending",
+            "once v2 is set the seed leaves the job alone"
+        );
     }
 
     #[test]
@@ -18928,10 +20347,15 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let meeting_id = insert_test_meeting(&store, "CMS Daily Win Room");
         let seq_before = store.get_meeting(meeting_id).unwrap().unwrap().local_seq;
-        assert!(store.set_meeting_title(meeting_id, "Room audio only · CMS Daily Win Room").unwrap());
+        assert!(store
+            .set_meeting_title(meeting_id, "Room audio only · CMS Daily Win Room")
+            .unwrap());
         let meeting = store.get_meeting(meeting_id).unwrap().unwrap();
         assert_eq!(meeting.title, "Room audio only · CMS Daily Win Room");
-        assert!(meeting.local_seq > seq_before, "a synced meeting mutation must stamp local_seq");
+        assert!(
+            meeting.local_seq > seq_before,
+            "a synced meeting mutation must stamp local_seq"
+        );
         assert!(!store.set_meeting_title(i64::MAX, "x").unwrap());
     }
 
@@ -18940,8 +20364,14 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let id = store
             .insert_meeting(&NewMeeting {
-                device_id: "d".into(), start_unix_ms: 1, end_unix_ms: None, title: "A".into(),
-                attendees: vec![], trigger: MeetingTrigger::Calendar, audio_path: None, status: MeetingStatus::Completed,
+                device_id: "d".into(),
+                start_unix_ms: 1,
+                end_unix_ms: None,
+                title: "A".into(),
+                attendees: vec![],
+                trigger: MeetingTrigger::Calendar,
+                audio_path: None,
+                status: MeetingStatus::Completed,
             })
             .unwrap();
         assert!(!store.set_meeting_title_if_equals(id, "B", "C").unwrap());
@@ -18979,10 +20409,20 @@ mod tests {
         };
         let detected = insert("zoom.us", MeetingTrigger::Detected);
         let calendar = insert("CMS Daily Win Room", MeetingTrigger::Calendar);
-        assert!(store.set_meeting_title_if_placeholder(detected, "Partner cost review").unwrap());
-        assert!(!store.set_meeting_title_if_placeholder(calendar, "Partner cost review").unwrap());
-        assert_eq!(store.get_meeting(detected).unwrap().unwrap().title, "Partner cost review");
-        assert_eq!(store.get_meeting(calendar).unwrap().unwrap().title, "CMS Daily Win Room");
+        assert!(store
+            .set_meeting_title_if_placeholder(detected, "Partner cost review")
+            .unwrap());
+        assert!(!store
+            .set_meeting_title_if_placeholder(calendar, "Partner cost review")
+            .unwrap());
+        assert_eq!(
+            store.get_meeting(detected).unwrap().unwrap().title,
+            "Partner cost review"
+        );
+        assert_eq!(
+            store.get_meeting(calendar).unwrap().unwrap().title,
+            "CMS Daily Win Room"
+        );
     }
 
     #[test]
@@ -19179,9 +20619,18 @@ mod tests {
     fn away_routine_created_on_first_use_disabled() {
         let s = Store::open_in_memory().unwrap();
         s.seed_builtin_routines().unwrap();
-        assert!(s.list_routines().unwrap().iter().all(|r| r.template != RoutineTemplate::AwayFollowUp));
+        assert!(s
+            .list_routines()
+            .unwrap()
+            .iter()
+            .all(|r| r.template != RoutineTemplate::AwayFollowUp));
         let id = s.ensure_away_routine().unwrap();
-        let r = s.list_routines().unwrap().into_iter().find(|r| r.template == RoutineTemplate::AwayFollowUp).expect("created");
+        let r = s
+            .list_routines()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.template == RoutineTemplate::AwayFollowUp)
+            .expect("created");
         assert_eq!((r.id, r.name.as_str(), r.enabled), (id, "Away Mode", false));
         assert_eq!(s.ensure_away_routine().unwrap(), id, "idempotent");
     }
@@ -19189,10 +20638,16 @@ mod tests {
     #[test]
     fn followups_open_until_completed() {
         let s = Store::open_in_memory().unwrap();
-        let a = s.insert_meeting_followup(1, "Ask Ana for the recording of Standup", None, 100).unwrap();
-        s.insert_meeting_followup(2, "Ask Bo for the recording of Sync", Some(7), 200).unwrap();
+        let a = s
+            .insert_meeting_followup(1, "Ask Ana for the recording of Standup", None, 100)
+            .unwrap();
+        s.insert_meeting_followup(2, "Ask Bo for the recording of Sync", Some(7), 200)
+            .unwrap();
         let open = s.open_meeting_followups().unwrap();
-        assert_eq!(open.iter().map(|f| f.routine_run_id).collect::<Vec<_>>(), vec![None, Some(7)]);
+        assert_eq!(
+            open.iter().map(|f| f.routine_run_id).collect::<Vec<_>>(),
+            vec![None, Some(7)]
+        );
         s.complete_meeting_followup(a, 300).unwrap();
         let open = s.open_meeting_followups().unwrap();
         assert_eq!(open.len(), 1);
@@ -19311,7 +20766,13 @@ mod tests {
         assert!(store.get_episode(999).unwrap().is_none());
     }
 
-    fn insert_priority_test_thread(store: &Store, ext: &str, status: &str, message_count: i64, last_ts: i64) -> i64 {
+    fn insert_priority_test_thread(
+        store: &Store,
+        ext: &str,
+        status: &str,
+        message_count: i64,
+        last_ts: i64,
+    ) -> i64 {
         store.conn.execute(
             "INSERT INTO threads (source, external_thread_id, account_email, subject, message_count, last_activity_ts_unix_ms, last_message_from, ever_directly_addressed, status, summarize_status, created_at_unix_ms, updated_at_unix_ms) \
              VALUES ('gmail', ?1, 'me@example.com', ?1, ?2, ?3, 'a@example.com', 1, ?4, 'pending_summary', 0, 0)",
@@ -19321,7 +20782,13 @@ mod tests {
     }
 
     fn judgments_with_priority(asks_reply: f64) -> priority::PriorityJudgments {
-        priority::PriorityJudgments { asks_reply, urgency: 3.0, person: 0.0, bulk: 0.0, automated: 0.0 }
+        priority::PriorityJudgments {
+            asks_reply,
+            urgency: 3.0,
+            person: 0.0,
+            bulk: 0.0,
+            automated: 0.0,
+        }
     }
 
     fn subjects(threads: &[Thread]) -> Vec<String> {
@@ -19335,8 +20802,12 @@ mod tests {
         let high = insert_priority_test_thread(&store, "high", "waiting_on_me", 1, 50);
         insert_priority_test_thread(&store, "fresh-unscored", "waiting_on_me", 1, 900);
         insert_priority_test_thread(&store, "them", "waiting_on_them", 1, 800);
-        store.save_thread_priority(low, 1, &judgments_with_priority(0.2), 1).unwrap();
-        store.save_thread_priority(high, 1, &judgments_with_priority(0.9), 1).unwrap();
+        store
+            .save_thread_priority(low, 1, &judgments_with_priority(0.2), 1)
+            .unwrap();
+        store
+            .save_thread_priority(high, 1, &judgments_with_priority(0.9), 1)
+            .unwrap();
 
         let ranked = store.threads_needing_attention(10).unwrap();
         assert_eq!(subjects(&ranked), ["high", "low", "fresh-unscored", "them"]);
@@ -19347,10 +20818,15 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let stale = insert_priority_test_thread(&store, "stale", "waiting_on_me", 2, 100);
         insert_priority_test_thread(&store, "newer", "waiting_on_me", 1, 200);
-        store.save_thread_priority(stale, 1, &judgments_with_priority(1.0), 1).unwrap();
+        store
+            .save_thread_priority(stale, 1, &judgments_with_priority(1.0), 1)
+            .unwrap();
 
         // The 1.0 score belongs to message 1 of a thread now at 2: ordering is recency only.
-        assert_eq!(subjects(&store.threads_needing_attention(10).unwrap()), ["newer", "stale"]);
+        assert_eq!(
+            subjects(&store.threads_needing_attention(10).unwrap()),
+            ["newer", "stale"]
+        );
         assert!(store.scored_waiting_threads(10).unwrap().is_empty());
     }
 
@@ -19360,7 +20836,10 @@ mod tests {
         insert_priority_test_thread(&store, "old", "waiting_on_me", 1, 100);
         insert_priority_test_thread(&store, "new", "waiting_on_me", 1, 300);
         insert_priority_test_thread(&store, "mid", "waiting_on_them", 1, 200);
-        assert_eq!(subjects(&store.threads_needing_attention(2).unwrap()), ["new", "mid"]);
+        assert_eq!(
+            subjects(&store.threads_needing_attention(2).unwrap()),
+            ["new", "mid"]
+        );
     }
 
     #[test]
@@ -19368,11 +20847,21 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let a = insert_priority_test_thread(&store, "a", "waiting_on_me", 1, 100);
         let b = insert_priority_test_thread(&store, "b", "waiting_on_me", 1, 200);
-        store.save_thread_priority(a, 1, &judgments_with_priority(0.9), 1).unwrap();
-        store.save_thread_priority(b, 1, &judgments_with_priority(0.3), 1).unwrap();
+        store
+            .save_thread_priority(a, 1, &judgments_with_priority(0.9), 1)
+            .unwrap();
+        store
+            .save_thread_priority(b, 1, &judgments_with_priority(0.3), 1)
+            .unwrap();
 
         let scored = store.scored_waiting_threads(10).unwrap();
-        assert_eq!(scored.iter().map(|(t, _)| t.subject.clone().unwrap()).collect::<Vec<_>>(), ["a", "b"]);
+        assert_eq!(
+            scored
+                .iter()
+                .map(|(t, _)| t.subject.clone().unwrap())
+                .collect::<Vec<_>>(),
+            ["a", "b"]
+        );
         assert!(scored[0].1 > scored[1].1);
     }
 
@@ -20097,13 +21586,21 @@ mod tests {
         assert!(store.set_episode_hidden(episode_id, true, 5000).unwrap());
         let hidden: i64 = store
             .conn
-            .query_row("SELECT hidden FROM episodes WHERE id = ?1", params![episode_id], |r| r.get(0))
+            .query_row(
+                "SELECT hidden FROM episodes WHERE id = ?1",
+                params![episode_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(hidden, 1);
         assert!(store.set_episode_hidden(episode_id, false, 6000).unwrap());
         let hidden: i64 = store
             .conn
-            .query_row("SELECT hidden FROM episodes WHERE id = ?1", params![episode_id], |r| r.get(0))
+            .query_row(
+                "SELECT hidden FROM episodes WHERE id = ?1",
+                params![episode_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(hidden, 0);
     }
@@ -20115,14 +21612,24 @@ mod tests {
         assert!(store.set_episode_hidden(episode_id, true, 5000).unwrap());
         let marks = store.hidden_episode_sync_fields().unwrap();
         assert_eq!(marks.len(), 1);
-        assert_eq!(marks[0].field_key(), "episode.hidden.dev-1|com.test.app|1000");
+        assert_eq!(
+            marks[0].field_key(),
+            "episode.hidden.dev-1|com.test.app|1000"
+        );
         assert_eq!((marks[0].hidden, marks[0].updated_at_unix_ms), (true, 5000));
 
         // Unhide is a newer "0" mark on the same key, not a second row.
         assert!(store.set_episode_hidden(episode_id, false, 6000).unwrap());
         let marks = store.hidden_episode_sync_fields().unwrap();
         assert_eq!(marks.len(), 1);
-        assert_eq!((marks[0].hidden, marks[0].updated_at_unix_ms, marks[0].field_value()), (false, 6000, "0"));
+        assert_eq!(
+            (
+                marks[0].hidden,
+                marks[0].updated_at_unix_ms,
+                marks[0].field_value()
+            ),
+            (false, 6000, "0")
+        );
 
         // An unknown id records nothing.
         assert!(!store.set_episode_hidden(999_999, true, 7000).unwrap());
@@ -20137,30 +21644,62 @@ mod tests {
         let hidden_of = |id: i64| -> i64 {
             store
                 .conn
-                .query_row("SELECT hidden FROM episodes WHERE id = ?1", params![id], |r| r.get(0))
+                .query_row(
+                    "SELECT hidden FROM episodes WHERE id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
                 .unwrap()
         };
         let mark = |hidden: bool, at: i64| {
-            HiddenEpisodeMark::from_field("episode.hidden.dev-1|com.test.app|1000", if hidden { "1" } else { "0" }, at).unwrap()
+            HiddenEpisodeMark::from_field(
+                "episode.hidden.dev-1|com.test.app|1000",
+                if hidden { "1" } else { "0" },
+                at,
+            )
+            .unwrap()
         };
 
         // A peer hid it.
-        assert_eq!(store.apply_hidden_episode_sync_fields(&[mark(true, 5000)]).unwrap(), 1);
+        assert_eq!(
+            store
+                .apply_hidden_episode_sync_fields(&[mark(true, 5000)])
+                .unwrap(),
+            1
+        );
         assert_eq!((hidden_of(episode_id), hidden_of(other_id)), (1, 0));
 
         // A stale unhide from before that loses.
-        assert_eq!(store.apply_hidden_episode_sync_fields(&[mark(false, 4000)]).unwrap(), 0);
+        assert_eq!(
+            store
+                .apply_hidden_episode_sync_fields(&[mark(false, 4000)])
+                .unwrap(),
+            0
+        );
         assert_eq!(hidden_of(episode_id), 1);
 
         // A local unhide afterwards beats the peer's older mark, and is what gets pushed.
         store.set_episode_hidden(episode_id, false, 6000).unwrap();
-        assert_eq!(store.apply_hidden_episode_sync_fields(&[mark(true, 5500)]).unwrap(), 0);
+        assert_eq!(
+            store
+                .apply_hidden_episode_sync_fields(&[mark(true, 5500)])
+                .unwrap(),
+            0
+        );
         assert_eq!(hidden_of(episode_id), 0);
-        assert_eq!(store.hidden_episode_sync_fields().unwrap()[0].updated_at_unix_ms, 6000);
+        assert_eq!(
+            store.hidden_episode_sync_fields().unwrap()[0].updated_at_unix_ms,
+            6000
+        );
 
         // A mark for an episode this device has not segmented yet is kept for later.
-        let future = HiddenEpisodeMark::from_field("episode.hidden.dev-9|com.other.app|77", "1", 100).unwrap();
-        assert_eq!(store.apply_hidden_episode_sync_fields(&[future]).unwrap(), 1);
+        let future =
+            HiddenEpisodeMark::from_field("episode.hidden.dev-9|com.other.app|77", "1", 100)
+                .unwrap();
+        assert_eq!(
+            store.apply_hidden_episode_sync_fields(&[future]).unwrap(),
+            1
+        );
         assert_eq!(store.hidden_episode_sync_fields().unwrap().len(), 2);
     }
 
@@ -20173,10 +21712,13 @@ mod tests {
             hidden: true,
             updated_at_unix_ms: 42,
         };
-        let parsed = HiddenEpisodeMark::from_field(&mark.field_key(), mark.field_value(), 42).unwrap();
+        let parsed =
+            HiddenEpisodeMark::from_field(&mark.field_key(), mark.field_value(), 42).unwrap();
         assert_eq!(parsed, mark);
         assert!(HiddenEpisodeMark::from_field("routing.localOnlyMode", "true", 1).is_none());
-        assert!(HiddenEpisodeMark::from_field("episode.hidden.dev|app|notanumber", "1", 1).is_none());
+        assert!(
+            HiddenEpisodeMark::from_field("episode.hidden.dev|app|notanumber", "1", 1).is_none()
+        );
         assert!(HiddenEpisodeMark::from_field("episode.hidden.dev|app|5", "maybe", 1).is_none());
     }
 
@@ -20205,7 +21747,11 @@ mod tests {
 
         let remaining_episode: i64 = store
             .conn
-            .query_row("SELECT count(*) FROM episodes WHERE id = ?1", params![episode_id], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM episodes WHERE id = ?1",
+                params![episode_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(remaining_episode, 0);
     }
@@ -20263,7 +21809,10 @@ mod tests {
 
         assert!(store.forget_episode_activity(episode_id).unwrap());
 
-        let mut stmt = store.conn.prepare("SELECT id FROM items ORDER BY id").unwrap();
+        let mut stmt = store
+            .conn
+            .prepare("SELECT id FROM items ORDER BY id")
+            .unwrap();
         let survivors: Vec<i64> = stmt
             .query_map([], |r| r.get(0))
             .unwrap()
@@ -20277,22 +21826,34 @@ mod tests {
 
         let other_episode_count: i64 = store
             .conn
-            .query_row("SELECT count(*) FROM episodes WHERE id = ?1", params![other_episode_id], |r| r.get(0))
+            .query_row(
+                "SELECT count(*) FROM episodes WHERE id = ?1",
+                params![other_episode_id],
+                |r| r.get(0),
+            )
             .unwrap();
-        assert_eq!(other_episode_count, 1, "the other episode's row must survive");
+        assert_eq!(
+            other_episode_count, 1,
+            "the other episode's row must survive"
+        );
     }
 
     #[test]
     fn forget_episode_activity_removes_items_from_fts_search() {
         let store = Store::open_in_memory().unwrap();
-        let episode_id = insert_test_episode_with_body_text(&store, 100, 100, "unique_forget_marker_text");
+        let episode_id =
+            insert_test_episode_with_body_text(&store, 100, 100, "unique_forget_marker_text");
 
-        let hits_before = store.search_items_keyword("unique_forget_marker_text", 10).unwrap();
+        let hits_before = store
+            .search_items_keyword("unique_forget_marker_text", 10)
+            .unwrap();
         assert_eq!(hits_before.len(), 1);
 
         assert!(store.forget_episode_activity(episode_id).unwrap());
 
-        let hits_after = store.search_items_keyword("unique_forget_marker_text", 10).unwrap();
+        let hits_after = store
+            .search_items_keyword("unique_forget_marker_text", 10)
+            .unwrap();
         assert_eq!(hits_after.len(), 0);
     }
 
@@ -20339,7 +21900,11 @@ mod tests {
 
         let episode_status: String = store
             .conn
-            .query_row("SELECT status FROM episodes WHERE id = ?1", params![episode_id], |r| r.get(0))
+            .query_row(
+                "SELECT status FROM episodes WHERE id = ?1",
+                params![episode_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(episode_status, "pending_summary");
     }
@@ -20382,7 +21947,13 @@ mod tests {
     #[test]
     fn thread_priority_round_trips_and_upserts() {
         let store = Store::open_in_memory().unwrap();
-        let first = priority::PriorityJudgments { asks_reply: 0.9, urgency: 2.0, person: 0.7, bulk: 0.1, automated: 0.05 };
+        let first = priority::PriorityJudgments {
+            asks_reply: 0.9,
+            urgency: 2.0,
+            person: 0.7,
+            bulk: 0.1,
+            automated: 0.05,
+        };
         assert!(store.get_thread_priority(7).unwrap().is_none());
 
         store.save_thread_priority(7, 3, &first, 1000).unwrap();
@@ -20390,7 +21961,10 @@ mod tests {
         assert_eq!(row.scored_message_count, 3);
         assert_eq!(row.judgments, first);
 
-        let second = priority::PriorityJudgments { asks_reply: 0.1, ..first };
+        let second = priority::PriorityJudgments {
+            asks_reply: 0.1,
+            ..first
+        };
         store.save_thread_priority(7, 4, &second, 2000).unwrap();
         let row = store.get_thread_priority(7).unwrap().unwrap();
         assert_eq!((row.scored_message_count, row.judgments), (4, second));
@@ -20409,40 +21983,112 @@ mod tests {
     }
 
     fn waiting_thread_id(store: &Store) -> i64 {
-        store.conn.query_row("SELECT id FROM threads WHERE external_thread_id = 'thread-1'", [], |r| r.get(0)).unwrap()
+        store
+            .conn
+            .query_row(
+                "SELECT id FROM threads WHERE external_thread_id = 'thread-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
     }
 
     fn sample_judgments() -> priority::PriorityJudgments {
-        priority::PriorityJudgments { asks_reply: 0.9, urgency: 2.0, person: 0.7, bulk: 0.1, automated: 0.05 }
+        priority::PriorityJudgments {
+            asks_reply: 0.9,
+            urgency: 2.0,
+            person: 0.7,
+            bulk: 0.1,
+            automated: 0.05,
+        }
     }
 
     #[test]
     fn a_waiting_on_me_thread_gets_a_priority_job_and_a_new_message_revives_it() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "msg-1", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Hello", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Hello",
+            1000,
+        );
         store.run_thread_state_sync_job(2000).unwrap();
         let thread_id = waiting_thread_id(&store);
-        assert_eq!(priority_job_status(&store, thread_id).as_deref(), Some("pending"));
+        assert_eq!(
+            priority_job_status(&store, thread_id).as_deref(),
+            Some("pending")
+        );
 
-        store.conn.execute("UPDATE jobs SET status = 'done' WHERE job_type = 'thread_priority'", []).unwrap();
-        insert_email_item(&store, "dev-1", "msg-2", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Re: Hello", 3000);
+        store
+            .conn
+            .execute(
+                "UPDATE jobs SET status = 'done' WHERE job_type = 'thread_priority'",
+                [],
+            )
+            .unwrap();
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-2",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Re: Hello",
+            3000,
+        );
         store.run_thread_state_sync_job(4000).unwrap();
-        assert_eq!(priority_job_status(&store, thread_id).as_deref(), Some("pending"));
+        assert_eq!(
+            priority_job_status(&store, thread_id).as_deref(),
+            Some("pending")
+        );
     }
 
     #[test]
     fn a_thread_the_user_last_wrote_gets_no_priority_job() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "msg-1", "thread-1", "me@example.com", "me@example.com", "alice@example.com", "Hi", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "me@example.com",
+            "alice@example.com",
+            "Hi",
+            1000,
+        );
         store.run_thread_state_sync_job(2000).unwrap();
-        let count: i64 = store.conn.query_row("SELECT COUNT(*) FROM jobs WHERE job_type = 'thread_priority'", [], |r| r.get(0)).unwrap();
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM jobs WHERE job_type = 'thread_priority'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 0);
     }
 
     #[test]
     fn claim_returns_the_thread_state_and_latest_message() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "msg-1", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Hello", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Hello",
+            1000,
+        );
         store.run_thread_state_sync_job(2000).unwrap();
 
         let jobs = store.claim_thread_priority_jobs(5, 5000).unwrap();
@@ -20451,32 +22097,75 @@ mod tests {
         assert_eq!(jobs[0].subject, "Hello");
         assert_eq!(jobs[0].sender, "alice@example.com");
         assert_eq!(jobs[0].latest_message, "body");
-        assert_eq!(priority_job_status(&store, jobs[0].thread_id).as_deref(), Some("running"));
+        assert_eq!(
+            priority_job_status(&store, jobs[0].thread_id).as_deref(),
+            Some("running")
+        );
     }
 
     #[test]
     fn claim_completes_without_a_call_when_the_thread_stopped_waiting_on_me() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "msg-1", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Hello", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Hello",
+            1000,
+        );
         store.run_thread_state_sync_job(2000).unwrap();
         let thread_id = waiting_thread_id(&store);
         // The user replied between queueing and claiming.
-        store.conn.execute("UPDATE threads SET status = 'waiting_on_them' WHERE id = ?1", params![thread_id]).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE threads SET status = 'waiting_on_them' WHERE id = ?1",
+                params![thread_id],
+            )
+            .unwrap();
 
-        assert!(store.claim_thread_priority_jobs(5, 5000).unwrap().is_empty());
-        assert_eq!(priority_job_status(&store, thread_id).as_deref(), Some("done"));
+        assert!(store
+            .claim_thread_priority_jobs(5, 5000)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            priority_job_status(&store, thread_id).as_deref(),
+            Some("done")
+        );
     }
 
     #[test]
     fn claim_skips_a_thread_whose_current_message_count_is_already_scored() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "msg-1", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Hello", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Hello",
+            1000,
+        );
         store.run_thread_state_sync_job(2000).unwrap();
         let thread_id = waiting_thread_id(&store);
-        store.save_thread_priority(thread_id, 1, &sample_judgments(), 3000).unwrap();
+        store
+            .save_thread_priority(thread_id, 1, &sample_judgments(), 3000)
+            .unwrap();
 
-        assert!(store.claim_thread_priority_jobs(5, 5000).unwrap().is_empty());
-        assert_eq!(priority_job_status(&store, thread_id).as_deref(), Some("done"));
+        assert!(store
+            .claim_thread_priority_jobs(5, 5000)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            priority_job_status(&store, thread_id).as_deref(),
+            Some("done")
+        );
     }
 
     #[test]
@@ -20484,18 +22173,63 @@ mod tests {
         // A message arrives while a score is in flight: the claim saw count 1, the thread
         // is now at 2. complete() stores count 1, so the read path treats it as stale.
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "msg-1", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Hello", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Hello",
+            1000,
+        );
         store.run_thread_state_sync_job(2000).unwrap();
         let claimed = store.claim_thread_priority_jobs(5, 5000).unwrap();
-        insert_email_item(&store, "dev-1", "msg-2", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Re: Hello", 6000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-2",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Re: Hello",
+            6000,
+        );
         store.run_thread_state_sync_job(7000).unwrap(); // revives the 'running' job to 'pending'
 
         let job = &claimed[0];
-        store.complete_thread_priority_job(job.job_id, job.thread_id, job.message_count, &sample_judgments(), 8000).unwrap();
-        assert_eq!(store.get_thread_priority(job.thread_id).unwrap().unwrap().scored_message_count, 1);
-        let current: i64 = store.conn.query_row("SELECT message_count FROM threads WHERE id = ?1", params![job.thread_id], |r| r.get(0)).unwrap();
+        store
+            .complete_thread_priority_job(
+                job.job_id,
+                job.thread_id,
+                job.message_count,
+                &sample_judgments(),
+                8000,
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .get_thread_priority(job.thread_id)
+                .unwrap()
+                .unwrap()
+                .scored_message_count,
+            1
+        );
+        let current: i64 = store
+            .conn
+            .query_row(
+                "SELECT message_count FROM threads WHERE id = ?1",
+                params![job.thread_id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(current, 2);
-        assert_eq!(priority_job_status(&store, job.thread_id).as_deref(), Some("pending"));
+        assert_eq!(
+            priority_job_status(&store, job.thread_id).as_deref(),
+            Some("pending")
+        );
         let again = store.claim_thread_priority_jobs(5, 9000).unwrap();
         assert_eq!(again.len(), 1);
         assert_eq!(again[0].message_count, 2);
@@ -20504,49 +22238,135 @@ mod tests {
     #[test]
     fn failures_count_toward_the_ceiling_but_retry_later_does_not() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "msg-1", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Hello", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Hello",
+            1000,
+        );
         store.run_thread_state_sync_job(2000).unwrap();
         let job = store.claim_thread_priority_jobs(1, 5000).unwrap().remove(0);
 
-        store.retry_thread_priority_job_later(job.job_id, 300_000, 6000).unwrap();
-        let (status, attempts, not_before): (String, i64, i64) = store.conn.query_row(
-            "SELECT status, attempts, not_before FROM jobs WHERE id = ?1", params![job.job_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
-        assert_eq!((status.as_str(), attempts, not_before), ("pending", 0, 306_000));
+        store
+            .retry_thread_priority_job_later(job.job_id, 300_000, 6000)
+            .unwrap();
+        let (status, attempts, not_before): (String, i64, i64) = store
+            .conn
+            .query_row(
+                "SELECT status, attempts, not_before FROM jobs WHERE id = ?1",
+                params![job.job_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (status.as_str(), attempts, not_before),
+            ("pending", 0, 306_000)
+        );
 
         store.fail_thread_priority_job(job.job_id, 0, 7000).unwrap();
-        let (status, attempts): (String, i64) = store.conn.query_row(
-            "SELECT status, attempts FROM jobs WHERE id = ?1", params![job.job_id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        let (status, attempts): (String, i64) = store
+            .conn
+            .query_row(
+                "SELECT status, attempts FROM jobs WHERE id = ?1",
+                params![job.job_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
         assert_eq!((status.as_str(), attempts), ("pending", 1));
 
         store.fail_thread_priority_job(job.job_id, 4, 8000).unwrap();
-        let status: String = store.conn.query_row("SELECT status FROM jobs WHERE id = ?1", params![job.job_id], |r| r.get(0)).unwrap();
+        let status: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM jobs WHERE id = ?1",
+                params![job.job_id],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(status, "failed");
     }
 
     #[test]
     fn a_reply_from_the_user_completes_the_pending_priority_job() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "msg-1", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Hello", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Hello",
+            1000,
+        );
         store.run_thread_state_sync_job(2000).unwrap();
         let thread_id = waiting_thread_id(&store);
-        assert_eq!(priority_job_status(&store, thread_id).as_deref(), Some("pending"));
+        assert_eq!(
+            priority_job_status(&store, thread_id).as_deref(),
+            Some("pending")
+        );
 
-        insert_email_item(&store, "dev-1", "msg-2", "thread-1", "me@example.com", "me@example.com", "alice@example.com", "Re: Hello", 3000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-2",
+            "thread-1",
+            "me@example.com",
+            "me@example.com",
+            "alice@example.com",
+            "Re: Hello",
+            3000,
+        );
         store.run_thread_state_sync_job(4000).unwrap();
-        assert_eq!(priority_job_status(&store, thread_id).as_deref(), Some("done"));
+        assert_eq!(
+            priority_job_status(&store, thread_id).as_deref(),
+            Some("done")
+        );
     }
 
     #[test]
     fn dead_jobs_at_the_queue_head_do_not_use_up_the_claim_budget() {
         let store = Store::open_in_memory().unwrap();
         for n in 0..3 {
-            insert_email_item(&store, "dev-1", &format!("dead-{n}"), &format!("dead-thread-{n}"), "me@example.com", "alice@example.com", "me@example.com", "Dead", 1000 + n);
+            insert_email_item(
+                &store,
+                "dev-1",
+                &format!("dead-{n}"),
+                &format!("dead-thread-{n}"),
+                "me@example.com",
+                "alice@example.com",
+                "me@example.com",
+                "Dead",
+                1000 + n,
+            );
         }
-        insert_email_item(&store, "dev-1", "live-1", "live-thread", "me@example.com", "bob@example.com", "me@example.com", "Live", 2000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "live-1",
+            "live-thread",
+            "me@example.com",
+            "bob@example.com",
+            "me@example.com",
+            "Live",
+            2000,
+        );
         store.run_thread_state_sync_job(5000).unwrap();
         // The first three threads stop waiting on me without their jobs being completed.
         store.conn.execute("UPDATE threads SET status = 'waiting_on_them' WHERE external_thread_id LIKE 'dead-thread-%'", []).unwrap();
-        store.conn.execute("UPDATE jobs SET status = 'pending' WHERE job_type = 'thread_priority'", []).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE jobs SET status = 'pending' WHERE job_type = 'thread_priority'",
+                [],
+            )
+            .unwrap();
 
         let claimed = store.claim_thread_priority_jobs(1, 6000).unwrap();
         assert_eq!(claimed.len(), 1);
@@ -20556,28 +22376,62 @@ mod tests {
     #[test]
     fn seeding_queues_a_job_for_every_waiting_on_me_thread() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "msg-1", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Hello", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Hello",
+            1000,
+        );
         store.run_thread_state_sync_job(2000).unwrap();
-        store.conn.execute("DELETE FROM jobs WHERE job_type = 'thread_priority'", []).unwrap();
+        store
+            .conn
+            .execute("DELETE FROM jobs WHERE job_type = 'thread_priority'", [])
+            .unwrap();
 
         assert_eq!(store.seed_thread_priority_jobs(3000).unwrap(), 1);
-        assert_eq!(priority_job_status(&store, waiting_thread_id(&store)).as_deref(), Some("pending"));
+        assert_eq!(
+            priority_job_status(&store, waiting_thread_id(&store)).as_deref(),
+            Some("pending")
+        );
     }
 
     #[test]
     fn the_generic_job_runner_never_claims_thread_priority_jobs() {
         let store = Store::open_in_memory().unwrap();
-        insert_email_item(&store, "dev-1", "msg-1", "thread-1", "me@example.com", "alice@example.com", "me@example.com", "Hello", 1000);
+        insert_email_item(
+            &store,
+            "dev-1",
+            "msg-1",
+            "thread-1",
+            "me@example.com",
+            "alice@example.com",
+            "me@example.com",
+            "Hello",
+            1000,
+        );
         store.run_thread_state_sync_job(2000).unwrap();
         let thread_id = waiting_thread_id(&store);
 
         store.run_jobs_batch(10, 10_000).unwrap();
-        assert_eq!(priority_job_status(&store, thread_id).as_deref(), Some("pending"));
+        assert_eq!(
+            priority_job_status(&store, thread_id).as_deref(),
+            Some("pending")
+        );
     }
 
     fn snap_meeting(store: &Store, start: i64) -> i64 {
         store
-            .insert_meeting(&new_meeting("Deck", start, MeetingTrigger::Manual, MeetingStatus::Completed))
+            .insert_meeting(&new_meeting(
+                "Deck",
+                start,
+                MeetingTrigger::Manual,
+                MeetingStatus::Completed,
+            ))
             .unwrap()
     }
 
@@ -20595,7 +22449,11 @@ mod tests {
     fn snapshot_items(store: &Store) -> i64 {
         store
             .conn
-            .query_row("SELECT COUNT(*) FROM items WHERE kind = 'snapshot'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM items WHERE kind = 'snapshot'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap()
     }
 
@@ -20603,7 +22461,10 @@ mod tests {
     fn insert_meeting_snapshot_mirrors_ocr_text_into_items_as_local_only_snapshot() {
         let store = Store::open_in_memory().unwrap();
         let mid = snap_meeting(&store, 1000);
-        let sid = store.insert_meeting_snapshot(&snap(mid, 2000, "Org chart Alice Bob")).unwrap().unwrap();
+        let sid = store
+            .insert_meeting_snapshot(&snap(mid, 2000, "Org chart Alice Bob"))
+            .unwrap()
+            .unwrap();
         let listed = store.list_meeting_snapshots(mid).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, sid);
@@ -20616,19 +22477,36 @@ mod tests {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .unwrap();
-        assert_eq!((kind.as_str(), local_seq, thread_id), ("snapshot", None, mid));
-        assert!(store.search_items_keyword("Alice", 10).unwrap().contains(&items_id));
+        assert_eq!(
+            (kind.as_str(), local_seq, thread_id),
+            ("snapshot", None, mid)
+        );
+        assert!(store
+            .search_items_keyword("Alice", 10)
+            .unwrap()
+            .contains(&items_id));
     }
 
     #[test]
     fn get_meeting_item_ref_maps_snapshot_and_transcript_items_to_their_meeting() {
         let store = Store::open_in_memory().unwrap();
         let mid = snap_meeting(&store, 1000);
-        store.insert_meeting_snapshot(&snap(mid, 2000, "Org chart")).unwrap();
-        let hit = &store.search_snapshot_keyword_with_meeting_ts("Org", 10).unwrap()[0].0;
-        assert_eq!(store.get_meeting_item_ref(hit.id, "snapshot").unwrap(), Some((mid, 2000)));
+        store
+            .insert_meeting_snapshot(&snap(mid, 2000, "Org chart"))
+            .unwrap();
+        let hit = &store
+            .search_snapshot_keyword_with_meeting_ts("Org", 10)
+            .unwrap()[0]
+            .0;
+        assert_eq!(
+            store.get_meeting_item_ref(hit.id, "snapshot").unwrap(),
+            Some((mid, 2000))
+        );
         // Wrong kind or unknown id is a clean miss.
-        assert_eq!(store.get_meeting_item_ref(hit.id, "transcript").unwrap(), None);
+        assert_eq!(
+            store.get_meeting_item_ref(hit.id, "transcript").unwrap(),
+            None
+        );
         assert_eq!(store.get_meeting_item_ref(9999, "snapshot").unwrap(), None);
     }
 
@@ -20653,7 +22531,10 @@ mod tests {
             })
             .unwrap();
         let got = store.get_routine_run_with_name(run).unwrap().unwrap();
-        assert_eq!((got.routine_name.as_str(), got.ran_at_unix_ms), ("Morning digest", 5));
+        assert_eq!(
+            (got.routine_name.as_str(), got.ran_at_unix_ms),
+            ("Morning digest", 5)
+        );
         assert!(store.get_routine_run_with_name(run + 1).unwrap().is_none());
     }
 
@@ -20661,28 +22542,41 @@ mod tests {
     fn search_snapshot_keyword_finds_slide_text_with_meeting_title() {
         let store = Store::open_in_memory().unwrap();
         let mid = snap_meeting(&store, 1000);
-        store.insert_meeting_snapshot(&snap(mid, 2000, "Org chart Alice Bob")).unwrap();
-        let hits = store.search_snapshot_keyword_with_meeting_ts("Alice", 10).unwrap();
+        store
+            .insert_meeting_snapshot(&snap(mid, 2000, "Org chart Alice Bob"))
+            .unwrap();
+        let hits = store
+            .search_snapshot_keyword_with_meeting_ts("Alice", 10)
+            .unwrap();
         assert_eq!(hits.len(), 1);
         let (h, ts) = &hits[0];
         assert_eq!((h.meeting_id, *ts), (mid, 2000));
         assert_eq!(h.text, "Org chart Alice Bob");
         assert_eq!(h.file_path, "/tmp/snap-2000.png");
         assert!(!h.meeting_title.is_empty());
-        assert!(store.search_snapshot_keyword_with_meeting_ts("zebra", 10).unwrap().is_empty());
+        assert!(store
+            .search_snapshot_keyword_with_meeting_ts("zebra", 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
     fn insert_meeting_snapshot_for_missing_meeting_returns_none() {
         let store = Store::open_in_memory().unwrap();
-        assert_eq!(store.insert_meeting_snapshot(&snap(999, 1, "x")).unwrap(), None);
+        assert_eq!(
+            store.insert_meeting_snapshot(&snap(999, 1, "x")).unwrap(),
+            None
+        );
     }
 
     #[test]
     fn insert_meeting_snapshot_with_blank_ocr_skips_items_row() {
         let store = Store::open_in_memory().unwrap();
         let mid = snap_meeting(&store, 1000);
-        assert!(store.insert_meeting_snapshot(&snap(mid, 2000, "  \n ")).unwrap().is_some());
+        assert!(store
+            .insert_meeting_snapshot(&snap(mid, 2000, "  \n "))
+            .unwrap()
+            .is_some());
         assert_eq!(snapshot_items(&store), 0);
     }
 
@@ -20690,11 +22584,21 @@ mod tests {
     fn replace_meeting_snapshot_keeps_capture_time_and_updates_items_text() {
         let store = Store::open_in_memory().unwrap();
         let mid = snap_meeting(&store, 1000);
-        let sid = store.insert_meeting_snapshot(&snap(mid, 2000, "old words")).unwrap().unwrap();
-        assert!(store.replace_meeting_snapshot(sid, "/tmp/new.png", 800, 600, "fresh Carol").unwrap());
-        assert!(!store.replace_meeting_snapshot(sid + 100, "/tmp/x.png", 1, 1, "z").unwrap());
+        let sid = store
+            .insert_meeting_snapshot(&snap(mid, 2000, "old words"))
+            .unwrap()
+            .unwrap();
+        assert!(store
+            .replace_meeting_snapshot(sid, "/tmp/new.png", 800, 600, "fresh Carol")
+            .unwrap());
+        assert!(!store
+            .replace_meeting_snapshot(sid + 100, "/tmp/x.png", 1, 1, "z")
+            .unwrap());
         let s = &store.list_meeting_snapshots(mid).unwrap()[0];
-        assert_eq!((s.captured_unix_ms, s.file_path.as_str(), s.width, s.height), (2000, "/tmp/new.png", 800, 600));
+        assert_eq!(
+            (s.captured_unix_ms, s.file_path.as_str(), s.width, s.height),
+            (2000, "/tmp/new.png", 800, 600)
+        );
         let (body, ts): (String, i64) = store
             .conn
             .query_row(
@@ -20712,8 +22616,14 @@ mod tests {
     fn delete_meeting_snapshot_returns_path_and_removes_items_row() {
         let store = Store::open_in_memory().unwrap();
         let mid = snap_meeting(&store, 1000);
-        let sid = store.insert_meeting_snapshot(&snap(mid, 2000, "gone soon")).unwrap().unwrap();
-        assert_eq!(store.delete_meeting_snapshot(sid).unwrap().as_deref(), Some("/tmp/snap-2000.png"));
+        let sid = store
+            .insert_meeting_snapshot(&snap(mid, 2000, "gone soon"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            store.delete_meeting_snapshot(sid).unwrap().as_deref(),
+            Some("/tmp/snap-2000.png")
+        );
         assert_eq!(store.delete_meeting_snapshot(sid).unwrap(), None);
         assert!(store.list_meeting_snapshots(mid).unwrap().is_empty());
         assert_eq!(snapshot_items(&store), 0);
@@ -20723,10 +22633,14 @@ mod tests {
     fn snapshot_items_are_never_in_the_content_push_query() {
         let store = Store::open_in_memory().unwrap();
         let mid = snap_meeting(&store, 1000);
-        store.insert_meeting_snapshot(&snap(mid, 2000, "slide text")).unwrap();
+        store
+            .insert_meeting_snapshot(&snap(mid, 2000, "slide text"))
+            .unwrap();
         assert_eq!(snapshot_items(&store), 1);
         let rows = store.unpushed_item_rows("test-device", 0).unwrap();
-        assert!(rows.iter().all(|r| !matches!(r, SyncableRow::Item { item, .. } if item.kind == "snapshot")));
+        assert!(rows
+            .iter()
+            .all(|r| !matches!(r, SyncableRow::Item { item, .. } if item.kind == "snapshot")));
         let pushable: i64 = store
             .conn
             .query_row(
@@ -20745,7 +22659,9 @@ mod tests {
         let m2 = snap_meeting(&store, 1100);
         for (m, dir) in [(m1, "/tmp/dir1"), (m2, "/tmp/dir2")] {
             store.set_meeting_snapshots_dir(m, dir).unwrap();
-            store.insert_meeting_snapshot(&snap(m, 2000, "slide")).unwrap();
+            store
+                .insert_meeting_snapshot(&snap(m, 2000, "slide"))
+                .unwrap();
         }
         store.set_keep_snapshots(m2, true).unwrap();
         let (n, files) = store.delete_meetings_before(5000).unwrap();
@@ -20753,21 +22669,35 @@ mod tests {
         let mut dirs: Vec<Option<String>> = files.into_iter().map(|f| f.snapshots_dir).collect();
         dirs.sort();
         assert_eq!(dirs, vec![None, Some("/tmp/dir1".to_string())]);
-        let rows: i64 = store.conn.query_row("SELECT COUNT(*) FROM meeting_snapshot", [], |r| r.get(0)).unwrap();
+        let rows: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM meeting_snapshot", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(rows, 0);
         assert_eq!(snapshot_items(&store), 0);
     }
 
     #[test]
     fn shared_snapshot_dir_is_kept_with_either_separator() {
-        for (dir, file) in [("/tmp/shared", "/tmp/shared/a.png"), ("C:\\data\\Snapshots\\1", "C:\\data\\Snapshots\\1\\a.png")] {
+        for (dir, file) in [
+            ("/tmp/shared", "/tmp/shared/a.png"),
+            ("C:\\data\\Snapshots\\1", "C:\\data\\Snapshots\\1\\a.png"),
+        ] {
             let store = Store::open_in_memory().unwrap();
             let m = snap_meeting(&store, 1000);
             let other = snap_meeting(&store, 1100);
             store.set_meeting_snapshots_dir(m, dir).unwrap();
-            store.insert_meeting_snapshot(&NewMeetingSnapshot { file_path: file.into(), ..snap(other, 2000, "theirs") }).unwrap();
+            store
+                .insert_meeting_snapshot(&NewMeetingSnapshot {
+                    file_path: file.into(),
+                    ..snap(other, 2000, "theirs")
+                })
+                .unwrap();
             let files = store.delete_meeting_returning_files(m).unwrap().unwrap();
-            assert_eq!(files.snapshots_dir, None, "{dir} still holds another meeting's snapshot");
+            assert_eq!(
+                files.snapshots_dir, None,
+                "{dir} still holds another meeting's snapshot"
+            );
         }
     }
 
@@ -20776,8 +22706,12 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let m = snap_meeting(&store, 1000);
         let other = snap_meeting(&store, 1100);
-        store.insert_meeting_snapshot(&snap(m, 2000, "mine")).unwrap();
-        store.insert_meeting_snapshot(&snap(other, 2000, "theirs")).unwrap();
+        store
+            .insert_meeting_snapshot(&snap(m, 2000, "mine"))
+            .unwrap();
+        store
+            .insert_meeting_snapshot(&snap(other, 2000, "theirs"))
+            .unwrap();
         assert!(store.delete_meeting(m).unwrap());
         assert!(store.list_meeting_snapshots(m).unwrap().is_empty());
         assert_eq!(store.list_meeting_snapshots(other).unwrap().len(), 1);
@@ -20788,10 +22722,16 @@ mod tests {
     fn meeting_snapshots_info_reflects_dir_and_keep() {
         let store = Store::open_in_memory().unwrap();
         let m = snap_meeting(&store, 1000);
-        assert_eq!(store.meeting_snapshots_info(m).unwrap(), Some((None, false)));
+        assert_eq!(
+            store.meeting_snapshots_info(m).unwrap(),
+            Some((None, false))
+        );
         store.set_meeting_snapshots_dir(m, "/tmp/d").unwrap();
         store.set_keep_snapshots(m, true).unwrap();
-        assert_eq!(store.meeting_snapshots_info(m).unwrap(), Some((Some("/tmp/d".into()), true)));
+        assert_eq!(
+            store.meeting_snapshots_info(m).unwrap(),
+            Some((Some("/tmp/d".into()), true))
+        );
         assert_eq!(store.meeting_snapshots_info(999).unwrap(), None);
     }
 }

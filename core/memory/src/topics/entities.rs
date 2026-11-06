@@ -73,25 +73,26 @@ const KEYWORDS_STOPWORDS: &[(&str, &[&str])] = &[
     (
         "en",
         &[
-            "a", "an", "the", "and", "or", "but", "of", "in", "on", "at", "to", "for", "with", "from",
-            "by", "via", "as", "is", "are", "was", "were", "be", "this", "that", "these", "those", "it",
-            "its", "if", "we", "you", "i", "he", "she", "they", "our", "your", "my", "re", "fwd", "fw",
-            "hi", "hello", "dear", "thanks", "thank", "please", "not", "no", "yes", "so", "then",
+            "a", "an", "the", "and", "or", "but", "of", "in", "on", "at", "to", "for", "with",
+            "from", "by", "via", "as", "is", "are", "was", "were", "be", "this", "that", "these",
+            "those", "it", "its", "if", "we", "you", "i", "he", "she", "they", "our", "your", "my",
+            "re", "fwd", "fw", "hi", "hello", "dear", "thanks", "thank", "please", "not", "no",
+            "yes", "so", "then",
         ],
     ),
     (
         "es",
         &[
-            "el", "los", "las", "un", "una", "unos", "unas", "al", "y", "pero", "con", "por", "sobre",
-            "este", "esta", "estos", "estas", "ese", "esa", "mi", "mis", "tu", "tus", "su", "sus", "nuestro",
-            "nuestra", "hola", "gracias", "favor", "sí",
+            "el", "los", "las", "un", "una", "unos", "unas", "al", "y", "pero", "con", "por",
+            "sobre", "este", "esta", "estos", "estas", "ese", "esa", "mi", "mis", "tu", "tus",
+            "su", "sus", "nuestro", "nuestra", "hola", "gracias", "favor", "sí",
         ],
     ),
     (
         "fr",
         &[
-            "les", "des", "une", "aux", "et", "ou", "mais", "avec", "dans", "sur", "sont", "cette", "ces",
-            "mes", "tes", "notre", "nos", "votre", "vos", "bonjour", "salut", "merci",
+            "les", "des", "une", "aux", "et", "ou", "mais", "avec", "dans", "sur", "sont", "cette",
+            "ces", "mes", "tes", "notre", "nos", "votre", "vos", "bonjour", "salut", "merci",
             "oui",
         ],
     ),
@@ -326,7 +327,9 @@ mod tests {
 
     #[test]
     fn entity_stopwords_include_es_fr_but_not_name_particles() {
-        for w in ["los", "las", "una", "hola", "gracias", "les", "une", "bonjour", "merci"] {
+        for w in [
+            "los", "las", "una", "hola", "gracias", "les", "une", "bonjour", "merci",
+        ] {
             assert!(is_stopword(w), "{w}");
         }
         for w in ["de", "del", "la", "le", "du", "son", "sin", "pour", "est"] {

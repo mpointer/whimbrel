@@ -43,13 +43,22 @@ const MIN_GROUPED_MS: i64 = 2 * 60_000;
 /// the same start as the other: two Macs recording one calendar event both start at the
 /// event's start, so a brief copy of it is still that call.
 fn same_call(a: &Meeting, b: &Meeting) -> bool {
-    let (Some((a_start, a_end)), Some((b_start, b_end))) = (span(a), span(b)) else { return false };
+    let (Some((a_start, a_end)), Some((b_start, b_end))) = (span(a), span(b)) else {
+        return false;
+    };
     let overlap = a_end.min(b_end) - a_start.max(b_start);
     let shorter = (a_end - a_start).min(b_end - b_start);
     // A room-audio copy carries the event's title behind the prefix.
-    let event_title = |m: &Meeting| m.title.strip_prefix(ROOM_AUDIO_PREFIX).unwrap_or(&m.title).to_string();
+    let event_title = |m: &Meeting| {
+        m.title
+            .strip_prefix(ROOM_AUDIO_PREFIX)
+            .unwrap_or(&m.title)
+            .to_string()
+    };
     let same_event = a_start == b_start && event_title(a) == event_title(b);
-    (shorter >= MIN_GROUPED_MS || same_event) && (a_start - b_start).abs() <= MAX_START_GAP_MS && overlap * 2 >= shorter
+    (shorter >= MIN_GROUPED_MS || same_event)
+        && (a_start - b_start).abs() <= MAX_START_GAP_MS
+        && overlap * 2 >= shorter
 }
 
 fn span(m: &Meeting) -> Option<(i64, i64)> {
@@ -103,17 +112,28 @@ pub fn group_copies(meetings: Vec<Meeting>) -> Vec<GroupedMeeting> {
                 .iter()
                 .map(|&k| {
                     let m = slots[k].take().unwrap();
-                    MeetingCopy { id: m.id, device_id: m.device_id, title: m.title }
+                    MeetingCopy {
+                        id: m.id,
+                        device_id: m.device_id,
+                        title: m.title,
+                    }
                 })
                 .collect();
-            GroupedMeeting { meeting, also_recorded }
+            GroupedMeeting {
+                meeting,
+                also_recorded,
+            }
         })
         .collect()
 }
 
 impl Store {
     /// Every meeting, any status, that started in `[start, end)`, newest first.
-    pub fn meetings_starting_between(&self, start_unix_ms: i64, end_unix_ms: i64) -> rusqlite::Result<Vec<Meeting>> {
+    pub fn meetings_starting_between(
+        &self,
+        start_unix_ms: i64,
+        end_unix_ms: i64,
+    ) -> rusqlite::Result<Vec<Meeting>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, device_id, start_unix_ms, end_unix_ms, title, attendees, trigger, audio_path, status, \
              transcript_path, notes, summary_tldr, summary_decisions_json, summary_action_items_json, summary_open_questions_json, \
@@ -136,8 +156,10 @@ impl Store {
                 leads.insert(id, id);
                 continue;
             };
-            let window =
-                self.meetings_starting_between(m.start_unix_ms - MAX_START_GAP_MS, m.start_unix_ms + MAX_START_GAP_MS + 1)?;
+            let window = self.meetings_starting_between(
+                m.start_unix_ms - MAX_START_GAP_MS,
+                m.start_unix_ms + MAX_START_GAP_MS + 1,
+            )?;
             let lead = group_copies(window)
                 .into_iter()
                 .find(|g| g.meeting.id == id || g.also_recorded.iter().any(|c| c.id == id))
@@ -150,7 +172,11 @@ impl Store {
     /// `hits` without those from a copy whose lead also has a hit, order kept.
     /// ponytail: runs after the search's LIMIT, so a search can return fewer than `limit`;
     /// over-fetch if that ever matters.
-    pub(crate) fn drop_copy_hits<T>(&self, hits: Vec<T>, meeting_of: impl Fn(&T) -> i64) -> rusqlite::Result<Vec<T>> {
+    pub(crate) fn drop_copy_hits<T>(
+        &self,
+        hits: Vec<T>,
+        meeting_of: impl Fn(&T) -> i64,
+    ) -> rusqlite::Result<Vec<T>> {
         let ids: Vec<i64> = hits.iter().map(&meeting_of).collect();
         let leads = self.copy_leads(&ids)?;
         Ok(keep_lead_hits(hits, &leads, meeting_of))
@@ -158,7 +184,11 @@ impl Store {
 }
 
 /// Keeps a hit when its meeting leads its group, or when no hit belongs to that lead.
-pub fn keep_lead_hits<T>(hits: Vec<T>, leads: &HashMap<i64, i64>, meeting_of: impl Fn(&T) -> i64) -> Vec<T> {
+pub fn keep_lead_hits<T>(
+    hits: Vec<T>,
+    leads: &HashMap<i64, i64>,
+    meeting_of: impl Fn(&T) -> i64,
+) -> Vec<T> {
     let hit_meetings: HashSet<i64> = hits.iter().map(&meeting_of).collect();
     hits.into_iter()
         .filter(|h| {
@@ -176,7 +206,14 @@ mod tests {
 
     const MIN: i64 = 60_000;
 
-    fn meeting(id: i64, device: &str, title: &str, start_min: i64, end_min: i64, transcript: bool) -> Meeting {
+    fn meeting(
+        id: i64,
+        device: &str,
+        title: &str,
+        start_min: i64,
+        end_min: i64,
+        transcript: bool,
+    ) -> Meeting {
         Meeting {
             id,
             device_id: device.to_string(),
@@ -196,7 +233,10 @@ mod tests {
             summary_provider: None,
             summary_model: None,
             local_seq: None,
-            estimated_speaker_count: None,             away_outcome: None,             away_outcome_at_unix_ms: None, keep_media: false,
+            estimated_speaker_count: None,
+            away_outcome: None,
+            away_outcome_at_unix_ms: None,
+            keep_media: false,
         }
     }
 
@@ -205,13 +245,27 @@ mod tests {
         // The 9/25 partner call: this Mac 16:00-16:35, the third laptop 15:59-16:07, and
         // the work Mac's room recording under its calendar event 16:00-16:09.
         let grouped = group_copies(vec![
-            meeting(212, "work", "Room audio only · CMS Daily Win Room", 960, 969, true),
+            meeting(
+                212,
+                "work",
+                "Room audio only · CMS Daily Win Room",
+                960,
+                969,
+                true,
+            ),
             meeting(211, "third", "Rock Arkie's Zoom Meeting", 959, 967, true),
             meeting(210, "this", "Rock Arkie's Zoom Meeting", 960, 995, true),
         ]);
         assert_eq!(grouped.len(), 1);
         assert_eq!(grouped[0].meeting.id, 210, "the longest in-call copy leads");
-        assert_eq!(grouped[0].also_recorded.iter().map(|c| c.id).collect::<Vec<_>>(), [211, 212]);
+        assert_eq!(
+            grouped[0]
+                .also_recorded
+                .iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>(),
+            [211, 212]
+        );
     }
 
     #[test]
@@ -230,7 +284,10 @@ mod tests {
             meeting(28, "b", "Koozie AI Strategy", 30, 90, true),
             meeting(27, "a", "Records Management", 0, 48, true), // 18 of 48 min = 38%
         ]);
-        assert_eq!(grouped.iter().map(|g| g.meeting.id).collect::<Vec<_>>(), [28, 27]);
+        assert_eq!(
+            grouped.iter().map(|g| g.meeting.id).collect::<Vec<_>>(),
+            [28, 27]
+        );
         assert!(grouped.iter().all(|g| g.also_recorded.is_empty()));
     }
 
@@ -248,12 +305,29 @@ mod tests {
     fn a_short_room_audio_copy_groups_with_the_in_call_recording_of_its_event() {
         // 11/2 9:30: this Mac recorded the call for 20 min; the Genesys Mac's mic picked it
         // up for 75 s under the same calendar event, titled with the room-audio prefix.
-        let mut room = meeting(587, "genesys", "Room audio only · Michael R Pointer / Aditya", 570, 571, false);
+        let mut room = meeting(
+            587,
+            "genesys",
+            "Room audio only · Michael R Pointer / Aditya",
+            570,
+            571,
+            false,
+        );
         room.end_unix_ms = Some(570 * MIN + 75_000);
-        let grouped = group_copies(vec![room, meeting(586, "this", "Michael R Pointer / Aditya", 570, 590, true)]);
+        let grouped = group_copies(vec![
+            room,
+            meeting(586, "this", "Michael R Pointer / Aditya", 570, 590, true),
+        ]);
         assert_eq!(grouped.len(), 1);
         assert_eq!(grouped[0].meeting.id, 586);
-        assert_eq!(grouped[0].also_recorded.iter().map(|c| c.id).collect::<Vec<_>>(), [587]);
+        assert_eq!(
+            grouped[0]
+                .also_recorded
+                .iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>(),
+            [587]
+        );
     }
 
     #[test]
@@ -269,9 +343,26 @@ mod tests {
         let mut d = meeting(255, "b", "FMA Partner Connect", 630, 631, true);
         d.end_unix_ms = Some(630 * MIN + 75_000);
         let grouped = group_copies(vec![a, b, c, d]);
-        assert_eq!(grouped.iter().map(|g| g.meeting.id).collect::<Vec<_>>(), [259, 256]);
-        assert_eq!(grouped[0].also_recorded.iter().map(|c| c.id).collect::<Vec<_>>(), [258]);
-        assert_eq!(grouped[1].also_recorded.iter().map(|c| c.id).collect::<Vec<_>>(), [255]);
+        assert_eq!(
+            grouped.iter().map(|g| g.meeting.id).collect::<Vec<_>>(),
+            [259, 256]
+        );
+        assert_eq!(
+            grouped[0]
+                .also_recorded
+                .iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>(),
+            [258]
+        );
+        assert_eq!(
+            grouped[1]
+                .also_recorded
+                .iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>(),
+            [255]
+        );
     }
 
     #[test]
@@ -294,17 +385,27 @@ mod tests {
 
     #[test]
     fn grouped_meeting_json_keeps_meeting_fields_flat() {
-        let json = serde_json::to_value(&group_copies(vec![meeting(1, "a", "T", 0, 10, false)])).unwrap();
+        let json =
+            serde_json::to_value(&group_copies(vec![meeting(1, "a", "T", 0, 10, false)])).unwrap();
         assert_eq!(json[0]["id"], 1);
         assert_eq!(json[0]["also_recorded"], serde_json::json!([]));
     }
 
     mod store_hits {
-        use crate::{MeetingStatus, MeetingTrigger, NewMeeting, NewMeetingSnapshot, NewTranscriptSegment, Store};
+        use crate::{
+            MeetingStatus, MeetingTrigger, NewMeeting, NewMeetingSnapshot, NewTranscriptSegment,
+            Store,
+        };
 
         const MIN: i64 = 60_000;
 
-        fn add(store: &Store, title: &str, start_min: i64, end_min: i64, status: MeetingStatus) -> i64 {
+        fn add(
+            store: &Store,
+            title: &str,
+            start_min: i64,
+            end_min: i64,
+            status: MeetingStatus,
+        ) -> i64 {
             store
                 .insert_meeting(&NewMeeting {
                     device_id: "d".into(),
@@ -353,11 +454,20 @@ mod tests {
             say(&store, c, 100, "budget review");
             say(&store, a, 100, "the budget is fine");
             say(&store, b, 100, "the budget is fine");
-            let hits: Vec<i64> = store.search_transcript_keyword("budget", 50).unwrap().iter().map(|h| h.meeting_id).collect();
+            let hits: Vec<i64> = store
+                .search_transcript_keyword("budget", 50)
+                .unwrap()
+                .iter()
+                .map(|h| h.meeting_id)
+                .collect();
             assert!(!hits.contains(&b), "copy dropped: {hits:?}");
             assert_eq!(hits.len(), 2);
-            let ts: Vec<i64> =
-                store.search_transcript_keyword_with_meeting_ts("budget", 50).unwrap().iter().map(|(h, _)| h.meeting_id).collect();
+            let ts: Vec<i64> = store
+                .search_transcript_keyword_with_meeting_ts("budget", 50)
+                .unwrap()
+                .iter()
+                .map(|(h, _)| h.meeting_id)
+                .collect();
             assert!(!ts.contains(&b));
         }
 
@@ -387,8 +497,13 @@ mod tests {
                     })
                     .unwrap();
             }
-            let hits = store.search_snapshot_keyword_with_meeting_ts("Roadmap", 50).unwrap();
-            assert_eq!(hits.iter().map(|(h, _)| h.meeting_id).collect::<Vec<_>>(), [a]);
+            let hits = store
+                .search_snapshot_keyword_with_meeting_ts("Roadmap", 50)
+                .unwrap();
+            assert_eq!(
+                hits.iter().map(|(h, _)| h.meeting_id).collect::<Vec<_>>(),
+                [a]
+            );
         }
 
         #[test]
@@ -397,7 +512,12 @@ mod tests {
             let (a, b, _) = three(&store, MeetingStatus::Recording);
             say(&store, a, 100, "budget");
             say(&store, b, 100, "budget");
-            let mut hits: Vec<i64> = store.search_transcript_keyword("budget", 50).unwrap().iter().map(|h| h.meeting_id).collect();
+            let mut hits: Vec<i64> = store
+                .search_transcript_keyword("budget", 50)
+                .unwrap()
+                .iter()
+                .map(|h| h.meeting_id)
+                .collect();
             hits.sort();
             assert_eq!(hits, [a, b]);
         }

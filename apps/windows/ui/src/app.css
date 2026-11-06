@@ -460,6 +460,118 @@ details summary {
   }
 }
 
+/* Settings: the section list beside the chosen section's cards (the Mac's layout). */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: var(--space-xl);
+  align-items: start;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 0;
+}
+
+.settings-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--color-text-secondary);
+  background: none;
+  border: none;
+  border-radius: var(--radius-control);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+}
+
+.settings-nav-item:hover {
+  background: var(--color-background-card);
+}
+
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--color-accent-primary);
+  outline-offset: 1px;
+}
+
+.settings-nav-item--active {
+  color: var(--color-text-primary);
+  background: var(--color-background-card);
+  box-shadow: inset 3px 0 0 var(--color-accent-primary);
+}
+
+.settings-panel {
+  max-width: 720px;
+}
+
+.settings-panel .about {
+  max-width: none;
+}
+
+/* Card titles stand out from the text under them; subsections get a rule and room above. */
+.settings-panel .card > h2.section-label {
+  margin: 0 0 var(--space-sm);
+  font-size: calc(var(--text-section) * 1.2);
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  font-variant-caps: normal;
+  color: var(--color-text-primary);
+}
+
+.settings-panel .card > h2.section-label + p.muted {
+  margin-top: 0;
+  margin-bottom: var(--space-md);
+}
+
+.settings-panel .card h3.section-label {
+  margin: var(--space-xl) 0 var(--space-sm);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--text-body);
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  font-variant-caps: normal;
+  color: var(--color-text-primary);
+}
+
+@media (max-width: 720px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-md);
+  }
+
+  .settings-nav {
+    position: static;
+    overflow-x: auto;
+  }
+
+  .settings-nav ul {
+    flex-direction: row;
+  }
+
+  .settings-nav-item {
+    white-space: nowrap;
+  }
+
+  .settings-nav-item--active {
+    box-shadow: inset 0 -3px 0 var(--color-accent-primary);
+  }
+}
+
 .ask-sidebar {
   display: flex;
   flex-direction: column;
@@ -998,6 +1110,12 @@ button.link.transcript-speaker {
   padding: var(--space-xs) var(--space-sm);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
+}
+
+/* A suggestion whose Add or Dismiss is on its way: shows the click registered. */
+.fact-row[aria-busy="true"] {
+  opacity: 0.5;
+  cursor: progress;
 }
 
 .fact-text {

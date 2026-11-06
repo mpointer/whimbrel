@@ -35,7 +35,11 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
     let na = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let nb = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if na == 0.0 || nb == 0.0 { 0.0 } else { dot / (na * nb) }
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na * nb)
+    }
 }
 
 /// Greedy best-first one-to-one matching of voices to candidates with prints.
@@ -75,7 +79,10 @@ pub fn match_by_voice(
 }
 
 /// Exactly one unassigned speaker and one unassigned candidate: pair them as a guess.
-pub fn eliminate(unassigned_speakers: &[i32], unassigned_candidates: &[Candidate]) -> Option<Assignment> {
+pub fn eliminate(
+    unassigned_speakers: &[i32],
+    unassigned_candidates: &[Candidate],
+) -> Option<Assignment> {
     match (unassigned_speakers, unassigned_candidates) {
         ([s], [c]) => Some(Assignment {
             speaker_id: *s,
@@ -91,27 +98,52 @@ mod tests {
     use super::*;
 
     fn cand(key: &str, print: Option<Vec<f32>>) -> Candidate {
-        Candidate { person_key: key.into(), name: key.into(), print }
+        Candidate {
+            person_key: key.into(),
+            name: key.into(),
+            print,
+        }
     }
 
     #[test]
     fn strong_match_confirms() {
-        let r = match_by_voice(&[(1, vec![1.0, 0.0])], &[cand("a", Some(vec![1.0, 0.0]))], STRONG_MATCH);
-        assert_eq!(r, vec![Assignment { speaker_id: 1, person_key: "a".into(), status: NameStatus::Confirmed }]);
+        let r = match_by_voice(
+            &[(1, vec![1.0, 0.0])],
+            &[cand("a", Some(vec![1.0, 0.0]))],
+            STRONG_MATCH,
+        );
+        assert_eq!(
+            r,
+            vec![Assignment {
+                speaker_id: 1,
+                person_key: "a".into(),
+                status: NameStatus::Confirmed
+            }]
+        );
     }
 
     #[test]
     fn below_threshold_assigns_nothing() {
-        let r = match_by_voice(&[(1, vec![1.0, 0.0])], &[cand("a", Some(vec![0.0, 1.0]))], STRONG_MATCH);
+        let r = match_by_voice(
+            &[(1, vec![1.0, 0.0])],
+            &[cand("a", Some(vec![0.0, 1.0]))],
+            STRONG_MATCH,
+        );
         assert!(r.is_empty());
     }
 
     #[test]
     fn one_to_one_best_first() {
         let voices = [(1, vec![1.0, 0.1]), (2, vec![1.0, 0.0])];
-        let cands = [cand("a", Some(vec![1.0, 0.0])), cand("b", Some(vec![0.8, 0.6]))];
+        let cands = [
+            cand("a", Some(vec![1.0, 0.0])),
+            cand("b", Some(vec![0.8, 0.6])),
+        ];
         let r = match_by_voice(&voices, &cands, STRONG_MATCH);
-        assert_eq!(r.iter().find(|a| a.person_key == "a").unwrap().speaker_id, 2);
+        assert_eq!(
+            r.iter().find(|a| a.person_key == "a").unwrap().speaker_id,
+            2
+        );
         assert!(r.iter().all(|a| a.speaker_id != 1 || a.person_key == "b"));
         assert_eq!(r.iter().filter(|a| a.person_key == "a").count(), 1);
     }
@@ -125,7 +157,10 @@ mod tests {
     #[test]
     fn eliminate_one_and_one_is_guess() {
         let a = eliminate(&[3], &[cand("a", None)]).unwrap();
-        assert_eq!((a.speaker_id, a.person_key.as_str(), a.status), (3, "a", NameStatus::Guess));
+        assert_eq!(
+            (a.speaker_id, a.person_key.as_str(), a.status),
+            (3, "a", NameStatus::Guess)
+        );
     }
 
     #[test]
@@ -151,13 +186,23 @@ mod tests {
     fn cosine_of_different_lengths_is_zero() {
         // Another embedding model: zip would compare only the shared prefix and call it a match.
         assert_eq!(cosine(&[1.0, 0.0], &[1.0]), 0.0);
-        let r = match_by_voice(&[(1, vec![1.0, 0.0])], &[cand("a", Some(vec![1.0]))], STRONG_MATCH);
+        let r = match_by_voice(
+            &[(1, vec![1.0, 0.0])],
+            &[cand("a", Some(vec![1.0]))],
+            STRONG_MATCH,
+        );
         assert!(r.is_empty());
     }
 
     #[test]
     fn status_serde_lowercase() {
-        assert_eq!(serde_json::to_string(&NameStatus::Confirmed).unwrap(), "\"confirmed\"");
-        assert_eq!(serde_json::from_str::<NameStatus>("\"guess\"").unwrap(), NameStatus::Guess);
+        assert_eq!(
+            serde_json::to_string(&NameStatus::Confirmed).unwrap(),
+            "\"confirmed\""
+        );
+        assert_eq!(
+            serde_json::from_str::<NameStatus>("\"guess\"").unwrap(),
+            NameStatus::Guess
+        );
     }
 }

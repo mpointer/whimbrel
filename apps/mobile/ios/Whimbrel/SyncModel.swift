@@ -23,6 +23,8 @@ protocol SyncCredentialSource: AnyObject {
 /// The local store seam (faked in tests). Calls block; `SyncModel` runs them off main.
 protocol MeetingSyncStore: AnyObject {
     func pullOnly(_ credentials: SyncCredentials, captureWindowDays: Int32) -> Bool
+    /// The last pull stopped with rows still on the relay (`whimbrel_sync_content_more_to_pull`).
+    func moreToPull() -> Bool
     func groupedMeetingCount() -> Int?
     func lastSyncError() -> String?
 }
@@ -36,6 +38,7 @@ extension CoreMemoryStore: MeetingSyncStore {
     }
 
     func groupedMeetingCount() -> Int? { groupedMeetingCount(limit: 200) }
+    func moreToPull() -> Bool { whimbrel_sync_content_more_to_pull() }
     func lastSyncError() -> String? { Self.lastSyncContentError() }
 }
 
@@ -83,6 +86,8 @@ final class SyncModel: ObservableObject {
     private let queue = DispatchQueue(label: "com.mpointer.whimbrel.mobile.store", qos: .userInitiated)
     private let log = Logger(subsystem: "com.mpointer.whimbrel.mobile", category: "content-sync")
     private var consecutiveFailures = 0
+    /// The last good round left rows behind: the next comes after the catch-up gap, not a minute.
+    private var moreToPull = false
     /// The running cadence loop, if any. Exposed so tests can await it.
     private(set) var loopTask: Task<Void, Never>?
 
@@ -114,7 +119,8 @@ final class SyncModel: ObservableObject {
         loopTask = Task { [weak self] in
             while let self, !Task.isCancelled {
                 await self.syncNow()
-                do { try await self.sleep(SyncTiming.nextDelaySeconds(consecutiveFailures: self.consecutiveFailures)) } catch { break }
+                let delay = SyncTiming.nextDelaySeconds(consecutiveFailures: self.consecutiveFailures, moreToPull: self.moreToPull)
+                do { try await self.sleep(delay) } catch { break }
             }
             if !Task.isCancelled { self?.loopTask = nil }
         }
@@ -181,6 +187,7 @@ final class SyncModel: ObservableObject {
             return
         }
         let ok = await run(store) { $0.pullOnly(current, captureWindowDays: Self.captureWindowDays) }
+        moreToPull = ok ? await run(store) { $0.moreToPull() } : false
         if ok {
             consecutiveFailures = 0
             lastError = nil

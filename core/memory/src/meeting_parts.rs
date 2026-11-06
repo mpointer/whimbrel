@@ -547,7 +547,11 @@ impl Store {
     /// "Merge with previous meeting": the meeting on `device_id` that ended last before
     /// `meeting_id` started, when it has the same title, ended under 10 minutes before, and
     /// both are completed meetings of `device_id`. Never offered when either one was trimmed.
-    pub fn previous_mergeable_meeting(&self, meeting_id: i64, device_id: &str) -> rusqlite::Result<Option<i64>> {
+    pub fn previous_mergeable_meeting(
+        &self,
+        meeting_id: i64,
+        device_id: &str,
+    ) -> rusqlite::Result<Option<i64>> {
         self.conn
             .query_row(
                 "SELECT p.id, p.title = t.title AND p.status = 'completed' AND p.trimmed_keep_ms IS NULL \
@@ -574,9 +578,17 @@ impl Store {
     pub fn merge_into_previous(&self, into: i64, from: i64) -> rusqlite::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         // A menu loaded earlier can be stale: `into` forgotten, reopened or no longer the one before.
-        let device: Option<String> =
-            tx.query_row("SELECT device_id FROM meeting WHERE id = ?1", params![from], |r| r.get(0)).optional()?;
-        let previous = device.map(|d| self.previous_mergeable_meeting(from, &d)).transpose()?.flatten();
+        let device: Option<String> = tx
+            .query_row(
+                "SELECT device_id FROM meeting WHERE id = ?1",
+                params![from],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let previous = device
+            .map(|d| self.previous_mergeable_meeting(from, &d))
+            .transpose()?
+            .flatten();
         if previous != Some(into) {
             return Err(bad("not the meeting before this one"));
         }
@@ -598,7 +610,10 @@ impl Store {
              SELECT ?1, ?3 + part_index, start_unix_ms, end_unix_ms, audio_path FROM meeting_part WHERE meeting_id = ?2",
             params![into, from, next],
         )?;
-        tx.execute("UPDATE meeting_part SET transcribed = 0 WHERE meeting_id = ?1", params![into])?;
+        tx.execute(
+            "UPDATE meeting_part SET transcribed = 0 WHERE meeting_id = ?1",
+            params![into],
+        )?;
         let seq = Self::next_local_seq_tx(&tx)?;
         tx.execute(
             "UPDATE meeting SET end_unix_ms = MAX(COALESCE(end_unix_ms, 0), (SELECT COALESCE(end_unix_ms, 0) FROM meeting WHERE id = ?2)), \
@@ -648,9 +663,11 @@ impl Store {
     /// delete original media files only after this returns true. False when a reader on
     /// another connection still needs older frames (after the busy timeout).
     pub fn checkpoint_durable(&self) -> rusqlite::Result<bool> {
-        let (busy, log, done): (i64, i64, i64) = self
-            .conn
-            .query_row("PRAGMA wal_checkpoint(FULL)", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let (busy, log, done): (i64, i64, i64) =
+            self.conn
+                .query_row("PRAGMA wal_checkpoint(FULL)", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?;
         Ok(busy == 0 && log == done)
     }
 
@@ -686,25 +703,35 @@ impl Store {
             "SELECT audio_path FROM meeting_part WHERE meeting_id = ?1 AND audio_path IS NOT NULL ORDER BY part_index",
         )?;
         rows.into_iter()
-            .map(|(id, start_unix_ms, keep_media, audio, snapshots_dir, keep_snapshots, all_transcribed)| {
-                let mut audio_paths: Vec<String> = audio.into_iter().collect();
-                for p in parts.query_map(params![id], |r| r.get::<_, String>(0))? {
-                    let p = p?;
-                    if !audio_paths.contains(&p) {
-                        audio_paths.push(p);
-                    }
-                }
-                Ok(MediaMeeting {
+            .map(
+                |(
                     id,
                     start_unix_ms,
                     keep_media,
-                    keep_snapshots,
-                    audio_paths,
-                    snapshots: self.list_meeting_snapshots(id)?,
+                    audio,
                     snapshots_dir,
+                    keep_snapshots,
                     all_transcribed,
-                })
-            })
+                )| {
+                    let mut audio_paths: Vec<String> = audio.into_iter().collect();
+                    for p in parts.query_map(params![id], |r| r.get::<_, String>(0))? {
+                        let p = p?;
+                        if !audio_paths.contains(&p) {
+                            audio_paths.push(p);
+                        }
+                    }
+                    Ok(MediaMeeting {
+                        id,
+                        start_unix_ms,
+                        keep_media,
+                        keep_snapshots,
+                        audio_paths,
+                        snapshots: self.list_meeting_snapshots(id)?,
+                        snapshots_dir,
+                        all_transcribed,
+                    })
+                },
+            )
             .collect()
     }
 
@@ -795,10 +822,13 @@ mod tests {
     fn set_meeting_notes_keeps_transcript_path_and_restamps() {
         let s = Store::open_in_memory().unwrap();
         let id = done(&s, None, 5_000);
-        s.update_meeting_transcript_and_notes(id, "/r/t.txt", Some("a")).unwrap();
+        s.update_meeting_transcript_and_notes(id, "/r/t.txt", Some("a"))
+            .unwrap();
         let seq = |s: &Store| -> i64 {
             s.conn
-                .query_row("SELECT local_seq FROM meeting WHERE id = ?1", [id], |r| r.get(0))
+                .query_row("SELECT local_seq FROM meeting WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
                 .unwrap()
         };
         let before = seq(&s);
@@ -1309,16 +1339,31 @@ mod tests {
         let id = three_parts(&s);
         let moves = vec![
             ("/snaps/o/1.png".to_string(), "/snaps/n/1.png".to_string()),
-            ("/snaps/o/nope.png".to_string(), "/snaps/n/nope.png".to_string()),
+            (
+                "/snaps/o/nope.png".to_string(),
+                "/snaps/n/nope.png".to_string(),
+            ),
         ];
-        assert!(s.set_meeting_snapshot_paths(id, &moves, "/snaps/n").is_err());
-        assert_eq!(snapshot_paths(&s, id), ["/snaps/o/1.png", "/snaps/o/2.png", "/snaps/o/3.png"]);
-        assert_eq!(s.meeting_snapshots_info(id).unwrap().unwrap().0.as_deref(), Some("/snaps/o"));
+        assert!(s
+            .set_meeting_snapshot_paths(id, &moves, "/snaps/n")
+            .is_err());
+        assert_eq!(
+            snapshot_paths(&s, id),
+            ["/snaps/o/1.png", "/snaps/o/2.png", "/snaps/o/3.png"]
+        );
+        assert_eq!(
+            s.meeting_snapshots_info(id).unwrap().unwrap().0.as_deref(),
+            Some("/snaps/o")
+        );
         // Another meeting's row doesn't count as a match either.
         let other = three_parts(&s);
         let theirs = vec![("/snaps/o/1.png".to_string(), "/snaps/n/1.png".to_string())];
-        s.conn.execute("DELETE FROM meeting_snapshot WHERE meeting_id = ?1", [id]).unwrap();
-        assert!(s.set_meeting_snapshot_paths(id, &theirs, "/snaps/n").is_err());
+        s.conn
+            .execute("DELETE FROM meeting_snapshot WHERE meeting_id = ?1", [id])
+            .unwrap();
+        assert!(s
+            .set_meeting_snapshot_paths(id, &theirs, "/snaps/n")
+            .is_err());
         assert_eq!(snapshot_paths(&s, other)[0], "/snaps/o/1.png");
     }
 
@@ -1328,17 +1373,23 @@ mod tests {
     fn absorb_split_meeting_moves_snapshots_and_key() {
         let s = Store::open_in_memory().unwrap();
         let a = done(&s, Some("cal:A"), 5_000);
-        s.insert_meeting_snapshot(&snap(a, 2_000, "/snaps/a/1.png")).unwrap();
+        s.insert_meeting_snapshot(&snap(a, 2_000, "/snaps/a/1.png"))
+            .unwrap();
         s.set_meeting_snapshots_dir(a, "/snaps/a").unwrap();
         let b = mk(&s, MeetingStatus::Recording, None);
         s.begin_meeting_part(b, 6_000, Some("cal:B")).unwrap();
-        s.insert_meeting_snapshot(&snap(b, 7_000, "/snaps/b/1.png")).unwrap();
-        s.insert_meeting_snapshot(&snap(b, 8_000, "/snaps/b/2.png")).unwrap();
+        s.insert_meeting_snapshot(&snap(b, 7_000, "/snaps/b/1.png"))
+            .unwrap();
+        s.insert_meeting_snapshot(&snap(b, 8_000, "/snaps/b/2.png"))
+            .unwrap();
         s.set_meeting_snapshots_dir(b, "/snaps/b").unwrap();
 
         let moved = s.absorb_split_meeting(a, b).unwrap();
         assert_eq!(moved, ["/snaps/b/1.png", "/snaps/b/2.png"]);
-        assert_eq!(snapshot_paths(&s, a), ["/snaps/a/1.png", "/snaps/b/1.png", "/snaps/b/2.png"]);
+        assert_eq!(
+            snapshot_paths(&s, a),
+            ["/snaps/a/1.png", "/snaps/b/1.png", "/snaps/b/2.png"]
+        );
         assert!(snapshot_paths(&s, b).is_empty());
         let items: i64 = s
             .conn
@@ -1349,7 +1400,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(items, 3, "the search mirror follows the rows");
-        assert_eq!(key_of(&s, a).as_deref(), Some("cal:B"), "a rejoin of B's call continues A");
+        assert_eq!(
+            key_of(&s, a).as_deref(),
+            Some("cal:B"),
+            "a rejoin of B's call continues A"
+        );
 
         // Deleting B now leaves A's snapshots alone.
         s.delete_meeting_returning_files(b).unwrap().unwrap();
@@ -1634,15 +1689,23 @@ mod tests {
         let other = two_parts(&s);
         let seq = |s: &Store| -> i64 {
             s.conn
-                .query_row("SELECT local_seq FROM meeting WHERE id = ?1", [id], |r| r.get(0))
+                .query_row("SELECT local_seq FROM meeting WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
                 .unwrap()
         };
         let before = seq(&s);
         s.set_meeting_audio_paths(
             id,
             &[
-                ("/r/system-audio-A.caf".into(), "/m/Audio/system-audio-A.m4a".into()),
-                ("/r/system-audio-B.caf".into(), "/m/Audio/system-audio-B.m4a".into()),
+                (
+                    "/r/system-audio-A.caf".into(),
+                    "/m/Audio/system-audio-A.m4a".into(),
+                ),
+                (
+                    "/r/system-audio-B.caf".into(),
+                    "/m/Audio/system-audio-B.m4a".into(),
+                ),
             ],
         )
         .unwrap();
@@ -1650,15 +1713,26 @@ mod tests {
             s.get_meeting(id).unwrap().unwrap().audio_path.as_deref(),
             Some("/m/Audio/system-audio-A.m4a")
         );
-        let paths: Vec<_> = s.meeting_parts(id).unwrap().into_iter().map(|p| p.audio_path.unwrap()).collect();
-        assert_eq!(paths, ["/m/Audio/system-audio-A.m4a", "/m/Audio/system-audio-B.m4a"]);
+        let paths: Vec<_> = s
+            .meeting_parts(id)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.audio_path.unwrap())
+            .collect();
+        assert_eq!(
+            paths,
+            ["/m/Audio/system-audio-A.m4a", "/m/Audio/system-audio-B.m4a"]
+        );
         assert_eq!(seq(&s), before, "local only: no restamp");
         // Another meeting sharing the same old path is untouched.
         assert_eq!(
             s.get_meeting(other).unwrap().unwrap().audio_path.as_deref(),
             Some("/r/system-audio-A.caf")
         );
-        assert_eq!(s.meeting_parts(other).unwrap()[1].audio_path.as_deref(), Some("/r/system-audio-B.caf"));
+        assert_eq!(
+            s.meeting_parts(other).unwrap()[1].audio_path.as_deref(),
+            Some("/r/system-audio-B.caf")
+        );
     }
 
     #[test]
@@ -1668,11 +1742,16 @@ mod tests {
         let store = Store::open(&path, std::path::Path::new("")).unwrap();
         let reader = rusqlite::Connection::open(&path).unwrap();
         reader.busy_timeout(std::time::Duration::ZERO).unwrap();
-        store.conn.busy_timeout(std::time::Duration::from_millis(50)).unwrap();
+        store
+            .conn
+            .busy_timeout(std::time::Duration::from_millis(50))
+            .unwrap();
         assert!(store.checkpoint_durable().unwrap(), "nothing pending");
 
         // A deferred transaction keeps its snapshot from the first read until COMMIT.
-        reader.execute_batch("BEGIN; SELECT count(*) FROM meeting;").unwrap();
+        reader
+            .execute_batch("BEGIN; SELECT count(*) FROM meeting;")
+            .unwrap();
         let id = store
             .insert_meeting(&NewMeeting {
                 device_id: "d".into(),
@@ -1686,11 +1765,25 @@ mod tests {
             })
             .unwrap();
         store
-            .set_meeting_audio_paths(id, &[("/r/system-audio-A.caf".into(), "/r/system-audio-A.m4a".into())])
+            .set_meeting_audio_paths(
+                id,
+                &[(
+                    "/r/system-audio-A.caf".into(),
+                    "/r/system-audio-A.m4a".into(),
+                )],
+            )
             .unwrap();
-        assert!(!store.checkpoint_durable().unwrap(), "the reader pins frames the checkpoint needs");
+        assert!(
+            !store.checkpoint_durable().unwrap(),
+            "the reader pins frames the checkpoint needs"
+        );
         assert_eq!(
-            store.get_meeting(id).unwrap().unwrap().audio_path.as_deref(),
+            store
+                .get_meeting(id)
+                .unwrap()
+                .unwrap()
+                .audio_path
+                .as_deref(),
             Some("/r/system-audio-A.m4a"),
             "committed, just not confirmed durable"
         );
@@ -1706,8 +1799,14 @@ mod tests {
         let err = s.set_meeting_audio_paths(
             id,
             &[
-                ("/r/system-audio-A.caf".into(), "/m/system-audio-A.m4a".into()),
-                ("/r/system-audio-NOPE.caf".into(), "/m/system-audio-NOPE.m4a".into()),
+                (
+                    "/r/system-audio-A.caf".into(),
+                    "/m/system-audio-A.m4a".into(),
+                ),
+                (
+                    "/r/system-audio-NOPE.caf".into(),
+                    "/m/system-audio-NOPE.m4a".into(),
+                ),
             ],
         );
         assert!(err.is_err());
@@ -1716,7 +1815,10 @@ mod tests {
             Some("/r/system-audio-A.caf"),
             "the earlier move rolled back"
         );
-        assert_eq!(s.meeting_parts(id).unwrap()[0].audio_path.as_deref(), Some("/r/system-audio-A.caf"));
+        assert_eq!(
+            s.meeting_parts(id).unwrap()[0].audio_path.as_deref(),
+            Some("/r/system-audio-A.caf")
+        );
     }
 
     #[test]
@@ -1725,15 +1827,25 @@ mod tests {
         let done = two_parts(&s);
         let pending = mk(&s, MeetingStatus::Recording, None);
         s.begin_meeting_part(pending, 1_000, None).unwrap();
-        s.complete_meeting_part(pending, 1, 2_000, Some("/r/system-audio-P.caf")).unwrap();
-        s.complete_meeting(pending, 2_000, Some("/r/system-audio-P.caf")).unwrap();
+        s.complete_meeting_part(pending, 1, 2_000, Some("/r/system-audio-P.caf"))
+            .unwrap();
+        s.complete_meeting(pending, 2_000, Some("/r/system-audio-P.caf"))
+            .unwrap();
         let legacy = mk(&s, MeetingStatus::Recording, Some("/r/system-audio-L.caf"));
-        s.complete_meeting(legacy, 2_000, Some("/r/system-audio-L.caf")).unwrap();
-        let by_id = |id| s.media_meetings().unwrap().into_iter().find(|m| m.id == id).unwrap();
+        s.complete_meeting(legacy, 2_000, Some("/r/system-audio-L.caf"))
+            .unwrap();
+        let by_id = |id| {
+            s.media_meetings()
+                .unwrap()
+                .into_iter()
+                .find(|m| m.id == id)
+                .unwrap()
+        };
         assert!(by_id(done).all_transcribed);
         assert!(!by_id(pending).all_transcribed);
         assert!(!by_id(legacy).all_transcribed);
-        s.update_meeting_transcript_and_notes(legacy, "/r/t.txt", None).unwrap();
+        s.update_meeting_transcript_and_notes(legacy, "/r/t.txt", None)
+            .unwrap();
         assert!(by_id(legacy).all_transcribed);
     }
 
@@ -1743,7 +1855,14 @@ mod tests {
 
         /// A finished meeting on `device` from `start_min` to `end_min`, with `parts` parts
         /// (0: a legacy meeting with only `meeting.audio_path`).
-        fn finished(store: &Store, device: &str, title: &str, start_min: i64, end_min: i64, parts: i64) -> i64 {
+        fn finished(
+            store: &Store,
+            device: &str,
+            title: &str,
+            start_min: i64,
+            end_min: i64,
+            parts: i64,
+        ) -> i64 {
             let id = store
                 .insert_meeting(&NewMeeting {
                     device_id: device.into(),
@@ -1760,10 +1879,19 @@ mod tests {
             for i in 0..parts {
                 let s = start_min + i * step;
                 let idx = store.begin_meeting_part(id, s * MIN, None).unwrap();
-                store.complete_meeting_part(id, idx, (s + step) * MIN, Some(&format!("/a/{id}-{idx}.m4a"))).unwrap();
+                store
+                    .complete_meeting_part(
+                        id,
+                        idx,
+                        (s + step) * MIN,
+                        Some(&format!("/a/{id}-{idx}.m4a")),
+                    )
+                    .unwrap();
             }
             let audio = (parts == 0).then(|| format!("/a/{id}.m4a"));
-            store.complete_meeting(id, end_min * MIN, audio.as_deref()).unwrap();
+            store
+                .complete_meeting(id, end_min * MIN, audio.as_deref())
+                .unwrap();
             id
         }
 
@@ -1781,25 +1909,45 @@ mod tests {
             let store = Store::open_in_memory().unwrap();
             finished(&store, "d", "Planning", 0, 30, 1);
             let other_title = finished(&store, "d", "Standup", 35, 40, 1);
-            assert_eq!(store.previous_mergeable_meeting(other_title, "d").unwrap(), None, "different title");
+            assert_eq!(
+                store.previous_mergeable_meeting(other_title, "d").unwrap(),
+                None,
+                "different title"
+            );
 
             let store = Store::open_in_memory().unwrap();
             finished(&store, "d", "Planning", 0, 30, 1);
             let gap10 = finished(&store, "d", "Planning", 40, 60, 1);
-            assert_eq!(store.previous_mergeable_meeting(gap10, "d").unwrap(), None, "exactly 10 min apart");
+            assert_eq!(
+                store.previous_mergeable_meeting(gap10, "d").unwrap(),
+                None,
+                "exactly 10 min apart"
+            );
 
             let store = Store::open_in_memory().unwrap();
             finished(&store, "other", "Planning", 0, 30, 1);
             let b = finished(&store, "d", "Planning", 35, 60, 1);
-            assert_eq!(store.previous_mergeable_meeting(b, "d").unwrap(), None, "previous on another device");
+            assert_eq!(
+                store.previous_mergeable_meeting(b, "d").unwrap(),
+                None,
+                "previous on another device"
+            );
 
             let store = Store::open_in_memory().unwrap();
             let a = finished(&store, "d", "Planning", 0, 30, 1);
             let b = finished(&store, "d", "Planning", 35, 60, 1);
             store.reopen_meeting(a).unwrap();
-            assert_eq!(store.previous_mergeable_meeting(b, "d").unwrap(), None, "previous still recording");
+            assert_eq!(
+                store.previous_mergeable_meeting(b, "d").unwrap(),
+                None,
+                "previous still recording"
+            );
             store.reopen_meeting(b).unwrap();
-            assert_eq!(store.previous_mergeable_meeting(b, "d").unwrap(), None, "this one still recording");
+            assert_eq!(
+                store.previous_mergeable_meeting(b, "d").unwrap(),
+                None,
+                "this one still recording"
+            );
         }
 
         #[test]
@@ -1813,10 +1961,20 @@ mod tests {
                 .unwrap();
             store.merge_into_previous(a, b).unwrap();
             let parts = store.meeting_parts(a).unwrap();
-            assert_eq!(parts.iter().map(|p| p.part_index).collect::<Vec<_>>(), [1, 2, 3]);
             assert_eq!(
-                parts.iter().map(|p| p.audio_path.clone().unwrap()).collect::<Vec<_>>(),
-                [format!("/a/{a}-1.m4a"), format!("/a/{b}-1.m4a"), format!("/a/{b}-2.m4a")]
+                parts.iter().map(|p| p.part_index).collect::<Vec<_>>(),
+                [1, 2, 3]
+            );
+            assert_eq!(
+                parts
+                    .iter()
+                    .map(|p| p.audio_path.clone().unwrap())
+                    .collect::<Vec<_>>(),
+                [
+                    format!("/a/{a}-1.m4a"),
+                    format!("/a/{b}-1.m4a"),
+                    format!("/a/{b}-2.m4a")
+                ]
             );
             assert!(parts.iter().all(|p| !p.transcribed));
             assert_eq!(parts[1].start_unix_ms, 35 * MIN);
@@ -1834,8 +1992,14 @@ mod tests {
             store.merge_into_previous(a, b).unwrap();
             let parts = store.meeting_parts(a).unwrap();
             assert_eq!(
-                parts.iter().map(|p| (p.part_index, p.start_unix_ms, p.audio_path.clone().unwrap())).collect::<Vec<_>>(),
-                [(1, 0, format!("/a/{a}.m4a")), (2, 35 * MIN, format!("/a/{b}.m4a"))]
+                parts
+                    .iter()
+                    .map(|p| (p.part_index, p.start_unix_ms, p.audio_path.clone().unwrap()))
+                    .collect::<Vec<_>>(),
+                [
+                    (1, 0, format!("/a/{a}.m4a")),
+                    (2, 35 * MIN, format!("/a/{b}.m4a"))
+                ]
             );
         }
 
@@ -1853,10 +2017,20 @@ mod tests {
                 }])
                 .unwrap();
             store.merge_into_previous(a, b).unwrap();
-            assert!(store.search_transcript_keyword("quarterly", 10).unwrap().is_empty(), "b's text left with b");
+            assert!(
+                store
+                    .search_transcript_keyword("quarterly", 10)
+                    .unwrap()
+                    .is_empty(),
+                "b's text left with b"
+            );
             let rows: i64 = store
                 .conn
-                .query_row("SELECT COUNT(*) FROM meeting_part WHERE meeting_id = ?1", [b], |r| r.get(0))
+                .query_row(
+                    "SELECT COUNT(*) FROM meeting_part WHERE meeting_id = ?1",
+                    [b],
+                    |r| r.get(0),
+                )
                 .unwrap();
             assert_eq!(rows, 0);
         }
@@ -1870,7 +2044,10 @@ mod tests {
             assert!(store.merge_into_previous(a, b).is_err());
             assert!(store.get_meeting(b).unwrap().is_some(), "b kept");
             let other = finished(&store, "d", "Standup", 70, 80, 1);
-            assert!(store.merge_into_previous(b, other).is_err(), "different title");
+            assert!(
+                store.merge_into_previous(b, other).is_err(),
+                "different title"
+            );
             assert!(store.get_meeting(other).unwrap().is_some());
         }
 
@@ -1882,13 +2059,20 @@ mod tests {
             store.set_meeting_notes(a, Some("first half")).unwrap();
             store.set_meeting_notes(b, Some("second half")).unwrap();
             store.merge_into_previous(a, b).unwrap();
-            assert_eq!(store.get_meeting(a).unwrap().unwrap().notes.as_deref(), Some("first half\nsecond half"));
+            assert_eq!(
+                store.get_meeting(a).unwrap().unwrap().notes.as_deref(),
+                Some("first half\nsecond half")
+            );
 
             let c = finished(&store, "d", "Planning", 65, 70, 1);
             store.set_meeting_notes(c, Some("only later")).unwrap();
             let d = finished(&store, "d", "Planning", 72, 80, 1);
             store.merge_into_previous(c, d).unwrap();
-            assert_eq!(store.get_meeting(c).unwrap().unwrap().notes.as_deref(), Some("only later"), "no notes on d: unchanged");
+            assert_eq!(
+                store.get_meeting(c).unwrap().unwrap().notes.as_deref(),
+                Some("only later"),
+                "no notes on d: unchanged"
+            );
         }
     }
 }

@@ -56,7 +56,10 @@ final class CoreMemoryStore {
     /// One pull-only content-sync round (`whimbrel_sync_content_pull_only`). Blocks for
     /// up to the core's 30 s timeout; never call on the main thread.
     func syncContentPullOnly(tursoURL: String, tursoToken: String, groupKeyBase64: String, deviceId: String, captureWindowDays: Int32) -> Bool {
-        tursoURL.withCString { url in
+        // The phone keeps no recordings, so the files of meetings forgotten elsewhere are only drained,
+        // or the core's list would grow for as long as the app runs.
+        defer { whimbrel_core_free_string(whimbrel_sync_take_forgotten_meeting_files()) }
+        return tursoURL.withCString { url in
             tursoToken.withCString { token in
                 groupKeyBase64.withCString { key in
                     deviceId.withCString { device in

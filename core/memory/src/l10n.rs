@@ -16,8 +16,10 @@ pub mod keys {
     pub const BRIEFLY_VIEWED_TITLE_IN_APP: &str = "Briefly viewed \"{title}\" in {app}.";
     pub const NO_EVENTS_TODAY: &str = "No events on today's calendar.";
     pub const TODAY_EVENTS: &str = "Today: {titles}.";
-    pub const NOTHING_TO_RANK: &str = "Nothing to rank yet. Turn on Rank email by reply priority in AI & Routing settings.";
-    pub const THREADS_NEED_REPLY: &str = "{count} threads look like they need a reply, most likely first: {names}.";
+    pub const NOTHING_TO_RANK: &str =
+        "Nothing to rank yet. Turn on Rank email by reply priority in AI & Routing settings.";
+    pub const THREADS_NEED_REPLY: &str =
+        "{count} threads look like they need a reply, most likely first: {names}.";
     pub const NO_SUBJECT: &str = "(no subject)";
     pub const AWAY_TODO: &str = "Ask {organizer} for the recording of {title}";
     pub const AWAY_THE_ORGANIZER: &str = "the organizer";
@@ -38,53 +40,110 @@ pub mod keys {
     pub const STARTER_RECURRING_TITLE: &str = "Which recurring meetings can I kill?";
     pub const STARTER_RECURRING_QUERY: &str = "Which recurring meetings can I kill? Look for meetings that keep happening but don't seem to produce decisions or action items.";
     pub const STARTER_TODAY_TITLE: &str = "Summarize today";
-    pub const STARTER_TODAY_QUERY: &str = "Summarize what happened today across my meetings and captures.";
+    pub const STARTER_TODAY_QUERY: &str =
+        "Summarize what happened today across my meetings and captures.";
     pub const STARTER_ACTIONS_TITLE: &str = "What action items are still open?";
-    pub const STARTER_ACTIONS_QUERY: &str = "What action items from my recent meetings are still open?";
+    pub const STARTER_ACTIONS_QUERY: &str =
+        "What action items from my recent meetings are still open?";
     pub const STARTER_TREND_TITLE: &str = "Any trend this week?";
-    pub const STARTER_TREND_QUERY: &str = "Is there a trend across my meetings this week — recurring topics, blockers, or themes?";
+    pub const STARTER_TREND_QUERY: &str =
+        "Is there a trend across my meetings this week — recurring topics, blockers, or themes?";
     pub const STARTER_DECISIONS_TITLE: &str = "What decisions did I make recently?";
-    pub const STARTER_DECISIONS_QUERY: &str = "Summarize the decisions I've made in my recent meetings.";
+    pub const STARTER_DECISIONS_QUERY: &str =
+        "Summarize the decisions I've made in my recent meetings.";
 
     // Transient: core renders these in English only; the shells localize them by code (Task 4).
     pub const CALENDAR_NOT_CONNECTED: &str = "Calendar isn't connected, or needs to be reconnected. Check Settings → Connectors, then try Approve again.";
     pub const GMAIL_NOT_CONNECTED: &str = "Gmail isn't connected, or needs to be reconnected. Check Settings → Connectors, then try Approve again.";
     pub const ACTION_RETRYABLE: &str = "Couldn't complete this action just now ({reason}). It's still pending -- try Approve again in a bit.";
     pub const KEY_REFUSED: &str = "{provider} refused this key. Check it on {provider}'s key page.";
-    pub const KEY_UNREACHABLE: &str = "Couldn't reach {provider}. The key is saved; models will load when you're online.";
-    pub const DEVICE_REVOKED: &str = "This device's access was revoked. Sign in again from Settings to request access.";
+    pub const KEY_UNREACHABLE: &str =
+        "Couldn't reach {provider}. The key is saved; models will load when you're online.";
+    pub const DEVICE_REVOKED: &str =
+        "This device's access was revoked. Sign in again from Settings to request access.";
     pub const DEVICE_NOT_APPROVED: &str = "This device isn't approved on this account yet.";
-    pub const APPROVE_ON_OTHER_DEVICE_UNNAMED: &str = "Approve this computer on your other device; it was active in the last week.";
-    pub const APPROVE_ON_OTHER_DEVICE: &str = "Approve this computer on {devices}; it was active in the last week.";
+    pub const APPROVE_ON_OTHER_DEVICE_UNNAMED: &str =
+        "Approve this computer on your other device; it was active in the last week.";
+    pub const APPROVE_ON_OTHER_DEVICE: &str =
+        "Approve this computer on {devices}; it was active in the last week.";
     pub const RESET_REQUIRES_COMPUTER: &str = "Starting fresh has to be done from a computer.";
-    pub const ACCOUNT_NOT_ALLOWED: &str = "This Google account isn't allowed to sign in to Whimbrel.";
+    pub const ACCOUNT_NOT_ALLOWED: &str =
+        "This Google account isn't allowed to sign in to Whimbrel.";
     pub const SIGNIN_EXPIRED: &str = "Your Google sign-in expired. Try signing in again.";
-    pub const DEVICE_LIMIT: &str = "Your free sync plan includes one computer and one phone, and they're already in use.";
+    pub const DEVICE_LIMIT: &str =
+        "Your free sync plan includes one computer and one phone, and they're already in use.";
     pub const RATE_LIMITED: &str = "Too many sign-in attempts. Try again in a few minutes.";
-    pub const ACCOUNT_CHANGING: &str = "Your sync account is being changed. Try again in a few minutes.";
+    pub const ACCOUNT_CHANGING: &str =
+        "Your sync account is being changed. Try again in a few minutes.";
     pub const SWAP_KIND_MISMATCH: &str = "That device can't take the place of this one.";
     pub const WANTS_REQUIRED: &str = "Pick at least one option to join the waitlist.";
     pub const RESET_CONFIRM_REQUIRED: &str = "Confirm that you want to start fresh to continue.";
     pub const DEVICE_NOT_FOUND: &str = "That device is no longer on this account.";
     pub const SERVER_ERROR: &str = "Sync is temporarily unavailable (server error {status}).";
-    pub const NETWORK: &str = "Couldn't reach the sync server. Check your connection and try again.";
-    pub const MALFORMED_RESPONSE: &str = "The sync server returned an unexpected response. Try again.";
+    pub const NETWORK: &str =
+        "Couldn't reach the sync server. Check your connection and try again.";
+    pub const MALFORMED_RESPONSE: &str =
+        "The sync server returned an unexpected response. Try again.";
 }
 
 /// Every key core passes to `text`/`text_plural`; each must exist in the bundled catalog.
 pub const KEYS: &[&str] = {
     use keys::*;
     &[
-        NO_ACTIVITY_TODAY, BRIEFLY_VIEWED_APP, BRIEFLY_VIEWED_TITLE_IN_APP, NO_EVENTS_TODAY, TODAY_EVENTS,
-        NOTHING_TO_RANK, THREADS_NEED_REPLY, NO_SUBJECT, AWAY_TODO, AWAY_THE_ORGANIZER, AWAY_GREETING_FALLBACK,
-        AWAY_EMAIL_SUBJECT, AWAY_EMAIL_BODY, DAY_LONG, AWAY_RUN_SUMMARY, ACTION_UNDECODABLE, CALENDAR_ADDED, CALENDAR_REJECTED,
-        EMAIL_SENT, EMAIL_REJECTED, STARTER_SLIPPING_TITLE, STARTER_SLIPPING_QUERY, STARTER_RECURRING_TITLE,
-        STARTER_RECURRING_QUERY, STARTER_TODAY_TITLE, STARTER_TODAY_QUERY, STARTER_ACTIONS_TITLE, STARTER_ACTIONS_QUERY,
-        STARTER_TREND_TITLE, STARTER_TREND_QUERY, STARTER_DECISIONS_TITLE, STARTER_DECISIONS_QUERY,
-        CALENDAR_NOT_CONNECTED, GMAIL_NOT_CONNECTED, ACTION_RETRYABLE, KEY_REFUSED, KEY_UNREACHABLE, DEVICE_REVOKED,
-        DEVICE_NOT_APPROVED, APPROVE_ON_OTHER_DEVICE_UNNAMED, APPROVE_ON_OTHER_DEVICE, RESET_REQUIRES_COMPUTER,
-        ACCOUNT_NOT_ALLOWED, SIGNIN_EXPIRED, DEVICE_LIMIT, RATE_LIMITED, ACCOUNT_CHANGING, SWAP_KIND_MISMATCH,
-        WANTS_REQUIRED, RESET_CONFIRM_REQUIRED, DEVICE_NOT_FOUND, SERVER_ERROR, NETWORK, MALFORMED_RESPONSE,
+        NO_ACTIVITY_TODAY,
+        BRIEFLY_VIEWED_APP,
+        BRIEFLY_VIEWED_TITLE_IN_APP,
+        NO_EVENTS_TODAY,
+        TODAY_EVENTS,
+        NOTHING_TO_RANK,
+        THREADS_NEED_REPLY,
+        NO_SUBJECT,
+        AWAY_TODO,
+        AWAY_THE_ORGANIZER,
+        AWAY_GREETING_FALLBACK,
+        AWAY_EMAIL_SUBJECT,
+        AWAY_EMAIL_BODY,
+        DAY_LONG,
+        AWAY_RUN_SUMMARY,
+        ACTION_UNDECODABLE,
+        CALENDAR_ADDED,
+        CALENDAR_REJECTED,
+        EMAIL_SENT,
+        EMAIL_REJECTED,
+        STARTER_SLIPPING_TITLE,
+        STARTER_SLIPPING_QUERY,
+        STARTER_RECURRING_TITLE,
+        STARTER_RECURRING_QUERY,
+        STARTER_TODAY_TITLE,
+        STARTER_TODAY_QUERY,
+        STARTER_ACTIONS_TITLE,
+        STARTER_ACTIONS_QUERY,
+        STARTER_TREND_TITLE,
+        STARTER_TREND_QUERY,
+        STARTER_DECISIONS_TITLE,
+        STARTER_DECISIONS_QUERY,
+        CALENDAR_NOT_CONNECTED,
+        GMAIL_NOT_CONNECTED,
+        ACTION_RETRYABLE,
+        KEY_REFUSED,
+        KEY_UNREACHABLE,
+        DEVICE_REVOKED,
+        DEVICE_NOT_APPROVED,
+        APPROVE_ON_OTHER_DEVICE_UNNAMED,
+        APPROVE_ON_OTHER_DEVICE,
+        RESET_REQUIRES_COMPUTER,
+        ACCOUNT_NOT_ALLOWED,
+        SIGNIN_EXPIRED,
+        DEVICE_LIMIT,
+        RATE_LIMITED,
+        ACCOUNT_CHANGING,
+        SWAP_KIND_MISMATCH,
+        WANTS_REQUIRED,
+        RESET_CONFIRM_REQUIRED,
+        DEVICE_NOT_FOUND,
+        SERVER_ERROR,
+        NETWORK,
+        MALFORMED_RESPONSE,
     ]
 };
 
@@ -306,7 +365,10 @@ mod tests {
     fn shipped_languages_render_every_key() {
         for lang in ["es", "fr", "fr-CA", "de", "pt"] {
             for key in KEYS {
-                assert!(BUNDLED.lookup(lang, key, Some(2)).is_some(), "{lang} missing: {key}");
+                assert!(
+                    BUNDLED.lookup(lang, key, Some(2)).is_some(),
+                    "{lang} missing: {key}"
+                );
             }
         }
     }

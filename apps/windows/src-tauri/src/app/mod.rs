@@ -78,6 +78,9 @@ pub fn run() {
             if let Some(slow) = &state.slow_store {
                 slow.log_queue_wait_every("slow", QUEUE_LOG_EVERY);
             }
+            if let Some(bg) = &state.bg_store {
+                bg.log_queue_wait_every("background", QUEUE_LOG_EVERY);
+            }
             app.manage(state);
             crate::tray::build(app.handle())?;
             commands::general::apply_autostart_at_launch(app.handle(), &app.state::<AppState>());

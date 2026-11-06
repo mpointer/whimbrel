@@ -37,6 +37,10 @@ pub struct AppState {
     /// call. `None` if it didn't open, in which case [`slow_store`](Self::slow_store)
     /// falls back to the main store.
     pub slow_store: Option<StoreHandle>,
+    /// The background lane: a third connection for the job loops (episode and thread
+    /// summaries), so their Ollama calls queue neither clicks nor asks. `None` if it didn't
+    /// open, in which case the loops use the main store as before.
+    pub bg_store: Option<StoreHandle>,
     pub identity: Option<DeviceIdentity>,
     /// Ambient capture; `None` until [`start_capture`](Self::start_capture), or if it
     /// could not start.
@@ -109,11 +113,18 @@ impl AppState {
                 None
             }
         });
+        let bg_store = store.as_ref().and_then(|primary| match StoreHandle::open_background(paths.db.clone(), primary) {
+            Ok(bg) => Some(bg),
+            Err(e) => {
+                tracing::warn!(error = %e, "background-lane store did not open; the job loops share the main store");
+                None
+            }
+        });
 
         if let Some(identity) = &identity {
-            // Both connections: the slow lane's summary and title writes enqueue sync
-            // outbox rows only once it knows its own device id.
-            for handle in store.iter().chain(slow_store.iter()) {
+            // Every connection: the other lanes' summary and title writes enqueue sync
+            // outbox rows only once they know their own device id.
+            for handle in store.iter().chain(slow_store.iter()).chain(bg_store.iter()) {
                 let device_id = identity.device_id.clone();
                 if let Err(e) = handle.call_blocking(move |s| s.set_own_device_id(&device_id)) {
                     startup_errors.push(format!("Database: {e}"));
@@ -202,6 +213,7 @@ impl AppState {
             device_names: Arc::new(RwLock::new(HashMap::new())),
             store,
             slow_store,
+            bg_store,
             identity,
             capture: None,
             sync: None,
@@ -339,7 +351,8 @@ impl AppState {
     /// [`start_capture`](Self::start_capture), kept out of `start` for tests.
     pub fn start_jobs(&self) {
         if let Some(store) = &self.store {
-            crate::jobs::start(store.clone(), self.settings.clone());
+            // The summary loops hold their store across an Ollama call, so they get their own lane.
+            crate::jobs::start(self.bg_store.as_ref().unwrap_or(store).clone(), self.settings.clone());
             // The suggestion call holds the store across a model call, so it goes on the slow lane.
             let slow = self.slow_store.as_ref().unwrap_or(store).clone();
             let own_device_id = self.identity.as_ref().map(|i| i.device_id.clone());

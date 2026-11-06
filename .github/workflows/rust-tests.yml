@@ -30,6 +30,7 @@ jobs:
       run_core: ${{ steps.filter.outputs.run_core }}
       run_windows_app: ${{ steps.filter.outputs.run_windows_app }}
       run_ios: ${{ steps.filter.outputs.run_ios }}
+      run_android: ${{ steps.filter.outputs.run_android }}
     steps:
       # ref pinned to the real commit (not actions/checkout@v4's pull_request default,
       # GitHub's ephemeral refs/pull/N/merge preview ref -- observed transiently
@@ -72,6 +73,12 @@ jobs:
             echo "run_windows_app=true" >> "$GITHUB_OUTPUT"
           else
             echo "run_windows_app=false" >> "$GITHUB_OUTPUT"
+          fi
+          # The Android app (apps/mobile/android) links core/ through JNI and reads themes/.
+          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE '^(apps/mobile/android/|core/|themes/|\.github/workflows/)' <<<"$changed"; }; then
+            echo "run_android=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_android=false" >> "$GITHUB_OUTPUT"
           fi
           # The iOS app (apps/mobile/ios) builds core/ffi and references the Mac app's shared
           # Support/ sources and themes/, so any of those runs the ios job.
@@ -422,6 +429,55 @@ jobs:
         run: |
           cargo ndk -t arm64-v8a build --workspace --exclude diarize --exclude ffi
           cargo ndk -t arm64-v8a build -p ffi --no-default-features
+
+  # The Android app: Gradle unit tests, a debug APK, and a release native build so the
+  # release link of the Rust core is exercised too (release signing is not set up yet).
+  # app/build.gradle.kts runs `cargo metadata` and reads the NDK at configuration time, so
+  # the Rust toolchain, cargo-ndk, the NDK and CMake must all exist before any Gradle command.
+  android-app:
+    needs: changes
+    if: needs.changes.outputs.run_android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/27.2.12479018
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Add Android target
+        run: rustup target add aarch64-linux-android
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version "4.1.2"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # A cached whisper-rs-sys build directory fails CMake's next configure on Android
+      # ("add_subdirectory given source tests ... not an existing directory"), so every run after
+      # a cache save broke. Drop it; only whisper rebuilds.
+      - name: Drop cached whisper-rs-sys build output
+        run: rm -rf core/target/aarch64-linux-android/*/build/whisper-rs-sys-*
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install NDK and CMake
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" "cmake;3.22.1"
+      - name: Unit tests and debug APK
+        working-directory: apps/mobile/android
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug
+      - name: Release build (unsigned)
+        working-directory: apps/mobile/android
+        env:
+          WHIMBREL_UNSIGNED_RELEASE: "1"
+        run: |
+          ./gradlew :app:assembleRelease
+          find app/build -name 'lib*.so' -path '*elease*' -exec ls -l {} \; -exec file {} \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
   ios:
     needs: changes

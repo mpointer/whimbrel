@@ -103,14 +103,24 @@ pub(crate) fn ensure_speaker_names_tables(conn: &Connection) -> rusqlite::Result
 /// speaker N-1; the bool is whether that name is a guess. Anything else stays as written.
 pub fn display_label(raw: &str, speakers: &[MeetingSpeaker]) -> (String, bool) {
     match labelled_speaker(raw, speakers) {
-        Some(MeetingSpeaker { name: Some(name), status, .. }) => (name.clone(), *status == Some(NameStatus::Guess)),
+        Some(MeetingSpeaker {
+            name: Some(name),
+            status,
+            ..
+        }) => (name.clone(), *status == Some(NameStatus::Guess)),
         _ => (raw.to_string(), false),
     }
 }
 
 /// The speaker a "Speaker N" label names, if any.
-pub fn labelled_speaker<'a>(raw: &str, speakers: &'a [MeetingSpeaker]) -> Option<&'a MeetingSpeaker> {
-    let n = raw.strip_prefix("Speaker ").and_then(|n| n.parse::<i32>().ok()).filter(|n| *n >= 1)?;
+pub fn labelled_speaker<'a>(
+    raw: &str,
+    speakers: &'a [MeetingSpeaker],
+) -> Option<&'a MeetingSpeaker> {
+    let n = raw
+        .strip_prefix("Speaker ")
+        .and_then(|n| n.parse::<i32>().ok())
+        .filter(|n| *n >= 1)?;
     speakers.iter().find(|s| s.speaker_id == n - 1)
 }
 
@@ -142,12 +152,15 @@ fn to_blob(v: &[f32]) -> Vec<u8> {
 }
 
 fn from_blob(b: &[u8]) -> Vec<f32> {
-    b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+    b.chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
 }
 
 /// A `meeting.attendee_details` column value; NULL (a row from before the column) is empty.
 pub(crate) fn attendee_details_from(json: Option<String>) -> Vec<Attendee> {
-    json.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default()
+    json.and_then(|j| serde_json::from_str(&j).ok())
+        .unwrap_or_default()
 }
 
 fn row_to_applied(r: &Row<'_>) -> rusqlite::Result<AppliedMeetingSpeaker> {
@@ -185,9 +198,17 @@ fn upsert_newer_speaker(
 impl Store {
     /// Stores a meeting's invitees with their emails. `attendees` (names) is left as is.
     /// ponytail: not restamped for sync; a meeting already pushed carries them on its next push.
-    pub fn set_meeting_attendee_details(&self, meeting_id: i64, a: &[Attendee]) -> rusqlite::Result<()> {
-        let json = serde_json::to_string(a).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-        self.conn.execute("UPDATE meeting SET attendee_details = ?1 WHERE id = ?2", params![json, meeting_id])?;
+    pub fn set_meeting_attendee_details(
+        &self,
+        meeting_id: i64,
+        a: &[Attendee],
+    ) -> rusqlite::Result<()> {
+        let json = serde_json::to_string(a)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        self.conn.execute(
+            "UPDATE meeting SET attendee_details = ?1 WHERE id = ?2",
+            params![json, meeting_id],
+        )?;
         Ok(())
     }
 
@@ -196,28 +217,48 @@ impl Store {
     pub fn meeting_attendee_details(&self, meeting_id: i64) -> rusqlite::Result<Vec<Attendee>> {
         let row: Option<(String, Option<String>)> = self
             .conn
-            .query_row("SELECT attendees, attendee_details FROM meeting WHERE id = ?1", params![meeting_id], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
+            .query_row(
+                "SELECT attendees, attendee_details FROM meeting WHERE id = ?1",
+                params![meeting_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .optional()?;
-        let Some((names, details)) = row else { return Ok(Vec::new()) };
+        let Some((names, details)) = row else {
+            return Ok(Vec::new());
+        };
         let details = attendee_details_from(details);
         if !details.is_empty() {
             return Ok(details);
         }
         let names: Vec<String> = serde_json::from_str(&names).unwrap_or_default();
-        Ok(names.into_iter().map(|name| Attendee { name, email: None }).collect())
+        Ok(names
+            .into_iter()
+            .map(|name| Attendee { name, email: None })
+            .collect())
     }
 
     /// The stored column alone (no fallback), for the meeting's sync payload.
-    pub(crate) fn stored_attendee_details_tx(&self, tx: &rusqlite::Transaction<'_>, meeting_id: i64) -> rusqlite::Result<Vec<Attendee>> {
+    pub(crate) fn stored_attendee_details_tx(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        meeting_id: i64,
+    ) -> rusqlite::Result<Vec<Attendee>> {
         let json: Option<Option<String>> = tx
-            .query_row("SELECT attendee_details FROM meeting WHERE id = ?1", params![meeting_id], |r| r.get(0))
+            .query_row(
+                "SELECT attendee_details FROM meeting WHERE id = ?1",
+                params![meeting_id],
+                |r| r.get(0),
+            )
             .optional()?;
         Ok(attendee_details_from(json.flatten()))
     }
 
-    pub fn upsert_person(&self, key: &str, name: &str, email: Option<&str>) -> rusqlite::Result<()> {
+    pub fn upsert_person(
+        &self,
+        key: &str,
+        name: &str,
+        email: Option<&str>,
+    ) -> rusqlite::Result<()> {
         let mut p = AppliedPerson {
             person_key: key.to_string(),
             name: name.to_string(),
@@ -240,7 +281,12 @@ impl Store {
     /// Stores each speaker's embedding (NULL when `remember` is off), keeping any assignment,
     /// unless the stored embedding is another voice (transcribed again, the ids reshuffled):
     /// then that speaker's name no longer applies and is cleared. No stored embedding keeps it.
-    pub fn save_meeting_voices(&self, meeting_id: i64, voices: &[(i32, Vec<f32>)], remember: bool) -> rusqlite::Result<()> {
+    pub fn save_meeting_voices(
+        &self,
+        meeting_id: i64,
+        voices: &[(i32, Vec<f32>)],
+        remember: bool,
+    ) -> rusqlite::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         for (speaker_id, embedding) in voices {
             let old: Option<Option<Vec<u8>>> = tx
@@ -292,7 +338,12 @@ impl Store {
 
     /// Confirms a speaker's guess as the person it already is. Only when the speaker is still
     /// `person_key` (a page shown before a sync or a rerun could be stale); false otherwise.
-    pub fn confirm_meeting_speaker(&self, meeting_id: i64, speaker_id: i32, person_key: &str) -> rusqlite::Result<bool> {
+    pub fn confirm_meeting_speaker(
+        &self,
+        meeting_id: i64,
+        speaker_id: i32,
+        person_key: &str,
+    ) -> rusqlite::Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
         let changed = tx.execute(
             "UPDATE meeting_speaker SET status = 'confirmed', updated_at_unix_ms = MAX(?4, updated_at_unix_ms + 1) \
@@ -307,7 +358,12 @@ impl Store {
         Ok(true)
     }
 
-    fn enqueue_meeting_speaker_row(&self, tx: &rusqlite::Transaction<'_>, meeting_id: i64, speaker_id: i32) -> rusqlite::Result<()> {
+    fn enqueue_meeting_speaker_row(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        meeting_id: i64,
+        speaker_id: i32,
+    ) -> rusqlite::Result<()> {
         let mut row = tx.query_row(
             "SELECT meeting_id, speaker_id, embedding, person_key, status, updated_at_unix_ms \
              FROM meeting_speaker WHERE meeting_id = ?1 AND speaker_id = ?2",
@@ -333,7 +389,11 @@ impl Store {
 
     /// Applies a person pulled from another device; the later `updated_at_unix_ms` wins (a tie
     /// keeps this device's). Never enqueued.
-    pub fn apply_synced_person(&self, _peer_device_id: &str, p: &AppliedPerson) -> rusqlite::Result<()> {
+    pub fn apply_synced_person(
+        &self,
+        _peer_device_id: &str,
+        p: &AppliedPerson,
+    ) -> rusqlite::Result<()> {
         self.conn.execute(
             "INSERT INTO person (person_key, name, email, updated_at_unix_ms) VALUES (?1, ?2, ?3, ?4) \
              ON CONFLICT(person_key) DO UPDATE SET name = excluded.name, email = excluded.email, \
@@ -347,12 +407,20 @@ impl Store {
     /// (a tie keeps this device's). Never enqueued. A meeting deleted here drops the row; one
     /// not synced here yet parks it in `meeting_speaker_pending` (`None`) until
     /// `record_sync_meeting_map` attaches it.
-    pub fn apply_synced_meeting_speaker(&self, peer_device_id: &str, s: &AppliedMeetingSpeaker) -> rusqlite::Result<Option<()>> {
+    pub fn apply_synced_meeting_speaker(
+        &self,
+        peer_device_id: &str,
+        s: &AppliedMeetingSpeaker,
+    ) -> rusqlite::Result<Option<()>> {
         let origin = s.origin_device_id.as_deref().unwrap_or(peer_device_id);
         let meeting_id: Option<i64> = if self.own_device_id().as_deref() == Some(origin) {
             let exists = self
                 .conn
-                .query_row("SELECT 1 FROM meeting WHERE id = ?1", params![s.source_meeting_id], |_| Ok(()))
+                .query_row(
+                    "SELECT 1 FROM meeting WHERE id = ?1",
+                    params![s.source_meeting_id],
+                    |_| Ok(()),
+                )
                 .optional()?;
             if exists.is_none() {
                 return Ok(None);
@@ -372,7 +440,15 @@ impl Store {
         let status = s.status.map(status_str);
         match meeting_id {
             Some(id) => {
-                upsert_newer_speaker(&self.conn, id, s.speaker_id, blob, s.person_key.as_deref(), status, s.updated_at_unix_ms)?;
+                upsert_newer_speaker(
+                    &self.conn,
+                    id,
+                    s.speaker_id,
+                    blob,
+                    s.person_key.as_deref(),
+                    status,
+                    s.updated_at_unix_ms,
+                )?;
                 Ok(Some(()))
             }
             None => {
@@ -391,7 +467,12 @@ impl Store {
     }
 
     /// Moves a peer meeting's pending speaker rows onto its local id, now that it has one.
-    pub(crate) fn attach_pending_meeting_speakers(&self, origin_device_id: &str, source_meeting_id: i64, local_meeting_id: i64) -> rusqlite::Result<()> {
+    pub(crate) fn attach_pending_meeting_speakers(
+        &self,
+        origin_device_id: &str,
+        source_meeting_id: i64,
+        local_meeting_id: i64,
+    ) -> rusqlite::Result<()> {
         let pending: Vec<(i32, Option<Vec<u8>>, Option<String>, Option<String>, i64)> = {
             let mut stmt = self.conn.prepare(
                 "DELETE FROM meeting_speaker_pending WHERE origin_device_id = ?1 AND source_meeting_id = ?2 \
@@ -403,7 +484,15 @@ impl Store {
             rows.collect::<rusqlite::Result<_>>()?
         };
         for (speaker_id, embedding, person_key, status, updated) in pending {
-            upsert_newer_speaker(&self.conn, local_meeting_id, speaker_id, embedding, person_key.as_deref(), status.as_deref(), updated)?;
+            upsert_newer_speaker(
+                &self.conn,
+                local_meeting_id,
+                speaker_id,
+                embedding,
+                person_key.as_deref(),
+                status.as_deref(),
+                updated,
+            )?;
         }
         Ok(())
     }
@@ -415,7 +504,12 @@ impl Store {
              LEFT JOIN person p ON p.person_key = ms.person_key WHERE ms.meeting_id = ?1 ORDER BY ms.speaker_id",
         )?;
         let rows = stmt.query_map(params![meeting_id], |r| {
-            Ok(MeetingSpeaker { speaker_id: r.get(0)?, person_key: r.get(1)?, name: r.get(2)?, status: parse_status(r.get(3)?) })
+            Ok(MeetingSpeaker {
+                speaker_id: r.get(0)?,
+                person_key: r.get(1)?,
+                name: r.get(2)?,
+                status: parse_status(r.get(3)?),
+            })
         })?;
         rows.collect()
     }
@@ -452,7 +546,13 @@ impl Store {
             "SELECT p.person_key, p.name, COUNT(*) FROM meeting_speaker ms JOIN person p ON p.person_key = ms.person_key \
              WHERE ms.status = 'confirmed' AND ms.embedding IS NOT NULL GROUP BY p.person_key ORDER BY p.name, p.person_key",
         )?;
-        let rows = stmt.query_map([], |r| Ok(VoicePerson { person_key: r.get(0)?, name: r.get(1)?, confirmed_count: r.get(2)? }))?;
+        let rows = stmt.query_map([], |r| {
+            Ok(VoicePerson {
+                person_key: r.get(0)?,
+                name: r.get(1)?,
+                confirmed_count: r.get(2)?,
+            })
+        })?;
         rows.collect()
     }
 
@@ -464,7 +564,9 @@ impl Store {
                 "UPDATE meeting_speaker SET embedding = NULL, updated_at_unix_ms = MAX(?2, updated_at_unix_ms + 1) \
                  WHERE person_key = ?1 AND status = 'confirmed' AND embedding IS NOT NULL RETURNING meeting_id, speaker_id",
             )?;
-            let rows = stmt.query_map(params![person_key, crate::now_unix_ms()], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let rows = stmt.query_map(params![person_key, crate::now_unix_ms()], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
             rows.collect::<rusqlite::Result<_>>()?
         };
         for (meeting_id, speaker_id) in cleared {
@@ -485,7 +587,10 @@ mod tests {
     use crate::{MeetingStatus, MeetingTrigger, NewMeeting, NewTranscriptSegment, Store};
 
     fn attendee(name: &str, email: Option<&str>) -> Attendee {
-        Attendee { name: name.into(), email: email.map(str::to_string) }
+        Attendee {
+            name: name.into(),
+            email: email.map(str::to_string),
+        }
     }
 
     fn meeting(s: &Store, start_unix_ms: i64, details: Vec<Attendee>) -> i64 {
@@ -513,12 +618,21 @@ mod tests {
         let details = vec![attendee("Sam", Some("sam@x.com")), attendee("Ana", None)];
         let id = meeting(&s, 1_000, details.clone());
         assert_eq!(s.meeting_attendee_details(id).unwrap(), details);
-        assert_eq!(s.get_meeting(id).unwrap().unwrap().attendees, vec!["Sam".to_string(), "Ana".to_string()]);
+        assert_eq!(
+            s.get_meeting(id).unwrap().unwrap().attendees,
+            vec!["Sam".to_string(), "Ana".to_string()]
+        );
         // A meeting from before emails were kept falls back to its names.
         let old = s
-            .insert_meeting(&NewMeeting { attendees: vec!["Bo".into()], ..sample_new_meeting() })
+            .insert_meeting(&NewMeeting {
+                attendees: vec!["Bo".into()],
+                ..sample_new_meeting()
+            })
             .unwrap();
-        assert_eq!(s.meeting_attendee_details(old).unwrap(), vec![attendee("Bo", None)]);
+        assert_eq!(
+            s.meeting_attendee_details(old).unwrap(),
+            vec![attendee("Bo", None)]
+        );
         assert!(s.meeting_attendee_details(9_999).unwrap().is_empty());
     }
 
@@ -537,7 +651,10 @@ mod tests {
 
     #[test]
     fn person_key_prefers_email_then_name() {
-        assert_eq!(person_key(&attendee("Sam", Some(" Sam@X.com "))), "sam@x.com");
+        assert_eq!(
+            person_key(&attendee("Sam", Some(" Sam@X.com "))),
+            "sam@x.com"
+        );
         assert_eq!(person_key(&attendee(" Sam Lee ", None)), "name:sam lee");
         assert_eq!(person_key(&attendee("Sam", Some("  "))), "name:sam");
     }
@@ -552,8 +669,10 @@ mod tests {
         s.upsert_person(&a, "Sam", Some("sam@a.com")).unwrap();
         s.upsert_person(&b, "Sam", Some("sam@b.com")).unwrap();
         let id = meeting(&s, 1_000, vec![]);
-        s.set_meeting_speaker(id, 0, Some(&a), Some(NameStatus::Confirmed)).unwrap();
-        s.set_meeting_speaker(id, 1, Some(&b), Some(NameStatus::Guess)).unwrap();
+        s.set_meeting_speaker(id, 0, Some(&a), Some(NameStatus::Confirmed))
+            .unwrap();
+        s.set_meeting_speaker(id, 1, Some(&b), Some(NameStatus::Guess))
+            .unwrap();
         let speakers = s.meeting_speakers(id).unwrap();
         assert_eq!(speakers.len(), 2);
         assert_eq!(speakers[0].person_key.as_deref(), Some(a.as_str()));
@@ -572,7 +691,10 @@ mod tests {
             ]
         );
         let p: AppliedPerson = serde_json::from_str(&ops[1].3).unwrap();
-        assert_eq!((p.person_key.as_str(), p.email.as_deref()), (b.as_str(), Some("sam@b.com")));
+        assert_eq!(
+            (p.person_key.as_str(), p.email.as_deref()),
+            (b.as_str(), Some("sam@b.com"))
+        );
         let ms: AppliedMeetingSpeaker = serde_json::from_str(&ops[3].3).unwrap();
         assert_eq!((ms.source_meeting_id, ms.speaker_id), (id, 1));
         assert_eq!(ms.status, Some(NameStatus::Guess));
@@ -582,19 +704,39 @@ mod tests {
     fn confirming_a_guess_keeps_its_person_when_invitees_share_a_name() {
         let s = Store::open_in_memory().unwrap();
         s.set_own_device_id("dev");
-        let id = meeting(&s, 1_000, vec![attendee("Sam", Some("sam@a.com")), attendee("Sam", Some("sam@b.com"))]);
-        s.upsert_person("sam@a.com", "Sam", Some("sam@a.com")).unwrap();
-        s.upsert_person("sam@b.com", "Sam", Some("sam@b.com")).unwrap();
-        s.set_meeting_speaker(id, 0, Some("sam@b.com"), Some(NameStatus::Guess)).unwrap();
+        let id = meeting(
+            &s,
+            1_000,
+            vec![
+                attendee("Sam", Some("sam@a.com")),
+                attendee("Sam", Some("sam@b.com")),
+            ],
+        );
+        s.upsert_person("sam@a.com", "Sam", Some("sam@a.com"))
+            .unwrap();
+        s.upsert_person("sam@b.com", "Sam", Some("sam@b.com"))
+            .unwrap();
+        s.set_meeting_speaker(id, 0, Some("sam@b.com"), Some(NameStatus::Guess))
+            .unwrap();
         let before = s.list_outbox_operations().unwrap().len();
         // Shown Sam A by a stale page: nothing is confirmed.
         assert!(!s.confirm_meeting_speaker(id, 0, "sam@a.com").unwrap());
         assert_eq!(s.list_outbox_operations().unwrap().len(), before);
         assert!(s.confirm_meeting_speaker(id, 0, "sam@b.com").unwrap());
         let sp = &s.meeting_speakers(id).unwrap()[0];
-        assert_eq!((sp.person_key.as_deref(), sp.status), (Some("sam@b.com"), Some(NameStatus::Confirmed)));
-        assert_eq!(s.list_outbox_operations().unwrap().len(), before + 1, "the confirmed row syncs");
-        assert!(!s.confirm_meeting_speaker(id, 7, "sam@b.com").unwrap(), "no such speaker");
+        assert_eq!(
+            (sp.person_key.as_deref(), sp.status),
+            (Some("sam@b.com"), Some(NameStatus::Confirmed))
+        );
+        assert_eq!(
+            s.list_outbox_operations().unwrap().len(),
+            before + 1,
+            "the confirmed row syncs"
+        );
+        assert!(
+            !s.confirm_meeting_speaker(id, 7, "sam@b.com").unwrap(),
+            "no such speaker"
+        );
     }
 
     #[test]
@@ -602,7 +744,8 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         s.set_own_device_id("dev");
         let id = meeting(&s, 1_000, vec![]);
-        s.set_meeting_speaker(id, 0, Some("ana"), Some(NameStatus::Guess)).unwrap();
+        s.set_meeting_speaker(id, 0, Some("ana"), Some(NameStatus::Guess))
+            .unwrap();
         let mine = s.list_outbox_operations().unwrap();
         let mine: AppliedMeetingSpeaker = serde_json::from_str(&mine[0].3).unwrap();
         let theirs = |key: &str, at: i64| AppliedMeetingSpeaker {
@@ -613,42 +756,70 @@ mod tests {
             ..mine.clone()
         };
         let key = |s: &Store| s.meeting_speakers(id).unwrap()[0].person_key.clone();
-        s.apply_synced_meeting_speaker("peer", &theirs("bo", mine.updated_at_unix_ms)).unwrap();
+        s.apply_synced_meeting_speaker("peer", &theirs("bo", mine.updated_at_unix_ms))
+            .unwrap();
         assert_eq!(key(&s).as_deref(), Some("ana"), "a tie keeps this device's");
-        s.apply_synced_meeting_speaker("peer", &theirs("bo", mine.updated_at_unix_ms - 1)).unwrap();
+        s.apply_synced_meeting_speaker("peer", &theirs("bo", mine.updated_at_unix_ms - 1))
+            .unwrap();
         assert_eq!(key(&s).as_deref(), Some("ana"), "an older edit is dropped");
-        s.apply_synced_meeting_speaker("peer", &theirs("bo", mine.updated_at_unix_ms + 1)).unwrap();
+        s.apply_synced_meeting_speaker("peer", &theirs("bo", mine.updated_at_unix_ms + 1))
+            .unwrap();
         assert_eq!(key(&s).as_deref(), Some("bo"));
         // A local edit stamps past the peer's, however far ahead its clock is.
-        s.apply_synced_meeting_speaker("peer", &theirs("cy", i64::MAX / 2)).unwrap();
-        s.set_meeting_speaker(id, 0, Some("ana"), Some(NameStatus::Confirmed)).unwrap();
-        let last: AppliedMeetingSpeaker = serde_json::from_str(&s.list_outbox_operations().unwrap().last().unwrap().3).unwrap();
+        s.apply_synced_meeting_speaker("peer", &theirs("cy", i64::MAX / 2))
+            .unwrap();
+        s.set_meeting_speaker(id, 0, Some("ana"), Some(NameStatus::Confirmed))
+            .unwrap();
+        let last: AppliedMeetingSpeaker =
+            serde_json::from_str(&s.list_outbox_operations().unwrap().last().unwrap().3).unwrap();
         assert_eq!(last.updated_at_unix_ms, i64::MAX / 2 + 1);
-        assert_eq!(s.list_outbox_operations().unwrap().len(), 2, "applied rows are never enqueued");
+        assert_eq!(
+            s.list_outbox_operations().unwrap().len(),
+            2,
+            "applied rows are never enqueued"
+        );
     }
 
     #[test]
     fn voice_print_averages_confirmed_only() {
         let s = Store::open_in_memory().unwrap();
-        s.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
+        s.upsert_person("sam@x.com", "Sam", Some("sam@x.com"))
+            .unwrap();
         let m1 = meeting(&s, 1_000, vec![]);
         let m2 = meeting(&s, 2_000, vec![]);
         let m3 = meeting(&s, 3_000, vec![]);
-        s.save_meeting_voices(m1, &[(0, vec![1.0, 0.0])], true).unwrap();
-        s.save_meeting_voices(m2, &[(0, vec![0.0, 1.0])], true).unwrap();
-        s.save_meeting_voices(m3, &[(0, vec![-1.0, 0.0]), (1, vec![1.0, 0.0, 0.0])], true).unwrap();
-        s.set_meeting_speaker(m1, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
-        s.set_meeting_speaker(m2, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        s.save_meeting_voices(m1, &[(0, vec![1.0, 0.0])], true)
+            .unwrap();
+        s.save_meeting_voices(m2, &[(0, vec![0.0, 1.0])], true)
+            .unwrap();
+        s.save_meeting_voices(m3, &[(0, vec![-1.0, 0.0]), (1, vec![1.0, 0.0, 0.0])], true)
+            .unwrap();
+        s.set_meeting_speaker(m1, 0, Some("sam@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
+        s.set_meeting_speaker(m2, 0, Some("sam@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
         // A guess doesn't count, nor does an embedding from another model (other length).
-        s.set_meeting_speaker(m3, 0, Some("sam@x.com"), Some(NameStatus::Guess)).unwrap();
-        s.set_meeting_speaker(m3, 1, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        s.set_meeting_speaker(m3, 0, Some("sam@x.com"), Some(NameStatus::Guess))
+            .unwrap();
+        s.set_meeting_speaker(m3, 1, Some("sam@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
         let print = s.voice_print("sam@x.com").unwrap().unwrap();
         let h = std::f32::consts::FRAC_1_SQRT_2;
         assert_eq!(print.len(), 2);
-        assert!((print[0] - h).abs() < 1e-6 && (print[1] - h).abs() < 1e-6, "{print:?}");
+        assert!(
+            (print[0] - h).abs() < 1e-6 && (print[1] - h).abs() < 1e-6,
+            "{print:?}"
+        );
         assert_eq!(s.voice_print("nobody").unwrap(), None);
         let people = s.voice_people().unwrap();
-        assert_eq!(people, vec![VoicePerson { person_key: "sam@x.com".into(), name: "Sam".into(), confirmed_count: 3 }]);
+        assert_eq!(
+            people,
+            vec![VoicePerson {
+                person_key: "sam@x.com".into(),
+                name: "Sam".into(),
+                confirmed_count: 3
+            }]
+        );
     }
 
     #[test]
@@ -657,23 +828,35 @@ mod tests {
         s.upsert_person("sam@x.com", "Sam", None).unwrap();
         let id = meeting(&s, 1_000, vec![]);
         let key = |s: &Store, sp: i32| {
-            let m = s.meeting_speakers(id).unwrap().into_iter().find(|m| m.speaker_id == sp).unwrap();
+            let m = s
+                .meeting_speakers(id)
+                .unwrap()
+                .into_iter()
+                .find(|m| m.speaker_id == sp)
+                .unwrap();
             (m.person_key, m.status)
         };
         let sam = (Some("sam@x.com".to_string()), Some(NameStatus::Confirmed));
         // Speaker 0 had a voice; speaker 1 was named without one (remember off).
-        s.save_meeting_voices(id, &[(0, vec![1.0, 0.0])], true).unwrap();
-        s.save_meeting_voices(id, &[(1, vec![1.0, 0.0])], false).unwrap();
-        s.set_meeting_speaker(id, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
-        s.set_meeting_speaker(id, 1, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        s.save_meeting_voices(id, &[(0, vec![1.0, 0.0])], true)
+            .unwrap();
+        s.save_meeting_voices(id, &[(1, vec![1.0, 0.0])], false)
+            .unwrap();
+        s.set_meeting_speaker(id, 0, Some("sam@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
+        s.set_meeting_speaker(id, 1, Some("sam@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
         // The same voice again keeps the name.
-        s.save_meeting_voices(id, &[(0, vec![0.99, 0.05])], true).unwrap();
+        s.save_meeting_voices(id, &[(0, vec![0.99, 0.05])], true)
+            .unwrap();
         assert_eq!(key(&s, 0), sam);
         // No old voice to compare: the name stays.
-        s.save_meeting_voices(id, &[(1, vec![0.0, 1.0])], true).unwrap();
+        s.save_meeting_voices(id, &[(1, vec![0.0, 1.0])], true)
+            .unwrap();
         assert_eq!(key(&s, 1), sam);
         // Another voice behind speaker 0 now: the name no longer applies.
-        s.save_meeting_voices(id, &[(0, vec![0.0, 1.0])], true).unwrap();
+        s.save_meeting_voices(id, &[(0, vec![0.0, 1.0])], true)
+            .unwrap();
         assert_eq!(key(&s, 0), (None, None));
     }
 
@@ -682,8 +865,10 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         s.upsert_person("sam@x.com", "Sam", None).unwrap();
         let id = meeting(&s, 1_000, vec![]);
-        s.save_meeting_voices(id, &[(0, vec![1.0, 0.0])], false).unwrap();
-        s.set_meeting_speaker(id, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        s.save_meeting_voices(id, &[(0, vec![1.0, 0.0])], false)
+            .unwrap();
+        s.set_meeting_speaker(id, 0, Some("sam@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
         assert_eq!(s.meeting_speakers(id).unwrap().len(), 1);
         assert_eq!(s.voice_print("sam@x.com").unwrap(), None);
         assert!(s.voice_people().unwrap().is_empty());
@@ -695,15 +880,20 @@ mod tests {
         s.set_own_device_id("dev");
         s.upsert_person("sam@x.com", "Sam", None).unwrap();
         let id = meeting(&s, 1_000, vec![]);
-        s.save_meeting_voices(id, &[(0, vec![1.0, 0.0])], true).unwrap();
-        s.set_meeting_speaker(id, 0, Some("sam@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        s.save_meeting_voices(id, &[(0, vec![1.0, 0.0])], true)
+            .unwrap();
+        s.set_meeting_speaker(id, 0, Some("sam@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
         assert!(s.voice_print("sam@x.com").unwrap().is_some());
         let before = s.list_outbox_operations().unwrap().len();
         s.forget_voice("sam@x.com").unwrap();
         assert_eq!(s.voice_print("sam@x.com").unwrap(), None);
         assert!(s.voice_people().unwrap().is_empty());
         let sp = &s.meeting_speakers(id).unwrap()[0];
-        assert_eq!((sp.name.as_deref(), sp.status), (Some("Sam"), Some(NameStatus::Confirmed)));
+        assert_eq!(
+            (sp.name.as_deref(), sp.status),
+            (Some("Sam"), Some(NameStatus::Confirmed))
+        );
         let ops = s.list_outbox_operations().unwrap();
         assert_eq!(ops.len(), before + 1, "the cleared row syncs");
         let ms: AppliedMeetingSpeaker = serde_json::from_str(&ops.last().unwrap().3).unwrap();
@@ -729,7 +919,10 @@ mod tests {
             .conn
             .prepare("SELECT source_meeting_id, embedding IS NOT NULL FROM meeting_speaker_pending ORDER BY source_meeting_id")
             .unwrap();
-        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
     }
 
     #[test]
@@ -740,7 +933,10 @@ mod tests {
         park(&s, 2, "sam@x.com", NameStatus::Guess, 10);
         park(&s, 3, "ana@x.com", NameStatus::Confirmed, 10);
         s.forget_voice("sam@x.com").unwrap();
-        assert_eq!(pending_embeddings(&s), vec![(1, false), (2, true), (3, true)]);
+        assert_eq!(
+            pending_embeddings(&s),
+            vec![(1, false), (2, true), (3, true)]
+        );
     }
 
     #[test]
@@ -756,14 +952,41 @@ mod tests {
     #[test]
     fn display_label_resolves_assigned_speakers_only() {
         let speakers = vec![
-            MeetingSpeaker { speaker_id: 0, person_key: Some("a".into()), name: Some("Sam".into()), status: Some(NameStatus::Guess) },
-            MeetingSpeaker { speaker_id: 9, person_key: Some("b".into()), name: Some("Ana".into()), status: Some(NameStatus::Confirmed) },
-            MeetingSpeaker { speaker_id: 2, person_key: None, name: None, status: None },
+            MeetingSpeaker {
+                speaker_id: 0,
+                person_key: Some("a".into()),
+                name: Some("Sam".into()),
+                status: Some(NameStatus::Guess),
+            },
+            MeetingSpeaker {
+                speaker_id: 9,
+                person_key: Some("b".into()),
+                name: Some("Ana".into()),
+                status: Some(NameStatus::Confirmed),
+            },
+            MeetingSpeaker {
+                speaker_id: 2,
+                person_key: None,
+                name: None,
+                status: None,
+            },
         ];
-        assert_eq!(display_label("Speaker 1", &speakers), ("Sam".to_string(), true));
-        assert_eq!(display_label("Speaker 10", &speakers), ("Ana".to_string(), false));
-        assert_eq!(display_label("Speaker 3", &speakers), ("Speaker 3".to_string(), false));
-        assert_eq!(display_label("Speaker 0", &speakers), ("Speaker 0".to_string(), false));
+        assert_eq!(
+            display_label("Speaker 1", &speakers),
+            ("Sam".to_string(), true)
+        );
+        assert_eq!(
+            display_label("Speaker 10", &speakers),
+            ("Ana".to_string(), false)
+        );
+        assert_eq!(
+            display_label("Speaker 3", &speakers),
+            ("Speaker 3".to_string(), false)
+        );
+        assert_eq!(
+            display_label("Speaker 0", &speakers),
+            ("Speaker 0".to_string(), false)
+        );
         assert_eq!(display_label("Me", &speakers), ("Me".to_string(), false));
     }
 
@@ -771,18 +994,44 @@ mod tests {
     fn transcript_text_resolves_names_and_marks_guesses() {
         use chrono::{Local, TimeZone};
         let s = Store::open_in_memory().unwrap();
-        let midnight = Local.with_ymd_and_hms(2026, 1, 5, 0, 0, 0).single().unwrap().timestamp_millis();
-        let id = meeting(&s, midnight, vec![attendee("Sam", None), attendee("Ana", Some("ana@x.com"))]);
+        let midnight = Local
+            .with_ymd_and_hms(2026, 1, 5, 0, 0, 0)
+            .single()
+            .unwrap()
+            .timestamp_millis();
+        let id = meeting(
+            &s,
+            midnight,
+            vec![attendee("Sam", None), attendee("Ana", Some("ana@x.com"))],
+        );
         s.insert_transcript_segments(&[
-            NewTranscriptSegment { meeting_id: id, start_cs: 100, speaker_label: "Speaker 1".into(), text: "hi".into() },
-            NewTranscriptSegment { meeting_id: id, start_cs: 200, speaker_label: "Speaker 2".into(), text: "hey".into() },
-            NewTranscriptSegment { meeting_id: id, start_cs: 300, speaker_label: "Speaker 3".into(), text: "yo".into() },
+            NewTranscriptSegment {
+                meeting_id: id,
+                start_cs: 100,
+                speaker_label: "Speaker 1".into(),
+                text: "hi".into(),
+            },
+            NewTranscriptSegment {
+                meeting_id: id,
+                start_cs: 200,
+                speaker_label: "Speaker 2".into(),
+                text: "hey".into(),
+            },
+            NewTranscriptSegment {
+                meeting_id: id,
+                start_cs: 300,
+                speaker_label: "Speaker 3".into(),
+                text: "yo".into(),
+            },
         ])
         .unwrap();
         s.upsert_person("name:sam", "Sam", None).unwrap();
-        s.upsert_person("ana@x.com", "Ana", Some("ana@x.com")).unwrap();
-        s.set_meeting_speaker(id, 0, Some("name:sam"), Some(NameStatus::Guess)).unwrap();
-        s.set_meeting_speaker(id, 1, Some("ana@x.com"), Some(NameStatus::Confirmed)).unwrap();
+        s.upsert_person("ana@x.com", "Ana", Some("ana@x.com"))
+            .unwrap();
+        s.set_meeting_speaker(id, 0, Some("name:sam"), Some(NameStatus::Guess))
+            .unwrap();
+        s.set_meeting_speaker(id, 1, Some("ana@x.com"), Some(NameStatus::Confirmed))
+            .unwrap();
         assert_eq!(
             s.meeting_transcript_text(id).unwrap(),
             "Invitees: Sam, Ana\n[00:00:01] Sam (unconfirmed): hi\n[00:00:02] Ana: hey\n[00:00:03] Speaker 3: yo"
@@ -795,10 +1044,18 @@ mod tests {
         let id = meeting(&s, 1_000, vec![]);
         s.upsert_person("name:sam", "Sam", None).unwrap();
         s.save_meeting_voices(id, &[(1, vec![1.0])], true).unwrap();
-        s.set_meeting_speaker(id, 0, Some("name:sam"), Some(NameStatus::Guess)).unwrap();
+        s.set_meeting_speaker(id, 0, Some("name:sam"), Some(NameStatus::Guess))
+            .unwrap();
         let speakers = s.meeting_speakers(id).unwrap();
-        assert_eq!(display_label("Speaker 1", &speakers), ("Sam".to_string(), true));
-        assert_eq!(display_label("Speaker 2", &speakers), ("Speaker 2".to_string(), false), "voice, no name");
+        assert_eq!(
+            display_label("Speaker 1", &speakers),
+            ("Sam".to_string(), true)
+        );
+        assert_eq!(
+            display_label("Speaker 2", &speakers),
+            ("Speaker 2".to_string(), false),
+            "voice, no name"
+        );
     }
 
     #[test]
@@ -820,13 +1077,19 @@ mod tests {
         s.upsert_person("name:sam", "Sam", None).unwrap();
         let keep = meeting(&s, 1_000, vec![]);
         let drop = meeting(&s, 1_000, vec![]);
-        s.save_meeting_voices(keep, &[(0, vec![1.0])], true).unwrap();
+        s.save_meeting_voices(keep, &[(0, vec![1.0])], true)
+            .unwrap();
         // Speaker 0 collides with the kept copy's; speaker 1 is only on the dropped copy.
-        s.save_meeting_voices(drop, &[(0, vec![2.0]), (1, vec![3.0])], true).unwrap();
-        s.set_meeting_speaker(drop, 1, Some("name:sam"), Some(NameStatus::Confirmed)).unwrap();
+        s.save_meeting_voices(drop, &[(0, vec![2.0]), (1, vec![3.0])], true)
+            .unwrap();
+        s.set_meeting_speaker(drop, 1, Some("name:sam"), Some(NameStatus::Confirmed))
+            .unwrap();
         assert!(s.fold_duplicate_meeting(keep, drop).unwrap());
         let speakers = s.meeting_speakers(keep).unwrap();
-        assert_eq!(speakers.iter().map(|m| m.speaker_id).collect::<Vec<_>>(), [0, 1]);
+        assert_eq!(
+            speakers.iter().map(|m| m.speaker_id).collect::<Vec<_>>(),
+            [0, 1]
+        );
         assert_eq!(speakers[1].name.as_deref(), Some("Sam"));
         assert!(s.meeting_speakers(drop).unwrap().is_empty());
         assert_eq!(s.voice_print("name:sam").unwrap(), Some(vec![1.0]));
@@ -843,10 +1106,26 @@ mod tests {
         assert!(old.attendee_details.is_empty());
         let s = Store::open_in_memory().unwrap();
         let details = vec![attendee("Sam", Some("sam@x.com"))];
-        let applied = crate::AppliedMeeting { attendee_details: details.clone(), ..old };
+        let applied = crate::AppliedMeeting {
+            attendee_details: details.clone(),
+            ..old
+        };
         let id = s.apply_synced_meeting("peer", 1, None, &applied).unwrap();
         assert_eq!(s.meeting_attendee_details(id).unwrap(), details);
-        s.apply_synced_meeting("peer", 2, Some(id), &crate::AppliedMeeting { attendee_details: vec![], ..applied }).unwrap();
-        assert_eq!(s.meeting_attendee_details(id).unwrap(), vec![attendee("Sam", None)], "falls back to the names");
+        s.apply_synced_meeting(
+            "peer",
+            2,
+            Some(id),
+            &crate::AppliedMeeting {
+                attendee_details: vec![],
+                ..applied
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            s.meeting_attendee_details(id).unwrap(),
+            vec![attendee("Sam", None)],
+            "falls back to the names"
+        );
     }
 }

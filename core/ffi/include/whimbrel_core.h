@@ -808,6 +808,10 @@ char *whimbrel_memory_recent_meetings(StoreHandle *handle, size_t limit);
  * entry with an "also_recorded" array of {id, device_id, title}. NULL on failure. */
 char *whimbrel_meetings_recent_grouped(StoreHandle *handle, size_t limit);
 
+/* Number of meetings after grouping copies, over every meeting (no list cap).
+ * Returns -1 on a null handle or DB error. */
+int64_t whimbrel_meetings_grouped_count(StoreHandle *handle);
+
 /* Captures per device in [start_unix_ms, end_unix_ms), busiest first. Returns a JSON
  * array of {"device_id", "captures", "last_ts_unix_ms"}, or NULL on a null handle or a
  * DB error. */
@@ -1162,10 +1166,19 @@ bool whimbrel_sync_content_pull_only(StoreHandle *handle, const char *turso_url,
 char *whimbrel_sync_content_last_error(void);
 /* Whether the last content sync left rows on the relay, so another round should follow soon. */
 bool whimbrel_sync_content_more_to_pull(void);
+/* The last pull round's per-peer stats as a JSON array: hashed peer tags, cursors and
+ * row counts only. Caller frees with whimbrel_core_free_string. */
+char *whimbrel_sync_content_last_pull_stats(void);
+
 /* JSON array of DeletedMeetingFiles: meetings other devices forgot that content sync deleted
  * here since the last call ("[]" if none). Call after every round, failed or not, and delete each
  * with whimbrel_retention_delete_all_meeting_files. Caller frees with whimbrel_core_free_string. */
 char *whimbrel_sync_take_forgotten_meeting_files(void);
+
+/* {"pending": N, "oldest_unix_ms": T|null}: outbox operations not yet sent and when the oldest was
+ * made, for "N changes waiting since ...". NULL on a null handle or store error. Caller frees with
+ * whimbrel_core_free_string. */
+char *whimbrel_sync_outbox_backlog(StoreHandle *handle);
 
 typedef struct McpHostHandle McpHostHandle;
 

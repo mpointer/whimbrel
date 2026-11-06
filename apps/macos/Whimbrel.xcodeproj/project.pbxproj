@@ -37,6 +37,7 @@
 		114754CE1679D75C4803079A /* TodayRowsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 288E3BDA22F6392CC8D24988 /* TodayRowsTests.swift */; };
 		129BF14D28E7A5CDA5AA1323 /* LiveTranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD35AE105673C79B64E89D92 /* LiveTranscriptionService.swift */; };
 		13BE8BBFCE6CD9B481D227B9 /* DeviceComparisonCodeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90A7F8CAB46D630D5921AF00 /* DeviceComparisonCodeTests.swift */; };
+		7EC04792A17FF5334368C1F5 /* DeviceDisplayNameTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCDB018EBECBBC9A0B5927AF /* DeviceDisplayNameTests.swift */; };
 		140EE0DF998A7E93BE7DEA8D /* PowerIdleGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 722BFFADE1EA406D4C04D4B6 /* PowerIdleGate.swift */; };
 		1426387C035F3FAB330CB7F2 /* PaletteRepairTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74FF98DC005FF335158DC8E2 /* PaletteRepairTests.swift */; };
 		155EF0CEA419F0FF245F3F1B /* SkinMatrixTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A5FF5AEAB68CE7C3E943FCC /* SkinMatrixTests.swift */; };
@@ -372,6 +373,7 @@
 		DC79FBCDB4621010F155767A /* MeetingTriggerServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD5737B4828F4E6D99DB5ADC /* MeetingTriggerServiceTests.swift */; };
 		DE6F582E63B38C78D1FB7752 /* UserSkinStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81750320CED92670FEB2229B /* UserSkinStore.swift */; };
 		DF3B626975BF61D641ED20CF /* DeviceCodeCollisions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AD9BFD3E5BECAA117C9F2F5 /* DeviceCodeCollisions.swift */; };
+		5EE9BF6CC88C7D906DE89FA0 /* DeviceDisplayName.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE40378120035FDD33E7F1F8 /* DeviceDisplayName.swift */; };
 		DF8558A1E5B8BE1BBBE2942A /* MeetingPartTranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CFB9E723833815E14ECA69C /* MeetingPartTranscriptionTests.swift */; };
 		DFECD80B471D7BE032C58DF9 /* RetentionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05A165F5D04BD2B1444AC834 /* RetentionSettings.swift */; };
 		E0D4631BF25F9E7FEF4BD6F6 /* MeetingsSettingsPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A61B5A4C15E4692D800DAC4 /* MeetingsSettingsPane.swift */; };
@@ -524,6 +526,7 @@
 		288E3BDA22F6392CC8D24988 /* TodayRowsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayRowsTests.swift; sourceTree = "<group>"; };
 		2AB48B112298425CAD855D0E /* CoreBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreBridge.swift; sourceTree = "<group>"; };
 		2AD9BFD3E5BECAA117C9F2F5 /* DeviceCodeCollisions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceCodeCollisions.swift; sourceTree = "<group>"; };
+		CE40378120035FDD33E7F1F8 /* DeviceDisplayName.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDisplayName.swift; sourceTree = "<group>"; };
 		2BE3E471BE8FD9DE260D8AF4 /* MeetingBriefView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingBriefView.swift; sourceTree = "<group>"; };
 		2C098113F1804862790EF707 /* ThemedRoot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemedRoot.swift; sourceTree = "<group>"; };
 		2CFB9E723833815E14ECA69C /* MeetingPartTranscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingPartTranscriptionTests.swift; sourceTree = "<group>"; };
@@ -684,6 +687,7 @@
 		9035D3CEA208C209A76563EE /* InferenceEventDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InferenceEventDecodingTests.swift; sourceTree = "<group>"; };
 		907A0930F3E1E75F8EABDACF /* TodayComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayComposer.swift; sourceTree = "<group>"; };
 		90A7F8CAB46D630D5921AF00 /* DeviceComparisonCodeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceComparisonCodeTests.swift; sourceTree = "<group>"; };
+		DCDB018EBECBBC9A0B5927AF /* DeviceDisplayNameTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceDisplayNameTests.swift; sourceTree = "<group>"; };
 		93046A824FBAC7C8B96F58F5 /* SyncConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncConfig.swift; sourceTree = "<group>"; };
 		930AB3711ADE1B846B2A2A06 /* TodayComposerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayComposerTests.swift; sourceTree = "<group>"; };
 		94DA5ACBE281F9FCFC362DC7 /* ProfileSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileSettings.swift; sourceTree = "<group>"; };
@@ -890,6 +894,7 @@
 				420EE9B48CC1680FEEB14624 /* CoreSelfTest.swift */,
 				0DFF6C0BE06E4CA607789FE3 /* DailyDigestCache.swift */,
 				2AD9BFD3E5BECAA117C9F2F5 /* DeviceCodeCollisions.swift */,
+				CE40378120035FDD33E7F1F8 /* DeviceDisplayName.swift */,
 				3BCCC3F2ACC293F7D28852A3 /* DiagnosticsPrinter.swift */,
 				88C54530E2CECBBDBC4101B7 /* DiarizationService.swift */,
 				AFA6141269356D53BCBAC7F8 /* EmbeddingModelLocator.swift */,
@@ -1020,6 +1025,7 @@
 				3AAD542B1996D3F22D963BBA /* CoreSelfTestLineScanTests.swift */,
 				A74055CD95D5C50615CE6789 /* DesignSystemComponentTests.swift */,
 				90A7F8CAB46D630D5921AF00 /* DeviceComparisonCodeTests.swift */,
+				DCDB018EBECBBC9A0B5927AF /* DeviceDisplayNameTests.swift */,
 				D1072E7C1D13BF25A18A5E40 /* ElapsedLabelTests.swift */,
 				D0DA640425E489A11FEEFF7C /* EpisodeOptionsMenuTests.swift */,
 				ADABC8501D873C73A3F3C2A1 /* GoogleMeetParticipantCountReaderTests.swift */,
@@ -1707,6 +1713,7 @@
 				A36018CA57D897B2C465016D /* DailyDigestCache.swift in Sources */,
 				FE23D83CE6416039E6D86FA6 /* DesignSystem.swift in Sources */,
 				DF3B626975BF61D641ED20CF /* DeviceCodeCollisions.swift in Sources */,
+				5EE9BF6CC88C7D906DE89FA0 /* DeviceDisplayName.swift in Sources */,
 				242BBE0489507020F16D4D68 /* DevicesSettingsPane.swift in Sources */,
 				59E4B0AA3D0716F8D0E548A2 /* DiagnosticsPrinter.swift in Sources */,
 				011EEB1BC353B556A997BC11 /* DiagnosticsSettingsPane.swift in Sources */,
@@ -1937,6 +1944,7 @@
 				A94C4F056CD63CD3E737C923 /* CoreSelfTestLineScanTests.swift in Sources */,
 				3112700C48822F11D74A925F /* DesignSystemComponentTests.swift in Sources */,
 				13BE8BBFCE6CD9B481D227B9 /* DeviceComparisonCodeTests.swift in Sources */,
+				7EC04792A17FF5334368C1F5 /* DeviceDisplayNameTests.swift in Sources */,
 				A1DDF5A2B064DDBC6CC28E08 /* ElapsedLabelTests.swift in Sources */,
 				F96AC93F7F31721482E03BF8 /* EpisodeOptionsMenuTests.swift in Sources */,
 				F102D19233FC0AAD67FBDAE3 /* GoogleMeetParticipantCountReaderTests.swift in Sources */,
@@ -2079,7 +2087,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/target/release";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.58;
+				MARKETING_VERSION = 0.9.59;
 				OTHER_LDFLAGS = "-lwhimbrel_core -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel;
 				PRODUCT_NAME = Whimbrel;
@@ -2279,7 +2287,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/target/release";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.58;
+				MARKETING_VERSION = 0.9.59;
 				OTHER_LDFLAGS = "-lwhimbrel_core -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel;
 				PRODUCT_NAME = Whimbrel;

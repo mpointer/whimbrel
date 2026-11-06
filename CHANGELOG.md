@@ -2,6 +2,28 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.59] - 2026-11-06
+
+### Android
+- Whimbrel for Android, early access: read your meetings, transcripts, summaries and routines on your phone. Install it from the release page in your phone's browser; later releases update it in place.
+- The phone keeps its sync sign-in across restarts and doesn't stop syncing to ask for your Google account.
+- The Whimbrel logo is the app icon.
+
+### Mac
+- Settings → Devices shows "Changes waiting to send" when this Mac's changes have been waiting more than an hour to reach your other devices.
+- A meeting window that's open when another device forgets its meeting now says the meeting is no longer available.
+- Fewer near-duplicate screen captures: a strip of the call window is no longer saved when nobody is sharing a screen.
+
+### Windows
+- Settings shows one section at a time (General, Profile, Capture & Privacy, Meetings, AI, Sync & Devices, Connectors), as on the Mac.
+- Clicks such as Dismiss respond at once instead of waiting behind meeting summaries.
+- Error messages and the Ask button point to Settings → AI, the section's new name.
+- The "Routines run on" choice is ready when you open Automations, and the Routines card no longer says "this PC" when another device runs them.
+
+### All devices
+- Dismissing or adding a suggested profile fact resolves it on every device.
+- Forgetting a meeting reaches your other devices sooner, and a forget, routine run or other change sent late is no longer missed by a device that already synced past it.
+- The iPhone catches up faster on its first sync.
 ## [0.9.58] - 2026-11-05
 
 ### Mac

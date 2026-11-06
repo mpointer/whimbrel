@@ -91,7 +91,7 @@ pub struct UsageView {
     pub month_by_provider: Vec<ProviderSpendView>,
 }
 
-/// A paid provider's monthly budget (Settings → AI Providers); `None` is no budget.
+/// A paid provider's monthly budget (Settings → AI); `None` is no budget.
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderBudgetView {
@@ -225,7 +225,7 @@ pub async fn set_provider_budget(app: tauri::AppHandle, state: State<'_, AppStat
     Ok(views)
 }
 
-/// "Open AI Providers settings" from a "budget spent" message in another window or view.
+/// "Open AI settings" from a "budget spent" message in another window or view.
 #[tauri::command]
 pub fn open_ai_settings(app: tauri::AppHandle) {
     crate::budget_alert::open_ai_settings(&app);

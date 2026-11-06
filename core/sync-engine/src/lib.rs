@@ -29,7 +29,8 @@ use tokio::runtime::Runtime;
 mod content;
 mod outbox;
 pub use content::{
-    ensure_content_schema, more_to_pull, pull_content, push_content, take_forgotten_meeting_files, PullOptions,
+    ensure_content_schema, last_pull_stats_json, more_to_pull, pull_content, push_content,
+    take_forgotten_meeting_files, PullOptions,
 };
 pub use outbox::{dispatch_outbox, OutboxDispatchSummary};
 
@@ -152,9 +153,9 @@ async fn remote_connection(
         let builder = builder.connector(webpki_connector());
         builder.build().await
     })
-        .await
-        .map_err(|e| SyncEngineError::Connection(format!("connector setup panicked: {e}")))?
-        .map_err(|e| SyncEngineError::Connection(e.to_string()))?;
+    .await
+    .map_err(|e| SyncEngineError::Connection(format!("connector setup panicked: {e}")))?
+    .map_err(|e| SyncEngineError::Connection(e.to_string()))?;
 
     let conn = db
         .connect()
@@ -257,7 +258,7 @@ pub fn sync_content(
         let conn = remote_connection(turso_url, turso_token).await?;
         content_round(&conn, group_key, store, device_id, &set).await
     }));
-    record_content_sync_outcome(&result, *phase.lock().unwrap());
+    finish_round(store, &result, *phase.lock().unwrap());
     result
 }
 
@@ -305,7 +306,7 @@ pub fn sync_content_pull_only(
         let conn = remote_connection(turso_url, turso_token).await?;
         pull_only_phased(&conn, group_key, store, device_id, options, &phase).await
     }));
-    record_content_sync_outcome(&result, *phase.lock().unwrap());
+    finish_round(store, &result, *phase.lock().unwrap());
     result
 }
 
@@ -318,7 +319,15 @@ pub async fn pull_only_with_connection(
     device_id: &str,
     options: &PullOptions,
 ) -> Result<(), SyncEngineError> {
-    pull_only_phased(conn, group_key, store, device_id, options, &Mutex::new("connect")).await
+    pull_only_phased(
+        conn,
+        group_key,
+        store,
+        device_id,
+        options,
+        &Mutex::new("connect"),
+    )
+    .await
 }
 
 /// [`pull_only_with_connection`] that reports the phase it is in through `phase`, so a
@@ -342,9 +351,24 @@ static LAST_CONTENT_SYNC_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
 /// Remembers why the last `sync_content` failed (and in which phase), or clears it on
 /// success. The FFI returns only a bool, so the Mac shell reads this to log the cause.
+/// Records the round's outcome in memory (the shell's error line) and on disk (`sync_round`), so a
+/// stall can still be read after the system log rolls over (#590). The disk record never fails a round.
+fn finish_round(store: &memory::Store, result: &Result<(), SyncEngineError>, phase: &str) {
+    record_content_sync_outcome(result, phase);
+    let error = result
+        .as_ref()
+        .err()
+        .map(|e| format!("{e} (during {phase})"));
+    if let Err(e) = store.record_sync_round(now_unix_ms(), error.as_deref()) {
+        eprintln!("[sync] could not record the round: {e}");
+    }
+}
+
 fn record_content_sync_outcome(result: &Result<(), SyncEngineError>, phase: &str) {
-    *LAST_CONTENT_SYNC_ERROR.lock().unwrap() =
-        result.as_ref().err().map(|e| format!("{e} (during {phase})"));
+    *LAST_CONTENT_SYNC_ERROR.lock().unwrap() = result
+        .as_ref()
+        .err()
+        .map(|e| format!("{e} (during {phase})"));
 }
 
 /// The error recorded by the most recent `sync_content`, `None` if it succeeded.
@@ -533,13 +557,37 @@ fn decrypt_field(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_round_is_recorded_on_disk_with_its_phase() {
+        let store = memory::Store::open_in_memory().unwrap();
+        finish_round(&store, &Ok(()), "forgotten cleanup");
+        finish_round(
+            &store,
+            &Err(SyncEngineError::Query("timed out".into())),
+            "pull",
+        );
+        let rounds = store.recent_sync_rounds(5).unwrap();
+        assert_eq!(rounds.len(), 2);
+        assert!(
+            rounds[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .ends_with("(during pull)"),
+            "{:?}",
+            rounds[0].error
+        );
+        assert_eq!(rounds[1].error, None);
+    }
+
     use super::*;
     use std::collections::HashMap;
 
     #[test]
     fn content_sync_outcome_records_error_with_phase_and_clears_on_success() {
-        let failed: Result<(), SyncEngineError> =
-            Err(SyncEngineError::Connection("content sync timed out after 30s".into()));
+        let failed: Result<(), SyncEngineError> = Err(SyncEngineError::Connection(
+            "content sync timed out after 30s".into(),
+        ));
         record_content_sync_outcome(&failed, "pull");
         let msg = last_content_sync_error().expect("error recorded");
         assert!(msg.contains("timed out after 30s"), "{msg}");
@@ -555,7 +603,9 @@ mod tests {
         let conn = local_connection(&dir.path().join("shared.db")).await;
         // A view named `sync_row` makes CREATE TABLE IF NOT EXISTS a no-op but the
         // following CREATE INDEX fail, so the schema step errors.
-        conn.execute_batch("CREATE VIEW sync_row AS SELECT 1 AS x;").await.unwrap();
+        conn.execute_batch("CREATE VIEW sync_row AS SELECT 1 AS x;")
+            .await
+            .unwrap();
         let store = memory::Store::open_in_memory().unwrap();
         let phase = Mutex::new("connect");
         let result = pull_only_phased(
@@ -602,8 +652,14 @@ mod tests {
 
         match result {
             Err(SyncEngineError::Connection(msg)) => {
-                assert!(msg.contains("test sync"), "error should name which sync timed out: {msg}");
-                assert!(msg.contains("timed out"), "error should say it timed out: {msg}");
+                assert!(
+                    msg.contains("test sync"),
+                    "error should name which sync timed out: {msg}"
+                );
+                assert!(
+                    msg.contains("timed out"),
+                    "error should say it timed out: {msg}"
+                );
             }
             other => panic!("expected a Connection timeout error, got {other:?}"),
         }
@@ -1019,13 +1075,17 @@ mod tests {
     /// connector (`build` and `connect` are offline, so no network is touched).
     #[tokio::test]
     async fn android_webpki_connector_builds_with_a_non_empty_root_store() {
-        assert!(webpki_root_store().len() > 100, "bundled Mozilla roots missing");
+        assert!(
+            webpki_root_store().len() > 100,
+            "bundled Mozilla roots missing"
+        );
         let db = Builder::new_remote("https://example.invalid".to_string(), "token".to_string())
             .connector(webpki_connector())
             .build()
             .await
             .expect("libsql must accept the webpki connector");
-        db.connect().expect("connect is lazy and must not fail offline");
+        db.connect()
+            .expect("connect is lazy and must not fail offline");
     }
 
     /// `remote_connection`'s whole point is to stop rebuilding the HTTPS
@@ -1210,7 +1270,10 @@ mod tests {
             .unwrap();
         store.complete_meeting(meeting_id, 2000, None).unwrap();
         let outbox_before = store.list_outbox_operations().unwrap();
-        assert!(!outbox_before.is_empty(), "the test needs a pending outbox entry");
+        assert!(
+            !outbox_before.is_empty(),
+            "the test needs a pending outbox entry"
+        );
 
         let peer = memory::Store::open_in_memory().unwrap();
         peer.insert_meeting(&memory::NewMeeting {
@@ -1226,22 +1289,45 @@ mod tests {
         .map(|id| peer.complete_meeting(id, 2000, None).unwrap())
         .unwrap();
         content::ensure_content_schema(&conn).await.unwrap();
-        content::push_content(&conn, &group_key, &peer, "device-b").await.unwrap();
-
-        pull_only_with_connection(&conn, &group_key, &store, "device-a", &PullOptions::default())
+        content::push_content(&conn, &group_key, &peer, "device-b")
             .await
             .unwrap();
 
+        pull_only_with_connection(
+            &conn,
+            &group_key,
+            &store,
+            "device-a",
+            &PullOptions::default(),
+        )
+        .await
+        .unwrap();
+
         let mut rows = conn
-            .query("SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a'", ())
+            .query(
+                "SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a'",
+                (),
+            )
             .await
             .unwrap();
         let own_rows: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
         assert_eq!(own_rows, 0, "pull-only must write nothing to the relay");
-        assert_eq!(store.get_sync_push_cursor().unwrap(), 0, "push cursor untouched");
-        assert_eq!(store.list_outbox_operations().unwrap(), outbox_before, "outbox untouched");
+        assert_eq!(
+            store.get_sync_push_cursor().unwrap(),
+            0,
+            "push cursor untouched"
+        );
+        assert_eq!(
+            store.list_outbox_operations().unwrap(),
+            outbox_before,
+            "outbox untouched"
+        );
         assert!(
-            store.recent_meetings(10).unwrap().iter().any(|m| m.title == "Peer Meeting"),
+            store
+                .recent_meetings(10)
+                .unwrap()
+                .iter()
+                .any(|m| m.title == "Peer Meeting"),
             "the peer's row is still pulled"
         );
     }

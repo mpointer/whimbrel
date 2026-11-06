@@ -560,7 +560,11 @@ fn todo_ids(
         ids
     };
     if let Some(last) = fresh.last() {
-        kv_set(cx.conn, &format!("topic_index_hw:{kind}"), &last.to_string())?;
+        kv_set(
+            cx.conn,
+            &format!("topic_index_hw:{kind}"),
+            &last.to_string(),
+        )?;
     }
     let more = dirty.len() == batch || fresh.len() == batch;
     Ok((dirty.into_iter().chain(fresh).collect(), more))
@@ -846,7 +850,14 @@ mod tests {
         // Across two ticks and within one: the attacker's entity has the lower id.
         for one_tick in [false, true] {
             let (_d, s) = store();
-            email(&s, "e1", "Sarah Lee <attacker@evil.com>", "b@y.com", "Hi", "{}");
+            email(
+                &s,
+                "e1",
+                "Sarah Lee <attacker@evil.com>",
+                "b@y.com",
+                "Hi",
+                "{}",
+            );
             if !one_tick {
                 run_topic_index_job(&s, 200).unwrap();
             }
@@ -858,7 +869,14 @@ mod tests {
         // A trusted Sarah with a higher id is the one joined.
         let (_d, s) = store();
         meeting(&s, Some(1), r#"["sarah@acme.com"]"#);
-        email(&s, "e1", "Sarah Lee <attacker@evil.com>", "b@y.com", "Hi", "{}");
+        email(
+            &s,
+            "e1",
+            "Sarah Lee <attacker@evil.com>",
+            "b@y.com",
+            "Hi",
+            "{}",
+        );
         email(&s, "e2", SARAH, "b@y.com", "Hi", "{}");
         run_topic_index_job(&s, 200).unwrap();
         meeting(&s, Some(3), r#"["Sarah Lee"]"#);
@@ -890,7 +908,10 @@ mod tests {
         assert!(cx.people.is_empty(), "no up-front load of every person");
         assert!(cx.trusted("sarah@acme.com").unwrap());
         s.conn.execute("DELETE FROM meeting", []).unwrap();
-        assert!(cx.trusted("sarah@acme.com").unwrap(), "second lookup is cached");
+        assert!(
+            cx.trusted("sarah@acme.com").unwrap(),
+            "second lookup is cached"
+        );
         assert!(!Ctx::new(&s.conn).trusted("sarah@acme.com").unwrap());
     }
 
@@ -901,8 +922,15 @@ mod tests {
         s.conn.execute("INSERT INTO episodes (device_id, app_bundle_id, window_title, start_ts_unix_ms, end_ts_unix_ms, start_item_id, end_item_id, item_count, summary, status, created_at_unix_ms, updated_at_unix_ms) VALUES ('d','a','Doc',1,2,1,2,2,'x','summarized',1,1)", []).unwrap();
         let ep = s.conn.last_insert_rowid();
         run_topic_index_job(&s, 200).unwrap();
-        assert_eq!((hw_get(&s.conn, "meeting"), hw_get(&s.conn, "episode")), (m, ep));
-        let stale = || s.conn.execute("UPDATE topic_source SET indexed_at_unix_ms = 7", []).unwrap();
+        assert_eq!(
+            (hw_get(&s.conn, "meeting"), hw_get(&s.conn, "episode")),
+            (m, ep)
+        );
+        let stale = || {
+            s.conn
+                .execute("UPDATE topic_source SET indexed_at_unix_ms = 7", [])
+                .unwrap()
+        };
         let fresh = |kind: &str| {
             s.conn
                 .query_row(
@@ -914,10 +942,18 @@ mod tests {
         };
         stale();
         run_topic_index_job(&s, 200).unwrap();
-        assert!(!fresh("meeting") && !fresh("episode"), "idle tick re-indexes nothing");
+        assert!(
+            !fresh("meeting") && !fresh("episode"),
+            "idle tick re-indexes nothing"
+        );
         s.conn.execute("INSERT INTO meeting_action_item (meeting_id, text, order_index, source, created_unix_ms, updated_unix_ms) VALUES (?1, 'Send Falcon Plan', 0, 'llm', 1, 1)", [m]).unwrap();
         // Summary rewritten without touching updated_at (lib.rs re-summarize path).
-        s.conn.execute("UPDATE episodes SET summary = 'Falcon Plan draft' WHERE id = ?1", [ep]).unwrap();
+        s.conn
+            .execute(
+                "UPDATE episodes SET summary = 'Falcon Plan draft' WHERE id = ?1",
+                [ep],
+            )
+            .unwrap();
         run_topic_index_job(&s, 200).unwrap();
         assert!(fresh("meeting") && fresh("episode"));
         assert_eq!(n(&s, "SELECT COUNT(*) FROM topic_dirty"), 0);

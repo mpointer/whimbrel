@@ -139,5 +139,32 @@ export const hostAny = (): string => t("Any device (default)");
 /** Shown instead of a choice while there are no other devices to choose between. */
 export const noOtherDevices = (): string => t("Your other devices appear here once sync is set up and they are approved.");
 
+/**
+ * Whether routines are set to run on another device. The backend only captions a chosen device
+ * that isn't this PC, so a selection with a caption is one.
+ */
+export const runsElsewhere = (view: Pick<HostView, "selected" | "caption"> | null): boolean =>
+  !!view && view.selected !== "" && view.caption != null;
+
+/**
+ * The Routines card's opening line. "Runs on this PC" would contradict a choice of another device;
+ * then the picker's caption says where they run, and this keeps only the approval rule.
+ */
+export const routinesIntro = (view: Pick<HostView, "selected" | "caption"> | null): string =>
+  runsElsewhere(view)
+    ? t("A routine that would send or add something waits for your approval first, unless you turn on approving it automatically for that routine.")
+    : t("Routines run on this PC while Whimbrel is running. A routine that would send or add something waits for your approval first, unless you turn on approving it automatically for that routine.");
+
 /** The picker can only choose between devices when there is more than this PC. */
 export const canChooseHost = (view: Pick<HostView, "options">): boolean => view.options.length >= 2;
+
+/** How often, and for how long after the page opens, the picker re-checks while it has nothing to choose. */
+export const HOST_FAST_POLL_MS = 3_000;
+export const HOST_FAST_POLL_FOR_MS = 60_000;
+
+/**
+ * Whether to re-read the picker soon: there is nothing to choose between yet (the device list
+ * may still be arriving after launch or sign-in) and the page opened under a minute ago.
+ */
+export const fastHostPoll = (view: Pick<HostView, "options"> | null, openForMs: number): boolean =>
+  openForMs < HOST_FAST_POLL_FOR_MS && (view === null || !canChooseHost(view));

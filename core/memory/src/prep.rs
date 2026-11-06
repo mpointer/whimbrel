@@ -18,13 +18,24 @@ pub const MEETING_TEXT_CHARS: usize = 800;
 /// `Name <addr>`, `mailto:addr`, a bare address or a bare name.
 pub fn person_keys(raw: &str) -> Vec<String> {
     let trimmed = raw.trim();
-    let trimmed = if trimmed.to_lowercase().starts_with("mailto:") { &trimmed[7..] } else { trimmed };
+    let trimmed = if trimmed.to_lowercase().starts_with("mailto:") {
+        &trimmed[7..]
+    } else {
+        trimmed
+    };
     let (name, addr) = match (trimmed.rfind('<'), trimmed.rfind('>')) {
-        (Some(l), Some(r)) if l < r => (trimmed[..l].trim().trim_matches('"').trim(), trimmed[l + 1..r].trim()),
+        (Some(l), Some(r)) if l < r => (
+            trimmed[..l].trim().trim_matches('"').trim(),
+            trimmed[l + 1..r].trim(),
+        ),
         _ if trimmed.contains('@') => ("", trimmed),
         _ => (trimmed, ""),
     };
-    [name, addr].iter().map(|s| s.to_lowercase()).filter(|s| !s.is_empty()).collect()
+    [name, addr]
+        .iter()
+        .map(|s| s.to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// Whether two person strings name the same person (they share a name or an address).
@@ -136,7 +147,9 @@ impl Store {
             return Ok(false);
         }
         let row = MeetingPrepRow {
-            generated_at_unix_ms: row.generated_at_unix_ms.min(crate::now_unix_ms() + crate::SYNCED_RUN_MAX_FUTURE_MS),
+            generated_at_unix_ms: row
+                .generated_at_unix_ms
+                .min(crate::now_unix_ms() + crate::SYNCED_RUN_MAX_FUTURE_MS),
             title: row.title.chars().take(200).collect(),
             brief_json: self.keep_only_local_meeting_ids(&row.brief_json),
             ..row.clone()
@@ -156,11 +169,22 @@ impl Store {
     /// here. Keep it only when the local meeting at that id has the source's start and title (case and
     /// padding ignored); otherwise clear it so the chip is a plain label. Unparseable JSON is returned as is.
     fn keep_only_local_meeting_ids(&self, brief_json: &str) -> String {
-        let Ok(mut v) = serde_json::from_str::<serde_json::Value>(brief_json) else { return brief_json.to_string() };
-        let Some(sources) = v.get_mut("sources").and_then(|s| s.as_array_mut()) else { return brief_json.to_string() };
+        let Ok(mut v) = serde_json::from_str::<serde_json::Value>(brief_json) else {
+            return brief_json.to_string();
+        };
+        let Some(sources) = v.get_mut("sources").and_then(|s| s.as_array_mut()) else {
+            return brief_json.to_string();
+        };
         for src in sources {
-            let Some(id) = src.get("meeting_id").and_then(|m| m.as_i64()) else { continue };
-            let title = src.get("title").and_then(|t| t.as_str()).unwrap_or("").trim().to_lowercase();
+            let Some(id) = src.get("meeting_id").and_then(|m| m.as_i64()) else {
+                continue;
+            };
+            let title = src
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
             let start = src.get("ts_unix_ms").and_then(|t| t.as_i64());
             let same = matches!(self.get_meeting(id), Ok(Some(m)) if Some(m.start_unix_ms) == start && m.title.trim().to_lowercase() == title);
             if !same {
@@ -174,7 +198,12 @@ impl Store {
     /// peer wrote for the same meeting (same start, same title ignoring case and padding) is copied
     /// under this device's own id, where Today and the prepared check look. Never enqueued. Returns
     /// whether a copy was made.
-    pub fn alias_synced_meeting_prep(&self, event_id: &str, start_unix_ms: i64, title: &str) -> rusqlite::Result<bool> {
+    pub fn alias_synced_meeting_prep(
+        &self,
+        event_id: &str,
+        start_unix_ms: i64,
+        title: &str,
+    ) -> rusqlite::Result<bool> {
         if self.get_meeting_prep(event_id)?.is_some() {
             return Ok(false);
         }
@@ -185,15 +214,27 @@ impl Store {
         )?;
         let rows = stmt.query_map(params![start_unix_ms], |r| {
             Ok(MeetingPrepRow {
-                event_id: r.get(0)?, title: r.get(1)?, start_unix_ms: r.get(2)?,
-                generated_at_unix_ms: r.get(3)?, brief_json: r.get(4)?, provider: r.get(5)?, model: r.get(6)?,
+                event_id: r.get(0)?,
+                title: r.get(1)?,
+                start_unix_ms: r.get(2)?,
+                generated_at_unix_ms: r.get(3)?,
+                brief_json: r.get(4)?,
+                provider: r.get(5)?,
+                model: r.get(6)?,
             })
         })?;
         for row in rows {
             let row = row?;
             if row.title.trim().to_lowercase() == key {
                 let brief_json = self.keep_only_local_meeting_ids(&row.brief_json);
-                upsert_meeting_prep(&self.conn, &MeetingPrepRow { event_id: event_id.to_string(), brief_json, ..row })?;
+                upsert_meeting_prep(
+                    &self.conn,
+                    &MeetingPrepRow {
+                        event_id: event_id.to_string(),
+                        brief_json,
+                        ..row
+                    },
+                )?;
                 return Ok(true);
             }
         }
@@ -216,7 +257,11 @@ impl Store {
         }
     }
 
-    fn meeting_prep_where(&self, condition: &str, args: impl rusqlite::Params) -> rusqlite::Result<Option<MeetingPrepRow>> {
+    fn meeting_prep_where(
+        &self,
+        condition: &str,
+        args: impl rusqlite::Params,
+    ) -> rusqlite::Result<Option<MeetingPrepRow>> {
         self.conn
             .query_row(
                 &format!(
@@ -241,7 +286,9 @@ impl Store {
     /// Every occurrence that already has a brief, as [`prep_key`]s, so an occurrence is prepared
     /// once. A row stored under a bare event id counts for the occurrence at its start.
     pub fn prepared_event_ids(&self) -> rusqlite::Result<HashSet<String>> {
-        let mut stmt = self.conn.prepare("SELECT event_id, start_unix_ms FROM meeting_prep")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT event_id, start_unix_ms FROM meeting_prep")?;
         let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
         let mut keys = HashSet::new();
         for row in rows {
@@ -257,13 +304,22 @@ impl Store {
     /// otherwise (or when that finds none) a brief with the same title, ignoring case and padding,
     /// whose meeting was due to start between an hour before and 15 minutes after this one did,
     /// preferring the latest one that had started by then (the meeting already under way).
-    pub fn meeting_prep_for_meeting(&self, meeting_id: i64) -> rusqlite::Result<Option<MeetingPrepRow>> {
+    pub fn meeting_prep_for_meeting(
+        &self,
+        meeting_id: i64,
+    ) -> rusqlite::Result<Option<MeetingPrepRow>> {
         let Some((start, title, continue_key)) = self
             .conn
             .query_row(
                 "SELECT start_unix_ms, title, continue_key FROM meeting WHERE id = ?1",
                 params![meeting_id],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                    ))
+                },
             )
             .optional()?
         else {
@@ -284,7 +340,10 @@ impl Store {
 
     /// Drops briefs for meetings that started before `older_than_start_unix_ms`.
     pub fn prune_meeting_prep(&self, older_than_start_unix_ms: i64) -> rusqlite::Result<usize> {
-        self.conn.execute("DELETE FROM meeting_prep WHERE start_unix_ms < ?1", params![older_than_start_unix_ms])
+        self.conn.execute(
+            "DELETE FROM meeting_prep WHERE start_unix_ms < ?1",
+            params![older_than_start_unix_ms],
+        )
     }
 }
 
@@ -366,10 +425,10 @@ impl Store {
         for attendee in attendees {
             let mut latest: Option<i64> = None;
             let mut taken = 0;
-            for m in meetings
-                .iter()
-                .filter(|m| m.status == MeetingStatus::Completed && m.attendees.iter().any(|a| same_person(a, attendee)))
-            {
+            for m in meetings.iter().filter(|m| {
+                m.status == MeetingStatus::Completed
+                    && m.attendees.iter().any(|a| same_person(a, attendee))
+            }) {
                 latest = latest.max(Some(m.start_unix_ms));
                 if taken < MEETINGS_PER_ATTENDEE && seen_meetings.insert(m.id) {
                     taken += 1;
@@ -387,7 +446,10 @@ impl Store {
                 }
             }
             let mut taken = 0;
-            for e in emails.iter().filter(|e| e.actors.iter().any(|a| same_person(a, attendee))) {
+            for e in emails
+                .iter()
+                .filter(|e| e.actors.iter().any(|a| same_person(a, attendee)))
+            {
                 latest = latest.max(Some(e.ts_unix_ms));
                 if taken < EMAILS_PER_ATTENDEE && seen_threads.insert(e.gmail_thread_id.clone()) {
                     taken += 1;
@@ -404,9 +466,15 @@ impl Store {
                     });
                 }
             }
-            last_interaction.push(LastInteraction { attendee: attendee.clone(), ts_unix_ms: latest });
+            last_interaction.push(LastInteraction {
+                attendee: attendee.clone(),
+                ts_unix_ms: latest,
+            });
         }
-        Ok(PrepContext { sources, last_interaction })
+        Ok(PrepContext {
+            sources,
+            last_interaction,
+        })
     }
 }
 
@@ -416,9 +484,18 @@ mod tests {
 
     #[test]
     fn keys_cover_the_name_and_the_address() {
-        assert_eq!(person_keys("Ben Lawrick <Ben@AlphaSights.com>"), ["ben lawrick", "ben@alphasights.com"]);
-        assert_eq!(person_keys("\"Lawrick, Ben\" <ben@alphasights.com>"), ["lawrick, ben", "ben@alphasights.com"]);
-        assert_eq!(person_keys("mailto:Ben@AlphaSights.com"), ["ben@alphasights.com"]);
+        assert_eq!(
+            person_keys("Ben Lawrick <Ben@AlphaSights.com>"),
+            ["ben lawrick", "ben@alphasights.com"]
+        );
+        assert_eq!(
+            person_keys("\"Lawrick, Ben\" <ben@alphasights.com>"),
+            ["lawrick, ben", "ben@alphasights.com"]
+        );
+        assert_eq!(
+            person_keys("mailto:Ben@AlphaSights.com"),
+            ["ben@alphasights.com"]
+        );
         assert_eq!(person_keys("ben@alphasights.com"), ["ben@alphasights.com"]);
         assert_eq!(person_keys("  Ben Lawrick "), ["ben lawrick"]);
         assert!(person_keys("   ").is_empty());
@@ -426,8 +503,14 @@ mod tests {
 
     #[test]
     fn people_match_by_name_or_by_address_across_formats() {
-        assert!(same_person("Ben Lawrick", "ben lawrick <ben@alphasights.com>"), "shared name");
-        assert!(same_person("mailto:ben@alphasights.com", "Ben L. <BEN@alphasights.com>"), "shared address");
+        assert!(
+            same_person("Ben Lawrick", "ben lawrick <ben@alphasights.com>"),
+            "shared name"
+        );
+        assert!(
+            same_person("mailto:ben@alphasights.com", "Ben L. <BEN@alphasights.com>"),
+            "shared address"
+        );
         assert!(!same_person("Ben Lawrick", "Hannah Larbi <hannah@x.org>"));
         assert!(!same_person("", ""), "empty never matches");
     }
@@ -451,16 +534,31 @@ mod tests {
 
         store.save_meeting_prep(&row("e1", 1_000_000)).unwrap();
         store.save_meeting_prep(&row("e2", 9_000_000)).unwrap();
-        assert_eq!(store.get_meeting_prep("e1").unwrap(), Some(row("e1", 1_000_000)));
+        assert_eq!(
+            store.get_meeting_prep("e1").unwrap(),
+            Some(row("e1", 1_000_000))
+        );
         let prepared = store.prepared_event_ids().unwrap();
-        assert!(prepared.contains(&prep_key("e1", 1_000_000)) && prepared.contains(&prep_key("e2", 9_000_000)), "{prepared:?}");
+        assert!(
+            prepared.contains(&prep_key("e1", 1_000_000))
+                && prepared.contains(&prep_key("e2", 9_000_000)),
+            "{prepared:?}"
+        );
 
         let mut changed = row("e1", 1_000_000);
         changed.brief_json = "{\"x\":2}".into();
         store.save_meeting_prep(&changed).unwrap();
-        assert_eq!(store.get_meeting_prep("e1").unwrap().unwrap().brief_json, "{\"x\":2}", "upsert replaces");
+        assert_eq!(
+            store.get_meeting_prep("e1").unwrap().unwrap().brief_json,
+            "{\"x\":2}",
+            "upsert replaces"
+        );
 
-        assert_eq!(store.prune_meeting_prep(5_000_000).unwrap(), 1, "only the older meeting goes");
+        assert_eq!(
+            store.prune_meeting_prep(5_000_000).unwrap(),
+            1,
+            "only the older meeting goes"
+        );
         assert!(store.get_meeting_prep("e1").unwrap().is_none());
         assert!(store.get_meeting_prep("e2").unwrap().is_some());
     }
@@ -486,25 +584,53 @@ mod tests {
     fn a_recorded_meeting_finds_its_occurrences_brief_through_its_calendar_event() {
         let store = crate::Store::open_in_memory().unwrap();
         let week = 7 * DAY;
-        store.save_meeting_prep(&row(&prep_key("series", 10 * DAY), 10 * DAY)).unwrap();
-        store.save_meeting_prep(&row(&prep_key("series", 10 * DAY + week), 10 * DAY + week)).unwrap();
+        store
+            .save_meeting_prep(&row(&prep_key("series", 10 * DAY), 10 * DAY))
+            .unwrap();
+        store
+            .save_meeting_prep(&row(&prep_key("series", 10 * DAY + week), 10 * DAY + week))
+            .unwrap();
         // Renamed by the title check after recording: the event link still finds it.
         let id = recorded(&store, 10 * DAY + week, "Renamed");
-        store.begin_meeting_part(id, 10 * DAY + week, Some("cal:series")).unwrap();
-        assert_eq!(store.meeting_prep_for_meeting(id).unwrap().unwrap().start_unix_ms, 10 * DAY + week);
+        store
+            .begin_meeting_part(id, 10 * DAY + week, Some("cal:series"))
+            .unwrap();
+        assert_eq!(
+            store
+                .meeting_prep_for_meeting(id)
+                .unwrap()
+                .unwrap()
+                .start_unix_ms,
+            10 * DAY + week
+        );
         assert!(store.meeting_prep_for_meeting(9_999).unwrap().is_none());
     }
 
     #[test]
     fn a_meeting_without_an_event_link_matches_a_brief_by_title_and_start() {
         let store = crate::Store::open_in_memory().unwrap();
-        store.save_meeting_prep(&row("legacy-id", 10 * DAY)).unwrap();
+        store
+            .save_meeting_prep(&row("legacy-id", 10 * DAY))
+            .unwrap();
         let late = recorded(&store, 10 * DAY + 10 * 60_000, "  acme RENEWAL ");
-        assert_eq!(store.meeting_prep_for_meeting(late).unwrap().unwrap().event_id, "legacy-id");
+        assert_eq!(
+            store
+                .meeting_prep_for_meeting(late)
+                .unwrap()
+                .unwrap()
+                .event_id,
+            "legacy-id"
+        );
         let other_title = recorded(&store, 10 * DAY, "Standup");
-        assert!(store.meeting_prep_for_meeting(other_title).unwrap().is_none());
+        assert!(store
+            .meeting_prep_for_meeting(other_title)
+            .unwrap()
+            .is_none());
         let next_day = recorded(&store, 11 * DAY, "Acme renewal");
-        assert!(store.meeting_prep_for_meeting(next_day).unwrap().is_none(), "outside the event window");
+        assert!(
+            store.meeting_prep_for_meeting(next_day).unwrap().is_none(),
+            "outside the event window"
+        );
     }
 
     #[test]
@@ -512,13 +638,29 @@ mod tests {
         let store = crate::Store::open_in_memory().unwrap();
         let (nine, nine_thirty) = (20 * DAY, 20 * DAY + 30 * 60_000);
         store.save_meeting_prep(&row("at-9", nine)).unwrap();
-        store.save_meeting_prep(&row("at-930", nine_thirty)).unwrap();
+        store
+            .save_meeting_prep(&row("at-930", nine_thirty))
+            .unwrap();
         // Started at 9:20: 9:30 is nearer, but the 9:00 meeting is the one under way.
         let id = recorded(&store, nine + 20 * 60_000, "Acme renewal");
-        assert_eq!(store.meeting_prep_for_meeting(id).unwrap().unwrap().event_id, "at-9");
+        assert_eq!(
+            store
+                .meeting_prep_for_meeting(id)
+                .unwrap()
+                .unwrap()
+                .event_id,
+            "at-9"
+        );
         // Started at 8:50: nothing under way yet, so the soonest one ahead.
         let early = recorded(&store, nine - 10 * 60_000, "Acme renewal");
-        assert_eq!(store.meeting_prep_for_meeting(early).unwrap().unwrap().event_id, "at-9");
+        assert_eq!(
+            store
+                .meeting_prep_for_meeting(early)
+                .unwrap()
+                .unwrap()
+                .event_id,
+            "at-9"
+        );
     }
 
     #[test]
@@ -531,12 +673,25 @@ mod tests {
         // An older peer's bare-id row for last week, generated earlier: still applied.
         let peer = row("weekly", 3 * DAY);
         assert!(store.apply_synced_meeting_prep(&peer).unwrap());
-        assert_eq!(store.get_meeting_prep("weekly").unwrap().unwrap().start_unix_ms, 3 * DAY);
+        assert_eq!(
+            store
+                .get_meeting_prep("weekly")
+                .unwrap()
+                .unwrap()
+                .start_unix_ms,
+            3 * DAY
+        );
     }
 
     const DAY: i64 = 86_400_000;
 
-    fn completed_meeting(store: &crate::Store, start: i64, title: &str, attendees: &[&str], tldr: &str) -> i64 {
+    fn completed_meeting(
+        store: &crate::Store,
+        start: i64,
+        title: &str,
+        attendees: &[&str],
+        tldr: &str,
+    ) -> i64 {
         let id = store
             .insert_meeting(&NewMeeting {
                 device_id: "dev-1".into(),
@@ -550,7 +705,15 @@ mod tests {
             })
             .unwrap();
         store
-            .update_meeting_summary(id, tldr, &["Ship v2".to_string()], &["Ben sends the deck".to_string()], &["Pricing?".to_string()], "ollama", "m")
+            .update_meeting_summary(
+                id,
+                tldr,
+                &["Ship v2".to_string()],
+                &["Ben sends the deck".to_string()],
+                &["Pricing?".to_string()],
+                "ollama",
+                "m",
+            )
             .unwrap();
         id
     }
@@ -575,20 +738,54 @@ mod tests {
     #[test]
     fn earlier_meetings_and_email_with_an_attendee_become_cited_sources() {
         let store = crate::Store::open_in_memory().unwrap();
-        let m = completed_meeting(&store, 10 * DAY, "Acme kickoff", &["Ben Lawrick"], "Kicked off the Acme project");
-        completed_meeting(&store, 11 * DAY, "Unrelated", &["Hannah Larbi"], "Not about Ben");
-        email(&store, 12, "t-1", "Ben Lawrick <ben@alphasights.com>", "Re: Acme pricing", "Here is the pricing deck");
+        let m = completed_meeting(
+            &store,
+            10 * DAY,
+            "Acme kickoff",
+            &["Ben Lawrick"],
+            "Kicked off the Acme project",
+        );
+        completed_meeting(
+            &store,
+            11 * DAY,
+            "Unrelated",
+            &["Hannah Larbi"],
+            "Not about Ben",
+        );
+        email(
+            &store,
+            12,
+            "t-1",
+            "Ben Lawrick <ben@alphasights.com>",
+            "Re: Acme pricing",
+            "Here is the pricing deck",
+        );
 
-        let context = store.gather_prep_context(&["Ben Lawrick".to_string()]).unwrap();
+        let context = store
+            .gather_prep_context(&["Ben Lawrick".to_string()])
+            .unwrap();
 
         assert_eq!(context.sources.len(), 2);
         let meeting = &context.sources[0];
-        assert_eq!((meeting.id.as_str(), meeting.kind, meeting.meeting_id), ("M1", PrepSourceKind::Meeting, Some(m)));
-        assert!(meeting.text.contains("Kicked off the Acme project") && meeting.text.contains("Ship v2") && meeting.text.contains("Pricing?"));
+        assert_eq!(
+            (meeting.id.as_str(), meeting.kind, meeting.meeting_id),
+            ("M1", PrepSourceKind::Meeting, Some(m))
+        );
+        assert!(
+            meeting.text.contains("Kicked off the Acme project")
+                && meeting.text.contains("Ship v2")
+                && meeting.text.contains("Pricing?")
+        );
         let mail = &context.sources[1];
         assert_eq!((mail.id.as_str(), mail.kind), ("E1", PrepSourceKind::Email));
         assert!(mail.title.contains("Acme pricing") && mail.text.contains("pricing deck"));
-        assert_eq!(context.last_interaction, vec![LastInteraction { attendee: "Ben Lawrick".into(), ts_unix_ms: Some(12 * DAY) }]);
+        assert_eq!(
+            context.last_interaction,
+            vec![LastInteraction {
+                attendee: "Ben Lawrick".into(),
+                ts_unix_ms: Some(12 * DAY)
+            }]
+        );
     }
 
     #[test]
@@ -598,15 +795,40 @@ mod tests {
             completed_meeting(&store, n * DAY, &format!("Sync {n}"), &["Ben Lawrick"], "s");
         }
         for n in 20..=28 {
-            email(&store, n, &format!("t-{n}"), "ben@alphasights.com", &format!("Subject {n}"), "b");
+            email(
+                &store,
+                n,
+                &format!("t-{n}"),
+                "ben@alphasights.com",
+                &format!("Subject {n}"),
+                "b",
+            );
         }
 
-        let context = store.gather_prep_context(&["ben lawrick".to_string(), "ben@alphasights.com".to_string()]).unwrap();
+        let context = store
+            .gather_prep_context(&["ben lawrick".to_string(), "ben@alphasights.com".to_string()])
+            .unwrap();
 
-        let meetings: Vec<&str> = context.sources.iter().filter(|s| s.kind == PrepSourceKind::Meeting).map(|s| s.title.as_str()).collect();
-        assert_eq!(meetings, ["Sync 5", "Sync 4", "Sync 3"], "3 meetings, newest first");
-        let emails = context.sources.iter().filter(|s| s.kind == PrepSourceKind::Email).count();
-        assert_eq!(emails, EMAILS_PER_ATTENDEE, "5 threads for the attendee that matches by address");
+        let meetings: Vec<&str> = context
+            .sources
+            .iter()
+            .filter(|s| s.kind == PrepSourceKind::Meeting)
+            .map(|s| s.title.as_str())
+            .collect();
+        assert_eq!(
+            meetings,
+            ["Sync 5", "Sync 4", "Sync 3"],
+            "3 meetings, newest first"
+        );
+        let emails = context
+            .sources
+            .iter()
+            .filter(|s| s.kind == PrepSourceKind::Email)
+            .count();
+        assert_eq!(
+            emails, EMAILS_PER_ATTENDEE,
+            "5 threads for the attendee that matches by address"
+        );
         assert_eq!(context.last_interaction.len(), 2);
     }
 
@@ -614,15 +836,34 @@ mod tests {
     fn a_thread_with_many_messages_is_one_source_and_secrets_are_redacted_before_the_cut() {
         let store = crate::Store::open_in_memory().unwrap();
         let key = format!("apikey_{}", "a1b2_c3".repeat(10));
-        email(&store, 30, "t-9", "ben@alphasights.com", "Keys", "first message, plain");
+        email(
+            &store,
+            30,
+            "t-9",
+            "ben@alphasights.com",
+            "Keys",
+            "first message, plain",
+        );
         // The newest message in the thread is the one that becomes the source.
-        email(&store, 31, "t-9", "ben@alphasights.com", "Re: Keys", &format!("{} {key}", "y".repeat(290)));
+        email(
+            &store,
+            31,
+            "t-9",
+            "ben@alphasights.com",
+            "Re: Keys",
+            &format!("{} {key}", "y".repeat(290)),
+        );
 
-        let context = store.gather_prep_context(&["ben@alphasights.com".to_string()]).unwrap();
+        let context = store
+            .gather_prep_context(&["ben@alphasights.com".to_string()])
+            .unwrap();
 
         assert_eq!(context.sources.len(), 1, "one source per thread");
         let text = &context.sources[0].text;
-        assert!(text.contains("[REDACTED"), "the key must have been redacted, not just cut off: {text:?}");
+        assert!(
+            text.contains("[REDACTED"),
+            "the key must have been redacted, not just cut off: {text:?}"
+        );
         assert!(!text.contains("apikey_"), "raw key leaked: {text:?}");
         assert!(text.chars().count() <= EXCERPT_CHARS);
     }
@@ -630,9 +871,17 @@ mod tests {
     #[test]
     fn nobody_known_means_no_sources() {
         let store = crate::Store::open_in_memory().unwrap();
-        let context = store.gather_prep_context(&["Stranger".to_string()]).unwrap();
+        let context = store
+            .gather_prep_context(&["Stranger".to_string()])
+            .unwrap();
         assert!(context.sources.is_empty());
-        assert_eq!(context.last_interaction, vec![LastInteraction { attendee: "Stranger".into(), ts_unix_ms: None }]);
+        assert_eq!(
+            context.last_interaction,
+            vec![LastInteraction {
+                attendee: "Stranger".into(),
+                ts_unix_ms: None
+            }]
+        );
     }
 
     #[test]
@@ -647,8 +896,13 @@ mod tests {
 
     fn brief(event_id: &str, generated_at: i64) -> MeetingPrepRow {
         MeetingPrepRow {
-            event_id: event_id.into(), title: "Sync".into(), start_unix_ms: 2_000_000,
-            generated_at_unix_ms: generated_at, brief_json: "{}".into(), provider: "p".into(), model: "m".into(),
+            event_id: event_id.into(),
+            title: "Sync".into(),
+            start_unix_ms: 2_000_000,
+            generated_at_unix_ms: generated_at,
+            brief_json: "{}".into(),
+            provider: "p".into(),
+            model: "m".into(),
         }
     }
 
@@ -665,11 +919,28 @@ mod tests {
     fn a_synced_brief_applies_only_when_newer_and_never_enqueues() {
         let store = Store::open_in_memory().unwrap();
         store.set_own_device_id("dev-a");
-        assert!(store.apply_synced_meeting_prep(&brief("ev1", 1_000)).unwrap());
-        assert!(!store.apply_synced_meeting_prep(&brief("ev1", 500)).unwrap(), "older must not replace");
-        assert!(store.apply_synced_meeting_prep(&brief("ev1", 2_000)).unwrap());
-        assert_eq!(store.get_meeting_prep("ev1").unwrap().unwrap().generated_at_unix_ms, 2_000);
-        assert!(store.list_outbox_operations().unwrap().is_empty(), "applied rows are not re-pushed");
+        assert!(store
+            .apply_synced_meeting_prep(&brief("ev1", 1_000))
+            .unwrap());
+        assert!(
+            !store.apply_synced_meeting_prep(&brief("ev1", 500)).unwrap(),
+            "older must not replace"
+        );
+        assert!(store
+            .apply_synced_meeting_prep(&brief("ev1", 2_000))
+            .unwrap());
+        assert_eq!(
+            store
+                .get_meeting_prep("ev1")
+                .unwrap()
+                .unwrap()
+                .generated_at_unix_ms,
+            2_000
+        );
+        assert!(
+            store.list_outbox_operations().unwrap().is_empty(),
+            "applied rows are not re-pushed"
+        );
     }
 
     #[test]
@@ -682,18 +953,34 @@ mod tests {
     }
 
     #[test]
-    fn a_peer_brief_for_the_same_meeting_under_another_id_is_aliased_to_the_local_id_without_enqueueing() {
+    fn a_peer_brief_for_the_same_meeting_under_another_id_is_aliased_to_the_local_id_without_enqueueing(
+    ) {
         let store = Store::open_in_memory().unwrap();
         store.set_own_device_id("dev-a");
         let mut peer = brief("peer-id", 1_000);
         peer.start_unix_ms = 5_000;
         peer.title = "  Acme Renewal ".into();
         store.apply_synced_meeting_prep(&peer).unwrap();
-        assert!(store.alias_synced_meeting_prep("local-id", 5_000, "acme renewal").unwrap());
+        assert!(store
+            .alias_synced_meeting_prep("local-id", 5_000, "acme renewal")
+            .unwrap());
         assert!(store.get_meeting_prep("local-id").unwrap().is_some());
-        assert!(!store.alias_synced_meeting_prep("local-id", 5_000, "acme renewal").unwrap(), "already there");
-        assert!(!store.alias_synced_meeting_prep("other", 6_000, "acme renewal").unwrap(), "different start");
-        assert!(store.list_outbox_operations().unwrap().is_empty(), "an alias is never pushed");
+        assert!(
+            !store
+                .alias_synced_meeting_prep("local-id", 5_000, "acme renewal")
+                .unwrap(),
+            "already there"
+        );
+        assert!(
+            !store
+                .alias_synced_meeting_prep("other", 6_000, "acme renewal")
+                .unwrap(),
+            "different start"
+        );
+        assert!(
+            store.list_outbox_operations().unwrap().is_empty(),
+            "an alias is never pushed"
+        );
     }
 
     fn peer_brief_citing(meeting_id: i64, title: &str, ts: i64) -> MeetingPrepRow {
@@ -708,16 +995,33 @@ mod tests {
     }
 
     fn cited_meeting_ids(store: &Store, event_id: &str) -> Vec<Option<i64>> {
-        let json = store.get_meeting_prep(event_id).unwrap().unwrap().brief_json;
+        let json = store
+            .get_meeting_prep(event_id)
+            .unwrap()
+            .unwrap()
+            .brief_json;
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        v["sources"].as_array().unwrap().iter().map(|s| s["meeting_id"].as_i64()).collect()
+        v["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["meeting_id"].as_i64())
+            .collect()
     }
 
     fn put_meeting(store: &Store, title: &str, start: i64) -> i64 {
-        store.insert_meeting(&crate::NewMeeting {
-            device_id: "dev".into(), start_unix_ms: start, end_unix_ms: Some(start + 1_000), title: title.into(),
-            attendees: vec![], trigger: crate::MeetingTrigger::Manual, audio_path: None, status: crate::MeetingStatus::Completed,
-        }).unwrap()
+        store
+            .insert_meeting(&crate::NewMeeting {
+                device_id: "dev".into(),
+                start_unix_ms: start,
+                end_unix_ms: Some(start + 1_000),
+                title: title.into(),
+                attendees: vec![],
+                trigger: crate::MeetingTrigger::Manual,
+                audio_path: None,
+                status: crate::MeetingStatus::Completed,
+            })
+            .unwrap()
     }
 
     #[test]
@@ -725,7 +1029,9 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let id = put_meeting(&store, "Lunch", 7_000);
         // The peer's id happens to be a different meeting here: wrong title and start, so it is cleared.
-        store.apply_synced_meeting_prep(&peer_brief_citing(id, "Acme kickoff", 3_000)).unwrap();
+        store
+            .apply_synced_meeting_prep(&peer_brief_citing(id, "Acme kickoff", 3_000))
+            .unwrap();
         assert_eq!(cited_meeting_ids(&store, "peer-id"), vec![None, None]);
         // Same title and start (case and padding aside): the id is real here and stays.
         let mut again = peer_brief_citing(id, " LUNCH ", 7_000);
@@ -739,7 +1045,9 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let id = put_meeting(&store, "Lunch", 7_000);
         upsert_meeting_prep(&store.conn, &peer_brief_citing(id, "Acme kickoff", 3_000)).unwrap();
-        assert!(store.alias_synced_meeting_prep("local-id", 5_000, "acme").unwrap());
+        assert!(store
+            .alias_synced_meeting_prep("local-id", 5_000, "acme")
+            .unwrap());
         assert_eq!(cited_meeting_ids(&store, "local-id"), vec![None, None]);
     }
 }

@@ -133,7 +133,7 @@ export const aiSettings = () => invoke<AiSettings>("ai_settings");
 /** A paid provider's monthly budget in dollars; `null` removes it. */
 export const setProviderBudget = (provider: Provider, dollars: number | null) =>
   invoke<ProviderBudgetView[]>("set_provider_budget", { provider, dollars });
-/** "Open AI Providers settings": the main window shows Settings at AI Providers. */
+/** "Open AI settings": the main window shows Settings at AI. */
 export const openAiSettings = () => invoke<void>("open_ai_settings");
 /** Opens a new email to Whimbrel with the version and Windows build filled in. */
 export const sendFeedback = () => invoke<FeedbackResult>("send_feedback");
