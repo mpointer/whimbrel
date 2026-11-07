@@ -68,6 +68,8 @@ struct MenuBarContentView: View {
                 #if DEBUG
                 Button("Dump Zoom window (AX)") { AXTreeDump.dumpZoomWindows() }
                     .buttonStyle(.whimbrelSecondary)
+                Button("Record Zoom (60 s)") { AXTreeDump.recordZoomWindows() }
+                    .buttonStyle(.whimbrelSecondary)
                 #endif
                 Spacer()
                 Button("Quit") { NSApplication.shared.terminate(nil) }

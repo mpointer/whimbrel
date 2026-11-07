@@ -48,7 +48,7 @@ function text(raw: unknown, max: number): string | null {
   return trimmed.length === 0 ? null : trimmed.slice(0, max);
 }
 
-function oneOf<T extends string>(raw: unknown, allowed: readonly T[]): T | null {
+export function oneOf<T extends string>(raw: unknown, allowed: readonly T[]): T | null {
   return typeof raw === "string" && (allowed as readonly string[]).includes(raw) ? (raw as T) : null;
 }
 
@@ -56,10 +56,13 @@ function truthy(raw: unknown): boolean {
   return raw === true || raw === "true" || raw === "on" || raw === "1";
 }
 
-/** Validates a registration body (already decoded from JSON or a form post into a plain
- * object). Unknown values for the select fields are dropped rather than rejected — they
- * are nice-to-have segmentation, not a reason to lose a lead. */
-export function parseLead(body: Record<string, unknown>): ParseResult {
+/** Who is signing up: the fields every form shares (registration and the mobile beta). */
+export type Contact = Omit<LeadInput, "platform">;
+
+/** Validates the shared fields of a sign-up body (already decoded from JSON or a form
+ * post into a plain object). Unknown values for the select fields are dropped rather than
+ * rejected: they are nice-to-have segmentation, not a reason to lose a lead. */
+export function parseContact(body: Record<string, unknown>): { contact: Contact; errors: Record<string, string> } {
   const errors: Record<string, string> = {};
 
   const email = text(body.email, 254)?.toLowerCase() ?? "";
@@ -68,20 +71,14 @@ export function parseLead(body: Record<string, unknown>): ParseResult {
   const name = text(body.name, 100) ?? "";
   if (name.length === 0) errors.name = "Enter your name.";
 
-  const platform = oneOf(body.platform, PLATFORMS);
-  if (!platform) errors.platform = "Choose Mac or Windows.";
-
-  if (Object.keys(errors).length > 0 || !platform) return { ok: false, errors };
-
   return {
-    ok: true,
-    lead: {
+    errors,
+    contact: {
       email,
       name,
       company: text(body.company, 200),
       role: oneOf(body.role, ROLES),
       teamSize: oneOf(body.teamSize, TEAM_SIZES),
-      platform,
       marketingOptIn: truthy(body.marketingOptIn),
       utmSource: text(body.utm_source, 200),
       utmMedium: text(body.utm_medium, 200),
@@ -97,13 +94,23 @@ export function parseLead(body: Record<string, unknown>): ParseResult {
   };
 }
 
+/** Validates a registration body: the shared fields plus the platform to download. */
+export function parseLead(body: Record<string, unknown>): ParseResult {
+  const { contact, errors } = parseContact(body);
+  const platform = oneOf(body.platform, PLATFORMS);
+  if (!platform) errors.platform = "Choose Mac or Windows.";
+  if (Object.keys(errors).length > 0 || !platform) return { ok: false, errors };
+  return { ok: true, lead: { ...contact, platform } };
+}
+
 /** Inserts the lead, or — when the email is already registered — refreshes the row
  * (latest platform/profile wins, opt-in is sticky once given, first-touch attribution is
  * kept) and bumps its registration count. Returns the lead's stable id either way, and
- * whether this was the email's first registration. */
+ * whether this was the email's first registration. A null platform (a mobile beta sign-up
+ * with no computer) keeps the lead's platform, or stores 'none' for a new lead. */
 export async function upsertLead(
   db: D1Database,
-  lead: LeadInput,
+  lead: Contact & { platform: Platform | null },
   country: string | null,
   now: string,
 ): Promise<{ id: string; isNew: boolean }> {
@@ -112,14 +119,14 @@ export async function upsertLead(
       `INSERT INTO leads (id, email, name, company, role, team_size, platform, marketing_opt_in,
          utm_source, utm_medium, utm_campaign, referrer, landing_page, country, created_at, updated_at,
          product_emails, product_emails_set_at, product_emails_source, signup_page, signup_language)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15,
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, COALESCE(?7, 'none'), ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15,
          'opted_out', ?15, 'signup_form', ?16, ?17)
        ON CONFLICT(email) DO UPDATE SET
          name = excluded.name,
          company = COALESCE(excluded.company, leads.company),
          role = COALESCE(excluded.role, leads.role),
          team_size = COALESCE(excluded.team_size, leads.team_size),
-         platform = excluded.platform,
+         platform = COALESCE(?7, leads.platform),
          marketing_opt_in = MAX(leads.marketing_opt_in, excluded.marketing_opt_in),
          country = COALESCE(excluded.country, leads.country),
          registrations = leads.registrations + 1,

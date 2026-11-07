@@ -76,10 +76,10 @@ export async function logEvent(
 
 export const TOKEN_DAYS = 180;
 
-const b64url = (bytes: ArrayBuffer) =>
+export const b64url = (bytes: ArrayBuffer) =>
   btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-function fromB64url(s: string): Uint8Array | null {
+export function fromB64url(s: string): Uint8Array | null {
   try {
     const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
     return Uint8Array.from(bin, (c) => c.charCodeAt(0));
@@ -88,7 +88,7 @@ function fromB64url(s: string): Uint8Array | null {
   }
 }
 
-const hmacKey = (secret: string) =>
+export const hmacKey = (secret: string) =>
   crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
 
 export async function signToken(secret: string, leadId: string, nowMs: number): Promise<string> {

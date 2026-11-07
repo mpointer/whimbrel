@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  openExternal,
   syncApproveDevice,
   syncCancelSignIn,
   syncCheckAgain,
@@ -13,6 +14,9 @@ import { describeError, isCommandError } from "../errors";
 import type { DeviceView, SyncView } from "../generated/types";
 import { useL10n } from "../l10n";
 import { collidingPendingIds, contentLine, deviceActions, deviceTitle, primaryAction, settingsLine, stateLabel } from "./syncModel";
+
+/** The phone app's beta sign-up. The backend opens only pages on its allowlist, and this is one. */
+const MOBILE_BETA_URL = "https://whimbrelapp.com/mobile-beta/";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -49,6 +53,11 @@ export function SyncCard() {
       <h2 id="sync-heading" className="section-label">
         {t("Sync")}
       </h2>
+      <p className="small">
+        <button type="button" className="link small" onClick={() => void openExternal(MOBILE_BETA_URL)}>
+          {t("Whimbrel for iPhone and Android is in beta. Request to join")}
+        </button>
+      </p>
       <p role="status">
         <strong>{stateLabel(view.state)}</strong>
         {view.message && <span className="muted"> · {view.message}</span>}

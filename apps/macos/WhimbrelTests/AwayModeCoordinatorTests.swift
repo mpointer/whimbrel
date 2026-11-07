@@ -377,8 +377,12 @@ final class AwayModeCoordinatorTests: XCTestCase {
         XCTAssertFalse(AwayModeCoordinator.takesPrompt(meeting(), enabled: true, joinAvailable: false))
         XCTAssertFalse(AwayModeCoordinator.takesPrompt(meeting(), enabled: false, joinAvailable: true))
         XCTAssertFalse(AwayModeCoordinator.takesPrompt(meeting(response: .declined), enabled: true, joinAvailable: true))
-        // Until Task 7b the live join is off, so the prompt flow is unchanged.
+        // The live join is on only in DEBUG builds until the manual pass is done.
+        #if DEBUG
+        XCTAssertTrue(AppState.awayZoomJoinEnabled)
+        #else
         XCTAssertFalse(AppState.awayZoomJoinEnabled)
+        #endif
     }
 
     func test_same_meeting_never_rejoins() async {

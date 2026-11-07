@@ -8,6 +8,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore: ["docs/**", "**/*.md"]
+  # Nightly run on main (#ci-minutes). The hosted Linux jobs no longer run on a
+  # push to main (the PR already ran them on the same code), so this is the
+  # safety net for anything two merges break together, and it is now what saves
+  # the Rust caches on main that PR runs restore from.
+  schedule:
+    - cron: "17 7 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -107,7 +113,10 @@ jobs:
   # macOS's ld64 tolerates the duplicate symbols; lld and link.exe don't.
   test-linux:
     needs: changes
-    if: needs.changes.outputs.run_core == 'true'
+    # Not on a push to main (#ci-minutes): the PR ran this on the same code, and
+    # the nightly schedule run covers main. Each skipped run saves about 10 billed
+    # Linux minutes across this job and android.
+    if: needs.changes.outputs.run_core == 'true' && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -175,7 +184,7 @@ jobs:
   # collision with the real installed app -- see release-integrity.yml.
   test:
     needs: changes
-    if: needs.changes.outputs.run_core == 'true' && github.event_name != 'pull_request' && github.repository == 'mpointer/kestrel'
+    if: needs.changes.outputs.run_core == 'true' && github.event_name != 'pull_request' && github.event_name != 'schedule' && github.repository == 'mpointer/kestrel'
     runs-on: [self-hosted, macOS]
     timeout-minutes: 5
     steps:
@@ -397,7 +406,8 @@ jobs:
 
   android:
     needs: changes
-    if: needs.changes.outputs.run_core == 'true'
+    # Not on a push to main; see test-linux.
+    if: needs.changes.outputs.run_core == 'true' && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -436,7 +446,8 @@ jobs:
   # the Rust toolchain, cargo-ndk, the NDK and CMake must all exist before any Gradle command.
   android-app:
     needs: changes
-    if: needs.changes.outputs.run_android == 'true'
+    # Not on a push to main; see test-linux.
+    if: needs.changes.outputs.run_android == 'true' && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
@@ -481,7 +492,7 @@ jobs:
 
   ios:
     needs: changes
-    if: needs.changes.outputs.run_ios == 'true' && github.event_name != 'pull_request' && github.repository == 'mpointer/kestrel'
+    if: needs.changes.outputs.run_ios == 'true' && github.event_name != 'pull_request' && github.event_name != 'schedule' && github.repository == 'mpointer/kestrel'
     runs-on: [self-hosted, macOS]
     timeout-minutes: 45
     steps:

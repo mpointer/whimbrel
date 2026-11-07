@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -95,6 +96,8 @@ fun TodayScreen(
     labels: StateFlow<DeviceLabels>,
     onOpenSettings: () -> Unit,
     onOpenMeeting: (Long) -> Unit,
+    update: com.mpointer.whimbrel.mobile.update.AvailableUpdate? = null,
+    onDismissUpdate: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope() // Main: the models are main-thread only
@@ -143,6 +146,18 @@ fun TodayScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(DateUtils.formatDateTime(context, now, DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_NO_YEAR), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(stringResource(greeting), style = MaterialTheme.typography.headlineLarge, fontFamily = FontFamily.Serif, modifier = Modifier.semantics { heading() })
+                    }
+                    if (update != null) {
+                        InfoCard {
+                            Text(stringResource(R.string.update_available, update.version), style = MaterialTheme.typography.titleMedium)
+                            Muted(stringResource(R.string.update_available_detail))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = {
+                                    runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(update.pageUrl))) }
+                                }) { Text(stringResource(R.string.update_download)) }
+                                TextButton(onClick = onDismissUpdate) { Text(stringResource(R.string.update_not_now)) }
+                            }
+                        }
                     }
                     InfoCard {
                         SectionLabel(stringResource(R.string.today_daily_brief))

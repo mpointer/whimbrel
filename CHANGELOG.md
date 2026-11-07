@@ -2,6 +2,23 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.60] - 2026-11-07
+
+### Mac
+- Away Mode: turn it on in Settings → Meetings and Whimbrel joins the Zoom meetings you can't make, muted with the camera off, records them and posts a short note in the meeting chat.
+- The Settings page in the main window is now a Status page: sync, AI, storage, updates and routines at a glance, each opening where it's changed.
+- Settings → Devices links to the iPhone and Android beta sign-up.
+
+### Windows
+- Settings opens on a Status page: sync, AI, storage, updates and routines at a glance, each opening where it's changed.
+- Settings → Sync & Devices links to the iPhone and Android beta sign-up.
+
+### Android
+- "Update available" appears when a newer release is out, with a link to the release page.
+
+### All devices
+- The Whimbrel phone app for iPhone and Android is in beta. Request to join at whimbrelapp.com/mobile-beta.
+
 ## [0.9.59] - 2026-11-06
 
 ### Android

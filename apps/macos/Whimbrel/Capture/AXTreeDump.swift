@@ -1,11 +1,10 @@
-#if DEBUG
 import AppKit
 import ApplicationServices
 import Foundation
 import OSLog
 
-/// DEBUG-only: a Codable copy of an Accessibility subtree, used to record real Zoom
-/// windows as test fixtures for the Zoom window reader.
+/// A Codable copy of an Accessibility subtree: what `ZoomMeetingReader` reads, and (in DEBUG builds)
+/// what the dump below records as test fixtures.
 struct AXNodeSnapshot: Codable, Equatable {
     var role: String?
     var subrole: String?
@@ -34,6 +33,7 @@ struct AXNodeSnapshot: Codable, Equatable {
     }
 }
 
+#if DEBUG
 enum AXTreeDump {
     private static let log = Logger(subsystem: "com.mpointer.kestrel", category: "ax-dump")
 
@@ -71,6 +71,39 @@ enum AXTreeDump {
             log.notice("AX dump wrote \(url.path, privacy: .public)")
         } catch {
             log.error("AX dump failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// For notices that close too fast to dump by hand (removed by the host, meeting ended): for `seconds`,
+    /// snapshots every Zoom window twice a second and writes `zoom-ax-auto-<n>-<timestamp>.json` each time
+    /// what they show changes.
+    @MainActor static func recordZoomWindows(seconds: Int = 60) {
+        guard AXIsProcessTrusted() else { log.error("AX record skipped: Accessibility permission is missing."); return }
+        Task { @MainActor in
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            var last: [AXNodeSnapshot]? = nil
+            var n = 0
+            for _ in 0..<(seconds * 2) {
+                if let zoom = NSRunningApplication.runningApplications(withBundleIdentifier: "us.zoom.xos").first {
+                    let app = AXUIElementCreateApplication(zoom.processIdentifier)
+                    var windowsRef: CFTypeRef?
+                    if AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+                       let windows = windowsRef as? [AXUIElement] {
+                        let snap = windows.map { AXNodeSnapshot.capture($0) }
+                        if snap != last {
+                            last = snap
+                            n += 1
+                            let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+                            let url = FileManager.default.homeDirectoryForCurrentUser
+                                .appendingPathComponent("Desktop/zoom-ax-auto-\(n)-\(stamp).json")
+                            try? encoder.encode(snap).write(to: url)
+                        }
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            log.notice("AX record finished: \(n, privacy: .public) snapshots")
         }
     }
 }

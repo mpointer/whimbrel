@@ -17,6 +17,8 @@ struct DevicesSettingsPane: View {
             Text("Sync your timeline across Macs. Sign in once per device, then approve new devices from here.")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
+            Link("Whimbrel for iPhone and Android is in beta. Request to join", destination: URL(string: "https://whimbrelapp.com/mobile-beta/")!)
+                .font(.whimbrelBody(.caption))
 
             Divider().overlay(Color.whimbrelBorder)
 

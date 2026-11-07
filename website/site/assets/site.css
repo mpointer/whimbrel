@@ -227,6 +227,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); box-shad
 [aria-invalid="true"] { border-color: var(--error) !important; }
 .platform-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .platform-choice legend { margin-bottom: 6px; }
+.platform-choice.three { grid-template-columns: repeat(3, 1fr); }
 .choice { display: flex; align-items: center; gap: 8px; border: 1.5px solid var(--border); border-radius: 10px; padding: 10px 12px; cursor: pointer; background: var(--bg); min-height: 46px; }
 .choice:has(input:checked) { border-color: var(--accent); background: var(--highlight); }
 .choice small { color: var(--text-2); font-size: .78rem; display: block; line-height: 1.1; }

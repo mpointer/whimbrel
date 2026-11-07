@@ -1,0 +1,130 @@
+[
+ {
+  "children": [
+   {
+    "children": [
+     {
+      "children": [],
+      "description": "Background & effects",
+      "identifier": null,
+      "role": "AXButton",
+      "title": null,
+      "value": null
+     },
+     {
+      "children": [],
+      "description": "Video, turn on, currently off",
+      "identifier": "Video",
+      "role": "AXButton",
+      "title": null,
+      "value": null
+     },
+     {
+      "children": [],
+      "description": "Audio, turn off, currently unmuted",
+      "identifier": "Audio",
+      "role": "AXButton",
+      "title": null,
+      "value": null
+     }
+    ],
+    "description": null,
+    "identifier": null,
+    "role": "AXTabGroup",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXStaticText",
+    "title": null,
+    "value": "Person A's Personal Meeting Room"
+   },
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXStaticText",
+    "title": null,
+    "value": "The host will admit you when they're ready."
+   },
+   {
+    "children": [],
+    "description": "Test speaker and mic",
+    "identifier": null,
+    "role": "AXButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": "More options",
+    "identifier": null,
+    "role": "AXButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXButton",
+    "subrole": "AXCloseButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [
+     {
+      "children": [
+       {
+        "children": [],
+        "description": null,
+        "identifier": null,
+        "role": "AXGroup",
+        "title": null,
+        "value": null
+       }
+      ],
+      "description": null,
+      "identifier": null,
+      "role": "AXGroup",
+      "title": null,
+      "value": null
+     }
+    ],
+    "description": null,
+    "identifier": null,
+    "role": "AXButton",
+    "subrole": "AXFullScreenButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXButton",
+    "subrole": "AXMinimizeButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXStaticText",
+    "title": null,
+    "value": ""
+   }
+  ],
+  "description": null,
+  "identifier": "zm.meeting.window.main",
+  "role": "AXWindow",
+  "subrole": "AXStandardWindow",
+  "title": "",
+  "value": null
+ }
+]

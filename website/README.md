@@ -9,8 +9,8 @@ site/layout.html page shell: meta tags, Open Graph, JSON-LD, header/footer
 site/config.json site URL, OS requirements, demo-video metadata, Turnstile site key
 site/static/     copied to the site root: favicon, manifest, _headers (CSP, caching)
 scripts/build.mjs        builds dist/ and fails on SEO mistakes (see SEO.md)
-src/                     Worker: /api/register, /api/download/{mac,windows}, /api/releases
-migrations/              D1 schema: leads, downloads
+src/                     Worker: /api/register, /api/beta, /beta/review, /api/download/{mac,windows}, /api/releases
+migrations/              D1 schema: leads, downloads, email preferences, beta_signups
 demo/                    sources for the tour video and OG image (not deployed)
 ```
 
@@ -25,6 +25,22 @@ This is a soft gate: the installers are public on the updates Worker because the
 Spam protection: a hidden honeypot field always, plus Cloudflare Turnstile when `TURNSTILE_SECRET` is set (and `turnstileSiteKey` in `site/config.json`).
 
 Email (Resend, from `whimbrel@futuremeanswered.com`): when the `RESEND_API_KEY` secret is set, a first-time registrant gets one email with personal download links, and `LEAD_ALERT_EMAIL` gets an alert for every registration, new or returning. The links carry the lead's id as `/api/download/<platform>?lead=<id>`, which the download route accepts in place of the cookie. Sender, reply-to and alert address are `vars` in `wrangler.jsonc`. Email is sent after the response and never fails a registration.
+
+## Mobile beta sign-up
+
+`/mobile-beta/` asks for name, email, phone (iPhone, Android or both) and computer (Mac, Windows or none). `POST /api/beta` runs the same checks, honeypot and Turnstile as `/api/register`, upserts the lead (same product-email double opt-in; a lead created here gets no next-day desktop follow-up), and saves one `beta_signups` row per open request: a repeat sign-up updates the pending row. The tester gets a "we got your request" email; `LEAD_ALERT_EMAIL` gets an alert with Approve and Decline links.
+
+The links open `/beta/review`, signed with HMAC-SHA256 over the request id and action using the `BETA_REVIEW_SECRET` secret. A GET only shows the request and a confirm button; only the POST changes anything, so a mail scanner opening the link approves no one. Without the secret, sign-ups are still saved and the alert says review links are unavailable.
+
+- **Approve** marks the request approved and sends the install email once, with only the sections for the phones asked for. iPhone uses `TESTFLIGHT_PUBLIC_URL`; while it is empty the email says the TestFlight link follows and the request is not marked sent, so approving again after setting it sends the full email. Android uses `ANDROID_RELEASE_URL`.
+- **Decline** marks it declined and sends nothing. **Decline and tell them** also sends a short note.
+
+Reading requests:
+
+```bash
+npx wrangler d1 execute kestrel-leads --remote --command \
+  "SELECT email, phones, computer, status, created_at, install_email_sent_at FROM beta_signups ORDER BY created_at DESC LIMIT 50"
+```
 
 Lead routing: set `LEAD_WEBHOOK_URL` and every registration is also POSTed there as JSON (Zapier, Make, a HubSpot workflow, a Slack incoming webhook, …).
 
@@ -56,6 +72,7 @@ npm run db:migrate
 npx wrangler secret put TURNSTILE_SECRET  # optional
 npx wrangler secret put LEAD_WEBHOOK_URL  # optional
 npx wrangler secret put RESEND_API_KEY    # turns on welcome and lead-alert email
+npx wrangler secret put BETA_REVIEW_SECRET  # signs the mobile beta Approve/Decline links (any long random string)
 npm run deploy
 ```
 

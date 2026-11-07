@@ -136,4 +136,8 @@
     <string name="sync_error_failed">Couldn\'t sync. Will retry automatically.</string>
     <string name="sync_error_unreachable">Couldn\'t reach the server. Will retry automatically.</string>
     <string name="sync_error_storage_unavailable">This phone\'s local storage is unavailable.</string>
+    <string name="update_available">Whimbrel %1$s is available</string>
+    <string name="update_available_detail">This phone has an older version. Download the new one from the release page and install it over this one; your meetings and sign-in stay.</string>
+    <string name="update_download">Download</string>
+    <string name="update_not_now">Not now</string>
 </resources>

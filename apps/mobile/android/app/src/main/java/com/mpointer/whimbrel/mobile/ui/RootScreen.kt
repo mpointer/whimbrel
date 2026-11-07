@@ -67,6 +67,16 @@ fun RootScreen(
     var fromToday by rememberSaveable { mutableStateOf(false) }
     var settingsOpen by rememberSaveable { mutableStateOf(start.settingsOpen) }
     val today = remember { TodayModel() }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val updates = remember {
+        com.mpointer.whimbrel.mobile.update.UpdateModel(
+            context.getSharedPreferences(com.mpointer.whimbrel.mobile.update.UpdateModel.PREFS, android.content.Context.MODE_PRIVATE),
+            com.mpointer.whimbrel.mobile.BuildConfig.VERSION_NAME,
+        )
+    }
+    val update by updates.available.collectAsState()
+    // Once per time the app's screen is shown; the model itself limits network checks to one a day.
+    LaunchedEffect(Unit) { updates.checkIfDue() }
     val meetings = remember { MeetingsModel() }
     val routines = remember { RoutinesModel() }
     val scope = rememberCoroutineScope() // Main
@@ -133,6 +143,8 @@ fun RootScreen(
                         tab = RootTab.Meetings
                         openMeeting(id)
                     },
+                    update = update,
+                    onDismissUpdate = { updates.dismiss() },
                 )
                 RootTab.Meetings -> MeetingsScreen(sync, meetings, enrollment.deviceLabels, navigator, openMeeting)
                 RootTab.Routines -> RoutinesScreen(sync, routines, enrollment.deviceLabels)

@@ -3955,6 +3955,39 @@
       ],
       "type": "object"
     },
+    "StatusView": {
+      "properties": {
+        "audioBytes": {
+          "description": "Meeting audio on disk, counted from the stored paths (both tracks of each part).",
+          "format": "int64",
+          "type": "integer"
+        },
+        "imageBytes": {
+          "description": "Meeting snapshot images on disk, counted from the stored paths.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "outboxOldestMs": {
+          "description": "When the oldest of them was made, if there are any.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "outboxPending": {
+          "description": "Sync operations not yet delivered.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "outboxPending",
+        "audioBytes",
+        "imageBytes"
+      ],
+      "type": "object"
+    },
     "SuggestionView": {
       "description": "A fact the daily job proposed, waiting for Add or Dismiss.",
       "properties": {

@@ -1955,6 +1955,28 @@ export interface StarterPromptView {
   title: string;
 }
 /**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "StatusView".
+ */
+export interface StatusView {
+  /**
+   * Meeting audio on disk, counted from the stored paths (both tracks of each part).
+   */
+  audioBytes: number;
+  /**
+   * Meeting snapshot images on disk, counted from the stored paths.
+   */
+  imageBytes: number;
+  /**
+   * When the oldest of them was made, if there are any.
+   */
+  outboxOldestMs?: number | null;
+  /**
+   * Sync operations not yet delivered.
+   */
+  outboxPending: number;
+}
+/**
  * A fact the daily job proposed, waiting for Add or Dismiss.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema

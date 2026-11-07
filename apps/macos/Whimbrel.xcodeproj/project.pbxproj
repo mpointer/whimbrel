@@ -61,6 +61,7 @@
 		22F73E48DA9FB8B4068E0CA5 /* AddAccountState.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB3B237B39CDFD50B94C3DCB /* AddAccountState.swift */; };
 		23BADE2CCA3FAB3168DA1C68 /* ThemeLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2D3139E2AC7CBD757043853 /* ThemeLoaderTests.swift */; };
 		240B8C6969D21DF10E146EFB /* AXTreeDump.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBB223A91CEBC492634323E6 /* AXTreeDump.swift */; };
+		C76C23F70898498FAF519591 /* ZoomMeetingReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C645C1B734435E99C1766A /* ZoomMeetingReader.swift */; };
 		242BBE0489507020F16D4D68 /* DevicesSettingsPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3312C02EF01F2B435B5467D8 /* DevicesSettingsPane.swift */; };
 		2506B40F7C72852127FAE797 /* TextRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 775549423589FA473BB6729B /* TextRecognizer.swift */; };
 		25A30E72CAB943EEB9BA7E3B /* ContentSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D6BF5AB0F512ED98D356A7 /* ContentSyncCoordinator.swift */; };
@@ -335,6 +336,7 @@
 		C628165CBA4F62CEF2CFA831 /* AXTextWalker.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFCADD6DD92B33C3DD86E0B0 /* AXTextWalker.swift */; };
 		C658CA3857C25C296DE79C23 /* AppearanceThemeSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = D05B1DCB78ABD4F4F63DAE6A /* AppearanceThemeSettings.swift */; };
 		C70BFE7B0115C362785FB1AF /* AXNodeSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD042988D3B7F1BF636B5F92 /* AXNodeSnapshotTests.swift */; };
+		6A5E3F753F7C4DE5B3F31179 /* ZoomMeetingReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CFF7ECFB03B42EDBD0C968C /* ZoomMeetingReaderTests.swift */; };
 		C70FFFCCB002A2C633D3BEF1 /* MeetingOptionsMenuTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7E60E8C9ABEE339CB5BFEE4 /* MeetingOptionsMenuTests.swift */; };
 		C83E58581DAEA813FA9A70CF /* ConnectorBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFFF9AA92C9AD4A39ED4EA45 /* ConnectorBridgeTests.swift */; };
 		C86282C4837B80F484AB7232 /* McpNodeLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FB5EC407B1EFC1F7AEE5B2B /* McpNodeLocator.swift */; };
@@ -749,9 +751,11 @@
 		BAC4DCD5760698B57CEC608C /* RetentionBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetentionBridgeTests.swift; sourceTree = "<group>"; };
 		BB3B237B39CDFD50B94C3DCB /* AddAccountState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddAccountState.swift; sourceTree = "<group>"; };
 		BBB223A91CEBC492634323E6 /* AXTreeDump.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXTreeDump.swift; sourceTree = "<group>"; };
+		A6C645C1B734435E99C1766A /* ZoomMeetingReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomMeetingReader.swift; sourceTree = "<group>"; };
 		BC23B303F0FE180B0D68EBA3 /* MeetingHeuristicDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingHeuristicDetectorTests.swift; sourceTree = "<group>"; };
 		BCBFA02133FF9FACDE1A184D /* ArchetypeFieldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchetypeFieldTests.swift; sourceTree = "<group>"; };
 		BD042988D3B7F1BF636B5F92 /* AXNodeSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXNodeSnapshotTests.swift; sourceTree = "<group>"; };
+		3CFF7ECFB03B42EDBD0C968C /* ZoomMeetingReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomMeetingReaderTests.swift; sourceTree = "<group>"; };
 		BD35AE105673C79B64E89D92 /* LiveTranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptionService.swift; sourceTree = "<group>"; };
 		BD5737B4828F4E6D99DB5ADC /* MeetingTriggerServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingTriggerServiceTests.swift; sourceTree = "<group>"; };
 		BD8D15581A0EEE4898A7F938 /* ScreenTextCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenTextCaptureService.swift; sourceTree = "<group>"; };
@@ -1010,6 +1014,7 @@
 				A10C0FFEE0000000000C0E05 /* TranscriptionEngineTests.swift */,
 				E9BB2808C5CA14F4FB61EDEE /* AwayOutcomeLabelTests.swift */,
 				BD042988D3B7F1BF636B5F92 /* AXNodeSnapshotTests.swift */,
+				3CFF7ECFB03B42EDBD0C968C /* ZoomMeetingReaderTests.swift */,
 				6C8A53881B193997BC85AF7D /* CalendarSelfResponseTests.swift */,
 				EEF5BF82EBB238A7BA4A51E1 /* CaptureExclusionsTests.swift */,
 				68EB6700AAA06636A8E462F5 /* YourDataTests.swift */,
@@ -1169,6 +1174,7 @@
 				137533EE7F9388153CAA15DF /* AwayModeCoordinator.swift */,
 				DFCADD6DD92B33C3DD86E0B0 /* AXTextWalker.swift */,
 				BBB223A91CEBC492634323E6 /* AXTreeDump.swift */,
+				A6C645C1B734435E99C1766A /* ZoomMeetingReader.swift */,
 				53625DCADDA879BD8D587CA0 /* BrowserMeetingCheck.swift */,
 				96C038E88E139D162436C6C5 /* CalendarService.swift */,
 				9F87B25EE3F98E1D65247939 /* GmailPollingService.swift */,
@@ -1680,6 +1686,7 @@
 				C19A07D68EC0210836E7F714 /* AIProvidersSettingsPane.swift in Sources */,
 				C628165CBA4F62CEF2CFA831 /* AXTextWalker.swift in Sources */,
 				240B8C6969D21DF10E146EFB /* AXTreeDump.swift in Sources */,
+				C76C23F70898498FAF519591 /* ZoomMeetingReader.swift in Sources */,
 				FEC6645C5F7D865AA6C30E68 /* ActionProposalCard.swift in Sources */,
 				F2B378E009711377E1C12096 /* ActiveMeetingView.swift in Sources */,
 				A10C0FFEE0000000000C0E44 /* RecordingNoticeCard.swift in Sources */,
@@ -1911,6 +1918,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C70BFE7B0115C362785FB1AF /* AXNodeSnapshotTests.swift in Sources */,
+				6A5E3F753F7C4DE5B3F31179 /* ZoomMeetingReaderTests.swift in Sources */,
 				5A5A217FF7CBA04B8F68B9A0 /* ActionProposalStateTests.swift in Sources */,
 				AAAA00000000000000002001 /* TranscriptionTrackTests.swift in Sources */,
 				5C972DB7504825A269A39A68 /* ActiveMeetingViewTests.swift in Sources */,
@@ -2087,7 +2095,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/target/release";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.59;
+				MARKETING_VERSION = 0.9.60;
 				OTHER_LDFLAGS = "-lwhimbrel_core -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel;
 				PRODUCT_NAME = Whimbrel;
@@ -2287,7 +2295,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../core/target/release";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.9.59;
+				MARKETING_VERSION = 0.9.60;
 				OTHER_LDFLAGS = "-lwhimbrel_core -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mpointer.kestrel;
 				PRODUCT_NAME = Whimbrel;
