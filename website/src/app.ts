@@ -1,4 +1,5 @@
-import { leadExists, parseLead, PLATFORMS, recordDownload, upsertLead, type LeadInput, type Platform } from "./leads";
+import { leadExists, parseLead, PLATFORMS, recordDownload, upsertLead, type Contact, type LeadInput, type Platform } from "./leads";
+import { handleBeta, handleReview } from "./beta";
 import { resolveRelease } from "./downloads";
 import { leadAlertEmail, send, welcomeEmail, type Email } from "./email";
 import { preferencesPage } from "./preferences-page";
@@ -30,6 +31,13 @@ export interface Env {
   EMAIL_TOKEN_SECRET?: string;
   /** The Resend topic ("Product updates") that mirrors each lead's answer for broadcasts. */
   RESEND_PRODUCT_TOPIC_ID?: string;
+  /** Signs the Approve and Decline links in the mobile beta alert (secret). Without it,
+   * sign-ups are still saved but the alert has no review links. */
+  BETA_REVIEW_SECRET?: string;
+  /** The TestFlight public link for the iPhone beta. Empty: the install email says it follows. */
+  TESTFLIGHT_PUBLIC_URL?: string;
+  /** Where Android testers download the APK. */
+  ANDROID_RELEASE_URL?: string;
 }
 
 /** Cookie that remembers a registered visitor so the download links work without asking
@@ -56,7 +64,7 @@ function leadCookie(id: string): string {
   return `${LEAD_COOKIE}=${id}; Path=/; Max-Age=${LEAD_COOKIE_MAX_AGE}; HttpOnly; Secure; SameSite=Lax`;
 }
 
-function country(request: Request): string | null {
+export function country(request: Request): string | null {
   const cf = (request as Request & { cf?: { country?: unknown } }).cf;
   return typeof cf?.country === "string" ? cf.country : null;
 }
@@ -79,11 +87,11 @@ function canonicalRedirect(request: Request, env: Env): Response | null {
   return new Response(null, { status, headers: { location: url.toString() } });
 }
 
-function redirect(location: string, headers: Record<string, string> = {}): Response {
+export function redirect(location: string, headers: Record<string, string> = {}): Response {
   return new Response(null, { status: 303, headers: { location, "cache-control": "no-store", ...headers } });
 }
 
-async function readBody(request: Request): Promise<{ body: Record<string, unknown>; isJson: boolean } | null> {
+export async function readBody(request: Request): Promise<{ body: Record<string, unknown>; isJson: boolean } | null> {
   const type = request.headers.get("content-type") ?? "";
   try {
     if (type.includes("application/json")) {
@@ -122,6 +130,39 @@ function webhookPayload(id: string, lead: LeadInput, countryCode: string | null,
   return { event: "lead.registered", leadId: id, country: countryCode, at, ...profile };
 }
 
+/** The spam guard every sign-up form shares: "bot" when the hidden honeypot field is
+ * filled (answer as a success, store nothing), "refused" when Turnstile is on and fails. */
+export async function spamCheck(request: Request, env: Env, contact: Contact, fetcher: typeof fetch): Promise<"ok" | "bot" | "refused"> {
+  if (contact.honeypot) return "bot";
+  if (env.TURNSTILE_SECRET) {
+    const ok = await verifyTurnstile(env.TURNSTILE_SECRET, contact.turnstileToken, request.headers.get("cf-connecting-ip"), fetcher);
+    if (!ok) return "refused";
+  }
+  return "ok";
+}
+
+/** Upserts the lead and starts its product-email answer. Every sign-up form goes through here. */
+export async function saveLead(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  lead: Contact & { platform: Platform | null },
+  fetcher: typeof fetch,
+): Promise<{ id: string; isNew: boolean; now: string; countryCode: string | null }> {
+  const now = new Date().toISOString();
+  const countryCode = country(request);
+  const { id, isNew } = await upsertLead(env.DB, lead, countryCode, now);
+
+  // The product-email answer (design §1, double opt-in): every lead starts opted_out. The
+  // form needs no proof of owning the address, so a ticked box only mails a confirmation
+  // link; product mail starts when the owner of the address confirms through it.
+  const where = { page: lead.signupPage, language: lead.signupLanguage };
+  if (isNew) await logEvent(env.DB, id, "opted_out", "signup_form", where, now);
+  ctx.waitUntil(syncLead(env, id, fetcher));
+  if (lead.marketingOptIn) ctx.waitUntil(requestConfirmation(env, id, new URL(request.url).origin, Date.parse(now), fetcher));
+  return { id, isNew, now, countryCode };
+}
+
 /** POST /api/register — accepts JSON (the page's script) or a plain form post (no-JS
  * fallback). JSON callers get JSON back; form posts are redirected to the thank-you page
  * or back to the form with an error flag. */
@@ -139,24 +180,11 @@ export async function handleRegister(request: Request, env: Env, ctx: ExecutionC
   const thanks = `/download/thanks/?platform=${lead.platform}`;
 
   // A bot filled the hidden field: answer exactly as a success would, store nothing.
-  if (lead.honeypot) return isJson ? Response.json({ ok: true, next: thanks }) : redirect(thanks);
+  const spam = await spamCheck(request, env, lead, fetcher);
+  if (spam === "bot") return isJson ? Response.json({ ok: true, next: thanks }) : redirect(thanks);
+  if (spam === "refused") return fail(403, { form: "Verification failed. Refresh the page and try again." });
 
-  if (env.TURNSTILE_SECRET) {
-    const ok = await verifyTurnstile(env.TURNSTILE_SECRET, lead.turnstileToken, request.headers.get("cf-connecting-ip"), fetcher);
-    if (!ok) return fail(403, { form: "Verification failed. Refresh the page and try again." });
-  }
-
-  const now = new Date().toISOString();
-  const countryCode = country(request);
-  const { id, isNew } = await upsertLead(env.DB, lead, countryCode, now);
-
-  // The product-email answer (design §1, double opt-in): every lead starts opted_out. The
-  // form needs no proof of owning the address, so a ticked box only mails a confirmation
-  // link; product mail starts when the owner of the address confirms through it.
-  const where = { page: lead.signupPage, language: lead.signupLanguage };
-  if (isNew) await logEvent(env.DB, id, "opted_out", "signup_form", where, now);
-  ctx.waitUntil(syncLead(env, id, fetcher));
-  if (lead.marketingOptIn) ctx.waitUntil(requestConfirmation(env, id, new URL(request.url).origin, Date.parse(now), fetcher));
+  const { id, isNew, now, countryCode } = await saveLead(request, env, ctx, lead, fetcher);
 
   // Email never blocks or fails the registration: it runs after the response is sent.
   if (env.EMAIL_FROM) {
@@ -218,6 +246,16 @@ export async function handle(request: Request, env: Env, ctx: ExecutionContext, 
   if (moved) return moved;
 
   const { pathname } = new URL(request.url);
+
+  if (pathname === "/api/beta") {
+    if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers: { allow: "POST" } });
+    return handleBeta(request, env, ctx, fetcher);
+  }
+
+  if (pathname === "/beta/review" || pathname === "/beta/review/") {
+    if (request.method !== "GET" && request.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET, POST" } });
+    return handleReview(request, env, fetcher);
+  }
 
   if (pathname === "/api/register") {
     if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers: { allow: "POST" } });

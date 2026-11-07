@@ -54,7 +54,11 @@
     "LEAD_ALERT_EMAIL": "mike@futuremeanswered.com",
     // The Resend topic "Product updates" (default opt-out): each lead's product-email answer
     // is mirrored to a Resend contact on it, so broadcasts reach opted-in leads only.
-    "RESEND_PRODUCT_TOPIC_ID": "16aeceec-2bef-4e93-8f9d-d63c6b2775c0"
+    "RESEND_PRODUCT_TOPIC_ID": "16aeceec-2bef-4e93-8f9d-d63c6b2775c0",
+    // Mobile beta install email (src/beta.ts). Empty TESTFLIGHT_PUBLIC_URL: an approved
+    // iPhone tester is told the TestFlight link comes in a follow-up email.
+    "TESTFLIGHT_PUBLIC_URL": "",
+    "ANDROID_RELEASE_URL": "https://github.com/mpointer/whimbrel/releases/latest"
     // Optional secrets (set with `npx wrangler secret put <NAME>`):
     //   RESEND_API_KEY   — a Resend API key with sending access; turns email on.
     //   TURNSTILE_SECRET — when set, /api/register requires a valid Cloudflare
@@ -63,6 +67,8 @@
     //                      (Zapier/Make/HubSpot/Slack incoming webhook, etc.).
     //   EMAIL_TOKEN_SECRET — signs the "Manage email preferences" links. Without it, mail
     //                      has no preferences link and product mail is refused.
+    //   BETA_REVIEW_SECRET — signs the Approve and Decline links in the mobile beta alert.
+    //                      Without it, sign-ups are saved but the alert has no links.
   },
   // Hourly: the next-day follow-up email and the Resend contact sync (src/followup.ts).
   "triggers": { "crons": ["0 * * * *"] }

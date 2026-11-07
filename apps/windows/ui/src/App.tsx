@@ -6,7 +6,7 @@ import { UpdateBanner } from "./settings/UpdateBanner";
 import { bootstrapModels } from "./settings/modelBootstrap";
 import { ModelStatusLine } from "./settings/ModelStatusLine";
 import { SettingsView } from "./settings/SettingsView";
-import { rememberedSection, rememberSection, toSection, type SettingsSectionId } from "./settings/settingsSections";
+import { DEFAULT_SECTION, toSection, type SettingsSectionId } from "./settings/settingsSections";
 import { AutomationsView } from "./automations/AutomationsView";
 import { waitingLabel } from "./automations/automationsModel";
 import type { AskRequest } from "./chat/chatModel";
@@ -28,15 +28,16 @@ export function App() {
   const [waiting, setWaiting] = useState(0);
   // A question Today's composer hands to Library > Ask; Ask sends it once and clears it.
   const [askRequest, setAskRequest] = useState<AskRequest | null>(null);
-  // Which Settings section shows: the last one chosen, or the one a button elsewhere asked for.
-  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>(() => rememberedSection());
-  const chooseSection = (id: SettingsSectionId) => {
-    setSettingsSection(id);
-    rememberSection(id);
-  };
+  // Which Settings section shows: Status when the tab is chosen (the Mac's issue 595), or the one a
+  // button elsewhere asked for.
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>(DEFAULT_SECTION);
   const openSettings = (id: SettingsSectionId) => {
-    chooseSection(id);
+    setSettingsSection(id);
     setActive("settings");
+  };
+  const chooseTab = (id: TabId) => {
+    if (id === "settings" && active !== "settings") setSettingsSection(DEFAULT_SECTION);
+    setActive(id);
   };
   useEffect(() => {
     const look = () => approvalsCount().then(setWaiting, () => {});
@@ -61,9 +62,7 @@ export function App() {
   // "Raise budget" and "Open AI settings" (provider budgets): Settings, at the section named.
   useEffect(() => {
     const unlisten = listen<string>("open-settings", (event) => {
-      const id = toSection(event.payload);
-      setSettingsSection(id);
-      rememberSection(id);
+      setSettingsSection(toSection(event.payload));
       setActive("settings");
     });
     return () => void unlisten.then((stop) => stop());
@@ -86,7 +85,7 @@ export function App() {
                 aria-selected={each.id === active}
                 aria-controls="panel"
                 className={each.id === active ? "tab tab--active" : "tab"}
-                onClick={() => setActive(each.id)}
+                onClick={() => chooseTab(each.id)}
               >
                 <SkinIcon role={TAB_ICON[each.id]} />
                 {each.label}
@@ -109,7 +108,12 @@ export function App() {
         {/* Today writes its own heading: the greeting. */}
         {tab.id !== "today" && <h1 className="display">{tab.label}</h1>}
         {tab.id === "settings" ? (
-          <SettingsView section={settingsSection} onSection={chooseSection} onRetentionSaved={() => setRetentionSaved((n) => n + 1)} />
+          <SettingsView
+            section={settingsSection}
+            onSection={setSettingsSection}
+            onRetentionSaved={() => setRetentionSaved((n) => n + 1)}
+            onOpenAutomations={() => setActive("automations")}
+          />
         ) : tab.id === "today" ? (
           <TodayView
             onAsk={(prompt) => {

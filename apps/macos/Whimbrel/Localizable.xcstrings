@@ -311,6 +311,46 @@
         }
       }
     },
+    "%@ isn't installed; using %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ ist nicht installiert; %2$@ wird verwendet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ isn't installed; using %2$@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ no está instalado; se usará %2$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ n’est pas installé ; %2$@ est utilisé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ n’est pas installé; %2$@ est utilisé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%1$@ não está instalado; usando %2$@."
+          }
+        }
+      }
+    },
     "%@ options" : {
       "localizations" : {
         "de" : {
@@ -5023,6 +5063,40 @@
         }
       }
     },
+    "Checking…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird geprüft…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Comprobando…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vérification…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Vérification…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verificando…"
+          }
+        }
+      }
+    },
     "Choose Model File…" : {
       "localizations" : {
         "de" : {
@@ -6481,6 +6555,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Não foi possível criar o e-mail."
+          }
+        }
+      }
+    },
+    "Couldn't check for updates. Try again later." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Update-Suche fehlgeschlagen. Bitte später erneut versuchen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No se pudo buscar actualizaciones. Inténtalo de nuevo más tarde."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de rechercher des mises à jour. Réessayez plus tard."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Impossible de vérifier les mises à jour. Réessayez plus tard."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não foi possível buscar atualizações. Tente novamente mais tarde."
           }
         }
       }
@@ -8744,6 +8852,40 @@
         }
       }
     },
+    "Devices approved: %lld" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Genehmigte Geräte: %lld"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dispositivos aprobados: %lld"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appareils approuvés : %lld"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appareils approuvés : %lld"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dispositivos aprovados: %lld"
+          }
+        }
+      }
+    },
     "Diagnostics" : {
       "localizations" : {
         "de" : {
@@ -9182,6 +9324,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Baixando o modelo local…"
+          }
+        }
+      }
+    },
+    "Downloading v%@…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "v%@ wird heruntergeladen …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Descargando v%@…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargement de la v%@…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Téléchargement de la v%@…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Baixando a v%@…"
           }
         }
       }
@@ -13247,6 +13423,46 @@
         }
       }
     },
+    "Last run: %@, %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Letzte Ausführung: %1$@, %2$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Last run: %1$@, %2$@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Última ejecución: %1$@, %2$@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dernier lancement : %1$@, %2$@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dernière exéc. : %1$@, %2$@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Última execução: %1$@, %2$@"
+          }
+        }
+      }
+    },
     "Later" : {
       "localizations" : {
         "de" : {
@@ -14773,6 +14989,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Reuniões"
+          }
+        }
+      }
+    },
+    "Meetings are kept for %lld days." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meetings werden %lld Tage lang aufbewahrt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las reuniones se conservan durante %lld días."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les réunions sont conservées pendant %lld jours."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les réunions sont conservées pendant %lld jours."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As reuniões são mantidas por %lld dias."
+          }
+        }
+      }
+    },
+    "Meetings are kept forever." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meetings werden unbegrenzt aufbewahrt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las reuniones se guardan para siempre."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les réunions sont conservées à vie."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les réunions sont conservées à vie."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As reuniões são mantidas para sempre."
           }
         }
       }
@@ -21935,6 +22219,40 @@
         }
       }
     },
+    "Routines run on %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routines laufen auf %@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routines se ejecutan en %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routines exécutées sur %@."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routines exécutées sur %@."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routines rodam em %@."
+          }
+        }
+      }
+    },
     "Routines run on %@. If it has not run Daily Brief or Reply Priorities 3 hours after their time, this device runs them (devices in different time zones may then both run). Their on/off and time sync between devices. Results sync to every device." : {
       "localizations" : {
         "de" : {
@@ -21965,6 +22283,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "As rotinas rodam em %@. Se ele não tiver executado o Daily Brief ou as Reply Priorities 3 horas após o horário definido, este dispositivo os executa (dispositivos em fusos horários diferentes podem acabar executando ambos). A ativação e o horário deles são sincronizados entre os dispositivos. Os resultados são sincronizados com todos os dispositivos."
+          }
+        }
+      }
+    },
+    "Routines run on any device." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routines laufen auf jedem Gerät."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routines funcionan en cualquier equipo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routines exécutées sur tout appareil."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routines exécutées sur tout appareil."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routines rodam em qualquer aparelho."
           }
         }
       }
@@ -25305,6 +25657,40 @@
         }
       }
     },
+    "Status" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Status"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Estado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "État"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "État"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Status"
+          }
+        }
+      }
+    },
     "Still in a meeting?" : {
       "localizations" : {
         "de" : {
@@ -25543,6 +25929,40 @@
         }
       }
     },
+    "Storage" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Speicher"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Almacenamiento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stockage"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stockage"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Armazenamento"
+          }
+        }
+      }
+    },
     "Suggest additions from my meetings" : {
       "localizations" : {
         "de" : {
@@ -25641,6 +26061,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Perguntas sugeridas"
+          }
+        }
+      }
+    },
+    "Summaries use %@, %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zusammenfassungen: %1$@, %2$@."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Summaries use %1$@, %2$@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los resúmenes usan %1$@, %2$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les résumés utilisent %1$@, %2$@."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les résumés utilisent %1$@, %2$@."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os resumos usam %1$@, %2$@."
           }
         }
       }
@@ -25861,6 +26321,40 @@
         }
       }
     },
+    "Sync" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sync"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchroniser"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchroniser"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronizar"
+          }
+        }
+      }
+    },
     "Sync & Devices" : {
       "localizations" : {
         "de" : {
@@ -25997,6 +26491,40 @@
         }
       }
     },
+    "Sync is off." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sync ist aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sin sincronización."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchro désactivée."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchro désactivée."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronia desativada."
+          }
+        }
+      }
+    },
     "Sync is on. This Mac will download everything again from your other devices unless you also delete your sync account." : {
       "localizations" : {
         "de" : {
@@ -26027,6 +26555,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "A sincronização está ativada. Este Mac vai baixar tudo de novo dos seus outros dispositivos, a menos que você também apague sua conta de sincronização."
+          }
+        }
+      }
+    },
+    "Sync is setting up." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sync wird eingerichtet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Configurando sincronización."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Configuration de la synchro."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchro en configuration."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Configurando a sincronia."
           }
         }
       }
@@ -30236,6 +30798,40 @@
         }
       }
     },
+    "Up to date." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktuell."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Todo está al día."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "À jour."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "À jour."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tudo atualizado."
+          }
+        }
+      }
+    },
     "Update check" : {
       "localizations" : {
         "de" : {
@@ -30334,6 +30930,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Atualizar o resumo"
+          }
+        }
+      }
+    },
+    "Updates" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Updates"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actualizaciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mises à jour"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mises à jour"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Atualizações"
           }
         }
       }
@@ -30470,6 +31100,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Usar este computador"
+          }
+        }
+      }
+    },
+    "Version %@ is ready. Restart to install it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Version %@ ist bereit. Zum Installieren neu starten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La versión %@ está lista. Reinicia para instalarla."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La version %@ est prête. Redémarrez pour l’installer."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La version %@ est prête. Redémarrez pour l’installer."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A versão %@ está pronta. Reinicie para instalá-la."
           }
         }
       }
@@ -31055,6 +31719,40 @@
     "Whimbrel" : {
       "shouldTranslate" : false
     },
+    "Whimbrel %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel %@"
+          }
+        }
+      }
+    },
     "Whimbrel can't write to this folder." : {
       "localizations" : {
         "de" : {
@@ -31221,6 +31919,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "O Whimbrel não iniciou a gravação: menos de 5 GB livres neste Mac."
+          }
+        }
+      }
+    },
+    "Whimbrel for iPhone and Android is in beta. Request to join" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel für iPhone und Android ist in der Beta-Phase. Teilnahme anfragen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel para iPhone y Android está en beta. Solicita unirte"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel pour iPhone et Android est en version bêta. Demander à rejoindre"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel pour iPhone et Android est en version bêta. Demandez à vous joindre"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel para iPhone e Android está em beta. Solicite sua participação"
           }
         }
       }

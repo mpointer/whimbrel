@@ -74,6 +74,7 @@ import type {
   ProviderKey,
   RoutingSettings,
   ScheduleView,
+  StatusView,
   SyncView,
   TrayStatus,
   GeneralSettings,
@@ -337,6 +338,7 @@ export const routineSetSchedule = (id: number, schedule: string) => invoke<Routi
 export const routineRuns = (limit?: number) => invoke<RunView[]>("routine_runs", { limit });
 export const routinesHost = () => invoke<HostView>("routines_host");
 export const routinesSetHost = (id: string) => invoke<HostView>("routines_set_host", { id });
+export const statusOverview = () => invoke<StatusView>("status_overview");
 export const routineSetAutoApprove = (id: number, enabled: boolean) => invoke<RoutineView[]>("routine_set_auto_approve", { id, enabled });
 export const routineSetModelPref = (id: number, pref: string) => invoke<RoutineView[]>("routine_set_model_pref", { id, pref });
 export const routineModelOptions = () => invoke<ModelOptionView[]>("routine_model_options");

@@ -230,6 +230,7 @@ pub fn run() {
             commands::routines::routine_model_options,
             commands::routines::routines_host,
             commands::routines::routines_set_host,
+            commands::status::status_overview,
             commands::approvals::approvals_list,
             commands::approvals::approvals_count,
             commands::approvals::approval_approve,

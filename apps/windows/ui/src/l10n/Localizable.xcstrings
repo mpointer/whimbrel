@@ -2472,6 +2472,40 @@
         }
       }
     },
+    "Audio: {audio}. Images: {images}." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Audio: {audio}. Bilder: {images}."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Audio: {audio}. Imágenes: {images}."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Audio : {audio}. Images : {images}."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Audio : {audio}. Images : {images}."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Áudio: {audio}. Imagens: {images}."
+          }
+        }
+      }
+    },
     "Automatic" : {
       "localizations" : {
         "de" : {
@@ -4028,6 +4062,118 @@
         }
       }
     },
+    "Changes waiting to send: {count}, the oldest from {when}" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Ausstehende Änderungen: {count}, die älteste von {when}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Ausstehende Änderungen: {count}, die älteste von {when}"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Changes waiting to send: {count}, from {when}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Changes waiting to send: {count}, the oldest from {when}"
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Cambios en espera de envío: {count}, el más antiguo de {when}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Cambios en espera de envío: {count}, el más antiguo de {when}"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Modifications en attente d’envoi : {count}, la plus ancienne datant du {when}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Modifications en attente d’envoi : {count}, la plus ancienne datant du {when}"
+                }
+              }
+            }
+          }
+        },
+        "fr-CA" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Modifications en attente d’envoi : {count}, la plus ancienne datant de {when}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Modifications en attente d’envoi : {count}, la plus ancienne datant de {when}"
+                }
+              }
+            }
+          }
+        },
+        "pt" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Alterações aguardando envio: {count}, a mais antiga de {when}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Alterações aguardando envio: {count}, a mais antiga de {when}"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Chats" : {
       "localizations" : {
         "de" : {
@@ -5190,6 +5336,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "O conteúdo ainda não foi sincronizado nesta sessão; a primeira rodada ocorre em até um minuto."
+          }
+        }
+      }
+    },
+    "Content last synced {when}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zuletzt synchronisiert: {when}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contenido sincronizado: {when}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Contenu synchronisé : {when}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dernière synchro du contenu : {when}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Última sincronização: {when}"
           }
         }
       }
@@ -7376,6 +7556,118 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Dispositivos"
+          }
+        }
+      }
+    },
+    "Devices approved: {count}" : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Freigegebene Geräte: {count}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Freigegebene Geräte: {count}"
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Devices approved: {count}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Devices approved: {count}"
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Dispositivos aprobados: {count}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Dispositivos aprobados: {count}"
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Appareil approuvé : {count}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Appareils approuvés : {count}"
+                }
+              }
+            }
+          }
+        },
+        "fr-CA" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Appareil approuvé : {count}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Appareils approuvés : {count}"
+                }
+              }
+            }
+          }
+        },
+        "pt" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Dispositivos aprovados: {count}"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Dispositivos aprovados: {count}"
+                }
+              }
+            }
           }
         }
       }
@@ -11208,6 +11500,40 @@
         }
       }
     },
+    "Last run: {name}, {when}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zuletzt ausgeführt: {name}, {when}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Última ejecución: {name}, {when}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dernière exécution : {name}, {when}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dernière exécution : {name}, {when}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Última execução: {name}, {when}"
+          }
+        }
+      }
+    },
     "Last sync failed: {error}" : {
       "localizations" : {
         "de" : {
@@ -12574,6 +12900,152 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "Meetings are kept for {count} days." : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Meetings werden {count} Tag behalten."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Meetings werden {count} Tage behalten."
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Meetings are kept for {count} day."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Meetings are kept for {count} days."
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Las reuniones se conservan durante {count} día."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Las reuniones se conservan durante {count} días."
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Les réunions sont conservées {count} jour."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Les réunions sont conservées {count} jours."
+                }
+              }
+            }
+          }
+        },
+        "fr-CA" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Les réunions sont conservées {count} jour."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Les réunions sont conservées {count} jours."
+                }
+              }
+            }
+          }
+        },
+        "pt" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "As reuniões são mantidas por {count} dia."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "As reuniões são mantidas por {count} dias."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Meetings are kept forever." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Meetings werden für immer behalten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las reuniones se conservan para siempre."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les réunions sont conservées indéfiniment."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les réunions sont conservées à jamais."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As reuniões são mantidas para sempre."
           }
         }
       }
@@ -19323,6 +19795,40 @@
         }
       }
     },
+    "Routines run on any device." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routinen laufen auf jedem Gerät."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las rutinas se ejecutan en cualquier dispositivo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les routines s’exécutent sur n’importe quel appareil."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les routines s’exécutent sur n’importe quel appareil."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As rotinas são executadas em qualquer dispositivo."
+          }
+        }
+      }
+    },
     "Routines run on this PC while Whimbrel is running. A routine that would send or add something waits for your approval first, unless you turn on approving it automatically for that routine." : {
       "localizations" : {
         "de" : {
@@ -19387,6 +19893,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Os Routines são executados no seu dispositivo principal e escrevem no idioma desse dispositivo."
+          }
+        }
+      }
+    },
+    "Routines run on {device}." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Routinen laufen auf {device}."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las rutinas se ejecutan en {device}."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les routines s’exécutent sur {device}."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les routines s’exécutent sur {device}."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "As rotinas são executadas em {device}."
           }
         }
       }
@@ -20665,6 +21205,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Configurações"
+          }
+        }
+      }
+    },
+    "Settings last synced {when}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Einstellungen synchronisiert: {when}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajustes sincronizados: {when}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Réglages synchronisés : {when}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dernière synchro des réglages : {when}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Última sincronização: {when}"
           }
         }
       }
@@ -22219,6 +22793,40 @@
         }
       }
     },
+    "Status" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Status"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Estado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "État"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "État"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Status"
+          }
+        }
+      }
+    },
     "Still in a meeting?" : {
       "localizations" : {
         "de" : {
@@ -22423,6 +23031,40 @@
         }
       }
     },
+    "Storage" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Speicher"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Almacenamiento"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stockage"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stockage"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Armazenamento"
+          }
+        }
+      }
+    },
     "Stored" : {
       "localizations" : {
         "de" : {
@@ -22589,6 +23231,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Sugeridos"
+          }
+        }
+      }
+    },
+    "Summaries use {provider}, {model}." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zusammenfassungen nutzen {provider}, {model}."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Los resúmenes usan {provider}, {model}."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les résumés utilisent {provider}, {model}."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les résumés utilisent {provider}, {model}."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os resumos usam {provider}, {model}."
           }
         }
       }
@@ -22939,6 +23615,74 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "A sincronização não está configurada: falta {keys} em apps/windows/src-tauri/Secrets.toml (veja Secrets.toml.example); depois recompile."
+          }
+        }
+      }
+    },
+    "Sync is off." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sync ist aus."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La sincronización está desactivada."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchro est désactivée."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchro est désactivée."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A sincronização está desativada."
+          }
+        }
+      }
+    },
+    "Sync is setting up." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sync wird eingerichtet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La sincronización se está configurando."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchro est en cours de configuration."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchro est en cours de configuration."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A sincronização está sendo configurada."
           }
         }
       }
@@ -27026,6 +27770,40 @@
         }
       }
     },
+    "Up to date." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf dem neuesten Stand."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actualizado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "À jour."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "À jour."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Atualizado."
+          }
+        }
+      }
+    },
     "Update ready" : {
       "localizations" : {
         "de" : {
@@ -27090,6 +27868,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Atualizar o resumo"
+          }
+        }
+      }
+    },
+    "Updates" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Updates"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Actualizaciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mises à jour"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mises à jour"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Atualizações"
           }
         }
       }
@@ -27362,6 +28174,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Versão"
+          }
+        }
+      }
+    },
+    "Version {version} is ready. Restart to install it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Version {version} ist bereit. Zum Installieren neu starten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La versión {version} está lista. Reinicia para instalarla."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La version {version} est prête. Redémarrez pour l’installer."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La version {version} est prête. Redémarrez pour l’installer."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A versão {version} está pronta. Reinicie para instalá-la."
           }
         }
       }
@@ -28114,6 +28960,40 @@
         }
       }
     },
+    "Whimbrel for iPhone and Android is in beta. Request to join" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel für iPhone und Android ist in der Beta-Phase. Teilnahme anfragen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel para iPhone y Android está en beta. Solicita unirte"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel pour iPhone et Android est en version bêta. Demander à rejoindre"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel pour iPhone et Android est en version bêta. Demandez à vous joindre"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel para iPhone e Android está em beta. Solicite sua participação"
+          }
+        }
+      }
+    },
     "Whimbrel is still working on a meeting. Try again when it's done." : {
       "localizations" : {
         "de" : {
@@ -28280,6 +29160,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "O Whimbrel funciona sem nenhum modelo de IA: captura, transcrições e busca continuam funcionando. Chat, resumos e Routines precisam de um."
+          }
+        }
+      }
+    },
+    "Whimbrel {version}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel {version}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel {version}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel {version}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel {version}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel {version}"
           }
         }
       }

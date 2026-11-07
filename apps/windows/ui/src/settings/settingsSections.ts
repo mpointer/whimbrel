@@ -1,17 +1,21 @@
 import { t } from "../l10n";
 
 /**
- * Settings sections, one shown at a time, in the Mac's order and wording (SettingsView.swift).
- * The Mac's Automations and Diagnostics sections have no Windows cards: routines live in the
- * Automations tab, and there is no diagnostics pane.
+ * Settings sections, one shown at a time, in the Mac's order and wording (SettingsView.swift),
+ * after the status page that opens first (issue 595; on the Mac it is the main window's Settings
+ * entry). The Mac's Automations and Diagnostics sections have no Windows cards: routines live
+ * in the Automations tab, and there is no diagnostics pane.
  */
-export const SETTINGS_SECTIONS = ["general", "profile", "capture", "meetings", "ai", "devices", "connectors"] as const;
+export const SETTINGS_SECTIONS = ["status", "general", "profile", "capture", "meetings", "ai", "devices", "connectors"] as const;
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number];
 
-export const DEFAULT_SECTION: SettingsSectionId = "general";
+/** Where the Settings tab opens: the status page, as on the Mac. */
+export const DEFAULT_SECTION: SettingsSectionId = "status";
 
 export function sectionTitle(id: SettingsSectionId): string {
   switch (id) {
+    case "status":
+      return t("Status");
     case "general":
       return t("General");
     case "profile":
@@ -29,34 +33,7 @@ export function sectionTitle(id: SettingsSectionId): string {
   }
 }
 
-/** A stored or requested section, or the default when it isn't one (an old value, a typo). */
+/** A requested section, or the status page when it isn't one (an old value, a typo). */
 export function toSection(value: string | null | undefined): SettingsSectionId {
   return (SETTINGS_SECTIONS as readonly string[]).includes(value ?? "") ? (value as SettingsSectionId) : DEFAULT_SECTION;
-}
-
-const STORAGE_KEY = "whimbrel.settings.section";
-
-/** The section shown last time, so Settings reopens where you left it. */
-export function rememberedSection(storage: Pick<Storage, "getItem"> | null = safeStorage()): SettingsSectionId {
-  try {
-    return toSection(storage?.getItem(STORAGE_KEY));
-  } catch {
-    return DEFAULT_SECTION;
-  }
-}
-
-export function rememberSection(id: SettingsSectionId, storage: Pick<Storage, "setItem"> | null = safeStorage()): void {
-  try {
-    storage?.setItem(STORAGE_KEY, id);
-  } catch {
-    // Remembering is a convenience; Settings opens at General without it.
-  }
-}
-
-function safeStorage(): Storage | null {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
 }

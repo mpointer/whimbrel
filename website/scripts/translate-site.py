@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SITE = ROOT / "site"
 PAGES = ["index.html", "pricing.html", "open-source.html", "features/meeting-notes.html", "features/screen-memory.html",
          "features/routines.html", "features/languages.html", "download/index.html", "download/mac.html",
-         "download/windows.html", "download/thanks.html", "download/unavailable.html"]
+         "download/windows.html", "download/thanks.html", "download/unavailable.html", "mobile-beta/index.html", "mobile-beta/thanks.html"]
 PARTIALS = ["cta.html", "demo-video.html", "register-form.html", "app-mock.html"]
 NAMES = {"es": ("neutral Latin American Spanish", "es"), "fr": ("Canadian French", "fr-CA")}
 TAG = re.compile(r"</?([a-zA-Z][\w-]*)")

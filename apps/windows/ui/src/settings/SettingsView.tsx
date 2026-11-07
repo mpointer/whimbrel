@@ -15,14 +15,20 @@ import { RetentionCard } from "./RetentionCard";
 import { SearchModelCard } from "./SearchModelCard";
 import { SETTINGS_SECTIONS, sectionTitle, type SettingsSectionId } from "./settingsSections";
 import { SkinGallery } from "./SkinGallery";
+import { StatusPage } from "./StatusPage";
 import { SyncCard } from "./SyncCard";
 
 /** How often the Profile badge recounts the suggestions waiting for Add or Dismiss. */
 const BADGE_REFRESH_MS = 30_000;
 
 /** Settings: a list of sections on the left and the chosen section's cards on the right (the Mac's layout). */
-export function SettingsView(props: { section: SettingsSectionId; onSection: (id: SettingsSectionId) => void; onRetentionSaved: () => void }) {
-  const { section, onSection, onRetentionSaved } = props;
+export function SettingsView(props: {
+  section: SettingsSectionId;
+  onSection: (id: SettingsSectionId) => void;
+  onRetentionSaved: () => void;
+  onOpenAutomations: () => void;
+}) {
+  const { section, onSection, onRetentionSaved, onOpenAutomations } = props;
   const [pending, setPending] = useState(0);
 
   useEffect(() => {
@@ -52,13 +58,17 @@ export function SettingsView(props: { section: SettingsSectionId; onSection: (id
         </ul>
       </nav>
       <div className="settings-panel stack" aria-labelledby={`settings-${section}`}>
-        <SectionCards section={section} onRetentionSaved={onRetentionSaved} />
+        {section === "status" ? (
+          <StatusPage onSection={onSection} onOpenAutomations={onOpenAutomations} />
+        ) : (
+          <SectionCards section={section} onRetentionSaved={onRetentionSaved} />
+        )}
       </div>
     </div>
   );
 }
 
-function SectionCards({ section, onRetentionSaved }: { section: SettingsSectionId; onRetentionSaved: () => void }) {
+function SectionCards({ section, onRetentionSaved }: { section: Exclude<SettingsSectionId, "status">; onRetentionSaved: () => void }) {
   switch (section) {
     case "general":
       return (

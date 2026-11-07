@@ -2508,17 +2508,15 @@ extension AppState {
 // MARK: - Away Mode
 
 extension AppState {
-    /// Task 7b replaces this: until the live Zoom readers land, Zoom is never opened, so
-    /// an Away run ends at once as "app failed" instead of joining a meeting it can't watch.
-    static let awayZoomJoinEnabled = false
+    /// Joining reads Zoom's window (`ZoomMeetingReader`) to confirm the mic and camera are off.
+    /// On in all builds since the manual pass (docs/superpowers/plans/2026-10-27-away-mode-manual-pass.md).
+    static let awayZoomJoinEnabled = true
 
     /// The live `AwayEnvironment`: this Mac, Zoom, and AppState's own capture.
     final class LiveAwayEnvironment: AwayEnvironment {
         private unowned let app: AppState
-        /// Task 7b replaces this.
-        private let reader: ZoomStateReading = PlaceholderZoomStateReader()
-        /// Task 7b replaces this.
-        let chat: ZoomChatPosting = PlaceholderZoomChatPoster()
+        private let reader: ZoomStateReading = LiveZoomStateReader()
+        let chat: ZoomChatPosting = ZoomChatPoster()
         let leaver: ZoomLeaving = ZoomLeaver()
         /// The meeting this environment started, so `endCapture` never ends another recording.
         private var meetingId: Int64?
@@ -2594,16 +2592,6 @@ extension AppState {
         func sleep(seconds: Double) async {
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         }
-    }
-
-    // Task 7b replaces this
-    private struct PlaceholderZoomStateReader: ZoomStateReading {
-        func currentState() -> ZoomWindowState { .notOpen }
-    }
-
-    // Task 7b replaces this
-    private struct PlaceholderZoomChatPoster: ZoomChatPosting {
-        func post(_ text: String) async -> Bool { false }
     }
 }
 

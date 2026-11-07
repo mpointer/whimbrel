@@ -1,4 +1,3 @@
-#if DEBUG
 import XCTest
 @testable import Whimbrel
 
@@ -17,4 +16,3 @@ final class AXNodeSnapshotTests: XCTestCase {
         XCTAssertEqual(decoded, tree)
     }
 }
-#endif

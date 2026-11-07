@@ -1,0 +1,36 @@
+[
+ {
+  "children": [
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXStaticText",
+    "title": null,
+    "value": "The host has removed you from this meeting."
+   },
+   {
+    "children": [],
+    "description": "This message will close in 5s",
+    "identifier": null,
+    "role": "AXStaticText",
+    "title": null,
+    "value": "This message will close in 3s"
+   },
+   {
+    "children": [],
+    "description": "OK",
+    "identifier": "1FAA8554-6234-4364-9A0B-282515C51053",
+    "role": "AXButton",
+    "title": null,
+    "value": null
+   }
+  ],
+  "description": "The host has removed you from this meeting., This message will close in 5s",
+  "identifier": null,
+  "role": "AXWindow",
+  "subrole": "",
+  "title": null,
+  "value": null
+ }
+]

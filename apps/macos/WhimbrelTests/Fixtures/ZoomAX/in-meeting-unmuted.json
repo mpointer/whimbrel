@@ -1,0 +1,315 @@
+[
+ {
+  "children": [
+   {
+    "children": [
+     {
+      "children": [],
+      "description": null,
+      "identifier": null,
+      "role": "AXStaticText",
+      "title": null,
+      "value": "Person B"
+     },
+     {
+      "children": [],
+      "description": "Person B",
+      "identifier": null,
+      "role": "AXButton",
+      "title": null,
+      "value": null
+     }
+    ],
+    "description": "Person B, Computer audio muted",
+    "identifier": null,
+    "role": "AXTabGroup",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [
+     {
+      "children": [],
+      "description": null,
+      "identifier": null,
+      "role": "AXImage",
+      "title": null,
+      "value": null
+     },
+     {
+      "children": [],
+      "description": "View Person A's profile",
+      "identifier": null,
+      "role": "AXButton",
+      "title": null,
+      "value": null
+     }
+    ],
+    "description": "Person A, Computer audio unmuted, Video off",
+    "identifier": null,
+    "role": "AXTabGroup",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXSplitter",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "children": [
+           {
+            "children": [],
+            "description": null,
+            "identifier": null,
+            "role": "AXStaticText",
+            "title": null,
+            "value": "Person A (me)"
+           },
+           {
+            "children": [],
+            "description": "More options for Person A, collapsed",
+            "identifier": null,
+            "role": "AXMenuButton",
+            "title": null,
+            "value": null
+           },
+           {
+            "children": [],
+            "description": "Start video",
+            "identifier": null,
+            "role": "AXButton",
+            "title": null,
+            "value": null
+           },
+           {
+            "children": [],
+            "description": "Mute",
+            "identifier": null,
+            "role": "AXButton",
+            "title": null,
+            "value": null
+           }
+          ],
+          "description": null,
+          "identifier": "ZMHCTableItemType_PANELIST",
+          "role": "AXCell",
+          "title": null,
+          "value": null
+         }
+        ],
+        "description": null,
+        "identifier": null,
+        "role": "AXRow",
+        "subrole": "AXTableRow",
+        "title": null,
+        "value": null
+       },
+       {
+        "children": [
+         {
+          "children": [
+           {
+            "children": [],
+            "description": null,
+            "identifier": null,
+            "role": "AXStaticText",
+            "title": null,
+            "value": "Person B (Host)"
+           },
+           {
+            "children": [],
+            "description": "More options for Person B, collapsed",
+            "identifier": null,
+            "role": "AXMenuButton",
+            "title": null,
+            "value": null
+           },
+           {
+            "children": [],
+            "description": "Computer audio muted",
+            "identifier": null,
+            "role": "AXImage",
+            "title": "",
+            "value": null
+           },
+           {
+            "children": [],
+            "description": "Video off",
+            "identifier": null,
+            "role": "AXImage",
+            "title": "",
+            "value": null
+           }
+          ],
+          "description": null,
+          "identifier": "ZMHCTableItemType_PANELIST",
+          "role": "AXCell",
+          "title": null,
+          "value": null
+         }
+        ],
+        "description": null,
+        "identifier": null,
+        "role": "AXRow",
+        "subrole": "AXTableRow",
+        "title": null,
+        "value": null
+       }
+      ],
+      "description": "Participants list",
+      "identifier": null,
+      "role": "AXOutline",
+      "title": null,
+      "value": null
+     }
+    ],
+    "description": null,
+    "identifier": null,
+    "role": "AXScrollArea",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": "Invite",
+    "identifier": null,
+    "role": "AXButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": "Mute me",
+    "identifier": null,
+    "role": "AXButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": "Reclaim host",
+    "identifier": null,
+    "role": "AXButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [
+     {
+      "children": [],
+      "description": "Button",
+      "identifier": null,
+      "role": "AXButton",
+      "title": "Close",
+      "value": null
+     },
+     {
+      "children": [],
+      "description": "Button",
+      "identifier": null,
+      "role": "AXButton",
+      "title": "Pop out",
+      "value": null
+     },
+     {
+      "children": [],
+      "description": null,
+      "identifier": null,
+      "role": "AXStaticText",
+      "title": null,
+      "value": "Participants (2)"
+     }
+    ],
+    "description": "Participants (2)",
+    "identifier": null,
+    "role": "AXUnknown",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXSplitter",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": "",
+    "identifier": null,
+    "role": "",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [
+     {
+      "children": [],
+      "description": "Time left   09:59",
+      "identifier": null,
+      "role": "AXTextArea",
+      "title": null,
+      "value": null
+     }
+    ],
+    "description": null,
+    "identifier": null,
+    "role": "AXTextArea",
+    "title": null,
+    "value": "Time left   07:13"
+   },
+   {
+    "children": [],
+    "description": "Upgrade to Zoom Pro",
+    "identifier": "upgrade button",
+    "role": "AXButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXButton",
+    "subrole": "AXCloseButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXButton",
+    "subrole": "AXMinimizeButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXButton",
+    "subrole": "AXFullScreenButton",
+    "title": null,
+    "value": null
+   }
+  ],
+  "description": null,
+  "identifier": "zm.meeting.window.main",
+  "role": "AXWindow",
+  "subrole": "AXStandardWindow",
+  "title": "Zoom Meeting",
+  "value": null
+ }
+]

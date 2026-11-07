@@ -1,0 +1,63 @@
+[
+ {
+  "children": [
+   {
+    "children": [
+     {
+      "children": [],
+      "description": null,
+      "identifier": null,
+      "role": "AXStaticText",
+      "title": null,
+      "value": "Enter meeting passcode"
+     },
+     {
+      "children": [],
+      "description": null,
+      "identifier": null,
+      "role": "AXTextField",
+      "subrole": "AXSecureTextField",
+      "title": null,
+      "value": ""
+     }
+    ],
+    "description": null,
+    "identifier": null,
+    "role": "AXGroup",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": "Join",
+    "identifier": null,
+    "role": "AXButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": "Cancel",
+    "identifier": null,
+    "role": "AXButton",
+    "title": null,
+    "value": null
+   },
+   {
+    "children": [],
+    "description": null,
+    "identifier": null,
+    "role": "AXButton",
+    "subrole": "AXCloseButton",
+    "title": null,
+    "value": null
+   }
+  ],
+  "description": null,
+  "identifier": null,
+  "role": "AXWindow",
+  "subrole": "AXSystemDialog",
+  "title": "",
+  "value": null
+ }
+]

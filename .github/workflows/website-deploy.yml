@@ -68,6 +68,19 @@ jobs:
           base="$(node -p "require('./site/config.json').url.replace(/\/$/, '')")"
           # A newly attached custom domain can take a few minutes to get its certificate.
           retry=(--retry 12 --retry-delay 15 --retry-all-errors)
+          # Cloudflare's bot protection can answer GitHub's runners with 403 (the site itself never
+          # sends 403 for a page). Then check the Worker through its workers.dev address, which
+          # sits outside the zone's security settings and 301s every GET to the site.
+          code="$(curl -sS --retry 12 --retry-delay 15 --retry-connrefused -o /dev/null -w '%{http_code}' "$base/")"
+          if [ "$code" = 403 ]; then
+            echo "::warning::Cloudflare refused this runner (403 from $base); checking the Worker through workers.dev instead."
+            dev="https://kestrel-website.mpointer.workers.dev"
+            for path in / /changelog/ /api/releases; do
+              loc="$(curl -sS "${retry[@]}" -o /dev/null -w '%{http_code} %{redirect_url}' "$dev$path")"
+              [ "$loc" = "301 $base$path" ] || { echo "Expected 301 to $base$path from $dev$path, got: $loc"; exit 1; }
+            done
+            exit 0
+          fi
           curl -fsS "${retry[@]}" "$base/" -o /dev/null
           curl -fsS "${retry[@]}" "$base/changelog/" -o /dev/null
           curl -fsS "${retry[@]}" "$base/api/releases" | tee /dev/stderr | grep -q '"version"'

@@ -91,6 +91,8 @@
       "Enter your name.": "Escribe tu nombre.",
       "Enter a valid email address.": "Escribe un correo electrónico válido.",
       "Choose Mac or Windows.": "Elige Mac o Windows.",
+      "Choose iPhone, Android or both.": "Elige iPhone, Android o ambos.",
+      "Choose Mac, Windows or none.": "Elige Mac, Windows o ninguna.",
       "Registering…": "Registrando…",
       "Something went wrong. Please try again.": "Algo salió mal. Inténtalo de nuevo.",
       "Network error. Check your connection and try again.": "Error de red. Revisa tu conexión e inténtalo de nuevo.",
@@ -99,6 +101,8 @@
       "Enter your name.": "Entrez votre nom.",
       "Enter a valid email address.": "Entrez une adresse courriel valide.",
       "Choose Mac or Windows.": "Choisissez Mac ou Windows.",
+      "Choose iPhone, Android or both.": "Choisissez iPhone, Android ou les deux.",
+      "Choose Mac, Windows or none.": "Choisissez Mac, Windows ou aucun.",
       "Registering…": "Inscription…",
       "Something went wrong. Please try again.": "Une erreur s’est produite. Veuillez réessayer.",
       "Network error. Check your connection and try again.": "Erreur réseau. Vérifiez votre connexion et réessayez.",
@@ -106,7 +110,8 @@
   };
   function text(s) { return (messages[lang] && messages[lang][s]) || s; }
 
-  var form = document.getElementById("register-form");
+  // The download form, or the mobile beta form (/mobile-beta/): same fields, spam guard and flow.
+  var form = document.getElementById("register-form") || document.getElementById("beta-form");
   if (!form) return;
 
   Object.keys(attribution).forEach(function (k) {
@@ -115,7 +120,7 @@
   });
 
   if (platform) {
-    var radio = form.querySelector('input[name="platform"][value="' + platform + '"]');
+    var radio = form.querySelector('input[name="platform"][value="' + platform + '"], input[name="computer"][value="' + platform + '"]');
     if (radio) radio.checked = true;
   }
 
@@ -156,7 +161,9 @@
     var errors = {};
     if (!String(data.name || "").trim()) errors.name = text("Enter your name.");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(data.email || "").trim())) errors.email = text("Enter a valid email address.");
-    if (data.platform !== "mac" && data.platform !== "windows") errors.platform = text("Choose Mac or Windows.");
+    if (form.elements.namedItem("platform") && data.platform !== "mac" && data.platform !== "windows") errors.platform = text("Choose Mac or Windows.");
+    if (form.elements.namedItem("phones") && !/^(iphone|android|both)$/.test(data.phones || "")) errors.phones = text("Choose iPhone, Android or both.");
+    if (form.elements.namedItem("computer") && !/^(mac|windows|none)$/.test(data.computer || "")) errors.computer = text("Choose Mac, Windows or none.");
     return errors;
   }
 
@@ -174,7 +181,7 @@
     button.setAttribute("aria-busy", "true");
     button.textContent = text("Registering…");
 
-    fetch("/api/register", {
+    fetch(form.getAttribute("action"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(data),
@@ -183,7 +190,7 @@
       .then(function (r) { return r.json().catch(function () { return { ok: false, errors: { form: text("Something went wrong. Please try again.") } }; }); })
       .then(function (res) {
         if (res.ok) {
-          if (window.gtag) window.gtag("event", "generate_lead", { platform: data.platform });
+          if (window.gtag && data.platform) window.gtag("event", "generate_lead", { platform: data.platform });
           location.href = localePrefix + res.next;
           return;
         }

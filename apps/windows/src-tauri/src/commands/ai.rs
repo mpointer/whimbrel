@@ -354,11 +354,15 @@ pub fn key_format_hint(provider: Provider, key: String) -> Option<String> {
     api::providers::format_hint(provider.as_str(), &key)
 }
 
-/// The pages the key on-ramp may open: every provider's key and policy page, and the
-/// Ollama download. Anything else is refused, so the UI cannot be made to open an
-/// arbitrary URL.
+/// The phone app's beta sign-up, linked from Settings → Sync & Devices.
+pub const MOBILE_BETA_URL: &str = "https://whimbrelapp.com/mobile-beta/";
+
+/// The pages the UI may open: every provider's key and policy page, the Ollama download,
+/// and the phone beta sign-up. Anything else is refused, so the UI cannot be made to open
+/// an arbitrary URL.
 pub fn external_url_allowed(url: &str) -> bool {
     url == "https://ollama.com/download"
+        || url == MOBILE_BETA_URL
         || api::providers::PROVIDERS.iter().any(|p| p.key_page_url == Some(url) || p.policy_url == Some(url))
 }
 
@@ -565,6 +569,8 @@ mod tests {
         assert!(external_url_allowed("https://ollama.com/download"));
         assert!(external_url_allowed("https://aistudio.google.com/apikey"));
         assert!(external_url_allowed("https://openrouter.ai/privacy"));
+        assert!(external_url_allowed("https://whimbrelapp.com/mobile-beta/"));
+        assert!(!external_url_allowed("https://whimbrelapp.com/mobile-beta/?x=1"));
         assert!(!external_url_allowed("https://example.com"));
         assert!(!external_url_allowed("http://ollama.com/download"));
         assert!(!external_url_allowed("file:///C:/Windows"));

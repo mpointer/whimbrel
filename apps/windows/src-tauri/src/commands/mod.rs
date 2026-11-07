@@ -22,6 +22,7 @@ pub mod schedule;
 pub mod schema;
 pub mod skins;
 pub mod snapshots;
+pub mod status;
 pub mod sync;
 pub mod today;
 pub mod workspace;
