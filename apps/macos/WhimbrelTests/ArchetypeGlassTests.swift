@@ -60,7 +60,7 @@ final class ArchetypeGlassTests: XCTestCase {
     }
 
     func test_glass_places_expected_sections() {
-        XCTAssertEqual(GlassTodayLayout.placedSections, [.greeting, .composer, .upNext, .schedule, .recap])
+        XCTAssertEqual(GlassTodayLayout.placedSections, [.greeting, .composer, .upNext, .schedule, .upcoming, .recap])
     }
 
     /// Runs `body` with Hypermodern and `palette` in force. The palettes are installed in the

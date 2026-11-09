@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { topicPage, topicRoleSet, topicsPageList, topicStepAction } from "../api";
+import { emit } from "@tauri-apps/api/event";
+import { topicPage, topicRoleSet, topicsPageList, topicStepAction, topicSuggestions } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { LibraryTarget, StepActionInput, TopicListItemView, TopicPageView, TopicStepView } from "../generated/types";
 import { useL10n } from "../l10n";
@@ -45,6 +46,13 @@ export function TopicsView({ request }: { request?: { seq: number; topicId: numb
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Selection | null>(null);
   const wanted = useRef<number | null>(selected);
+  // Suggestions waiting in Settings → Topics, for the empty state; asked once there are no named topics.
+  const [suggested, setSuggested] = useState(0);
+  const empty = list !== null && list.length === 0;
+  useEffect(() => {
+    if (!empty) return;
+    topicSuggestions().then((s) => setSuggested(Array.isArray(s) ? s.length : 0), () => {});
+  }, [empty]);
 
   // A way in (Today, a meeting, search, the tray) asked for a topic.
   useEffect(() => {
@@ -87,6 +95,25 @@ export function TopicsView({ request }: { request?: { seq: number; topicId: numb
   };
 
   if (open) return <Detail selection={open} onBack={() => setOpen(null)} />;
+
+  // No named topics yet: the Mac's empty state, centred on its own, not pushed into the page column beside
+  // an empty list. It counts the suggestions waiting in Settings → Topics.
+  if (list && list.length === 0) {
+    return (
+      <section className="card empty-state topics-empty">
+        {error && <p role="alert">{error}</p>}
+        <h2 className="section-label">{t("No topics yet")}</h2>
+        <p className="muted">
+          {suggested > 0
+            ? t("Suggested topics waiting: {n}. Add the ones you care about in Settings.", { n: String(suggested) })
+            : t("Name the customers, products and projects you care about in Settings.")}
+        </p>
+        <button type="button" className="mode mode--active" onClick={() => void emit("open-settings", "topics")}>
+          {t("Open Topics settings")}
+        </button>
+      </section>
+    );
+  }
 
   return (
     <div className="topics">

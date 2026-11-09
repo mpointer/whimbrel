@@ -737,6 +737,15 @@ final class AppState: ObservableObject {
         scheduleScreenTextIngestStep()
         scheduleTranscriptBackfillStep()
 
+        // Read the calendar the moment access is granted, not at the next 60 s refresh.
+        permissions.$calendarGranted
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] granted in
+                if granted { self?.calendar.accessGranted() }
+            }
+            .store(in: &cancellables)
+
         // FR-CAP-13: activity capture starts automatically the first time Accessibility
         // permission is confirmed granted -- during onboarding, or later via Settings --
         // removing the need for a separate manual step. `@Published`'s projected

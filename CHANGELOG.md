@@ -2,6 +2,19 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.63] - 2026-11-09
+
+### Mac
+- Fixed: on macOS 27, Today kept saying "No calendar connected" and Upcoming filled in only minutes after launch. Whimbrel now trusts the calendar access you granted, refreshes the moment it has it, and shows each Google account's meetings as soon as that account syncs. If Upcoming stays empty, grant Calendar once in Settings → General.
+- Fixed: with no named topics, the Topics tab shows a centred "No topics yet" with how many suggested topics are waiting and a button to Settings → Topics.
+
+### Windows
+- Fixed: Today's Upcoming filled in only minutes after launch; it now updates as soon as the calendar syncs, and says when the calendar can't sync (an expired Google sign-in, say) instead of looking empty. In skinned layouts it sits after the schedule, as on the Mac.
+- Fixed: with no named topics, the Topics tab shows a centred "No topics yet" with how many suggested topics are waiting and a button to Settings.
+
+### All devices
+- The Topics list opens faster: it reads your upcoming meetings once instead of once per topic.
+
 ## [0.9.62] - 2026-11-09
 
 ### Mac

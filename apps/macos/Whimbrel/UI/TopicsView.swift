@@ -9,6 +9,8 @@ struct TopicsView: View {
     @State private var page: TopicPage?
     @State private var hasLoaded = false
     @State private var errorText: String?
+    @State private var suggestionCount = 0
+    @Environment(\.openSettings) private var openSettings
 
     private static let groups: [(kind: String, title: String)] = [
         ("customer", String(localized: "Customer")), ("product", String(localized: "Product")), ("project", String(localized: "Project")),
@@ -16,6 +18,37 @@ struct TopicsView: View {
     ]
 
     var body: some View {
+        Group {
+            if hasLoaded && topics.isEmpty {
+                // No list to show, so the empty state takes the whole tab rather than the page column.
+                WhimbrelEmptyState(
+                    systemImage: "square.stack.3d.up",
+                    title: String(localized: "No topics yet"),
+                    message: suggestionCount > 0
+                        ? String(localized: "Suggested topics waiting: \(suggestionCount). Add the ones you care about in Settings.")
+                        : String(localized: "Name the customers, products and projects you care about in Settings."),
+                    actionTitle: String(localized: "Open Topics settings"),
+                    action: {
+                        // Set first: SettingsView takes it on appear, or on change when already open.
+                        appState.pendingSettingsSection = .topics
+                        openSettings()
+                    }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                split
+            }
+        }
+        .background(Color.whimbrelBackgroundPage)
+        .task(id: appState.selectedTopicId) {
+            while !Task.isCancelled {
+                reload()
+                try? await Task.sleep(for: .seconds(30))
+            }
+        }
+    }
+
+    private var split: some View {
         HStack(spacing: 0) {
             list.frame(width: 240)
             Divider().overlay(Color.whimbrelBorder)
@@ -25,9 +58,7 @@ struct TopicsView: View {
                     TopicPageView(page: page, errorText: errorText, run: run)
                         .id(page.topic.topicId)
                 } else {
-                    Text(hasLoaded && topics.isEmpty
-                         ? String(localized: "No topics yet. Name the customers, products and projects you care about in Settings > Topics.")
-                         : hasLoaded ? String(localized: "Choose a topic.") : "")
+                    Text(hasLoaded ? String(localized: "Choose a topic.") : "")
                         .font(.whimbrelBody(.callout))
                         .foregroundStyle(Color.whimbrelTextSecondary)
                         .padding(Spacing.xl)
@@ -35,13 +66,6 @@ struct TopicsView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .background(Color.whimbrelBackgroundPage)
-        .task(id: appState.selectedTopicId) {
-            while !Task.isCancelled {
-                reload()
-                try? await Task.sleep(for: .seconds(30))
-            }
         }
     }
 
@@ -96,6 +120,8 @@ struct TopicsView: View {
         let wanted = appState.selectedTopicId
         CoreMemoryStore.accessQueue.async {
             let list = store.topicPageList()
+            // Only the empty state uses the count.
+            let suggested = list?.isEmpty == true ? store.topicSuggestions(limit: 100)?.count : nil
             let id = wanted ?? list?.first?.topic.topicId
             let p = id.flatMap { store.topicPage(topicId: $0) }
             DispatchQueue.main.async {
@@ -107,6 +133,7 @@ struct TopicsView: View {
                         return
                     }
                 }
+                if let suggested { suggestionCount = suggested }
                 hasLoaded = true
                 // A reply for a topic no longer selected is dropped; the next reload covers it.
                 guard appState.selectedTopicId == wanted else { return }

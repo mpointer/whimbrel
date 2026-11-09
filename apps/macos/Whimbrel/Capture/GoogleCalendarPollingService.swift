@@ -62,6 +62,9 @@ final class GoogleCalendarPollingService: ObservableObject {
     }
 
     private func poll(calendarConnectorState: CalendarConnectorState) async {
+        // Pruned first, so a removed account's meetings never show in a per-account publish below.
+        let connectedEmails = Set(calendarConnectorState.accounts.map(\.email))
+        lastKnownGoodMeetings = lastKnownGoodMeetings.filter { connectedEmails.contains($0.key) }
         for account in calendarConnectorState.accounts {
             guard let helper = calendarConnectorState.oauthHelper(forEmail: account.email) else {
                 log.error("poll: no OAuth helper for \(account.email, privacy: .private) -- account listed but not connected")
@@ -71,6 +74,9 @@ final class GoogleCalendarPollingService: ObservableObject {
                 let accessToken = try await helper.validAccessToken()
                 try await syncAccount(email: account.email, accessToken: accessToken)
                 calendarConnectorState.clearNeedsReconnect(account.email)
+                // Publish each account as it lands: a launch-time sync waits on the busy store
+                // queue twice per account, so waiting for every account kept Today empty for minutes.
+                oauthMeetings = lastKnownGoodMeetings.values.flatMap { $0 }
             } catch {
                 switch error {
                 case GoogleOAuthError.notAuthorized, GoogleOAuthError.refreshTokenRevoked:
@@ -80,8 +86,6 @@ final class GoogleCalendarPollingService: ObservableObject {
                 log.error("poll: failed for \(account.email, privacy: .private): \(String(describing: error), privacy: .public) -- keeping last-known-good meetings for this account")
             }
         }
-        let connectedEmails = Set(calendarConnectorState.accounts.map(\.email))
-        lastKnownGoodMeetings = lastKnownGoodMeetings.filter { connectedEmails.contains($0.key) }
         oauthMeetings = lastKnownGoodMeetings.values.flatMap { $0 }
     }
 

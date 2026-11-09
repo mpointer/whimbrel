@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { earlierRows, nonEmptySections, schedule, scheduleItems, upNext, voiceText } from "../layoutModel";
 import { t } from "../../l10n";
+import { UpcomingBody } from "../UpcomingCard";
 import { DevicesLine, EventLine, HeldLine, OpenLoopLines, RecapLines, ScheduleLines, SkinImage, SkinText, applyCaps, type TodayLayoutProps } from "./parts";
 
 /** A centred page inside a double-rule border: small-caps headers, a fleuron between sections, the skin's
@@ -40,6 +41,7 @@ export function Almanac(props: TodayLayoutProps) {
       {props.composer}
       {present.includes("upNext") && next && section("upNext", voiceText(voice, "upNextHeader"), <EventLine row={next} props={props} shape="stack" accentTime />)}
       {present.includes("schedule") && items.length > 0 && section("schedule", voiceText(voice, "upcomingHeader"), <ScheduleLines items={items} props={props} shape="stack" />)}
+      {present.includes("upcoming") && model.upcoming && section("upcoming", t("Upcoming"), <UpcomingBody view={model.upcoming} />)}
       {present.includes("earlier") &&
         section(
           "earlier",

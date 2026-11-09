@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 use super::aliases::{alias_hits, live_seeds};
 use super::entities::parse_addresses;
 use super::index::calendar_series_key;
-use super::read::{members, next_event, open_target, series_topic, OpenTarget, TopicMember};
+use super::read::{
+    members, next_event, next_event_in, open_target, series_topic, upcoming_events, OpenTarget,
+    TopicMember,
+};
 use super::steps::{hash_completed, primary_topic_for_source};
 use crate::Store;
 
@@ -522,6 +525,8 @@ impl Store {
             })?
             .collect::<rusqlite::Result<_>>()?;
         let mut out = Vec::with_capacity(rows.len());
+        // Read the coming events once for every topic, not once per topic.
+        let events = upcoming_events(conn, now_ms)?;
         for (topic, kind) in rows {
             // As the page's "You owe": open mine steps of a topic active in the last 60 days.
             let open_mine = if stale(conn, topic.topic_id, now_ms)? {
@@ -533,7 +538,7 @@ impl Store {
                     .count() as i64
             };
             out.push(TopicListEntry {
-                next_meeting_unix_ms: next_event(conn, topic.topic_id, now_ms)?
+                next_meeting_unix_ms: next_event_in(conn, topic.topic_id, &events)?
                     .map(|e| e.ts_unix_ms),
                 topic,
                 kind,
@@ -908,6 +913,43 @@ mod tests {
                 due_date: None
             })
         );
+    }
+
+    #[test]
+    fn list_next_meetings_match_each_topic_page() {
+        let s = Store::open_in_memory().unwrap();
+        let a = seed(&s, "Maximus");
+        let b = seed(&s, "Greensky");
+        let c = seed(&s, "Realti");
+        filed(&s, a.topic_id, "email", None, NOW - DAY_MS, "seed");
+        filed(&s, b.topic_id, "email", None, NOW - DAY_MS, "seed");
+        event(&s, "m1", NOW + 2 * DAY_MS, "Maximus QBR", &[]);
+        event(&s, "g1", NOW + 5 * DAY_MS, "Greensky sync", &[]);
+        event(&s, "x1", NOW + DAY_MS, "Lunch", &[]);
+        let list = s.topic_page_list(NOW).unwrap();
+        for t in [&a, &b, &c] {
+            let from_list = list
+                .iter()
+                .find(|e| e.topic.topic_id == t.topic_id)
+                .unwrap()
+                .next_meeting_unix_ms;
+            let from_page = s
+                .topic_page(t.topic_id, NOW)
+                .unwrap()
+                .unwrap()
+                .next_meeting
+                .map(|m| m.start_unix_ms);
+            assert_eq!(from_list, from_page, "{}", t.name);
+        }
+        let ts = |t: &TopicRef| {
+            list.iter()
+                .find(|e| e.topic.topic_id == t.topic_id)
+                .unwrap()
+                .next_meeting_unix_ms
+        };
+        assert_eq!(ts(&a), Some(NOW + 2 * DAY_MS));
+        assert_eq!(ts(&b), Some(NOW + 5 * DAY_MS));
+        assert_eq!(ts(&c), None);
     }
 
     #[test]

@@ -45,7 +45,7 @@ struct TodayView: View {
         if let origin = briefRecap?.originDeviceId { labels[origin] = appState.deviceLabel(for: origin) }
         return TodayContent(
             name: appState.profile.name, now: Date(), pinnedNow: nil, events: appState.allUpcomingMeetings,
-            recentMeetings: recentMeetings, recentLoaded: recentLoaded, calendarGranted: appState.permissions.calendarGranted,
+            recentMeetings: recentMeetings, recentLoaded: recentLoaded, calendarGranted: appState.permissions.calendarGranted || !appState.calendarConnectorState.accounts.isEmpty,
             activeMeetingId: appState.activeMeetingId, processingMeetingId: appState.processingMeetingId,
             nextPrep: nextPrep, pendingApprovalCount: pendingApprovalCount, attentionThreads: attentionThreads,
             briefRecap: briefRecap, digest: digest, digestError: digestError, isGeneratingDigest: isGeneratingDigest,

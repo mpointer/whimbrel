@@ -13,6 +13,7 @@ import {
   type SectionId,
 } from "../layoutModel";
 import { t } from "../../l10n";
+import { UpcomingBody } from "../UpcomingCard";
 import { BracketLink, DevicesLine, HeldLine, OpenLoopLines, PrepLine, RecapLines, ScheduleLines, SkinImage, SkinText, useWidth, type TodayLayoutProps } from "./parts";
 
 const anchor = (section: SectionId) => `today-${section}`;
@@ -38,6 +39,8 @@ export function Reference(props: TodayLayoutProps) {
         return next ? [{ section, title: voiceText(voice, "upNextHeader") }] : [];
       case "schedule":
         return items.length > 0 ? [{ section, title: voiceText(voice, "upcomingHeader") }] : [];
+      case "upcoming":
+        return model.upcoming ? [{ section, title: t("Upcoming") }] : [];
       case "earlier":
         return [{ section, title: voiceText(voice, "earlierHeader") }];
       case "threads":
@@ -96,6 +99,7 @@ export function Reference(props: TodayLayoutProps) {
       </div>
       {present.includes("composer") && <div id={anchor("composer")}>{props.composer}</div>}
       {present.includes("schedule") && items.length > 0 && section("schedule", voiceText(voice, "upcomingHeader"), <ScheduleLines items={items} props={props} shape="inline" bracket />)}
+      {present.includes("upcoming") && model.upcoming && section("upcoming", t("Upcoming"), <UpcomingBody view={model.upcoming} />)}
       {present.includes("earlier") &&
         section(
           "earlier",

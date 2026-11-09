@@ -195,30 +195,24 @@ pub(crate) fn members(conn: &Connection, topic_id: i64) -> rusqlite::Result<Vec<
     Ok(out)
 }
 
-/// Earliest future calendar event of the topic. An event named for topics (its series'
-/// primary topic, else the seed topics its title names) matches only those; any other
-/// matches when its attendees include a person the topic knows: by entity mention when the
-/// event is indexed, else by attendee address against the topic's `email:` person keys.
-pub(crate) fn next_event(
-    conn: &Connection,
-    topic_id: i64,
-    now: i64,
-) -> rusqlite::Result<Option<TopicMember>> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT e.id, e.key FROM entity e \
-           JOIN entity_mention em ON em.entity_id = e.id \
-           JOIN topic_member m ON m.source_id = em.source_id AND m.topic_id = ?1 AND m.origin != 'removed' \
-         WHERE e.kind = 'person'",
-    )?;
-    let people: Vec<(i64, String)> = stmt
-        .query_map([topic_id], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .collect::<rusqlite::Result<_>>()?;
+/// A future calendar event with what topic matching needs, read once and shared by every
+/// topic (the Topics list checks all topics against the same events).
+pub(crate) struct UpcomingEvent {
+    item: i64,
+    ts: i64,
+    title: String,
+    sid: Option<i64>,
+    /// Topics the event is named for: its series' primary topic, else seed topics in its title.
+    named: Vec<i64>,
+    /// Attendee addresses, lowercase as parsed.
+    emails: Vec<String>,
+    /// Entities mentioned in the indexed event (only read when `named` is empty).
+    mentions: Vec<i64>,
+}
+
+/// The next 200 calendar events after `now`, prepared for `next_event_in`.
+pub(crate) fn upcoming_events(conn: &Connection, now: i64) -> rusqlite::Result<Vec<UpcomingEvent>> {
     let seeds = live_seeds(conn)?;
-    let ids: HashSet<i64> = people.iter().map(|p| p.0).collect();
-    let emails: HashSet<&str> = people
-        .iter()
-        .filter_map(|p| p.1.strip_prefix("email:"))
-        .collect();
     // ponytail: scans the next 200 events; raise if someone books further ahead than that
     let mut stmt = conn.prepare(
         "SELECT i.id, i.ts_unix_ms, COALESCE(i.title, ''), i.actors, s.id, i.source, i.external_id \
@@ -226,6 +220,7 @@ pub(crate) fn next_event(
          WHERE i.kind = 'calendar_event' AND i.ts_unix_ms > ?1 ORDER BY i.ts_unix_ms, i.id LIMIT 200",
     )?;
     let mut rows = stmt.query([now])?;
+    let mut out = Vec::new();
     while let Some(r) = rows.next()? {
         let (item, ts, title, actors, sid): (i64, i64, String, Option<String>, Option<i64>) =
             (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?);
@@ -240,39 +235,82 @@ pub(crate) fn next_event(
             Some((t, _)) => vec![t],
             None => alias_hits(&title, &seeds),
         };
-        let by_name = named.contains(&topic_id);
-        let by_email = named.is_empty()
-            && actors
-                .and_then(|a| serde_json::from_str::<Vec<String>>(&a).ok())
-                .unwrap_or_default()
-                .iter()
-                .flat_map(|a| parse_addresses(a))
-                .any(|a| emails.contains(a.email.as_str()));
-        let by_mention = match sid {
-            Some(sid) if named.is_empty() => {
-                let mut m = conn
-                    .prepare_cached("SELECT entity_id FROM entity_mention WHERE source_id = ?1")?;
-                let found = m
-                    .query_map([sid], |x| x.get::<_, i64>(0))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                found.iter().any(|e| ids.contains(e))
-            }
-            _ => false,
+        let emails = actors
+            .and_then(|a| serde_json::from_str::<Vec<String>>(&a).ok())
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|a| parse_addresses(a))
+            .map(|a| a.email)
+            .collect();
+        let mentions = match sid {
+            Some(sid) if named.is_empty() => conn
+                .prepare_cached("SELECT entity_id FROM entity_mention WHERE source_id = ?1")?
+                .query_map([sid], |x| x.get::<_, i64>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+            _ => Vec::new(),
         };
-        if by_name || by_email || by_mention {
-            return Ok(Some(TopicMember {
-                source_id: sid.unwrap_or(0),
-                kind: "calendar_event".into(),
-                ref_id: Some(item),
-                ts_unix_ms: ts,
-                title,
-                origin: "auto".into(),
-                stub: false,
-                open: None,
-            }));
-        }
+        out.push(UpcomingEvent {
+            item,
+            ts,
+            title,
+            sid,
+            named,
+            emails,
+            mentions,
+        });
     }
-    Ok(None)
+    Ok(out)
+}
+
+/// Earliest future calendar event of the topic. An event named for topics (its series'
+/// primary topic, else the seed topics its title names) matches only those; any other
+/// matches when its attendees include a person the topic knows: by entity mention when the
+/// event is indexed, else by attendee address against the topic's `email:` person keys.
+pub(crate) fn next_event(
+    conn: &Connection,
+    topic_id: i64,
+    now: i64,
+) -> rusqlite::Result<Option<TopicMember>> {
+    next_event_in(conn, topic_id, &upcoming_events(conn, now)?)
+}
+
+/// `next_event` over events already read with `upcoming_events`.
+pub(crate) fn next_event_in(
+    conn: &Connection,
+    topic_id: i64,
+    events: &[UpcomingEvent],
+) -> rusqlite::Result<Option<TopicMember>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT DISTINCT e.id, e.key FROM entity e \
+           JOIN entity_mention em ON em.entity_id = e.id \
+           JOIN topic_member m ON m.source_id = em.source_id AND m.topic_id = ?1 AND m.origin != 'removed' \
+         WHERE e.kind = 'person'",
+    )?;
+    let people: Vec<(i64, String)> = stmt
+        .query_map([topic_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let ids: HashSet<i64> = people.iter().map(|p| p.0).collect();
+    let emails: HashSet<&str> = people
+        .iter()
+        .filter_map(|p| p.1.strip_prefix("email:"))
+        .collect();
+    let hit = events.iter().find(|e| {
+        if !e.named.is_empty() {
+            return e.named.contains(&topic_id);
+        }
+        e.emails.iter().any(|a| emails.contains(a.as_str()))
+            || e.mentions.iter().any(|m| ids.contains(m))
+    });
+    Ok(hit.map(|e| TopicMember {
+        source_id: e.sid.unwrap_or(0),
+        kind: "calendar_event".into(),
+        ref_id: Some(e.item),
+        ts_unix_ms: e.ts,
+        title: e.title.clone(),
+        origin: "auto".into(),
+        stub: false,
+        open: None,
+    }))
 }
 
 /// The seed topic a calendar series belongs to: its source's primary topic.

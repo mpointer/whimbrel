@@ -2560,6 +2560,20 @@ export interface UpcomingDay {
   tomorrow: boolean;
 }
 /**
+ * Today's Upcoming, and why it may be empty.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "UpcomingView".
+ */
+export interface UpcomingView {
+  days: UpcomingDay[];
+  /**
+   * The calendar's last sync failed (a Google sign-in that expired, say): the week may look empty
+   * only because nothing could be read.
+   */
+  syncError?: string | null;
+}
+/**
  * One call as the Model usage list shows it (core/api::usage::UsageRow).
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema

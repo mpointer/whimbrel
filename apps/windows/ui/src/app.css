@@ -1766,3 +1766,14 @@ button.link:focus-visible {
 .skin-gallery-footer p {
   margin: 0;
 }
+
+/* Topics with no named topics (0.9.62 fix): the empty state stands on its own, centred, as on the Mac. */
+.topics-empty {
+  max-width: 560px;
+  margin: var(--space-xl) auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+}
