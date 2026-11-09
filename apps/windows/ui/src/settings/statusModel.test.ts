@@ -5,7 +5,7 @@ import { aiLines, backlogStalled, BACKLOG_STALLED_MS, diskSize, relativeTime, ro
 const NOW = Date.UTC(2026, 10, 7, 12, 0);
 const MIN = 60_000;
 
-const ready = (over: Partial<SyncView> = {}): SyncView => ({ deviceId: "me", state: "ready", ...over });
+const ready = (over: Partial<SyncView> = {}): SyncView => ({ deviceId: "me", state: "ready", deviceLimit: false, planUnknown: false, ...over });
 
 describe("relativeTime", () => {
   it("names the time the way the Mac's relative format does", () => {

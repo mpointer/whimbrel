@@ -237,7 +237,7 @@ it("a contact after the cron reads the account cancels deletion", async () => {
   const db = new FakeSqlExecutor();
   const { account, device } = await warnedAt(db);
   // The device reconnects between the cron's read and its claim.
-  db.after("SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms FROM account WHERE warned_at", () =>
+  db.after("SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id FROM account WHERE warned_at", () =>
     accounts.touchLastSeen(db, account.id, device.id, NOW + 15 * DAY),
   );
   expect((await runInactivity(db, makeEnv(), NOW + 15 * DAY, resend().fetcher)).deleted).toBe(0);
@@ -310,6 +310,21 @@ it("a Resend failure logs only the status", async () => {
   expect(logged).not.toContain("secret-body");
 });
 
+it("cron finishing an unfinished deletion cancels the subscription", async () => {
+  const db = new FakeSqlExecutor();
+  const { account } = await idle(db, 10);
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + DAY, stripeSubscriptionId: "sub_1" });
+  await accounts.claimForDeletion(db, account.id, NOW - 20 * 60 * 1000);
+  const urls: string[] = [];
+  const fetcher = (async (url: string, init: RequestInit) => {
+    urls.push(`${init.method} ${url}`);
+    return new Response("{}", { status: 200 });
+  }) as unknown as typeof fetch;
+  await runInactivity(db, makeEnv({ STRIPE_SECRET_KEY: "sk_test_x" }), NOW, fetcher);
+  expect(urls).toEqual(["DELETE https://api.stripe.com/v1/subscriptions/sub_1"]);
+  expect(db.rawAccount(account.id)).toBeUndefined();
+});
+
 // ---- fix round 2 ----
 it("cron skips an account with a reset in progress", async () => {
   const db = new FakeSqlExecutor();
@@ -320,5 +335,54 @@ it("cron skips an account with a reset in progress", async () => {
   await accounts.claimSwapForReset(db, me.id, NOW + 15 * DAY - 60_000);
   expect((await runInactivity(db, makeEnv(), NOW + 15 * DAY, resend().fetcher)).deleted).toBe(0);
   expect(db.rawAccount(account.id)?.deletingSinceUnixMs ?? null).toBeNull();
+  expect(del).not.toHaveBeenCalled();
+});
+
+// ---- Cloud plan ----
+const COLS = "id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id";
+
+it("cloud_accounts_are_never_warned", async () => {
+  const db = new FakeSqlExecutor();
+  const { account } = await idle(db, 200);
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 10 * DAY });
+  expect((await runInactivity(db, makeEnv(), NOW, resend().fetcher)).warned).toBe(0);
+});
+
+it("the_clock_starts_at_the_end_of_the_paid_period", async () => {
+  const db = new FakeSqlExecutor();
+  const { account } = await idle(db, 300);
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW - 100 * DAY });
+  expect((await runInactivity(db, makeEnv(), NOW, resend().fetcher)).warned).toBe(0);
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW - 181 * DAY });
+  expect((await runInactivity(db, makeEnv(), NOW, resend().fetcher)).warned).toBe(1);
+});
+
+it("a_plan_set_between_the_read_and_the_claim_wins", async () => {
+  const db = new FakeSqlExecutor();
+  const { account } = await warnedAt(db);
+  db.after(`SELECT ${COLS} FROM account WHERE warned_at_unix_ms <`, async () => {
+    db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 15 * DAY + 30 * DAY });
+  });
+  expect((await runInactivity(db, makeEnv(), NOW + 15 * DAY, resend().fetcher)).deleted).toBe(0);
+  expect(del).not.toHaveBeenCalled();
+  expect(db.rawAccount(account.id)?.deletingSinceUnixMs ?? null).toBeNull();
+});
+
+it("a_plan_set_between_warn_read_and_mark_is_not_warned", async () => {
+  const db = new FakeSqlExecutor();
+  const { account } = await idle(db, 200);
+  db.after("SELECT id, email FROM account WHERE warned_at_unix_ms IS NULL", async () => {
+    db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 30 * DAY });
+  });
+  await runInactivity(db, makeEnv(), NOW, resend().fetcher);
+  expect(db.rawAccount(account.id)?.warnedAtUnixMs ?? null).toBeNull();
+});
+
+it("a_warning_from_before_the_plan_never_deletes_after_it_lapses", async () => {
+  const db = new FakeSqlExecutor();
+  const { account } = await idle(db, 300);
+  db.markWarned(account.id, NOW - 20 * DAY);
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW - 15 * DAY });
+  expect((await runInactivity(db, makeEnv(), NOW, resend().fetcher)).deleted).toBe(0);
   expect(del).not.toHaveBeenCalled();
 });

@@ -8,7 +8,7 @@ internal object StringCatalog {
     private val catalog: Map<String, String> =
         Regex("""<string name="(\w+)">(.*)</string>""")
             .findAll(File("src/main/res/values/strings.xml").readText())
-            .associate { it.groupValues[1] to it.groupValues[2].replace("\\'", "'") }
+            .associate { it.groupValues[1] to it.groupValues[2].replace("\\'", "'").replace("&amp;", "&") }
 
     val resolve: (Int, Array<Any>) -> String = { id, args ->
         val name = R.string::class.java.fields.first { it.getInt(null) == id }.name

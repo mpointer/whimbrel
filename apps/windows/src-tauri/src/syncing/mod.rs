@@ -2,6 +2,7 @@
 //! content sync. Named `syncing`, not `sync`, so it doesn't collide with the `sync`
 //! crate (device keypairs, group keys) at the crate root.
 
+pub mod billing;
 pub mod config;
 pub mod content;
 pub mod controller;

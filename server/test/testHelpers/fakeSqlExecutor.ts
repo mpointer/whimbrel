@@ -18,17 +18,46 @@ export class FakeSqlExecutor implements SqlExecutor {
       warnedAtUnixMs?: number | null;
       resetNoticePendingUnixMs?: number | null;
       deletingSinceUnixMs?: number | null;
+      plan?: "free" | "cloud";
+      planUntilUnixMs?: number | null;
+      planInterval?: "month" | "year" | null;
+      stripeCustomerId?: string | null;
+      stripeSubscriptionId?: string | null;
     }
   >();
   private devices = new Map<string, SqlRow>();
   private waitlist: SqlRow[] = [];
   private retired: SqlRow[] = [];
   private creations: SqlRow[] = [];
+  private stripeEvents = new Set<string>();
 
   /** Test seam: simulate a pending inactivity warning. */
   markWarned(accountId: string, at: number) {
     const a = this.accounts.get(accountId);
     if (a) this.accounts.set(accountId, { ...a, warnedAtUnixMs: at });
+  }
+
+  /** Test seam: set an account's plan columns (omitted optional ones become null). */
+  setPlan(
+    accountId: string,
+    p: {
+      plan: "free" | "cloud";
+      planUntilUnixMs: number | null;
+      planInterval?: "month" | "year" | null;
+      stripeCustomerId?: string | null;
+      stripeSubscriptionId?: string | null;
+    },
+  ) {
+    const a = this.accounts.get(accountId);
+    if (!a) throw new Error(`setPlan: no account ${accountId}`);
+    this.accounts.set(accountId, {
+      ...a,
+      plan: p.plan,
+      planUntilUnixMs: p.planUntilUnixMs,
+      planInterval: p.planInterval ?? null,
+      stripeCustomerId: p.stripeCustomerId ?? null,
+      stripeSubscriptionId: p.stripeSubscriptionId ?? null,
+    });
   }
 
   /** Test peeks at columns the app queries never SELECT. */
@@ -73,6 +102,11 @@ export class FakeSqlExecutor implements SqlExecutor {
       dataDbName: string;
       dataDbUrl: string;
       deletingSinceUnixMs?: number | null;
+      plan?: "free" | "cloud";
+      planUntilUnixMs?: number | null;
+      planInterval?: "month" | "year" | null;
+      stripeCustomerId?: string | null;
+      stripeSubscriptionId?: string | null;
     }) => ({
       id: a.id,
       email: a.email,
@@ -80,9 +114,14 @@ export class FakeSqlExecutor implements SqlExecutor {
       data_db_name: a.dataDbName,
       data_db_url: a.dataDbUrl,
       deleting_since_unix_ms: a.deletingSinceUnixMs ?? null,
+      plan: a.plan ?? "free",
+      plan_until_unix_ms: a.planUntilUnixMs ?? null,
+      plan_interval: a.planInterval ?? null,
+      stripe_customer_id: a.stripeCustomerId ?? null,
+      stripe_subscription_id: a.stripeSubscriptionId ?? null,
     });
 
-    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms FROM account WHERE google_sub = ?") {
+    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id FROM account WHERE google_sub = ?") {
       const [googleSub] = params as [string];
       const found = [...this.accounts.values()].find((a) => a.googleSub === googleSub);
       return found ? [accountRow(found)] : [];
@@ -319,10 +358,39 @@ export class FakeSqlExecutor implements SqlExecutor {
       this.waitlist.push({ account_id, wants, platform, created_at_unix_ms });
       return [{ account_id }];
     }
+    if (q === "UPDATE account SET stripe_customer_id = ? WHERE id = ? AND deleting_since_unix_ms IS NULL RETURNING id") {
+      const [customerId, id] = params as [string, string];
+      const a = this.accounts.get(id);
+      if (!a || a.deletingSinceUnixMs != null) return [];
+      this.accounts.set(id, { ...a, stripeCustomerId: customerId });
+      return [{ id }];
+    }
+    const applyPlanSet = "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, stripe_subscription_id = ?";
+    if (q === `${applyPlanSet}, warned_at_unix_ms = NULL WHERE id = ? AND deleting_since_unix_ms IS NULL RETURNING id`) {
+      const [plan, planUntilUnixMs, planInterval, stripeSubscriptionId, id] = params as ["cloud", number, "month" | "year" | null, string, string];
+      const a = this.accounts.get(id);
+      if (!a || a.deletingSinceUnixMs != null) return [];
+      this.accounts.set(id, { ...a, plan, planUntilUnixMs, planInterval, stripeSubscriptionId, warnedAtUnixMs: null });
+      return [{ id }];
+    }
+    if (q === `${applyPlanSet} WHERE id = ? AND stripe_subscription_id = ? AND deleting_since_unix_ms IS NULL RETURNING id`) {
+      const [plan, planUntilUnixMs, planInterval, stripeSubscriptionId, id, current] = params as ["free", number, null, string, string, string];
+      const a = this.accounts.get(id);
+      if (!a || a.deletingSinceUnixMs != null || a.stripeSubscriptionId !== current) return [];
+      this.accounts.set(id, { ...a, plan, planUntilUnixMs, planInterval, stripeSubscriptionId });
+      return [{ id }];
+    }
+    if (q === "SELECT 1 FROM stripe_event WHERE id = ?") {
+      return this.stripeEvents.has(params[0] as string) ? [{ 1: 1 }] : [];
+    }
+    if (q === "INSERT OR IGNORE INTO stripe_event (id, received_at_unix_ms) VALUES (?, ?)") {
+      this.stripeEvents.add(params[0] as string);
+      return [];
+    }
     // ---- account deletion and the inactivity cron ----
     const resetting = (accountId: string) =>
       [...this.devices.values()].some((d) => d.account_id === accountId && d.status === "resetting");
-    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms FROM account WHERE id = ?") {
+    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id FROM account WHERE id = ?") {
       const a = this.accounts.get(params[0] as string);
       return a ? [accountRow(a)] : [];
     }
@@ -376,20 +444,32 @@ export class FakeSqlExecutor implements SqlExecutor {
       if (a && a.resetNoticePendingUnixMs === params[1]) a.resetNoticePendingUnixMs = null;
       return [];
     }
-    if (q === "SELECT id, email FROM account WHERE warned_at_unix_ms IS NULL AND last_seen_unix_ms < ?") {
+    if (
+      q ===
+      "SELECT id, email FROM account WHERE warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?)"
+    ) {
       return [...this.accounts.values()]
-        .filter((a) => a.warnedAtUnixMs == null && a.lastSeenUnixMs != null && a.lastSeenUnixMs < (params[0] as number))
+        .filter(
+          (a) =>
+            a.warnedAtUnixMs == null &&
+            a.lastSeenUnixMs != null &&
+            a.lastSeenUnixMs < (params[0] as number) &&
+            (a.planUntilUnixMs == null || a.planUntilUnixMs < (params[1] as number)),
+        )
         .map((a) => ({ id: a.id, email: a.email }));
     }
-    if (q === "UPDATE account SET warned_at_unix_ms = ? WHERE id = ? AND warned_at_unix_ms IS NULL AND last_seen_unix_ms < ?") {
+    if (
+      q ===
+      "UPDATE account SET warned_at_unix_ms = ? WHERE id = ? AND warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?)"
+    ) {
       const [at, id, before] = params as [number, string, number];
       const a = this.accounts.get(id);
-      if (a && a.warnedAtUnixMs == null && a.lastSeenUnixMs != null && a.lastSeenUnixMs < before) a.warnedAtUnixMs = at;
+      if (a && a.warnedAtUnixMs == null && a.lastSeenUnixMs != null && a.lastSeenUnixMs < before && (a.planUntilUnixMs == null || a.planUntilUnixMs < (params[3] as number))) a.warnedAtUnixMs = at;
       return [];
     }
     if (
       q ===
-      "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms FROM account WHERE warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms"
+      "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id FROM account WHERE warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms)"
     ) {
       return [...this.accounts.values()]
         .filter(
@@ -397,7 +477,8 @@ export class FakeSqlExecutor implements SqlExecutor {
             a.warnedAtUnixMs != null &&
             a.warnedAtUnixMs < (params[0] as number) &&
             a.lastSeenUnixMs != null &&
-            a.lastSeenUnixMs < a.warnedAtUnixMs,
+            a.lastSeenUnixMs < a.warnedAtUnixMs &&
+            (a.planUntilUnixMs == null || a.planUntilUnixMs < a.warnedAtUnixMs),
         )
         .map(accountRow);
     }
@@ -411,7 +492,7 @@ export class FakeSqlExecutor implements SqlExecutor {
     }
     if (
       q ===
-      "UPDATE account SET deleting_since_unix_ms = ? WHERE id = ? AND deleting_since_unix_ms IS NULL AND warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND NOT EXISTS (SELECT 1 FROM device WHERE device.account_id = account.id AND device.status = 'resetting') RETURNING id"
+      "UPDATE account SET deleting_since_unix_ms = ? WHERE id = ? AND deleting_since_unix_ms IS NULL AND warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms) AND NOT EXISTS (SELECT 1 FROM device WHERE device.account_id = account.id AND device.status = 'resetting') RETURNING id"
     ) {
       const [at, id, warnedBefore] = params as [number, string, number];
       const a = this.accounts.get(id);
@@ -421,7 +502,8 @@ export class FakeSqlExecutor implements SqlExecutor {
         a.warnedAtUnixMs == null ||
         !(a.warnedAtUnixMs < warnedBefore) ||
         a.lastSeenUnixMs == null ||
-        !(a.lastSeenUnixMs < a.warnedAtUnixMs)
+        !(a.lastSeenUnixMs < a.warnedAtUnixMs) ||
+        (a.planUntilUnixMs != null && !(a.planUntilUnixMs < a.warnedAtUnixMs))
       )
         return [];
       if (resetting(id)) return [];
@@ -435,10 +517,15 @@ export class FakeSqlExecutor implements SqlExecutor {
       a.deletingSinceUnixMs = at;
       return [{ id }];
     }
-    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms FROM account WHERE deleting_since_unix_ms < ?") {
+    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id FROM account WHERE deleting_since_unix_ms < ?") {
       return [...this.accounts.values()]
         .filter((a) => a.deletingSinceUnixMs != null && a.deletingSinceUnixMs < (params[0] as number))
         .map(accountRow);
+    }
+    if (q === "UPDATE account SET plan = 'free', stripe_subscription_id = NULL WHERE id = ?") {
+      const a = this.accounts.get(params[0] as string);
+      if (a) this.accounts.set(a.id, { ...a, plan: "free", stripeSubscriptionId: null });
+      return [];
     }
     if (q === "SELECT 1 FROM account WHERE data_db_name = ?") {
       return [...this.accounts.values()].filter((a) => a.dataDbName === params[0]).map(() => ({ 1: 1 }));

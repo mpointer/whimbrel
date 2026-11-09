@@ -68,6 +68,7 @@ allows 100 databases; each account gets one).
    | `OPEN_SIGN_IN` | `true` lets any verified Google account sign in, ignoring `ALLOWED_GOOGLE_EMAILS`, **and turns on the free device limit** (one computer and one phone per account). This is the hosted relay's setting. Unset or `false`: allowlist only, no device limit |
    | `UNLIMITED_EMAILS` | Comma-separated emails exempt from the free device limit (which only exists when `OPEN_SIGN_IN` is `true`) and from inactivity warnings and deletion |
    | `RESEND_API_KEY` | Sends the inactivity warning emails. Without it the daily cron warns no one, so it deletes no account for inactivity |
+   | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_YEARLY` | Optional. Leave all four unset to run without billing |
 
 5. **Deploy and test.**
 

@@ -6502,6 +6502,40 @@
         }
       }
     },
+    "Cloud until %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud bis %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud hasta el %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud jusqu’au %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud jusqu’au %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud até %@"
+          }
+        }
+      }
+    },
     "Compare" : {
       "localizations" : {
         "de" : {
@@ -7828,6 +7862,40 @@
         }
       }
     },
+    "Couldn't check your plan. Try again in a moment." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ihr Tarif konnte nicht geprüft werden. Versuchen Sie es gleich noch einmal."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo comprobar tu plan. Inténtalo de nuevo en un momento."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de vérifier votre forfait. Réessayez dans un instant."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de vérifier votre forfait. Réessayez dans un moment."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível verificar seu plano. Tente novamente em instantes."
+          }
+        }
+      }
+    },
     "Couldn't complete that action" : {
       "localizations" : {
         "de" : {
@@ -8538,6 +8606,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Não foi possível acessar o Ollama: %@ — digite o nome de um modelo manualmente."
+          }
+        }
+      }
+    },
+    "Couldn't reach Stripe. Try again in a minute." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stripe ist nicht erreichbar. Versuchen Sie es in einer Minute erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo conectar con Stripe. Inténtalo de nuevo en un minuto."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de joindre Stripe. Réessayez dans une minute."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de joindre Stripe. Réessayez dans une minute."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível acessar o Stripe. Tente novamente em um minuto."
           }
         }
       }
@@ -12507,6 +12609,40 @@
         }
       }
     },
+    "Free: 1 computer + 1 phone" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kostenlos: 1 Computer + 1 Telefon"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gratis: 1 ordenador + 1 teléfono"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gratuit : 1 ordinateur + 1 téléphone"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gratuit : 1 ordinateur + 1 téléphone"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grátis: 1 computador + 1 celular"
+          }
+        }
+      }
+    },
     "From %@" : {
       "localizations" : {
         "de" : {
@@ -16156,6 +16292,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Me faça parecer inteligente"
+          }
+        }
+      }
+    },
+    "Manage subscription" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abo verwalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gestionar suscripción"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gérer l’abonnement"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gérer l’abonnement"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gerenciar assinatura"
           }
         }
       }
@@ -22287,6 +22457,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Escolha onde a IA roda"
+          }
+        }
+      }
+    },
+    "Plus tax where applicable. Opens Stripe in your browser. Cloud adds unlimited devices on our sync server." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zuzüglich Steuern, wo zutreffend. Öffnet Stripe in Ihrem Browser. Cloud erlaubt unbegrenzt viele Geräte auf unserem Sync-Server."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impuestos aplicables aparte. Abre Stripe en tu navegador. Cloud permite dispositivos ilimitados en nuestro servidor de sincronización."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taxes en sus, le cas échéant. Ouvre Stripe dans votre navigateur. Cloud permet un nombre illimité d’appareils sur notre serveur de synchronisation."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taxes en sus, s’il y a lieu. Ouvre Stripe dans votre navigateur. Cloud permet un nombre illimité d’appareils sur notre serveur de synchronisation."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mais impostos, quando aplicável. Abre o Stripe no seu navegador. O Cloud permite dispositivos ilimitados no nosso servidor de sincronização."
           }
         }
       }
@@ -32311,6 +32515,40 @@
         }
       }
     },
+    "Too many tries. Try again in a few minutes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zu viele Versuche. Versuchen Sie es in ein paar Minuten erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Demasiados intentos. Inténtalo de nuevo en unos minutos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trop de tentatives. Réessayez dans quelques minutes."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trop de tentatives. Réessayez dans quelques minutes."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Muitas tentativas. Tente novamente em alguns minutos."
+          }
+        }
+      }
+    },
     "Topics" : {
       "localizations" : {
         "de" : {
@@ -33973,6 +34211,108 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Atualizações"
+          }
+        }
+      }
+    },
+    "Upgrade to Cloud for unlimited devices." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit Cloud unbegrenzt viele Geräte nutzen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pasa a Cloud para tener dispositivos ilimitados."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passez à Cloud pour un nombre illimité d’appareils."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passez à Cloud pour un nombre illimité d’appareils."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mude para o Cloud e tenha dispositivos ilimitados."
+          }
+        }
+      }
+    },
+    "Upgrade to Cloud: $5 a month" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf Cloud upgraden: 5 $ im Monat"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pasar a Cloud: 5 $ al mes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passer à Cloud : 5 $ par mois"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passer à Cloud : 5 $ par mois"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mudar para o Cloud: US$ 5 por mês"
+          }
+        }
+      }
+    },
+    "Upgrade to Cloud: $50 a year" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf Cloud upgraden: 50 $ im Jahr"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pasar a Cloud: 50 $ al año"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passer à Cloud : 50 $ par an"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passer à Cloud : 50 $ par an"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mudar para o Cloud: US$ 50 por ano"
           }
         }
       }

@@ -1,4 +1,4 @@
-import type { DeviceView, SyncState, SyncView } from "../generated/types";
+import type { DeviceView, PlanView, SyncState, SyncView } from "../generated/types";
 import { t } from "../l10n";
 
 export type SyncAction = "signIn" | "cancel" | "checkAgain" | "none";
@@ -82,3 +82,19 @@ export function deviceTitle(device: DeviceView): string {
   if (name) return name;
   return device.thisDevice ? t("This PC (unnamed)") : t("Unnamed device");
 }
+
+// --- Cloud v1 (docs/superpowers/plans/2026-11-09-windows-cloud-v1.md) ---------------------------
+
+/** "Free: 1 computer + 1 phone", or "Cloud until November 9, 2027". */
+export function planLine(plan: PlanView, locale: string): string {
+  if (plan.plan !== "cloud") return t("Free: 1 computer + 1 phone");
+  if (plan.untilUnixMs == null) return t("Cloud");
+  const date = new Date(plan.untilUnixMs).toLocaleDateString(locale, { month: "long", day: "numeric", year: "numeric" });
+  return t("Cloud until {date}", { date });
+}
+
+/** Upgrade shows only on the free plan with billing open. */
+export const offersUpgrade = (view: SyncView): boolean => !!view.plan && view.plan.billing && view.plan.plan !== "cloud";
+
+/** Manage subscription shows only on Cloud, with billing open. */
+export const offersManage = (view: SyncView): boolean => !!view.plan && view.plan.billing && view.plan.plan === "cloud";

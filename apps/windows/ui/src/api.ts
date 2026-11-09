@@ -140,6 +140,10 @@ export const syncStatus = () => invoke<SyncView>("sync_status");
 export const syncSignIn = () => invoke<SyncView>("sync_sign_in");
 export const syncCancelSignIn = () => invoke<SyncView>("sync_cancel_sign_in");
 export const syncCheckAgain = () => invoke<SyncView>("sync_check_again");
+// Cloud v1: the plan, and Stripe's checkout and portal (opened in the browser by the shell).
+export const syncRefreshPlan = () => invoke<SyncView>("sync_refresh_plan");
+export const syncUpgrade = (interval: "month" | "year") => invoke<SyncView>("sync_upgrade", { interval });
+export const syncManageSubscription = () => invoke<SyncView>("sync_manage_subscription");
 export const syncDevices = () => invoke<DeviceView[]>("sync_devices");
 export const syncSetDeviceName = (name: string) => invoke<DeviceView[]>("sync_set_device_name", { name });
 export const syncApproveDevice = (id: string) => invoke<DeviceView[]>("sync_approve_device", { id });

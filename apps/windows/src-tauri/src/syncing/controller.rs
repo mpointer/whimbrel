@@ -59,6 +59,12 @@ pub struct SyncView {
     pub settings_last_synced_ms: Option<i64>,
     /// The last settings-sync failure, cleared by the next success.
     pub settings_error: Option<String>,
+    /// Stopped at the free plan's device limit: Settings offers Cloud here.
+    pub device_limit: bool,
+    /// The account's plan, as last read (Cloud v1); `None` until a read succeeds.
+    pub plan: Option<crate::syncing::billing::PlanView>,
+    /// The last plan read failed and no plan is known: "Couldn't check your plan."
+    pub plan_unknown: bool,
 }
 
 /// The content-sync coordinator's last result (Task 6), shown in the Sync card.
@@ -234,6 +240,11 @@ pub struct SyncController {
     content: Mutex<ContentStatus>,
     settings: Mutex<ContentStatus>,
     open_url: Opener,
+    /// Cloud v1: the last plan read, and how many reads in a row have failed.
+    plan: Mutex<Option<en::AccountPlan>>,
+    plan_failures: std::sync::atomic::AtomicU32,
+    /// Bumped by each checkout or portal opening: a newer poll replaces the running one.
+    plan_poll: AtomicU64,
 }
 
 impl SyncController {
@@ -276,6 +287,9 @@ impl SyncController {
             content: Mutex::new(ContentStatus::default()),
             settings: Mutex::new(ContentStatus::default()),
             open_url,
+            plan: Mutex::new(None),
+            plan_failures: std::sync::atomic::AtomicU32::new(0),
+            plan_poll: AtomicU64::new(0),
         }
     }
 
@@ -283,7 +297,13 @@ impl SyncController {
         let (state, message) = view_of(self.config.as_ref().err().map(String::as_str), &self.status.lock().unwrap());
         let content = self.content.lock().unwrap().clone();
         let settings = self.settings.lock().unwrap().clone();
+        let device_limit = matches!(*self.status.lock().unwrap(), SyncStatus::DeviceLimit { .. });
+        let plan = self.plan.lock().unwrap().as_ref().map(crate::syncing::billing::PlanView::from);
+        let plan_unknown = plan.is_none() && self.plan_failures.load(Ordering::SeqCst) > 0;
         SyncView {
+            device_limit,
+            plan,
+            plan_unknown,
             state,
             message,
             device_id: self.identity.device_id.clone(),
@@ -415,6 +435,10 @@ impl SyncController {
                     if matches!(status, SyncStatus::Ready { .. }) {
                         self.after_ready();
                     }
+                    // At the limit, the plan decides what Settings offers (Upgrade, or nothing).
+                    if matches!(status, SyncStatus::DeviceLimit { .. }) {
+                        let _ = self.refresh_plan();
+                    }
                     break;
                 }
                 Err(StepError::Worker(e)) if en::is_permanent_failure(&e) => {
@@ -523,6 +547,9 @@ impl SyncController {
                         if let Err(e) = me.refresh_devices() {
                             tracing::warn!(error = %e, "device list refresh failed");
                         }
+                        let _ = me.refresh_plan();
+                    } else if me.wants_plan_retry() {
+                        let _ = me.refresh_plan();
                     }
                 }
             })
@@ -535,6 +562,7 @@ impl SyncController {
     }
 
     fn after_ready(&self) {
+        let _ = self.refresh_plan();
         match self.refresh_devices() {
             Ok(views) => {
                 let unnamed = views.iter().any(|v| v.this_device && v.name.as_deref().is_none_or(|n| n.trim().is_empty()));
@@ -546,6 +574,103 @@ impl SyncController {
             }
             Err(e) => tracing::warn!(error = %e, "device list after enrollment failed"),
         }
+    }
+
+    /// Reads the account's plan (Cloud v1). A failed read keeps the last plan and counts toward
+    /// `PLAN_RETRIES`.
+    pub fn refresh_plan(&self) -> Result<crate::syncing::billing::PlanView, String> {
+        let read = self.fresh_id_token().and_then(|id_token| {
+            self.worker()?.account_plan(&id_token, &self.identity.device_id).map_err(|e| en::user_message_in(&e, &crate::l10n::ui_language()))
+        });
+        match read {
+            Ok(plan) => {
+                self.plan_failures.store(0, Ordering::SeqCst);
+                let view = crate::syncing::billing::PlanView::from(&plan);
+                *self.plan.lock().unwrap() = Some(plan);
+                Ok(view)
+            }
+            Err(e) => {
+                self.plan_failures.fetch_add(1, Ordering::SeqCst);
+                tracing::warn!(error = %e, "could not read the sync plan");
+                Err(e)
+            }
+        }
+    }
+
+    /// Whether the upkeep tick should try the plan again: none known yet, signed in (ready or at the
+    /// limit), and fewer than `PLAN_RETRIES` failures in a row.
+    fn wants_plan_retry(&self) -> bool {
+        let signed_in = matches!(*self.status.lock().unwrap(), SyncStatus::Ready { .. } | SyncStatus::DeviceLimit { .. });
+        signed_in
+            && self.plan.lock().unwrap().is_none()
+            && (1..crate::syncing::billing::PLAN_RETRIES).contains(&self.plan_failures.load(Ordering::SeqCst))
+    }
+
+    /// Upgrade to Cloud: opens Stripe Checkout for `interval` in the browser, then watches the plan.
+    pub fn upgrade(self: &Arc<Self>, interval: &str) -> Result<(), String> {
+        let interval = crate::syncing::billing::interval(interval).ok_or_else(|| format!("unknown billing interval {interval:?}"))?;
+        let id_token = self.fresh_id_token()?;
+        let opened = self.worker()?.billing_checkout(&id_token, &self.identity.device_id, interval);
+        self.open_billing(opened)
+    }
+
+    /// Manage subscription: opens Stripe's customer portal, then watches the plan.
+    pub fn manage_subscription(self: &Arc<Self>) -> Result<(), String> {
+        let id_token = self.fresh_id_token()?;
+        let opened = self.worker()?.billing_portal(&id_token, &self.identity.device_id);
+        self.open_billing(opened)
+    }
+
+    fn open_billing(self: &Arc<Self>, url: Result<String, en::WorkerError>) -> Result<(), String> {
+        use crate::syncing::billing::{billing_failure, BillingFailure};
+        match url {
+            Ok(url) => {
+                (self.open_url)(&url)?;
+                self.start_plan_poll();
+                Ok(())
+            }
+            Err(e) => match billing_failure(&e) {
+                BillingFailure::RefreshPlan => self.refresh_plan().map(|_| ()),
+                BillingFailure::Unavailable => {
+                    // Hides Upgrade and Manage until a read says billing is open again.
+                    if let Some(plan) = self.plan.lock().unwrap().as_mut() {
+                        plan.billing = false;
+                    }
+                    Ok(())
+                }
+                BillingFailure::Message(message) => Err(message),
+            },
+        }
+    }
+
+    /// After Stripe opens: reads the plan every `PLAN_POLL_EVERY` for up to `PLAN_POLL_FOR`, stopping when
+    /// it changes. Turning Cloud at the device limit runs the silent sign-in again, so this PC joins.
+    fn start_plan_poll(self: &Arc<Self>) {
+        use crate::syncing::billing::{is_cloud, PLAN_POLL_EVERY, PLAN_POLL_FOR};
+        let generation = self.plan_poll.fetch_add(1, Ordering::SeqCst) + 1;
+        let start = self.plan.lock().unwrap().clone();
+        let me = self.clone();
+        let every = if self.poll_base < Duration::from_secs(1) { self.poll_base } else { PLAN_POLL_EVERY };
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + PLAN_POLL_FOR;
+            while Instant::now() < deadline {
+                std::thread::sleep(every);
+                if me.plan_poll.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+                if me.refresh_plan().is_err() {
+                    continue;
+                }
+                let now = me.plan.lock().unwrap().clone();
+                if now != start {
+                    let at_limit = matches!(*me.status.lock().unwrap(), SyncStatus::DeviceLimit { .. });
+                    if at_limit && now.as_ref().is_some_and(is_cloud) {
+                        me.check_again();
+                    }
+                    return;
+                }
+            }
+        });
     }
 
     /// Fetches the account's devices, refreshing the Library's peer names.
@@ -658,6 +783,64 @@ mod tests {
         assert!(message.unwrap().contains("one computer and one phone"));
         assert_eq!(view_of(None, &SyncStatus::RateLimited), (SyncState::Error, Some(tr("Too many attempts. Try again later.", &[]))));
         assert_eq!(view_of(Some("not configured"), &SyncStatus::NotSignedIn).0, SyncState::NotConfigured);
+    }
+
+    fn view_when(c: &SyncController, what: impl Fn(&SyncView) -> bool) -> SyncView {
+        for _ in 0..300 {
+            let v = c.view();
+            if what(&v) {
+                return v;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        c.view()
+    }
+
+    fn plan(name: &str, billing: bool) -> api::sync_ops::enrollment::AccountPlan {
+        api::sync_ops::enrollment::AccountPlan { plan: name.into(), until: None, interval: None, billing }
+    }
+
+    #[test]
+    fn upgrading_at_the_device_limit_joins_once_the_plan_turns_cloud() {
+        let worker = FakeWorker::new(Ok(GoogleAuthResult::DeviceLimit { kind: "computer".into(), devices: vec![] }), vec![]);
+        let c = Arc::new(controller(worker.clone(), Arc::new(MemorySecrets::default())));
+        c.check_again();
+        let v = view_when(&c, |v| v.device_limit && v.plan.is_some());
+        assert!(v.device_limit, "stopped at the limit");
+        assert_eq!(v.plan.as_ref().map(|p| (p.plan.as_str(), p.billing)), Some(("free", true)), "the plan is read at the limit");
+
+        c.upgrade("year").unwrap();
+        assert_eq!(*worker.checkouts.lock().unwrap(), vec!["year".to_string()]);
+        // Stripe finishes: the plan turns Cloud and the Worker now lets this PC in.
+        *worker.plan.lock().unwrap() = Ok(plan("cloud", true));
+        *worker.auth.lock().unwrap() = approved();
+        let v = view_when(&c, |v| !v.device_limit);
+        assert!(!v.device_limit, "the silent sign-in ran again once the plan turned Cloud");
+        assert!(c.upgrade("week").is_err(), "only month and year");
+    }
+
+    #[test]
+    fn billing_errors_refresh_the_plan_hide_billing_or_explain() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        let c = Arc::new(controller(worker.clone(), Arc::new(MemorySecrets::default())));
+        assert!(c.view().plan.is_none() && !c.view().plan_unknown);
+        c.refresh_plan().unwrap();
+
+        *worker.checkout.lock().unwrap() = Err(WorkerError::Http { status: 503, body: r#"{"error":"billing_unavailable"}"#.into() });
+        c.upgrade("month").unwrap();
+        assert!(!c.view().plan.unwrap().billing, "503 hides Upgrade and Manage");
+
+        *worker.plan.lock().unwrap() = Ok(plan("cloud", true));
+        *worker.checkout.lock().unwrap() = Err(WorkerError::Http { status: 409, body: r#"{"error":"already_cloud"}"#.into() });
+        c.upgrade("month").unwrap();
+        assert_eq!(c.view().plan.unwrap().plan, "cloud", "409 re-reads the plan");
+
+        *worker.checkout.lock().unwrap() = Err(WorkerError::Http { status: 502, body: "{}".into() });
+        assert_eq!(c.manage_subscription(), Err("Couldn't reach Stripe. Try again in a minute.".to_string()));
+
+        *worker.plan.lock().unwrap() = Err(WorkerError::Network);
+        assert!(c.refresh_plan().is_err());
+        assert_eq!(c.view().plan.unwrap().plan, "cloud", "a failed read keeps the last plan");
     }
 
     #[test]

@@ -176,6 +176,7 @@ it("provisions a new data-plane database only for a brand new account, then mint
     url: "https://kestrel-sync-abc123-test-org.turso.io",
   });
   vi.spyOn(accounts, "getOrCreateAccount").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -224,6 +225,7 @@ it("does not provision a new database for an account that already exists", async
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -232,6 +234,7 @@ it("does not provision a new database for an account that already exists", async
   });
   const createDbSpy = vi.spyOn(turso, "createAccountDatabase");
   vi.spyOn(accounts, "getOrCreateAccount").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -273,6 +276,7 @@ it("marks a second device pending instead of minting a token", async () => {
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -280,6 +284,7 @@ it("marks a second device pending instead of minting a token", async () => {
     dataDbUrl: "https://kestrel-sync-existing-test-org.turso.io",
   });
   vi.spyOn(accounts, "getOrCreateAccount").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -318,6 +323,7 @@ it("returns 403 for a previously revoked device", async () => {
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -325,6 +331,7 @@ it("returns 403 for a previously revoked device", async () => {
     dataDbUrl: "https://kestrel-sync-existing-test-org.turso.io",
   });
   vi.spyOn(accounts, "getOrCreateAccount").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -357,6 +364,7 @@ it("returns pending status for a device that already exists and is still pending
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -364,6 +372,7 @@ it("returns pending status for a device that already exists and is still pending
     dataDbUrl: "https://kestrel-sync-existing-test-org.turso.io",
   });
   vi.spyOn(accounts, "getOrCreateAccount").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -592,6 +601,7 @@ it("returns 403 from /v1/devices when the caller's own device isn't approved", a
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -624,6 +634,7 @@ it("lists an account's devices for an approved caller", async () => {
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -765,6 +776,7 @@ it("returns 404 from the approve route for a target device that doesn't exist", 
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -803,6 +815,7 @@ it("returns 404 (not 403) from the approve route for a target device on a differ
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -850,6 +863,7 @@ it("returns 400 from the approve route when the target device is revoked", async
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -896,6 +910,7 @@ it("allows re-approving an already-approved device (recovers from an expired han
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -1009,6 +1024,7 @@ it("returns 404 from the revoke route for a target device that doesn't exist", a
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -1043,6 +1059,7 @@ it("returns 404 (not 403) from the revoke route for a target device on a differe
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -1086,6 +1103,7 @@ it("returns 400 from the revoke route when the target device is already revoked"
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -1128,6 +1146,7 @@ it("revokes an approved device and rotates all tokens for the account's database
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -1249,6 +1268,7 @@ it("sets the calling device's own name", async () => {
     audience: "test-client-id",
   });
   vi.spyOn(accounts, "findAccountByGoogleSub").mockResolvedValue({
+    ...FREE_PLAN,
     id: "account-1",
     email: "owner@example.com",
     googleSub: "google-sub-1",
@@ -1358,6 +1378,8 @@ it("truncates an over-long device name to 100 characters", async () => {
 });
 
 const IOS = "test-ios-client-id";
+const FREE_PLAN = { plan: "free", planUntilUnixMs: null, planInterval: null, stripeCustomerId: null, stripeSubscriptionId: null } as const;
+
 function mockAud(audience: string) {
   vi.spyOn(googleAuth, "verifyGoogleIdToken").mockResolvedValue({
     email: "owner@example.com",
@@ -2427,4 +2449,30 @@ it("on the hosted relay an unlimited email can approve a second computer", async
     db,
   );
   expect(res.status).toBe(200);
+});
+
+// ---- Cloud plan lifts the device limit ----
+
+it("a_cloud_account_enrols_a_second_computer_as_pending", async () => {
+  const { db, account } = await seeded();
+  vi.spyOn(turso, "mintDeviceToken").mockResolvedValue("jwt");
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: Date.now() + 30 * DAY });
+  const res = await handleGoogleAuth(authBody({ platform: "windows" }), hostedEnv(), db);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toMatchObject({ status: "pending" });
+});
+
+it("after_cloud_ends_approved_devices_keep_tokens_and_a_fourth_is_refused", async () => {
+  const { db, account } = await seeded();
+  vi.spyOn(turso, "mintDeviceToken").mockResolvedValue("jwt");
+  await accounts.enrollDevice(db, account.id, "win-key", "approved", 3, "windows");
+  await accounts.enrollDevice(db, account.id, "win2-key", "approved", 4, "windows");
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: Date.now() - 1 });
+  for (const key of ["mac-key", "win-key", "win2-key"]) {
+    const res = await handleGoogleAuth(postAuth({ idToken: "t", devicePublicKey: key }), hostedEnv(), db);
+    expect(await res.json()).toMatchObject({ status: "approved" });
+  }
+  const fourth = await handleGoogleAuth(authBody({ platform: "windows" }), hostedEnv(), db);
+  expect(fourth.status).toBe(409);
+  expect(await fourth.json()).toMatchObject({ error: "device_limit" });
 });

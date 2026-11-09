@@ -3,10 +3,12 @@ import { connect } from "@tursodatabase/serverless";
 import { hasDeviceLimit, isSignInAllowed } from "./allowlist";
 import { allowedAudiences, googleJwks, verifyGoogleIdToken } from "./googleAuth";
 import { mintDeviceToken, createAccountDatabase, deleteAccountDatabase, rotateAllTokens } from "./turso";
-import { kindOf, limitCheck } from "./limits";
+import { isCloud, kindOf, limitCheck } from "./limits";
 import { storeWrappedKeyForHandoff, fetchAndConsumeWrappedKey } from "./handoff";
 import { ipBucket, rateLimit, rateLimited } from "./rateLimit";
 import { deleteAccount, runInactivity } from "./inactivity";
+import { billingConfigured, planFromSubscription, stripeRequest, subscriptionIdOf, verifyStripeSignature } from "./stripe";
+import { EMAIL_FROM, EMAIL_REPLY_TO, sendEmail } from "./email";
 import {
   findAccountByGoogleSub,
   getOrCreateAccount,
@@ -32,6 +34,11 @@ import {
   recentlySeenApprovedDevices,
   addToWaitlist,
   claimForDeletion,
+  findAccountById,
+  setStripeCustomer,
+  applyPlan,
+  stripeEventSeen,
+  recordStripeEvent,
   AccountDeletingError,
   type AccountRecord,
   type DevicePlatform,
@@ -58,6 +65,13 @@ export interface Env {
   /** Comma-separated emails exempt from the free device limit. */
   UNLIMITED_EMAILS?: string;
   RESEND_API_KEY?: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_PRICE_MONTHLY?: string;
+  STRIPE_PRICE_YEARLY?: string;
+  /** Optional Billing Portal configuration (`bpc_…`) for Whimbrel; the Stripe
+   * account is shared, so the default portal could offer another product. */
+  STRIPE_PORTAL_CONFIGURATION?: string;
   ENROLLMENT_HANDOFF: KVNamespace;
 }
 
@@ -205,7 +219,7 @@ export async function handleGoogleAuth(
       // Only new device keys count: a known device (a pending one polls every
       // few seconds) is never limited.
       if (!(await rateLimit(env.ENROLLMENT_HANDOFF, `auth:${identity.googleSub}`, 30, 10 * 60))) return rateLimited();
-      const enrolled = await enrolNewDevice(db, env, identity.email, account.id, body.devicePublicKey, platformFor(body.platform, phone), phone, now);
+      const enrolled = await enrolNewDevice(db, env, account, body.devicePublicKey, platformFor(body.platform, phone), phone, now);
       if (enrolled instanceof Response) return enrolled;
       device = enrolled;
     }
@@ -291,18 +305,17 @@ const desktopRequired = () => Response.json({ error: "desktop_required" }, { sta
 async function enrolNewDevice(
   db: SqlExecutor,
   env: Env,
-  email: string,
-  accountId: string,
+  account: AccountRecord,
   publicKey: string,
   platform: DevicePlatform,
   phone: PhoneAudience | null,
   now: number,
 ): Promise<DeviceRecord | Response> {
-  const activeDeviceCount = await countActiveDevicesForAccount(db, accountId);
+  const activeDeviceCount = await countActiveDevicesForAccount(db, account.id);
   if (phone && activeDeviceCount === 0) return desktopRequired();
   const status = activeDeviceCount === 0 ? "approved" : "pending";
-  const device = await enrollDevice(db, accountId, publicKey, status, now, platform);
-  const limited = await deviceLimitAfterEnrol(db, env, email, device, () => deleteDevice(db, device.id));
+  const device = await enrollDevice(db, account.id, publicKey, status, now, platform);
+  const limited = await deviceLimitAfterEnrol(db, env, account, device, () => deleteDevice(db, device.id), now);
   return limited ?? device;
 }
 
@@ -322,11 +335,12 @@ function deviceLimitResponse(kind: string, holders: DeviceRecord[]): Response {
 async function deviceLimitAfterEnrol(
   db: SqlExecutor,
   env: Env,
-  email: string,
+  account: AccountRecord,
   device: DeviceRecord,
   undo: () => Promise<void>,
+  now: number,
 ): Promise<Response | null> {
-  if (!hasDeviceLimit(email, env)) return null;
+  if (!hasDeviceLimit(account.email, env, isCloud(account, now))) return null;
   try {
     const devices = await listDevicesForAccount(db, device.accountId);
     const own = devices.findIndex((d) => d.id === device.id);
@@ -455,10 +469,11 @@ export async function handleApproveDevice(
     // A pending row that isn't a swap can still be over the limit (enrolled
     // before the limit existed, or left behind by a failed check), so check
     // again here rather than trust that it was checked at enrolment.
+    const now = Date.now();
     if (
       targetDevice.status === "pending" &&
       !targetDevice.replacesDeviceId &&
-      hasDeviceLimit(authResult.account.email, env)
+      hasDeviceLimit(authResult.account.email, env, isCloud(authResult.account, now))
     ) {
       const others = (await listDevicesForAccount(db, authResult.account.id)).filter((d) => d.id !== targetDevice.id);
       const check = limitCheck(others, targetDevice.platform, false);
@@ -658,8 +673,9 @@ export async function handleSwapDevice(
     const device =
       existing ?? (await enrollDevice(db, account.id, caller.devicePublicKey, "pending", now, platformFor(body.platform, caller.phone)));
     await setReplacesDevice(db, device.id, target.id);
-    const limited = await deviceLimitAfterEnrol(db, env, caller.email, { ...device, replacesDeviceId: target.id }, () =>
+    const limited = await deviceLimitAfterEnrol(db, env, account, { ...device, replacesDeviceId: target.id }, () =>
       existing ? setReplacesDevice(db, device.id, existing.replacesDeviceId ?? null) : deleteDevice(db, device.id),
+      now,
     );
     if (limited) return limited;
     await touchLastSeen(db, account.id, device.id, now);
@@ -710,6 +726,294 @@ export async function handleWaitlist(
     return Response.json({ status: "ok" });
   } catch (err) {
     return backendError("handleWaitlist", err);
+  }
+}
+
+/** The auth recipe for the billing routes: like the waitlist, the caller's
+ * device need not be enrolled (at the free limit it was just refused). The
+ * Google token proves account ownership; nothing here grants sync access. */
+async function billingAccount(
+  body: AuthenticatedApprovedDeviceRequestBody,
+  env: Env,
+  db: SqlExecutor,
+  now: number,
+): Promise<{ account: AccountRecord; googleSub: string } | Response> {
+  const caller = await verifyCaller(body, env);
+  if (caller instanceof Response) return caller;
+  const account = await liveAccount(db, caller.googleSub);
+  if (!account) return Response.json({ error: "device not approved" }, { status: 403 });
+  const device = await findDeviceByPublicKey(db, account.id, caller.devicePublicKey);
+  if (device && device.status !== "revoked") await touchLastSeen(db, account.id, device.id, now);
+  return { account, googleSub: caller.googleSub };
+}
+
+const billingUnavailable = () => Response.json({ error: "billing_unavailable" }, { status: 503 });
+/** Stripe's own error body never reaches the client. */
+const billingFailed = () => Response.json({ error: "billing_failed" }, { status: 502 });
+
+async function readBody(request: Request): Promise<AuthenticatedApprovedDeviceRequestBody | null> {
+  try {
+    return (await request.json()) as AuthenticatedApprovedDeviceRequestBody;
+  } catch {
+    return null;
+  }
+}
+
+/** The caller's plan, for the app's Cloud row. */
+export async function handleAccountPlan(
+  request: Request,
+  env: Env,
+  db: SqlExecutor = tursoSqlExecutor(env),
+  now: number = Date.now(),
+): Promise<Response> {
+  const body = await readBody(request);
+  if (!body) return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  try {
+    const auth = await billingAccount(body, env, db, now);
+    if (auth instanceof Response) return auth;
+    const { account } = auth;
+    const cloud = isCloud(account, now);
+    return Response.json({
+      plan: cloud ? "cloud" : "free",
+      until: cloud ? account.planUntilUnixMs : null,
+      interval: cloud ? account.planInterval : null,
+      billing: billingConfigured(env),
+    });
+  } catch (err) {
+    return backendError("handleAccountPlan", err);
+  }
+}
+
+/** Starts a Stripe Checkout session for Cloud and returns its URL. */
+export async function handleBillingCheckout(
+  request: Request,
+  env: Env,
+  db: SqlExecutor = tursoSqlExecutor(env),
+  fetcher: typeof fetch = fetch,
+  now: number = Date.now(),
+): Promise<Response> {
+  const body = (await readBody(request)) as (AuthenticatedApprovedDeviceRequestBody & { interval?: unknown }) | null;
+  if (!body) return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  const interval = body.interval;
+  if (interval !== "month" && interval !== "year") return Response.json({ error: "interval_required" }, { status: 400 });
+  if (!billingConfigured(env)) return billingUnavailable();
+  try {
+    const auth = await billingAccount(body, env, db, now);
+    if (auth instanceof Response) return auth;
+    const { account, googleSub } = auth;
+    if (!(await rateLimit(env.ENROLLMENT_HANDOFF, `billing:${googleSub}`, 20, 60 * 60))) return rateLimited();
+    if (isCloud(account, now)) return Response.json({ error: "already_cloud" }, { status: 409 });
+    const params: Record<string, string> = {
+      mode: "subscription",
+      "line_items[0][price]": interval === "year" ? env.STRIPE_PRICE_YEARLY! : env.STRIPE_PRICE_MONTHLY!,
+      "line_items[0][quantity]": "1",
+      client_reference_id: account.id,
+      "subscription_data[metadata][account_id]": account.id,
+      "automatic_tax[enabled]": "true",
+      billing_address_collection: "required",
+      success_url: "https://whimbrelapp.com/cloud/thanks/",
+      cancel_url: "https://whimbrelapp.com/cloud/cancelled/",
+    };
+    if (account.stripeCustomerId) {
+      params.customer = account.stripeCustomerId;
+      params["customer_update[address]"] = "auto";
+    } else {
+      params.customer_email = account.email;
+    }
+    const res = await stripeRequest(env.STRIPE_SECRET_KEY!, "POST", "checkout/sessions", params, fetcher);
+    if (!res.ok || typeof res.body?.url !== "string") return billingFailed();
+    return Response.json({ url: res.body.url });
+  } catch (err) {
+    return backendError("handleBillingCheckout", err);
+  }
+}
+
+/** Opens the Stripe customer portal for an account that has paid before. */
+export async function handleBillingPortal(
+  request: Request,
+  env: Env,
+  db: SqlExecutor = tursoSqlExecutor(env),
+  fetcher: typeof fetch = fetch,
+): Promise<Response> {
+  const body = await readBody(request);
+  if (!body) return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  if (!billingConfigured(env)) return billingUnavailable();
+  try {
+    const auth = await billingAccount(body, env, db, Date.now());
+    if (auth instanceof Response) return auth;
+    if (!(await rateLimit(env.ENROLLMENT_HANDOFF, `billing:${auth.googleSub}`, 20, 60 * 60))) return rateLimited();
+    const customer = auth.account.stripeCustomerId;
+    if (!customer) return Response.json({ error: "no_subscription" }, { status: 409 });
+    const params: Record<string, string> = { customer, return_url: "https://whimbrelapp.com/cloud/thanks/" };
+    if (env.STRIPE_PORTAL_CONFIGURATION) params.configuration = env.STRIPE_PORTAL_CONFIGURATION;
+    const res = await stripeRequest(env.STRIPE_SECRET_KEY!, "POST", "billing_portal/sessions", params, fetcher);
+    if (!res.ok || typeof res.body?.url !== "string") return billingFailed();
+    return Response.json({ url: res.body.url });
+  } catch (err) {
+    return backendError("handleBillingPortal", err);
+  }
+}
+
+/** The Stripe account is shared with another product: a subscription is ours
+ * to act on when it is on one of Whimbrel's two prices, or when its
+ * `metadata.account_id` names `accountId`, a Whimbrel account that exists (so a
+ * renewal on a retired price still lands). Pass null when no account matched. */
+function isWhimbrelSubscription(sub: any, env: Env, accountId: string | null): boolean {
+  if (accountId !== null && sub?.metadata?.account_id === accountId) return true;
+  const items: any[] = Array.isArray(sub?.items?.data) ? sub.items.data : [];
+  return items.some((i) => {
+    const price = i?.price?.id;
+    return typeof price === "string" && (price === env.STRIPE_PRICE_MONTHLY || price === env.STRIPE_PRICE_YEARLY);
+  });
+}
+
+/** Not an error to the caller: Stripe retries any non-2xx for three days. */
+const stripeRetryLater = () => Response.json({ error: "stripe_unavailable" }, { status: 500 });
+
+/** Emails the alert address so Mike can refund a duplicate by hand. When no
+ * email goes out, the log carries everything the refund needs (ids only,
+ * never the person's email address). */
+async function alertDuplicateSubscription(env: Env, accountId: string, kept: string, cancelled: string, customer: unknown, fetcher: typeof fetch) {
+  console.error("billing: duplicate subscription cancelled", cancelled, "kept", kept);
+  const sent =
+    !!env.RESEND_API_KEY &&
+    (await sendEmail(
+    env.RESEND_API_KEY,
+    {
+      from: EMAIL_FROM,
+      to: EMAIL_REPLY_TO,
+      subject: "Refund a duplicate Whimbrel Cloud subscription",
+      text:
+        `Account ${accountId} started a second Whimbrel Cloud subscription while one was live. ` +
+        `${cancelled} was cancelled at once; ${kept} is kept. ` +
+        `Refund what ${cancelled} charged by hand in Stripe (customer ${typeof customer === "string" ? customer : "unknown"}).`,
+    },
+    fetcher,
+  ));
+  if (!sent) console.error("billing: duplicate alert not sent", "account", accountId, "cancelled", cancelled, "kept", kept, "customer", customer);
+}
+
+/** Emails the alert address after cancelling a subscription whose account
+ * is deleted or being deleted (a Checkout completed late, say). Ids only. */
+async function alertDeletedAccountSubscription(env: Env, accountId: string, subscriptionId: string, customer: unknown, fetcher: typeof fetch) {
+  console.error("billing: deleted account's subscription cancelled", subscriptionId);
+  const sent =
+    !!env.RESEND_API_KEY &&
+    (await sendEmail(
+    env.RESEND_API_KEY,
+    {
+      from: EMAIL_FROM,
+      to: EMAIL_REPLY_TO,
+      subject: "Refund a Whimbrel Cloud subscription for a deleted account",
+      text:
+        `Subscription ${subscriptionId} was cancelled because the account was deleted (account ${accountId}). ` +
+        `No refund was issued: refund by hand in Stripe what it charged (customer ${typeof customer === "string" ? customer : "unknown"}).`,
+    },
+    fetcher,
+  ));
+  if (!sent) console.error("billing: deleted account alert not sent", "account", accountId, "subscription", subscriptionId, "customer", customer);
+}
+
+/** Stripe's webhook. Verified on the raw body; each event id is handled
+ * once. The plan comes from a fresh read of the subscription, never the
+ * event payload, because Stripe does not order its events. Stripe failures
+ * return 500 (event not recorded) so Stripe retries; events for unknown or
+ * deleting accounts write nothing, but a live Cloud subscription of theirs is
+ * cancelled and alerted. */
+export async function handleBillingWebhook(
+  request: Request,
+  env: Env,
+  db: SqlExecutor = tursoSqlExecutor(env),
+  fetcher: typeof fetch = fetch,
+  now: number = Date.now(),
+): Promise<Response> {
+  if (!billingConfigured(env)) return billingUnavailable();
+  const raw = await request.text();
+  if (!(await verifyStripeSignature(raw, request.headers.get("stripe-signature"), env.STRIPE_WEBHOOK_SECRET!, now))) {
+    console.log("billing webhook: bad signature");
+    return Response.json({ error: "bad_signature" }, { status: 400 });
+  }
+  let event: any;
+  try {
+    event = JSON.parse(raw);
+  } catch {
+    return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+  if (typeof event?.id !== "string") return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  const received = async () => {
+    await recordStripeEvent(db, event.id, now);
+    return Response.json({ received: true });
+  };
+  try {
+    if (await stripeEventSeen(db, event.id)) return Response.json({ received: true });
+    const subId = subscriptionIdOf(event);
+    if (typeof subId !== "string") return await received();
+    const key = env.STRIPE_SECRET_KEY!;
+    const res = await stripeRequest(key, "GET", `subscriptions/${encodeURIComponent(subId)}`, {}, fetcher);
+    // A 404 too: it means a wrong or test/live-mismatched key, so recording
+    // the event would drop a paid checkout; Stripe retries for days.
+    if (!res.ok) return stripeRetryLater();
+    const sub = res.body;
+    const obj = event.data?.object;
+    const metaId = sub?.metadata?.account_id;
+    const accountId = typeof metaId === "string" ? metaId : obj?.client_reference_id;
+    const account = typeof accountId === "string" ? await findAccountById(db, accountId) : null;
+    // Another product's subscription, invoice or checkout: acknowledge, touch nothing.
+    if (!isWhimbrelSubscription(sub, env, account?.id ?? null)) {
+      console.log("billing: ignored subscription", sub?.id, sub?.status);
+      return await received();
+    }
+    let state = planFromSubscription(sub, now);
+    if (!account || account.deletingSinceUnixMs != null) {
+      // A Checkout completed (or renewed) after the account was deleted would
+      // charge forever: cancel it (no proration, no refund) and alert. The
+      // account's own stored subscription is left to deleteAccount.
+      if (typeof metaId === "string" && state?.plan === "cloud" && account?.stripeSubscriptionId !== subId) {
+        const del = await stripeRequest(key, "DELETE", `subscriptions/${encodeURIComponent(subId)}`, {}, fetcher);
+        if (!del.ok && del.status !== 404) {
+          console.error("billing: deleted account cancel failed", del.status, subId);
+          return stripeRetryLater();
+        }
+        await alertDeletedAccountSubscription(env, metaId, subId, sub?.customer, fetcher);
+      }
+      return await received();
+    }
+    let applyId = subId;
+    let keptSub = sub;
+    const stored = account.stripeSubscriptionId;
+    // ponytail: read-then-cancel, so two concurrent first events for two new
+    // subscriptions can both miss each other; Mike's refund-by-hand covers it.
+    if (state?.plan === "cloud" && stored && stored !== subId) {
+      const other = await stripeRequest(key, "GET", `subscriptions/${encodeURIComponent(stored)}`, {}, fetcher);
+      if (!other.ok && other.status !== 404) return stripeRetryLater();
+      // Only two Whimbrel subscriptions on one account are a duplicate.
+      const otherState = other.ok && isWhimbrelSubscription(other.body, env, account.id) ? planFromSubscription(other.body, now) : null;
+      if (otherState?.plan === "cloud") {
+        // Two live subscriptions: keep the older, cancel the newer (no proration, no refund).
+        const storedIsOlder = (other.body?.created ?? 0) <= (sub?.created ?? 0);
+        const [kept, cancelled] = storedIsOlder ? [stored, subId] : [subId, stored];
+        const del = await stripeRequest(key, "DELETE", `subscriptions/${encodeURIComponent(cancelled)}`, {}, fetcher);
+        if (!del.ok && del.status !== 404) {
+          console.error("billing: duplicate cancel failed", del.status, "cancelling", cancelled, "kept", kept);
+          return stripeRetryLater();
+        }
+        await alertDuplicateSubscription(env, account.id, kept, cancelled, storedIsOlder ? sub?.customer : other.body?.customer, fetcher);
+        applyId = kept;
+        if (storedIsOlder) {
+          state = otherState;
+          keptSub = other.body;
+        }
+      }
+    }
+    // The customer comes from the kept subscription, so Manage never opens
+    // a cancelled duplicate's portal.
+    if (state && (await applyPlan(db, account.id, applyId, state)) && state.plan === "cloud") {
+      const customer = keptSub?.customer;
+      if (typeof customer === "string" && customer !== account.stripeCustomerId) await setStripeCustomer(db, account.id, customer);
+    }
+    return await received();
+  } catch (err) {
+    return backendError("handleBillingWebhook", err);
   }
 }
 
@@ -832,6 +1136,7 @@ export async function handleDeleteAccount(
   request: Request,
   env: Env,
   db: SqlExecutor = tursoSqlExecutor(env),
+  fetcher: typeof fetch = fetch,
 ): Promise<Response> {
   let body: ResetAccountRequestBody;
   try {
@@ -848,7 +1153,7 @@ export async function handleDeleteAccount(
     if (authResult instanceof Response) return authResult;
     // The claim shuts every other route out before anything is deleted.
     if (!(await claimForDeletion(db, authResult.account.id, Date.now()))) return accountDeleting();
-    await deleteAccount(db, env, authResult.account);
+    await deleteAccount(db, env, authResult.account, fetcher);
     return Response.json({ status: "deleted" });
   } catch (err) {
     return backendError("handleDeleteAccount", err);
@@ -879,6 +1184,18 @@ export default {
       }
       if (url.pathname === "/v1/waitlist" && request.method === "POST") {
         return await handleWaitlist(request, env);
+      }
+      if (url.pathname === "/v1/account/plan" && request.method === "POST") {
+        return await handleAccountPlan(request, env);
+      }
+      if (url.pathname === "/v1/billing/checkout" && request.method === "POST") {
+        return await handleBillingCheckout(request, env);
+      }
+      if (url.pathname === "/v1/billing/portal" && request.method === "POST") {
+        return await handleBillingPortal(request, env);
+      }
+      if (url.pathname === "/v1/billing/webhook" && request.method === "POST") {
+        return await handleBillingWebhook(request, env);
       }
       if (url.pathname === "/v1/account/reset" && request.method === "POST") {
         return await handleResetAccount(request, env);

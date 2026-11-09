@@ -2691,6 +2691,39 @@
       ],
       "type": "object"
     },
+    "PlanView": {
+      "description": "The plan as Settings → Sync & Devices draws it.",
+      "properties": {
+        "billing": {
+          "description": "Billing is open: Upgrade and Manage show only when it is.",
+          "type": "boolean"
+        },
+        "interval": {
+          "description": "`month` or `year`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plan": {
+          "description": "`free` or `cloud`.",
+          "type": "string"
+        },
+        "untilUnixMs": {
+          "description": "When a Cloud plan runs to (it renews unless cancelled).",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "plan",
+        "billing"
+      ],
+      "type": "object"
+    },
     "PrepAttendee": {
       "properties": {
         "note": {
@@ -4334,11 +4367,30 @@
         "deviceId": {
           "type": "string"
         },
+        "deviceLimit": {
+          "description": "Stopped at the free plan's device limit: Settings offers Cloud here.",
+          "type": "boolean"
+        },
         "message": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PlanView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The account's plan, as last read (Cloud v1); `None` until a read succeeds."
+        },
+        "planUnknown": {
+          "description": "The last plan read failed and no plan is known: \"Couldn't check your plan.\"",
+          "type": "boolean"
         },
         "settingsError": {
           "description": "The last settings-sync failure, cleared by the next success.",
@@ -4361,7 +4413,9 @@
       },
       "required": [
         "state",
-        "deviceId"
+        "deviceId",
+        "deviceLimit",
+        "planUnknown"
       ],
       "type": "object"
     },

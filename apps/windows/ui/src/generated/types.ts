@@ -1696,6 +1696,30 @@ export interface OrgCount {
   org: string;
 }
 /**
+ * The plan as Settings → Sync & Devices draws it.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "PlanView".
+ */
+export interface PlanView {
+  /**
+   * Billing is open: Upgrade and Manage show only when it is.
+   */
+  billing: boolean;
+  /**
+   * `month` or `year`.
+   */
+  interval?: string | null;
+  /**
+   * `free` or `cloud`.
+   */
+  plan: string;
+  /**
+   * When a Cloud plan runs to (it renews unless cancelled).
+   */
+  untilUnixMs?: number | null;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "ProfileFields".
  */
@@ -2151,7 +2175,19 @@ export interface SyncView {
    */
   contentLastSyncedMs?: number | null;
   deviceId: string;
+  /**
+   * Stopped at the free plan's device limit: Settings offers Cloud here.
+   */
+  deviceLimit: boolean;
   message?: string | null;
+  /**
+   * The account's plan, as last read (Cloud v1); `None` until a read succeeds.
+   */
+  plan?: PlanView | null;
+  /**
+   * The last plan read failed and no plan is known: "Couldn't check your plan."
+   */
+  planUnknown: boolean;
   /**
    * The last settings-sync failure, cleared by the next success.
    */

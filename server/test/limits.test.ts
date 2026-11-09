@@ -1,5 +1,5 @@
 import { it, expect } from "vitest";
-import { kindOf, limitCheck } from "../src/limits";
+import { isCloud, kindOf, limitCheck } from "../src/limits";
 import type { DeviceRecord } from "../src/accounts";
 
 let n = 0;
@@ -72,4 +72,12 @@ it("a resetting device holds its slot and stands in for the device it replaces",
   const old = dev("mac");
   const resetting = dev("mac", "resetting", old.id);
   expect(limitCheck([old, resetting], "mac", false)).toEqual({ ok: false, kind: "computer", holders: [resetting] });
+});
+
+it("isCloud_needs_cloud_and_a_future_until", () => {
+  const now = 1_000_000;
+  expect(isCloud({ plan: "cloud", planUntilUnixMs: now + 1 }, now)).toBe(true);
+  expect(isCloud({ plan: "cloud", planUntilUnixMs: now - 1 }, now)).toBe(false);
+  expect(isCloud({ plan: "cloud", planUntilUnixMs: null }, now)).toBe(false);
+  expect(isCloud({ plan: "free", planUntilUnixMs: now + 1 }, now)).toBe(false);
 });

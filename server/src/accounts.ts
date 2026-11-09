@@ -1,3 +1,5 @@
+import type { PlanState } from "./stripe";
+
 export interface SqlRow {
   [column: string]: unknown;
 }
@@ -27,7 +29,17 @@ CREATE TABLE IF NOT EXISTS account (
   warned_at_unix_ms INTEGER,
   unlimited INTEGER NOT NULL DEFAULT 0,
   reset_notice_pending_unix_ms INTEGER,
-  deleting_since_unix_ms INTEGER
+  deleting_since_unix_ms INTEGER,
+  plan TEXT NOT NULL DEFAULT 'free',
+  plan_until_unix_ms INTEGER,
+  plan_interval TEXT,
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS stripe_event (
+  id TEXT PRIMARY KEY,
+  received_at_unix_ms INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS device (
@@ -84,12 +96,18 @@ export interface AccountRecord {
   dataDbUrl: string;
   /** Set while the account is being deleted; every route refuses it then. */
   deletingSinceUnixMs?: number | null;
+  plan: "free" | "cloud";
+  planUntilUnixMs: number | null;
+  planInterval: "month" | "year" | null;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
 }
 
 /** Thrown when a route touches an account that is claimed for deletion. */
 export class AccountDeletingError extends Error {}
 
-const ACCOUNT_COLUMNS = "id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms";
+export const ACCOUNT_COLUMNS =
+  "id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id";
 
 /** "resetting" is a pending swap device partway through a fresh-start
  * reset: it is treated like "pending" everywhere until the reset finishes. */
@@ -299,6 +317,51 @@ export async function setAccountDatabase(
   return rows.length === 1;
 }
 
+/** Records the Stripe customer for an account. Returns false, changing
+ * nothing, when the account is claimed for deletion (or gone). */
+export async function setStripeCustomer(db: SqlExecutor, accountId: string, customerId: string): Promise<boolean> {
+  const rows = await db.execute(
+    "UPDATE account SET stripe_customer_id = ? WHERE id = ? AND deleting_since_unix_ms IS NULL RETURNING id",
+    [customerId, accountId],
+  );
+  return rows.length === 1;
+}
+
+/** Stores a subscription's plan on the account. Cloud takes over the account
+ * (and clears an inactivity warning, so a warned-then-paid account is warned
+ * afresh after the plan ends); free only ends the subscription the account
+ * is on, so a late event for an old subscription never ends a newer one.
+ * Nothing is written to an account claimed for deletion. */
+export async function applyPlan(db: SqlExecutor, accountId: string, subscriptionId: string, state: PlanState): Promise<boolean> {
+  const set = [state.plan, state.untilUnixMs, state.interval, subscriptionId];
+  const rows =
+    state.plan === "cloud"
+      ? await db.execute(
+          "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, stripe_subscription_id = ?, warned_at_unix_ms = NULL WHERE id = ? AND deleting_since_unix_ms IS NULL RETURNING id",
+          [...set, accountId],
+        )
+      : await db.execute(
+          "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, stripe_subscription_id = ? WHERE id = ? AND stripe_subscription_id = ? AND deleting_since_unix_ms IS NULL RETURNING id",
+          [...set, accountId, subscriptionId],
+        );
+  return rows.length === 1;
+}
+
+/** Marks the plan ended once its subscription is cancelled, so a retried
+ * deletion skips the cancel. */
+export async function endPlan(db: SqlExecutor, accountId: string): Promise<void> {
+  await db.execute("UPDATE account SET plan = 'free', stripe_subscription_id = NULL WHERE id = ?", [accountId]);
+}
+
+// ponytail: stripe_event is never pruned; prune in the cron past ~100k rows.
+export async function stripeEventSeen(db: SqlExecutor, id: string): Promise<boolean> {
+  return (await db.execute("SELECT 1 FROM stripe_event WHERE id = ?", [id])).length > 0;
+}
+
+export async function recordStripeEvent(db: SqlExecutor, id: string, nowUnixMs: number): Promise<void> {
+  await db.execute("INSERT OR IGNORE INTO stripe_event (id, received_at_unix_ms) VALUES (?, ?)", [id, nowUnixMs]);
+}
+
 /** Takes one of `limit` account-creation slots for an IP bucket in the
  * window after `sinceUnixMs`. A single statement, so concurrent first
  * sign-ins can't all see the last free slot (KV get-then-put could).
@@ -451,7 +514,7 @@ export async function claimInactiveForDeletion(
   warnedBeforeUnixMs: number,
 ): Promise<boolean> {
   const rows = await db.execute(
-    "UPDATE account SET deleting_since_unix_ms = ? WHERE id = ? AND deleting_since_unix_ms IS NULL AND warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND NOT EXISTS (SELECT 1 FROM device WHERE device.account_id = account.id AND device.status = 'resetting') RETURNING id",
+    "UPDATE account SET deleting_since_unix_ms = ? WHERE id = ? AND deleting_since_unix_ms IS NULL AND warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms) AND NOT EXISTS (SELECT 1 FROM device WHERE device.account_id = account.id AND device.status = 'resetting') RETURNING id",
     [nowUnixMs, accountId, warnedBeforeUnixMs],
   );
   return rows.length === 1;
@@ -548,9 +611,10 @@ export async function clearResetNotice(db: SqlExecutor, accountId: string, reset
 
 /** Unwarned accounts last seen before `seenBeforeUnixMs`. */
 export async function accountsToWarn(db: SqlExecutor, seenBeforeUnixMs: number): Promise<{ id: string; email: string }[]> {
-  const rows = await db.execute("SELECT id, email FROM account WHERE warned_at_unix_ms IS NULL AND last_seen_unix_ms < ?", [
-    seenBeforeUnixMs,
-  ]);
+  const rows = await db.execute(
+    "SELECT id, email FROM account WHERE warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?)",
+    [seenBeforeUnixMs, seenBeforeUnixMs],
+  );
   return rows.map((r) => ({ id: r.id as string, email: r.email as string }));
 }
 
@@ -558,15 +622,15 @@ export async function accountsToWarn(db: SqlExecutor, seenBeforeUnixMs: number):
  * read (which would leave a warning that can never lead to deletion). */
 export async function markWarned(db: SqlExecutor, accountId: string, nowUnixMs: number, seenBeforeUnixMs: number): Promise<void> {
   await db.execute(
-    "UPDATE account SET warned_at_unix_ms = ? WHERE id = ? AND warned_at_unix_ms IS NULL AND last_seen_unix_ms < ?",
-    [nowUnixMs, accountId, seenBeforeUnixMs],
+    "UPDATE account SET warned_at_unix_ms = ? WHERE id = ? AND warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?)",
+    [nowUnixMs, accountId, seenBeforeUnixMs, seenBeforeUnixMs],
   );
 }
 
 /** Accounts warned before `warnedBeforeUnixMs` with no contact since the warning. */
 export async function accountsToDelete(db: SqlExecutor, warnedBeforeUnixMs: number): Promise<AccountRecord[]> {
   const rows = await db.execute(
-    `SELECT ${ACCOUNT_COLUMNS} FROM account WHERE warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms`,
+    `SELECT ${ACCOUNT_COLUMNS} FROM account WHERE warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms)`,
     [warnedBeforeUnixMs],
   );
   return rows.map(rowToAccount);
@@ -605,6 +669,11 @@ function rowToAccount(row: SqlRow): AccountRecord {
     dataDbName: row.data_db_name as string,
     dataDbUrl: row.data_db_url as string,
     deletingSinceUnixMs: row.deleting_since_unix_ms == null ? null : Number(row.deleting_since_unix_ms),
+    plan: row.plan === "cloud" ? "cloud" : "free",
+    planUntilUnixMs: row.plan_until_unix_ms == null ? null : Number(row.plan_until_unix_ms),
+    planInterval: row.plan_interval === "month" || row.plan_interval === "year" ? row.plan_interval : null,
+    stripeCustomerId: row.stripe_customer_id == null ? null : (row.stripe_customer_id as string),
+    stripeSubscriptionId: row.stripe_subscription_id == null ? null : (row.stripe_subscription_id as string),
   };
 }
 

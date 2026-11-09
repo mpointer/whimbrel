@@ -37,8 +37,38 @@ pub fn sync_status(state: State<'_, AppState>) -> SyncView {
             content_error: None,
             settings_last_synced_ms: None,
             settings_error: None,
+            device_limit: false,
+            plan: None,
+            plan_unknown: false,
         },
     }
+}
+
+/// Reads the plan again (Settings → Sync & Devices opening, or the window regaining focus).
+#[tauri::command]
+pub async fn sync_refresh_plan(state: State<'_, AppState>) -> Result<SyncView, CommandError> {
+    let c = controller(&state)?;
+    let reading = c.clone();
+    let _ = tokio::task::spawn_blocking(move || reading.refresh_plan()).await;
+    Ok(c.view())
+}
+
+/// Upgrade to Cloud: opens Stripe Checkout (`month` or `year`) in the browser.
+#[tauri::command]
+pub async fn sync_upgrade(state: State<'_, AppState>, interval: String) -> Result<SyncView, CommandError> {
+    let c = controller(&state)?;
+    let opening = c.clone();
+    blocking(move || opening.upgrade(&interval)).await?;
+    Ok(c.view())
+}
+
+/// Manage subscription: opens Stripe's customer portal in the browser.
+#[tauri::command]
+pub async fn sync_manage_subscription(state: State<'_, AppState>) -> Result<SyncView, CommandError> {
+    let c = controller(&state)?;
+    let opening = c.clone();
+    blocking(move || opening.manage_subscription()).await?;
+    Ok(c.view())
 }
 
 #[tauri::command]

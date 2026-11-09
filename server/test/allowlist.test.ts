@@ -36,7 +36,7 @@ it("matches one entry among several", () => {
   expect(isEmailAllowed("d@example.com", list)).toBe(false);
 });
 
-import { isSignInAllowed, isUnlimited } from "../src/allowlist";
+import { hasDeviceLimit, isSignInAllowed, isUnlimited } from "../src/allowlist";
 
 it.each(["true", " TRUE ", "True"])("isSignInAllowed admits anyone when OPEN_SIGN_IN is %j", (v) => {
   expect(isSignInAllowed("anyone@example.com", { OPEN_SIGN_IN: v, ALLOWED_GOOGLE_EMAILS: "" })).toBe(true);
@@ -52,4 +52,9 @@ it("isUnlimited matches case-insensitively in a CSV and fails closed when unset"
   expect(isUnlimited("other@example.com", "mike@example.com")).toBe(false);
   expect(isUnlimited("mike@example.com", undefined)).toBe(false);
   expect(isUnlimited("mike@example.com", "  ")).toBe(false);
+});
+
+it("cloud_has_no_device_limit", () => {
+  expect(hasDeviceLimit("a@x", { OPEN_SIGN_IN: "true" }, false)).toBe(true);
+  expect(hasDeviceLimit("a@x", { OPEN_SIGN_IN: "true" }, true)).toBe(false);
 });

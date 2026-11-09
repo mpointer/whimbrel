@@ -1,6 +1,7 @@
 import type { Env } from "./index";
 import { isUnlimited } from "./allowlist";
 import { deleteAccountDatabase } from "./turso";
+import { stripeRequest } from "./stripe";
 import { EMAIL_FROM, EMAIL_REPLY_TO, sendEmail } from "./email";
 import {
   accountsToDelete,
@@ -10,6 +11,7 @@ import {
   clearResetNotice,
   deleteAccountRows,
   deletePendingDevice,
+  endPlan,
   expiredRetiredDatabases,
   findAccountById,
   forgetRetiredDatabase,
@@ -44,17 +46,71 @@ async function deleteRetired(db: SqlExecutor, env: Env, name: string): Promise<v
   await forgetRetiredDatabase(db, name);
 }
 
+/** Cancels the account's Stripe subscription at once (no proration, no
+ * invoice, no refund). Only the stored subscription id is touched, because
+ * the Stripe account is shared with another product. A free plan with a
+ * stored subscription may still be billing (unpaid, paused), so it is read
+ * first and cancelled unless Stripe says it has ended. Nothing here blocks the
+ * deletion. Anything but a 2xx (a 404 too, since a wrong or test/live key
+ * also gets one) alerts the alert address to check by hand; the log carries
+ * ids only, never the person's email address. The plan ends and the stored
+ * id is cleared after either outcome, so a retried deletion neither cancels
+ * nor alerts again. */
+async function cancelSubscription(db: SqlExecutor, env: Env, account: AccountRecord, fetcher: typeof fetch): Promise<void> {
+  const subscriptionId = account.stripeSubscriptionId;
+  if (!subscriptionId) return;
+  if (account.plan !== "cloud" && env.STRIPE_SECRET_KEY) {
+    const got = await stripeRequest(env.STRIPE_SECRET_KEY, "GET", `subscriptions/${encodeURIComponent(subscriptionId)}`, {}, fetcher);
+    if (got.ok && (got.body?.status === "canceled" || got.body?.status === "incomplete_expired")) return await endPlan(db, account.id);
+  }
+  const res = env.STRIPE_SECRET_KEY
+    ? await stripeRequest(env.STRIPE_SECRET_KEY, "DELETE", `subscriptions/${encodeURIComponent(subscriptionId)}`, {}, fetcher)
+    : { ok: false, status: 0, body: null };
+  if (!res.ok) await alertCancelFailed(env, account, subscriptionId, res.status, fetcher);
+  await endPlan(db, account.id);
+}
+
+async function alertCancelFailed(env: Env, account: AccountRecord, subscriptionId: string, status: number, fetcher: typeof fetch) {
+  console.error("billing: cancel failed", status, subscriptionId);
+  const missing = status === 404;
+  const sent =
+    !!env.RESEND_API_KEY &&
+    (await sendEmail(
+      env.RESEND_API_KEY,
+      {
+        from: EMAIL_FROM,
+        to: EMAIL_REPLY_TO,
+        subject: "Cancel a Whimbrel Cloud subscription by hand",
+        text:
+          `Account ${account.id} was deleted, but its subscription ${subscriptionId} ` +
+          `(customer ${account.stripeCustomerId ?? "unknown"}) ` +
+          (missing
+            ? "was not found in Stripe (a wrong or test/live key does this too). Check it by hand: it may still be charging. "
+            : "could not be cancelled. Cancel it by hand in Stripe. ") +
+          "No refund was issued.",
+      },
+      fetcher,
+    ));
+  if (!sent) console.error("billing: cancel alert not sent", "account", account.id, "subscription", subscriptionId, "customer", account.stripeCustomerId);
+}
+
 /** Deletes the account's data database, its retired databases, then its
- * registry rows. The caller must already hold the deletion claim
+ * registry rows, after cancelling its Cloud subscription. The caller must already hold the deletion claim
  * (`deleting_since_unix_ms`), which shuts every route out of the account and
  * fences resets. Everything is read fresh after the claim; the caller's
  * account is used only for its id, since its snapshot may predate a reset.
  * Databases go first, so a failure leaves the claimed account for the cron
  * to finish. A retired database that some account is using now is never
  * deleted (the account's own current one is deleted as current). */
-export async function deleteAccount(db: SqlExecutor, env: Env, claimed: Pick<AccountRecord, "id">): Promise<void> {
+export async function deleteAccount(
+  db: SqlExecutor,
+  env: Env,
+  claimed: Pick<AccountRecord, "id">,
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
   const account = await findAccountById(db, claimed.id);
   if (!account) return;
+  await cancelSubscription(db, env, account, fetcher);
   for (const name of await retiredDatabasesForAccount(db, account.id)) await deleteRetired(db, env, name);
   await deleteAccountDatabase(turso(env), account.dataDbName);
   await deleteAccountRows(db, account.id);
@@ -99,7 +155,7 @@ export async function runInactivity(
 
   // A deletion (cron or self-serve) that failed after its claim is finished here.
   const finished = await each("unfinished deletion", await staleDeletionClaims(db, now - STUCK_DELETION_MS), (a) =>
-    deleteAccount(db, env, a),
+    deleteAccount(db, env, a, fetcher),
   );
 
   const apiKey = env.RESEND_API_KEY;
@@ -159,7 +215,7 @@ export async function runInactivity(
     finished +
     (await each("deletion", toDelete, async (a) => {
       if (!(await claimInactiveForDeletion(db, a.id, now, now - WARNING_MS))) return false;
-      await deleteAccount(db, env, a);
+      await deleteAccount(db, env, a, fetcher);
     }));
 
   // Abandoned swaps expire, except one that a kept swap still points at

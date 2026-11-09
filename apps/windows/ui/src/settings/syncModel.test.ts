@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { DeviceView } from "../generated/types";
-import { collidingPendingIds, contentLine, deviceActions, deviceTitle, primaryAction, settingsLine } from "./syncModel";
+import type { DeviceView, PlanView } from "../generated/types";
+import { collidingPendingIds, contentLine, deviceActions, deviceTitle, offersManage, offersUpgrade, planLine, primaryAction, settingsLine } from "./syncModel";
 
 describe("contentLine", () => {
-  const ready = { state: "ready" as const, message: null, deviceId: "k" };
+  const ready = { state: "ready" as const, message: null, deviceId: "k", deviceLimit: false, planUnknown: false };
   it("is silent until enrolled", () => {
     expect(contentLine({ ...ready, state: "waitingForApproval" }, "en")).toBeNull();
   });
@@ -17,7 +17,7 @@ describe("contentLine", () => {
 });
 
 describe("settingsLine", () => {
-  const ready = { state: "ready" as const, message: null, deviceId: "k" };
+  const ready = { state: "ready" as const, message: null, deviceId: "k", deviceLimit: false, planUnknown: false };
   it("is silent until enrolled and until the first round", () => {
     expect(settingsLine({ ...ready, state: "waitingForApproval", settingsError: "x" }, "en")).toBeNull();
     expect(settingsLine(ready, "en")).toBeNull();
@@ -82,5 +82,23 @@ describe("collidingPendingIds", () => {
   });
   it("ignores missing codes and non-pending devices", () => {
     expect(collidingPendingIds([dev("a", "pending", null), dev("b", "pending", null), dev("c", "approved", "X"), dev("d", "pending", "X")]).size).toBe(0);
+  });
+});
+
+describe("the plan (Cloud v1)", () => {
+  const view = (plan: PlanView | null) => ({ state: "ready" as const, message: null, deviceId: "k", deviceLimit: false, planUnknown: false, plan });
+  const free = { plan: "free", untilUnixMs: null, interval: null, billing: true };
+  const cloud = { plan: "cloud", untilUnixMs: Date.UTC(2027, 10, 9, 12), interval: "year", billing: true };
+
+  it("reads Free or Cloud until a date", () => {
+    expect(planLine(free, "en-US")).toBe("Free: 1 computer + 1 phone");
+    expect(planLine(cloud, "en-US")).toBe("Cloud until November 9, 2027");
+  });
+
+  it("offers Upgrade on Free and Manage on Cloud, only with billing open", () => {
+    expect([offersUpgrade(view(free)), offersManage(view(free))]).toEqual([true, false]);
+    expect([offersUpgrade(view(cloud)), offersManage(view(cloud))]).toEqual([false, true]);
+    expect([offersUpgrade(view({ ...free, billing: false })), offersManage(view({ ...cloud, billing: false }))]).toEqual([false, false]);
+    expect([offersUpgrade(view(null)), offersManage(view(null))]).toEqual([false, false]);
   });
 });

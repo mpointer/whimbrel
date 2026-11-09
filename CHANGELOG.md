@@ -2,6 +2,16 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [Unreleased]
+
+## [0.9.64] - 2026-11-09
+
+### Mac
+- Settings → Sync & Devices shows your plan. On the free plan (one computer and one phone) you can upgrade to Cloud for unlimited devices, $5 a month or $50 a year plus tax, in Stripe's checkout in your browser; on Cloud, Manage subscription opens Stripe. A Mac stopped at the device limit can upgrade from there and joins once the payment goes through. Translated into German, Spanish, French and Portuguese.
+
+### Windows
+- Settings → Sync & Devices shows your plan. On the free plan (one computer and one phone) you can upgrade to Cloud for unlimited devices, $5 a month or $50 a year plus tax, in Stripe's checkout in your browser; on Cloud, Manage subscription opens Stripe. A PC stopped at the device limit can upgrade from there and joins once the payment goes through.
+
 ## [0.9.63] - 2026-11-09
 
 ### Mac

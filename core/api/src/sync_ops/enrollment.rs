@@ -260,6 +260,15 @@ pub enum GoogleAuthResult {
     },
 }
 
+/// `POST /v1/account/plan`: the account's plan and whether the Worker can sell one.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AccountPlan {
+    pub plan: String,
+    pub until: Option<i64>,
+    pub interval: Option<String>,
+    pub billing: bool,
+}
+
 /// One row of `POST /v1/devices`, with the Worker's own camelCase field names.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -360,6 +369,23 @@ impl WorkerClient {
     pub fn delete_account(&self, id_token: &str, device_public_key: &str) -> Result<(), WorkerError> {
         self.post("v1/account/delete", serde_json::json!({ "idToken": id_token, "devicePublicKey": device_public_key, "confirm": true }))
             .map(|_| ())
+    }
+
+    pub fn account_plan(&self, id_token: &str, device_public_key: &str) -> Result<AccountPlan, WorkerError> {
+        let body = self.post("v1/account/plan", serde_json::json!({ "idToken": id_token, "devicePublicKey": device_public_key }))?;
+        serde_json::from_value(body).map_err(|_| WorkerError::MalformedResponse)
+    }
+
+    /// `interval` is `"month"` or `"year"`; returns the Stripe Checkout URL.
+    pub fn billing_checkout(&self, id_token: &str, device_public_key: &str, interval: &str) -> Result<String, WorkerError> {
+        let body = self.post("v1/billing/checkout", serde_json::json!({ "idToken": id_token, "devicePublicKey": device_public_key, "interval": interval }))?;
+        body["url"].as_str().map(str::to_string).ok_or(WorkerError::MalformedResponse)
+    }
+
+    /// Returns the Stripe customer portal URL.
+    pub fn billing_portal(&self, id_token: &str, device_public_key: &str) -> Result<String, WorkerError> {
+        let body = self.post("v1/billing/portal", serde_json::json!({ "idToken": id_token, "devicePublicKey": device_public_key }))?;
+        body["url"].as_str().map(str::to_string).ok_or(WorkerError::MalformedResponse)
     }
 
     /// Requires the caller's own device to already be `approved` (enforced server-side).
@@ -563,6 +589,30 @@ mod tests {
         assert_eq!(next, SyncStatus::DeviceLimit { kind: "phone".into(), holders });
         assert_eq!(next_status(&SyncStatus::SigningIn, &EnrollmentEvent::RateLimited), SyncStatus::RateLimited);
         assert_eq!(SyncStatus::RateLimited.to_string(), "rateLimited");
+    }
+
+    #[test]
+    fn billing_routes() {
+        let (url, rx) = worker(200, r#"{"plan":"cloud","until":1790000000000,"interval":"year","billing":true}"#);
+        let plan = WorkerClient::new(&url).account_plan("id", "pk").unwrap();
+        assert_eq!(plan, AccountPlan { plan: "cloud".into(), until: Some(1790000000000), interval: Some("year".into()), billing: true });
+        let req = rx.recv().unwrap();
+        assert!(req.starts_with("POST /v1/account/plan "), "{req}");
+
+        let (url, rx) = worker(200, r#"{"url":"https://checkout.example/c"}"#);
+        assert_eq!(WorkerClient::new(&url).billing_checkout("id", "pk", "month").unwrap(), "https://checkout.example/c");
+        let req = rx.recv().unwrap();
+        assert!(req.starts_with("POST /v1/billing/checkout ") && req.contains(r#""interval":"month""#), "{req}");
+
+        let (url, rx) = worker(200, r#"{"url":"https://portal.example/p"}"#);
+        assert_eq!(WorkerClient::new(&url).billing_portal("id", "pk").unwrap(), "https://portal.example/p");
+        assert!(rx.recv().unwrap().starts_with("POST /v1/billing/portal "));
+
+        let (url, _) = worker(409, r#"{"error":"no_subscription"}"#);
+        assert!(matches!(WorkerClient::new(&url).billing_portal("id", "pk"), Err(WorkerError::Http { status: 409, .. })));
+
+        let (url, _) = worker(200, "{}");
+        assert_eq!(WorkerClient::new(&url).billing_checkout("id", "pk", "year"), Err(WorkerError::MalformedResponse));
     }
 
     #[test]
