@@ -15,6 +15,7 @@ import {
   type FieldMarker,
 } from "../layoutModel";
 import { t } from "../../l10n";
+import { UpcomingBody } from "../UpcomingCard";
 import { HeldLine, PrepLine, ScheduleLines, SkinImage, SkinText, applyCaps, useWidth, type TodayLayoutProps } from "./parts";
 
 const PITCH_PADDING = 12;
@@ -72,6 +73,7 @@ export function Field(props: TodayLayoutProps) {
             )}
           </>,
         )}
+      {present.includes("upcoming") && model.upcoming && section("upcoming", t("Upcoming"), <UpcomingBody view={model.upcoming} />)}
       {present.includes("earlier") &&
         section(
           "earlier",

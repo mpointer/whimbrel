@@ -84,6 +84,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<crate::topics::SeedInput>();
     generator.subschema_for::<super::topic_page::TopicListItemView>();
     generator.subschema_for::<super::schedule::UpcomingDay>();
+    generator.subschema_for::<super::schedule::UpcomingView>();
     generator.subschema_for::<super::topic_page::TopicPageView>();
     generator.subschema_for::<super::topic_page::StepActionInput>();
     generator.subschema_for::<super::topic_page::TopicLookup>();

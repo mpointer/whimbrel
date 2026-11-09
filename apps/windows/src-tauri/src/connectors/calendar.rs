@@ -21,7 +21,7 @@ use std::time::Duration;
 use api::connectors::calendar::{self, QualifyingMeeting};
 use api::meetings::trigger;
 use mcp_host::McpHost;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use super::accounts;
 use super::node::{self, GOOGLE_CALENDAR};
@@ -31,6 +31,9 @@ use crate::secrets::SecretStore;
 use crate::settings::SettingsFile;
 use crate::store_actor::StoreHandle;
 use crate::syncing::config::SyncConfig;
+
+/// Sent to the windows after each calendar round, synced or not.
+pub const CALENDAR_SYNCED_EVENT: &str = "calendar-synced";
 
 /// The Mac's 5-minute calendar poll.
 pub const POLL: Duration = Duration::from_secs(5 * 60);
@@ -260,11 +263,15 @@ impl CalendarService {
             emails.iter().filter_map(|e| known.get(e).cloned()).collect()
         };
         self.poller.store_events(todays_events(&per_account, tomorrow_start(chrono::Local::now())));
-        let mut status = self.status.lock().unwrap();
-        status.error = failure;
-        if status.error.is_none() {
-            status.last_synced_unix_ms = Some(chrono::Utc::now().timestamp_millis());
+        {
+            let mut status = self.status.lock().unwrap();
+            status.error = failure;
+            if status.error.is_none() {
+                status.last_synced_unix_ms = Some(chrono::Utc::now().timestamp_millis());
+            }
         }
+        // Today's Upcoming reads the meetings kept here; at launch they arrive only with this first round.
+        let _ = self.app.emit(CALENDAR_SYNCED_EVENT, ());
     }
 
     /// Forgets an account's meetings when it is disconnected.

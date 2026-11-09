@@ -5269,6 +5269,28 @@
       ],
       "type": "object"
     },
+    "UpcomingView": {
+      "description": "Today's Upcoming, and why it may be empty.",
+      "properties": {
+        "days": {
+          "items": {
+            "$ref": "#/definitions/UpcomingDay"
+          },
+          "type": "array"
+        },
+        "syncError": {
+          "description": "The calendar's last sync failed (a Google sign-in that expired, say): the week may look empty\nonly because nothing could be read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "days"
+      ],
+      "type": "object"
+    },
     "UpdateCheck": {
       "description": "Settings → General's \"Check for Updates\", as the Mac's shows it.",
       "oneOf": [

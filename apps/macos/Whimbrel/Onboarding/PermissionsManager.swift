@@ -14,7 +14,7 @@ final class PermissionsManager: ObservableObject {
     @Published private(set) var screenRecordingGranted: Bool = CGPreflightScreenCaptureAccess()
     @Published private(set) var microphoneGranted: Bool = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     @Published private(set) var accessibilityGranted: Bool = AXIsProcessTrusted()
-    @Published private(set) var calendarGranted: Bool = EKEventStore.authorizationStatus(for: .event) == .fullAccess
+    @Published private(set) var calendarGranted: Bool = PermissionsManager.calendarAccessible
     @Published private(set) var notificationsGranted: Bool = false
 
     private var activationObserver: NSObjectProtocol?
@@ -30,6 +30,26 @@ final class PermissionsManager: ObservableObject {
         }
         startPollingIfNeeded()
         refreshNotificationStatus()
+        // Granted on an earlier run but reported as not determined (see `calendarAccessible`): ask
+        // again. TCC already holds the grant, so this returns at once with no prompt.
+        if EKEventStore.authorizationStatus(for: .event) == .notDetermined,
+           UserDefaults.standard.bool(forKey: Self.calendarGrantedKey) {
+            request(.calendar)
+        }
+    }
+
+    private static let calendarGrantedKey = "com.mpointer.kestrel.calendarAccessGranted"
+    private static var calendarRequestGranted = false
+
+    /// Calendar access the app can use. On macOS 27 `authorizationStatus` has been seen to stay
+    /// `.notDetermined` for the whole run while TCC allows full access and `requestFullAccessToEvents()`
+    /// returns granted with no prompt, so a granted request this run counts too.
+    static var calendarAccessible: Bool {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        if status == .fullAccess, !UserDefaults.standard.bool(forKey: calendarGrantedKey) {
+            UserDefaults.standard.set(true, forKey: calendarGrantedKey)
+        }
+        return status == .fullAccess || (status == .notDetermined && calendarRequestGranted)
     }
 
     deinit {
@@ -62,7 +82,7 @@ final class PermissionsManager: ObservableObject {
         screenRecordingGranted = CGPreflightScreenCaptureAccess()
         microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         accessibilityGranted = AXIsProcessTrusted()
-        calendarGranted = EKEventStore.authorizationStatus(for: .event) == .fullAccess
+        calendarGranted = Self.calendarAccessible
         refreshNotificationStatus()
         if allGranted {
             pollTimer?.invalidate()
@@ -109,7 +129,9 @@ final class PermissionsManager: ObservableObject {
         case .calendar:
             Task { @MainActor in
                 let granted = (try? await EKEventStore().requestFullAccessToEvents()) ?? false
-                self.calendarGranted = granted
+                Self.calendarRequestGranted = granted
+                if granted { UserDefaults.standard.set(true, forKey: Self.calendarGrantedKey) }
+                self.calendarGranted = Self.calendarAccessible
             }
         case .notifications:
             Task { @MainActor in

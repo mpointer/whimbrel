@@ -89,7 +89,7 @@ final class ArchetypeFieldTests: XCTestCase {
     }
 
     func test_field_places_expected_sections() {
-        XCTAssertEqual(FieldTodayLayout.placedSections, [.greeting, .composer, .upNext, .schedule, .earlier])
+        XCTAssertEqual(FieldTodayLayout.placedSections, [.greeting, .composer, .upNext, .schedule, .upcoming, .earlier])
     }
 
     // MARK: pitch geometry (pure)

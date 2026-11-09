@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { earlierRows, nonEmptySections, schedule, scheduleItems, upNext } from "../layoutModel";
 import { voiceText } from "../layoutModel";
 import { t } from "../../l10n";
+import { UpcomingBody } from "../UpcomingCard";
 import { DevicesLine, EventLine, HeldLine, OpenLoopLines, RecapLines, ScheduleLines, SkinImage, SkinText, applyCaps, type TodayLayoutProps } from "./parts";
 
 /** One mono column: `[ SECTION ]` labels, dotted rules, and an Ask framed as a shell prompt (`>`, a block
@@ -38,6 +39,7 @@ export function Terminal(props: TodayLayoutProps) {
       </div>
       {present.includes("upNext") && next && section("upNext", voiceText(voice, "upNextHeader"), <EventLine row={next} props={props} shape="grid" accentTime />)}
       {present.includes("schedule") && items.length > 0 && section("schedule", voiceText(voice, "upcomingHeader"), <ScheduleLines items={items} props={props} shape="grid" accentTime />)}
+      {present.includes("upcoming") && model.upcoming && section("upcoming", t("Upcoming"), <UpcomingBody view={model.upcoming} />)}
       {present.includes("earlier") &&
         section(
           "earlier",

@@ -89,7 +89,7 @@ import type {
   SkinSources,
   SkinTurnResult,
   TopicListItemView,
-  UpcomingDay,
+  UpcomingView,
   TopicPageView,
   StepActionInput,
   TopicLookup,
@@ -175,7 +175,7 @@ export const acceptTopicSuggestion = (topicId: number, name: string) => invoke<T
 export const dismissTopicSuggestion = (topicId: number) => invoke<void>("dismiss_topic_suggestion", { topicId });
 // The topic page (topics piece 2): the Topics tab, step actions, the ways in, and Settings → Topics.
 /** Today's Upcoming: the next 7 days' meetings, grouped by day. */
-export const todayUpcoming = () => invoke<UpcomingDay[]>("today_upcoming");
+export const todayUpcoming = () => invoke<UpcomingView>("today_upcoming");
 export const topicsPageList = () => invoke<TopicListItemView[]>("topics_page_list");
 /** Null when the topic is gone (deleted, or merged away). */
 export const topicPage = (topicId: number) => invoke<TopicPageView | null>("topic_page", { topicId });

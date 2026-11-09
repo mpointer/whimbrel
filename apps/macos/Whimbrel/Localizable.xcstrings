@@ -17452,6 +17452,40 @@
         }
       }
     },
+    "Name the customers, products and projects you care about in Settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nennen Sie in den Einstellungen die Kunden, Produkte und Projekte, die Ihnen wichtig sind."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nombra en Ajustes los clientes, productos y proyectos que te importan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nommez dans les Réglages les clients, produits et projets qui vous importent."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nommez dans les Réglages les clients, produits et projets qui vous importent."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Indique em Configurações os clientes, produtos e projetos que importam para você."
+          }
+        }
+      }
+    },
     "Name the customers, products and projects you care about. Whimbrel groups your meetings, emails and notes under them." : {
       "localizations" : {
         "de" : {
@@ -19188,6 +19222,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nenhuma conversa aguardando você no momento."
+          }
+        }
+      }
+    },
+    "No topics yet" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch keine Themen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aún no hay temas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucun sujet pour l’instant"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucun sujet pour le moment"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ainda não há tópicos"
           }
         }
       }
@@ -21153,6 +21221,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Abrir Ajustes do Sistema"
+          }
+        }
+      }
+    },
+    "Open Topics settings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Themen-Einstellungen öffnen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir los ajustes de Temas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrir les réglages des sujets"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrir les réglages des sujets"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir as configurações de Tópicos"
           }
         }
       }
@@ -28798,6 +28900,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Perguntas sugeridas"
+          }
+        }
+      }
+    },
+    "Suggested topics waiting: %lld. Add the ones you care about in Settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Vorgeschlagene Themen: %lld. Fügen Sie in den Einstellungen die hinzu, die Ihnen wichtig sind."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Temas sugeridos en espera: %lld. Añade en Ajustes los que te importan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sujets suggérés en attente : %lld. Ajoutez dans les Réglages ceux qui vous importent."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sujets suggérés en attente : %lld. Ajoutez dans les Réglages ceux qui vous importent."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tópicos sugeridos aguardando: %lld. Adicione em Configurações os que importam para você."
           }
         }
       }

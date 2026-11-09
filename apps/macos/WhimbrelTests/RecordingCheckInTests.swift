@@ -129,6 +129,6 @@ final class StatusMenuCopyTests: XCTestCase {
         XCTAssertEqual(StatusMenuCopy.checkInWarning, String(localized: "Still recording? Whimbrel stops in 5 minutes unless you choose Keep recording."))
         XCTAssertEqual(StatusMenuCopy.forcedStop(durationCap: true, saved: true), "Whimbrel stopped recording: 6-hour limit reached. The recording was saved.")
         XCTAssertEqual(StatusMenuCopy.forcedStop(durationCap: false, saved: false), "Whimbrel stopped recording: less than 2 GB free.")
-        XCTAssertEqual(WhimbrelTab.allCases.map(\.title), ["Today", "Meetings", "Library", "Automations", "Settings"])
+        XCTAssertEqual(WhimbrelTab.allCases.map(\.title), ["Today", "Meetings", "Library", "Topics", "Automations", "Settings"])
     }
 }

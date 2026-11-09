@@ -2,7 +2,7 @@
 // and `TodayContent`). The layouts style these rows and wire the actions; they do not re-derive them.
 // Pure: nothing here touches the DOM.
 
-import type { DeviceCount, MeetingRow, NextMeetingView, ScheduleEvent, ScheduleView, ThreadRow, TodayOverview, TodayRecap } from "../generated/types";
+import type { DeviceCount, MeetingRow, NextMeetingView, ScheduleEvent, ScheduleView, ThreadRow, TodayOverview, TodayRecap, UpcomingView } from "../generated/types";
 import { dateTimeLabel, timeLabel } from "../library/rows";
 import { WHIMBREL, type SkinManifest } from "../skin";
 import { attendeesLine, deviceLine, greeting, relativeStart, rowAction } from "./todayModel";
@@ -11,9 +11,9 @@ import { t } from "../l10n";
 // --- sections ---------------------------------------------------------------------------------
 
 /** The parts of Today a layout can place, in the standard order (the Mac's `TodaySection.allCases`). */
-export type SectionId = "greeting" | "composer" | "upNext" | "schedule" | "earlier" | "threads" | "recap" | "devices";
+export type SectionId = "greeting" | "composer" | "upNext" | "schedule" | "upcoming" | "earlier" | "threads" | "recap" | "devices";
 
-export const SECTIONS: readonly SectionId[] = ["greeting", "composer", "upNext", "schedule", "earlier", "threads", "recap", "devices"];
+export const SECTIONS: readonly SectionId[] = ["greeting", "composer", "upNext", "schedule", "upcoming", "earlier", "threads", "recap", "devices"];
 
 export type ArchetypeId = "standard" | "terminal" | "glass" | "field" | "almanac" | "reference";
 
@@ -28,17 +28,17 @@ export const archetypeOf = (id: string | undefined): ArchetypeId => ARCHETYPE_ID
  * compares. Standard is Windows' own Today, which has no separate up next and no Earlier list.
  */
 export const PLACED: Record<ArchetypeId, readonly SectionId[]> = {
-  standard: ["greeting", "composer", "schedule", "recap", "threads", "devices"],
-  terminal: ["greeting", "composer", "upNext", "schedule", "earlier", "threads", "recap", "devices"],
-  glass: ["greeting", "composer", "upNext", "schedule", "recap"],
-  field: ["greeting", "composer", "upNext", "schedule", "earlier"],
-  almanac: ["greeting", "composer", "upNext", "schedule", "earlier", "threads", "recap", "devices"],
+  standard: ["greeting", "composer", "schedule", "upcoming", "recap", "threads", "devices"],
+  terminal: ["greeting", "composer", "upNext", "schedule", "upcoming", "earlier", "threads", "recap", "devices"],
+  glass: ["greeting", "composer", "upNext", "schedule", "upcoming", "recap"],
+  field: ["greeting", "composer", "upNext", "schedule", "upcoming", "earlier"],
+  almanac: ["greeting", "composer", "upNext", "schedule", "upcoming", "earlier", "threads", "recap", "devices"],
   // The infobox (up next) comes before the composer; Contents lists them in `REFERENCE_CONTENTS` order.
-  reference: ["greeting", "upNext", "composer", "schedule", "earlier", "threads", "recap", "devices"],
+  reference: ["greeting", "upNext", "composer", "schedule", "upcoming", "earlier", "threads", "recap", "devices"],
 };
 
 /** The order of Reference's Contents box (the Mac's `entries`). */
-export const REFERENCE_CONTENTS: readonly SectionId[] = ["composer", "upNext", "schedule", "earlier", "threads", "recap", "devices"];
+export const REFERENCE_CONTENTS: readonly SectionId[] = ["composer", "upNext", "schedule", "upcoming", "earlier", "threads", "recap", "devices"];
 
 // --- voice ------------------------------------------------------------------------------------
 
@@ -134,6 +134,8 @@ export interface TodayModel {
   openLoops: ThreadRow[];
   recap: RecapModel | null;
   devices: DeviceCount[];
+  /** The next 7 days (Upcoming); null until read. */
+  upcoming?: UpcomingView | null;
 }
 
 // --- rows -------------------------------------------------------------------------------------
@@ -258,6 +260,8 @@ export function nonEmptySections(model: TodayModel): SectionId[] {
         return upNext(model) !== null;
       case "schedule":
         return rows.upcoming.length > 0 || rows.held.length > 0;
+      case "upcoming":
+        return !!model.upcoming && (model.upcoming.days.length > 0 || !!model.upcoming.syncError);
       case "earlier":
         return model.earlier.length > 0;
       case "threads":

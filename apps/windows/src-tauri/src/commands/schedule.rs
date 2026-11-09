@@ -147,13 +147,24 @@ pub fn build_upcoming(calendar: &[QualifyingMeeting], days: &[(String, i64, i64)
         .collect()
 }
 
+/// Today's Upcoming, and why it may be empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpcomingView {
+    pub days: Vec<UpcomingDay>,
+    /// The calendar's last sync failed (a Google sign-in that expired, say): the week may look empty
+    /// only because nothing could be read.
+    pub sync_error: Option<String>,
+}
+
 /// Today's Upcoming: the qualifying meetings of the next `UPCOMING_DAYS` days, from the calendar's last
 /// sync. Nothing is stored.
 #[tauri::command]
-pub fn today_upcoming(state: State<'_, AppState>) -> Vec<UpcomingDay> {
+pub fn today_upcoming(state: State<'_, AppState>) -> UpcomingView {
     let now = chrono::Local::now();
     let calendar = state.calendar.as_ref().map(|c| c.upcoming(now.timestamp_millis())).unwrap_or_default();
-    build_upcoming(&calendar, &days_after(&now, UPCOMING_DAYS))
+    let sync_error = state.calendar.as_ref().and_then(|c| c.status().error);
+    UpcomingView { days: build_upcoming(&calendar, &days_after(&now, UPCOMING_DAYS)), sync_error }
 }
 
 #[tauri::command]

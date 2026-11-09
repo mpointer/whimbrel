@@ -126,8 +126,8 @@ describe("the sections each layout places", () => {
 
   it("Glass and Field leave the rest to the plain list, as the Mac's chrome does", () => {
     const placedLine = (name: string) => /static var placedSections: Set<TodaySection> \{ (.*) \}/.exec(macSource(name))?.[1];
-    expect(placedLine("Glass")).toBe("[.greeting, .composer, .upNext, .schedule, .recap]");
-    expect(placedLine("Field")).toBe("[.greeting, .composer, .upNext, .schedule, .earlier]");
+    expect(placedLine("Glass")).toBe("[.greeting, .composer, .upNext, .schedule, .upcoming, .recap]");
+    expect(placedLine("Field")).toBe("[.greeting, .composer, .upNext, .schedule, .upcoming, .earlier]");
   });
 
   it("every layout places the greeting and the composer first (Reference puts the infobox between)", () => {
@@ -139,7 +139,7 @@ describe("the sections each layout places", () => {
   });
 
   it("Standard is Windows' own Today: no separate up next, no Earlier list", () => {
-    expect([...PLACED.standard]).toEqual(["greeting", "composer", "schedule", "recap", "threads", "devices"]);
+    expect([...PLACED.standard]).toEqual(["greeting", "composer", "schedule", "upcoming", "recap", "threads", "devices"]);
   });
 
   it("places each section at most once and uses only known sections", () => {
@@ -286,8 +286,15 @@ describe("what has something to show", () => {
       earlier: [meeting(2, -26 * 60)],
       openLoops: [{ id: 1 } as ThreadRow],
       recap: { kind: "digest", text: "x" } as const,
+      upcoming: { days: [{ date: "2026-11-10", tomorrow: true, events: [] }], syncError: null },
     };
     expect(nonEmptySections(m)).toEqual([...SECTIONS]);
+  });
+
+  it("has an Upcoming with meetings ahead, or with a calendar that couldn't sync", () => {
+    expect(nonEmptySections(model({ upcoming: { days: [], syncError: null } }))).not.toContain("upcoming");
+    expect(nonEmptySections(model({ upcoming: { days: [], syncError: "Sign in again." } }))).toContain("upcoming");
+    expect(nonEmptySections(model({ upcoming: null }))).not.toContain("upcoming");
   });
 
   it("has a schedule from held meetings alone, and an up next only from an unrecorded event", () => {

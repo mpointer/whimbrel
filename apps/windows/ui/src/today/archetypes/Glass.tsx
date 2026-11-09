@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 import { nonEmptySections, schedule, scheduleItems, upNext, voiceText } from "../layoutModel";
 import { EventLine, RecapLines, ScheduleLines, SkinImage, SkinText, type TodayLayoutProps } from "./parts";
+import { t } from "../../l10n";
+import { UpcomingBody } from "../UpcomingCard";
+
 
 /** Translucent cards (a blurred backdrop under a `backgroundCard` tint) over a gradient from `accentPrimary`
  *  to `backgroundPage`. A big thin greeting, the Ask pill, then Up next, Later today and the recap as cards.
@@ -31,6 +34,7 @@ export function Glass(props: TodayLayoutProps) {
       {props.composer}
       {present.includes("upNext") && next && card("upNext", voiceText(voice, "upNextHeader"), <EventLine row={next} props={props} shape="grid" />)}
       {present.includes("schedule") && items.length > 0 && card("schedule", voiceText(voice, "upcomingHeader"), <ScheduleLines items={items} props={props} shape="grid" />)}
+      {present.includes("upcoming") && model.upcoming && card("upcoming", t("Upcoming"), <UpcomingBody view={model.upcoming} />)}
       {present.includes("recap") && model.recap && card("recap", voiceText(voice, "recapHeader"), <RecapLines recap={model.recap} props={props} tone="primary" />)}
     </div>
   );

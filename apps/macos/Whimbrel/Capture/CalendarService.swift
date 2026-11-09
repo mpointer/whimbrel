@@ -177,10 +177,16 @@ final class CalendarService: ObservableObject {
         return start..<(cal.date(byAdding: .day, value: 7, to: start) ?? start)
     }
 
+    /// Access just granted: a store made before the grant can keep returning nothing until reset.
+    func accessGranted() {
+        store.reset()
+        refresh()
+    }
+
     func refresh() {
         let authStatus = EKEventStore.authorizationStatus(for: .event)
-        guard authStatus == .fullAccess else {
-            log.log("Calendar refresh: skipped, authorizationStatus=\(String(describing: authStatus), privacy: .public) (need .fullAccess)")
+        guard PermissionsManager.calendarAccessible else {
+            log.log("Calendar refresh: skipped, authorizationStatus=\(String(describing: authStatus), privacy: .public) (no calendar access)")
             upcomingMeetings = []
             upcomingWeek = []
             availableCalendars = []
