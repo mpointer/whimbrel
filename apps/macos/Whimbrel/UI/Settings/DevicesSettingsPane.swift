@@ -24,7 +24,18 @@ struct DevicesSettingsPane: View {
 
             content
         }
-        .onAppear { appState.syncState.startDevicesPolling() }
+        .onAppear {
+            appState.syncState.startDevicesPolling()
+            Task { await appState.syncState.refreshPlan() }
+        }
+        .onChange(of: appState.syncState.status) { old, status in
+            // A token renewal is .ready to .ready: not a new arrival.
+            if case .ready = old, case .ready = status { return }
+            switch status {
+            case .ready, .deviceLimit: Task { await appState.syncState.refreshPlan() }
+            default: break
+            }
+        }
         .onDisappear { appState.syncState.stopDevicesPolling() }
         .alert("Revoke this device?", isPresented: Binding(
             get: { devicePendingRevocation != nil },
@@ -102,6 +113,18 @@ struct DevicesSettingsPane: View {
                     .font(.whimbrelBody(.caption))
                     .foregroundStyle(Color.whimbrelError)
             }
+            if let plan = appState.syncState.plan {
+                if plan.billing, !plan.isCloud {
+                    Text("Upgrade to Cloud for unlimited devices.")
+                        .font(.whimbrelBody(.body))
+                        .foregroundStyle(Color.whimbrelTextPrimary)
+                    upgradeButtons
+                }
+            } else if appState.syncState.planReadFailed {
+                Text("Couldn't check your plan. Try again in a moment.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+            }
             if kind == "computer", let holder = holders.first {
                 Button("Use this computer instead") {
                     Task {
@@ -142,6 +165,33 @@ struct DevicesSettingsPane: View {
                 .disabled(waitlistWants.isEmpty || working)
             }
         }
+    }
+
+    /// Monthly and yearly Upgrade, each opening Stripe Checkout in the browser.
+    @ViewBuilder
+    private var upgradeButtons: some View {
+        HStack {
+            Button("Upgrade to Cloud: $5 a month") {
+                Task {
+                    working = true
+                    await appState.syncState.upgrade(interval: "month")
+                    working = false
+                }
+            }
+            .buttonStyle(.whimbrelPrimary)
+            Button("Upgrade to Cloud: $50 a year") {
+                Task {
+                    working = true
+                    await appState.syncState.upgrade(interval: "year")
+                    working = false
+                }
+            }
+            .buttonStyle(.whimbrelSecondary)
+        }
+        .disabled(working)
+        Text("Plus tax where applicable. Opens Stripe in your browser. Cloud adds unlimited devices on our sync server.")
+            .font(.whimbrelBody(.caption))
+            .foregroundStyle(Color.whimbrelTextSecondary)
     }
 
     @ViewBuilder
@@ -243,6 +293,33 @@ struct DevicesSettingsPane: View {
             Text("Changes waiting to send: \(backlog.pending), the oldest from \(oldest, format: .dateTime.month().day().hour().minute())")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
+        }
+
+        if let plan = appState.syncState.plan {
+            Divider().overlay(Color.whimbrelBorder)
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                Text("Plan")
+                    .font(.whimbrelBody(.body))
+                    .foregroundStyle(Color.whimbrelTextPrimary)
+                Text(PlanCopy.line(plan))
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                if plan.billing {
+                    if plan.isCloud {
+                        Button("Manage subscription") {
+                            Task {
+                                working = true
+                                await appState.syncState.manageSubscription()
+                                working = false
+                            }
+                        }
+                        .buttonStyle(.whimbrelSecondary)
+                        .disabled(working)
+                    } else {
+                        upgradeButtons
+                    }
+                }
+            }
         }
 
         Divider().overlay(Color.whimbrelBorder)

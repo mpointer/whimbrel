@@ -1639,6 +1639,14 @@ char *whimbrel_sync_worker_join_waitlist(const char *base_url, const char *id_to
 char *whimbrel_sync_worker_reset_account(const char *base_url, const char *id_token, const char *device_public_key);
 char *whimbrel_sync_worker_delete_account(const char *base_url, const char *id_token, const char *device_public_key);
 
+/* Billing routes, same envelope. account_plan: POST /v1/account/plan -> {"plan","until",
+ * "interval","billing"} (until ms, interval "month"|"year", both null off Cloud). billing_checkout:
+ * POST /v1/billing/checkout, interval "month" or "year" -> {"url"}. billing_portal:
+ * POST /v1/billing/portal -> {"url"}. A reply without a url is a malformed_response error. */
+char *whimbrel_sync_worker_account_plan(const char *base_url, const char *id_token, const char *device_public_key);
+char *whimbrel_sync_worker_billing_checkout(const char *base_url, const char *id_token, const char *device_public_key, const char *interval);
+char *whimbrel_sync_worker_billing_portal(const char *base_url, const char *id_token, const char *device_public_key);
+
 /* The enrollment status machine. state_json is {"status": "notSignedIn"|"signingIn"|
  * "waitingForApproval"|"waitingForGroupKey"|"ready" (+ "turso_token",
  * "turso_database_url")|"error" (+ "message")}; event_json is {"event":

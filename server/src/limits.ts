@@ -1,4 +1,4 @@
-import type { DevicePlatform, DeviceRecord } from "./accounts";
+import type { AccountRecord, DevicePlatform, DeviceRecord } from "./accounts";
 
 export type DeviceKind = "computer" | "phone";
 
@@ -20,4 +20,9 @@ export function limitCheck(
   const replaced = new Set(devices.filter((d) => (d.status === "pending" || d.status === "resetting") && d.replacesDeviceId).map((d) => d.replacesDeviceId));
   const holders = devices.filter((d) => d.status !== "revoked" && !replaced.has(d.id) && kindOf(d.platform) === kind);
   return holders.length === 0 ? { ok: true } : { ok: false, kind, holders };
+}
+
+/** Cloud means plan = cloud with a paid period that has not ended. */
+export function isCloud(a: Pick<AccountRecord, "plan" | "planUntilUnixMs">, nowUnixMs: number): boolean {
+  return a.plan === "cloud" && a.planUntilUnixMs != null && a.planUntilUnixMs > nowUnixMs;
 }

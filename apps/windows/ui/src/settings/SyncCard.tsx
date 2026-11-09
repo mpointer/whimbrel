@@ -5,6 +5,9 @@ import {
   syncCancelSignIn,
   syncCheckAgain,
   syncDevices,
+  syncManageSubscription,
+  syncRefreshPlan,
+  syncUpgrade,
   syncRevokeDevice,
   syncSetDeviceName,
   syncSignIn,
@@ -13,7 +16,7 @@ import {
 import { describeError, isCommandError } from "../errors";
 import type { DeviceView, SyncView } from "../generated/types";
 import { useL10n } from "../l10n";
-import { collidingPendingIds, contentLine, deviceActions, deviceTitle, primaryAction, settingsLine, stateLabel } from "./syncModel";
+import { collidingPendingIds, contentLine, deviceActions, deviceTitle, offersManage, offersUpgrade, planLine, primaryAction, settingsLine, stateLabel } from "./syncModel";
 
 /** The phone app's beta sign-up. The backend opens only pages on its allowlist, and this is one. */
 const MOBILE_BETA_URL = "https://whimbrelapp.com/mobile-beta/";
@@ -33,7 +36,14 @@ export function SyncCard() {
     refresh();
     // Sign-in and approval happen in the background; keep the card current.
     const timer = setInterval(refresh, 2000);
-    return () => clearInterval(timer);
+    // The plan is read when the card opens and when the window comes back (from Stripe, say).
+    const plan = () => void syncRefreshPlan().then(setView, () => {});
+    plan();
+    window.addEventListener("focus", plan);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", plan);
+    };
   }, []);
 
   const act = (f: () => Promise<SyncView>) => {
@@ -82,8 +92,73 @@ export function SyncCard() {
       {contentLine(view, locale) && <p className="muted small">{contentLine(view, locale)}</p>}
       {settingsLine(view, locale) && <p className="muted small">{settingsLine(view, locale)}</p>}
       {error && <p role="alert">{error}</p>}
+      {view.deviceLimit && <LimitUpgrade view={view} busy={busy} act={act} />}
+      {view.state === "ready" && <Plan view={view} busy={busy} act={act} />}
       {view.state === "ready" && <Devices />}
     </section>
+  );
+}
+
+type Act = (f: () => Promise<SyncView>) => void;
+
+/** The two Upgrade buttons (Cloud v1), shown only on the free plan with billing open. */
+function UpgradeButtons({ busy, act }: { busy: boolean; act: Act }) {
+  const { t } = useL10n();
+  return (
+    <div className="toolbar">
+      <button className="mode mode--active" disabled={busy} onClick={() => act(() => syncUpgrade("month"))}>
+        {t("Upgrade to Cloud: $5 a month")}
+      </button>
+      <button className="mode" disabled={busy} onClick={() => act(() => syncUpgrade("year"))}>
+        {t("Upgrade to Cloud: $50 a year")}
+      </button>
+    </div>
+  );
+}
+
+function Caption() {
+  const { t } = useL10n();
+  return <p className="muted small">{t("Plus tax where applicable. Opens Stripe in your browser. Cloud adds unlimited devices on our sync server.")}</p>;
+}
+
+/** At the free plan's device limit: the way past it. */
+function LimitUpgrade({ view, busy, act }: { view: SyncView; busy: boolean; act: Act }) {
+  const { t } = useL10n();
+  if (view.planUnknown) return <p className="muted small">{t("Couldn't check your plan. Try again in a moment.")}</p>;
+  if (!offersUpgrade(view)) return null;
+  return (
+    <div className="stack-sm">
+      <p>{t("Upgrade to Cloud for unlimited devices.")}</p>
+      <UpgradeButtons busy={busy} act={act} />
+      <Caption />
+    </div>
+  );
+}
+
+/** Settings → Sync & Devices' Plan block: the plan, then Upgrade or Manage. */
+function Plan({ view, busy, act }: { view: SyncView; busy: boolean; act: Act }) {
+  const { t, locale } = useL10n();
+  if (!view.plan) return null;
+  return (
+    <div className="stack-sm" aria-labelledby="plan-heading">
+      <h3 id="plan-heading" className="section-label">
+        {t("Plan")}
+      </h3>
+      <p>{planLine(view.plan, locale)}</p>
+      {offersUpgrade(view) && (
+        <>
+          <UpgradeButtons busy={busy} act={act} />
+          <Caption />
+        </>
+      )}
+      {offersManage(view) && (
+        <div className="toolbar">
+          <button className="mode" disabled={busy} onClick={() => act(syncManageSubscription)}>
+            {t("Manage subscription")}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

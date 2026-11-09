@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use api::sync_ops::enrollment::{self as en, DeviceRecord, EnrollmentEvent, GoogleAuthResult, GroupKeyDecision, WorkerError};
+use api::sync_ops::enrollment::{self as en, AccountPlan, DeviceRecord, EnrollmentEvent, GoogleAuthResult, GroupKeyDecision, WorkerError};
 
 use crate::identity::DeviceIdentity;
 use crate::secrets::SecretStore;
@@ -19,6 +19,12 @@ pub trait WorkerApi: Send + Sync {
     fn approve_device(&self, id_token: &str, device_public_key: &str, target_device_id: &str, wrapped_group_key: &str) -> Result<(), WorkerError>;
     fn revoke_device(&self, id_token: &str, device_public_key: &str, target_device_id: &str) -> Result<(), WorkerError>;
     fn set_device_name(&self, id_token: &str, device_public_key: &str, name: &str) -> Result<(), WorkerError>;
+    /// Cloud v1: the account's plan. The device needn't be approved (a PC at the device limit asks too).
+    fn account_plan(&self, id_token: &str, device_public_key: &str) -> Result<AccountPlan, WorkerError>;
+    /// Stripe Checkout for `interval` (`month` or `year`): the URL to open.
+    fn billing_checkout(&self, id_token: &str, device_public_key: &str, interval: &str) -> Result<String, WorkerError>;
+    /// Stripe's customer portal: the URL to open.
+    fn billing_portal(&self, id_token: &str, device_public_key: &str) -> Result<String, WorkerError>;
 }
 
 impl WorkerApi for en::WorkerClient {
@@ -37,6 +43,15 @@ impl WorkerApi for en::WorkerClient {
     }
     fn set_device_name(&self, id_token: &str, pk: &str, name: &str) -> Result<(), WorkerError> {
         en::WorkerClient::set_device_name(self, id_token, pk, name)
+    }
+    fn account_plan(&self, id_token: &str, pk: &str) -> Result<AccountPlan, WorkerError> {
+        en::WorkerClient::account_plan(self, id_token, pk)
+    }
+    fn billing_checkout(&self, id_token: &str, pk: &str, interval: &str) -> Result<String, WorkerError> {
+        en::WorkerClient::billing_checkout(self, id_token, pk, interval)
+    }
+    fn billing_portal(&self, id_token: &str, pk: &str) -> Result<String, WorkerError> {
+        en::WorkerClient::billing_portal(self, id_token, pk)
     }
 }
 
@@ -128,6 +143,9 @@ pub(crate) mod tests {
         pub list_calls: Arc<Mutex<u32>>,
         pub approvals: Arc<Mutex<Vec<(String, String)>>>,
         pub names: Arc<Mutex<Vec<String>>>,
+        pub plan: Arc<Mutex<Result<AccountPlan, WorkerError>>>,
+        pub checkout: Arc<Mutex<Result<String, WorkerError>>>,
+        pub checkouts: Arc<Mutex<Vec<String>>>,
     }
 
     impl FakeWorker {
@@ -138,6 +156,9 @@ pub(crate) mod tests {
                 list_calls: Arc::new(Mutex::new(0)),
                 approvals: Arc::new(Mutex::new(Vec::new())),
                 names: Arc::new(Mutex::new(Vec::new())),
+                plan: Arc::new(Mutex::new(Ok(AccountPlan { plan: "free".into(), until: None, interval: None, billing: true }))),
+                checkout: Arc::new(Mutex::new(Ok("https://checkout.stripe.test/s".into()))),
+                checkouts: Arc::new(Mutex::new(Vec::new())),
             }
         }
     }
@@ -160,6 +181,16 @@ pub(crate) mod tests {
         fn set_device_name(&self, _: &str, _: &str, name: &str) -> Result<(), WorkerError> {
             self.names.lock().unwrap().push(name.into());
             Ok(())
+        }
+        fn account_plan(&self, _: &str, _: &str) -> Result<AccountPlan, WorkerError> {
+            self.plan.lock().unwrap().clone()
+        }
+        fn billing_checkout(&self, _: &str, _: &str, interval: &str) -> Result<String, WorkerError> {
+            self.checkouts.lock().unwrap().push(interval.into());
+            self.checkout.lock().unwrap().clone()
+        }
+        fn billing_portal(&self, _: &str, _: &str) -> Result<String, WorkerError> {
+            self.checkout.lock().unwrap().clone()
         }
     }
 

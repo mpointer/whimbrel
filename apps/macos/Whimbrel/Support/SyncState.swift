@@ -1,3 +1,4 @@
+import AppKit
 import AuthenticationServices
 import Foundation
 import OSLog
@@ -56,6 +57,15 @@ final class SyncState: ObservableObject {
     /// re-sending a key to one peer doesn't blow away an otherwise-healthy
     /// `.ready` state and its device list.
     @Published private(set) var actionError: String?
+    /// The account's plan (`POST /v1/account/plan`); nil until the first read succeeds, and
+    /// kept as it was when a later read fails.
+    @Published private(set) var plan: AccountPlan?
+    /// The last plan read failed while no plan is held: the limit screen says so instead of
+    /// showing nothing.
+    @Published private(set) var planReadFailed = false
+    /// Retries of a failed first plan read on the devices-poll tick, capped at `planReadMaxRetries`.
+    private var planReadRetries = 0
+    static let planReadMaxRetries = 10
     /// This device's own locally-editable name draft, persisted so it
     /// survives relaunch — separate from whatever's actually saved
     /// server-side (`SyncDeviceRecord.name`, read via `devices`), since
@@ -104,6 +114,7 @@ final class SyncState: ObservableObject {
 
     private let signIn: SyncSignIn?
     private let syncClient: SyncWorker?
+    private let billing: SyncBilling?
     private let keys: SyncKeyStore
     private let defaults: UserDefaults
     private let configError: String?
@@ -114,6 +125,7 @@ final class SyncState: ObservableObject {
 
     private var waitingPollTask: Task<Void, Never>?
     private var devicesPollTask: Task<Void, Never>?
+    private var planPollTask: Task<Void, Never>?
     /// Wall-clock times (not uptime) so a Mac that slept through the Turso token's
     /// expiry still sees it as due on the first tick after waking.
     private var lastAuthAt: Date?
@@ -129,6 +141,9 @@ final class SyncState: ObservableObject {
     static let waitingPollMaxIntervalSeconds: UInt64 = 30
     /// How often the Devices panel re-polls `POST /v1/devices` while open.
     static let devicesPollIntervalSeconds: UInt64 = 5
+    /// After opening Stripe: how often, and for how long, the plan is re-read.
+    static let planPollIntervalSeconds: UInt64 = 15
+    static let planPollDuration: TimeInterval = 15 * 60
 
     convenience init() {
         do {
@@ -137,7 +152,8 @@ final class SyncState: ObservableObject {
             let baseURL = try SyncConfig.workerBaseURL()
             self.init(
                 signIn: GoogleOAuthHelper(clientId: clientId, clientSecret: clientSecret, scope: "openid email", keychainAccount: "google-sync"),
-                worker: SyncClient(baseURL: baseURL, platform: "mac")
+                worker: SyncClient(baseURL: baseURL, platform: "mac"),
+                billing: SyncBillingClient(baseURL: baseURL)
             )
         } catch {
             // Missing Secrets.xcconfig (e.g. a fresh checkout that hasn't
@@ -148,9 +164,10 @@ final class SyncState: ObservableObject {
     }
 
     /// Tests pass fakes; the app uses `init()`.
-    init(signIn: SyncSignIn?, worker: SyncWorker?, keys: SyncKeyStore = SyncKeychainStore(), defaults: UserDefaults = .standard, configError: String? = nil) {
+    init(signIn: SyncSignIn?, worker: SyncWorker?, keys: SyncKeyStore = SyncKeychainStore(), defaults: UserDefaults = .standard, configError: String? = nil, billing: SyncBilling? = nil) {
         self.signIn = signIn
         self.syncClient = worker
+        self.billing = billing
         self.keys = keys
         self.defaults = defaults
         self.configError = configError
@@ -637,6 +654,10 @@ final class SyncState: ObservableObject {
         lastAuthAt = nil
         lastRenewAttemptAt = nil
         setDevices([])
+        planPollTask?.cancel()
+        planPollTask = nil
+        plan = nil
+        planReadFailed = false
         if !keepSignIn { setStatus(.notSignedIn) }
     }
 
@@ -647,9 +668,11 @@ final class SyncState: ObservableObject {
 
     func startDevicesPolling() {
         stopDevicesPolling()
+        planReadRetries = 0
         devicesPollTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refreshDevices()
+                await self?.retryPlanReadIfNeeded()
                 try? await Task.sleep(nanoseconds: Self.devicesPollIntervalSeconds * 1_000_000_000)
             }
         }
@@ -670,6 +693,106 @@ final class SyncState: ObservableObject {
         } catch {
             // A transient poll failure shouldn't blow away the last-known
             // device list or surface as a hard error — just skip this tick.
+        }
+    }
+
+    // MARK: - Cloud plan: Upgrade (Stripe Checkout) and Manage (Stripe portal)
+
+    func refreshPlan() async {
+        guard let signIn, let billing else { return }
+        do {
+            let devicePublicKeyBase64 = try loadOrThrowDevicePublicKey()
+            let idToken = try await signIn.validIdToken()
+            let fetched = try await billing.accountPlan(idToken: idToken, devicePublicKey: devicePublicKeyBase64)
+            if plan != fetched { plan = fetched }
+            planReadRetries = 0
+            if planReadFailed { planReadFailed = false }
+            // Cloud lifts the device limit, even when it lands after the plan poll ended.
+            if fetched.isCloud, case .deviceLimit = status {
+                await silentResumeIfPossible()
+            }
+        } catch {
+            // Keep the last plan; the next open or poll tick tries again.
+            if plan == nil, !planReadFailed { planReadFailed = true }
+        }
+    }
+
+    /// While no plan is held at `.ready` or the device limit, re-reads it on the devices-poll
+    /// tick, up to `planReadMaxRetries` times per Settings visit.
+    private func retryPlanReadIfNeeded() async {
+        guard plan == nil, planReadRetries < Self.planReadMaxRetries else { return }
+        switch status {
+        case .ready, .deviceLimit: break
+        default: return
+        }
+        planReadRetries += 1
+        await refreshPlan()
+    }
+
+    /// Opens Stripe Checkout for `interval` ("month" or "year") in the browser.
+    func upgrade(interval: String) async {
+        await openBilling { billing, idToken, key in
+            try await billing.checkoutURL(idToken: idToken, devicePublicKey: key, interval: interval)
+        }
+    }
+
+    /// Opens the Stripe customer portal in the browser.
+    func manageSubscription() async {
+        await openBilling { billing, idToken, key in
+            try await billing.portalURL(idToken: idToken, devicePublicKey: key)
+        }
+    }
+
+    private func openBilling(_ fetchURL: (SyncBilling, String, String) async throws -> URL) async {
+        guard let signIn, let billing else { return }
+        actionError = nil
+        do {
+            let devicePublicKeyBase64 = try loadOrThrowDevicePublicKey()
+            let idToken = try await signIn.validIdToken()
+            let url = try await fetchURL(billing, idToken, devicePublicKeyBase64)
+            NSWorkspace.shared.open(url)
+            startPlanPoll()
+        } catch let SyncAPIError.httpError(status, body)
+            where (status == 409 && (body.contains("already_cloud") || body.contains("no_subscription")))
+            || (status == 503 && body.contains("billing_unavailable")) {
+            // The plan here was stale (already Cloud, no longer Cloud, or billing off): show the
+            // server's, which moves or hides the buttons.
+            await refreshPlan()
+        } catch SyncAPIError.httpError(502, _) {
+            actionError = String(localized: "Couldn't reach Stripe. Try again in a minute.")
+        } catch SyncAPIError.httpError(429, _) {
+            actionError = String(localized: "Too many tries. Try again in a few minutes.")
+        } catch {
+            actionError = userMessage(for: error)
+        }
+    }
+
+    /// After Stripe opens in the browser: re-reads the plan every few seconds and whenever
+    /// Whimbrel comes back to the front, until it changes or 15 minutes pass. Becoming Cloud at
+    /// the device limit retries the sign-in, which now enrolls this computer.
+    private func startPlanPoll() {
+        planPollTask?.cancel()
+        planPollTask = Task { [weak self] in
+            guard let self else { return }
+            if self.plan == nil { await self.refreshPlan() }
+            let start = self.plan
+            let activation = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in await self?.refreshPlan() }
+            }
+            defer { NotificationCenter.default.removeObserver(activation) }
+            let deadline = Date().addingTimeInterval(Self.planPollDuration)
+            while !Task.isCancelled, Date() < deadline {
+                try? await Task.sleep(nanoseconds: Self.planPollIntervalSeconds * 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                await self.refreshPlan()
+                // Without a starting plan, only Cloud counts as a change.
+                let changed = start == nil ? self.plan?.isCloud == true : self.plan != start
+                // refreshPlan already resumed past the device limit if the plan is Cloud.
+                guard changed else { continue }
+                break
+            }
+            // A cancelled task's slot may already hold its successor.
+            if !Task.isCancelled { self.planPollTask = nil }
         }
     }
 

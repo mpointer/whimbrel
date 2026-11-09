@@ -140,6 +140,38 @@ pub extern "C" fn whimbrel_sync_worker_delete_account(base_url: *const c_char, i
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_worker_account_plan(base_url: *const c_char, id_token: *const c_char, device_public_key: *const c_char) -> *mut c_char {
+    let (Some(client), Some(id_token), Some(pk)) = (client(base_url), cstr_to_string(id_token), cstr_to_string(device_public_key)) else {
+        return ptr::null_mut();
+    };
+    outcome(client.account_plan(&id_token, &pk))
+}
+
+/// `interval` is "month" or "year"; success is `{"url": "..."}`.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_worker_billing_checkout(
+    base_url: *const c_char,
+    id_token: *const c_char,
+    device_public_key: *const c_char,
+    interval: *const c_char,
+) -> *mut c_char {
+    let (Some(client), Some(id_token), Some(pk), Some(interval)) =
+        (client(base_url), cstr_to_string(id_token), cstr_to_string(device_public_key), cstr_to_string(interval))
+    else {
+        return ptr::null_mut();
+    };
+    outcome(client.billing_checkout(&id_token, &pk, &interval).map(|url| serde_json::json!({ "url": url })))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_worker_billing_portal(base_url: *const c_char, id_token: *const c_char, device_public_key: *const c_char) -> *mut c_char {
+    let (Some(client), Some(id_token), Some(pk)) = (client(base_url), cstr_to_string(id_token), cstr_to_string(device_public_key)) else {
+        return ptr::null_mut();
+    };
+    outcome(client.billing_portal(&id_token, &pk).map(|url| serde_json::json!({ "url": url })))
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_sync_enrollment_step(state_json: *const c_char, event_json: *const c_char) -> *mut c_char {
     let (Some(state), Some(event)) = (cstr_to_string(state_json), cstr_to_string(event_json)) else {
         return ptr::null_mut();
@@ -236,6 +268,9 @@ mod tests {
         assert_eq!(v["error"]["kind"], "network");
         let bad_wants = CString::new("not json").unwrap();
         assert!(whimbrel_sync_worker_join_waitlist(unreachable.as_ptr(), id.as_ptr(), pk.as_ptr(), bad_wants.as_ptr(), ptr::null()).is_null());
+        assert!(whimbrel_sync_worker_account_plan(ptr::null(), id.as_ptr(), pk.as_ptr()).is_null());
+        assert!(whimbrel_sync_worker_billing_checkout(unreachable.as_ptr(), id.as_ptr(), pk.as_ptr(), ptr::null()).is_null());
+        assert!(whimbrel_sync_worker_billing_portal(ptr::null(), id.as_ptr(), pk.as_ptr()).is_null());
         assert!(!crate::whimbrel_sync_reset_push_cursor(ptr::null_mut()));
     }
 }

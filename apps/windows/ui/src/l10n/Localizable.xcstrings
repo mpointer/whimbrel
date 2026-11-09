@@ -803,6 +803,40 @@
         }
       }
     },
+    "A step needs some text." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Schritt braucht einen Text."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un paso necesita texto."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une étape doit contenir du texte."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Une étape doit contenir du texte."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Um passo precisa de texto."
+          }
+        }
+      }
+    },
     "A store job panicked: {error}" : {
       "localizations" : {
         "de" : {
@@ -833,6 +867,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Uma tarefa do armazenamento falhou: {error}"
+          }
+        }
+      }
+    },
+    "A topic needs a name." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Thema braucht einen Namen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un tema necesita un nombre."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un sujet doit avoir un nom."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Un sujet doit avoir un nom."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Um tópico precisa de um nome."
           }
         }
       }
@@ -5180,6 +5248,74 @@
         }
       }
     },
+    "Cloud" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud"
+          }
+        }
+      }
+    },
+    "Cloud until {date}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud bis {date}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud hasta el {date}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud jusqu’au {date}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud jusqu’au {date}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud até {date}"
+          }
+        }
+      }
+    },
     "Coming in {milestone}." : {
       "localizations" : {
         "de" : {
@@ -6846,6 +6982,40 @@
         }
       }
     },
+    "Couldn't check your plan. Try again in a moment." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ihr Tarif konnte nicht geprüft werden. Versuchen Sie es gleich noch einmal."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo comprobar tu plan. Inténtalo de nuevo en un momento."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de vérifier votre forfait. Réessayez dans un instant."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de vérifier votre forfait. Réessayez dans un moment."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível verificar seu plano. Tente novamente em instantes."
+          }
+        }
+      }
+    },
     "Couldn't delete this skin." : {
       "localizations" : {
         "de" : {
@@ -7080,6 +7250,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Não foi possível abrir seu app de e-mail. Envie um e-mail para {address}."
+          }
+        }
+      }
+    },
+    "Couldn't reach Stripe. Try again in a minute." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stripe ist nicht erreichbar. Versuchen Sie es in einer Minute erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo conectar con Stripe. Inténtalo de nuevo en un minuto."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de joindre Stripe. Réessayez dans une minute."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de joindre Stripe. Réessayez dans une minute."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível acessar o Stripe. Tente novamente em um minuto."
           }
         }
       }
@@ -10126,6 +10330,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Encontrei isto"
+          }
+        }
+      }
+    },
+    "Free: 1 computer + 1 phone" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kostenlos: 1 Computer + 1 Telefon"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gratis: 1 ordenador + 1 teléfono"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gratuit : 1 ordinateur + 1 téléphone"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gratuit : 1 ordinateur + 1 téléphone"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grátis: 1 computador + 1 celular"
           }
         }
       }
@@ -13580,6 +13818,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Criando uma imagem: '{prompt}'…"
+          }
+        }
+      }
+    },
+    "Manage subscription" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abo verwalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gestionar suscripción"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gérer l’abonnement"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gérer l’abonnement"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gerenciar assinatura"
           }
         }
       }
@@ -18500,6 +18772,40 @@
         }
       }
     },
+    "Open Connectors" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connectors öffnen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir Conectores"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrir les connecteurs"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrir les connecteurs"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir Conectores"
+          }
+        }
+      }
+    },
     "Open Topics settings" : {
       "localizations" : {
         "de" : {
@@ -19316,6 +19622,40 @@
         }
       }
     },
+    "Plan" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tarif"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plan"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forfait"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Forfait"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plano"
+          }
+        }
+      }
+    },
     "Please attach {file}, the diagnostics file Whimbrel just saved (File Explorer has it selected). It has recent logs and settings status, with email addresses and meeting titles removed." : {
       "localizations" : {
         "de" : {
@@ -19346,6 +19686,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Anexe {file}, o arquivo de diagnóstico que o Whimbrel acabou de salvar (está selecionado no Explorador de Arquivos). Ele tem registros recentes e o estado das configurações, sem endereços de e-mail nem títulos de reuniões."
+          }
+        }
+      }
+    },
+    "Plus tax where applicable. Opens Stripe in your browser. Cloud adds unlimited devices on our sync server." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zuzüglich Steuern, wo zutreffend. Öffnet Stripe in Ihrem Browser. Cloud erlaubt unbegrenzt viele Geräte auf unserem Sync-Server."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impuestos aplicables aparte. Abre Stripe en tu navegador. Cloud permite dispositivos ilimitados en nuestro servidor de sincronización."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taxes en sus, le cas échéant. Ouvre Stripe dans votre navigateur. Cloud permet un nombre illimité d’appareils sur notre serveur de synchronisation."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Taxes en sus, s’il y a lieu. Ouvre Stripe dans votre navigateur. Cloud permet un nombre illimité d’appareils sur notre serveur de synchronisation."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mais impostos, quando aplicável. Abre o Stripe no seu navegador. O Cloud permite dispositivos ilimitados no nosso servidor de sincronização."
           }
         }
       }
@@ -29820,6 +30194,40 @@
         }
       }
     },
+    "Too many tries. Try again in a few minutes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zu viele Versuche. Versuchen Sie es in ein paar Minuten erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Demasiados intentos. Inténtalo de nuevo en unos minutos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trop de tentatives. Réessayez dans quelques minutes."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Trop de tentatives. Réessayez dans quelques minutes."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Muitas tentativas. Tente novamente em alguns minutos."
+          }
+        }
+      }
+    },
     "Topics" : {
       "localizations" : {
         "de" : {
@@ -30942,6 +31350,108 @@
         }
       }
     },
+    "Upgrade to Cloud for unlimited devices." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit Cloud unbegrenzt viele Geräte nutzen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pasa a Cloud para tener dispositivos ilimitados."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passez à Cloud pour un nombre illimité d’appareils."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passez à Cloud pour un nombre illimité d’appareils."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mude para o Cloud e tenha dispositivos ilimitados."
+          }
+        }
+      }
+    },
+    "Upgrade to Cloud: $5 a month" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf Cloud upgraden: 5 $ im Monat"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pasar a Cloud: 5 $ al mes"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passer à Cloud : 5 $ par mois"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passer à Cloud : 5 $ par mois"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mudar para o Cloud: US$ 5 por mês"
+          }
+        }
+      }
+    },
+    "Upgrade to Cloud: $50 a year" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf Cloud upgraden: 50 $ im Jahr"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pasar a Cloud: 50 $ al año"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passer à Cloud : 50 $ par an"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Passer à Cloud : 50 $ par an"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mudar para o Cloud: US$ 50 por ano"
+          }
+        }
+      }
+    },
     "Use a time like 08:30." : {
       "localizations" : {
         "de" : {
@@ -31720,6 +32230,74 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Qual modelo esta rotina usa. O uso de modelos em Configurações mostra o que cada execução consumiu, então uma rotina definida com o modelo mais barato pode ser avaliada com uma semana de resultados."
+          }
+        }
+      }
+    },
+    "Whimbrel closed unexpectedly {n} times, so it won't restart on its own. A report with its recent logs was saved (email addresses and meeting titles removed).\n\nEmail the report to Whimbrel now?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel wurde {n}-mal unerwartet beendet und startet daher nicht mehr von selbst. Ein Bericht mit den letzten Protokollen wurde gespeichert (ohne E-Mail-Adressen und Meeting-Titel).\n\nDen Bericht jetzt per E-Mail an Whimbrel senden?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel se cerró inesperadamente {n} veces, así que no se reiniciará por sí solo. Se guardó un informe con sus registros recientes (sin direcciones de correo ni títulos de reuniones).\n\n¿Enviar el informe a Whimbrel por correo ahora?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel s’est fermé de façon inattendue {n} fois et ne redémarrera donc pas tout seul. Un rapport avec ses journaux récents a été enregistré (sans adresses e-mail ni titres de réunions).\n\nEnvoyer le rapport à Whimbrel par e-mail maintenant ?"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel s’est fermé de façon inattendue {n} fois et ne redémarrera donc pas tout seul. Un rapport avec ses journaux récents a été enregistré (sans adresses courriel ni titres de réunions).\n\nEnvoyer le rapport à Whimbrel par courriel maintenant?"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Whimbrel fechou inesperadamente {n} vezes, então não vai reiniciar sozinho. Um relatório com os registros recentes foi salvo (sem endereços de e-mail e títulos de reuniões).\n\nEnviar o relatório ao Whimbrel por e-mail agora?"
+          }
+        }
+      }
+    },
+    "Whimbrel closed unexpectedly {n} times, so it won't restart on its own. It couldn't save a report: {error}\n\nEmail Whimbrel about it now?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel wurde {n}-mal unerwartet beendet und startet daher nicht mehr von selbst. Ein Bericht konnte nicht gespeichert werden: {error}\n\nWhimbrel jetzt per E-Mail darüber informieren?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel se cerró inesperadamente {n} veces, así que no se reiniciará por sí solo. No se pudo guardar un informe: {error}\n\n¿Escribir a Whimbrel sobre esto ahora?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel s’est fermé de façon inattendue {n} fois et ne redémarrera donc pas tout seul. Impossible d’enregistrer un rapport : {error}\n\nÉcrire à Whimbrel à ce sujet maintenant ?"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel s’est fermé de façon inattendue {n} fois et ne redémarrera donc pas tout seul. Impossible d’enregistrer un rapport : {error}\n\nÉcrire à Whimbrel à ce sujet maintenant?"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Whimbrel fechou inesperadamente {n} vezes, então não vai reiniciar sozinho. Não foi possível salvar um relatório: {error}\n\nEscrever para o Whimbrel sobre isso agora?"
           }
         }
       }
@@ -33158,6 +33736,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Seu login do Google expirou. Entre novamente."
+          }
+        }
+      }
+    },
+    "Your calendar couldn't sync, so meetings may be missing: {error}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ihr Kalender konnte nicht synchronisiert werden, daher fehlen möglicherweise Meetings: {error}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu calendario no se pudo sincronizar, así que pueden faltar reuniones: {error}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Votre calendrier n’a pas pu être synchronisé ; des réunions peuvent manquer : {error}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Votre calendrier n’a pas pu être synchronisé; des réunions peuvent manquer : {error}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível sincronizar sua agenda, então podem faltar reuniões: {error}"
           }
         }
       }

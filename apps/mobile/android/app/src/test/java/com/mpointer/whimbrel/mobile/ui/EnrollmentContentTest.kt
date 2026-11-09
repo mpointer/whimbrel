@@ -98,5 +98,10 @@ class EnrollmentContentTest {
         )
         assertFalse(EnrollmentAction.SignIn in c.actions)
         assertEquals("Whimbrel's free sync includes one computer and one phone. Pixel is your synced phone.", c.title!!.localized(resolve))
+        assertEquals(R.string.limit_cloud_note, c.bodyRes)
+        assertEquals(
+            "Cloud lifts this limit. Subscribe from Whimbrel on your Mac or PC (Settings → Sync & Devices).",
+            resolve(c.bodyRes!!, emptyArray()),
+        )
     }
 }

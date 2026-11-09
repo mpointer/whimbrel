@@ -37,7 +37,8 @@ export function isUnlimited(email: string, csv: string | undefined): boolean {
 }
 
 /** The free device limit applies only on the hosted relay (OPEN_SIGN_IN on);
- * a self-hosted relay has none. UNLIMITED_EMAILS are exempt either way. */
-export function hasDeviceLimit(email: string, env: { OPEN_SIGN_IN?: string; UNLIMITED_EMAILS?: string }): boolean {
-  return isOpenSignIn(env) && !isUnlimited(email, env.UNLIMITED_EMAILS);
+ * a self-hosted relay has none. UNLIMITED_EMAILS and Cloud accounts are
+ * exempt either way. */
+export function hasDeviceLimit(email: string, env: { OPEN_SIGN_IN?: string; UNLIMITED_EMAILS?: string }, cloud: boolean): boolean {
+  return isOpenSignIn(env) && !cloud && !isUnlimited(email, env.UNLIMITED_EMAILS);
 }

@@ -117,6 +117,7 @@ fun enrollmentContent(status: EnrollmentStatus, swapRequested: Boolean): Enrollm
     EnrollmentStatus.NeedsDesktopFirst -> EnrollmentContent(bodyRes = R.string.enroll_needs_desktop, actions = listOf(EnrollmentAction.TryAgain))
     is EnrollmentStatus.DeviceLimit -> EnrollmentContent(
         title = EnrollmentText.Limit(EnrollmentModel.limitMessage(status.holders)),
+        bodyRes = R.string.limit_cloud_note,
         actions = status.holders.map { EnrollmentAction.UseThisPhoneInstead(it) } + EnrollmentAction.JoinWaitlist,
     )
     EnrollmentStatus.Approved -> EnrollmentContent() // MainActivity shows the signed-in app instead

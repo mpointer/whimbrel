@@ -145,6 +145,8 @@ struct DeviceLimitView: View {
     var body: some View {
         VStack(spacing: 16) {
             Text(EnrollmentModel.limitMessage(holders: holders)).foregroundStyle(Color.theme(.textPrimary))
+            Text("Cloud lifts this limit. Subscribe from Whimbrel on your Mac or PC (Settings → Sync & Devices).")
+                .foregroundStyle(Color.theme(.textSecondary))
             if let error = model.actionError {
                 Text(error).font(.footnote).foregroundStyle(Color.theme(.textSecondary))
             }

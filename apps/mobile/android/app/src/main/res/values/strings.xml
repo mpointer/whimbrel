@@ -35,6 +35,7 @@
     <string name="config_missing_worker_url">The sync server URL is not configured in this build. Set SYNC_WORKER_BASE_URL in secrets.properties.</string>
     <string name="config_missing_both">Google sign-in and the sync server URL are not configured in this build. Set GOOGLE_WEB_CLIENT_ID and SYNC_WORKER_BASE_URL in secrets.properties.</string>
     <string name="limit_message">Whimbrel\'s free sync includes one computer and one phone. %1$s is your synced phone.</string>
+    <string name="limit_cloud_note">Cloud lifts this limit. Subscribe from Whimbrel on your Mac or PC (Settings → Sync &amp; Devices).</string>
     <string name="limit_default_phone_name">Your other phone</string>
     <string name="waitlist_more_devices">More devices</string>
     <string name="waitlist_routines_while_closed">Routines that run while my computer is closed</string>
