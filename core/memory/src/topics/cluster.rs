@@ -25,10 +25,11 @@
 //! Centroids are cached in `topic_stats` as a running vector sum per topic, updated on every
 //! join, so a batch reads one row per topic instead of every member's vector.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+use super::aliases::assign_seeds;
 use super::schema::{prune_orphans, PRUNE_DIRTY_KEY};
 use crate::{Store, EMBEDDING_DIM};
 
@@ -44,6 +45,12 @@ pub(crate) const SEED_WINDOW_DAYS: i64 = 30;
 /// domain), once there are `COMMON_MIN_SOURCES` sources. People are never ignored.
 pub(crate) const COMMON_SHARE: f64 = 0.25;
 pub(crate) const COMMON_MIN_SOURCES: f64 = 200.0;
+/// Phrases on more than 3% of indexed episodes (window titles and screen text every session
+/// shares) are ignored by clustering and naming, once there are 100 episodes.
+const COMMON_PHRASE_PCT: i64 = 3;
+const COMMON_PHRASE_MIN_EPISODES: i64 = 100;
+/// Auto topics one source may join in `cluster_one`; seed, Jev and user members don't count.
+pub(crate) const MAX_AUTO_JOINS: usize = 2;
 /// Orphan peers looked at per entity when seeding (closest in time first).
 pub(crate) const SEED_PEERS_PER_ENTITY: i64 = 50;
 /// Phrases the idea pass handles per call.
@@ -95,7 +102,7 @@ fn now_ms() -> i64 {
 }
 
 #[allow(clippy::chunks_exact_to_as_chunks)]
-fn unblob(b: &[u8]) -> Vec<f32> {
+pub(crate) fn unblob(b: &[u8]) -> Vec<f32> {
     b.chunks_exact(4) // ponytail: as_chunks needs a newer toolchain than CI
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect()
@@ -105,7 +112,7 @@ fn blob(v: &[f32]) -> Vec<u8> {
     v.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 
-fn cos(a: &[f32], b: &[f32]) -> f64 {
+pub(crate) fn cos(a: &[f32], b: &[f32]) -> f64 {
     let (mut d, mut na, mut nb) = (0f64, 0f64, 0f64);
     for (x, y) in a.iter().zip(b) {
         let (x, y) = (*x as f64, *y as f64);
@@ -140,7 +147,7 @@ fn weighted_jaccard(a: &Ents, b: &Ents) -> f64 {
     }
 }
 
-fn source_vec(conn: &Connection, sid: i64) -> rusqlite::Result<Option<Vec<f32>>> {
+pub(crate) fn source_vec(conn: &Connection, sid: i64) -> rusqlite::Result<Option<Vec<f32>>> {
     Ok(conn
         .query_row(
             "SELECT embedding FROM topic_source_vec WHERE rowid = ?1",
@@ -193,11 +200,32 @@ fn write_stats(conn: &Connection, tid: i64, n: i64, sum: Option<&[f32]>) -> rusq
     Ok(())
 }
 
+/// Phrase entities on more than `COMMON_PHRASE_PCT`% of indexed episode sources.
+pub(crate) fn common_phrases(conn: &Connection) -> rusqlite::Result<HashSet<i64>> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM topic_source WHERE kind = 'episode'",
+        [],
+        |r| r.get(0),
+    )?;
+    if n < COMMON_PHRASE_MIN_EPISODES {
+        return Ok(HashSet::new());
+    }
+    conn.prepare(
+        "SELECT em.entity_id FROM entity_mention em \
+         JOIN topic_source s ON s.id = em.source_id AND s.kind = 'episode' \
+         JOIN entity e ON e.id = em.entity_id AND e.kind = 'phrase' \
+         GROUP BY em.entity_id HAVING COUNT(*) * 100 > ?1 * ?2",
+    )?
+    .query_map([COMMON_PHRASE_PCT, n], |r| r.get(0))?
+    .collect()
+}
+
 struct Cx<'a> {
     conn: &'a Connection,
     n_sources: f64,
     /// Entity id -> (mention count, kind: 0 phrase, 1 person, 2 org).
     df: HashMap<i64, (i64, u8)>,
+    common_phrases: HashSet<i64>,
     topics: BTreeMap<i64, TopicState>,
     now: i64,
 }
@@ -221,7 +249,8 @@ impl Cx<'_> {
         // move to a vec0 KNN table if topic counts reach the hundreds of thousands.
         let mut stmt = conn.prepare(
             "SELECT t.id, s.vec_n, s.vec_sum FROM topic t JOIN topic_stats s ON s.topic_id = t.id \
-             WHERE t.merged_into IS NULL",
+             WHERE t.merged_into IS NULL \
+               AND NOT EXISTS (SELECT 1 FROM topic_seed d WHERE d.topic_id = t.id)",
         )?;
         for row in stmt.query_map([], |r| {
             Ok((
@@ -247,6 +276,7 @@ impl Cx<'_> {
             conn,
             n_sources: n_sources as f64,
             df: HashMap::new(),
+            common_phrases: common_phrases(conn)?,
             topics,
             now: now_ms(),
         })
@@ -270,7 +300,7 @@ impl Cx<'_> {
         let common = org == 2
             && self.n_sources >= COMMON_MIN_SOURCES
             && df as f64 > COMMON_SHARE * self.n_sources;
-        Ok(df >= 2 && !common)
+        Ok(df >= 2 && !common && !self.common_phrases.contains(&e))
     }
 
     /// Whether the raw mentions include a person or org (kinds cached by `filter`).
@@ -465,6 +495,7 @@ impl Cx<'_> {
                 cands.insert(t);
             }
         }
+        let mut joins = vec![];
         for t in cands {
             let te = self.profile(t)?;
             let sc = self.score(
@@ -475,8 +506,15 @@ impl Cx<'_> {
                 &te,
             );
             if sc >= JOIN_THRESHOLD {
-                self.add_member(t, sid, ts, sc, sv.as_deref(), &raw)?;
+                joins.push((sc, t));
             }
+        }
+        // ponytail: at most MAX_AUTO_JOINS auto topics per source (best scores win), so one
+        // source cannot copy itself into every near-duplicate topic; tune if real topics lose
+        // members they should share.
+        joins.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (sc, t) in joins.into_iter().take(MAX_AUTO_JOINS) {
+            self.add_member(t, sid, ts, sc, sv.as_deref(), &raw)?;
         }
         if self.is_orphan(sid)? {
             self.seed(sid, ts, &raw, &ents, sv.as_deref())?;
@@ -700,9 +738,10 @@ pub(crate) fn run_cluster(
     idea_batch: usize,
 ) -> rusqlite::Result<bool> {
     let tx = store.conn.unchecked_transaction()?;
+    let sweeping = assign_seeds(&tx, store.own_device_id().as_deref(), batch)?;
     let todo: Vec<(i64, i64)> = {
         let mut stmt = tx.prepare(
-            "SELECT id, ts_unix_ms FROM topic_source WHERE assigned_at_unix_ms IS NULL \
+            "SELECT id, ts_unix_ms FROM topic_source WHERE assigned_at_unix_ms IS NULL AND noise = 0 \
              ORDER BY ts_unix_ms, id LIMIT ?1",
         )?;
         let rows = stmt
@@ -719,7 +758,7 @@ pub(crate) fn run_cluster(
         }
         more = tx
             .query_row(
-                "SELECT 1 FROM topic_source WHERE assigned_at_unix_ms IS NULL LIMIT 1",
+                "SELECT 1 FROM topic_source WHERE assigned_at_unix_ms IS NULL AND noise = 0 LIMIT 1",
                 [],
                 |_| Ok(()),
             )
@@ -734,7 +773,7 @@ pub(crate) fn run_cluster(
         tx.execute("DELETE FROM kv_meta WHERE key = ?1", [PRUNE_DIRTY_KEY])?;
     }
     tx.commit()?;
-    Ok(more)
+    Ok(more || sweeping)
 }
 
 /// The idea pass has a step to take: one in progress, or sources newer than its last pass.
@@ -758,6 +797,324 @@ mod tests {
 
     fn run(s: &Store, batch: usize) {
         while run_topic_cluster_job(s, batch).unwrap() {}
+    }
+
+    fn mail(s: &Store, ext: &str, subject: &str) -> i64 {
+        s.conn
+            .execute(
+                "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id) \
+                 VALUES ('d','email','gmail',1000,json_array('a@x.com','b@y.com'),?1,'Budget review','{}',?2)",
+                params![subject, ext],
+            )
+            .unwrap();
+        s.conn.last_insert_rowid()
+    }
+
+    fn count(s: &Store, sql: &str) -> i64 {
+        s.conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    /// `n` episode sources; the first 10 mention only the phrase "cursor agents".
+    fn episodes_sharing_a_phrase(n: i64) -> Store {
+        let s = Store::open_in_memory().unwrap();
+        s.conn.execute("INSERT INTO entity (kind, key, display, updated_at_unix_ms) VALUES ('phrase','cursor agents','cursor agents',0)", []).unwrap();
+        let e = s.conn.last_insert_rowid();
+        for i in 0..n {
+            s.conn.execute("INSERT INTO topic_source (kind, ref_id, ts_unix_ms, title, indexed_at_unix_ms) VALUES ('episode', ?1, ?2, 'Cursor Agents', 0)", params![i, now_ms() - i]).unwrap();
+            let sid = s.conn.last_insert_rowid();
+            if i < 10 {
+                s.conn.execute("INSERT INTO entity_mention (entity_id, source_id, weight) VALUES (?1, ?2, 0.8)", params![e, sid]).unwrap();
+            }
+        }
+        s
+    }
+
+    #[test]
+    fn source_joins_only_its_two_best_auto_topics() {
+        let s = Store::open_in_memory().unwrap();
+        let q = |sql: &str, p: &[&dyn rusqlite::ToSql]| {
+            s.conn.execute(sql, p).unwrap();
+            s.conn.last_insert_rowid()
+        };
+        let e = q("INSERT INTO entity (kind, key, display, updated_at_unix_ms) VALUES ('person','falcon','falcon',0)", &[]);
+        let mention = |sid: i64, w: f64| {
+            q(
+                "INSERT INTO entity_mention (entity_id, source_id, weight) VALUES (?1, ?2, ?3)",
+                &[&e, &sid, &w],
+            );
+        };
+        let mut tids = vec![];
+        // Four topics whose only entity is weighted 1.0, 0.9, 0.8, 0.7: all clear the threshold.
+        for (i, w) in [1.0, 0.9, 0.8, 0.7].into_iter().enumerate() {
+            let t = q(
+                "INSERT INTO topic (name, created_at_unix_ms, updated_at_unix_ms) VALUES ('t',0,0)",
+                &[],
+            );
+            for j in 0..2 {
+                let sid = q("INSERT INTO topic_source (kind, ref_id, ts_unix_ms, title, indexed_at_unix_ms, assigned_at_unix_ms) VALUES ('email', ?1, 1, 'x', 0, 0)", &[&((i * 2 + j) as i64)]);
+                mention(sid, w);
+                q("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'auto')", &[&t, &sid]);
+            }
+            tids.push(t);
+        }
+        let sid = q("INSERT INTO topic_source (kind, ref_id, ts_unix_ms, title, indexed_at_unix_ms) VALUES ('email', 99, 1, 'new', 0)", &[]);
+        mention(sid, 1.0);
+        run(&s, 200);
+        let joined: Vec<i64> = s
+            .conn
+            .prepare("SELECT topic_id FROM topic_member WHERE source_id = ?1 ORDER BY topic_id")
+            .unwrap()
+            .query_map([sid], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(joined, tids[..2].to_vec());
+    }
+
+    #[test]
+    fn phrase_on_many_episodes_does_not_join_sources() {
+        // 10 of 100 episodes (> 3%): the shared phrase is no evidence, nothing groups.
+        let s = episodes_sharing_a_phrase(100);
+        run(&s, 200);
+        assert_eq!(count(&s, "SELECT COUNT(*) FROM topic_member"), 0);
+        // Under 100 indexed episodes the share proves nothing: the phrase still links.
+        let s = episodes_sharing_a_phrase(99);
+        run(&s, 200);
+        assert!(count(&s, "SELECT COUNT(*) FROM topic_member") >= 2);
+    }
+
+    #[test]
+    fn alias_hit_becomes_seed_member_and_skips_orphan_seeding() {
+        let s = Store::open_in_memory().unwrap();
+        let seed = s.create_seed_topic("Maximus", &[], None).unwrap();
+        mail(&s, "e1", "Maximus Canada pilot");
+        mail(&s, "e2", "Canada pilot notes");
+        while run_topic_index_job(&s, 200).unwrap() {}
+        run(&s, 200);
+        let rows: Vec<(i64, String)> = s
+            .conn
+            .prepare("SELECT topic_id, origin FROM topic_member WHERE source_id = (SELECT id FROM topic_source WHERE title = 'Maximus Canada pilot')")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows, vec![(seed.topic_id, "seed".to_string())]);
+        assert_eq!(count(&s, "SELECT COUNT(*) FROM topic"), 1);
+    }
+
+    /// A name in an email's body only makes the topic a candidate for Jev; the subject or
+    /// sender files it.
+    #[test]
+    fn body_only_mention_queues_for_judging_instead_of_filing() {
+        let s = Store::open_in_memory().unwrap();
+        let seed = s.create_seed_topic("Maximus", &[], None).unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id) \
+                 VALUES ('d','email','gmail',1000,json_array('a@x.com','b@y.com'),'Lunch plans','We also discussed Maximus pricing','{}','e9')",
+                [],
+            )
+            .unwrap();
+        while run_topic_index_job(&s, 200).unwrap() {}
+        run(&s, 200);
+        assert_eq!(
+            count(
+                &s,
+                &format!(
+                    "SELECT COUNT(*) FROM topic_member WHERE topic_id = {}",
+                    seed.topic_id
+                )
+            ),
+            0
+        );
+        assert_eq!(count(&s, "SELECT COUNT(*) FROM topic_judge_todo"), 1);
+    }
+
+    #[test]
+    fn zero_or_multi_hit_sources_queue_for_judging() {
+        let queued = |seeds: bool| {
+            let s = Store::open_in_memory().unwrap();
+            if seeds {
+                s.create_seed_topic("Maximus", &[], None).unwrap();
+                s.create_seed_topic("CMS", &[], None).unwrap();
+            }
+            mail(&s, "e1", "Lunch plans");
+            mail(&s, "e2", "Maximus CMS handoff");
+            mail(&s, "e3", "Maximus kickoff");
+            while run_topic_index_job(&s, 200).unwrap() {}
+            run(&s, 200);
+            let todo: Vec<String> = s
+                .conn
+                .prepare("SELECT title FROM topic_source WHERE id IN (SELECT source_id FROM topic_judge_todo) ORDER BY title")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            todo
+        };
+        assert_eq!(queued(true), vec!["Lunch plans", "Maximus CMS handoff"]);
+        assert!(queued(false).is_empty());
+    }
+
+    /// A title naming two topics files under neither; Jev picks one.
+    #[test]
+    fn title_naming_two_topics_files_neither() {
+        let s = Store::open_in_memory().unwrap();
+        s.create_seed_topic("Maximus", &[], None).unwrap();
+        s.create_seed_topic("CMS", &[], None).unwrap();
+        mail(&s, "e1", "Maximus CMS handoff");
+        while run_topic_index_job(&s, 200).unwrap() {}
+        run(&s, 200);
+        assert_eq!(
+            count(
+                &s,
+                "SELECT COUNT(*) FROM topic_member WHERE origin = 'seed'"
+            ),
+            0
+        );
+        assert_eq!(count(&s, "SELECT COUNT(*) FROM topic_judge_todo"), 1);
+    }
+
+    #[test]
+    fn first_seed_sweeps_already_assigned_sources_into_judge_queue() {
+        let s = Store::open_in_memory().unwrap();
+        mail(&s, "e1", "Maximus kickoff");
+        mail(&s, "e2", "Lunch plans");
+        mail(&s, "e3", "Quarterly numbers");
+        while run_topic_index_job(&s, 200).unwrap() {}
+        run(&s, 200);
+        assert_eq!(count(&s, "SELECT COUNT(*) FROM topic_judge_todo"), 0);
+        let seed = s.create_seed_topic("Maximus", &[], None).unwrap();
+        run(&s, 200);
+        assert_eq!(
+            count(
+                &s,
+                &format!(
+                    "SELECT COUNT(*) FROM topic_member WHERE topic_id = {} AND origin = 'seed' \
+                     AND source_id = (SELECT id FROM topic_source WHERE title = 'Maximus kickoff')",
+                    seed.topic_id
+                )
+            ),
+            1
+        );
+        assert_eq!(
+            count(&s, "SELECT COUNT(*) FROM topic_judge_todo WHERE source_id IN (SELECT id FROM topic_source WHERE title != 'Maximus kickoff')"),
+            2
+        );
+        assert_eq!(count(&s, "SELECT COUNT(*) FROM topic_judge_todo"), 2);
+    }
+
+    #[test]
+    fn unfinished_sweep_keeps_job_running_across_chunks() {
+        let s = Store::open_in_memory().unwrap();
+        for i in 0..5 {
+            mail(&s, &format!("e{i}"), &format!("Maximus note {i}"));
+        }
+        while run_topic_index_job(&s, 200).unwrap() {}
+        run(&s, 200);
+        let seed = s.create_seed_topic("Maximus", &[], None).unwrap();
+        mail(&s, "new", "Fresh item");
+        while run_topic_index_job(&s, 200).unwrap() {}
+        // Chunk is 2: the first run clusters the new source and must still report work.
+        assert!(run_topic_cluster_job(&s, 200).unwrap());
+        let mut runs = 1;
+        while run_topic_cluster_job(&s, 200).unwrap() {
+            runs += 1;
+            assert!(runs < 10);
+        }
+        assert!(runs >= 3);
+        assert_eq!(
+            count(
+                &s,
+                &format!(
+                    "SELECT COUNT(*) FROM topic_member WHERE topic_id = {} AND origin = 'seed'",
+                    seed.topic_id
+                )
+            ),
+            5
+        );
+        assert_eq!(count(&s, "SELECT COUNT(*) FROM topic_judge_todo"), 1);
+    }
+
+    #[test]
+    fn adding_an_alias_rematches_existing_sources() {
+        let s = Store::open_in_memory().unwrap();
+        mail(&s, "e1", "AXL Zurich workshop");
+        while run_topic_index_job(&s, 200).unwrap() {}
+        run(&s, 200);
+        let seed = s
+            .create_seed_topic("Zurich Insurance", &["Zurich".to_string()], None)
+            .unwrap();
+        run(&s, 200);
+        assert_eq!(
+            count(
+                &s,
+                &format!(
+                    "SELECT COUNT(*) FROM topic_member WHERE topic_id = {} AND origin = 'seed'",
+                    seed.topic_id
+                )
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn live_seed_gets_no_auto_members_from_clustering() {
+        let s = Store::open_in_memory().unwrap();
+        let seed = s.create_seed_topic("Maximus", &[], None).unwrap();
+        mail(&s, "e1", "Maximus Canada pilot");
+        for i in 2..7 {
+            mail(&s, &format!("e{i}"), &format!("Canada pilot kickoff {i}"));
+        }
+        while run_topic_index_job(&s, 200).unwrap() {}
+        run(&s, 200);
+        assert_eq!(
+            count(
+                &s,
+                &format!(
+                    "SELECT COUNT(*) FROM topic_member WHERE topic_id = {} AND origin = 'auto'",
+                    seed.topic_id
+                )
+            ),
+            0
+        );
+        assert_eq!(
+            count(
+                &s,
+                &format!(
+                    "SELECT COUNT(*) FROM topic_member WHERE topic_id = {} AND origin = 'seed'",
+                    seed.topic_id
+                )
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn deleted_seed_gets_no_new_members_from_clustering() {
+        let s = Store::open_in_memory().unwrap();
+        let seed = s.create_seed_topic("Maximus", &[], None).unwrap();
+        mail(&s, "e1", "Maximus Canada pilot");
+        mail(&s, "e2", "Maximus Canada kickoff");
+        while run_topic_index_job(&s, 200).unwrap() {}
+        run(&s, 200);
+        s.delete_seed_topic(&seed.key).unwrap();
+        mail(&s, "e3", "Maximus Canada followup");
+        while run_topic_index_job(&s, 200).unwrap() {}
+        run(&s, 200);
+        assert_eq!(
+            count(
+                &s,
+                &format!(
+                    "SELECT COUNT(*) FROM topic_member WHERE topic_id = {} \
+                     AND source_id = (SELECT id FROM topic_source WHERE title = 'Maximus Canada followup')",
+                    seed.topic_id
+                )
+            ),
+            0
+        );
     }
 
     /// Live topic id -> its non-removed members.

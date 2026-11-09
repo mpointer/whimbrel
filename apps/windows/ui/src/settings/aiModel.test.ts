@@ -14,6 +14,7 @@ import {
   monthSpent,
   ollamaWarningLine,
   parseCapDollars,
+  onRampOnceKnown,
   showsOnRamp,
   thisMonth,
   usageCost,
@@ -92,15 +93,25 @@ describe("the on-ramp", () => {
   });
 
   it("shows the card only with no hosted key and no local model to call", () => {
-    const none = [{ provider: "anthropic" as const, masked: null }];
+    const none = [{ provider: "anthropic" as const, masked: null, syncEnabled: false }];
     expect(showsOnRamp(routing, none, false)).toBe(true);
     expect(showsOnRamp(routing, none, true)).toBe(false);
     expect(showsOnRamp({ ...routing, useLocalModel: false }, none, true)).toBe(true);
-    expect(showsOnRamp(routing, [{ provider: "anthropic", masked: "••••••••1234" }], false)).toBe(false);
+    expect(showsOnRamp(routing, [{ provider: "anthropic", masked: "••••••••1234", syncEnabled: false }], false)).toBe(false);
+  });
+
+  it("decides the card only once the Ollama probe and the local model's status are in", () => {
+    const none = [{ provider: "anthropic" as const, masked: null, syncEnabled: false }];
+    const saved = [{ provider: "anthropic" as const, masked: "••••••••1234", syncEnabled: false }];
+    expect(onRampOnceKnown(routing, none, null, false)).toBeNull();
+    expect(onRampOnceKnown(routing, none, false, null)).toBeNull();
+    expect(onRampOnceKnown(routing, saved, null, null)).toBe(false);
+    expect(onRampOnceKnown(routing, none, false, true)).toBe(false);
+    expect(onRampOnceKnown(routing, none, false, false)).toBe(true);
   });
 
   it("notes an OpenRouter default without a pick", () => {
-    const keys = [{ provider: "openrouter" as const, masked: "••••••••1234" }];
+    const keys = [{ provider: "openrouter" as const, masked: "••••••••1234", syncEnabled: false }];
     expect(hostedNotice({ ...routing, preferredProvider: "openrouter" }, keys)).toMatch(/no model picked/);
     expect(hostedNotice({ ...routing, preferredProvider: "openrouter", openrouterModel: "vendor/model:free" }, keys)).toBeNull();
   });
@@ -166,8 +177,8 @@ describe("keys", () => {
   });
 
   it("warns when the preferred hosted provider has no key, or local-only overrides it", () => {
-    expect(hostedNotice(routing, [{ provider: "anthropic", masked: "••••••••1234" }])).toBeNull();
-    expect(hostedNotice(routing, [{ provider: "anthropic", masked: null }])).toBe(
+    expect(hostedNotice(routing, [{ provider: "anthropic", masked: "••••••••1234", syncEnabled: false }])).toBeNull();
+    expect(hostedNotice(routing, [{ provider: "anthropic", masked: null, syncEnabled: false }])).toBe(
       "Anthropic has no API key, so requests fall back to Ollama.",
     );
     expect(hostedNotice({ ...routing, preferredProvider: "ollama" }, [])).toBeNull();

@@ -498,6 +498,9 @@ impl WhimbrelMcpServer {
             now,
             params.context_limit,
             include_transcripts,
+            // Raw email text is not part of the "memory" scope and no token scope grants
+            // it yet, so MCP clients keep getting thread summaries only.
+            false,
         );
         let items = context
             .into_iter()

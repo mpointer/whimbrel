@@ -14,7 +14,7 @@ use serde::Serialize;
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, PhysicalPosition, Rect, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, Rect, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 use crate::l10n::tr;
 use crate::state::AppState;
@@ -23,8 +23,13 @@ use crate::syncing::controller::SyncState;
 pub const TRAY_ID: &str = "whimbrel";
 /// The popup window's label (also listed in `capabilities/default.json`).
 pub const POPUP: &str = "popup";
-/// The popup's size, in logical pixels.
-const POPUP_SIZE: (f64, f64) = (300.0, 228.0);
+/// The popup's size, in logical pixels (taller by a line for the next meeting, topics piece 2).
+const POPUP_SIZE: (f64, f64) = (300.0, 272.0);
+
+/// A topic the popup asked the main window to open, until the main window takes it.
+static PENDING_TOPIC: Mutex<Option<i64>> = Mutex::new(None);
+/// Tells an open main window that a topic is waiting (`take_pending_open_topic`).
+pub const OPEN_TOPIC_PENDING_EVENT: &str = "open-topic-pending";
 /// The gap between the popup and the taskbar, in logical pixels.
 const POPUP_MARGIN: f64 = 8.0;
 /// How often the icon and tooltip are recomputed: two status reads and one registry
@@ -366,6 +371,21 @@ pub async fn tray_status(app: AppHandle) -> Result<TrayStatus, crate::error::Com
 #[tauri::command]
 pub fn popup_open_main(app: AppHandle) {
     crate::app::show_main_window(&app);
+}
+
+/// The popup's next meeting chip: brings the main window up on the topic. The main window also
+/// asks on mount (`take_pending_open_topic`), since showing it may have just created it.
+#[tauri::command]
+pub fn popup_open_topic(app: AppHandle, topic_id: i64) {
+    *PENDING_TOPIC.lock().unwrap() = Some(topic_id);
+    crate::app::show_main_window(&app);
+    let _ = app.emit_to(crate::app::MAIN_WINDOW, OPEN_TOPIC_PENDING_EVENT, ());
+}
+
+/// The topic the popup asked for, once.
+#[tauri::command]
+pub fn take_pending_open_topic() -> Option<i64> {
+    PENDING_TOPIC.lock().unwrap().take()
 }
 
 #[tauri::command]

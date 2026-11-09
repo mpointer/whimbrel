@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
-import { meetingRecordStop, popupOpenMain, popupQuit, setCaptureEnabled, trayStatus } from "../api";
+import { meetingRecordStop, nextMeetingPrep, popupOpenMain, popupOpenTopic, popupQuit, setCaptureEnabled, trayStatus } from "../api";
+import { useTopicLookup } from "../topics/TopicChip";
+import { timeLabel } from "../library/rows";
 import { elapsedLabel } from "../meetings/recordingModel";
-import type { TrayStatus } from "../generated/types";
+import type { NextMeetingView, TrayStatus } from "../generated/types";
 import { useL10n } from "../l10n";
 
 /** The tray's quick-glance popup (plan Task 10), with a running meeting recording (M3.3). */
 export function PopupView() {
-  const { t } = useL10n();
+  const { t, locale } = useL10n();
+  // The next meeting and its topic (topics piece 2): the topic opens in the main window.
+  const [next, setNext] = useState<NextMeetingView | null>(null);
+  const [topic] = useTopicLookup(next ? [{ kind: "event", id: next.eventId, title: next.title }] : []);
   const [status, setStatus] = useState<TrayStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -18,6 +23,7 @@ export function PopupView() {
 
   useEffect(() => {
     load();
+    nextMeetingPrep().then(setNext, () => setNext(null));
     const clock = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(clock);
   }, []);
@@ -55,6 +61,16 @@ export function PopupView() {
             {t("Stop")}
           </button>
         </div>
+      )}
+      {next && (
+        <p className="popup-next small">
+          {t("Next: {title}, {time}", { title: next.title, time: timeLabel(next.startUnixMs, locale) })}{" "}
+          {topic && (
+            <button type="button" className="chip citation topic-chip" onClick={() => void popupOpenTopic(topic.topicId)}>
+              {topic.name}
+            </button>
+          )}
+        </p>
       )}
       <label className="toggle">
         <input type="checkbox" checked={status?.captureEnabled ?? false} disabled={!status || busy} onChange={toggle} />

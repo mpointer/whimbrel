@@ -188,7 +188,7 @@ describe("the Ask composer", () => {
     ...over,
   });
   const keys = (...saved: ProviderKey["provider"][]): ProviderKey[] =>
-    (["anthropic", "openai", "google"] as const).map((provider) => ({ provider, masked: saved.includes(provider) ? "••••1234" : null }));
+    (["anthropic", "openai", "google"] as const).map((provider) => ({ provider, masked: saved.includes(provider) ? "••••1234" : null, syncEnabled: false }));
 
   it("is available with a local model, whatever keys or local-only say", () => {
     expect(askAvailable(routing(), keys())).toBe(true);

@@ -728,12 +728,16 @@
             "kind": {
               "const": "completed",
               "type": "string"
+            },
+            "narrowed": {
+              "type": "boolean"
             }
           },
           "required": [
             "kind",
             "answer",
-            "citations"
+            "citations",
+            "narrowed"
           ],
           "type": "object"
         },
@@ -2096,6 +2100,54 @@
       ],
       "type": "object"
     },
+    "LiveTranscriptLine": {
+      "description": "One line of the live transcript, as the meeting page shows it.",
+      "properties": {
+        "id": {
+          "description": "Negative, as a meeting Ask citation to this line carries it (`transcript_for_meeting`).",
+          "format": "int64",
+          "type": "integer"
+        },
+        "speaker": {
+          "description": "The stored label, \"Me\" or \"Others\" (`sentinels.ts` translates it).",
+          "type": "string"
+        },
+        "startCs": {
+          "description": "Centiseconds from the start of the recording.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "speaker",
+        "startCs",
+        "text"
+      ],
+      "type": "object"
+    },
+    "LiveTranscriptView": {
+      "description": "The live transcript pane: off (the setting), or the lines heard so far.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "lines": {
+          "items": {
+            "$ref": "#/definitions/LiveTranscriptLine"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "enabled",
+        "lines"
+      ],
+      "type": "object"
+    },
     "LocalModelStatus": {
       "description": "The small local model behind Ask (W-1.3).",
       "properties": {
@@ -2190,6 +2242,23 @@
         "enabled",
         "status",
         "address"
+      ],
+      "type": "object"
+    },
+    "MeetingAskExchange": {
+      "description": "One answered exchange from the page, sent back as history for a follow-up.",
+      "properties": {
+        "answer": {
+          "type": "string"
+        },
+        "query": {
+          "description": "What the model was asked: a preset's prompt, not its label.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "answer"
       ],
       "type": "object"
     },
@@ -2432,6 +2501,11 @@
           "description": "\"Alert me when someone asks me something\". On by default.",
           "type": "boolean"
         },
+        "liveTranscript": {
+          "default": true,
+          "description": "\"Live transcript during meetings\". On by default, kept on this PC. Turning it off\ndeletes every live transcript line stored.",
+          "type": "boolean"
+        },
         "otherNames": {
           "default": "",
           "description": "\"Other names people call you\", comma-separated, as typed.",
@@ -2581,6 +2655,23 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "OrgCount": {
+      "properties": {
+        "count": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "org": {
+          "description": "An email domain.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "org",
+        "count"
+      ],
       "type": "object"
     },
     "PipelineFailure": {
@@ -3094,10 +3185,15 @@
         },
         "provider": {
           "$ref": "#/definitions/Provider"
+        },
+        "syncEnabled": {
+          "description": "Whether this key syncs to the account's other devices (off unless turned on).",
+          "type": "boolean"
         }
       },
       "required": [
-        "provider"
+        "provider",
+        "syncEnabled"
       ],
       "type": "object"
     },
@@ -3655,6 +3751,38 @@
       ],
       "type": "object"
     },
+    "SeedInput": {
+      "description": "A seed topic as Settings → Topics edits it: no key creates one.",
+      "properties": {
+        "aliases": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "customer, product, project or subject; none when absent.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "SkinLine": {
       "description": "A chat line from an image action, and whether it was stored in the skin's chat.",
       "properties": {
@@ -3988,6 +4116,106 @@
       ],
       "type": "object"
     },
+    "StepActionInput": {
+      "description": "What the user does to a step: core's `StepAction`, with a schema.",
+      "oneOf": [
+        {
+          "properties": {
+            "action": {
+              "const": "done",
+              "type": "string"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "const": "reopen",
+              "type": "string"
+            }
+          },
+          "required": [
+            "action"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`reason`: `not_mine` or `not_task`.",
+          "properties": {
+            "action": {
+              "const": "dismiss",
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "const": "confirm",
+              "type": "string"
+            },
+            "confirmed": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "action",
+            "confirmed"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "const": "note",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "action": {
+              "const": "edit",
+              "type": "string"
+            },
+            "dueDate": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "text"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "SuggestionView": {
       "description": "A fact the daily job proposed, waiting for Add or Dismiss.",
       "properties": {
@@ -4023,6 +4251,55 @@
         "createdAtUnixMs"
       ],
       "type": "object"
+    },
+    "SummaryLeadView": {
+      "description": "What the summary line leads with.",
+      "oneOf": [
+        {
+          "description": "A key date: \"SOW due Fri Nov 14\".",
+          "properties": {
+            "date": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "date",
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "label",
+            "date"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The next open step.",
+          "properties": {
+            "dueDate": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "step",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "SyncState": {
       "enum": [
@@ -4237,6 +4514,512 @@
         "openLoops",
         "cached",
         "emptyDay"
+      ],
+      "type": "object"
+    },
+    "TopicItemView": {
+      "description": "A Recent row.",
+      "properties": {
+        "kind": {
+          "description": "email, meeting, calendar, episode…",
+          "type": "string"
+        },
+        "open": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LibraryTarget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "tsUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "title",
+        "tsUnixMs"
+      ],
+      "type": "object"
+    },
+    "TopicListItemView": {
+      "description": "A row in the Topics list.",
+      "properties": {
+        "kind": {
+          "description": "customer, product, project or subject; none for Other.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nextMeetingUnixMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "openMine": {
+          "description": "Open steps the user owes (the hint's \"2 steps\").",
+          "format": "int64",
+          "type": "integer"
+        },
+        "topic": {
+          "$ref": "#/definitions/TopicRefView"
+        }
+      },
+      "required": [
+        "topic",
+        "openMine"
+      ],
+      "type": "object"
+    },
+    "TopicLookup": {
+      "description": "One thing a page shows a topic chip for.",
+      "oneOf": [
+        {
+          "description": "A recorded meeting.",
+          "properties": {
+            "id": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "meeting",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A calendar event: its series' topic, else the first topic its title names.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "event",
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "title"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TopicNamesView": {
+      "description": "\"Names I go by\", and names from the user's accounts to offer.",
+      "properties": {
+        "names": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "suggested": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "names",
+        "suggested"
+      ],
+      "type": "object"
+    },
+    "TopicNextMeetingView": {
+      "properties": {
+        "attendeesByOrg": {
+          "description": "Attendees other than the user, by email domain, largest first.",
+          "items": {
+            "$ref": "#/definitions/OrgCount"
+          },
+          "type": "array"
+        },
+        "me": {
+          "description": "Attendees whose address is one of the user's: \"1 you\".",
+          "format": "int64",
+          "type": "integer"
+        },
+        "startUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "startUnixMs",
+        "attendeesByOrg",
+        "me"
+      ],
+      "type": "object"
+    },
+    "TopicPageView": {
+      "properties": {
+        "done": {
+          "items": {
+            "$ref": "#/definitions/TopicStepView"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lead": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SummaryLeadView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nextMeeting": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TopicNextMeetingView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "older": {
+          "description": "Open steps of a topic quiet for 60 days.",
+          "items": {
+            "$ref": "#/definitions/TopicStepView"
+          },
+          "type": "array"
+        },
+        "owedToYou": {
+          "items": {
+            "$ref": "#/definitions/TopicStepView"
+          },
+          "type": "array"
+        },
+        "recent": {
+          "description": "The newest 20 items.",
+          "items": {
+            "$ref": "#/definitions/TopicItemView"
+          },
+          "type": "array"
+        },
+        "recentTotal": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "role": {
+          "description": "\"lead consultant\", \"supporting\"…",
+          "type": "string"
+        },
+        "roleEdited": {
+          "description": "The user wrote the role.",
+          "type": "boolean"
+        },
+        "topic": {
+          "$ref": "#/definitions/TopicRefView"
+        },
+        "youOwe": {
+          "items": {
+            "$ref": "#/definitions/TopicStepView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "topic",
+        "role",
+        "roleEdited",
+        "youOwe",
+        "owedToYou",
+        "done",
+        "older",
+        "recent",
+        "recentTotal"
+      ],
+      "type": "object"
+    },
+    "TopicRefView": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "topicId": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "topicId",
+        "key",
+        "name"
+      ],
+      "type": "object"
+    },
+    "TopicSeedView": {
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "itemCount": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "key": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "customer, product, project or subject.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "name",
+        "aliases",
+        "itemCount"
+      ],
+      "type": "object"
+    },
+    "TopicSortEstimate": {
+      "description": "\"About N items, about $X. Start?\"",
+      "properties": {
+        "indexing": {
+          "description": "Sorting isn't done: show \"Still sorting\" and no Start.",
+          "type": "boolean"
+        },
+        "sources": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "tokens": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "usd": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "sources",
+        "tokens",
+        "usd",
+        "indexing"
+      ],
+      "type": "object"
+    },
+    "TopicSortView": {
+      "description": "Settings → AI's TypeSafe section.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "key": {
+          "description": "The TypeSafe key, masked; `None` when unset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keyRejected": {
+          "type": "boolean"
+        },
+        "localOnly": {
+          "type": "boolean"
+        },
+        "overBudget": {
+          "type": "boolean"
+        },
+        "started": {
+          "description": "Start was pressed on the estimate.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled",
+        "started",
+        "localOnly",
+        "keyRejected",
+        "overBudget"
+      ],
+      "type": "object"
+    },
+    "TopicStepView": {
+      "properties": {
+        "askedAtUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "closedBy": {
+          "description": "What closed it, for a step a newer item marked done.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confirmed": {
+          "type": "boolean"
+        },
+        "direction": {
+          "description": "`mine` (You owe) or `owed` (Owed to you).",
+          "type": "string"
+        },
+        "dueDate": {
+          "description": "`YYYY-MM-DD` when one was stated.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fromScreen": {
+          "description": "Found on a screen (a Teams episode): captures are partial, so the page says so.",
+          "type": "boolean"
+        },
+        "key": {
+          "description": "Pass to `topic_step_action`.",
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "open": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LibraryTarget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sourceKind": {
+          "description": "email, meeting or episode.",
+          "type": "string"
+        },
+        "sourceTitle": {
+          "type": "string"
+        },
+        "status": {
+          "description": "open, done or dismissed.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "text",
+        "direction",
+        "sourceKind",
+        "sourceTitle",
+        "fromScreen",
+        "askedAtUnixMs",
+        "status",
+        "confirmed"
+      ],
+      "type": "object"
+    },
+    "TopicStepsView": {
+      "description": "Settings → Topics' \"Find steps with TypeSafe\".",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "hasKey": {
+          "description": "A TypeSafe key is saved (Settings → AI); the switch needs one.",
+          "type": "boolean"
+        },
+        "keyRejected": {
+          "type": "boolean"
+        },
+        "localOnly": {
+          "type": "boolean"
+        },
+        "noModel": {
+          "description": "The last local run found no local model: \"Finding steps needs a local model (Settings → AI).\"",
+          "type": "boolean"
+        },
+        "overBudget": {
+          "type": "boolean"
+        },
+        "started": {
+          "description": "Start was pressed on the estimate.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled",
+        "started",
+        "hasKey",
+        "localOnly",
+        "keyRejected",
+        "overBudget",
+        "noModel"
+      ],
+      "type": "object"
+    },
+    "TopicSuggestionView": {
+      "properties": {
+        "itemCount": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "topicId": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "topicId",
+        "name",
+        "itemCount"
       ],
       "type": "object"
     },
@@ -4458,6 +5241,31 @@
       "required": [
         "offered",
         "lengthMs"
+      ],
+      "type": "object"
+    },
+    "UpcomingDay": {
+      "description": "One day in Upcoming: its local date and the meetings that start on it, soonest first.",
+      "properties": {
+        "date": {
+          "description": "`YYYY-MM-DD`, local.",
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/definitions/ScheduleEvent"
+          },
+          "type": "array"
+        },
+        "tomorrow": {
+          "description": "The first day after today: the UI calls it \"Tomorrow\".",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "date",
+        "tomorrow",
+        "events"
       ],
       "type": "object"
     },

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { aiSettings, providerModels } from "../api";
 import type { AiSettings } from "../generated/types";
 import { t } from "../l10n";
-import { showsOnRamp } from "../settings/aiModel";
+import { onRampOnceKnown } from "../settings/aiModel";
 import { percent } from "../settings/searchModel";
 import { cardState, localModelDownload } from "./localModel";
 
@@ -11,7 +11,7 @@ import { cardState, localModelDownload } from "./localModel";
 export function LocalModelCard({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const { status, job } = localModelDownload.use();
   const [settings, setSettings] = useState<AiSettings | null>(null);
-  const [ollamaUp, setOllamaUp] = useState(false);
+  const [ollamaUp, setOllamaUp] = useState<boolean | null>(null);
 
   useEffect(() => {
     aiSettings().then(setSettings, () => {});
@@ -21,7 +21,7 @@ export function LocalModelCard({ onOpenSettings }: { onOpenSettings?: () => void
     );
   }, []);
 
-  const state = cardState(!!settings && showsOnRamp(settings.routing, settings.keys, ollamaUp), status, job);
+  const state = cardState(!!settings && onRampOnceKnown(settings.routing, settings.keys, ollamaUp, status ? status.installed : null) === true, status, job);
   if (state === "hidden") return null;
 
   return (

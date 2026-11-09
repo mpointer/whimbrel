@@ -8,6 +8,8 @@ struct TodayComposer: View {
     var placeholder = SkinDefaults.whimbrel.voice.text(.askPlaceholder, name: "")
     let onSubmit: (String) -> Void
     @State private var text = ""
+    /// Topics the typed text names, each offered as "Open topic page".
+    @State private var namedTopics: [TopicRef] = []
 
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -37,6 +39,23 @@ struct TodayComposer: View {
     private var setUpPrompt: some View { SetUpAIProviderButton { openSettings() } }
 
     private var composer: some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            ForEach(namedTopics, id: \.topicId) { TopicPageLink(topic: $0) }
+            field
+        }
+        // Looks up topics once typing pauses; a new keystroke cancels the wait.
+        .task(id: trimmed) {
+            guard !trimmed.isEmpty, let store = appState.coreStore else { namedTopics = []; return }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            let query = trimmed
+            namedTopics = await withCheckedContinuation { done in
+                CoreMemoryStore.accessQueue.async { done.resume(returning: store.topicsNamedIn(text: query) ?? []) }
+            }
+        }
+    }
+
+    private var field: some View {
         HStack(spacing: Spacing.sm) {
             TextField(placeholder, text: $text)
                 .textFieldStyle(.plain)

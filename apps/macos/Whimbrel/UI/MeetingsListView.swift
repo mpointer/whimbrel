@@ -36,6 +36,7 @@ struct MeetingsListView: View {
     @State private var selectedMeetingId: Int64?
     @State private var selectedDraft: CoreMeetingNoteDraft?
     @State private var selectedActionItems: [CoreMeetingActionItem] = []
+    @State private var selectedTopic: TopicRef?
     /// The meeting id `selectedDraft`/`selectedActionItems` actually belong to — used to
     /// gate `MeetingDetailContentView`'s construction until its real data has loaded, and
     /// to force a fresh instance per meeting (`.id(selectedMeetingId)` below).
@@ -113,6 +114,7 @@ struct MeetingsListView: View {
                 loadedMeetingId = nil
                 selectedDraft = nil
                 selectedActionItems = []
+                selectedTopic = nil
                 return
             }
             loadDetail(meetingId: newValue)
@@ -187,7 +189,7 @@ struct MeetingsListView: View {
                 if let copies = meeting.alsoRecorded, !copies.isEmpty {
                     AlsoRecordedRow(copies: copies, ownDeviceId: appState.deviceId).padding(.horizontal, Spacing.md)
                 }
-                MeetingDetailContentView(meeting: meeting, initialDraft: selectedDraft, initialActionItems: selectedActionItems)
+                MeetingDetailContentView(meeting: meeting, initialDraft: selectedDraft, initialActionItems: selectedActionItems, topic: selectedTopic)
             }
             .id(id)
         } else {
@@ -217,10 +219,12 @@ struct MeetingsListView: View {
         CoreMemoryStore.accessQueue.async {
             let draft = store.getMeetingNoteDraft(meetingId: meetingId)
             let items = store.listMeetingActionItems(meetingId: meetingId)
+            let topic = store.topicForMeeting(meetingId: meetingId)
             DispatchQueue.main.async {
                 guard selectedMeetingId == meetingId else { return }
                 selectedDraft = draft
                 selectedActionItems = items
+                selectedTopic = topic
                 loadedMeetingId = meetingId
             }
         }

@@ -654,11 +654,10 @@ fn tau_ms_for(item: &ContextItem) -> i64 {
         ContextItem::Capture(_) => RECENCY_TAU_CAPTURE_MS,
         ContextItem::Transcript(_) | ContextItem::Snapshot(_) => RECENCY_TAU_TRANSCRIPT_MS,
         ContextItem::RoutineRun(_) => RECENCY_TAU_ROUTINE_RUN_MS,
-        // assemble_context never puts Episode/Thread through this path (see step 12) --
-        // they use their own dedicated decay scaling instead of tau_ms_for.
-        ContextItem::Episode(_) | ContextItem::Thread(_) => {
-            unreachable!("episodes/threads are decay-scored separately, never RRF-fused")
-        }
+        // A thread is fused when its email matched the question; episodes and waiting
+        // threads are otherwise decay-scored in assemble_context's background list.
+        ContextItem::Thread(_) => RECENCY_TAU_THREAD_MS,
+        ContextItem::Episode(_) => RECENCY_TAU_EPISODE_MS,
     }
 }
 
@@ -686,6 +685,27 @@ fn rrf_fuse(lists: &[&[(ContextItem, i64)]]) -> Vec<(ContextItem, i64, f64)> {
         }
     }
     scores.into_values().collect()
+}
+
+/// Longest email body put in context; a long message is cut at a character boundary.
+const EMAIL_EXCERPT_CHARS: usize = 1_500;
+
+/// The thread as Ask sees it: its summary (if any) followed by the matching message.
+/// Only the in-context copy changes; nothing is written back. The Mac's citation list
+/// shows the same text (`whimbrel_memory_search_email_threads`).
+pub fn thread_with_matching_email(hit: memory::EmailThreadHit) -> memory::Thread {
+    // Email bodies are stored as received; credentials in them are replaced here, before
+    // the text reaches a model or a citation, as the thread summarizer does.
+    let body = memory::redact::redact_secrets(&hit.body);
+    let body: String = body.chars().take(EMAIL_EXCERPT_CHARS).collect();
+    let from = memory::redact::redact_secrets(&hit.from);
+    let message = format!("Email from {}: {}", from, body.trim());
+    let mut thread = hit.thread;
+    thread.summary = Some(match thread.summary.take() {
+        Some(summary) if !summary.trim().is_empty() => format!("{summary}\n\n{message}"),
+        _ => message,
+    });
+    thread
 }
 
 pub fn assemble_context(
@@ -745,7 +765,13 @@ pub fn assemble_context(
     let budget_chars = CONTEXT_BUDGET_TOKENS * CHARS_PER_TOKEN_ESTIMATE;
     let mut remaining_chars = budget_chars;
     let mut out = Vec::new();
+    // A thread found through its email is in l1 and may also be a waiting thread in l2;
+    // the first (l1) copy carries the matching message, so later copies are skipped.
+    let mut packed = std::collections::HashSet::new();
     for (item, _score) in l1.into_iter().chain(l2.into_iter()) {
+        if !packed.insert(item.citation_ref()) {
+            continue;
+        }
         let len = item.text().len();
         if len > remaining_chars {
             continue;
@@ -770,6 +796,7 @@ pub fn gather_and_assemble_context(
     now_unix_ms: i64,
     context_limit: usize,
     include_transcripts: bool,
+    include_email: bool,
 ) -> Vec<ContextItem> {
     let mut keyword_hits: Vec<(ContextItem, i64)> = Vec::new();
     keyword_hits.extend(
@@ -797,6 +824,21 @@ pub fn gather_and_assemble_context(
                 .unwrap_or_default()
                 .into_iter()
                 .map(|(h, ts)| (ContextItem::Snapshot(h), ts)),
+        );
+    }
+
+    // Email reaches Ask as its thread, carrying the message that matched. Message text is
+    // its own gate: a caller without email access still gets waiting threads' summaries.
+    if include_email {
+        keyword_hits.extend(
+            store
+                .search_email_thread_keyword(query, context_limit)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|hit| {
+                    let ts = hit.ts_unix_ms;
+                    (ContextItem::Thread(thread_with_matching_email(hit)), ts)
+                }),
         );
     }
 
@@ -2166,6 +2208,22 @@ pub fn estimate_cost_cents(provider: Provider, model: &str, usage: TokenUsage) -
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn thread_with_matching_email_redacts_credentials_in_the_message() {
+        let thread = memory::Thread {
+            id: 1, source: "gmail".into(), external_thread_id: "t".into(), account_email: "me@x.com".into(),
+            subject: Some("keys".into()), message_count: 1, last_activity_ts_unix_ms: 0,
+            last_message_from: "ops@x.com".into(), summary: None, status: "fyi".into(), summarize_status: "done".into(),
+        };
+        let hit = memory::EmailThreadHit {
+            thread, from: "ops@x.com".into(), ts_unix_ms: 0,
+            body: "Use api_key=sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789 for staging".into(),
+        };
+        let text = thread_with_matching_email(hit).summary.unwrap();
+        assert!(!text.contains("sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"), "{text}");
+        assert!(text.starts_with("Email from ops@x.com: Use api_key="));
+    }
 
     #[test]
     fn summary_chunks_fit_an_8k_window_not_4k() {
@@ -4298,7 +4356,7 @@ mod tests {
             )
             .unwrap();
 
-        let items = gather_and_assemble_context(&store, "fox", 10_000, 10, true);
+        let items = gather_and_assemble_context(&store, "fox", 10_000, 10, true, true);
 
         assert!(
             items.iter().any(|i| matches!(i, ContextItem::Capture(_))),
@@ -4355,7 +4413,7 @@ mod tests {
             }])
             .unwrap();
 
-        let items = gather_and_assemble_context(&store, "fox", 10_000, 10, false);
+        let items = gather_and_assemble_context(&store, "fox", 10_000, 10, false, true);
 
         assert!(
             items.iter().any(|i| matches!(i, ContextItem::Capture(_))),
@@ -4395,7 +4453,7 @@ mod tests {
             })
             .unwrap();
 
-        let with = gather_and_assemble_context(&store, "hiring", 10_000, 10, true);
+        let with = gather_and_assemble_context(&store, "hiring", 10_000, 10, true, true);
         let snap = with
             .iter()
             .find_map(|i| match i {
@@ -4408,7 +4466,7 @@ mod tests {
         assert_eq!(item.display_label(), "slide in meeting \"Board review\"");
         assert_eq!(item.citation_ref(), ContextItemRef::Snapshot { id: snap.id });
 
-        let without = gather_and_assemble_context(&store, "hiring", 10_000, 10, false);
+        let without = gather_and_assemble_context(&store, "hiring", 10_000, 10, false, true);
         assert!(!without.iter().any(|i| matches!(i, ContextItem::Snapshot(_))));
     }
 
@@ -4423,7 +4481,7 @@ mod tests {
     #[test]
     fn gather_and_assemble_context_on_a_fresh_store_returns_empty_without_panicking() {
         let store = memory::Store::open_in_memory().unwrap();
-        let items = gather_and_assemble_context(&store, "anything", 10_000, 10, true);
+        let items = gather_and_assemble_context(&store, "anything", 10_000, 10, true, true);
         assert!(items.is_empty());
     }
 

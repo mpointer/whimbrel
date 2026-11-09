@@ -159,3 +159,20 @@ export function groupUsageByDay(rows: UsageRowView[], locale: string): { day: st
  */
 export const showsOnRamp = (routing: RoutingSettings, keys: ProviderKey[], ollamaUp: boolean, localModelInstalled = false): boolean =>
   !(routing.useLocalModel && ollamaUp) && !keys.some((k) => k.masked) && !localModelInstalled;
+
+/**
+ * The on-ramp once it can be decided: null while the Ollama probe or the local model's status is
+ * still out. Deciding early drew the on-ramp for a moment on a PC with a local model, then the model
+ * picker jumped into its place (2026-11-08, Joe's 0.9.61).
+ */
+export const onRampOnceKnown = (
+  routing: RoutingSettings,
+  keys: ProviderKey[],
+  ollamaUp: boolean | null,
+  localModelInstalled: boolean | null,
+): boolean | null => {
+  // A saved hosted key decides it at once: no probe can bring the on-ramp back.
+  if (keys.some((k) => k.masked)) return false;
+  if (ollamaUp === null || localModelInstalled === null) return null;
+  return showsOnRamp(routing, keys, ollamaUp, localModelInstalled);
+};

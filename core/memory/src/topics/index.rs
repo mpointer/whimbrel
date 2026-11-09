@@ -7,6 +7,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+use super::chrome;
 use super::entities::{
     extract_phrases, org_key_from_domain, parse_addresses, person_key, EntityKind,
 };
@@ -37,6 +38,8 @@ pub(crate) fn name_key(name: &str) -> String {
     person_key(name)
 }
 
+const DAY_MS: i64 = 86_400_000;
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -44,8 +47,13 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// The first `TEXT_CHARS` characters, redacted before the cut so a secret straddling it
+/// cannot survive in part.
 fn head(s: &str) -> String {
-    s.chars().take(TEXT_CHARS).collect()
+    crate::redact::redact_secrets(s)
+        .chars()
+        .take(TEXT_CHARS)
+        .collect()
 }
 
 struct Ctx<'a> {
@@ -58,6 +66,8 @@ struct Ctx<'a> {
     now: i64,
     /// (source id, text) still needing an embedding; computed after the transaction commits.
     pending: Vec<(i64, String)>,
+    /// This device's id, for source keys (`super::steps::attach_source`).
+    own: Option<String>,
 }
 
 /// Entity ids with their best weight for one source.
@@ -72,6 +82,7 @@ impl<'a> Ctx<'a> {
             trust: HashMap::new(),
             now: now_ms(),
             pending: Vec::new(),
+            own: None,
         }
     }
 
@@ -317,6 +328,7 @@ impl<'a> Ctx<'a> {
             params![kind, ref_id, ts, title, self.now],
             |r| r.get(0),
         )?;
+        super::steps::attach_source(self.conn, self.own.as_deref(), sid)?;
         // Re-indexing can leave entities with no mentions: let topic_cluster prune.
         if self
             .conn
@@ -331,11 +343,27 @@ impl<'a> Ctx<'a> {
                 params![eid, sid, w],
             )?;
         }
+        // Redacted before the cut (and again when sent to Jev).
+        let cap = if kind == "episode" { 1_500 } else { 2_000 };
+        let text: String = crate::redact::redact_secrets(text)
+            .chars()
+            .take(cap)
+            .collect();
+        self.conn.execute(
+            "INSERT INTO topic_source_text (source_id, text) VALUES (?1, ?2) \
+             ON CONFLICT(source_id) DO UPDATE SET text = excluded.text",
+            params![sid, text],
+        )?;
         self.conn
             .execute("DELETE FROM topic_source_vec WHERE rowid = ?1", [sid])?;
-        match vec.filter(|v| v.len() == EMBEDDING_DIM) {
-            Some(v) => put_vec(self.conn, sid, &v)?,
-            None => self.pending.push((sid, text.to_string())),
+        let vec = vec.filter(|v| v.len() == EMBEDDING_DIM);
+        if let Some(v) = &vec {
+            put_vec(self.conn, sid, v)?;
+        }
+        // Episodes embed their chrome-stripped text after commit; the mean of the raw capture
+        // vectors (chrome included) stays only if that embedding fails.
+        if vec.is_none() || kind == "episode" {
+            self.pending.push((sid, text));
         }
         Ok(sid)
     }
@@ -413,7 +441,9 @@ fn kv_set(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
 /// Indexes up to `batch` new sources of each kind. Returns true while work remains.
 pub fn run_topic_index_job(store: &Store, batch: usize) -> rusqlite::Result<bool> {
     let tx = store.conn.unchecked_transaction()?;
+    chrome::rebuild_chrome_if_stale(&tx, now_ms())?;
     let mut cx = Ctx::new(&tx);
+    cx.own = store.own_device_id();
     let mut more = false;
     for kind in ["email", "calendar_event", "snapshot"] {
         more |= index_items(&mut cx, kind, batch)?;
@@ -444,6 +474,21 @@ pub fn run_topic_index_job(store: &Store, batch: usize) -> rusqlite::Result<bool
     Ok(more)
 }
 
+/// One key for every occurrence of a recurring event: the id before the last `#`, minus a
+/// trailing `_YYYYMMDDTHHMMSS[Z]` instance suffix (Google), prefixed by the source.
+pub(crate) fn calendar_series_key(source: &str, external_id: &str) -> String {
+    let id = external_id.rsplit_once('#').map_or(external_id, |(a, _)| a);
+    let b = id.as_bytes();
+    let z = usize::from(b.last() == Some(&b'Z'));
+    let n = b.len() - z;
+    let stamp = n >= 16
+        && b[n - 16] == b'_'
+        && b[n - 15..n - 7].iter().all(u8::is_ascii_digit)
+        && b[n - 7] == b'T'
+        && b[n - 6..n].iter().all(u8::is_ascii_digit);
+    format!("{source}:{}", if stamp { &id[..n - 16] } else { id })
+}
+
 fn index_items(cx: &mut Ctx, kind: &str, batch: usize) -> rusqlite::Result<bool> {
     let hw = hw_get(cx.conn, kind);
     struct Row {
@@ -454,6 +499,8 @@ fn index_items(cx: &mut Ctx, kind: &str, batch: usize) -> rusqlite::Result<bool>
         body: String,
         bulk: bool,
         unscored: bool,
+        source: Option<String>,
+        ext: Option<String>,
     }
     let rows: Vec<Row> = {
         let mut stmt = cx.conn.prepare(
@@ -466,7 +513,8 @@ fn index_items(cx: &mut Ctx, kind: &str, batch: usize) -> rusqlite::Result<bool>
                (json_extract(i.refs, '$.gmail_thread_id') IS NOT NULL AND NOT EXISTS ( \
                  SELECT 1 FROM threads t JOIN thread_priority p ON p.thread_id = t.id \
                  WHERE t.source = 'gmail' AND t.external_thread_id = json_extract(i.refs, '$.gmail_thread_id') \
-                   AND t.account_email = json_extract(i.refs, '$.account_email'))) \
+                   AND t.account_email = json_extract(i.refs, '$.account_email'))), \
+               i.source, i.external_id \
              FROM items i WHERE i.kind = ?1 AND i.id > ?2 ORDER BY i.id LIMIT ?3",
         )?;
         let rows = stmt
@@ -479,6 +527,8 @@ fn index_items(cx: &mut Ctx, kind: &str, batch: usize) -> rusqlite::Result<bool>
                     body: r.get(4)?,
                     bulk: r.get::<_, i64>(5)? != 0,
                     unscored: r.get::<_, i64>(6)? != 0,
+                    source: r.get(7)?,
+                    ext: r.get(8)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
@@ -491,9 +541,42 @@ fn index_items(cx: &mut Ctx, kind: &str, batch: usize) -> rusqlite::Result<bool>
         if kind == "email" && r.unscored && cx.now - r.ts < HOLD_MS {
             return Ok(false);
         }
+        // ponytail: re-scans today's future events each run; fine for one day's window
+        let future = kind == "calendar_event" && r.ts > cx.now;
+        if future && r.ts <= cx.now + DAY_MS {
+            return Ok(false);
+        }
         let title = r.title.clone().unwrap_or_default();
-        if !(kind == "email" && r.bulk) {
+        let series = match (kind, &r.source, &r.ext) {
+            ("calendar_event", Some(s), Some(e)) => Some(calendar_series_key(s, e)),
+            _ => None,
+        };
+        // Further than a day ahead: never indexed, and must not stall the mark.
+        let mut skip_older = future;
+        if let Some(key) = series.as_ref().filter(|_| !future) {
+            let cur: Option<(i64, i64)> = cx
+                .conn
+                .query_row(
+                    "SELECT s.id, s.ts_unix_ms FROM topic_series t \
+                     JOIN topic_source s ON s.id = t.source_id WHERE t.series_key = ?1",
+                    [key],
+                    |x| Ok((x.get(0)?, x.get(1)?)),
+                )
+                .optional()?;
+            if let Some((sid, cur_ts)) = cur {
+                skip_older = r.ts <= cur_ts;
+                if !skip_older {
+                    // Repoint; the write below then refreshes it as a re-index.
+                    cx.conn.execute(
+                        "UPDATE topic_source SET ref_id = ?1 WHERE id = ?2",
+                        params![r.id, sid],
+                    )?;
+                }
+            }
+        }
+        if !skip_older && !(kind == "email" && r.bulk) {
             let mut m = Mentions::new();
+            let mut head_len = None;
             let text = match kind {
                 "email" => {
                     for raw in json_strings(r.actors.clone()) {
@@ -501,7 +584,12 @@ fn index_items(cx: &mut Ctx, kind: &str, batch: usize) -> rusqlite::Result<bool>
                     }
                     cx.phrases(&mut m, &title, 8, 0.8)?;
                     cx.phrases(&mut m, &head(&r.body), 12, 0.4)?;
-                    format!("{title}\n{}", head(&r.body))
+                    let from = json_strings(r.actors.clone())
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default();
+                    head_len = Some(title.chars().count() + 1 + from.chars().count());
+                    format!("{title}\n{from}\n{}", head(&r.body))
                 }
                 "calendar_event" => {
                     cx.attendees(&mut m, &json_strings(r.actors.clone()))?;
@@ -514,7 +602,14 @@ fn index_items(cx: &mut Ctx, kind: &str, batch: usize) -> rusqlite::Result<bool>
                 }
             };
             let vec = cx.item_vec(r.id);
-            cx.write(kind, r.id, r.ts, &title, &text, vec, &m)?;
+            let sid = cx.write(kind, r.id, r.ts, &title, &text, vec, &m)?;
+            set_head_len(cx.conn, sid, head_len)?;
+            if let Some(key) = &series {
+                cx.conn.execute(
+                    "INSERT OR REPLACE INTO topic_series (series_key, source_id) VALUES (?1, ?2)",
+                    params![key, sid],
+                )?;
+            }
         }
         kv_set(
             cx.conn,
@@ -622,7 +717,7 @@ fn index_meetings(cx: &mut Ctx, batch: usize) -> rusqlite::Result<bool> {
         };
         let body = if notes.is_empty() { head(&text) } else { notes };
         let vec = cx.mean_vec(&transcript);
-        cx.write(
+        let sid = cx.write(
             "meeting",
             id,
             start,
@@ -631,19 +726,31 @@ fn index_meetings(cx: &mut Ctx, batch: usize) -> rusqlite::Result<bool> {
             vec,
             &m,
         )?;
+        set_head_len(cx.conn, sid, Some(title.chars().count()))?;
     }
     Ok(more)
 }
 
+/// Records where a source's head (title, subject and sender) ends in its stored text; `None`
+/// for kinds whose whole text counts (calendar events, snapshots).
+fn set_head_len(conn: &Connection, sid: i64, head_len: Option<usize>) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE topic_source_text SET head_len = ?2 WHERE source_id = ?1",
+        params![sid, head_len.map(|h| h as i64)],
+    )?;
+    Ok(())
+}
+
 fn index_episodes(cx: &mut Ctx, batch: usize) -> rusqlite::Result<bool> {
     let (ids, more) = todo_ids(cx, "episode", "episodes", batch)?;
+    let chrome = chrome::load_chrome(cx.conn)?;
     for id in ids {
         #[allow(clippy::type_complexity)]
-        let row: Option<(i64, String, String, String, i64, i64, bool, bool)> = cx
+        let row: Option<(i64, String, String, String, i64, i64, bool, String)> = cx
             .conn
             .prepare_cached(
                 "SELECT start_ts_unix_ms, COALESCE(window_title, ''), COALESCE(summary, ''), \
-                        device_id, start_item_id, end_item_id, hidden = 1, status = 'summarized' \
+                        device_id, start_item_id, end_item_id, hidden = 1, COALESCE(app_bundle_id, '') \
                  FROM episodes WHERE id = ?1",
             )?
             .query_row([id], |r| {
@@ -659,7 +766,7 @@ fn index_episodes(cx: &mut Ctx, batch: usize) -> rusqlite::Result<bool> {
                 ))
             })
             .optional()?;
-        let Some((start, title, summary, device, lo, hi, hidden, summarized)) = row else {
+        let Some((start, title, summary, device, lo, hi, hidden, app)) = row else {
             continue;
         };
         if hidden {
@@ -670,12 +777,15 @@ fn index_episodes(cx: &mut Ctx, batch: usize) -> rusqlite::Result<bool> {
             )?;
             continue;
         }
-        if !summarized {
-            continue;
-        }
+        let has_summary = !summary.trim().is_empty();
+        let lines = chrome::capture_lines(cx.conn, &device, &app, lo, hi, &chrome)?;
         let mut m = Mentions::new();
         cx.phrases(&mut m, &title, 8, 0.8)?;
         cx.phrases(&mut m, &summary, 12, 0.4)?;
+        if !has_summary {
+            // The period ends a capitalized run, so no phrase spans a cut-out chrome gap.
+            cx.phrases(&mut m, &lines.join(".\n"), 12, 0.4)?;
+        }
         let caps: Vec<i64> = {
             let mut stmt = cx.conn.prepare(
                 "SELECT id FROM items WHERE kind = 'capture' AND device_id = ?1 AND id BETWEEN ?2 AND ?3 ORDER BY id LIMIT ?4",
@@ -686,14 +796,14 @@ fn index_episodes(cx: &mut Ctx, batch: usize) -> rusqlite::Result<bool> {
             ids
         };
         let vec = cx.mean_vec(&caps);
-        cx.write(
-            "episode",
-            id,
-            start,
-            &title,
-            &format!("{title}\n{summary}"),
-            vec,
-            &m,
+        let (text, head_len) = chrome::episode_topic_text(&summary, &title, &lines);
+        let sid = cx.write("episode", id, start, &title, &text, vec, &m)?;
+        set_head_len(cx.conn, sid, Some(head_len))?;
+        // Too little text and no summary: not enough to seed or join a topic.
+        let noise = !has_summary && text.trim().chars().count() < 80;
+        cx.conn.execute(
+            "UPDATE topic_source SET noise = ?2 WHERE id = ?1",
+            params![sid, noise],
         )?;
     }
     Ok(more)
@@ -710,6 +820,37 @@ mod tests {
         let s =
             Store::open_with_embedder(&dir.path().join("t.db"), Arc::new(FakeEmbedder)).unwrap();
         (dir, s)
+    }
+
+    #[test]
+    fn episode_vector_embeds_its_stored_text_not_raw_captures() {
+        let (_d, s) = store();
+        s.conn.execute("INSERT INTO items (device_id, kind, source, ts_unix_ms, body_text) VALUES ('d','capture','ax',1,'Falcon launch plan review with the pricing team')", []).unwrap();
+        let item = s.conn.last_insert_rowid();
+        let raw: Vec<u8> = vec![0.5f32; EMBEDDING_DIM]
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+        s.conn
+            .execute(
+                "INSERT INTO items_vec (rowid, embedding) VALUES (?1, ?2)",
+                params![item, raw],
+            )
+            .unwrap();
+        s.conn.execute("INSERT INTO episodes (device_id, app_bundle_id, window_title, start_ts_unix_ms, end_ts_unix_ms, start_item_id, end_item_id, item_count, status, created_at_unix_ms, updated_at_unix_ms) VALUES ('d','a','Doc',1,2,?1,?1,1,'summarize_failed',1,1)", [item]).unwrap();
+        while run_topic_index_job(&s, 50).unwrap() {}
+        let (sid, text): (i64, String) = s
+            .conn
+            .query_row(
+                "SELECT s.id, t.text FROM topic_source s JOIN topic_source_text t ON t.source_id = s.id WHERE s.kind = 'episode'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        let v = crate::topics::cluster::source_vec(&s.conn, sid)
+            .unwrap()
+            .unwrap();
+        assert_eq!(v, s.embed(&text).unwrap());
     }
 
     fn n(s: &Store, sql: &str) -> i64 {
@@ -740,6 +881,204 @@ mod tests {
 
     fn people(s: &Store) -> i64 {
         n(s, "SELECT COUNT(*) FROM entity WHERE kind = 'person'")
+    }
+
+    fn bare_episode(s: &Store, title: &str, summary: Option<&str>, status: &str) -> i64 {
+        s.conn.execute("INSERT INTO episodes (device_id, app_bundle_id, window_title, start_ts_unix_ms, end_ts_unix_ms, start_item_id, end_item_id, item_count, summary, status, created_at_unix_ms, updated_at_unix_ms) VALUES ('d','a',?1,1,2,1,2,2,?2,?3,1,1)", params![title, summary, status]).unwrap();
+        s.conn.last_insert_rowid()
+    }
+
+    fn occurrence(s: &Store, ext: &str, ts: i64) -> i64 {
+        s.conn.execute("INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, external_id) VALUES ('d','calendar_event','google_calendar',?1,json_array('Ann Roe'),'Weekly Sync','',?2)", params![ts, ext]).unwrap();
+        s.conn.last_insert_rowid()
+    }
+
+    /// A key straddling the stored-text cap is redacted before the cut, so no part of it
+    /// is stored.
+    #[test]
+    fn secret_at_the_text_cap_is_redacted_before_the_cut() {
+        let (_d, s) = store();
+        let key = format!("sk-ant-api03-{}", "a".repeat(50));
+        let body = format!("{} {key} tail", "x".repeat(1960));
+        email(&s, "e1", "a@x.com", "b@y.com", "T", "{}");
+        s.conn
+            .execute("UPDATE items SET body_text = ?1", [&body])
+            .unwrap();
+        while run_topic_index_job(&s, 200).unwrap() {}
+        let text: String = s
+            .conn
+            .query_row("SELECT text FROM topic_source_text", [], |r| r.get(0))
+            .unwrap();
+        assert!(text.starts_with("T\na@x.com\nxxx"), "{}", &text[..20]);
+        assert!(!text.contains(&key[..8]), "{}", &text[1950..]);
+    }
+
+    #[test]
+    fn google_occurrence_ids_share_a_series_key() {
+        let a = calendar_series_key("google_calendar", "abc123_20261105T150000Z#1794000000");
+        let b = calendar_series_key("google_calendar", "abc123_20261112T150000Z#1794600000");
+        assert_eq!(a, b);
+        assert_eq!(a, "google_calendar:abc123");
+    }
+
+    #[test]
+    fn apple_ids_share_a_series_key() {
+        assert_eq!(
+            calendar_series_key("apple_calendar", "E1F2#100"),
+            "apple_calendar:E1F2"
+        );
+        assert_eq!(
+            calendar_series_key("apple_calendar", "E1F2#200"),
+            "apple_calendar:E1F2"
+        );
+    }
+
+    #[test]
+    fn three_occurrences_make_one_source_dated_by_the_latest_past() {
+        let (_d, s) = store();
+        occurrence(&s, "abc_20261105T150000Z#1", 1000);
+        occurrence(&s, "abc_20261112T150000Z#2", 2000);
+        let c = occurrence(&s, "abc_20261119T150000Z#3", 3000);
+        run_topic_index_job(&s, 200).unwrap();
+        assert_eq!(
+            n(
+                &s,
+                "SELECT COUNT(*) FROM topic_source WHERE kind = 'calendar_event'"
+            ),
+            1
+        );
+        assert_eq!(
+            n(
+                &s,
+                "SELECT ref_id FROM topic_source WHERE kind = 'calendar_event'"
+            ),
+            c
+        );
+        assert_eq!(
+            n(
+                &s,
+                "SELECT ts_unix_ms FROM topic_source WHERE kind = 'calendar_event'"
+            ),
+            3000
+        );
+        assert_eq!(n(&s, "SELECT COUNT(*) FROM topic_series"), 1);
+        // An older occurrence arriving later is skipped.
+        occurrence(&s, "abc_20261001T150000Z#0", 500);
+        run_topic_index_job(&s, 200).unwrap();
+        assert_eq!(
+            n(
+                &s,
+                "SELECT ts_unix_ms FROM topic_source WHERE kind = 'calendar_event'"
+            ),
+            3000
+        );
+        // Deleting the source drops the series row.
+        s.conn.execute("DELETE FROM topic_source", []).unwrap();
+        assert_eq!(n(&s, "SELECT COUNT(*) FROM topic_series"), 0);
+    }
+
+    #[test]
+    fn future_occurrence_is_not_indexed_until_it_has_started() {
+        let (_d, s) = store();
+        let id = occurrence(&s, "abc_20261105T150000Z#1", now_ms() + 3_600_000);
+        run_topic_index_job(&s, 200).unwrap();
+        assert_eq!(
+            n(
+                &s,
+                "SELECT COUNT(*) FROM topic_source WHERE kind = 'calendar_event'"
+            ),
+            0
+        );
+        assert_eq!(hw_get(&s.conn, "calendar_event"), 0);
+        s.conn
+            .execute("UPDATE items SET ts_unix_ms = 1000 WHERE id = ?1", [id])
+            .unwrap();
+        run_topic_index_job(&s, 200).unwrap();
+        assert_eq!(
+            n(
+                &s,
+                "SELECT COUNT(*) FROM topic_source WHERE kind = 'calendar_event'"
+            ),
+            1
+        );
+    }
+
+    #[test]
+    fn far_future_occurrence_does_not_stall_later_past_ones() {
+        let (_d, s) = store();
+        occurrence(&s, "far_20261110T150000Z#1", now_ms() + 3 * DAY_MS);
+        occurrence(&s, "past_20261101T150000Z#2", 1000);
+        run_topic_index_job(&s, 200).unwrap();
+        assert_eq!(
+            n(
+                &s,
+                "SELECT COUNT(*) FROM topic_source WHERE kind = 'calendar_event'"
+            ),
+            1
+        );
+        assert_eq!(
+            n(
+                &s,
+                "SELECT COUNT(*) FROM topic_series WHERE series_key LIKE '%:far'"
+            ),
+            0
+        );
+    }
+
+    #[test]
+    fn unsummarized_episode_is_indexed_and_reindexed_when_summarized() {
+        let (_d, s) = store();
+        let long = "Reviewing the Falcon launch checklist with the whole team today";
+        let ep = bare_episode(&s, long, None, "pending");
+        run_topic_index_job(&s, 200).unwrap();
+        assert_eq!(
+            n(
+                &s,
+                "SELECT COUNT(*) FROM topic_source WHERE kind = 'episode'"
+            ),
+            1
+        );
+        assert_eq!(n(&s, "SELECT COUNT(*) FROM topic_dirty"), 0);
+        s.conn
+            .execute(
+                "UPDATE episodes SET summary = 'Finished the Falcon checklist' WHERE id = ?1",
+                [ep],
+            )
+            .unwrap();
+        assert_eq!(
+            n(
+                &s,
+                "SELECT COUNT(*) FROM topic_dirty WHERE kind = 'episode'"
+            ),
+            1
+        );
+        run_topic_index_job(&s, 200).unwrap();
+        let text: String = s
+            .conn
+            .query_row("SELECT text FROM topic_source_text", [], |r| r.get(0))
+            .unwrap();
+        assert!(text.contains("\nFinished the Falcon checklist"), "{text}");
+    }
+
+    #[test]
+    fn short_unsummarized_episode_is_noise_and_never_clustered() {
+        let (_d, s) = store();
+        bare_episode(&s, "Untitled", None, "pending");
+        bare_episode(
+            &s,
+            "Planning the Falcon launch with everyone on the team this week, covering budget and schedule",
+            None,
+            "pending",
+        );
+        bare_episode(&s, "Untitled", Some("ok"), "summarized");
+        run_topic_index_job(&s, 200).unwrap();
+        let noise = |t: &str| {
+            n(&s, &format!("SELECT s.noise FROM topic_source s JOIN topic_source_text x ON x.source_id = s.id WHERE x.text LIKE '{t}%'"))
+        };
+        assert_eq!(noise("Untitled"), 1, "first row (no summary) is noise");
+        assert_eq!(noise("Planning"), 0);
+        crate::topics::cluster::run_topic_cluster_job(&s, 200).unwrap();
+        assert_eq!(n(&s, "SELECT COUNT(*) FROM topic_source WHERE noise = 1 AND assigned_at_unix_ms IS NOT NULL"), 0);
     }
 
     #[test]

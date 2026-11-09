@@ -10,6 +10,7 @@ import { BriefRecapBody } from "./BriefRecapBody";
 import { RecapBody } from "./DigestView";
 import { NextMeetingCard } from "./NextMeetingCard";
 import { ScheduleCard } from "./ScheduleCard";
+import { UpcomingCard } from "./UpcomingCard";
 import { TodayComposer } from "./TodayComposer";
 import { SkinImage, type TodayActions } from "./archetypes/parts";
 import { earlierMeetings, greetingFor, localizedVoice, recapModel, voiceText, type TodayModel } from "./layoutModel";
@@ -165,6 +166,7 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
           heading={heading}
         />
         {sched.error && <p role="alert">{sched.error}</p>}
+        <UpcomingCard />
         {workspace}
       </div>
     );
@@ -191,6 +193,8 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
       />
 
       {briefOpen && card}
+
+      <UpcomingCard />
 
       <section className="card" aria-labelledby="recap-heading">
         <div className="section-head">

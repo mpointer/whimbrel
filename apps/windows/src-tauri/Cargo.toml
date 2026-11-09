@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.60"
+version = "0.9.62"
 edition = "2021"
 publish = false
 # Two binaries (the app and the M3.1 capture-spike CLI); the Tauri CLI builds and
@@ -159,6 +159,13 @@ version = "0.3"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+# No incremental cache for dev builds and tests: cargo never prunes it, and on the build PC it
+# grew to 66 GB across 619 session folders (2026-10-31). Only this workspace's own crates use
+# it, so a change still rebuilds just what it touches. CI's runners already set
+# CARGO_INCREMENTAL=0, which overrides this either way.
+[profile.dev]
+incremental = false
 
 [profile.release]
 opt-level = 3

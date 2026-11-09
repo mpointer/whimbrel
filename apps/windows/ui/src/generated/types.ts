@@ -65,6 +65,7 @@ export type ChatEvent =
       citations: ContextItemRef[];
       conversationId?: number | null;
       kind: "completed";
+      narrowed: boolean;
     }
   | {
       kind: "cancelled";
@@ -277,6 +278,53 @@ export type RunOutcome = ("success" | "failed" | "rejected") | "pending";
  */
 export type SkinLineKind = "note" | "placed" | "local_only";
 /**
+ * What the user does to a step: core's `StepAction`, with a schema.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "StepActionInput".
+ */
+export type StepActionInput =
+  | {
+      action: "done";
+    }
+  | {
+      action: "reopen";
+    }
+  | {
+      action: "dismiss";
+      reason: string;
+    }
+  | {
+      action: "confirm";
+      confirmed: boolean;
+    }
+  | {
+      action: "note";
+      text: string;
+    }
+  | {
+      action: "edit";
+      dueDate?: string | null;
+      text: string;
+    };
+/**
+ * What the summary line leads with.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SummaryLeadView".
+ */
+export type SummaryLeadView =
+  | {
+      date: string;
+      kind: "date";
+      label: string;
+    }
+  | {
+      dueDate?: string | null;
+      kind: "step";
+      text: string;
+    };
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "SyncState".
  */
@@ -288,6 +336,22 @@ export type SyncState =
   | "waitingForGroupKey"
   | "ready"
   | "error";
+/**
+ * One thing a page shows a topic chip for.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicLookup".
+ */
+export type TopicLookup =
+  | {
+      id: number;
+      kind: "meeting";
+    }
+  | {
+      id: string;
+      kind: "event";
+      title: string;
+    };
 /**
  * What a finished meeting with no transcript says on its page, from the markers next to
  * its audio. `None` when neither marker is there (never run, or interrupted).
@@ -404,6 +468,10 @@ export interface ProviderKey {
    */
   masked?: string | null;
   provider: Provider;
+  /**
+   * Whether this key syncs to the account's other devices (off unless turned on).
+   */
+  syncEnabled: boolean;
 }
 /**
  * "{model} isn't installed. Whimbrel is using {fallback} until you install it or choose another model."
@@ -1290,6 +1358,37 @@ export interface LiveAlertView {
   sourcesElsewhere: boolean;
 }
 /**
+ * One line of the live transcript, as the meeting page shows it.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LiveTranscriptLine".
+ */
+export interface LiveTranscriptLine {
+  /**
+   * Negative, as a meeting Ask citation to this line carries it (`transcript_for_meeting`).
+   */
+  id: number;
+  /**
+   * The stored label, "Me" or "Others" (`sentinels.ts` translates it).
+   */
+  speaker: string;
+  /**
+   * Centiseconds from the start of the recording.
+   */
+  startCs: number;
+  text: string;
+}
+/**
+ * The live transcript pane: off (the setting), or the lines heard so far.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LiveTranscriptView".
+ */
+export interface LiveTranscriptView {
+  enabled: boolean;
+  lines: LiveTranscriptLine[];
+}
+/**
  * The small local model behind Ask (W-1.3).
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1341,6 +1440,19 @@ export interface McpServerView {
    * `stopped`, `running` or `failed`.
    */
   status: string;
+}
+/**
+ * One answered exchange from the page, sent back as history for a follow-up.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "MeetingAskExchange".
+ */
+export interface MeetingAskExchange {
+  answer: string;
+  /**
+   * What the model was asked: a preset's prompt, not its label.
+   */
+  query: string;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1456,6 +1568,11 @@ export interface MeetingSettings {
    */
   liveQuestionAlerts: boolean;
   /**
+   * "Live transcript during meetings". On by default, kept on this PC. Turning it off
+   * deletes every live transcript line stored.
+   */
+  liveTranscript?: boolean;
+  /**
    * "Other names people call you", comma-separated, as typed.
    */
   otherNames?: string;
@@ -1566,6 +1683,17 @@ export interface PrepSourceView {
  */
 export interface OpenMeetingRequest {
   meetingId?: number | null;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "OrgCount".
+ */
+export interface OrgCount {
+  count: number;
+  /**
+   * An email domain.
+   */
+  org: string;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1816,6 +1944,21 @@ export interface ScheduleView {
    * A meeting is recording now, so no row offers Start.
    */
   recording: boolean;
+}
+/**
+ * A seed topic as Settings → Topics edits it: no key creates one.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SeedInput".
+ */
+export interface SeedInput {
+  aliases?: string[];
+  key?: string | null;
+  /**
+   * customer, product, project or subject; none when absent.
+   */
+  kind?: string | null;
+  name: string;
 }
 /**
  * A chat line from an image action, and whether it was stored in the skin's chat.
@@ -2085,6 +2228,226 @@ export interface TodayRecap {
   summary: string;
 }
 /**
+ * A Recent row.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicItemView".
+ */
+export interface TopicItemView {
+  /**
+   * email, meeting, calendar, episode…
+   */
+  kind: string;
+  open?: LibraryTarget | null;
+  title: string;
+  tsUnixMs: number;
+}
+/**
+ * A row in the Topics list.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicListItemView".
+ */
+export interface TopicListItemView {
+  /**
+   * customer, product, project or subject; none for Other.
+   */
+  kind?: string | null;
+  nextMeetingUnixMs?: number | null;
+  /**
+   * Open steps the user owes (the hint's "2 steps").
+   */
+  openMine: number;
+  topic: TopicRefView;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicRefView".
+ */
+export interface TopicRefView {
+  key: string;
+  name: string;
+  topicId: number;
+}
+/**
+ * "Names I go by", and names from the user's accounts to offer.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicNamesView".
+ */
+export interface TopicNamesView {
+  names: string[];
+  suggested: string[];
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicNextMeetingView".
+ */
+export interface TopicNextMeetingView {
+  /**
+   * Attendees other than the user, by email domain, largest first.
+   */
+  attendeesByOrg: OrgCount[];
+  /**
+   * Attendees whose address is one of the user's: "1 you".
+   */
+  me: number;
+  startUnixMs: number;
+  title: string;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicPageView".
+ */
+export interface TopicPageView {
+  done: TopicStepView[];
+  kind?: string | null;
+  lead?: SummaryLeadView | null;
+  nextMeeting?: TopicNextMeetingView | null;
+  /**
+   * Open steps of a topic quiet for 60 days.
+   */
+  older: TopicStepView[];
+  owedToYou: TopicStepView[];
+  /**
+   * The newest 20 items.
+   */
+  recent: TopicItemView[];
+  recentTotal: number;
+  /**
+   * "lead consultant", "supporting"…
+   */
+  role: string;
+  /**
+   * The user wrote the role.
+   */
+  roleEdited: boolean;
+  topic: TopicRefView;
+  youOwe: TopicStepView[];
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicStepView".
+ */
+export interface TopicStepView {
+  askedAtUnixMs: number;
+  /**
+   * What closed it, for a step a newer item marked done.
+   */
+  closedBy?: string | null;
+  confirmed: boolean;
+  /**
+   * `mine` (You owe) or `owed` (Owed to you).
+   */
+  direction: string;
+  /**
+   * `YYYY-MM-DD` when one was stated.
+   */
+  dueDate?: string | null;
+  /**
+   * Found on a screen (a Teams episode): captures are partial, so the page says so.
+   */
+  fromScreen: boolean;
+  /**
+   * Pass to `topic_step_action`.
+   */
+  key: string;
+  note?: string | null;
+  open?: LibraryTarget | null;
+  /**
+   * email, meeting or episode.
+   */
+  sourceKind: string;
+  sourceTitle: string;
+  /**
+   * open, done or dismissed.
+   */
+  status: string;
+  text: string;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicSeedView".
+ */
+export interface TopicSeedView {
+  aliases: string[];
+  itemCount: number;
+  key: string;
+  /**
+   * customer, product, project or subject.
+   */
+  kind?: string | null;
+  name: string;
+}
+/**
+ * "About N items, about $X. Start?"
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicSortEstimate".
+ */
+export interface TopicSortEstimate {
+  /**
+   * Sorting isn't done: show "Still sorting" and no Start.
+   */
+  indexing: boolean;
+  sources: number;
+  tokens: number;
+  usd: number;
+}
+/**
+ * Settings → AI's TypeSafe section.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicSortView".
+ */
+export interface TopicSortView {
+  enabled: boolean;
+  /**
+   * The TypeSafe key, masked; `None` when unset.
+   */
+  key?: string | null;
+  keyRejected: boolean;
+  localOnly: boolean;
+  overBudget: boolean;
+  /**
+   * Start was pressed on the estimate.
+   */
+  started: boolean;
+}
+/**
+ * Settings → Topics' "Find steps with TypeSafe".
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicStepsView".
+ */
+export interface TopicStepsView {
+  enabled: boolean;
+  /**
+   * A TypeSafe key is saved (Settings → AI); the switch needs one.
+   */
+  hasKey: boolean;
+  keyRejected: boolean;
+  localOnly: boolean;
+  /**
+   * The last local run found no local model: "Finding steps needs a local model (Settings → AI)."
+   */
+  noModel: boolean;
+  overBudget: boolean;
+  /**
+   * Start was pressed on the estimate.
+   */
+  started: boolean;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicSuggestionView".
+ */
+export interface TopicSuggestionView {
+  itemCount: number;
+  name: string;
+  topicId: number;
+}
+/**
  * A meeting's transcript for display: turns from the file when it's on this device,
  * else from the stored segments.
  *
@@ -2178,6 +2541,23 @@ export interface TrayStatus {
 export interface TrimInfo {
   lengthMs: number;
   offered: boolean;
+}
+/**
+ * One day in Upcoming: its local date and the meetings that start on it, soonest first.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "UpcomingDay".
+ */
+export interface UpcomingDay {
+  /**
+   * `YYYY-MM-DD`, local.
+   */
+  date: string;
+  events: ScheduleEvent[];
+  /**
+   * The first day after today: the UI calls it "Tomorrow".
+   */
+  tomorrow: boolean;
 }
 /**
  * One call as the Model usage list shows it (core/api::usage::UsageRow).

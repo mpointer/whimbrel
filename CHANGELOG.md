@@ -2,6 +2,43 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.62] - 2026-11-09
+
+### Mac
+- Whimbrel now notices meetings in Chrome, Edge, Arc and Brave, not only Safari. It needs the Accessibility permission.
+- Excluded sites are now also skipped in Chrome, Edge, Arc and Brave. Before, their pages could still be read from the screen.
+- Settings → Topics: name the customers, products, projects and subjects you care about, with other names they go by, and Whimbrel files your email, meetings, calendar and screen activity under them. It also suggests topics it finds.
+- Optional: with a TypeSafe key, Whimbrel can ask TypeSafe to sort items that don't name a topic outright (Settings → AI).
+- Screen activity summaries wait until the Mac is plugged in and idle, like email summaries, as on Windows. Activity is still recorded as it happens.
+- Topics: a page per topic with the next meeting, what you owe, what's owed to you and recent activity. Open it from Today, a meeting, its prep brief, a search that names the topic, or the menu bar.
+- Steps are found by your local model; with a TypeSafe key you can switch that to TypeSafe (Settings → Topics).
+- Today has an Upcoming section under the schedule: your meetings for the next 7 days, by day, with how many people are invited and each meeting's topic. It shows the first 2 days with meetings; "Show the rest of the week" opens the rest, and Whimbrel remembers your choice on this Mac.
+
+### Windows
+- Meeting snapshots skip a slide that is the same as the last one saved, and narrow strips of the call window when nothing is shared, as on the Mac.
+- Settings → AI has a "Sync to devices" switch under each API key, as on the Mac. It's off until you turn it on, and a key moves only between devices that have it on.
+- While a meeting records, Windows transcribes it in pieces cut where someone pauses, as the Mac does, instead of every two minutes. Fewer words are cut off, silence is no longer sent to the transcriber, and the transcript is ready sooner after the meeting ends.
+- The meeting page shows a live transcript while you record, as on the Mac. It is provisional, about a minute behind, and replaced by the full transcript after the meeting. The live text stays on your PC. Settings → Meetings → "Live transcript during meetings" turns it off and deletes it.
+- Settings → Topics, as on the Mac: name the customers, products, projects and subjects you care about, with other names they go by, and Whimbrel files your email, meetings, calendar and screen activity under them. It also suggests topics it finds.
+- Optional: with a TypeSafe key, Whimbrel can ask TypeSafe to sort items that don't name a topic outright (Settings → AI). The key stays on this PC.
+- The meeting page has an Ask bar, as on the Mac. Ask about the meeting while it records, from the transcript so far, or after it from the full transcript. Answers cite transcript lines, and three quick questions are built in: "Make me sound smart", "Bring me up to speed" and "Did anyone ask me a question?". Answers aren't saved.
+- If Whimbrel keeps closing right after it starts, it now stops retrying after six tries, saves a diagnostics report (email addresses and meeting titles removed) and offers to email it, since Send feedback can't be reached.
+- Topics, as on the Mac: a page per topic with the next meeting, what you owe, what's owed to you and recent activity. Open it from the Topics tab, Today, a meeting, its prep brief, a search or question that names the topic, or the tray.
+- Steps are found by your local model; with a TypeSafe key you can switch that to TypeSafe (Settings → Topics), where you can also list the names you go by.
+- Today looks ahead: an Upcoming section lists the next 7 days' meetings by day, with each meeting's topic.
+- Fixed: Settings → AI no longer shows the "Pick where AI runs" panel for a moment and then jumps to the model picker on a PC that already has a model.
+
+### All devices
+- Topics you name, and how items were sorted, reach your other devices.
+- Steps, their state, your role on a topic and the names you go by reach your other devices.
+- Ask reads your email: a question about something said in an email finds that message and cites its thread, even before the thread has a summary.
+- Ask finds what you asked about in plain questions. Keyword search now matches any of your words, best matches first, so a question asked in ordinary words finds the meeting line or capture it is about. Search in the Library shows more results, best matches first.
+
+## [0.9.61] - 2026-11-08
+
+### Windows
+- Fixed: on Windows on Arm laptops, Whimbrel closed a few seconds after every launch. Microsoft's Vulkan compatibility layer crashed it when transcription first used the GPU; Whimbrel now skips that layer. If the transcription speed check ever closes the app again, it isn't run again.
+
 ## [0.9.60] - 2026-11-07
 
 ### Mac

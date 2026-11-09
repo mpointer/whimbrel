@@ -209,6 +209,29 @@ pub fn claim_due_outbox_batch(
     lease_until_unix_ms: i64,
     limit: i64,
 ) -> rusqlite::Result<Vec<ClaimedOutboxOperation>> {
+    claim_due_outbox_batch_except(
+        conn,
+        connector,
+        worker_id,
+        now_unix_ms,
+        lease_until_unix_ms,
+        limit,
+        &[],
+    )
+}
+
+/// `claim_due_outbox_batch` that leaves ops of the `held` row types unclaimed and untouched
+/// (a gate the dispatcher knows is closed), so they never take a place in the batch.
+pub fn claim_due_outbox_batch_except(
+    conn: &Connection,
+    connector: &str,
+    worker_id: &str,
+    now_unix_ms: i64,
+    lease_until_unix_ms: i64,
+    limit: i64,
+    held: &[&str],
+) -> rusqlite::Result<Vec<ClaimedOutboxOperation>> {
+    let held = serde_json::to_string(held).map_err(crate::json_to_sql_error)?;
     let mut statement = conn.prepare(
         "WITH due AS (
             SELECT operation_id
@@ -217,6 +240,7 @@ pub fn claim_due_outbox_batch(
               AND state IN ('pending', 'leased')
               AND next_attempt_at_unix_ms <= ?2
               AND (state = 'pending' OR lease_expires_at_unix_ms <= ?2)
+              AND row_type NOT IN (SELECT value FROM json_each(?7))
             -- A forget goes first: behind a backlog it would wait hours while the meeting stays on other devices.
             ORDER BY row_type = 'meeting_forgotten' DESC, created_at_unix_ms, local_seq
             LIMIT ?3
@@ -241,6 +265,7 @@ pub fn claim_due_outbox_batch(
                 OUTBOX_LEASED,
                 worker_id,
                 lease_until_unix_ms,
+                held,
             ],
             |row| {
                 let operation_kind = match row.get::<_, String>(6)?.as_str() {

@@ -78,6 +78,79 @@ int64_t whimbrel_threads_run_summarize_batch(StoreHandle *handle, const char *mo
  * handle or api_key is NULL, or -2 if TypeSafe rejected the key. */
 int64_t whimbrel_threads_run_priority_batch(StoreHandle *handle, const char *api_key, uint64_t max_jobs);
 
+/* Topics engine. Counts and statuses are -1 on a NULL handle, unreadable argument or
+ * database error; JSON results are NULL on failure. */
+
+/* Indexes and clusters one batch of sources. 1 = more work, 0 = idle. */
+int64_t whimbrel_topics_run_batch(StoreHandle *handle);
+
+/* Judges up to max queued sources with TypeSafe. Returns the count processed, -2 if the
+ * key was rejected, -3 if the first pass's token budget (whimbrel_topics_judge_start) is
+ * spent, -4 if today's allowance after the first pass (250,000 tokens a UTC day) is spent
+ * (judging resumes on its own tomorrow; not an error), -5 if judging was never started on
+ * this database (e.g. it was replaced): show the estimate and Start again. */
+int64_t whimbrel_topics_run_judge_batch(StoreHandle *handle, const char *api_key, uint64_t max, double usd_per_million);
+
+/* {"sources","tokens","usd","indexing"} for judging the current queue. "indexing" is true
+ * while sorting isn't done (no live seed, or whimbrel_topics_run_batch has more work): show
+ * no estimate or Start yet. */
+char *whimbrel_topics_judge_estimate_json(StoreHandle *handle, double usd_per_million);
+
+/* Starts a first pass: judging up to budget_tokens until the queue drains, then the daily
+ * allowance. Resets the tokens used. 0 ok, -1 failure. */
+int32_t whimbrel_topics_judge_start(StoreHandle *handle, int64_t budget_tokens);
+
+/* JSON array of seed topics: topic_id, key, name, aliases, kind, item_count, updated_at_unix_ms. */
+char *whimbrel_topics_seeds_json(StoreHandle *handle);
+
+/* Creates (key null) or updates a seed from {"key":null|"..","name":"..","aliases":[..],"kind":null|".."};
+ * returns the saved seed, NULL on bad input. */
+char *whimbrel_topics_seed_save_json(StoreHandle *handle, const char *json);
+
+/* 0 ok, -1 failure (unknown key included). */
+int32_t whimbrel_topics_seed_delete(StoreHandle *handle, const char *key);
+int32_t whimbrel_topics_seed_merge(StoreHandle *handle, const char *keep_key, const char *absorb_key);
+
+/* [{"topic_id","name","item_count","kinds"}]: auto topics with 5+ items from 2+ source
+ * kinds, not dismissed. Unnamed ones are named first from their top entities (no model call). */
+char *whimbrel_topics_suggestions_json(StoreHandle *handle, uint32_t limit);
+
+/* Turns a suggestion into a seed named name / hides it on this device. 0 ok, -1 failure. */
+int32_t whimbrel_topics_suggestion_accept(StoreHandle *handle, int64_t topic_id, const char *name);
+int32_t whimbrel_topics_suggestion_dismiss(StoreHandle *handle, int64_t topic_id);
+
+/* Topic page. JSON results are freed with whimbrel_core_free_string; NULL / -1 on failure. */
+/* JSON array of {topic, kind, next_meeting_unix_ms, open_mine}. */
+char *whimbrel_topics_page_list_json(StoreHandle *handle);
+/* One topic's page as JSON; NULL when the topic is absent. */
+char *whimbrel_topics_page_json(StoreHandle *handle, int64_t topic_id);
+/* action_json is a StepAction: {"action":"done"|"reopen"}, {"action":"dismiss","reason":"not_mine"|"not_task"},
+ * {"action":"confirm","confirmed":true}, {"action":"note","text":..},
+ * {"action":"edit","text":..,"due_date":..}. 0 ok, 1 unknown key, -1 failure
+ * (bad JSON or another dismiss reason). */
+int32_t whimbrel_topics_step_action(StoreHandle *handle, const char *key, const char *action_json);
+/* Sets the role text of seed topic topic_key. 0 ok, -1 failure. */
+int32_t whimbrel_topics_role_set(StoreHandle *handle, const char *topic_key, const char *text);
+/* {"names":[..],"suggested":[..]}: "Names I go by". */
+char *whimbrel_topics_names_json(StoreHandle *handle);
+/* Replaces "Names I go by" from a JSON array of strings. 0 ok, -1 failure. */
+int32_t whimbrel_topics_names_set_json(StoreHandle *handle, const char *names_json);
+/* {topic_id,key,name} of the meeting's topic; the JSON text "null" when none. */
+char *whimbrel_topics_for_meeting_json(StoreHandle *handle, int64_t meeting_id);
+/* Same for a calendar event (series topic, else a seed its title names). */
+char *whimbrel_topics_for_event_json(StoreHandle *handle, const char *event_id, const char *title);
+/* JSON array of live seed topics whose aliases appear in text. */
+char *whimbrel_topics_named_in_json(StoreHandle *handle, const char *text);
+/* Reads up to max queued sources for steps. api_key NULL: the local model (never a hosted one);
+ * non-NULL: TypeSafe (pass a key only when "Find steps with TypeSafe" is on). Returns the count
+ * processed, -1 failure, -2 key rejected, -3 over budget, -4 paused for today, -5 not started,
+ * -6 no local model (or an unreachable one). */
+int64_t whimbrel_topics_run_steps_batch(StoreHandle *handle, const char *routing_json, const char *ollama_model, const char *api_key, uint64_t max, double usd_per_million);
+/* {"sources","tokens","usd","indexing"} for the steps pass. */
+char *whimbrel_topics_steps_estimate_json(StoreHandle *handle, double usd_per_million);
+/* Allows the paid steps pass up to budget_tokens. 0 ok, -1 failure. */
+int32_t whimbrel_topics_steps_start(StoreHandle *handle, int64_t budget_tokens);
+
 /* Queues a thread_priority job for every thread currently waiting_on_me. Returns the
  * number of threads queued, or -1 on a NULL handle or database error. */
 int64_t whimbrel_threads_seed_priority_jobs(StoreHandle *handle);
@@ -460,6 +533,7 @@ bool whimbrel_memory_regenerate_episode_summary(StoreHandle *handle, int64_t epi
 char *whimbrel_memory_list_hidden_episodes(StoreHandle *handle, const char *device_id);
 
 char *whimbrel_threads_needing_attention(StoreHandle *handle, uint64_t limit);
+char *whimbrel_memory_search_email_threads(StoreHandle *handle, const char *query, size_t limit);
 char *whimbrel_memory_get_thread(StoreHandle *handle, int64_t id);
 
 /* Enables/disables a routine by id (a no-op UPDATE if id doesn't match any row --

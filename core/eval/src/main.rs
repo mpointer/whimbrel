@@ -251,6 +251,10 @@ fn run(cmd: &str, flags: &HashMap<String, String>, positional: &[String]) -> Res
 }
 
 fn main() {
+    // "Today" and "yesterday" are local days, and the corpus is planted in UTC days, so
+    // the dated set scored 33% in New York and 83% in CI. Every run uses UTC.
+    // SAFETY: single-threaded here, before anything reads the environment.
+    unsafe { std::env::set_var("TZ", "UTC") };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (cmd, flags, positional) = parse_args(&args);
     match run(&cmd, &flags, &positional) {

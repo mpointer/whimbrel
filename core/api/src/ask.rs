@@ -13,7 +13,7 @@ use crate::envelope::{ApiError, ApiResult};
 use crate::routing::{build_chain_for, RoutingConfig};
 use crate::util::{log_usage_for, now_unix_ms};
 
-/// Retrieval (keyword, falling back to semantic) using `query` alone, then the spend-cap
+/// Retrieval (keyword and semantic, fused) using `query` alone, then the spend-cap
 /// check, then the provider chain, then usage logging. `history` is fed to the model for
 /// conversational continuity but does not affect retrieval. Returns [`llm::ChatAnswer`]
 /// unchanged — its serialized shape (`text`, `citations`, `token_usage`) is exactly what
@@ -75,7 +75,7 @@ fn assemble_ask_context(
             (items, Some(llm::format_date_scope_label(scope, start)))
         }
         None => (
-            llm::gather_and_assemble_context(store, query, now_unix_ms(), context_limit, true),
+            llm::gather_and_assemble_context(store, query, now_unix_ms(), context_limit, true, true),
             None,
         ),
     }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { confirmMeetingSpeaker, meetingTranscript, setMeetingSpeaker } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { TranscriptView } from "../generated/types";
@@ -18,27 +18,34 @@ export function TranscriptPanel({
   meetingId,
   hasTranscript,
   onNamesChanged,
+  openRequest = 0,
 }: {
   meetingId: number;
   hasTranscript: boolean;
   onNamesChanged?: () => void;
+  /** Bumped to open the panel from outside (a meeting Ask citation). */
+  openRequest?: number;
 }) {
   const [view, setView] = useState<TranscriptView | null>(null);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { t } = useL10n();
 
-  const toggle = () => {
-    if (open) {
-      setOpen(false);
-      return;
-    }
+  const show = () => {
     setOpen(true);
     if (view) return;
     meetingTranscript(meetingId)
       .then(setView)
       .catch((e: unknown) => setError(message(e)));
   };
+
+  const toggle = () => (open ? setOpen(false) : show());
+
+  useEffect(() => {
+    if (openRequest > 0 && !open) show();
+    // Only a new request opens it; `show` and `open` change on every toggle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRequest]);
 
   const rename = (change: Promise<TranscriptView>) => {
     setError(null);

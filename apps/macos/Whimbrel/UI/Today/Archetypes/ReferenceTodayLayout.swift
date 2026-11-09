@@ -48,6 +48,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
         if present.contains(.composer), composer != nil { out.append(Entry(section: .composer, title: String(localized: "Ask"))) }
         if present.contains(.upNext), TodayRows.upNext(content) != nil { out.append(Entry(section: .upNext, title: voice.text(.upNextHeader, name: ""))) }
         if present.contains(.schedule), !(schedule.upcoming.isEmpty && schedule.held.isEmpty) { out.append(Entry(section: .schedule, title: voice.text(.upcomingHeader, name: ""))) }
+        if present.contains(.upcoming) { out.append(Entry(section: .upcoming, title: String(localized: "Upcoming"))) }
         if present.contains(.earlier) { out.append(Entry(section: .earlier, title: voice.text(.earlierHeader, name: ""))) }
         if present.contains(.threads) { out.append(Entry(section: .threads, title: String(localized: "Open loops"))) }
         if present.contains(.recap) { out.append(Entry(section: .recap, title: voice.text(.recapHeader, name: ""))) }
@@ -164,6 +165,15 @@ struct ReferenceTodayLayout: TodayArchetypeView {
                 }
             }
         }
+        if present.contains(.upcoming) {
+            section(.upcoming, String(localized: "Upcoming")) {
+                TodayUpcomingList(content: content) { heading in
+                    SkinText(heading, role: .label, size: 12).foregroundStyle(Color.whimbrelTextSecondary)
+                } row: { weekRow($0) } toggle: { label, action in
+                    ReferenceLink(label, action: action)
+                }
+            }
+        }
         if present.contains(.earlier) {
             section(.earlier, voice.text(.earlierHeader, name: "")) {
                 ForEach(TodayRows.earlier(content), id: \.id) { meetingRow($0) }
@@ -210,9 +220,23 @@ struct ReferenceTodayLayout: TodayArchetypeView {
                 SkinText(event.timeText, role: .numerals).foregroundStyle(Color.whimbrelTextSecondary)
                 SkinText(event.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
             }
+            if let topic = event.topic { TopicChip(topic: topic) }
             if let relative = event.relative { SkinText(relative, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             if !event.attendees.isEmpty { SkinText(event.attendees, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             if event.showsStart { ReferenceLink(String(localized: "Start"), role: .primary) { actions.startMeeting(event.event) } }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A meeting in the days ahead: the event row without relative time or Start.
+    private func weekRow(_ meeting: TodayWeekRowModel) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
+                SkinText(meeting.timeText, role: .numerals).foregroundStyle(Color.whimbrelTextSecondary)
+                SkinText(meeting.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
+            }
+            if let topic = meeting.topic { TopicChip(topic: topic) }
+            if !meeting.invited.isEmpty { SkinText(meeting.invited, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -223,6 +247,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
                 SkinText(meeting.timeText, role: .numerals).foregroundStyle(Color.whimbrelTextSecondary)
                 SkinText(meeting.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
             }
+            if let topic = meeting.topic { TopicChip(topic: topic) }
             if !meeting.subtitle.isEmpty { SkinText(meeting.subtitle, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             ReferenceLink(String(localized: "Open")) { actions.openMeeting(meeting.id) }
         }

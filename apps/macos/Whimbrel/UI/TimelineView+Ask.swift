@@ -390,14 +390,21 @@ extension TimelineView {
         contextItems += store.searchKeyword(query, limit: 5).map(ContextDisplayItem.capture)
         contextItems += store.searchTranscriptKeyword(query, limit: 5).map(ContextDisplayItem.transcript)
         contextItems += store.searchSnapshotKeyword(query, limit: 5).map(ContextDisplayItem.snapshot)
-        if contextItems.isEmpty {
-            contextItems += store.searchSemantic(query, limit: 5).map(ContextDisplayItem.capture)
-            contextItems += store.searchTranscriptSemantic(query, limit: 5).map(ContextDisplayItem.transcript)
-            contextItems += store.searchSnapshotSemantic(query, limit: 5).map(ContextDisplayItem.snapshot)
-        }
+        // Ask's own retrieval always fuses keyword and semantic hits, so a citation can
+        // point at either; keyword search ORs its words and is rarely empty now.
+        var semantic: [ContextDisplayItem] = []
+        semantic += store.searchSemantic(query, limit: 5).map(ContextDisplayItem.capture)
+        semantic += store.searchTranscriptSemantic(query, limit: 5).map(ContextDisplayItem.transcript)
+        semantic += store.searchSnapshotSemantic(query, limit: 5).map(ContextDisplayItem.snapshot)
+        let seen = Set(contextItems.map(\.id))
+        contextItems += semantic.filter { !seen.contains($0.id) }
         contextItems += store.recentRoutineRuns(limit: 5)?.map(ContextDisplayItem.routineRun) ?? []
         contextItems += store.recentEpisodes(limit: 10)?.map(ContextDisplayItem.episode) ?? []
-        contextItems += store.threadsNeedingAttention(limit: 10)?.map(ContextDisplayItem.thread) ?? []
+        // Threads Ask found through their email come first, carrying the matching message.
+        let emailThreads = store.searchEmailThreads(query, limit: 5).map(ContextDisplayItem.thread)
+        let emailIDs = Set(emailThreads.map(\.id))
+        contextItems += emailThreads
+        contextItems += (store.threadsNeedingAttention(limit: 10) ?? []).map(ContextDisplayItem.thread).filter { !emailIDs.contains($0.id) }
         return contextItems
     }
 

@@ -44,6 +44,16 @@ struct AlmanacTodayLayout: TodayArchetypeView {
                     }
                 }
             }
+            if sections.contains(.upcoming) {
+                divider
+                section(String(localized: "Upcoming")) {
+                    TodayUpcomingList(content: content) { heading in
+                        SkinText(heading, role: .label, size: 12, smallCaps: true).foregroundStyle(Color.whimbrelTextSecondary)
+                    } row: { weekRow($0) } toggle: { label, action in
+                        Button(label, action: action).buttonStyle(.whimbrelQuiet)
+                    }
+                }
+            }
             if sections.contains(.earlier) {
                 divider
                 section(voice.text(.earlierHeader, name: "")) {
@@ -133,6 +143,7 @@ struct AlmanacTodayLayout: TodayArchetypeView {
         VStack(spacing: 2) {
             SkinText(event.timeText, role: .numerals).foregroundStyle(Color.whimbrelAccentPrimary)
             SkinText(event.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
+            if let topic = event.topic { TopicChip(topic: topic) }
             if let relative = event.relative { SkinText(relative, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             if !event.attendees.isEmpty { SkinText(event.attendees, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             SkinPrepLine(prep: event.prep).multilineTextAlignment(.leading)
@@ -143,10 +154,22 @@ struct AlmanacTodayLayout: TodayArchetypeView {
         .frame(maxWidth: .infinity)
     }
 
+    /// A meeting in the days ahead: the event row without relative time, prep or Start.
+    private func weekRow(_ meeting: TodayWeekRowModel) -> some View {
+        VStack(spacing: 2) {
+            SkinText(meeting.timeText, role: .numerals).foregroundStyle(Color.whimbrelAccentPrimary)
+            SkinText(meeting.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
+            if let topic = meeting.topic { TopicChip(topic: topic) }
+            if !meeting.invited.isEmpty { SkinText(meeting.invited, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     private func meetingRow(_ meeting: TodayMeetingRowModel) -> some View {
         VStack(spacing: 2) {
             SkinText(meeting.timeText, role: .numerals).foregroundStyle(Color.whimbrelTextSecondary)
             SkinText(meeting.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
+            if let topic = meeting.topic { TopicChip(topic: topic) }
             if !meeting.subtitle.isEmpty { SkinText(meeting.subtitle, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             Button("Open") { actions.openMeeting(meeting.id) }.buttonStyle(.whimbrelQuiet).padding(.top, Spacing.xs)
         }

@@ -10,10 +10,8 @@ import OSLog
 /// "Meet in browser" detection is implemented via `BrowserMeetingCheck` — a lightweight
 /// AX check (not the full `ScreenTextCaptureService`/`AXTextWalker.extract()` text-walk
 /// machinery, which only runs once capture is already on) for whether the frontmost
-/// app is a known browser (Safari/Chrome — though Chrome is present in
-/// `BrowserMeetingCheck.knownBrowserBundleIDs` but non-functional as shipped; see that
-/// property's doc comment and `docs/05-roadmap.md`'s FR-MTG-2 paragraph for the
-/// root-caused gap) currently showing a Google Meet, Teams or Zoom web-client URL.
+/// app is a known browser (Safari or a Chromium browser, see `ChromiumAccessibility`)
+/// currently showing a Google Meet, Teams or Zoom web-client URL.
 /// Checked FIRST on every poll, ahead of the native-app bundle-ID check, because it's
 /// keyed off the frontmost app — a specific, real-time signal — whereas the native
 /// check matches any known meeting app merely *running* anywhere; checking the native
@@ -26,9 +24,7 @@ import OSLog
 /// `BrowserMeetingCheck.currentURL(of:)`, which doesn't require the window to still be
 /// frontmost — so switching away from the browser mid-meeting doesn't wrongly clear
 /// it; it's only cleared once that direct re-check confirms the tab is genuinely gone
-/// or navigated away. Other browsers (Arc/Edge/Firefox) and other in-browser meeting
-/// platforms (Zoom/Teams-in-browser) are not covered — same "most common cases, not
-/// exhaustive" tolerance this class already applies to its native-app bundle-ID list.
+/// or navigated away. Firefox isn't covered.
 @MainActor
 final class MeetingHeuristicDetector: ObservableObject {
     @Published private(set) var detectedMeeting: QualifyingMeeting?
@@ -56,6 +52,7 @@ final class MeetingHeuristicDetector: ObservableObject {
     /// itself, since that struct is a simple, `Equatable` value type and this is a
     /// live `AXUIElement` reference with no meaningful equality of its own.
     private var browserMeetingWindow: (meetingId: String, window: AXUIElement)?
+    private let chromium = ChromiumAccessibility()
 
     /// Set the moment the tracked browser window's Meet URL first fails to re-match
     /// (line ~113), cleared the moment it re-matches (either via the browser-frontmost
@@ -100,6 +97,7 @@ final class MeetingHeuristicDetector: ObservableObject {
     }
 
     func stop() {
+        chromium.turnOffAll()
         pollTimer?.invalidate()
         pollTimer = nil
         consecutiveMatches = 0
@@ -109,6 +107,8 @@ final class MeetingHeuristicDetector: ObservableObject {
     }
 
     private func poll() {
+        chromium.update(frontmost: NSWorkspace.shared.frontmostApplication, trackedWindow: browserMeetingWindow?.window,
+                        micInUse: AudioDeviceActivity.isDefaultInputInUse())
         // Checked first, based on the *frontmost* app: a much stronger, more specific
         // real-time signal than "some known meeting app happens to be running
         // somewhere" below. Checking the native "running anywhere" path first would

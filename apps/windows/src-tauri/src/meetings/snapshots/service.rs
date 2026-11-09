@@ -180,6 +180,8 @@ struct Analysis {
 
 struct Kept {
     features: Features,
+    /// The saved frame's 32×32 grey copy, for the duplicate-frame gate.
+    luma: Option<Luma>,
     id: i64,
     path: PathBuf,
     /// The slide's first appearance, which names its file even after a build replaces it.
@@ -282,6 +284,14 @@ impl<'a> Session<'a> {
     }
 
     fn keep(&mut self, image: &Frame, features: Features, now: DateTime<Local>) -> Result<(), String> {
+        // Extra to `decide` (issue 580, as on the Mac): a "new slide" that is pixel for pixel
+        // the last saved one, which OCR read differently, is not saved again.
+        let luma = Luma::dedupe(image);
+        if let (Some(last), Some(luma)) = (self.last_kept.as_ref().and_then(|k| k.luma.as_ref()), luma.as_ref()) {
+            if !filter::differs(last, luma) {
+                return Ok(());
+            }
+        }
         let folder = match &self.folder {
             Some(folder) => folder.clone(),
             None => {
@@ -319,7 +329,7 @@ impl<'a> Session<'a> {
         };
         match inserted.map_err(|e| e.to_string()).and_then(|r| r) {
             Ok(Some(id)) => {
-                self.last_kept = Some(Kept { features, id, path, captured: now.time() });
+                self.last_kept = Some(Kept { features, luma, id, path, captured: now.time() });
                 self.kept += 1;
                 Ok(())
             }
@@ -352,7 +362,7 @@ impl<'a> Session<'a> {
         match replaced.map_err(|e| e.to_string()).and_then(|r| r) {
             Ok(true) => {
                 let _ = std::fs::remove_file(&old);
-                self.last_kept = Some(Kept { features, id, path, captured });
+                self.last_kept = Some(Kept { features, luma: Luma::dedupe(image), id, path, captured });
                 Ok(())
             }
             Ok(false) => {
@@ -482,6 +492,39 @@ mod tests {
             move |s| s.meeting_snapshots_info(id).unwrap().unwrap().0
         });
         assert_eq!(dir.unwrap().map(PathBuf::from), Some(PathBuf::from(&rows[0].file_path).parent().unwrap().to_path_buf()));
+    }
+
+    #[test]
+    fn a_repeat_that_ocr_reads_differently_is_not_saved_again() {
+        // Issue 580: the same slide with a cursor on it, read as other words, is not a new slide.
+        let rig = rig("dedupe");
+        let meeting = SnapshotMeeting { meeting_id: rig.meeting_id, start_unix_ms: 1_761_660_000_000, title: "Acme sync".into(), root_pid: None };
+        let mut reads = 0;
+        let mut session = Session::new(
+            meeting,
+            rig.store.clone(),
+            rig.root.clone(),
+            rig.root.join("fallback"),
+            rig.stop.clone(),
+            Box::new(|_: &Frame| Vec::new()),
+            Box::new(move |_: &Frame| {
+                reads += 1;
+                if reads == 1 { "alpha beta gamma delta" } else { "one two three four" }.to_string()
+            }),
+        );
+        let plain = fx::slide(&ROADMAP);
+        let mut cursor = plain.clone();
+        for y in 680..696u32 {
+            for x in 1200..1216u32 {
+                let p = ((y * cursor.width + x) * 4) as usize;
+                cursor.bgra[p..p + 3].fill(0);
+            }
+        }
+        let frames = [&plain, &plain, &cursor, &cursor];
+        let decisions: Vec<Decision> = frames.iter().enumerate().map(|(t, f)| session.tick(Some((*f).clone()), at(t as u32)).unwrap()).collect();
+        assert_eq!(decisions, [Decision::WaitForStable, Decision::KeepNew, Decision::WaitForStable, Decision::KeepNew]);
+        assert_eq!(rig.rows().len(), 1);
+        assert_eq!(rig.pngs().len(), 1);
     }
 
     #[test]

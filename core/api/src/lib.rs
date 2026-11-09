@@ -55,6 +55,8 @@ pub mod spend;
 pub mod store;
 pub mod summary;
 pub mod title_check;
+pub mod topic_judge;
+pub mod topic_steps;
 pub mod topics;
 pub mod topics_export;
 pub mod sync_ops;

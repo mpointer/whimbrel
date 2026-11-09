@@ -50,6 +50,46 @@ fn set_user_member(conn: &Connection, topic_id: i64, source_id: i64) -> rusqlite
     Ok(())
 }
 
+/// `merge_topics`' row moves, without its checks or seed bookkeeping (a pulled seed merge
+/// runs only these): `absorb`'s members join `keep` (strongest origin wins; `removed`
+/// sticks), its ideas move, and it and the topics merged into it point at `keep`.
+pub(crate) fn merge_rows(conn: &Connection, keep: i64, absorb: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO topic_member (topic_id, source_id, origin, score) \
+         SELECT ?1, source_id, origin, score FROM topic_member WHERE topic_id = ?2 \
+         ON CONFLICT(topic_id, source_id) DO UPDATE SET \
+           origin = CASE WHEN excluded.origin = 'removed' OR topic_member.origin = 'removed' THEN 'removed' \
+                         WHEN excluded.origin = 'user' OR topic_member.origin = 'user' THEN 'user' \
+                         WHEN excluded.origin = 'seed' OR topic_member.origin = 'seed' THEN 'seed' \
+                         WHEN excluded.origin = 'jev' OR topic_member.origin = 'jev' THEN 'jev' \
+                         ELSE 'auto' END, \
+           score = MAX(topic_member.score, excluded.score)",
+        [keep, absorb],
+    )?;
+    conn.execute(
+        "UPDATE topic_idea SET topic_id = ?1 WHERE topic_id = ?2",
+        [keep, absorb],
+    )?;
+    // Flatten chains: topics already merged into `absorb` now point at `keep`.
+    conn.execute(
+        "UPDATE topic SET merged_into = ?1 WHERE merged_into = ?2",
+        [keep, absorb],
+    )?;
+    let now = now_unix_ms();
+    conn.execute(
+        "UPDATE topic SET merged_into = ?2, updated_at_unix_ms = ?3 WHERE id = ?1",
+        params![absorb, keep, now],
+    )?;
+    conn.execute(
+        "UPDATE topic SET name_dirty = CASE WHEN name_is_user = 1 THEN name_dirty ELSE 1 END, \
+           last_member_ts_unix_ms = MAX(COALESCE(last_member_ts_unix_ms, 0), \
+             COALESCE((SELECT last_member_ts_unix_ms FROM topic WHERE id = ?2), 0)), \
+           updated_at_unix_ms = ?3 WHERE id = ?1",
+        params![keep, absorb, now],
+    )?;
+    mark_stale(conn, keep)
+}
+
 impl Store {
     pub fn rename_topic(&self, id: i64, name: &str) -> rusqlite::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
@@ -58,7 +98,13 @@ impl Store {
             "UPDATE topic SET name = ?2, name_is_user = 1, name_dirty = 0, updated_at_unix_ms = ?3 WHERE id = ?1",
             params![id, name, now_unix_ms()],
         )?;
-        tx.commit()
+        let seed = super::seeds::on_rename(&tx, id, name)?;
+        super::seeds::enqueue_seed(self, &tx, id)?;
+        tx.commit()?;
+        if seed {
+            self.refresh_seed_vec(id);
+        }
+        Ok(())
     }
 
     /// Copies `absorb`'s members into `keep` (strongest origin wins; `removed` sticks) and
@@ -71,39 +117,16 @@ impl Store {
         let tx = self.conn.unchecked_transaction()?;
         live_topic(&tx, keep)?;
         live_topic(&tx, absorb)?;
-        tx.execute(
-            "INSERT INTO topic_member (topic_id, source_id, origin, score) \
-             SELECT ?1, source_id, origin, score FROM topic_member WHERE topic_id = ?2 \
-             ON CONFLICT(topic_id, source_id) DO UPDATE SET \
-               origin = CASE WHEN excluded.origin = 'removed' OR topic_member.origin = 'removed' THEN 'removed' \
-                             WHEN excluded.origin = 'user' OR topic_member.origin = 'user' THEN 'user' \
-                             ELSE 'auto' END, \
-               score = MAX(topic_member.score, excluded.score)",
-            [keep, absorb],
-        )?;
-        tx.execute(
-            "UPDATE topic_idea SET topic_id = ?1 WHERE topic_id = ?2",
-            [keep, absorb],
-        )?;
-        // Flatten chains: topics already merged into `absorb` now point at `keep`.
-        tx.execute(
-            "UPDATE topic SET merged_into = ?1 WHERE merged_into = ?2",
-            [keep, absorb],
-        )?;
-        let now = now_unix_ms();
-        tx.execute(
-            "UPDATE topic SET merged_into = ?2, updated_at_unix_ms = ?3 WHERE id = ?1",
-            params![absorb, keep, now],
-        )?;
-        tx.execute(
-            "UPDATE topic SET name_dirty = CASE WHEN name_is_user = 1 THEN name_dirty ELSE 1 END, \
-               last_member_ts_unix_ms = MAX(COALESCE(last_member_ts_unix_ms, 0), \
-                 COALESCE((SELECT last_member_ts_unix_ms FROM topic WHERE id = ?2), 0)), \
-               updated_at_unix_ms = ?3 WHERE id = ?1",
-            params![keep, absorb, now],
-        )?;
-        mark_stale(&tx, keep)?;
-        tx.commit()
+        merge_rows(&tx, keep, absorb)?;
+        let seed = super::seeds::on_merge(&tx, keep, absorb)?;
+        for t in [keep, absorb] {
+            super::seeds::enqueue_seed(self, &tx, t)?;
+        }
+        tx.commit()?;
+        if seed {
+            self.refresh_seed_vec(keep);
+        }
+        Ok(())
     }
 
     /// Moves `source_ids` (all must be non-removed members of `id`) into a new topic as

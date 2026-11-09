@@ -56,6 +56,8 @@ pub struct AppState {
     pub detected: Arc<Pending>,
     /// Question alerts other devices heard, waiting in the popup (parity item a).
     pub question_alerts: Arc<crate::live_alerts::QuestionAlerts>,
+    /// What the topics loop last learned about the TypeSafe key and budget, for Settings → AI.
+    pub topic_sort: Arc<crate::topics::TopicSortStatus>,
     /// Google Calendar polling and lead-time prompts; `None` without the sync config
     /// (the connector signs in with the same Google client).
     pub calendar: Option<Arc<CalendarService>>,
@@ -164,7 +166,7 @@ impl AppState {
                     identity.device_id.clone(),
                     paths.recordings.clone(),
                     WasapiRecording::starter(paths.recordings.clone(), {
-                        let (paths, settings) = (paths.clone(), settings.clone());
+                        let (paths, settings, rows_store) = (paths.clone(), settings.clone(), store.clone());
                         let questions = crate::live_question::Runtime {
                             store: store.clone(),
                             slow: slow.clone(),
@@ -184,6 +186,13 @@ impl AppState {
                                 let title = Some(meeting.title.trim()).filter(|t| !t.is_empty()).unwrap_or("Meeting");
                                 questions.listener(meeting.meeting_id, title.to_string())
                             });
+                            // The live transcript pane's rows. Started whatever the setting: it is
+                            // read at each write, so turning it on mid-meeting starts the pane.
+                            let rows = crate::meetings::live_rows::listener(rows_store.clone(), settings.clone(), meeting.meeting_id);
+                            let config = crate::meetings::live::Config {
+                                listener: crate::meetings::live::Listener::both(config.listener.clone(), rows),
+                                ..config
+                            };
                             // "Still in a meeting?" hears words through the live transcript.
                             let tracking = config.model.is_file();
                             let listener = crate::meetings::still_here::speech_listener(config.listener.clone(), tracking);
@@ -197,6 +206,11 @@ impl AppState {
                 // repair below then picks it up for transcription.
                 controller.reconcile_at_launch();
                 pipeline.repair_at_launch(&identity.device_id);
+                // Live transcript rows a day old, or whose meeting has its real transcript.
+                let now = chrono::Utc::now().timestamp_millis();
+                if let Ok(Err(e)) = store.call_blocking(move |s| s.purge_stale_live_segments(now)) {
+                    tracing::warn!(error = %e, "could not purge stale live transcript rows");
+                }
                 let controller = Arc::new(controller);
                 // A PC going to sleep ends its recording there (Mike, 2026-11-05): nothing is heard
                 // while it sleeps, and a recording left running counted hours of sleep as meeting.
@@ -221,6 +235,7 @@ impl AppState {
             pipeline,
             detected,
             question_alerts,
+            topic_sort: Arc::default(),
             calendar: None,
             gmail: None,
             retention: None,
@@ -353,6 +368,8 @@ impl AppState {
         if let Some(store) = &self.store {
             // The summary loops hold their store across an Ollama call, so they get their own lane.
             crate::jobs::start(self.bg_store.as_ref().unwrap_or(store).clone(), self.settings.clone());
+            // Topic sorting holds its store across a TypeSafe call, so it shares the background lane.
+            crate::topics::start(self.bg_store.as_ref().unwrap_or(store).clone(), self.settings.clone(), self.secrets.clone(), self.topic_sort.clone());
             // The suggestion call holds the store across a model call, so it goes on the slow lane.
             let slow = self.slow_store.as_ref().unwrap_or(store).clone();
             let own_device_id = self.identity.as_ref().map(|i| i.device_id.clone());
@@ -441,15 +458,13 @@ fn live_transcribe_config(paths: &Paths, settings: &SettingsFile) -> crate::meet
         plan,
         slices: paths.live_slices(),
         threads: (crate::meetings::perf::pipeline_threads() / 2).max(1),
-        slice_every: crate::meetings::live::SLICE_EVERY,
         listener: None,
     }
 }
 
 /// While live question alerts are armed (the switch on and a name to listen for), a
-/// recording slices every 30 s and feeds a question watcher (Mike's choice, 2026-11-03).
-/// Otherwise it is today's transcription, untouched. Read at the start: toggling mid-meeting
-/// changes detection, not the slice length.
+/// recording feeds a question watcher (Mike's choice, 2026-11-03). Otherwise it is today's
+/// transcription, untouched. Read at the start.
 /// `docs/superpowers/plans/2026-11-03-windows-live-question-detection.md`.
 fn with_question_watcher(
     config: crate::meetings::live::Config,
@@ -459,7 +474,7 @@ fn with_question_watcher(
     if !armed {
         return config;
     }
-    crate::meetings::live::Config { slice_every: crate::meetings::live::ALERT_SLICE_EVERY, listener: listener(), ..config }
+    crate::meetings::live::Config { listener: listener(), ..config }
 }
 
 #[cfg(test)]
@@ -474,17 +489,15 @@ mod tests {
     }
 
     #[test]
-    fn armed_alerts_slice_every_30_s_and_feed_a_watcher_and_otherwise_nothing_changes() {
+    fn armed_alerts_feed_a_watcher_and_otherwise_nothing_changes() {
         let paths = temp_paths("slices");
         let settings = SettingsFile::load(&paths.settings);
         let listener = || Some(crate::meetings::live::Listener(Arc::new(|_: &crate::meetings::live::Accumulated| {})));
 
         let plain = with_question_watcher(live_transcribe_config(&paths, &settings), false, || panic!("not asked"));
-        assert_eq!(plain.slice_every, crate::meetings::live::SLICE_EVERY);
         assert!(plain.listener.is_none());
 
         let armed = with_question_watcher(live_transcribe_config(&paths, &settings), true, listener);
-        assert_eq!(armed.slice_every, std::time::Duration::from_secs(30));
         assert!(armed.listener.is_some());
         let _ = std::fs::remove_dir_all(&paths.root);
     }

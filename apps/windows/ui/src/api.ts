@@ -6,8 +6,14 @@ import type {
   BudgetNoticeView,
   ProviderBudgetView,
   LiveAlertView,
+  LiveTranscriptView,
   OpenMeetingRequest,
   QuestionNotice,
+  SeedInput,
+  TopicSeedView,
+  TopicSortEstimate,
+  TopicSortView,
+  TopicSuggestionView,
   UpdateCheck,
   ChatLine,
   ImageCandidateView,
@@ -82,6 +88,15 @@ import type {
   SkinLine,
   SkinSources,
   SkinTurnResult,
+  TopicListItemView,
+  UpcomingDay,
+  TopicPageView,
+  StepActionInput,
+  TopicLookup,
+  TopicRefView,
+  TopicNamesView,
+  TopicStepsView,
+  MeetingAskExchange,
 } from "./generated/types";
 import type { SkinDto } from "./skin";
 
@@ -139,8 +154,45 @@ export const openAiSettings = () => invoke<void>("open_ai_settings");
 /** Opens a new email to Whimbrel with the version and Windows build filled in. */
 export const sendFeedback = () => invoke<FeedbackResult>("send_feedback");
 export const setApiKey = (provider: Provider, key: string | null) => invoke<ProviderKey[]>("set_api_key", { provider, key });
+/** Turns a provider's key sync on or off on this PC; resolves to the keys. */
+export const setApiKeySync = (provider: Provider, enabled: boolean) => invoke<ProviderKey[]>("set_api_key_sync", { provider, enabled });
 /** Saves (or, with null, removes) the skin maker's Brave Search key; resolves to it masked. */
 export const setImageSearchKey = (key: string | null) => invoke<string | null>("set_image_search_key", { key });
+// Topics (port of PR 631): the TypeSafe key and sorting switch in Settings → AI, and Settings → Topics.
+export const topicSortState = () => invoke<TopicSortView>("topic_sort_state");
+/** Saves (or, with null, removes) the TypeSafe key; it stays on this PC. */
+export const setTypesafeKey = (key: string | null) => invoke<TopicSortView>("set_typesafe_key", { key });
+export const setTopicSortEnabled = (enabled: boolean) => invoke<TopicSortView>("set_topic_sort_enabled", { enabled });
+export const topicSortEstimate = () => invoke<TopicSortEstimate>("topic_sort_estimate");
+/** Start on the estimate: allows judging up to 1.5 × `tokens`. */
+export const startTopicSort = (tokens: number) => invoke<TopicSortView>("start_topic_sort", { tokens });
+export const topicSeeds = () => invoke<TopicSeedView[]>("topic_seeds");
+export const saveTopicSeed = (seed: SeedInput) => invoke<TopicSeedView>("save_topic_seed", { seed });
+export const deleteTopicSeed = (key: string) => invoke<void>("delete_topic_seed", { key });
+export const mergeTopicSeeds = (keep: string, absorb: string) => invoke<void>("merge_topic_seeds", { keep, absorb });
+export const topicSuggestions = () => invoke<TopicSuggestionView[]>("topic_suggestions");
+export const acceptTopicSuggestion = (topicId: number, name: string) => invoke<TopicSeedView>("accept_topic_suggestion", { topicId, name });
+export const dismissTopicSuggestion = (topicId: number) => invoke<void>("dismiss_topic_suggestion", { topicId });
+// The topic page (topics piece 2): the Topics tab, step actions, the ways in, and Settings → Topics.
+/** Today's Upcoming: the next 7 days' meetings, grouped by day. */
+export const todayUpcoming = () => invoke<UpcomingDay[]>("today_upcoming");
+export const topicsPageList = () => invoke<TopicListItemView[]>("topics_page_list");
+/** Null when the topic is gone (deleted, or merged away). */
+export const topicPage = (topicId: number) => invoke<TopicPageView | null>("topic_page", { topicId });
+/** False when the step no longer exists. */
+export const topicStepAction = (key: string, action: StepActionInput) => invoke<boolean>("topic_step_action", { key, action });
+/** The user's wording of their role; blank goes back to the inferred one. */
+export const topicRoleSet = (topicKey: string, text: string) => invoke<void>("topic_role_set", { topicKey, text });
+/** Each item's topic, in order, in one call. */
+export const topicLookup = (items: TopicLookup[]) => invoke<(TopicRefView | null)[]>("topic_lookup", { items });
+export const topicsNamedIn = (text: string) => invoke<TopicRefView[]>("topics_named_in", { text });
+export const topicNames = () => invoke<TopicNamesView>("topic_names");
+export const setTopicNames = (names: string[]) => invoke<TopicNamesView>("set_topic_names", { names });
+export const topicStepsState = () => invoke<TopicStepsView>("topic_steps_state");
+export const setTopicStepsEnabled = (enabled: boolean) => invoke<TopicStepsView>("set_topic_steps_enabled", { enabled });
+export const topicStepsEstimate = () => invoke<TopicSortEstimate>("topic_steps_estimate");
+/** Start on the estimate: allows TypeSafe up to 1.5 × `tokens`. */
+export const startTopicSteps = (tokens: number) => invoke<TopicStepsView>("start_topic_steps", { tokens });
 export const setPrompt = (surface: PromptSurface, text: string) => invoke<void>("set_prompt", { surface, text });
 export const setSummaryInstructions = (text: string) => invoke<void>("set_summary_instructions", { text });
 export const providerModels = (provider: Provider) => invoke<string[]>("provider_models", { provider });
@@ -298,8 +350,13 @@ export const stillHereStop = () => invoke<void>("still_here_stop");
 export const budgetAlertStatus = () => invoke<BudgetNoticeView[]>("budget_alert_status");
 export const budgetAlertRaise = () => invoke<void>("budget_alert_raise");
 export const budgetAlertDismiss = () => invoke<void>("budget_alert_dismiss");
+/** The tray popup's next meeting chip: the main window opens on the topic. */
+export const popupOpenTopic = (topicId: number) => invoke<void>("popup_open_topic", { topicId });
+/** The topic the tray popup asked for, once. */
+export const takePendingOpenTopic = () => invoke<number | null>("take_pending_open_topic");
 export const takePendingOpenMeeting = () => invoke<OpenMeetingRequest | null>("take_pending_open_meeting");
 export const meetingLiveAlerts = (id: number) => invoke<LiveAlertView[]>("meeting_live_alerts", { id });
+export const meetingLiveTranscript = (id: number) => invoke<LiveTranscriptView>("meeting_live_transcript", { id });
 
 export const calendarAccounts = () => invoke<CalendarAccounts>("calendar_accounts");
 export const calendarConnect = () => invoke<CalendarAccounts>("calendar_connect");
@@ -356,6 +413,12 @@ export function chatAsk(query: string, conversationId: number | null, onEvent: (
   return invoke<void>("chat_ask", { query, conversationId, onEvent: channel });
 }
 export const chatStop = (runId: string) => invoke<boolean>("chat_stop", { runId });
+/** Starts answering `query` about one meeting from its transcript (the meeting Ask bar). Nothing is saved; `history` is the page's answered exchanges. */
+export function meetingAsk(meetingId: number, query: string, history: MeetingAskExchange[], onEvent: (event: ChatEvent) => void) {
+  const channel = new Channel<ChatEvent>();
+  channel.onmessage = onEvent;
+  return invoke<void>("meeting_ask", { meetingId, query, history, onEvent: channel });
+}
 export const chatConversations = () => invoke<ConversationRow[]>("chat_conversations");
 export const chatConversation = (id: number) => invoke<ConversationView | null>("chat_conversation", { id });
 export const chatRenameConversation = (id: number, title: string) => invoke<ConversationRow[]>("chat_rename_conversation", { id, title });

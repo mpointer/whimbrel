@@ -18,6 +18,7 @@ import type { ChatSpend, ConversationRow, StarterPromptView } from "../generated
 import { useL10n } from "../l10n";
 import { Detail, type Selection } from "../library/Detail";
 import { LocalModelCard } from "./LocalModelCard";
+import { TopicPageOffer } from "../topics/TopicChip";
 import {
   applyEvent,
   citedEntries,
@@ -204,6 +205,8 @@ export function AskView({
             </div>
           </div>
         )}
+        {/* A question that names a topic offers its page first (topics piece 2). */}
+        {last && <TopicPageOffer text={last.query} />}
         <ol className="turns">
           {turns.map((turn, i) => (
             <TurnView key={i} turn={turn} onOpen={setSelected} />

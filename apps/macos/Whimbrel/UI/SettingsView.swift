@@ -10,6 +10,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case capture
     case meetings
     case ai
+    case topics
     case devices
     case connectors
     case automations
@@ -33,6 +34,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .capture: return String(localized: "Capture & Privacy")
         case .meetings: return String(localized: "Meetings")
         case .ai: return String(localized: "AI")
+        case .topics: return String(localized: "Topics")
         case .devices: return String(localized: "Sync & Devices")
         case .connectors: return String(localized: "Connectors")
         case .automations: return String(localized: "Automations")
@@ -47,6 +49,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .capture: return "eye.slash"
         case .meetings: return "calendar"
         case .ai: return "cpu"
+        case .topics: return "tag"
         case .devices: return "macbook.and.iphone"
         case .connectors: return "puzzlepiece.extension"
         case .automations: return "clock.badge.checkmark"
@@ -128,6 +131,8 @@ struct SettingsView: View {
         case .ai:
             card { AIProvidersSettingsPane() }
             card { PromptsSettingsPane() }
+        case .topics:
+            card { TopicsSettingsPane() }
         case .devices:
             card { DevicesSettingsPane() }
         case .connectors:

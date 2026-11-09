@@ -173,6 +173,22 @@ struct TodayLeftovers: View {
                     }
                 }
             }
+        case .upcoming:
+            block(String(localized: "Upcoming")) {
+                TodayUpcomingList(content: content) { heading in
+                    WhimbrelSectionLabel(text: heading)
+                } row: { meeting in
+                    VStack(alignment: .leading, spacing: 2) {
+                        row(meeting.timeText, meeting.title)
+                        if let topic = meeting.topic { TopicChip(topic: topic) }
+                        if !meeting.invited.isEmpty {
+                            Text(meeting.invited).font(.whimbrelBody(.subheadline)).foregroundStyle(Color.whimbrelTextSecondary)
+                        }
+                    }
+                } toggle: { label, action in
+                    Button(label, action: action).buttonStyle(.whimbrelQuiet)
+                }
+            }
         case .earlier:
             block(voice.text(.earlierHeader, name: "")) {
                 ForEach(TodayRows.earlier(content), id: \.id) { meetingRow($0) }
@@ -259,6 +275,29 @@ struct TodayFollowupRow: View {
                 .foregroundStyle(Color.whimbrelTextPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button("Done") { actions.completeFollowup(followup.id) }.buttonStyle(.whimbrelSecondary)
+        }
+    }
+}
+
+/// The Upcoming section's body: day groups, collapsed after the first `TodayRows.upcomingCollapsedDays`
+/// days with "Show the rest of the week" / "Show less", the choice remembered per device. Each layout
+/// draws the day heading, the rows and the toggle in its own schedule style.
+struct TodayUpcomingList<Heading: View, Row: View, Toggle: View>: View {
+    let content: TodayContent
+    @ViewBuilder let heading: (String) -> Heading
+    @ViewBuilder let row: (TodayWeekRowModel) -> Row
+    @ViewBuilder let toggle: (String, @escaping () -> Void) -> Toggle
+    @AppStorage(TodayRows.upcomingExpandedKey) private var expanded = false
+
+    var body: some View {
+        Group {
+            ForEach(TodayRows.upcomingDays(content, expanded: expanded)) { day in
+                heading(day.heading)
+                ForEach(day.rows) { row($0) }
+            }
+            if TodayRows.upcomingHasMore(content) {
+                toggle(expanded ? String(localized: "Show less") : String(localized: "Show the rest of the week")) { expanded.toggle() }
+            }
         }
     }
 }

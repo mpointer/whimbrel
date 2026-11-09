@@ -41,6 +41,20 @@ pub(crate) const ROW_TYPE_MEETING_FORGOTTEN: &str = memory::OUTBOX_ROW_TYPE_MEET
 pub(crate) const ROW_TYPE_SKIN: &str = memory::OUTBOX_ROW_TYPE_SKIN;
 pub(crate) const ROW_TYPE_SKIN_IMAGE_CHUNK: &str = memory::OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK;
 pub(crate) const ROW_TYPE_SKINS_CAPABILITY: &str = "skins_capability";
+/// Topics (docs/superpowers/plans/2026-11-07-topics-engine.md, Task 7): seed topics and Jev
+/// verdicts, sent only once every peer announces `topics_capability` (older builds drop
+/// unknown row types, so a late upgrader would miss them for good).
+pub(crate) const ROW_TYPE_TOPIC_SEED: &str = memory::OUTBOX_ROW_TYPE_TOPIC_SEED;
+pub(crate) const ROW_TYPE_TOPIC_VERDICT: &str = memory::OUTBOX_ROW_TYPE_TOPIC_VERDICT;
+pub(crate) const ROW_TYPE_TOPICS_CAPABILITY: &str = "topics_capability";
+/// The topic page (docs/superpowers/plans/2026-11-08-topic-page.md, Task 8): steps, step reads,
+/// role edits and "Names I go by". Piece-1 builds announce `topics_capability` yet drop these
+/// row types, so they wait for every peer to announce `topic_page_capability`.
+pub(crate) const ROW_TYPE_TOPIC_STEP: &str = memory::OUTBOX_ROW_TYPE_TOPIC_STEP;
+pub(crate) const ROW_TYPE_TOPIC_EXTRACTION: &str = memory::OUTBOX_ROW_TYPE_TOPIC_EXTRACTION;
+pub(crate) const ROW_TYPE_TOPIC_ROLE: &str = memory::OUTBOX_ROW_TYPE_TOPIC_ROLE;
+pub(crate) const ROW_TYPE_TOPIC_NAMES: &str = memory::OUTBOX_ROW_TYPE_TOPIC_NAMES;
+pub(crate) const ROW_TYPE_TOPIC_PAGE_CAPABILITY: &str = "topic_page_capability";
 
 /// The relay bytes of image chunks one pass moves from (or to) one peer, so a skin with large images
 /// spreads over several rounds instead of holding the store or overrunning `SYNC_TIMEOUT`. Counted on
@@ -340,7 +354,13 @@ pub(crate) fn outbox_entity_identity(op: &memory::ClaimedOutboxOperation) -> Opt
         | ROW_TYPE_SKIN_IMAGE_CHUNK
         | ROW_TYPE_PERSON
         | ROW_TYPE_MEETING_SPEAKER
-        | ROW_TYPE_PROVIDER_SPEND => Some(format!("{}:{}", op.row_type, op.aggregate_id)),
+        | ROW_TYPE_PROVIDER_SPEND
+        | ROW_TYPE_TOPIC_SEED
+        | ROW_TYPE_TOPIC_VERDICT
+        | ROW_TYPE_TOPIC_STEP
+        | ROW_TYPE_TOPIC_EXTRACTION
+        | ROW_TYPE_TOPIC_ROLE
+        | ROW_TYPE_TOPIC_NAMES => Some(format!("{}:{}", op.row_type, op.aggregate_id)),
         _ => None,
     }
 }
@@ -375,11 +395,15 @@ async fn push_items_capability_marker(
     push_marker(conn, group_key, device_id, ROW_TYPE_ITEMS_CAPABILITY).await?;
     // Every device that pushes applies skin rows (the phone only pulls, and skips them), so it says
     // so the same way: a peer seeing this for the first time re-pushes every skin it has.
-    push_marker(conn, group_key, device_id, ROW_TYPE_SKINS_CAPABILITY).await
+    push_marker(conn, group_key, device_id, ROW_TYPE_SKINS_CAPABILITY).await?;
+    // Topic rows wait in the outbox until every peer has said this (`dispatch_outbox`).
+    push_marker(conn, group_key, device_id, ROW_TYPE_TOPICS_CAPABILITY).await?;
+    // Topic page rows wait the same way for this one.
+    push_marker(conn, group_key, device_id, ROW_TYPE_TOPIC_PAGE_CAPABILITY).await
 }
 
 /// One capability marker at `local_seq` 0, idempotent (see `push_items_capability_marker`).
-async fn push_marker(
+pub(crate) async fn push_marker(
     conn: &Connection,
     group_key: &GroupKey,
     device_id: &str,
@@ -417,9 +441,18 @@ pub(crate) async fn all_peers_items_capable(
     conn: &Connection,
     own_device_id: &str,
 ) -> Result<bool, SyncEngineError> {
+    all_peers_have_marker(conn, own_device_id, ROW_TYPE_ITEMS_CAPABILITY).await
+}
+
+/// True once every OTHER device in `sync_row` has pushed `marker` (vacuously true alone).
+pub(crate) async fn all_peers_have_marker(
+    conn: &Connection,
+    own_device_id: &str,
+    marker: &str,
+) -> Result<bool, SyncEngineError> {
     for peer in distinct_peer_device_ids(conn, own_device_id).await? {
         let mut rows = conn
-            .query(PEER_MARKER_SQL, params![peer, ROW_TYPE_ITEMS_CAPABILITY])
+            .query(PEER_MARKER_SQL, params![peer, marker])
             .await
             .map_err(|e| SyncEngineError::Query(e.to_string()))?;
         let has_marker = rows
@@ -551,6 +584,27 @@ pub async fn push_content(
     device_id: &str,
 ) -> Result<(), SyncEngineError> {
     push_items_capability_marker(conn, group_key, device_id).await?;
+    // Topic rows written before topic sync (or before this device had an id) are queued once,
+    // the first round every peer can apply them. Before the pull, so rows pulled in that
+    // round are not sent back.
+    if !store
+        .topic_sync_backfilled()
+        .map_err(|e| SyncEngineError::Query(e.to_string()))?
+        && all_peers_have_marker(conn, device_id, ROW_TYPE_TOPICS_CAPABILITY).await?
+    {
+        store
+            .enqueue_topic_sync_backfill()
+            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    }
+    if !store
+        .topic_page_sync_backfilled()
+        .map_err(|e| SyncEngineError::Query(e.to_string()))?
+        && all_peers_have_marker(conn, device_id, ROW_TYPE_TOPIC_PAGE_CAPABILITY).await?
+    {
+        store
+            .enqueue_topic_page_sync_backfill()
+            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    }
 
     let last_pushed = store
         .get_sync_push_cursor()
@@ -1285,6 +1339,75 @@ fn apply_parent_row(
             };
             store
                 .apply_synced_provider_spend(peer_device_id, &spend)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_TOPIC_SEED => {
+            // Last write wins on `updated_at_unix_ms`; no local row id to map.
+            let Ok(seed) =
+                serde_json::from_slice::<memory::topics::seeds::TopicSeedPayload>(plaintext)
+            else {
+                return Ok(());
+            };
+            store
+                .apply_synced_topic_seed(&seed)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_TOPIC_VERDICT => {
+            // Last write wins on `updated_at_unix_ms`; no local row id to map.
+            let Ok(verdict) =
+                serde_json::from_slice::<memory::topics::judge::TopicVerdictPayload>(plaintext)
+            else {
+                return Ok(());
+            };
+            store
+                .apply_synced_topic_verdict(&verdict)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_TOPIC_STEP => {
+            // Last write wins on `updated_at_unix_ms`; `source_id` is looked up here by source key.
+            let Ok(step) =
+                serde_json::from_slice::<memory::topics::steps::TopicStepPayload>(plaintext)
+            else {
+                return Ok(());
+            };
+            store
+                .apply_synced_topic_step(&step)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_TOPIC_EXTRACTION => {
+            let Ok(extraction) =
+                serde_json::from_slice::<memory::topics::steps::TopicExtractionPayload>(plaintext)
+            else {
+                return Ok(());
+            };
+            store
+                .apply_synced_topic_extraction(&extraction)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_TOPIC_ROLE => {
+            let Ok(role) =
+                serde_json::from_slice::<memory::topics::page::TopicRolePayload>(plaintext)
+            else {
+                return Ok(());
+            };
+            store
+                .apply_synced_topic_role(&role)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_TOPIC_NAMES => {
+            let Ok(names) =
+                serde_json::from_slice::<memory::topics::steps::TopicNamesPayload>(plaintext)
+            else {
+                return Ok(());
+            };
+            store
+                .apply_synced_topic_names(&names)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             return Ok(());
         }

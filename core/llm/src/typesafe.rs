@@ -4,7 +4,7 @@
 use memory::priority::PriorityJudgments;
 use serde_json::{json, Value};
 
-use super::{ureq_error_to_llm, LlmError};
+use super::{ureq_error_to_llm, LlmError, TokenUsage};
 
 /// Already redacted and truncated by the caller (`api::jobs`).
 #[derive(Debug, Clone, PartialEq)]
@@ -179,6 +179,209 @@ pub trait TitleMatcher {
 impl TitleMatcher for TypeSafeClient {
     fn probability(&self, input: &TitleMatchInput) -> Result<f64, LlmError> {
         parse_title_match(&self.post_with_read_timeout(build_title_match_request(input), TITLE_MATCH_READ_TIMEOUT)?)
+    }
+}
+
+/// Already redacted and truncated by the caller. Labels are `(label, description)`;
+/// callers pass opaque labels (`t1..tN`) so they never collide with `none`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopicJudgeInput {
+    pub kind: String,
+    pub text: String,
+    pub labels: Vec<(String, String)>,
+    pub ask_work: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopicJudgment {
+    /// One entry per sent label, in order, then `none`.
+    pub probabilities: Vec<(String, f64)>,
+    /// P(real work), present only when asked.
+    pub work: Option<f64>,
+    pub model: String,
+    pub usage: Option<TokenUsage>,
+}
+
+pub trait TopicJudge {
+    fn judge(&self, input: &TopicJudgeInput) -> Result<TopicJudgment, LlmError>;
+}
+
+const NONE_LABEL: &str = "none";
+
+pub fn build_topic_request(input: &TopicJudgeInput) -> Value {
+    let mut criteria = serde_json::Map::new();
+    for (label, description) in &input.labels {
+        criteria.insert(label.clone(), json!(description));
+    }
+    criteria.insert(NONE_LABEL.into(), json!("About none of these topics."));
+    let mut questions = json!({
+        "topic": {
+            "type": "choice",
+            "instructions": "Which topic is `item` mainly about? Pick none if it is about none of them.",
+            "criteria": criteria,
+        }
+    });
+    if input.ask_work {
+        questions["work"] = json!({
+            "type": "noul",
+            "instructions": "Is `item` real work on a subject (reading, writing, a call), rather than idle time, navigation or app screens?",
+            "criteria": {"true": "real work on a subject", "false": "idle, navigation or app chrome"}
+        });
+    }
+    json!({
+        "model": "jev-latest",
+        "state": {"item": input.text, "kind": input.kind},
+        "questions": questions,
+    })
+}
+
+/// Reads `usage.input_tokens` / `usage.output_tokens`; `None` when neither is present.
+pub fn parse_usage(body: &Value) -> Option<TokenUsage> {
+    let n = |k: &str| body["usage"][k].as_u64().and_then(|v| u32::try_from(v).ok());
+    let usage = TokenUsage { input_tokens: n("input_tokens"), output_tokens: n("output_tokens") };
+    (usage != TokenUsage::default()).then_some(usage)
+}
+
+pub fn parse_topic_response(
+    body: &Value,
+    labels: &[(String, String)],
+    ask_work: bool,
+) -> Result<TopicJudgment, LlmError> {
+    let probs = &body["answers"]["topic"]["probabilities"];
+    let mut probabilities = Vec::with_capacity(labels.len() + 1);
+    for label in labels.iter().map(|(l, _)| l.as_str()).chain([NONE_LABEL]) {
+        let p = probs[label].as_f64().ok_or_else(|| {
+            LlmError::Provider(format!("TypeSafe response is missing a probability for topic label {label}"))
+        })?;
+        probabilities.push((label.to_string(), finite(label, p)?));
+    }
+    let work = if ask_work { Some(answer(body, "work", "noul")?.clamp(0.0, 1.0)) } else { None };
+    Ok(TopicJudgment {
+        probabilities,
+        work,
+        model: body["model"].as_str().unwrap_or_default().to_string(),
+        usage: parse_usage(body),
+    })
+}
+
+impl TopicJudge for TypeSafeClient {
+    fn judge(&self, input: &TopicJudgeInput) -> Result<TopicJudgment, LlmError> {
+        let body = self.post_with_read_timeout(build_topic_request(input), TITLE_MATCH_READ_TIMEOUT)?;
+        parse_topic_response(&body, &input.labels, input.ask_work)
+    }
+}
+
+/// Already redacted and truncated by the caller. `examples` are `(text, reason)` pairs
+/// of lines the user said were not steps.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StepJudgeInput {
+    pub kind: String,
+    pub me: Vec<String>,
+    pub from: Option<String>,
+    pub context: String,
+    pub lines: Vec<String>,
+    pub open_steps: Vec<String>,
+    pub examples: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StepJudgment {
+    /// Per line: `(label, p)` over `mine`, `owed`, `date`, `none`.
+    pub lines: Vec<Vec<(String, f64)>>,
+    /// P(done) per open step.
+    pub closes: Vec<f64>,
+    pub model: String,
+    pub usage: Option<TokenUsage>,
+}
+
+pub trait StepJudge {
+    fn judge_steps(&self, input: &StepJudgeInput) -> Result<StepJudgment, LlmError>;
+}
+
+const STEP_LABELS: [&str; 4] = ["mine", "owed", "date", "none"];
+
+pub fn build_step_request(input: &StepJudgeInput) -> Value {
+    let mut state = serde_json::Map::new();
+    state.insert("item".into(), json!(input.context));
+    state.insert("kind".into(), json!(input.kind));
+    state.insert("me".into(), json!(input.me));
+    state.insert("from".into(), json!(input.from));
+    let mut questions = serde_json::Map::new();
+    let examples: Vec<String> = input
+        .examples
+        .iter()
+        .map(|(t, r)| format!("\"{t}\" ({r})"))
+        .collect();
+    let none = if examples.is_empty() {
+        "None of these.".to_string()
+    } else {
+        format!("None of these. For example: {}", examples.join(", "))
+    };
+    for (i, line) in input.lines.iter().enumerate() {
+        let n = i + 1;
+        state.insert(format!("line_{n}"), json!(line));
+        questions.insert(
+            format!("c{n}"),
+            json!({
+                "type": "choice",
+                "instructions": format!("What is `line_{n}`?"),
+                "criteria": {
+                    "mine": format!("`line_{n}` asks one of `me` to do something, or one of `me` promises to do it"),
+                    "owed": format!("`line_{n}` has someone other than `me` promise to do something for `me`"),
+                    "date": format!("`line_{n}` states a deadline or event date and asks nothing of anyone"),
+                    "none": none,
+                }
+            }),
+        );
+    }
+    for (j, step) in input.open_steps.iter().enumerate() {
+        let n = j + 1;
+        state.insert(format!("step_{n}"), json!(step));
+        questions.insert(
+            format!("x{n}"),
+            json!({"type": "noul", "instructions": format!("Does `item` say that `step_{n}` has been done?")}),
+        );
+    }
+    json!({"model": "jev-latest", "state": state, "questions": questions})
+}
+
+pub fn parse_step_response(
+    body: &Value,
+    n_lines: usize,
+    n_steps: usize,
+) -> Result<StepJudgment, LlmError> {
+    let mut lines = Vec::with_capacity(n_lines);
+    for i in 1..=n_lines {
+        let id = format!("c{i}");
+        let mut row = Vec::with_capacity(STEP_LABELS.len());
+        for label in STEP_LABELS {
+            let p = body["answers"][&id]["probabilities"][label]
+                .as_f64()
+                .ok_or_else(|| {
+                    LlmError::Provider(format!(
+                        "TypeSafe response is missing answers.{id}.probabilities.{label}"
+                    ))
+                })?;
+            row.push((label.to_string(), finite(&id, p)?));
+        }
+        lines.push(row);
+    }
+    let closes = (1..=n_steps)
+        .map(|j| Ok(answer(body, &format!("x{j}"), "noul")?.clamp(0.0, 1.0)))
+        .collect::<Result<Vec<_>, LlmError>>()?;
+    Ok(StepJudgment {
+        lines,
+        closes,
+        model: body["model"].as_str().unwrap_or_default().to_string(),
+        usage: parse_usage(body),
+    })
+}
+
+impl StepJudge for TypeSafeClient {
+    fn judge_steps(&self, input: &StepJudgeInput) -> Result<StepJudgment, LlmError> {
+        let body =
+            self.post_with_read_timeout(build_step_request(input), TITLE_MATCH_READ_TIMEOUT)?;
+        parse_step_response(&body, input.lines.len(), input.open_steps.len())
     }
 }
 
@@ -367,6 +570,169 @@ mod tests {
         assert!(request.starts_with("POST /v1/systemone"), "{request}");
         assert!(request.to_lowercase().contains("authorization: bearer secret-key"), "{request}");
         assert!(request.contains("summary_is_this_event"), "{request}");
+    }
+
+    fn labels() -> Vec<(String, String)> {
+        vec![("t1".into(), "Pricing work".into()), ("t2".into(), "Hiring".into())]
+    }
+
+    fn topic_input(ask_work: bool) -> TopicJudgeInput {
+        TopicJudgeInput { kind: "email".into(), text: "Q3 pricing deck".into(), labels: labels(), ask_work }
+    }
+
+    fn topic_body() -> Value {
+        json!({
+            "model": "jev-1.13.0",
+            "answers": {
+                "topic": {"type": "choice", "choice": "t1", "confidence": 0.8,
+                          "probabilities": {"t1": 0.8, "t2": 0.15, "none": 0.05}},
+                "work": {"type": "noul", "noul": 0.9}
+            },
+            "usage": {"input_tokens": 300, "output_tokens": 40}
+        })
+    }
+
+    #[test]
+    fn topic_request_carries_choice_criteria_with_none_and_optional_work() {
+        let req = build_topic_request(&topic_input(true));
+        assert_eq!(req["model"], "jev-latest");
+        assert_eq!(req["state"]["item"], "Q3 pricing deck");
+        assert_eq!(req["state"]["kind"], "email");
+        let t = &req["questions"]["topic"];
+        assert_eq!(t["type"], "choice");
+        assert_eq!(t["criteria"]["t1"], "Pricing work");
+        assert_eq!(t["criteria"]["t2"], "Hiring");
+        assert_eq!(t["criteria"]["none"], "About none of these topics.");
+        assert_eq!(req["questions"]["work"]["type"], "noul");
+        assert!(build_topic_request(&topic_input(false))["questions"].get("work").is_none());
+    }
+
+    #[test]
+    fn topic_response_parses_probabilities_work_and_usage() {
+        let j = parse_topic_response(&topic_body(), &labels(), true).unwrap();
+        assert_eq!(
+            j.probabilities,
+            vec![("t1".to_string(), 0.8), ("t2".to_string(), 0.15), ("none".to_string(), 0.05)]
+        );
+        assert_eq!(j.work, Some(0.9));
+        assert_eq!(j.model, "jev-1.13.0");
+        assert_eq!(j.usage, Some(TokenUsage { input_tokens: Some(300), output_tokens: Some(40) }));
+        let no_work = parse_topic_response(&topic_body(), &labels(), false).unwrap();
+        assert_eq!(no_work.work, None);
+    }
+
+    #[test]
+    fn missing_label_probability_is_a_provider_error() {
+        let mut body = topic_body();
+        body["answers"]["topic"]["probabilities"].as_object_mut().unwrap().remove("t2");
+        match parse_topic_response(&body, &labels(), false) {
+            Err(LlmError::Provider(msg)) => assert!(msg.contains("t2"), "{msg}"),
+            other => panic!("expected Provider error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn topic_judge_401_surfaces_as_http_401() {
+        let (url, handle) = serve_once("401 Unauthorized", "{\"error\":\"bad key\"}".to_string());
+        let client = TypeSafeClient::with_base_url(url, "wrong");
+        assert!(matches!(client.judge(&topic_input(false)), Err(LlmError::Http { status: 401, .. })));
+        handle.join().unwrap();
+    }
+
+    fn step_input() -> StepJudgeInput {
+        StepJudgeInput {
+            kind: "email".into(),
+            me: vec!["Mike".into()],
+            from: Some("Ana".into()),
+            context: "Pricing thread".into(),
+            lines: vec!["Mike to send the deck".into(), "Offsite is on 3 Dec".into()],
+            open_steps: vec!["Send the deck".into()],
+            examples: vec![("Thanks all".into(), "pleasantry".into())],
+        }
+    }
+
+    #[test]
+    fn step_request_has_a_choice_per_line_and_a_noul_per_open_step() {
+        let req = build_step_request(&step_input());
+        let q = req["questions"].as_object().unwrap();
+        let mut keys: Vec<_> = q.keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, ["c1", "c2", "x1"]);
+        assert_eq!(q["c1"]["type"], "choice");
+        let mut crit: Vec<_> = q["c1"]["criteria"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        crit.sort();
+        assert_eq!(crit, ["date", "mine", "none", "owed"]);
+        assert_eq!(
+            q["c1"]["criteria"]["none"],
+            "None of these. For example: \"Thanks all\" (pleasantry)"
+        );
+        assert_eq!(q["x1"]["type"], "noul");
+        let s = &req["state"];
+        assert_eq!(
+            (
+                s["item"].as_str(),
+                s["line_2"].as_str(),
+                s["step_1"].as_str()
+            ),
+            (
+                Some("Pricing thread"),
+                Some("Offsite is on 3 Dec"),
+                Some("Send the deck")
+            )
+        );
+        assert_eq!(
+            (s["kind"].as_str(), s["from"].as_str()),
+            (Some("email"), Some("Ana"))
+        );
+    }
+
+    #[test]
+    fn step_response_parses_lines_closes_and_usage() {
+        let body = json!({"model":"jev-1.13.0","answers":{"c1":{"type":"choice","probabilities":{"mine":0.8,"owed":0.1,"date":0.05,"none":0.05}},"x1":{"type":"noul","noul":0.9}},"usage":{"input_tokens":900,"output_tokens":60}});
+        let j = parse_step_response(&body, 1, 1).unwrap();
+        assert_eq!(
+            j.lines,
+            vec![vec![
+                ("mine".to_string(), 0.8),
+                ("owed".into(), 0.1),
+                ("date".into(), 0.05),
+                ("none".into(), 0.05)
+            ]]
+        );
+        assert_eq!(j.closes, vec![0.9]);
+        assert_eq!(j.model, "jev-1.13.0");
+        assert_eq!(
+            j.usage,
+            Some(TokenUsage {
+                input_tokens: Some(900),
+                output_tokens: Some(60)
+            })
+        );
+    }
+
+    #[test]
+    fn missing_line_answer_is_a_provider_error() {
+        let body = json!({"answers":{"x1":{"type":"noul","noul":0.9}}});
+        match parse_step_response(&body, 1, 1) {
+            Err(LlmError::Provider(msg)) => assert!(msg.contains("c1"), "{msg}"),
+            other => panic!("expected Provider error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn step_judge_401_surfaces_as_http_401() {
+        let (url, handle) = serve_once("401 Unauthorized", "{\"error\":\"bad key\"}".to_string());
+        let client = TypeSafeClient::with_base_url(url, "wrong");
+        assert!(matches!(
+            client.judge_steps(&step_input()),
+            Err(LlmError::Http { status: 401, .. })
+        ));
+        handle.join().unwrap();
     }
 
     /// Live call; run with `TYPESAFE_API_KEY=... cargo test -p llm live_ -- --ignored`.

@@ -79,7 +79,7 @@ pub fn assemble_like_ask(
                 true,
             )
         }
-        None => llm::gather_and_assemble_context(store, text, now_unix_ms, APP_CONTEXT_LIMIT, true),
+        None => llm::gather_and_assemble_context(store, text, now_unix_ms, APP_CONTEXT_LIMIT, true, true),
     }
 }
 

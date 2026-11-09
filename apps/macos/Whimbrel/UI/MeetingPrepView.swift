@@ -6,11 +6,15 @@ import SwiftUI
 /// thread. A brief that cannot be decoded shows its title and says so instead of failing.
 struct MeetingPrepView: View {
     let prep: CoreMeetingPrep
+    @EnvironmentObject var appState: AppState
     @Environment(\.openWindow) private var openWindow
+    /// The event's topic, read once per brief (its callers share no refresh to read it in).
+    @State private var topic: TopicRef?
 
     var body: some View {
         WhimbrelSurface {
             VStack(alignment: .leading, spacing: Spacing.lg) {
+                if let topic { TopicChip(topic: topic) }
                 Text(prep.title)
                     .font(.whimbrelDisplay(.title))
                     .foregroundStyle(Color.whimbrelTextPrimary)
@@ -36,6 +40,13 @@ struct MeetingPrepView: View {
                         .font(.whimbrelBody(.caption))
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 }
+            }
+        }
+        .task(id: prep.eventId) {
+            guard let store = appState.coreStore else { return }
+            let (id, title) = (prep.eventId, prep.title)
+            topic = await withCheckedContinuation { done in
+                CoreMemoryStore.accessQueue.async { done.resume(returning: store.topicForEvent(eventId: id, title: title)) }
             }
         }
     }

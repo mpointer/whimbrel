@@ -15,7 +15,7 @@ import {
   meetingWorkspace,
 } from "../api";
 import { describeError, isCommandError } from "../errors";
-import type { ActionItemView, TrimInfo, WorkspaceView } from "../generated/types";
+import type { ActionItemView, LiveTranscriptView, TrimInfo, WorkspaceView } from "../generated/types";
 import { TrimSheet } from "./TrimSheet";
 import { useL10n } from "../l10n";
 import { DeviceChip } from "../library/LibraryView";
@@ -25,8 +25,12 @@ import { elapsedLabel } from "./recordingModel";
 import { meetingTitleLabel } from "./sentinels";
 import { RecordingNoticeCard } from "./RecordingNoticeCard";
 import { LiveAlertsSection } from "./LiveAlertsSection";
+import { LiveTranscriptPane } from "./LiveTranscriptPane";
+import { MeetingAskBar } from "./MeetingAskBar";
+import { disabledReason } from "./meetingAskModel";
 import { SlidesStrip } from "./SlidesStrip";
 import { TranscriptPanel } from "./TranscriptPanel";
+import { TopicChip, useTopicLookup } from "../topics/TopicChip";
 import { overrideOf, phaseTitle, transcriptLanguageOptions, transcriptionNoticeText } from "./workspaceModel";
 
 /** The Mac's autosave delay for the workspace's editors. */
@@ -82,6 +86,14 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
   const lastStage = useRef<string | null>(null);
   const loadedNotes = useRef<string | null>(null);
   const loadedSummary = useRef<string | null>(null);
+  // The meeting's topic (topics piece 2), at the top of the page as on the Mac.
+  const [topic] = useTopicLookup([{ kind: "meeting", id: meetingId }]);
+  // The live transcript as last polled: the meeting Ask bar waits for its first lines.
+  const [liveView, setLiveView] = useState<LiveTranscriptView | null>(null);
+  // Bumped by a meeting Ask citation to open the transcript panel.
+  const [transcriptOpen, setTranscriptOpen] = useState(0);
+  const liveBox = useRef<HTMLDivElement>(null);
+  const transcriptBox = useRef<HTMLDivElement>(null);
 
   const load = useCallback(
     (reset: boolean) =>
@@ -93,7 +105,11 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
           // are the user's own, so they stay as typed.
           const finished = lastStage.current != null && next?.processingStage == null;
           lastStage.current = next?.processingStage ?? null;
-          if (finished) setTranscriptRound((n) => n + 1);
+          if (finished) {
+            // The panel remounts closed; an old citation click must not reopen it.
+            setTranscriptRound((n) => n + 1);
+            setTranscriptOpen(0);
+          }
           if (next && reset) {
             loadedNotes.current = next.personalNotes;
             loadedSummary.current = next.summary ?? "";
@@ -117,6 +133,8 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
     setSummary(null);
     setConflict(false);
     setForgetting(false);
+    setLiveView(null);
+    setTranscriptOpen(0);
     void load(true);
     // Seeding is idempotent in core: it only fills an empty list from the summary.
     meetingSeedActionItems(meetingId)
@@ -188,6 +206,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
     <section className="card" aria-label={t("{title} workspace", { title })}>
       <header className="workspace-header">
         <h2 className="section-label">{phaseTitle(view)}</h2>
+        {topic && <TopicChip topic={topic} />}
         <h3 className="row-title">{title}</h3>
         <p className="row-meta">
           {spanLabel(view.row.tsUnixMs, view.row.endUnixMs, { full: true, locale })} <DeviceChip device={view.row.device} />
@@ -219,6 +238,19 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
           </p>
           {!view.readOnly && <RecordingNoticeCard meetingId={meetingId} />}
           <LiveAlertsSection meetingId={meetingId} recording={true} endedUnixMs={null} />
+          <div ref={liveBox}>
+            <LiveTranscriptPane meetingId={meetingId} onView={setLiveView} />
+          </div>
+          {/* With the live transcript off there is nothing to ask about until the call ends. */}
+          {liveView?.enabled && (
+            <MeetingAskBar
+              key={`live-${meetingId}`}
+              meetingId={meetingId}
+              live={true}
+              disabledReason={disabledReason({ recording: true, liveLines: liveView.lines.length, processing: false, hasTranscript: false })}
+              onCite={() => liveBox.current?.scrollIntoView({ block: "nearest" })}
+            />
+          )}
           <label className="field">
             <span>{t("Notes")}</span>
             <textarea className="input" rows={6} value={notes ?? ""} onChange={(e) => setNotes(e.target.value)} />
@@ -314,12 +346,32 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
             </div>
           )}
 
-          <TranscriptPanel
-            key={transcriptRound}
+          <MeetingAskBar
+            key={`after-${meetingId}`}
             meetingId={meetingId}
-            hasTranscript={view.hasTranscript}
-            onNamesChanged={() => setNamesChanged(true)}
+            live={false}
+            disabledReason={disabledReason({
+              recording: false,
+              liveLines: 0,
+              processing: view.processingStage != null,
+              hasTranscript: view.hasTranscript,
+            })}
+            onCite={() => {
+              // No scroll-to-line yet (plan Decision 7): a citation opens the transcript.
+              setTranscriptOpen((n) => n + 1);
+              transcriptBox.current?.scrollIntoView({ block: "start" });
+            }}
           />
+
+          <div ref={transcriptBox}>
+            <TranscriptPanel
+              key={transcriptRound}
+              meetingId={meetingId}
+              hasTranscript={view.hasTranscript}
+              onNamesChanged={() => setNamesChanged(true)}
+              openRequest={transcriptOpen}
+            />
+          </div>
 
           {view.canChooseLanguage && (
             <label className="field-row">
@@ -368,6 +420,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
               onTrimmed={() => {
                 setTrimming(false);
                 setTranscriptRound((n) => n + 1);
+                setTranscriptOpen(0);
                 // The summary is redone from what's left, as Regenerate does.
                 askThenRegenerate();
               }}

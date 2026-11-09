@@ -19,8 +19,90 @@ use std::sync::Mutex;
 use api::sync_ops::coordinators::{apply_plan, Iteration, LocalField, LocalSettings, PulledField, SettingsField};
 use memory::{Routine, RoutineTemplate};
 
+use api::sync_ops::coordinators::ApiKeyState;
+
 use crate::profile::{Fact, MAX_FACTS, MAX_FACT_CHARS};
+use crate::secrets::{accounts, SecretStore, APP_SERVICE};
 use crate::settings::{keys, PromptSurface, Provider, RoutingSettings, SettingsFile};
+
+/// The API keys that can sync (plan 2026-11-07-windows-api-key-sync.md): the field key, and the
+/// Credential Manager account it lives under (the Mac's Keychain names). Each moves only while its
+/// own `<field>.syncEnabled` switch is on; the image-search key and the sync secrets never do.
+pub const API_KEYS: &[(&str, &str)] = &[
+    ("apiKey.anthropic", accounts::ANTHROPIC_API_KEY),
+    ("apiKey.openai", accounts::OPENAI_API_KEY),
+    ("apiKey.google", accounts::GOOGLE_API_KEY),
+    ("apiKey.openrouter", accounts::OPENROUTER_API_KEY),
+];
+
+/// A hosted provider's API-key field (`None` for Ollama).
+pub fn api_key_field(provider: Provider) -> Option<&'static str> {
+    match provider {
+        Provider::Anthropic => Some(API_KEYS[0].0),
+        Provider::Openai => Some(API_KEYS[1].0),
+        Provider::Google => Some(API_KEYS[2].0),
+        Provider::Openrouter => Some(API_KEYS[3].0),
+        Provider::Ollama => None,
+    }
+}
+
+/// The settings key of a key field's sync switch.
+pub fn api_key_switch(field: &str) -> String {
+    format!("{field}.syncEnabled")
+}
+
+/// Whether this PC's switch for `field` is on (off unless someone turned it on).
+pub fn api_key_sync_enabled(file: &SettingsFile, field: &str) -> bool {
+    file.get::<bool>(&api_key_switch(field)).unwrap_or(false)
+}
+
+/// Each key's state for core's push rule. The credential is read only while its switch is on. A key
+/// Credential Manager can't read is left out of the round: passing "no key" would make core send a
+/// tombstone and delete it on the other devices.
+pub fn api_key_states(file: &SettingsFile, secrets: &dyn SecretStore) -> Vec<ApiKeyState> {
+    let mut out = Vec::new();
+    for &(field, account) in API_KEYS {
+        let sync_enabled = api_key_sync_enabled(file, field);
+        let key = if sync_enabled {
+            match secrets.get_string(APP_SERVICE, account) {
+                Ok(key) => key.map(|k| k.trim().to_string()),
+                Err(e) => {
+                    tracing::warn!(field, error = %e, "couldn't read an API key to sync; left out of this round");
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        out.push(ApiKeyState {
+            field_key: field.to_string(),
+            sync_enabled,
+            key,
+            key_updated_at_unix_ms: file.stamp_of(field),
+            toggle_updated_at_unix_ms: file.stamp_of(&api_key_switch(field)),
+        });
+    }
+    out
+}
+
+/// Writes a pulled key (trimmed) or deletes the credential for a tombstone. Core's gate has already
+/// checked this PC's switch. False when Credential Manager failed or the key is blank, so the field
+/// isn't stamped and comes again next round.
+fn apply_api_key(secrets: &dyn SecretStore, field: &PulledField) -> bool {
+    let Some(&(_, account)) = API_KEYS.iter().find(|(f, _)| *f == field.field_key) else { return false };
+    let written = if field.is_deleted {
+        secrets.delete(APP_SERVICE, account)
+    } else {
+        match field.value.trim() {
+            "" => return false,
+            key => secrets.set_string(APP_SERVICE, account, key),
+        }
+    };
+    if let Err(e) = &written {
+        tracing::warn!(field = %field.field_key, error = %e, "couldn't save a synced API key");
+    }
+    written.is_ok()
+}
 
 /// The Profile's keys (plan Decision 1).
 pub const PROFILE_KEYS: &[&str] = &[
@@ -80,6 +162,8 @@ fn flat_keys() -> Vec<(String, Kind)> {
     out.extend(PromptSurface::ALL.iter().map(|s| (s.key(), Kind::Text)));
     // Monthly budgets read like the daily caps: cents, `""` none (0 is none too).
     out.extend(crate::settings::PAID_PROVIDERS.iter().map(|p| (crate::settings::monthly_budget_key(p), Kind::Cap)));
+    // The API keys' sync switches (not the keys, which never go in the settings file).
+    out.extend(API_KEYS.iter().map(|(field, _)| (api_key_switch(field), Kind::Flag(false))));
     out
 }
 
@@ -404,25 +488,26 @@ impl StoreSide for crate::store_actor::StoreHandle {
 }
 
 /// What this PC pushes: [`gather`] plus the routine fields (stamped in the settings file, as on the
-/// Mac) and the hidden marks.
-pub fn gather_all(file: &SettingsFile, store: &StoreLocal) -> LocalSettings {
+/// Mac), the hidden marks and the API keys.
+pub fn gather_all(file: &SettingsFile, store: &StoreLocal, secrets: &dyn SecretStore) -> LocalSettings {
     let mut local = gather(file);
     for (key, value) in routine_values(&store.routines) {
         let updated_at_unix_ms = file.stamp_of(&key);
         local.fields.insert(key, LocalField { value, updated_at_unix_ms });
     }
     local.hidden_episode_marks = store.hidden_marks.clone();
+    local.api_keys = api_key_states(file, secrets);
     local
 }
 
 /// One settings round. The settings lock is held only to gather and to apply, never across the store
 /// or `iterate` (the network call: `settings_iteration` in production, a fake in tests).
-pub fn run_round<F>(settings: &Mutex<SettingsFile>, store: &dyn StoreSide, iterate: F) -> Result<usize, String>
+pub fn run_round<F>(settings: &Mutex<SettingsFile>, store: &dyn StoreSide, secrets: &dyn SecretStore, iterate: F) -> Result<usize, String>
 where
     F: FnOnce(&LocalSettings) -> Result<Iteration, String>,
 {
     let store_local = store.gather()?;
-    let local = gather_all(&settings.lock().unwrap(), &store_local);
+    let local = gather_all(&settings.lock().unwrap(), &store_local, secrets);
     let iteration = iterate(&local)?;
     if iteration.pulled.is_empty() {
         return Ok(0);
@@ -433,9 +518,16 @@ where
     let hidden = {
         let mut file = settings.lock().unwrap();
         let stamps: HashMap<String, i64> = iteration.pulled.keys().map(|k| (k.clone(), file.stamp_of(k))).collect();
-        let plan = apply_plan(&iteration.pulled, &stamps, &HashMap::new());
+        // This PC's switches as they are now: a key lands only where its switch is on.
+        let switches: HashMap<String, bool> = API_KEYS.iter().map(|(f, _)| (f.to_string(), api_key_sync_enabled(&file, f))).collect();
+        let plan = apply_plan(&iteration.pulled, &stamps, &switches);
         for field in &plan.fields {
-            if parse_routine_key(&field.field_key).is_some() {
+            if switches.contains_key(&field.field_key) {
+                if apply_api_key(secrets, field) {
+                    file.set_stamp(&field.field_key, field.updated_at_unix_ms);
+                    applied += 1;
+                }
+            } else if parse_routine_key(&field.field_key).is_some() {
                 let change = if field.is_deleted { None } else { routine_change(&field.field_key, &field.value, &store_local.routines) };
                 if let Some(change) = change {
                     routine_changes.push((field.field_key.clone(), change));
@@ -470,6 +562,7 @@ where
 mod tests {
     use super::*;
     use api::sync_ops::coordinators::SettingsField;
+    use crate::secrets::MemorySecrets;
 
     /// A fresh folder, removed when dropped.
     struct TempDir(std::path::PathBuf);
@@ -666,6 +759,11 @@ mod tests {
         let (_d, mut f) = file();
         f.set(keys::CAPTURE_ENABLED, Some(false));
         f.set(keys::APP_LANGUAGE, Some("fr"));
+        f.set(keys::LIVE_TRANSCRIPT_ENABLED, Some(false));
+        f.set_topic_sort_enabled(true);
+        f.set_topic_sort_started(true);
+        f.set_topic_steps_enabled(true);
+        f.set_topic_steps_started(true);
         let local = gather(&f);
         assert_eq!(sorted(local.fields.keys().cloned().collect()), sorted(synced_keys()));
         for local_only in [
@@ -677,11 +775,21 @@ mod tests {
             keys::RETENTION_ACKNOWLEDGED,
             keys::EXCLUDED_BUNDLE_IDS,
             keys::LIVE_QUESTION_ENABLED,
+            keys::LIVE_TRANSCRIPT_ENABLED,
             keys::REMEMBER_VOICES,
+            keys::TOPIC_SORT_ENABLED,
+            keys::TOPIC_SORT_STARTED,
+            keys::TOPIC_STEPS_ENABLED,
+            keys::TOPIC_STEPS_STARTED,
         ] {
             assert!(!local.fields.contains_key(local_only), "{local_only} stays on this PC");
         }
         assert!(local.api_keys.is_empty() && local.hidden_episode_marks.is_empty());
+    }
+
+    #[test]
+    fn the_typesafe_key_never_syncs() {
+        assert!(API_KEYS.iter().all(|(_, account)| *account != accounts::TYPESAFE_API_KEY), "the TypeSafe key stays on this PC, as on the Mac");
     }
 
     #[test]
@@ -738,7 +846,7 @@ mod tests {
     fn an_edit_during_the_round_trip_wins() {
         let (_d, f) = file();
         let settings = Mutex::new(f);
-        let result = run_round(&settings, &FakeStore::default(), |_local| {
+        let result = run_round(&settings, &FakeStore::default(), &MemorySecrets::default(), |_local| {
             // The user saves a role while the network call is out.
             let mut file = settings.lock().unwrap();
             let before = encoded(&file);
@@ -758,7 +866,7 @@ mod tests {
         let dir = tempdir();
         let path = dir.path().join("settings.json");
         let settings = Mutex::new(SettingsFile::load(&path));
-        let result = run_round(&settings, &FakeStore::default(), |local| {
+        let result = run_round(&settings, &FakeStore::default(), &MemorySecrets::default(), |local| {
             assert_eq!(local.fields.len(), synced_keys().len());
             Ok(Iteration { pushed_count: local.fields.len(), pulled: HashMap::from([(keys::PROFILE_NAME.to_string(), remote("Mike", 10))]) })
         });
@@ -773,7 +881,7 @@ mod tests {
         let (_d, f) = file();
         let settings = Mutex::new(f);
         let before = encoded(&settings.lock().unwrap());
-        assert_eq!(run_round(&settings, &FakeStore::default(), |_| Err("settings sync connection failed: offline".into())), Err("settings sync connection failed: offline".into()));
+        assert_eq!(run_round(&settings, &FakeStore::default(), &MemorySecrets::default(), |_| Err("settings sync connection failed: offline".into())), Err("settings sync connection failed: offline".into()));
         assert_eq!(encoded(&settings.lock().unwrap()), before);
     }
     #[test]
@@ -888,7 +996,7 @@ mod tests {
             refuse: vec!["routine.daily_brief.enabled".into()],
             ..FakeStore::default()
         };
-        let result = run_round(&settings, &store, |local| {
+        let result = run_round(&settings, &store, &MemorySecrets::default(), |local| {
             assert_eq!(local.fields["routine.daily_brief.schedule"], LocalField { value: "08:00".into(), updated_at_unix_ms: 0 });
             assert_eq!(local.hidden_episode_marks.len(), 1);
             Ok(Iteration {
@@ -909,5 +1017,128 @@ mod tests {
             ("routine.daily_brief.schedule".to_string(), RoutineChange::Schedule { id: 1, hhmm: "07:15".into() })
         );
         assert!(store.marks.lock().unwrap().contains_key("episode.hidden.mac|com.apple.Safari|200"));
+    }
+
+    // --- API keys (plan 2026-11-07-windows-api-key-sync.md) ---
+
+    const ANTHROPIC: &str = "apiKey.anthropic";
+
+    /// Credential Manager failing every call.
+    struct BrokenSecrets;
+
+    impl SecretStore for BrokenSecrets {
+        fn get(&self, _: &str, _: &str) -> Result<Option<Vec<u8>>, crate::secrets::SecretError> {
+            Err(crate::secrets::SecretError::Backend("locked".into()))
+        }
+        fn set(&self, _: &str, _: &str, _: &[u8]) -> Result<(), crate::secrets::SecretError> {
+            Err(crate::secrets::SecretError::Backend("locked".into()))
+        }
+        fn delete(&self, _: &str, _: &str) -> Result<(), crate::secrets::SecretError> {
+            Err(crate::secrets::SecretError::Backend("locked".into()))
+        }
+    }
+
+    fn with_key(key: &str) -> MemorySecrets {
+        let secrets = MemorySecrets::default();
+        secrets.set_string(APP_SERVICE, accounts::ANTHROPIC_API_KEY, key).unwrap();
+        secrets
+    }
+
+    fn switch_on(f: &mut SettingsFile, at: i64) {
+        let before = encoded(f);
+        f.set(&api_key_switch(ANTHROPIC), Some(true));
+        stamp_changed(f, &before, at);
+    }
+
+    fn tombstone(ts: i64) -> SettingsField {
+        SettingsField { value: String::new(), updated_at_unix_ms: ts, is_deleted: true }
+    }
+
+    fn pull_once(f: SettingsFile, secrets: &dyn SecretStore, pulled: HashMap<String, SettingsField>) -> (SettingsFile, Result<usize, String>, LocalSettings) {
+        let settings = Mutex::new(f);
+        let mut sent = None;
+        let result = run_round(&settings, &FakeStore::default(), secrets, |local| {
+            sent = Some(local.clone());
+            Ok(Iteration { pushed_count: 0, pulled })
+        });
+        (settings.into_inner().unwrap(), result, sent.unwrap())
+    }
+
+    #[test]
+    fn with_the_switch_off_a_key_is_neither_read_nor_changed() {
+        let (_d, f) = file();
+        let secrets = with_key("sk-test-local");
+        let (f, result, sent) = pull_once(f, &secrets, HashMap::from([(ANTHROPIC.to_string(), remote("sk-test-other", 10))]));
+        assert_eq!(result, Ok(0));
+        let state = sent.api_keys.iter().find(|k| k.field_key == ANTHROPIC).unwrap();
+        assert!(!state.sync_enabled);
+        assert_eq!(state.key, None, "not read while the switch is off");
+        assert_eq!(secrets.get_string(APP_SERVICE, accounts::ANTHROPIC_API_KEY).unwrap().as_deref(), Some("sk-test-local"));
+        assert_eq!(f.stamp_of(ANTHROPIC), 0);
+
+        let (_f, result, _) = pull_once(f, &secrets, HashMap::from([(ANTHROPIC.to_string(), tombstone(20))]));
+        assert_eq!(result, Ok(0));
+        assert!(secrets.get_string(APP_SERVICE, accounts::ANTHROPIC_API_KEY).unwrap().is_some(), "a delete doesn't reach an opted-out PC");
+    }
+
+    #[test]
+    fn with_the_switch_on_the_key_goes_up_dated_by_the_switch() {
+        let (_d, mut f) = file();
+        switch_on(&mut f, 500);
+        let secrets = with_key("sk-test-local");
+        let state = api_key_states(&f, &secrets).into_iter().find(|k| k.field_key == ANTHROPIC).unwrap();
+        assert_eq!((state.sync_enabled, state.key.as_deref(), state.key_updated_at_unix_ms, state.toggle_updated_at_unix_ms), (true, Some("sk-test-local"), 0, 500));
+        let pushed = api::sync_ops::coordinators::plan_api_key_field(&state).unwrap();
+        assert_eq!(pushed, SettingsField { value: "sk-test-local".into(), updated_at_unix_ms: 500, is_deleted: false });
+        // The switch itself syncs like any flag.
+        assert_eq!(gather(&f).fields[&api_key_switch(ANTHROPIC)], LocalField { value: "true".into(), updated_at_unix_ms: 500 });
+    }
+
+    #[test]
+    fn a_pulled_key_is_saved_trimmed_and_a_pulled_delete_removes_it() {
+        let (d, mut f) = file();
+        switch_on(&mut f, 500);
+        let secrets = MemorySecrets::default();
+        let (f, result, _) = pull_once(f, &secrets, HashMap::from([(ANTHROPIC.to_string(), remote("  sk-test-from-mac \n", 600))]));
+        assert_eq!(result, Ok(1));
+        assert_eq!(secrets.get_string(APP_SERVICE, accounts::ANTHROPIC_API_KEY).unwrap().as_deref(), Some("sk-test-from-mac"));
+        assert_eq!(f.stamp_of(ANTHROPIC), 600);
+        let saved = std::fs::read_to_string(d.path().join("settings.json")).unwrap();
+        assert!(!saved.contains("sk-test-from-mac"), "the key never goes in settings.json");
+
+        let (f, result, _) = pull_once(f, &secrets, HashMap::from([(ANTHROPIC.to_string(), tombstone(700))]));
+        assert_eq!(result, Ok(1));
+        assert_eq!(secrets.get(APP_SERVICE, accounts::ANTHROPIC_API_KEY).unwrap(), None);
+        assert_eq!(f.stamp_of(ANTHROPIC), 700);
+    }
+
+    #[test]
+    fn an_older_pulled_key_loses_to_a_newer_local_save() {
+        let (_d, mut f) = file();
+        switch_on(&mut f, 500);
+        f.set_stamp(ANTHROPIC, 900);
+        let secrets = with_key("sk-test-local");
+        let (_f, result, _) = pull_once(f, &secrets, HashMap::from([(ANTHROPIC.to_string(), remote("sk-test-older", 800))]));
+        assert_eq!(result, Ok(0));
+        assert_eq!(secrets.get_string(APP_SERVICE, accounts::ANTHROPIC_API_KEY).unwrap().as_deref(), Some("sk-test-local"));
+    }
+
+    #[test]
+    fn a_key_credential_manager_cant_handle_is_left_out_and_not_stamped() {
+        let (_d, mut f) = file();
+        switch_on(&mut f, 500);
+        f.set_stamp(ANTHROPIC, 400);
+        let (f, result, sent) = pull_once(f, &BrokenSecrets, HashMap::from([(ANTHROPIC.to_string(), remote("sk-test-from-mac", 600))]));
+        assert!(sent.api_keys.iter().all(|k| k.field_key != ANTHROPIC), "an unreadable key isn't sent as missing, which would delete it elsewhere");
+        assert_eq!(result, Ok(0));
+        assert_eq!(f.stamp_of(ANTHROPIC), 400, "a failed write isn't stamped, so it comes again");
+    }
+
+    #[test]
+    fn a_pulled_switch_turns_sync_on_here() {
+        let (_d, f) = file();
+        let (f, result, _) = pull_once(f, &MemorySecrets::default(), HashMap::from([(api_key_switch(ANTHROPIC), remote("true", 300))]));
+        assert_eq!(result, Ok(1));
+        assert!(api_key_sync_enabled(&f, ANTHROPIC));
     }
 }

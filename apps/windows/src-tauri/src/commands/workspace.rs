@@ -688,6 +688,41 @@ pub async fn meeting_live_alerts(state: State<'_, AppState>, id: i64) -> Result<
         .map_err(CommandError::store)
 }
 
+/// One line of the live transcript, as the meeting page shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveTranscriptLine {
+    /// Negative, as a meeting Ask citation to this line carries it (`transcript_for_meeting`).
+    pub id: i64,
+    /// The stored label, "Me" or "Others" (`sentinels.ts` translates it).
+    pub speaker: String,
+    /// Centiseconds from the start of the recording.
+    pub start_cs: i64,
+    pub text: String,
+}
+
+/// The live transcript pane: off (the setting), or the lines heard so far.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveTranscriptView {
+    pub enabled: bool,
+    pub lines: Vec<LiveTranscriptLine>,
+}
+
+/// The live transcript of a meeting being recorded (issue 246; plan 2026-11-07 Decision 6).
+#[tauri::command]
+pub async fn meeting_live_transcript(state: State<'_, AppState>, id: i64) -> Result<LiveTranscriptView, CommandError> {
+    if !state.settings.lock().unwrap().live_transcript_enabled() {
+        return Ok(LiveTranscriptView { enabled: false, lines: Vec::new() });
+    }
+    let rows = state.store()?.call(move |s| s.list_live_segments(id).map_err(|e| e.to_string())).await?.map_err(CommandError::store)?;
+    let lines = rows
+        .into_iter()
+        .map(|r| LiveTranscriptLine { id: -r.id, speaker: r.speaker_label, start_cs: r.start_cs, text: r.text })
+        .collect();
+    Ok(LiveTranscriptView { enabled: true, lines })
+}
+
 /// Whether a regeneration would overwrite the user's edits, so the UI can ask first.
 /// The Mac's `regenerationNeedsConflictPrompt` plus `actionItemsHaveUserInteraction`.
 #[tauri::command]

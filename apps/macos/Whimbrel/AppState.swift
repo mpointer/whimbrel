@@ -150,6 +150,15 @@ final class AppState: ObservableObject {
     /// The shell's selected tab, here rather than in `WhimbrelShellView` so other screens
     /// (Today's "Review" button) can switch tabs.
     @Published var selectedTab: WhimbrelTab = .today
+    /// The topic the Topics tab shows; nil picks the first one.
+    @Published var selectedTopicId: Int64?
+
+    /// Shows topic `id` on the Topics tab (a topic chip, a link).
+    func openTopic(_ id: Int64) {
+        selectedTopicId = id
+        selectedTab = .topics
+        openTimeline?()
+    }
     /// Set by the ⌘F and ⌘N menu commands and cleared by Library once it acts on them.
     /// Flags rather than events, so a request made before Library is on screen still
     /// lands when it appears.
@@ -276,6 +285,19 @@ final class AppState: ObservableObject {
         let end = CalendarService.todayWindowEnd(now: now)
         return CoreMemoryStore.mergeMeetings(eventKit: eventKit, oauth: oauth.filter { $0.startDate < end })
     }
+
+    /// Today's "Upcoming" section: the 7 days after today from both sources, merged the same way,
+    /// declined meetings left out. Recomputed when either source publishes (see `init`), not per
+    /// render. Nothing else reads it (not the trigger, not calendar sync).
+    @Published private(set) var upcomingWeekMeetings: [QualifyingMeeting] = []
+
+    /// Both sources are cut to the window here: EventKit's list is up to a refresh (60 s) old, so
+    /// after midnight it can still hold the day that just became today.
+    nonisolated static func weekMeetings(eventKit: [QualifyingMeeting], oauth: [QualifyingMeeting], now: Date) -> [QualifyingMeeting] {
+        let week = CalendarService.weekWindow(now: now)
+        return CoreMemoryStore.mergeMeetings(eventKit: eventKit.filter { week.contains($0.startDate) }, oauth: oauth.filter { week.contains($0.startDate) })
+            .filter { $0.selfResponse != .declined }
+    }
     let meetingTrigger = MeetingTriggerService()
     /// "Away Mode": join Zoom meetings unattended. Owns the keep-awake assertion while on.
     /// Downloads missing models at launch, with no prompt (doc 17, item 1.1).
@@ -305,6 +327,11 @@ final class AppState: ObservableObject {
     let mcpServerProcess = McpServerProcessManager()
     var routing = RoutingSettings()
     let replyPriority = ReplyPrioritySettings()
+    let topicSort = TopicSortSettings()
+    /// "Find steps with TypeSafe" (Settings > Topics): same Start flow as topic sorting.
+    lazy var topicSteps = TopicSortSettings(enabledKey: "com.mpointer.kestrel.topicStepsEnabled", startedKey: "com.mpointer.kestrel.topicStepsStarted")
+    /// The last local steps run found no local model (or an unreachable one).
+    @Published var topicStepsNoModel = false
     let meetingPrepSettings = MeetingPrepSettings()
     let meetingTitleCheck = MeetingTitleCheckSettings()
     /// "Live transcript during meetings" (on by default) and the service that transcribes a
@@ -515,7 +542,10 @@ final class AppState: ObservableObject {
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: nil
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.endMeetingForQuit() }
+            MainActor.assumeIsolated {
+                self?.endMeetingForQuit()
+                self?.meetingHeuristicDetector.stop()
+            }
             CoreMemoryStore.stopLocalModel()
         }
 
@@ -524,7 +554,7 @@ final class AppState: ObservableObject {
             .merge(with: calendar.objectWillChange, meetingTrigger.objectWillChange, googleCalendarPolling.objectWillChange)
             .merge(with: retention.objectWillChange, meetingHeuristicDetector.objectWillChange)
             .merge(with: routing.objectWillChange, syncState.objectWillChange, replyPriority.objectWillChange, meetingPrepSettings.objectWillChange, meetingTitleCheck.objectWillChange, liveTranscriptSettings.objectWillChange, appearanceSettings.objectWillChange)
-            .merge(with: liveQuestionSettings.objectWillChange)
+            .merge(with: liveQuestionSettings.objectWillChange, topicSort.objectWillChange, topicSteps.objectWillChange)
             .merge(with: snapshotSettings.objectWillChange, mediaSettings.objectWillChange, mediaRetention.objectWillChange, recordingCheckInSettings.objectWillChange, awayMode.objectWillChange)
             .merge(with: settingsSyncCoordinator.objectWillChange, contentSyncCoordinator.objectWillChange)
             .merge(with: updateChecker.objectWillChange)
@@ -702,6 +732,8 @@ final class AppState: ObservableObject {
         scheduleJobsBatchStep()
         scheduleEpisodeSegmentStep()
         scheduleReplyPriorityStep()
+        scheduleTopicsStep()
+        scheduleTopicStepsStep()
         scheduleScreenTextIngestStep()
         scheduleTranscriptBackfillStep()
 
@@ -794,6 +826,19 @@ final class AppState: ObservableObject {
                     return
                 }
                 self.handlePrompt(prompt)
+            }
+            .store(in: &cancellables)
+
+        // `@Published` fires on willSet, so read the sources after the hop (as `persistCalendarEventItems` does).
+        calendar.$upcomingWeek
+            .merge(with: googleCalendarPolling.$oauthMeetings)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.upcomingWeekMeetings = Self.weekMeetings(
+                        eventKit: self.calendar.upcomingWeek, oauth: self.googleCalendarPolling.oauthMeetings, now: Date()
+                    )
+                }
             }
             .store(in: &cancellables)
 
@@ -1833,6 +1878,65 @@ final class AppState: ObservableObject {
         CoreMemoryStore.accessQueue.async { _ = store.seedThreadPriorityJobs() }
     }
 
+    /// Turns topic judging on or off. Turning it on shows the estimate for the user to
+    /// confirm; turning it off stops judging and deletes nothing.
+    func setTopicSortEnabled(_ on: Bool) {
+        if on, topicSort.overBudget { topicSort.requireStart() }
+        topicSort.enabled = on
+        refreshTopicSortEstimate()
+    }
+
+    /// Fetches the judging estimate while the switch is on and Start was not pressed. Also
+    /// the "Try again" button, and re-run by `scheduleTopicsStep` until sorting is done.
+    func refreshTopicSortEstimate() {
+        guard topicSort.awaitingStart, let store = coreStore else { return }
+        CoreMemoryStore.accessQueue.async { [weak self] in
+            let e = store.topicJudgeEstimate(usdPerMillion: TopicSortSettings.usdPerMillion)
+            DispatchQueue.main.async { self?.topicSort.setEstimate(e) }
+        }
+    }
+
+    /// The user pressed Start on the estimate: allow judging up to 1.5x the estimated tokens.
+    func startTopicSort() {
+        guard let store = coreStore, let e = topicSort.estimate else { return }
+        let budget = Int64((Double(e.tokens) * 1.5).rounded(.up))
+        CoreMemoryStore.accessQueue.async { [weak self] in
+            let ok = store.topicJudgeStart(budgetTokens: budget)
+            DispatchQueue.main.async {
+                if ok { self?.topicSort.markStarted() } else { self?.topicSort.setStartFailed(true) }
+            }
+        }
+    }
+
+    /// Turns "Find steps with TypeSafe" on or off. On shows the estimate to confirm; off
+    /// sends the next batches to the local model.
+    func setTopicStepsEnabled(_ on: Bool) {
+        if on, topicSteps.overBudget { topicSteps.requireStart() }
+        topicSteps.enabled = on
+        refreshTopicStepsEstimate()
+    }
+
+    /// Fetches the steps estimate while the switch is on and Start was not pressed.
+    func refreshTopicStepsEstimate() {
+        guard topicSteps.awaitingStart, let store = coreStore else { return }
+        CoreMemoryStore.accessQueue.async { [weak self] in
+            let e = store.topicStepsEstimate(usdPerMillion: TopicSortSettings.usdPerMillion)
+            DispatchQueue.main.async { self?.topicSteps.setEstimate(e) }
+        }
+    }
+
+    /// The user pressed Start on the steps estimate: allow up to 1.5x the estimated tokens.
+    func startTopicSteps() {
+        guard let store = coreStore, let e = topicSteps.estimate else { return }
+        let budget = Int64((Double(e.tokens) * 1.5).rounded(.up))
+        CoreMemoryStore.accessQueue.async { [weak self] in
+            let ok = store.topicStepsStart(budgetTokens: budget)
+            DispatchQueue.main.async {
+                if ok { self?.topicSteps.markStarted() } else { self?.topicSteps.setStartFailed(true) }
+            }
+        }
+    }
+
     // MARK: - Live question alerts
 
     private func feedLiveQuestionWatcher(_ rows: [CoreLiveSegment]) {
@@ -2007,8 +2111,8 @@ final class AppState: ObservableObject {
 
     /// Drives `episode_segment` (`Store::run_episode_segment_batch`) and
     /// `episode_summarize` (`runEpisodeSummarizeBatch`) forward every turn, same
-    /// throttled 0.1s-when-busy/30s-when-idle cadence as `scheduleJobsBatchStep()`, but
-    /// deliberately WITHOUT the `PowerIdleGate` check (#52). Episodes are meant to be a
+    /// throttled 0.1s-when-busy/30s-when-idle cadence as `scheduleJobsBatchStep()`.
+    /// Segmenting runs WITHOUT the `PowerIdleGate` check (#52); the summary waits for it. Episodes are meant to be a
     /// reliable, always-on record of the day's activity; gating them behind AC power +
     /// 60s of continuous idle meant they only ever processed during idle-while-plugged-in
     /// moments -- rare for a laptop used unplugged, and rare during genuinely focused
@@ -2025,7 +2129,12 @@ final class AppState: ObservableObject {
         CoreMemoryStore.accessQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             let segmented = store.runEpisodeSegmentBatch(maxJobs: 1)
             CoreMemoryStore.slowLaneQueue.async { [weak self] in
-                let summarized = slow?.runEpisodeSummarizeBatch(model: ollamaModel, maxJobs: 1, customInstructions: episodeSummaryInstructions) ?? 0
+                // Segmenting stays always-on (#52); the Ollama summary waits for the same
+                // AC-power + idle gate as thread summaries, as on Windows, so a backlog
+                // doesn't load the summary model while the user is working.
+                let summarized = PowerIdleGate.isEligibleForBackgroundWork()
+                    ? (slow?.runEpisodeSummarizeBatch(model: ollamaModel, maxJobs: 1, customInstructions: episodeSummaryInstructions) ?? 0)
+                    : 0
                 guard segmented > 0 || summarized > 0 else {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
                         self?.scheduleEpisodeSegmentStep()
@@ -2062,6 +2171,98 @@ final class AppState: ObservableObject {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + (prioritized > 0 ? 0 : 30)) { [weak self] in
                 self?.scheduleReplyPriorityStep()
+            }
+        }
+    }
+
+    /// Topics: the alias/index batch always runs (free, local); TypeSafe judging runs after
+    /// it only when the switch is on and Start was pressed. Same slow lane and main.sync
+    /// key read as `scheduleReplyPriorityStep`.
+    private func scheduleTopicsStep() {
+        guard let slow = slowStore else { return }
+        CoreMemoryStore.slowLaneQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            let more = slow.runTopicsBatch()
+            let key: String? = DispatchQueue.main.sync { [weak self] in
+                self?.topicSort.activeKey(localOnly: self?.routing.localOnlyMode ?? true)
+            }
+            var judged: Int64 = 0
+            if let key {
+                let result = slow.runTopicJudgeBatch(apiKey: key, max: 8, usdPerMillion: TopicSortSettings.usdPerMillion)
+                judged = result
+                DispatchQueue.main.async { [weak self] in
+                    if result == -2 { self?.topicSort.markKeyRejected(true) }
+                    else if result == -3 { self?.topicSort.setOverBudget(true) }
+                    else if result == -5 {
+                        // Core has no budget (database replaced): show the estimate and Start.
+                        self?.topicSort.requireStart()
+                        self?.refreshTopicSortEstimate()
+                    }
+                    // -4: today's allowance is used up; retried on the idle cadence below.
+                    else if result > 0 { self?.topicSort.markKeyRejected(false) }
+                }
+            } else if more == 0 {
+                // Waiting on Start: once the batch is idle, refresh an estimate that was
+                // still sorting (or empty).
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.topicSort.awaitingStart,
+                          self.topicSort.estimate.map({ $0.indexing || $0.sources == 0 }) ?? false else { return }
+                    self.refreshTopicSortEstimate()
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + (more == 1 || judged > 0 ? 0.1 : 60)) { [weak self] in
+                self?.scheduleTopicsStep()
+            }
+        }
+    }
+
+    /// Finds steps in topic sources, under the AC + idle gate. Switch off: the local model
+    /// (never a hosted one). Switch on: TypeSafe, only once Start was pressed, a key is saved
+    /// and Local-only mode is off; until then nothing runs, so the queue the estimate covers
+    /// is left for TypeSafe. Inputs are read in one `main.sync`, as in `scheduleTopicsStep`.
+    private func scheduleTopicStepsStep(after delay: Double = 0.1) {
+        guard let slow = slowStore else { return }
+        CoreMemoryStore.slowLaneQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard PowerIdleGate.isEligibleForBackgroundWork() else {
+                DispatchQueue.main.async { self?.scheduleTopicStepsStep(after: 60) }
+                return
+            }
+            typealias Inputs = (routing: CoreRoutingConfig, model: String, key: String?, wait: Bool)
+            let inputs = DispatchQueue.main.sync { () -> Inputs? in
+                guard let self else { return nil }
+                let key = self.topicSteps.enabled ? self.topicSteps.activeKey(localOnly: self.routing.localOnlyMode) : nil
+                return (
+                    self.routing.routingConfig(preferredProvider: self.routing.preferredProvider, preferredModel: self.routing.preferredModel),
+                    self.routing.ollamaDefaultModel,
+                    key,
+                    // Switch on without a usable key (no Start, no key, Local-only): wait, never local.
+                    self.topicSteps.enabled && key == nil
+                )
+            }
+            guard let inputs else { return }
+            let result: Int64 = inputs.wait ? 0 : slow.runTopicStepsBatch(
+                routing: inputs.routing, ollamaModel: inputs.model, apiKey: inputs.key,
+                max: 4, usdPerMillion: TopicSortSettings.usdPerMillion
+            )
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch result {
+                case -2: self.topicSteps.markKeyRejected(true)
+                case -3: self.topicSteps.setOverBudget(true)
+                case -5:
+                    // Core has no budget (database replaced): show the estimate and Start.
+                    self.topicSteps.requireStart()
+                    self.refreshTopicStepsEstimate()
+                case -6: self.topicStepsNoModel = true
+                // -4: today's allowance is used up; -1: error. Both retry on the idle cadence.
+                case 0...:
+                    if inputs.key != nil { self.topicSteps.markKeyRejected(false) } else if !inputs.wait { self.topicStepsNoModel = false }
+                default: break
+                }
+                if result <= 0, self.topicSteps.awaitingStart,
+                   self.topicSteps.estimate.map({ $0.indexing || $0.sources == 0 }) ?? false {
+                    self.refreshTopicStepsEstimate()
+                }
+                self.scheduleTopicStepsStep(after: result > 0 ? 0.1 : 60)
             }
         }
     }

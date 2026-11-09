@@ -17,6 +17,9 @@ import { SETTINGS_SECTIONS, sectionTitle, type SettingsSectionId } from "./setti
 import { SkinGallery } from "./SkinGallery";
 import { StatusPage } from "./StatusPage";
 import { SyncCard } from "./SyncCard";
+import { TopicsCard } from "./TopicsCard";
+import { TopicStepsCard } from "./TopicStepsCard";
+import { TypeSafeCard } from "./TypeSafeCard";
 
 /** How often the Profile badge recounts the suggestions waiting for Add or Dismiss. */
 const BADGE_REFRESH_MS = 30_000;
@@ -98,7 +101,15 @@ function SectionCards({ section, onRetentionSaved }: { section: Exclude<Settings
       return (
         <>
           <AiCard />
+          <TypeSafeCard />
           <SearchModelCard />
+        </>
+      );
+    case "topics":
+      return (
+        <>
+          <TopicsCard />
+          <TopicStepsCard />
         </>
       );
     case "devices":

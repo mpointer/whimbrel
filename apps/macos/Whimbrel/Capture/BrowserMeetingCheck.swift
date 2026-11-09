@@ -10,20 +10,9 @@ import Foundation
 /// (an `AXWebArea`'s `AXURL`), bounded to a small fixed depth, and stops as soon as it
 /// finds the first web area rather than needing to find every one.
 enum BrowserMeetingCheck {
-    /// Bundle IDs of browsers this check knows how to look at. Scoped to the two most
-    /// common cases, matching this codebase's existing tolerance for a similarly
-    /// incomplete native-app bundle-ID list (Teams/Webex are flagged there as
-    /// unverified too) — Arc/Edge/Firefox aren't covered. **Chrome is present in this
-    /// set but non-functional as shipped**: Chromium's renderer accessibility tree is
-    /// lazily activated and nothing triggers that activation under ordinary polling, so
-    /// `webAreaURL` never finds a web area in a real Chrome window — root-caused in
-    /// `docs/05-roadmap.md`'s FR-MTG-2 paragraph. Left in the set anyway since it's
-    /// harmless (Chrome simply never matches) and keeps a future fix a one-line
-    /// re-enable rather than needing this ID re-added from scratch.
-    static let knownBrowserBundleIDs: Set<String> = [
-        "com.apple.Safari",
-        "com.google.Chrome",
-    ]
+    /// Bundle IDs of browsers this check knows how to look at. Firefox isn't covered. The
+    /// Chromium ones need `ChromiumAccessibility` to turn their tree on first.
+    static let knownBrowserBundleIDs: Set<String> = ChromiumAccessibility.bundleIDs.union(["com.apple.Safari"])
 
     /// A browser window's main content area is nested several levels under
     /// toolbar/tab-strip containers, not the window's direct child — bounded to a
@@ -31,16 +20,12 @@ enum BrowserMeetingCheck {
     /// topmost web area, not walk the whole tree. Measured against a real running
     /// Safari (manual verification, Task 6): its `AXWebArea` sits at depth 6
     /// (`AXWindow`→`AXSplitGroup`→`AXTabGroup`→`AXGroup`→`AXGroup`→`AXScrollArea`→
-    /// `AXWebArea`). A depth-8 figure for Chrome was also observed during that same
-    /// pass, but only after forcing `AXUIElementSetAttributeValue(...,
-    /// "AXEnhancedUserInterface", true)` on Chrome's process — under ordinary polling
-    /// (no such call made), Chrome's web area is not reachable at all, so that number
-    /// does not reflect real usage; see `docs/05-roadmap.md`'s FR-MTG-2 paragraph. 12
-    /// leaves real margin above Safari's measured depth.
+    /// `AXWebArea`). Chrome's was measured at depth 8 with its tree on. 12 leaves real
+    /// margin above both.
     private static let maxSearchDepth = 12
 
     /// Breadth cap mirroring `AXTextWalker.extract`'s `maxNodes` precedent — without
-    /// it, a window with no reachable `AXWebArea` (Chrome under ordinary polling, a
+    /// it, a window with no reachable `AXWebArea` (Chrome with its tree off, a
     /// Safari Preferences/Start Page window, an AX-permission-denied state) would walk
     /// its entire accessible subtree to `maxSearchDepth` with no ceiling, one
     /// synchronous cross-process AX call per node, on the main actor.

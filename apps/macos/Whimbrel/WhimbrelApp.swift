@@ -76,12 +76,12 @@ struct WhimbrelApp: App {
                 Button("Send Feedback…") { NSWorkspace.shared.open(Self.feedbackMailURL()) }
             }
             CommandMenu("Go") {
-                ForEach(Array(WhimbrelTab.allCases.enumerated()), id: \.element) { index, tab in
+                ForEach(WhimbrelTab.allCases) { tab in
                     Button(tab.rawValue) {
                         appState.openTimeline?()
                         appState.selectedTab = tab
                     }
-                    .keyboardShortcut(KeyEquivalent(Character(String(index + 1))))
+                    .keyboardShortcut(KeyEquivalent(tab.goKey))
                 }
             }
         }

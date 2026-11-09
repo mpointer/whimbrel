@@ -13,9 +13,9 @@ use crate::state::AppState;
 /// The newest app logs that go in, besides `crash.log` and `supervisor.log`.
 const LOG_DAYS: usize = 3;
 /// Each log file is cut to its last this-many bytes (one day once reached 54 MB).
-const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+pub const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 /// Bundles kept in the diagnostics folder.
-const KEEP_BUNDLES: usize = 3;
+pub const KEEP_BUNDLES: usize = 3;
 /// Meetings the report lists.
 const MEETINGS: usize = 20;
 

@@ -14,8 +14,9 @@ use memory::{ClaimedOutboxOperation, DeliveryFailureClass, MeetingStatus, Store}
 use sync::GroupKey;
 
 use crate::content::{
-    all_peers_items_capable, content_row_aad, is_missing_entity_tag_column, outbox_entity_identity, tag_for,
-    CompactionBudget, ENTITY_TAG_COLUMN_SEEN, MAX_SKIN_CHUNK_BYTES_PER_PASS,
+    all_peers_have_marker, all_peers_items_capable, content_row_aad, is_missing_entity_tag_column,
+    outbox_entity_identity, tag_for, CompactionBudget, ENTITY_TAG_COLUMN_SEEN, MAX_SKIN_CHUNK_BYTES_PER_PASS,
+    ROW_TYPE_TOPICS_CAPABILITY, ROW_TYPE_TOPIC_PAGE_CAPABILITY,
 };
 use crate::SyncEngineError;
 
@@ -72,6 +73,23 @@ pub(crate) async fn dispatch_outbox_at(
 ) -> Result<OutboxDispatchSummary, SyncEngineError> {
     let worker_id = format!("{device_id}:{}", std::process::id());
     let items_capable = all_peers_items_capable(conn, device_id).await?;
+    // Topic rows are always enqueued, and left unclaimed while a peer can't apply them yet,
+    // so a backlog of them never fills a pass. `push_content` backfills older rows once.
+    let mut held: Vec<&str> = Vec::new();
+    if !all_peers_have_marker(conn, device_id, ROW_TYPE_TOPICS_CAPABILITY).await? {
+        held.extend([
+            memory::OUTBOX_ROW_TYPE_TOPIC_SEED,
+            memory::OUTBOX_ROW_TYPE_TOPIC_VERDICT,
+        ]);
+    }
+    if !all_peers_have_marker(conn, device_id, ROW_TYPE_TOPIC_PAGE_CAPABILITY).await? {
+        held.extend([
+            memory::OUTBOX_ROW_TYPE_TOPIC_STEP,
+            memory::OUTBOX_ROW_TYPE_TOPIC_EXTRACTION,
+            memory::OUTBOX_ROW_TYPE_TOPIC_ROLE,
+            memory::OUTBOX_ROW_TYPE_TOPIC_NAMES,
+        ]);
+    }
     let mut summary = OutboxDispatchSummary::default();
     let mut parent_terminal: HashMap<i64, Option<bool>> = HashMap::new();
     let mut processed = 0;
@@ -91,12 +109,13 @@ pub(crate) async fn dispatch_outbox_at(
 
     while processed < MAX_ROWS_PER_PASS {
         let batch = store
-            .claim_due_outbox_batch(
+            .claim_due_outbox_batch_except(
                 memory::OUTBOX_CONNECTOR,
                 &worker_id,
                 now_unix_ms,
                 now_unix_ms + LEASE_MS,
                 CLAIM_BATCH,
+                &held,
             )
             .map_err(query_error)?;
         if batch.is_empty() {
@@ -238,6 +257,16 @@ fn op_meeting_id(op: &ClaimedOutboxOperation) -> Option<i64> {
         memory::OUTBOX_ROW_TYPE_ITEMS | memory::OUTBOX_ROW_TYPE_LIVE_ALERT => source_meeting_id(),
         // Named `<origin>:<source id>:<speaker>`, with an empty origin for this device's own meeting.
         memory::OUTBOX_ROW_TYPE_MEETING_SPEAKER if op.aggregate_id.starts_with(':') => source_meeting_id(),
+        // A step or step read of this device's own meeting, `meeting:{device}:{id}`.
+        memory::OUTBOX_ROW_TYPE_TOPIC_STEP | memory::OUTBOX_ROW_TYPE_TOPIC_EXTRACTION => {
+            let v = serde_json::from_str::<serde_json::Value>(&op.payload_json).ok()?;
+            let key = v.get("source_key")?.as_str()?;
+            key.strip_prefix("meeting:")?
+                .strip_prefix(op.device_id.as_str())?
+                .strip_prefix(':')?
+                .parse()
+                .ok()
+        }
         _ => None,
     }
 }
@@ -827,6 +856,538 @@ mod tests {
         dispatch_outbox_at(&conn, &group_key, &store_a, "device-a", t0()).await.unwrap();
         pull_content(&conn, &group_key, &store_b, "device-b").await.unwrap();
         assert_eq!(store_b.month_spend_by_provider("2026-11").unwrap(), vec![("anthropic".into(), 450)]);
+    }
+
+    fn topic_store(device_id: &str) -> Store {
+        let store = Store::open_in_memory().unwrap();
+        store.set_own_device_id(device_id);
+        store
+    }
+
+    fn topic_email(store: &Store, external_id: &str, subject: &str) {
+        store
+            .upsert_email_items(&[memory::NewEmailItem {
+                device_id: "d".into(),
+                external_id: external_id.into(),
+                ts_unix_ms: 1000,
+                from: "a@x.com".into(),
+                to: "b@y.com".into(),
+                subject: subject.into(),
+                body_text: "Budget review".into(),
+                gmail_thread_id: external_id.into(),
+                account_email: "me@x.com".into(),
+                gmail_labels: vec![],
+                list_unsubscribe: false,
+            }])
+            .unwrap();
+    }
+
+    fn topic_index(store: &Store) {
+        while memory::topics::index::run_topic_index_job(store, 200).unwrap() {}
+        while memory::topics::cluster::run_topic_cluster_job(store, 200).unwrap() {}
+    }
+
+    /// One full `sync_content` round (push with markers, pull, outbox) against the test relay.
+    async fn topic_round(conn: &Connection, group_key: &GroupKey, store: &Store, device_id: &str) {
+        crate::content_round(conn, group_key, store, device_id, &|_| {}).await.unwrap();
+    }
+
+    fn outbox_count(store: &Store, row_type: &str) -> usize {
+        store.list_outbox_operations().unwrap().iter().filter(|o| o.1 == row_type).count()
+    }
+
+    #[tokio::test]
+    async fn topic_seed_round_trips_and_later_edit_wins() {
+        use crate::content::ROW_TYPE_TOPIC_SEED;
+        use memory::topics::seeds::SeedKind;
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (a, b) = (topic_store("device-a"), topic_store("device-b"));
+        let seed = a.create_seed_topic("Acme", &["Acme Corp".into()], Some(SeedKind::Customer)).unwrap();
+        topic_round(&conn, &group_key, &a, "device-a").await;
+        topic_round(&conn, &group_key, &b, "device-b").await;
+        let got = b.list_seed_topics().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].key.as_str(), got[0].name.as_str()), (seed.key.as_str(), "Acme"));
+        assert_eq!((got[0].aliases.clone(), got[0].kind), (seed.aliases.clone(), Some(SeedKind::Customer)));
+        assert_eq!(outbox_count(&b, ROW_TYPE_TOPIC_SEED), 0, "an applied seed is never re-enqueued");
+
+        b.update_seed_topic(&seed.key, "Acme Co", &[], None).unwrap();
+        tick();
+        a.update_seed_topic(&seed.key, "Acme Inc", &[], Some(SeedKind::Customer)).unwrap();
+        for _ in 0..2 {
+            topic_round(&conn, &group_key, &a, "device-a").await;
+            topic_round(&conn, &group_key, &b, "device-b").await;
+        }
+        for s in [&a, &b] {
+            let l = s.list_seed_topics().unwrap();
+            assert_eq!((l.len(), l[0].name.as_str(), l[0].kind), (1, "Acme Inc", Some(SeedKind::Customer)));
+        }
+    }
+
+    #[tokio::test]
+    async fn seed_merge_and_delete_apply_on_pull() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (a, b) = (topic_store("device-a"), topic_store("device-b"));
+        let x = a.create_seed_topic("Acme", &[], None).unwrap();
+        let y = a.create_seed_topic("Acme Inc", &["Acme Incorporated".into()], None).unwrap();
+        let z = a.create_seed_topic("Board", &[], None).unwrap();
+        topic_round(&conn, &group_key, &a, "device-a").await;
+        topic_round(&conn, &group_key, &b, "device-b").await;
+        assert_eq!(b.list_seed_topics().unwrap().len(), 3);
+
+        a.merge_topics(x.topic_id, y.topic_id).unwrap();
+        a.delete_seed_topic(&z.key).unwrap();
+        topic_round(&conn, &group_key, &a, "device-a").await;
+        topic_round(&conn, &group_key, &b, "device-b").await;
+        let l = b.list_seed_topics().unwrap();
+        assert_eq!(l.len(), 1);
+        assert_eq!(l[0].key, x.key);
+        for want in ["Acme", "Acme Inc", "Acme Incorporated"] {
+            assert!(l[0].aliases.iter().any(|a| a == want), "missing {want}");
+        }
+    }
+
+    /// I2: a merge on one device and a later edit of the merged seed on another: both end merged.
+    #[tokio::test]
+    async fn topic_merge_survives_a_later_edit_on_another_device() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (a, b) = (topic_store("device-a"), topic_store("device-b"));
+        let x = a.create_seed_topic("Acme", &[], None).unwrap();
+        let y = a.create_seed_topic("Acme Inc", &[], None).unwrap();
+        topic_round(&conn, &group_key, &a, "device-a").await;
+        topic_round(&conn, &group_key, &b, "device-b").await;
+
+        a.merge_topics(x.topic_id, y.topic_id).unwrap();
+        tick();
+        b.update_seed_topic(&y.key, "Acme Incorporated", &[], None).unwrap();
+        for _ in 0..2 {
+            topic_round(&conn, &group_key, &a, "device-a").await;
+            topic_round(&conn, &group_key, &b, "device-b").await;
+        }
+        for (name, s) in [("a", &a), ("b", &b)] {
+            let l = s.list_seed_topics().unwrap();
+            assert_eq!(l.len(), 1, "device {name}: {l:?}");
+            assert_eq!(l[0].key, x.key, "device {name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn verdict_round_trips_and_prevents_a_second_judgment() {
+        use crate::content::ROW_TYPE_TOPIC_VERDICT;
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (a, b) = (topic_store("device-a"), topic_store("device-b"));
+        let seed = a.create_seed_topic("Maximus", &[], None).unwrap();
+        topic_email(&a, "e1", "Lunch plans");
+        topic_email(&b, "e1", "Lunch plans");
+        topic_round(&conn, &group_key, &a, "device-a").await;
+        topic_round(&conn, &group_key, &b, "device-b").await;
+        topic_index(&a);
+        topic_index(&b);
+        // Both devices queue the source for Jev.
+        assert_eq!(b.next_judge_candidates(10).unwrap().len(), 1);
+        let c = a.next_judge_candidates(10).unwrap();
+        assert_eq!(c.len(), 1);
+        a.record_topic_verdict(c[0].source_id, Some(seed.topic_id), Some(0.9), "jev", 5).unwrap();
+
+        topic_round(&conn, &group_key, &a, "device-a").await;
+        topic_round(&conn, &group_key, &b, "device-b").await;
+        assert!(b.next_judge_candidates(10).unwrap().is_empty(), "the pulled verdict decides it on b");
+        assert_eq!(b.list_seed_topics().unwrap()[0].item_count, 1);
+        assert_eq!(outbox_count(&b, ROW_TYPE_TOPIC_VERDICT), 0, "an applied verdict is never re-enqueued");
+    }
+
+    #[tokio::test]
+    async fn verdict_pulled_before_its_source_applies_when_indexed() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (a, b) = (topic_store("device-a"), topic_store("device-b"));
+        let seed = a.create_seed_topic("Maximus", &[], None).unwrap();
+        topic_email(&a, "e1", "Lunch plans");
+        topic_index(&a);
+        let c = a.next_judge_candidates(10).unwrap();
+        a.record_topic_verdict(c[0].source_id, Some(seed.topic_id), Some(0.9), "jev", 5).unwrap();
+        topic_round(&conn, &group_key, &a, "device-a").await;
+        topic_round(&conn, &group_key, &b, "device-b").await;
+
+        topic_email(&b, "e1", "Lunch plans");
+        topic_index(&b);
+        assert!(b.next_judge_candidates(10).unwrap().is_empty());
+        assert_eq!(b.list_seed_topics().unwrap()[0].item_count, 1);
+    }
+
+    /// Held topic rows never fill a pass: a person row queued behind 150 of them still goes out.
+    #[tokio::test]
+    async fn held_topic_rows_do_not_starve_other_rows() {
+        use crate::content::{push_marker, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_PERSON, ROW_TYPE_TOPIC_SEED};
+        let (_dir, conn, group_key) = relay_and_store().await;
+        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+        let a = topic_store("device-a");
+        for i in 0..150 {
+            a.create_seed_topic(&format!("Seed {i}"), &[], None).unwrap();
+        }
+        a.upsert_person("sam@x.com", "Sam", Some("sam@x.com")).unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0()).await.unwrap();
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_PERSON).await, 1);
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED).await, 0);
+    }
+
+    #[tokio::test]
+    async fn topic_rows_wait_for_every_device_capability() {
+        use crate::content::{push_marker, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_TOPICS_CAPABILITY, ROW_TYPE_TOPIC_SEED};
+        let (_dir, conn, group_key) = relay_and_store().await;
+        // A peer on an older build: it announces items, not topics.
+        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY).await.unwrap();
+        let a = Store::open_in_memory().unwrap();
+        a.create_seed_topic("Before sync", &[], None).unwrap(); // no device id yet: never enqueued
+        a.set_own_device_id("device-a");
+        a.create_seed_topic("Acme", &[], None).unwrap();
+
+        let t = t0();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t).await.unwrap();
+        assert_eq!(relay_rows(&conn, "device-a", ROW_TYPE_TOPIC_SEED).await, 0);
+        assert_eq!(states(&a), vec!["pending".to_string()], "held, untouched");
+
+        push_marker(&conn, &group_key, "device-old", ROW_TYPE_TOPICS_CAPABILITY).await.unwrap();
+        crate::content::push_content(&conn, &group_key, &a, "device-a").await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t + DEFERRED_RECHECK_MS + 1).await.unwrap();
+        let b = topic_store("device-b");
+        pull_content(&conn, &group_key, &b, "device-b").await.unwrap();
+        assert_eq!(b.list_seed_topics().unwrap().len(), 2, "the backfill sends the seed made before sync");
+
+        let ops = outbox_count(&a, ROW_TYPE_TOPIC_SEED);
+        crate::content::push_content(&conn, &group_key, &a, "device-a").await.unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t + 2 * DEFERRED_RECHECK_MS).await.unwrap();
+        assert_eq!(outbox_count(&a, ROW_TYPE_TOPIC_SEED), ops, "the backfill runs once");
+    }
+
+    const DAY: i64 = 86_400_000;
+
+    /// An email from yesterday, so the step queue (last 30 days) takes it.
+    fn recent_email(store: &Store, external_id: &str, subject: &str) {
+        store
+            .upsert_email_items(&[memory::NewEmailItem {
+                device_id: "d".into(),
+                external_id: external_id.into(),
+                ts_unix_ms: crate::now_unix_ms() - DAY,
+                from: "Pat <pat@x.com>".into(),
+                to: "me@x.com".into(),
+                subject: subject.into(),
+                body_text: "Please send the SOW by Friday.".into(),
+                gmail_thread_id: external_id.into(),
+                account_email: "me@x.com".into(),
+                gmail_labels: vec![],
+                list_unsubscribe: false,
+            }])
+            .unwrap();
+    }
+
+    /// Reads every queued source with each candidate line labelled `mine`.
+    fn read_steps(store: &Store) {
+        for src in store.next_step_sources(10).unwrap() {
+            let labels: Vec<memory::topics::steps::LineLabel> = src
+                .candidates
+                .iter()
+                .map(|_| memory::topics::steps::LineLabel {
+                    direction: Some("mine"),
+                    is_date: false,
+                })
+                .collect();
+            store
+                .record_step_extraction(&src, &labels, &[], "m", crate::now_unix_ms())
+                .unwrap();
+        }
+    }
+
+    /// The page of the store's only seed topic.
+    fn page(store: &Store) -> memory::topics::page::TopicPage {
+        let id = store.list_seed_topics().unwrap()[0].topic_id;
+        store.topic_page(id, crate::now_unix_ms()).unwrap().unwrap()
+    }
+
+    async fn topic_rounds(conn: &Connection, group_key: &GroupKey, a: &Store, b: &Store) {
+        for _ in 0..2 {
+            topic_round(conn, group_key, a, "device-a").await;
+            topic_round(conn, group_key, b, "device-b").await;
+        }
+    }
+
+    #[tokio::test]
+    async fn topic_step_round_trips_and_later_edit_wins() {
+        use memory::topics::steps::StepAction;
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (a, b) = (topic_store("device-a"), topic_store("device-b"));
+        a.create_seed_topic("Maximus", &[], None).unwrap();
+        recent_email(&a, "e1", "Maximus SOW");
+        topic_index(&a);
+        read_steps(&a);
+        let key = page(&a).you_owe[0].key.clone();
+        topic_rounds(&conn, &group_key, &a, &b).await;
+        let got = page(&b).you_owe;
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            (got[0].key.as_str(), got[0].text.as_str()),
+            (key.as_str(), "Please send the SOW by Friday.")
+        );
+        assert_eq!(
+            outbox_count(&b, "topic_step"),
+            0,
+            "an applied step is never re-enqueued"
+        );
+
+        b.apply_step_action(&key, &StepAction::Note { text: "from b".into() })
+            .unwrap();
+        tick();
+        a.apply_step_action(&key, &StepAction::Note { text: "from a".into() })
+            .unwrap();
+        topic_rounds(&conn, &group_key, &a, &b).await;
+        for s in [&a, &b] {
+            assert_eq!(page(s).you_owe[0].note.as_deref(), Some("from a"));
+        }
+    }
+
+    /// Jev is never paid twice: a source read on one device is not read again on another.
+    #[tokio::test]
+    async fn pulled_extraction_prevents_a_second_read() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (a, b) = (topic_store("device-a"), topic_store("device-b"));
+        a.create_seed_topic("Maximus", &[], None).unwrap();
+        recent_email(&a, "e1", "Maximus SOW");
+        topic_index(&a);
+        read_steps(&a);
+        topic_rounds(&conn, &group_key, &a, &b).await;
+
+        recent_email(&b, "e1", "Maximus SOW");
+        topic_index(&b);
+        assert!(
+            b.next_step_sources(10).unwrap().is_empty(),
+            "read on a already"
+        );
+        assert_eq!(page(&b).you_owe.len(), 1);
+        assert_eq!(
+            outbox_count(&b, "topic_extraction"),
+            0,
+            "an applied extraction is never re-enqueued"
+        );
+    }
+
+    /// A finished "Maximus sync" meeting on a (device-a) with two action items, filed on seed
+    /// "Maximus" and read into two `mine` steps. Returns the item texts.
+    fn read_meeting(a: &Store) -> [String; 2] {
+        a.create_seed_topic("Maximus", &[], None).unwrap();
+        let start = crate::now_unix_ms() - DAY;
+        let mid = a
+            .insert_meeting(&NewMeeting {
+                device_id: "device-a".into(),
+                start_unix_ms: start,
+                end_unix_ms: None,
+                title: "Maximus sync".into(),
+                attendees: vec![],
+                trigger: MeetingTrigger::Calendar,
+                audio_path: None,
+                status: memory::MeetingStatus::Recording,
+            })
+            .unwrap();
+        a.complete_meeting(mid, start + 1000, None).unwrap();
+        let items = [
+            "Send the deck to Priya".to_string(),
+            "Book the venue".to_string(),
+        ];
+        a.update_meeting_summary(mid, "t", &[], &items, &[], "p", "m")
+            .unwrap();
+        topic_index(a);
+        read_steps(a);
+        items
+    }
+
+    #[tokio::test]
+    async fn pulled_done_meeting_step_completes_the_item_when_the_meeting_arrives() {
+        use memory::topics::steps::StepAction;
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (a, b) = (topic_store("device-a"), topic_store("device-b"));
+        let items = read_meeting(&a);
+        let key_of = |s: &Store, text: &str| {
+            page(s)
+                .you_owe
+                .into_iter()
+                .find(|v| v.text == text)
+                .unwrap()
+                .key
+        };
+        a.apply_step_action(&key_of(&a, &items[0]), &StepAction::Done)
+            .unwrap();
+        let book = key_of(&a, &items[1]);
+        // b pulls the meeting and the done step; its action items appear only once it reads it.
+        topic_rounds(&conn, &group_key, &a, &b).await;
+        topic_index(&b);
+        b.next_step_sources(10).unwrap();
+        let b_mid = b.recent_meetings(1).unwrap()[0].id;
+        let completed = |text: &str| {
+            b.list_meeting_action_items(b_mid)
+                .unwrap()
+                .into_iter()
+                .find(|i| i.text == text)
+                .unwrap()
+                .completed
+        };
+        assert!(
+            completed(&items[0]),
+            "the pulled done step checks the item off on arrival"
+        );
+        assert!(!completed(&items[1]));
+
+        // With the meeting here, a later done step checks its item off when pulled.
+        a.apply_step_action(&book, &StepAction::Done).unwrap();
+        topic_rounds(&conn, &group_key, &a, &b).await;
+        assert!(completed(&items[1]));
+    }
+
+    /// "Forget meeting everywhere" wins over topic sync: a step edited on the recorder after the
+    /// forget is dropped on pull, and the recorder removes its step rows from the relay.
+    #[tokio::test]
+    async fn forgotten_meeting_steps_are_not_resurrected_by_sync() {
+        use memory::topics::steps::StepAction;
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (a, b) = (topic_store("device-a"), topic_store("device-b"));
+        read_meeting(&a);
+        let key = page(&a).you_owe[0].key.clone();
+        topic_rounds(&conn, &group_key, &a, &b).await;
+        assert_eq!(page(&b).you_owe.len(), 2);
+
+        let b_mid = b.recent_meetings(1).unwrap()[0].id;
+        b.forget_meeting(b_mid).unwrap().unwrap();
+        assert!(
+            page(&b).you_owe.is_empty(),
+            "forgetting deletes the pulled steps"
+        );
+        // a edits a step and sends it before it hears of the forget.
+        a.apply_step_action(&key, &StepAction::Note { text: "late".into() })
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t0())
+            .await
+            .unwrap();
+        topic_rounds(&conn, &group_key, &a, &b).await;
+        let pb = page(&b);
+        assert!(
+            pb.you_owe.is_empty() && pb.done.is_empty(),
+            "not resurrected"
+        );
+        assert!(page(&a).you_owe.is_empty(), "a applied b's tombstone");
+        crate::content::delete_forgotten_meeting_rows(&conn, &group_key, &a, "device-a").await;
+        assert_eq!(
+            relay_rows(&conn, "device-a", "topic_step").await,
+            0,
+            "the recorder removes its step rows"
+        );
+    }
+
+    #[tokio::test]
+    async fn role_and_names_round_trip() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (a, b) = (topic_store("device-a"), topic_store("device-b"));
+        let seed = a.create_seed_topic("Maximus", &[], None).unwrap();
+        a.set_topic_role(&seed.key, "I run the rollout").unwrap();
+        a.set_self_names(&["Mike P".into()]).unwrap();
+        topic_rounds(&conn, &group_key, &a, &b).await;
+        let role = page(&b).role;
+        assert_eq!(
+            (role.text.as_str(), role.edited),
+            ("I run the rollout", true)
+        );
+        assert_eq!(b.self_names().unwrap(), vec!["Mike P".to_string()]);
+        assert_eq!(
+            outbox_count(&b, "topic_role") + outbox_count(&b, "topic_names"),
+            0
+        );
+
+        tick();
+        b.set_topic_role(&seed.key, "").unwrap();
+        b.set_self_names(&["Mike".into(), "MP".into()]).unwrap();
+        topic_rounds(&conn, &group_key, &a, &b).await;
+        assert!(!page(&a).role.edited, "b's later reset wins");
+        assert_eq!(
+            a.self_names().unwrap(),
+            vec!["Mike".to_string(), "MP".to_string()]
+        );
+    }
+
+    /// Piece-1 builds announce `topics_capability` but drop unknown row types, so step, extraction,
+    /// role and names rows wait for `topic_page_capability`.
+    #[tokio::test]
+    async fn topic_page_rows_wait_for_the_new_capability() {
+        use crate::content::{push_marker, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_TOPICS_CAPABILITY};
+        let (_dir, conn, group_key) = relay_and_store().await;
+        push_marker(&conn, &group_key, "device-old", ROW_TYPE_ITEMS_CAPABILITY)
+            .await
+            .unwrap();
+        push_marker(&conn, &group_key, "device-old", ROW_TYPE_TOPICS_CAPABILITY)
+            .await
+            .unwrap();
+        let a = Store::open_in_memory().unwrap();
+        a.create_seed_topic("Maximus", &[], None).unwrap();
+        recent_email(&a, "e1", "Maximus SOW");
+        topic_index(&a);
+        read_steps(&a); // no device id yet: never enqueued
+        a.set_own_device_id("device-a");
+        a.set_self_names(&["Mike P".into()]).unwrap();
+
+        let t = t0();
+        crate::content::push_content(&conn, &group_key, &a, "device-a")
+            .await
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t)
+            .await
+            .unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", "topic_names").await,
+            0,
+            "held"
+        );
+        assert_eq!(relay_rows(&conn, "device-a", "topic_step").await, 0);
+        assert_eq!(outbox_count(&a, "topic_step"), 0, "no backfill yet");
+
+        push_marker(&conn, &group_key, "device-old", "topic_page_capability")
+            .await
+            .unwrap();
+        crate::content::push_content(&conn, &group_key, &a, "device-a")
+            .await
+            .unwrap();
+        dispatch_outbox_at(
+            &conn,
+            &group_key,
+            &a,
+            "device-a",
+            t + DEFERRED_RECHECK_MS + 1,
+        )
+        .await
+        .unwrap();
+        let b = topic_store("device-b");
+        pull_content(&conn, &group_key, &b, "device-b")
+            .await
+            .unwrap();
+        assert_eq!(
+            page(&b).you_owe.len(),
+            1,
+            "the backfill sends the step made before sync"
+        );
+        assert_eq!(b.self_names().unwrap(), vec!["Mike P".to_string()]);
+
+        let ops = outbox_count(&a, "topic_step");
+        crate::content::push_content(&conn, &group_key, &a, "device-a")
+            .await
+            .unwrap();
+        dispatch_outbox_at(
+            &conn,
+            &group_key,
+            &a,
+            "device-a",
+            t + 2 * DEFERRED_RECHECK_MS,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outbox_count(&a, "topic_step"),
+            ops,
+            "the backfill runs once"
+        );
     }
 
     /// A reinstalled device (new database, same Keychain device id) never lowers what its

@@ -753,7 +753,14 @@ impl Pipeline {
         // A Windows meeting is one part (core synthesizes part 1 at offset 0), so on a first
         // run this is the insert it always was.
         self.store
-            .call_blocking(move |s| s.replace_part_transcript_segments(meeting_id, 1, &segments).map_err(|e| e.to_string()))
+            .call_blocking(move |s| {
+                s.replace_part_transcript_segments(meeting_id, 1, &segments).map_err(|e| e.to_string())?;
+                // The real transcript replaces the provisional live one (`live_rows`).
+                if let Err(e) = s.clear_live_segments(meeting_id) {
+                    tracing::warn!(error = %e, "could not clear the live transcript");
+                }
+                Ok::<(), String>(())
+            })
             .map_err(|e| e.to_string())??;
 
         // A calendar recording where nothing came from the call (only this PC's own

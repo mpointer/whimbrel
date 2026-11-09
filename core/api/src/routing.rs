@@ -422,6 +422,14 @@ pub fn build_chain_for(task: llm::TaskKind, ollama_model: &str, routing: &Routin
     }
 }
 
+/// On-device links only: Ollama when enabled, then the bundled model when installed. Never a
+/// hosted link, whatever keys are set.
+pub fn build_local_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
+    let mut chain: Vec<llm::ChainLink> = routing.use_local_model.then(|| ollama_link(ollama_model)).into_iter().collect();
+    push_local_link(&mut chain);
+    chain
+}
+
 /// How one routine picks its model: today's chain, the light chain, or one provider and
 /// model pinned first. Stored on the `routine` row as `default`, `cheapest`, or
 /// `<provider>/<model>`; a value in any other shape is rejected at write time.

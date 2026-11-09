@@ -46,6 +46,20 @@ const MIN_CONTENT_AREA: f64 = 0.25;
 const BAR_STD_DEV: f64 = 6.0;
 /// … and it ends where the mean luminance steps by this much.
 const BAR_STEP: f64 = 40.0;
+/// Narrowest content kept, as width / height. Slides and screens are landscape and a letter
+/// or A4 page is ~0.71-0.77; a strip of call window beside the speaker (toolbar, name tile)
+/// measured ~0.41-0.47 on the Mac on 2026-11-05, when 15 such strips were kept from a
+/// meeting where nothing was shared (issue 580).
+const MIN_CONTENT_ASPECT: f64 = 0.6;
+
+// The duplicate-frame gate in front of `decide` (the Mac's): a frame is saved only if, against
+// the last saved frame's 32×32 grey copy, at least `DEDUPE_MIN_CHANGED_CELLS` pixels changed by
+// more than `DEDUPE_PIXEL_STEP`. A near-identical check, not a minimum change: on the Mac's
+// fixture slides the smallest real text-slide change is 14 of 1024 cells, while a clock tick
+// or cursor blink is 1-3.
+const DEDUPE_SIDE: usize = 32;
+const DEDUPE_PIXEL_STEP: i32 = 16;
+const DEDUPE_MIN_CHANGED_CELLS: usize = 6;
 
 /// What the service remembers about a sampled frame, after cropping to the shared content.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +98,16 @@ pub fn dhash(frame: &Frame) -> u64 {
 
 pub fn hamming(a: u64, b: u64) -> u32 {
     (a ^ b).count_ones()
+}
+
+/// The duplicate-frame gate: true when at least `DEDUPE_MIN_CHANGED_CELLS` pixels of two
+/// `Luma::dedupe` copies differ by more than `DEDUPE_PIXEL_STEP` grey levels.
+pub fn differs(a: &Luma, b: &Luma) -> bool {
+    if (a.width, a.height) != (b.width, b.height) {
+        return true;
+    }
+    let changed = a.pixels.iter().zip(&b.pixels).filter(|(x, y)| (**x as i32 - **y as i32).abs() > DEDUPE_PIXEL_STEP).count();
+    changed >= DEDUPE_MIN_CHANGED_CELLS
 }
 
 /// Blank, loading or spinner, and mid-cross-fade frames.
@@ -145,6 +169,9 @@ pub fn content_crop(frame: &Frame, faces: &[Rect]) -> Option<Rect> {
     let to_frame = |cell: usize, cells: usize, pixels: u32| if cell == cells { pixels } else { (cell as f64 / scale).round() as u32 };
     let (x0, x1) = (to_frame(b.x.start, luma.width, frame.width), to_frame(b.x.end, luma.width, frame.width));
     let (y0, y1) = (to_frame(b.y.start, luma.height, frame.height), to_frame(b.y.end, luma.height, frame.height));
+    if ((x1 - x0) as f64) < MIN_CONTENT_ASPECT * (y1 - y0) as f64 {
+        return None;
+    }
     Some(Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 })
 }
 
@@ -245,7 +272,17 @@ impl Luma {
             return None;
         }
         let scale = (THUMBNAIL_SIDE as f64 / w.max(h) as f64).min(1.0);
-        let (tw, th) = (((w as f64 * scale).round() as usize).max(1), ((h as f64 * scale).round() as usize).max(1));
+        Some(Self::sized(frame, ((w as f64 * scale).round() as usize).max(1), ((h as f64 * scale).round() as usize).max(1)))
+    }
+
+    /// The 32×32 copy the duplicate-frame gate compares (stretched, as on the Mac).
+    pub fn dedupe(frame: &Frame) -> Option<Luma> {
+        (frame.width > 0 && frame.height > 0).then(|| Self::sized(frame, DEDUPE_SIDE, DEDUPE_SIDE))
+    }
+
+    /// Area-averaged to exactly `tw` × `th`. The frame must not be empty.
+    fn sized(frame: &Frame, tw: usize, th: usize) -> Luma {
+        let (w, h) = (frame.width as usize, frame.height as usize);
         let mut pixels = Vec::with_capacity(tw * th);
         for ty in 0..th {
             let (sy0, sy1) = (ty * h / th, ((ty + 1) * h / th).max(ty * h / th + 1));
@@ -262,7 +299,7 @@ impl Luma {
                 pixels.push((sum / ((sy1 - sy0) * (sx1 - sx0)) as u64) as u8);
             }
         }
-        Some(Luma { width: tw, height: th, pixels })
+        Luma { width: tw, height: th, pixels }
     }
 
     fn bounds(&self) -> Box2 {
@@ -468,6 +505,19 @@ mod tests {
     }
 
     #[test]
+    fn a_tall_strip_of_call_window_has_no_crop() {
+        // The Mac's 2026-11-05 case: a narrow call window with toolbar text and a name.
+        let strip = fx::slide(&["Scott Lemerond", "Record", "Leave"]).crop(Rect { x: 0, y: 0, width: 300, height: 720 }).unwrap();
+        assert_eq!(content_crop(&strip, &[]), None);
+    }
+
+    #[test]
+    fn a_shared_letter_page_still_crops() {
+        let page = fx::slide(&ROADMAP).crop(Rect { x: 0, y: 0, width: 560, height: 720 }).unwrap();
+        assert!(content_crop(&page, &[]).is_some());
+    }
+
+    #[test]
     fn a_face_leaving_under_a_quarter_of_the_frame_has_no_crop() {
         // A mid-size face on a text slide: its 900 px tile leaves 190 px strips (15%) each side.
         let face = Rect { x: 490, y: 210, width: 300, height: 300 };
@@ -589,6 +639,58 @@ mod tests {
     #[test]
     fn two_different_diagrams_with_little_text_are_both_kept() {
         assert_eq!(decide_recaptured(&fx::bar_chart(), &fx::flowchart()), Decision::KeepNew);
+    }
+
+    // --- the duplicate-frame gate
+
+    /// A white 32×32 copy with the first `black` pixels black.
+    fn cells(black: usize) -> Luma {
+        let mut pixels = vec![255u8; DEDUPE_SIDE * DEDUPE_SIDE];
+        pixels[..black].fill(0);
+        Luma { width: DEDUPE_SIDE, height: DEDUPE_SIDE, pixels }
+    }
+
+    #[test]
+    fn identical_copies_do_not_differ() {
+        assert!(!differs(&cells(100), &cells(100)));
+    }
+
+    #[test]
+    fn a_few_changed_cells_do_not_differ() {
+        // A clock tick or cursor blink: 1-3 cells, 5 at the edge.
+        for n in [1, 2, 3, 5] {
+            assert!(!differs(&cells(0), &cells(n)), "{n} cells");
+        }
+    }
+
+    #[test]
+    fn six_changed_cells_differ() {
+        assert!(differs(&cells(0), &cells(6)));
+        assert!(differs(&cells(0), &cells(52)));
+    }
+
+    #[test]
+    fn small_grey_steps_do_not_count() {
+        let (a, b) = (Luma { width: 32, height: 32, pixels: vec![100; 1024] }, Luma { width: 32, height: 32, pixels: vec![116; 1024] });
+        assert!(!differs(&a, &b), "16 grey levels is not a change");
+    }
+
+    #[test]
+    fn real_slide_changes_differ() {
+        let pairs: [(&[&str], &[&str]); 3] = [
+            (&ROADMAP, &["Hiring plan", "Two engineers in Q1", "One designer", "Interview loop"]),
+            (&ROADMAP[..1], &["Hiring plan", "Two engineers in Q1", "One designer", "Interview loop"]),
+            (&["Roadmap", "Ship it"], &["Q3 goals", "Hire", "Launch beta"]),
+        ];
+        for (a, b) in pairs {
+            let (la, lb) = (Luma::dedupe(&fx::slide(a)).unwrap(), Luma::dedupe(&fx::slide(b)).unwrap());
+            assert!(differs(&la, &lb), "{} → {}", a[0], b[0]);
+        }
+    }
+
+    #[test]
+    fn the_same_slide_twice_does_not_differ() {
+        assert!(!differs(&Luma::dedupe(&fx::slide(&ROADMAP)).unwrap(), &Luma::dedupe(&fx::slide(&ROADMAP)).unwrap()));
     }
 
     // --- dhash

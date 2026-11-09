@@ -38,6 +38,29 @@ fn speed(model: &Path, threads: i32) -> Result<f64, String> {
     Ok(samples.len() as f64 / 16_000.0 / started.elapsed().as_secs_f64().max(0.001))
 }
 
+/// Left beside the data while the benchmark runs. Whisper on the GPU runs inside this process, so
+/// a GPU driver that crashes takes the app down with it; finding the marker at the next launch
+/// means the last run never finished, and it isn't tried again. A normal quit removes it.
+pub fn marker(paths: &Paths) -> std::path::PathBuf {
+    paths.root.join("benchmark-running")
+}
+
+/// What to do about the benchmark, given whether the last one left its marker behind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Attempt {
+    Run,
+    /// The last run crashed the app: record "too slow for turbo" and never run it again.
+    GiveUp,
+}
+
+pub fn attempt(marker_found: bool) -> Attempt {
+    if marker_found {
+        Attempt::GiveUp
+    } else {
+        Attempt::Run
+    }
+}
+
 /// large-v3-turbo's estimated speed on this PC, or None with no small model on disk. Blocks for a
 /// few seconds, so call it off the main thread. Timed at the live worker's thread count, which is
 /// what the live floor is about.
@@ -60,6 +83,12 @@ pub fn estimate(paths: &Paths) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_benchmark_that_crashed_the_app_is_not_run_again() {
+        assert_eq!(attempt(false), Attempt::Run);
+        assert_eq!(attempt(true), Attempt::GiveUp);
+    }
 
     #[test]
     fn the_clip_is_eleven_seconds_of_16k_mono() {

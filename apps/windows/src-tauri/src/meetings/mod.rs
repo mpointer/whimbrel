@@ -5,6 +5,7 @@ pub mod benchmark;
 pub mod controller;
 pub mod detect;
 pub mod live;
+pub mod live_rows;
 pub mod perf;
 pub mod pipeline;
 pub mod quality;

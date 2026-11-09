@@ -6,14 +6,24 @@ enum AXTextWalker {
     struct Extraction {
         var text: String
         var url: String?
+        /// The page address of a browser whose page content is skipped. Used only to check
+        /// site exclusions; never stored.
+        var exclusionURL: String? = nil
     }
 
-    static func extract(from window: AXUIElement, maxNodes: Int = 400, maxDepth: Int = 40) -> Extraction {
+    static func extract(from window: AXUIElement, maxNodes: Int = 400, maxDepth: Int = 40, skipWebAreas: Bool = false) -> Extraction {
         var collected: [String] = []
         var foundURL: String?
+        var checkURL: String?
         var visited = 0
-        walk(window, depth: 0, maxDepth: maxDepth, visited: &visited, maxNodes: maxNodes, collected: &collected, url: &foundURL)
-        return Extraction(text: collected.joined(separator: "\n"), url: foundURL)
+        walk(window, depth: 0, maxDepth: maxDepth, visited: &visited, maxNodes: maxNodes, skipWebAreas: skipWebAreas, collected: &collected, url: &foundURL, checkURL: &checkURL)
+        return Extraction(text: collected.joined(separator: "\n"), url: foundURL, exclusionURL: checkURL)
+    }
+
+    /// Password fields never, and a Chromium browser's page content and URL: its tree is on
+    /// only for meeting detection, and must not widen what screen memory reads.
+    static func skips(role: String?, subrole: String?, skipWebAreas: Bool) -> Bool {
+        subrole == kAXSecureTextFieldSubrole || (skipWebAreas && role == "AXWebArea")
     }
 
     private static func walk(
@@ -22,13 +32,25 @@ enum AXTextWalker {
         maxDepth: Int,
         visited: inout Int,
         maxNodes: Int,
+        skipWebAreas: Bool,
         collected: inout [String],
-        url: inout String?
+        url: inout String?,
+        checkURL: inout String?
     ) {
         guard depth < maxDepth, visited < maxNodes else { return }
         visited += 1
 
-        if url == nil, let role = stringAttribute(element, kAXRoleAttribute), role == "AXWebArea" {
+        let role = stringAttribute(element, kAXRoleAttribute)
+        if skipWebAreas, checkURL == nil {
+            if role == "AXWebArea" {
+                checkURL = urlAttribute(element)
+            } else if role == "AXTextField" {
+                checkURL = addressBarURL(description: stringAttribute(element, kAXDescriptionAttribute),
+                                         value: stringAttribute(element, kAXValueAttribute))
+            }
+        }
+        if skips(role: role, subrole: stringAttribute(element, kAXSubroleAttribute), skipWebAreas: skipWebAreas) { return }
+        if url == nil, role == "AXWebArea" {
             url = urlAttribute(element)
         }
 
@@ -44,8 +66,19 @@ enum AXTextWalker {
 
         for child in children {
             if visited >= maxNodes { return }
-            walk(child, depth: depth + 1, maxDepth: maxDepth, visited: &visited, maxNodes: maxNodes, collected: &collected, url: &url)
+            walk(child, depth: depth + 1, maxDepth: maxDepth, visited: &visited, maxNodes: maxNodes, skipWebAreas: skipWebAreas, collected: &collected, url: &url, checkURL: &checkURL)
         }
+    }
+
+    /// A Chromium address bar's text as a URL for the exclusion check. The bar drops the
+    /// scheme ("mail.google.com/mail"), so one is added.
+    // ponytail: matches the English "Address and search bar" label; other UI languages fall
+    // back to the page's URL, which is only readable while the browser's tree is on.
+    static func addressBarURL(description: String?, value: String?) -> String? {
+        guard description?.lowercased().contains("address") == true,
+              let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty, !value.contains(" ")
+        else { return nil }
+        return value.contains("://") ? value : "https://" + value
     }
 
     /// Not `private` — `BrowserMeetingCheck` reuses this exact attribute-reading

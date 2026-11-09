@@ -1,6 +1,8 @@
 import { timeLabel } from "../library/rows";
 import { useL10n } from "../l10n";
 import type { ScheduleState } from "./useSchedule";
+import { TopicChip, useTopicLookup } from "../topics/TopicChip";
+import type { TopicLookup } from "../generated/types";
 import { attendeesLine, prepLine, relativeStart, rowAction } from "./todayModel";
 
 /**
@@ -24,6 +26,15 @@ export function ScheduleCard({
 }) {
   const { schedule, next, now, starting, error, start } = state;
   const { locale, t } = useL10n();
+  // A topic chip per row (topics piece 2): a recorded event by its meeting, else by the event.
+  const lookups: TopicLookup[] = [
+    ...(schedule?.events ?? []).map((e): TopicLookup =>
+      e.recordedMeetingId != null ? { kind: "meeting", id: e.recordedMeetingId } : { kind: "event", id: e.eventId, title: e.title },
+    ),
+    ...(schedule?.earlierToday ?? []).map((m): TopicLookup => ({ kind: "meeting", id: m.id })),
+  ];
+  const topics = useTopicLookup(lookups);
+  const eventCount = schedule?.events.length ?? 0;
 
   if (!schedule) return error ? <p role="alert">{error}</p> : null;
   // No calendar, or nothing today: the card has nothing to say.
@@ -36,7 +47,7 @@ export function ScheduleCard({
       </h2>
       {schedule.events.length > 0 && (
         <ul className="schedule-rows">
-          {schedule.events.map((e) => {
+          {schedule.events.map((e, i) => {
             const action = rowAction(e, schedule.recording);
             const prep = prepLine(e, next);
             const countdown = relativeStart(e.startUnixMs, e.endUnixMs, now);
@@ -46,6 +57,7 @@ export function ScheduleCard({
                 <time className="schedule-time">{timeLabel(e.startUnixMs, locale)}</time>
                 <span className="schedule-main">
                   <span className="schedule-title">{e.title}</span>
+                  {topics[i] && <TopicChip topic={topics[i]} />}
                   {invitees && <span className="muted small">{invitees}</span>}
                   {prep === "ready" && (
                     <span className="small">
@@ -81,11 +93,12 @@ export function ScheduleCard({
         <>
           <h3 className="schedule-sub">{t("Earlier today")}</h3>
           <ul className="schedule-rows">
-            {schedule.earlierToday.map((m) => (
+            {schedule.earlierToday.map((m, i) => (
               <li key={m.id} className="schedule-row">
                 <time className="schedule-time">{timeLabel(m.tsUnixMs, locale)}</time>
                 <span className="schedule-main">
                   <span className="schedule-title">{m.title}</span>
+                  {topics[eventCount + i] && <TopicChip topic={topics[eventCount + i]!} />}
                 </span>
                 <button type="button" className="mode" onClick={() => onOpenMeeting(m.id)}>
                   {t("Open")}
