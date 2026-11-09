@@ -77,12 +77,13 @@ struct MeetingDetailView: View {
     @State private var loadedMeeting: CoreMeeting?
     @State private var loadedDraft: CoreMeetingNoteDraft?
     @State private var loadedActionItems: [CoreMeetingActionItem] = []
+    @State private var loadedTopic: TopicRef?
     @State private var loadFailed = false
 
     var body: some View {
         Group {
             if let loadedMeeting {
-                MeetingDetailContentView(meeting: loadedMeeting, initialDraft: loadedDraft, initialActionItems: loadedActionItems)
+                MeetingDetailContentView(meeting: loadedMeeting, initialDraft: loadedDraft, initialActionItems: loadedActionItems, topic: loadedTopic)
             } else if loadFailed {
                 Text("This meeting is no longer available.")
                     .font(.whimbrelBody(.callout))
@@ -156,11 +157,13 @@ struct MeetingDetailView: View {
                 _ = store.seedMeetingActionItems(meetingId: id, texts: result.summaryActionItems, nowUnixMs: nowMs)
                 items = store.listMeetingActionItems(meetingId: id)
             }
+            let topic = result == nil ? nil : store.topicForMeeting(meetingId: id)
             DispatchQueue.main.async {
                 if let result {
                     loadedMeeting = result
                     loadedDraft = draft
                     loadedActionItems = items
+                    loadedTopic = topic
                 } else {
                     loadFailed = true
                 }
@@ -180,6 +183,8 @@ struct MeetingDetailView: View {
 struct MeetingDetailContentView: View {
     @EnvironmentObject var appState: AppState
     let meeting: CoreMeeting
+    /// The topic this meeting belongs to, shown as a chip above the title.
+    let topic: TopicRef?
     /// This page visit's Ask, torn down when the bar leaves.
     @StateObject private var askSession = MeetingAskSession()
     @StateObject private var snapshotsModel: MeetingSnapshotsModel
@@ -270,8 +275,9 @@ struct MeetingDetailContentView: View {
         let newGenerationUnixMs: Int64
     }
 
-    init(meeting: CoreMeeting, initialDraft: CoreMeetingNoteDraft?, initialActionItems: [CoreMeetingActionItem]) {
+    init(meeting: CoreMeeting, initialDraft: CoreMeetingNoteDraft?, initialActionItems: [CoreMeetingActionItem], topic: TopicRef? = nil) {
         self.meeting = meeting
+        self.topic = topic
         _snapshotsModel = StateObject(wrappedValue: MeetingSnapshotsModel(meetingId: meeting.id, store: nil))
         _draft = State(initialValue: initialDraft)
         _actionItems = State(initialValue: initialActionItems)
@@ -365,6 +371,7 @@ struct MeetingDetailContentView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.lg) {
+                    if let topic { TopicChip(topic: topic) }
                     Text(verbatim: MeetingDetailLogic.displayTitle(meeting.title))
                         .font(.whimbrelDisplay(.largeTitle))
                         .foregroundStyle(Color.whimbrelTextPrimary)

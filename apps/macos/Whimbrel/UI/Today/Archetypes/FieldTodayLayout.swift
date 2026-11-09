@@ -148,7 +148,7 @@ struct FieldTodayLayout: TodayArchetypeView {
         self.composer = composer
     }
 
-    static var placedSections: Set<TodaySection> { [.greeting, .composer, .upNext, .schedule, .earlier] }
+    static var placedSections: Set<TodaySection> { [.greeting, .composer, .upNext, .schedule, .upcoming, .earlier] }
 
     private var skin: Skin { SkinStore.shared.selected }
     private var voice: SkinVoice { skin.voice }
@@ -179,6 +179,15 @@ struct FieldTodayLayout: TodayArchetypeView {
                                 }
                             }
                         }
+                    }
+                }
+            }
+            if sections.contains(.upcoming) {
+                section(String(localized: "Upcoming")) {
+                    TodayUpcomingList(content: content) { heading in
+                        SkinText(skin.typography.caps.apply(heading), role: .label, size: 12).foregroundStyle(Color.whimbrelTextSecondary)
+                    } row: { weekRow($0) } toggle: { label, action in
+                        Button(label, action: action).buttonStyle(.whimbrelQuiet)
                     }
                 }
             }
@@ -362,6 +371,7 @@ struct FieldTodayLayout: TodayArchetypeView {
             SkinText(event.timeText, role: .numerals).foregroundStyle(Color.whimbrelTextSecondary).frame(width: timeWidth, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 SkinText(event.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
+                if let topic = event.topic { TopicChip(topic: topic) }
                 if !event.attendees.isEmpty { SkinText(event.attendees, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -371,11 +381,25 @@ struct FieldTodayLayout: TodayArchetypeView {
         }
     }
 
+    /// A meeting in the days ahead: the list's event row without Start.
+    private func weekRow(_ meeting: TodayWeekRowModel) -> some View {
+        HStack(alignment: .top, spacing: Spacing.md) {
+            SkinText(meeting.timeText, role: .numerals).foregroundStyle(Color.whimbrelTextSecondary).frame(width: timeWidth, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                SkinText(meeting.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
+                if let topic = meeting.topic { TopicChip(topic: topic) }
+                if !meeting.invited.isEmpty { SkinText(meeting.invited, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private func meetingRow(_ meeting: TodayMeetingRowModel) -> some View {
         HStack(alignment: .top, spacing: Spacing.md) {
             SkinText(meeting.timeText, role: .numerals).foregroundStyle(Color.whimbrelTextSecondary).frame(width: timeWidth, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 SkinText(meeting.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
+                if let topic = meeting.topic { TopicChip(topic: topic) }
                 if !meeting.subtitle.isEmpty { SkinText(meeting.subtitle, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

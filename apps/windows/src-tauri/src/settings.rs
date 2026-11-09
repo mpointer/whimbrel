@@ -55,6 +55,19 @@ pub mod keys {
     /// Device-local, as on the Mac (`LiveQuestionSettings.enabled`): "Alert me when someone asks me
     /// something". On unless turned off. In parity item (a) it gates the popup for other devices' alerts.
     pub const LIVE_QUESTION_ENABLED: &str = "liveQuestion.enabled";
+    /// Device-local, as on the Mac (`LiveTranscriptSettings`): "Live transcript during meetings".
+    /// On unless turned off. The text stays on this PC either way.
+    pub const LIVE_TRANSCRIPT_ENABLED: &str = "liveTranscript.enabled";
+    /// Device-local, as on the Mac (`TopicSortSettings`): "Sort items into topics with TypeSafe".
+    /// Off unless turned on.
+    pub const TOPIC_SORT_ENABLED: &str = "topicSort.enabled";
+    /// Device-local: the user pressed Start on the estimate, so judging may run.
+    pub const TOPIC_SORT_STARTED: &str = "topicSort.started";
+    /// Device-local, as on the Mac (`topicSteps`): "Find steps with TypeSafe". Off unless turned on;
+    /// off, the local model finds steps.
+    pub const TOPIC_STEPS_ENABLED: &str = "topicSteps.enabled";
+    /// Device-local: the user pressed Start on the steps estimate, so TypeSafe may run.
+    pub const TOPIC_STEPS_STARTED: &str = "topicSteps.started";
     /// Device-local, as on the Mac (`SpeakerNamesSettings.rememberVoices`): "Remember people's
     /// voices". On unless turned off; off keeps no voice embeddings.
     pub const REMEMBER_VOICES: &str = "speakerNames.rememberVoices";
@@ -567,6 +580,49 @@ impl SettingsFile {
 
     pub fn set_live_question_enabled(&mut self, enabled: bool) {
         self.set(keys::LIVE_QUESTION_ENABLED, Some(enabled));
+    }
+
+    /// The live transcript: on by default, as on the Mac.
+    pub fn live_transcript_enabled(&self) -> bool {
+        self.get(keys::LIVE_TRANSCRIPT_ENABLED).unwrap_or(true)
+    }
+
+    pub fn set_live_transcript_enabled(&mut self, enabled: bool) {
+        self.set(keys::LIVE_TRANSCRIPT_ENABLED, Some(enabled));
+    }
+
+    /// Topic sorting with TypeSafe: off by default, as on the Mac.
+    pub fn topic_sort_enabled(&self) -> bool {
+        self.get(keys::TOPIC_SORT_ENABLED).unwrap_or(false)
+    }
+
+    pub fn set_topic_sort_enabled(&mut self, enabled: bool) {
+        self.set(keys::TOPIC_SORT_ENABLED, Some(enabled));
+    }
+
+    pub fn topic_sort_started(&self) -> bool {
+        self.get(keys::TOPIC_SORT_STARTED).unwrap_or(false)
+    }
+
+    pub fn set_topic_sort_started(&mut self, started: bool) {
+        self.set(keys::TOPIC_SORT_STARTED, Some(started));
+    }
+
+    /// Finding steps with TypeSafe: off by default, as on the Mac.
+    pub fn topic_steps_enabled(&self) -> bool {
+        self.get(keys::TOPIC_STEPS_ENABLED).unwrap_or(false)
+    }
+
+    pub fn set_topic_steps_enabled(&mut self, enabled: bool) {
+        self.set(keys::TOPIC_STEPS_ENABLED, Some(enabled));
+    }
+
+    pub fn topic_steps_started(&self) -> bool {
+        self.get(keys::TOPIC_STEPS_STARTED).unwrap_or(false)
+    }
+
+    pub fn set_topic_steps_started(&mut self, started: bool) {
+        self.set(keys::TOPIC_STEPS_STARTED, Some(started));
     }
 
     /// Each paid provider's monthly budget in cents, 0 for none, in [`PAID_PROVIDERS`] order: what

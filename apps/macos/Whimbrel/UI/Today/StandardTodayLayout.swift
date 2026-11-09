@@ -22,6 +22,7 @@ struct StandardTodayLayout: View {
                 }
                 heroSection
                 scheduleCard
+                upcomingWeekCard
                 earlierSection
                 if content.pendingApprovalCount > 0 {
                     slots.decisionSlot
@@ -116,6 +117,45 @@ struct StandardTodayLayout: View {
         }
     }
 
+    /// The 7 days after today, by day, in a card like the schedule's: time, title, topic chip and how
+    /// many are invited. No Start or prep: those belong to the day itself.
+    @ViewBuilder
+    private var upcomingWeekCard: some View {
+        if !content.upcomingWeek.isEmpty {
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                WhimbrelSectionLabel(text: String(localized: "Upcoming"))
+                VStack(alignment: .leading, spacing: Spacing.md) {
+                    TodayUpcomingList(content: content) { heading in
+                        WhimbrelSectionLabel(text: heading)
+                    } row: { meeting in
+                        AccentBarRow(color: .whimbrelAccentPrimary) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(meeting.timeText)
+                                    .font(.whimbrelBody(.subheadline).weight(.semibold))
+                                    .foregroundStyle(Color.whimbrelAccentPrimary)
+                                Text(meeting.title)
+                                    .font(.whimbrelBody(.body))
+                                    .foregroundStyle(Color.whimbrelTextPrimary)
+                                    .lineLimit(2)
+                                if let topic = meeting.topic { TopicChip(topic: topic) }
+                                if !meeting.invited.isEmpty {
+                                    Text(meeting.invited)
+                                        .font(.whimbrelBody(.subheadline))
+                                        .foregroundStyle(Color.whimbrelTextSecondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
+                    } toggle: { label, action in
+                        Button(label, action: action).buttonStyle(.whimbrelQuiet)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .whimbrelCard()
+            }
+        }
+    }
+
     /// A meeting already held today, laid out like an event row (bar, time, title, attendees, Open).
     @ViewBuilder
     private func recordedRow(_ id: Int64) -> some View {
@@ -131,6 +171,7 @@ struct StandardTodayLayout: View {
                             .font(.whimbrelBody(.body))
                             .foregroundStyle(Color.whimbrelTextPrimary)
                             .lineLimit(2)
+                        if let topic = content.topicsByMeeting[id] { TopicChip(topic: topic) }
                         let subtitle = transcribing ? String(localized: "Transcribing…") : MeetingRowText.subtitle(for: meeting)
                         if !subtitle.isEmpty {
                             Text(subtitle)
@@ -168,6 +209,7 @@ struct StandardTodayLayout: View {
                         .font(.whimbrelBody(.body))
                         .foregroundStyle(Color.whimbrelTextPrimary)
                         .lineLimit(2)
+                    if let topic = content.topicsByEvent[event.id] { TopicChip(topic: topic) }
                     if !attendees.isEmpty {
                         Text(attendees)
                             .font(.whimbrelBody(.subheadline))
@@ -219,13 +261,17 @@ struct StandardTodayLayout: View {
     private func meetingRow(_ id: Int64) -> some View {
         if let meeting = content.recentMeetings.first(where: { $0.id == id }) {
             let transcribing = content.processingMeetingId == id
-            MeetingRowView(
-                title: meeting.title,
-                subtitle: transcribing ? String(localized: "Transcribing…") : MeetingRowText.subtitle(for: meeting),
-                time: MeetingRowText.time(meeting.startUnixMs),
-                actionLabel: String(localized: "Open"),
-                action: { actions.openMeeting(id) }
-            )
+            // The chip sits below the row, not inside it: the whole row is a button.
+            VStack(alignment: .leading, spacing: 2) {
+                MeetingRowView(
+                    title: meeting.title,
+                    subtitle: transcribing ? String(localized: "Transcribing…") : MeetingRowText.subtitle(for: meeting),
+                    time: MeetingRowText.time(meeting.startUnixMs),
+                    actionLabel: String(localized: "Open"),
+                    action: { actions.openMeeting(id) }
+                )
+                if let topic = content.topicsByMeeting[id] { TopicChip(topic: topic) }
+            }
         }
     }
 

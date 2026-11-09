@@ -43,6 +43,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::import::ImportView>();
     generator.subschema_for::<crate::settings::PromptSurface>();
     generator.subschema_for::<crate::chat::ChatEvent>();
+    generator.subschema_for::<super::meeting_ask::MeetingAskExchange>();
     generator.subschema_for::<super::chat::ConversationRow>();
     generator.subschema_for::<super::chat::ConversationView>();
     generator.subschema_for::<super::chat::StarterPromptView>();
@@ -75,6 +76,19 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<crate::meetings::service::AlertView>();
     generator.subschema_for::<crate::live_alerts::QuestionNotice>();
     generator.subschema_for::<crate::live_alerts::LiveAlertView>();
+    generator.subschema_for::<crate::commands::workspace::LiveTranscriptView>();
+    generator.subschema_for::<super::topics::TopicSortView>();
+    generator.subschema_for::<super::topics::TopicSortEstimate>();
+    generator.subschema_for::<super::topics::TopicSeedView>();
+    generator.subschema_for::<super::topics::TopicSuggestionView>();
+    generator.subschema_for::<crate::topics::SeedInput>();
+    generator.subschema_for::<super::topic_page::TopicListItemView>();
+    generator.subschema_for::<super::schedule::UpcomingDay>();
+    generator.subschema_for::<super::topic_page::TopicPageView>();
+    generator.subschema_for::<super::topic_page::StepActionInput>();
+    generator.subschema_for::<super::topic_page::TopicLookup>();
+    generator.subschema_for::<super::topic_page::TopicNamesView>();
+    generator.subschema_for::<super::topic_page::TopicStepsView>();
     generator.subschema_for::<crate::question_alert::OpenMeetingRequest>();
     generator.subschema_for::<super::connectors::CalendarAccounts>();
     generator.subschema_for::<super::mcp::McpServerView>();

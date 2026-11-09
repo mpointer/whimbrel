@@ -358,6 +358,54 @@ struct AIProvidersSettingsPane: View {
                     .font(.whimbrelBody(.caption))
                     .foregroundStyle(Color.whimbrelError)
             }
+            Toggle("Sort items into topics with TypeSafe", isOn: Binding(
+                get: { appState.topicSort.enabled },
+                set: { appState.setTopicSortEnabled($0) }
+            ))
+            .tint(Color.whimbrelAccentPrimary)
+            .disabled(!appState.replyPriority.hasKey)
+            Text("Sends short excerpts of emails, meetings, calendar events and screen activity to TypeSafe to choose a topic.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if appState.topicSort.awaitingStart {
+                if appState.topicSort.estimateFailed {
+                    HStack {
+                        Text("Couldn't get an estimate. Try again.")
+                            .font(.whimbrelBody(.caption))
+                            .foregroundStyle(Color.whimbrelError)
+                        Button("Try again") { appState.refreshTopicSortEstimate() }
+                    }
+                } else if let e = appState.topicSort.estimate {
+                    if e.indexing || e.sources == 0 {
+                        Text("Still sorting your items. The estimate will appear when that's done.")
+                            .font(.whimbrelBody(.caption))
+                            .foregroundStyle(Color.whimbrelTextSecondary)
+                    } else {
+                        HStack {
+                            Text("About \(e.sources) items, about \(e.usd, format: .currency(code: "USD")). Start?")
+                                .font(.whimbrelBody(.caption))
+                                .foregroundStyle(Color.whimbrelTextSecondary)
+                            Button("Start") { appState.startTopicSort() }
+                        }
+                    }
+                }
+            }
+            if appState.topicSort.startFailed {
+                Text("Couldn't start topic sorting. Try again.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelError)
+            }
+            if appState.topicSort.keyRejected {
+                Text("TypeSafe rejected this key. Check it and save it again.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelError)
+            }
+            if appState.topicSort.overBudget {
+                Text("The topic sorting budget is used up. Turn the switch off and on again to see a new estimate.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelError)
+            }
             Toggle("Check calendar meeting titles", isOn: Binding(
                 get: { appState.meetingTitleCheck.enabled },
                 set: { appState.meetingTitleCheck.enabled = $0 }

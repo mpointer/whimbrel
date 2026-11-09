@@ -7,9 +7,9 @@
 //! pipeline only the tail. Plan:
 //! `docs/superpowers/plans/2026-09-19-transcribe-during-the-meeting.md`.
 //!
-//! Nothing here is displayed. This is the same batch transcriber the pipeline uses, run
-//! repeatedly over slices of the same two files; a live transcript UI is out of scope
-//! (`docs/05-roadmap.md:87`).
+//! This is the same batch transcriber the pipeline uses, run repeatedly over slices of the
+//! same two files. Its listeners show what it hears: the live transcript pane
+//! (`live_rows`), question alerts and "Still in a meeting?".
 //!
 //! The design rests on two properties of the recorder, both verified before it was
 //! written: the WAVs are append-only even across a stream reopen, and they are 16 kHz
@@ -27,16 +27,13 @@ use transcribe::TranscriptSegment;
 
 use super::spoken::{Plan, Speech};
 
-/// How often a slice is taken. The tail left at stop is what the gate pays for: at about
-/// 0.09× real time across two channels, 120 s of audio costs ~22 s after the meeting,
-/// inside NFR-PRF-5's 120 s with the summary. Shorter slices shrink that tail but cut
-/// the audio more often; longer ones spend the margin (plan Decision 3).
-pub const SLICE_EVERY: Duration = Duration::from_secs(120);
-/// The slice length while live question alerts are armed (Mike, 2026-11-03): a question
-/// waits for 30 s of later talk before it's judged, so 120 s slices would make an alert up to
-/// about 4.5 minutes late. This costs more cuts (a clipped word each), not more whisper work.
-/// `docs/superpowers/plans/2026-11-03-windows-live-question-detection.md`.
-pub const ALERT_SLICE_EVERY: Duration = Duration::from_secs(30);
+/// How often the worker looks for a place to cut. A slice ends where core's shared rule
+/// (`transcribe::live::next_cut`, the Mac's) finds one: the first pause at or after 15 s,
+/// or 40 s with a 1.5 s overlap when nobody pauses. This replaced fixed 120 s slices (30 s
+/// while question alerts were armed), which cut mid-word; Mike's choice, 2026-11-07,
+/// `docs/superpowers/plans/2026-11-07-windows-live-transcript-and-meeting-ask.md` Decision 2.
+/// Lines arrive well under a minute behind, and the tail left at stop is under 40 s.
+pub const CHECK_EVERY: Duration = Duration::from_secs(5);
 /// The stop flag is checked this often, so stopping is prompt inside a long wait.
 const POLL: Duration = Duration::from_millis(250);
 
@@ -45,6 +42,13 @@ const SAMPLE_RATE: u32 = 16_000;
 const BYTES_PER_SAMPLE: u64 = 2;
 /// A canonical PCM WAV header: samples start here.
 const HEADER_BYTES: u64 = 44;
+/// The most audio `next_cut` looks at: it cuts at 40 s at the latest.
+const LOOK_BYTES: u64 = transcribe::live::MAX_CHUNK_SECONDS as u64 * SAMPLE_RATE as u64 * BYTES_PER_SAMPLE;
+/// Below this RMS (about -40 dBFS) audio is silence: core's pause threshold
+/// (`transcribe::live`'s `QUIET_RMS`).
+const QUIET_RMS: f32 = 0.01;
+/// The window a chunk's loudness is judged in, as core finds a pause.
+const QUIET_WINDOW: usize = SAMPLE_RATE as usize * 300 / 1_000;
 /// whisper.cpp wants about a second of audio; less than this is not worth a slice.
 const MIN_SLICE_BYTES: u64 = SAMPLE_RATE as u64 * BYTES_PER_SAMPLE;
 /// The tail at stop is taken even when it is short — it is the end of the meeting, and
@@ -78,6 +82,41 @@ fn slice_from(file_len: u64, cursor: u64, min_bytes: u64) -> Option<Range<u64>> 
         return None;
     }
     Some(start..end)
+}
+
+/// The next chunk of a recording, cut by core's shared rule ([`CHECK_EVERY`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chunk {
+    /// The bytes to transcribe.
+    pub range: Range<u64>,
+    /// Where the chunk after it starts: `range.end`, or 1.5 s earlier after a cut with no
+    /// pause, so the word on the boundary is heard whole by the next chunk.
+    pub next_start: u64,
+    /// No 300 ms of it is louder than a pause. whisper would only spend a full window on it and
+    /// may invent a line ("Thank you."), so the worker skips it. Cuts every 15 s made this
+    /// common: a listener's mic is mostly silence.
+    pub quiet: bool,
+}
+
+fn rms(window: &[f32]) -> f32 {
+    (window.iter().map(|s| s * s).sum::<f32>() / window.len().max(1) as f32).sqrt()
+}
+
+/// Where the settled audio from `start` should be cut, read from `src`. `None` while it is
+/// under 15 s, or under 40 s without a pause yet.
+pub fn next_chunk(src: &Path, file_len: u64, start: u64) -> std::io::Result<Option<Chunk>> {
+    let Some(settled) = next_slice(file_len, start) else { return Ok(None) };
+    let len = (settled.end - settled.start).min(LOOK_BYTES);
+    let mut file = std::fs::File::open(src)?;
+    file.seek(SeekFrom::Start(settled.start))?;
+    let mut bytes = vec![0u8; len as usize];
+    file.read_exact(&mut bytes)?;
+    let samples: Vec<f32> = bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32_768.0).collect();
+    Ok(transcribe::live::next_cut(&samples, SAMPLE_RATE).map(|cut| Chunk {
+        range: settled.start..settled.start + cut.at as u64 * BYTES_PER_SAMPLE,
+        next_start: settled.start + (cut.at - cut.overlap) as u64 * BYTES_PER_SAMPLE,
+        quiet: samples[..cut.at].chunks(QUIET_WINDOW).all(|w| rms(w) < QUIET_RMS),
+    }))
 }
 
 /// Copies `range` of a recording into its own playable WAV. Reads only — the recorder is
@@ -115,11 +154,9 @@ fn header(data_len: u32) -> [u8; HEADER_BYTES as usize] {
     h
 }
 
-/// The boundary rule (plan Task 1 Step 1, the author's call): every segment a slice
-/// produced is kept, moved onto the meeting's clock. A slice can end mid-word, and
-/// whisper will clip or invent that word — but the transcript's reader is a summarizer,
-/// and one blemish every two minutes costs it nothing, where re-transcribing the tail of
-/// each slice would cost real CPU on every one of them.
+/// Every segment a slice produced is kept, moved onto the meeting's clock. Slices end at a
+/// pause where there is one; after a cut with no pause the next chunk repeats the last
+/// 1.5 s, and the worker drops what it heard twice (`drop_overlap`) before merging.
 pub fn merge(into: &mut Vec<TranscriptSegment>, new: Vec<TranscriptSegment>, offset_cs: i64) {
     into.extend(new.into_iter().map(|s| TranscriptSegment {
         start_cs: s.start_cs + offset_cs,
@@ -182,9 +219,6 @@ pub struct Config {
     /// The meeting's language (W7): English as before, or the multilingual model detecting
     /// on the first chunk with speech. `model` is the file this plan names.
     pub plan: Plan,
-    /// How often a slice is taken: [`SLICE_EVERY`], or [`ALERT_SLICE_EVERY`] while question
-    /// alerts are armed.
-    pub slice_every: Duration,
     /// Told what the worker has after every slice that changed it, on the worker's thread, so
     /// it must return at once. The worker drops it when it ends, by any path, which is how a
     /// listener holding a channel learns the recording's live transcript is complete.
@@ -194,6 +228,19 @@ pub struct Config {
 /// See [`Config::listener`].
 #[derive(Clone)]
 pub struct Listener(pub Arc<dyn Fn(&Accumulated) + Send + Sync>);
+
+impl Listener {
+    /// One listener that tells `a`, then `b`.
+    pub fn both(a: Option<Listener>, b: Option<Listener>) -> Option<Listener> {
+        match (a, b) {
+            (Some(a), Some(b)) => Some(Listener(Arc::new(move |state: &Accumulated| {
+                (a.0)(state);
+                (b.0)(state);
+            }))),
+            (a, b) => a.or(b),
+        }
+    }
+}
 
 impl std::fmt::Debug for Listener {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -220,14 +267,17 @@ pub struct Accumulated {
 /// One recording channel's progress.
 struct Channel {
     path: PathBuf,
+    /// How far the audio is covered; what `Accumulated` publishes.
     cursor: u64,
+    /// Where the next chunk starts: `cursor`, or the overlap before it after a cut with no pause.
+    next_start: u64,
     segments: Vec<TranscriptSegment>,
     slices: u32,
 }
 
 impl Channel {
     fn new(path: PathBuf) -> Self {
-        Channel { path, cursor: HEADER_BYTES, segments: Vec::new(), slices: 0 }
+        Channel { path, cursor: HEADER_BYTES, next_start: HEADER_BYTES, segments: Vec::new(), slices: 0 }
     }
 
     /// Hands the whole channel back to the pipeline. Anything already transcribed is
@@ -310,7 +360,7 @@ fn run(
     stop: Arc<AtomicBool>,
     state: Arc<Mutex<Accumulated>>,
 ) {
-    let Config { model, slices, threads, mut plan, slice_every, listener } = config;
+    let Config { model, slices, threads, mut plan, listener } = config;
     // Anything left here is from a meeting that ended badly; it is scratch either way.
     let _ = std::fs::remove_dir_all(&slices);
     if let Err(e) = std::fs::create_dir_all(&slices) {
@@ -327,7 +377,7 @@ fn run(
 
     let mut system = system.map(Channel::new);
     let mut mic = mic.map(Channel::new);
-    while !wait(&stop, slice_every) {
+    while !wait(&stop, CHECK_EVERY) {
         for (channel, which) in [(system.as_mut(), Which::System), (mic.as_mut(), Which::Mic)] {
             let Some(channel) = channel else { continue };
             // One plan for both channels: whichever has speech first locks the meeting's language.
@@ -387,9 +437,21 @@ fn slice_once(speech: &dyn Speech, channel: &mut Channel, slices: &Path, threads
         channel.give_up("the recording shrank");
         return true;
     }
-    let Some(range) = next_slice(len, channel.cursor) else {
-        return false;
+    let chunk = match next_chunk(&channel.path, len, channel.next_start) {
+        Ok(Some(chunk)) => chunk,
+        Ok(None) => return false,
+        Err(e) => {
+            channel.give_up(&format!("the recording couldn't be read: {e}"));
+            return true;
+        }
     };
+    let range = chunk.range.clone();
+    if chunk.quiet {
+        // Covered: nothing was said. Published, so the question watcher sees time pass.
+        channel.cursor = range.end;
+        channel.next_start = chunk.next_start;
+        return true;
+    }
 
     let at = range.start;
     let audio_s = (range.end - range.start) as f64 / (SAMPLE_RATE as f64 * BYTES_PER_SAMPLE as f64);
@@ -407,8 +469,12 @@ fn slice_once(speech: &dyn Speech, channel: &mut Channel, slices: &Path, threads
             if let Some(language) = plan.observe(&transcribed) {
                 tracing::info!(language, "detected the meeting's language");
             }
-            merge(&mut channel.segments, transcribed.segments, cs_at(at));
+            let mut heard = Vec::new();
+            merge(&mut heard, transcribed.segments, cs_at(at));
+            // After a cut with no pause this chunk began 1.5 s before the covered point.
+            channel.segments.extend(transcribe::live::drop_overlap(heard, cs_at(channel.cursor)));
             channel.cursor = range.end;
+            channel.next_start = chunk.next_start;
             channel.slices += 1;
             tracing::info!(
                 path = %channel.path.display(),
@@ -447,6 +513,99 @@ mod tests {
         let mut file = std::fs::File::create(path).unwrap();
         file.write_all(&header(samples.len() as u32)).unwrap();
         file.write_all(&samples).unwrap();
+    }
+
+    /// `rounds` of 16 s of talk (the ramp) each followed by 1 s of silence: one pause to cut at
+    /// per round.
+    fn talk(path: &Path, rounds: u64) {
+        let round: Vec<i16> = (0..17 * SAMPLE_RATE as u64).map(|i| if i < 16 * SAMPLE_RATE as u64 { (i % 1000) as i16 } else { 0 }).collect();
+        let samples: Vec<u8> = (0..rounds).flat_map(|_| round.iter().flat_map(|s| s.to_le_bytes())).collect();
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(&header(samples.len() as u32)).unwrap();
+        file.write_all(&samples).unwrap();
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("whimbrel-live-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("slices")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_chunk_ends_at_the_first_pause_after_15_s() {
+        let dir = scratch("pause");
+        let path = dir.join("mic-audio-T.wav");
+        talk(&path, 2);
+        let len = std::fs::metadata(&path).unwrap().len();
+        let chunk = next_chunk(&path, len, HEADER_BYTES).unwrap().expect("a pause at 16 s");
+        let end_s = cs_at(chunk.range.end) as f64 / 100.0;
+        assert!((16.0..17.0).contains(&end_s), "cut at {end_s} s");
+        assert_eq!((chunk.range.start, chunk.next_start), (HEADER_BYTES, chunk.range.end), "no overlap after a pause");
+        assert_eq!(chunk.range.end % BYTES_PER_SAMPLE, HEADER_BYTES % BYTES_PER_SAMPLE, "a whole sample");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn talk_without_a_pause_waits_until_40_s_then_cuts_with_an_overlap() {
+        let dir = scratch("hard");
+        let path = dir.join("mic-audio-T.wav");
+        recording(&path, 30);
+        let len = std::fs::metadata(&path).unwrap().len();
+        assert_eq!(next_chunk(&path, len, HEADER_BYTES).unwrap(), None, "30 s with no pause: wait");
+        recording(&path, 10);
+        let len = std::fs::metadata(&path).unwrap().len();
+        assert_eq!(next_chunk(&path, len, HEADER_BYTES).unwrap(), None, "under 15 s");
+        recording(&path, 45);
+        let len = std::fs::metadata(&path).unwrap().len();
+        let chunk = next_chunk(&path, len, HEADER_BYTES).unwrap().expect("a hard cut");
+        assert_eq!(chunk.range, HEADER_BYTES..HEADER_BYTES + 40 * SECOND);
+        assert_eq!(chunk.next_start, HEADER_BYTES + 40 * SECOND - 3 * SECOND / 2, "the next chunk repeats 1.5 s");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn after_a_hard_cut_what_was_heard_twice_is_dropped_and_the_cursor_is_what_is_covered() {
+        use crate::meetings::spoken::tests::{chunk, FakeSpeech};
+        let dir = scratch("overlap");
+        let path = dir.join("mic-audio-T.wav");
+        recording(&path, 45);
+        // The second chunk starts 1.5 s early: its first two segments (centred at 0.45 s and
+        // 1.45 s into it) were heard by the first chunk; the third wasn't.
+        let speech = FakeSpeech::new(vec![chunk(2, Some("en")), chunk(3, Some("en"))]);
+        let mut plan = Plan::english();
+        let mut channel = Channel::new(path.clone());
+        assert!(slice_once(&speech, &mut channel, &dir.join("slices"), 1, &mut plan));
+        assert_eq!((channel.cursor, channel.segments.len()), (HEADER_BYTES + 40 * SECOND, 2));
+        recording(&path, 90);
+        assert!(slice_once(&speech, &mut channel, &dir.join("slices"), 1, &mut plan));
+        let starts: Vec<i64> = channel.segments.iter().map(|s| s.start_cs).collect();
+        assert_eq!(starts, [0, 100, 3_850 + 200], "only the unheard segment is added, on the meeting's clock");
+        assert_eq!(channel.cursor, HEADER_BYTES + 40 * SECOND - 3 * SECOND / 2 + 40 * SECOND);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_silent_chunk_is_covered_without_asking_whisper() {
+        use crate::meetings::spoken::tests::FakeSpeech;
+        let dir = scratch("quiet");
+        let path = dir.join("mic-audio-T.wav");
+        let silence = vec![0u8; 20 * SECOND as usize];
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(&header(silence.len() as u32)).unwrap();
+        file.write_all(&silence).unwrap();
+        drop(file);
+        let speech = FakeSpeech::new(vec![]);
+        let mut channel = Channel::new(path.clone());
+        assert!(slice_once(&speech, &mut channel, &dir.join("slices"), 1, &mut Plan::english()), "progress to publish");
+        assert!(speech.asked().is_empty(), "whisper never heard it");
+        assert!(channel.cursor > HEADER_BYTES + 15 * SECOND && channel.segments.is_empty());
+        assert_eq!(channel.next_start, channel.cursor);
+        // Talk is still transcribed.
+        talk(&path, 1);
+        let len = std::fs::metadata(&path).unwrap().len();
+        assert!(!next_chunk(&path, len, HEADER_BYTES).unwrap().unwrap().quiet);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -519,7 +678,7 @@ mod tests {
     fn a_byte_offset_becomes_the_second_it_sits_at() {
         assert_eq!(cs_at(HEADER_BYTES), 0);
         assert_eq!(cs_at(HEADER_BYTES + SECOND), 100);
-        assert_eq!(cs_at(HEADER_BYTES + 120 * SECOND), 12_000, "one slice in");
+        assert_eq!(cs_at(HEADER_BYTES + 120 * SECOND), 12_000, "two minutes in");
     }
 
     #[test]
@@ -546,8 +705,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let (system, mic, slices) = (dir.join("system-audio-T.wav"), dir.join("mic-audio-T.wav"), dir.join("slices"));
         std::fs::create_dir_all(&slices).unwrap();
-        recording(&system, 2);
-        recording(&mic, 2);
+        talk(&system, 1);
+        talk(&mic, 1);
         let speech = FakeSpeech::new(vec![chunk(0, Some("en")), chunk(2, Some("es")), chunk(1, Some("fr"))]);
         let mut plan = Plan::choose(true, true, None);
         let state = Mutex::new(Accumulated::default());
@@ -562,7 +721,7 @@ mod tests {
         assert_eq!(state.lock().unwrap().language.as_deref(), Some("es"));
 
         // Round two: forced, whatever whisper would have guessed.
-        recording(&system, 4);
+        talk(&system, 2);
         assert!(slice_once(&speech, &mut system_channel, &slices, 1, &mut plan));
         let asked: Vec<Option<String>> = speech.asked().into_iter().map(|p| p.language).collect();
         assert_eq!(asked, [None, None, Some("es".to_string())]);
@@ -576,7 +735,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("whimbrel-live-en-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("slices")).unwrap();
-        recording(&dir.join("mic-audio-T.wav"), 2);
+        talk(&dir.join("mic-audio-T.wav"), 1);
         let speech = FakeSpeech::new(vec![chunk(2, Some("en"))]);
         let mut plan = Plan::english();
         let mut channel = Channel::new(dir.join("mic-audio-T.wav"));
@@ -598,7 +757,6 @@ mod tests {
             slices: dir.join("slices"),
             threads: 1,
             plan: Plan::english(),
-            slice_every: SLICE_EVERY,
             listener: Some(listener),
         };
         let live = Live::start(None, None, config);

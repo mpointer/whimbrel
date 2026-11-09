@@ -92,6 +92,70 @@ pub fn build_schedule(
     ScheduleView { events, earlier_today: earlier.into_iter().map(|m| meeting_row(m, labeler)).collect(), recording }
 }
 
+/// Today's Upcoming section (docs/superpowers/specs/2026-11-08-today-upcoming-design.md): the days after
+/// today it covers.
+pub const UPCOMING_DAYS: u32 = 7;
+
+/// One day in Upcoming: its local date and the meetings that start on it, soonest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpcomingDay {
+    /// `YYYY-MM-DD`, local.
+    pub date: String,
+    /// The first day after today: the UI calls it "Tomorrow".
+    pub tomorrow: bool,
+    pub events: Vec<ScheduleEvent>,
+}
+
+/// The local days after `now`'s, as (date, start, end), for `count` days. Each day is found from its own
+/// noon, so a daylight-saving change can't shift it.
+pub fn days_after<Tz: chrono::TimeZone>(now: &chrono::DateTime<Tz>, count: u32) -> Vec<(String, i64, i64)> {
+    let tz = now.timezone();
+    let today = now.date_naive();
+    (1..=count)
+        .filter_map(|n| {
+            let date = today.checked_add_days(chrono::Days::new(n as u64))?;
+            let noon = tz.from_local_datetime(&date.and_hms_opt(12, 0, 0)?).earliest()?;
+            Some(day_bounds(&noon))
+        })
+        .collect()
+}
+
+/// `calendar`'s meetings grouped into `days`, by when they start. Days with none are left out.
+pub fn build_upcoming(calendar: &[QualifyingMeeting], days: &[(String, i64, i64)]) -> Vec<UpcomingDay> {
+    days.iter()
+        .enumerate()
+        .filter_map(|(i, (date, start, end))| {
+            let mut on_day: Vec<&QualifyingMeeting> = calendar.iter().filter(|e| e.start_unix_ms >= *start && e.start_unix_ms < *end).collect();
+            if on_day.is_empty() {
+                return None;
+            }
+            on_day.sort_by_key(|e| e.start_unix_ms);
+            let events = on_day
+                .into_iter()
+                .map(|e| ScheduleEvent {
+                    event_id: e.id.clone(),
+                    title: e.title.clone(),
+                    start_unix_ms: e.start_unix_ms,
+                    end_unix_ms: e.end_unix_ms,
+                    attendees: e.attendees.clone(),
+                    recorded_meeting_id: None,
+                })
+                .collect();
+            Some(UpcomingDay { date: date.clone(), tomorrow: i == 0, events })
+        })
+        .collect()
+}
+
+/// Today's Upcoming: the qualifying meetings of the next `UPCOMING_DAYS` days, from the calendar's last
+/// sync. Nothing is stored.
+#[tauri::command]
+pub fn today_upcoming(state: State<'_, AppState>) -> Vec<UpcomingDay> {
+    let now = chrono::Local::now();
+    let calendar = state.calendar.as_ref().map(|c| c.upcoming(now.timestamp_millis())).unwrap_or_default();
+    build_upcoming(&calendar, &days_after(&now, UPCOMING_DAYS))
+}
+
 #[tauri::command]
 pub async fn today_schedule(state: State<'_, AppState>) -> Result<ScheduleView, CommandError> {
     let labeler = state.device_labeler();
@@ -135,6 +199,37 @@ mod tests {
     const MIN: i64 = 60_000;
     const DAY_START: i64 = 1_000_000_000;
     const DAY_END: i64 = DAY_START + 24 * 60 * MIN;
+
+    #[test]
+    fn upcoming_groups_by_start_day_and_leaves_out_empty_days_and_today() {
+        let day = 24 * 60 * MIN;
+        let days: Vec<(String, i64, i64)> =
+            (1..=3).map(|n| (format!("d{n}"), DAY_START + n * day, DAY_START + (n + 1) * day)).collect();
+        let calendar = vec![
+            event("today", "Still today", DAY_START + 23 * 60 * MIN, 120),
+            event("b", "Late", DAY_START + day + 15 * 60 * MIN, 30),
+            event("a", "Early", DAY_START + day + 9 * 60 * MIN, 30),
+            event("c", "Third day", DAY_START + 3 * day + 60 * MIN, 30),
+            event("far", "Next month", DAY_START + 30 * day, 30),
+        ];
+        let up = build_upcoming(&calendar, &days);
+        let shape: Vec<(&str, bool, Vec<&str>)> =
+            up.iter().map(|d| (d.date.as_str(), d.tomorrow, d.events.iter().map(|e| e.event_id.as_str()).collect())).collect();
+        assert_eq!(shape, vec![("d1", true, vec!["a", "b"]), ("d3", false, vec!["c"])]);
+    }
+
+    #[test]
+    fn the_days_after_today_are_seven_back_to_back_local_days() {
+        use chrono::TimeZone;
+        // Evening, so "today" is still Oct 31 in this offset though UTC has moved on.
+        let tz = chrono::FixedOffset::west_opt(4 * 3600).unwrap();
+        let now = tz.with_ymd_and_hms(2026, 10, 31, 20, 0, 0).unwrap();
+        let days = days_after(&now, 7);
+        assert_eq!(days.len(), 7);
+        assert_eq!(days[0].0, "2026-11-01");
+        assert_eq!(days[6].0, "2026-11-07");
+        assert!(days.windows(2).all(|w| w[0].2 == w[1].1), "each day ends where the next starts");
+    }
 
     fn event(id: &str, title: &str, start: i64, minutes: i64) -> QualifyingMeeting {
         QualifyingMeeting {

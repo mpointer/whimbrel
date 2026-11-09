@@ -63,6 +63,15 @@ pub const OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK: &str = "skin_image_chunk";
 pub const OUTBOX_ROW_TYPE_PROVIDER_SPEND: &str = "provider_spend";
 /// "Forget meeting" (`forget`): a tombstone naming a meeting every device deletes.
 pub const OUTBOX_ROW_TYPE_MEETING_FORGOTTEN: &str = "meeting_forgotten";
+/// Topics (`topics::seeds`, `topics::judge`): a seed topic by its key, a Jev verdict by its source key.
+pub const OUTBOX_ROW_TYPE_TOPIC_SEED: &str = "topic_seed";
+pub const OUTBOX_ROW_TYPE_TOPIC_VERDICT: &str = "topic_verdict";
+/// The topic page (`topics::steps`, `topics::page`): a step by its key, a source's step read by
+/// its source key, a role edit by its topic key, and "Names I go by" (aggregate id `"self"`).
+pub const OUTBOX_ROW_TYPE_TOPIC_STEP: &str = "topic_step";
+pub const OUTBOX_ROW_TYPE_TOPIC_EXTRACTION: &str = "topic_extraction";
+pub const OUTBOX_ROW_TYPE_TOPIC_ROLE: &str = "topic_role";
+pub const OUTBOX_ROW_TYPE_TOPIC_NAMES: &str = "topic_names";
 /// Bounds applied to a routine run pulled from another device (see `apply_synced_routine_run`).
 const SYNCED_RUN_MAX_FUTURE_MS: i64 = 5 * 60 * 1000;
 const SYNCED_RUN_MAX_SUMMARY_CHARS: usize = 20_000;
@@ -279,15 +288,26 @@ fn embedding_to_json(embedding: &[f32]) -> String {
 /// phrase (with embedded `"` doubled per FTS5's escaping rule) makes every token a
 /// literal string match: the tokenizer still strips punctuation from within each quoted
 /// token during indexing/matching, so `"approach?"` still matches indexed `approach`, but
-/// nothing is parsed as an operator. Preserves this codebase's existing "must contain all
-/// these words, in any order" semantics (implicit AND across separate phrase tokens)
-/// rather than requiring the whole query as one exact adjacent phrase.
+/// nothing is parsed as an operator. The tokens are ORed: a row matches if it contains
+/// any of the words, and every caller orders by `rank` (bm25), so rows with more of the
+/// words, and rarer ones, come first while "what", "did" and "is" weigh almost nothing.
+/// ANDing them made a natural question ("What did Priya say the Falcon budget is?")
+/// match only rows that also contained every filler word, so Ask's keyword leg found
+/// nothing (eval harness finding 1, docs/superpowers/specs/2026-11-04-eval-harness-design.md).
 fn sanitize_fts5_query(query: &str) -> String {
     query
         .split_whitespace()
         .map(|word| format!("\"{}\"", word.replace('"', "\"\"")))
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" OR ")
+}
+
+/// The same quoted tokens ANDed: every word must appear. Keyword searches match on
+/// [`sanitize_fts5_query`] (any word) but sort the rows that contain all the words first,
+/// so a short query ("Falcon budget") keeps its exact matches ahead of rows that share
+/// one word, while a long natural question still finds rows by its subject words.
+fn fts5_all_words(query: &str) -> String {
+    sanitize_fts5_query(query).replace(" OR ", " ")
 }
 
 fn days_to_ms(days: u32) -> i64 {
@@ -1053,6 +1073,16 @@ pub struct Thread {
     pub summarize_status: String,
 }
 
+/// One email thread found by [`Store::search_email_thread_keyword`], with the message
+/// that matched.
+#[derive(Debug, Clone)]
+pub struct EmailThreadHit {
+    pub thread: Thread,
+    pub from: String,
+    pub ts_unix_ms: i64,
+    pub body: String,
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct NewMeeting {
     pub device_id: String,
@@ -1367,6 +1397,27 @@ impl Store {
 
     // Outbox lease/ack/release, exposed for `sync-engine`'s dispatcher (the free
     // functions in `sync_outbox` take a raw connection this struct keeps private).
+    /// `claim_due_outbox_batch` leaving ops of the `held` row types unclaimed and untouched.
+    pub fn claim_due_outbox_batch_except(
+        &self,
+        connector: &str,
+        worker_id: &str,
+        now_unix_ms: i64,
+        lease_until_unix_ms: i64,
+        limit: i64,
+        held: &[&str],
+    ) -> rusqlite::Result<Vec<ClaimedOutboxOperation>> {
+        sync_outbox::claim_due_outbox_batch_except(
+            &self.conn,
+            connector,
+            worker_id,
+            now_unix_ms,
+            lease_until_unix_ms,
+            limit,
+            held,
+        )
+    }
+
     pub fn claim_due_outbox_batch(
         &self,
         connector: &str,
@@ -4081,11 +4132,11 @@ impl Store {
              JOIN items i ON i.id = f.rowid \
              JOIN meeting m ON m.id = i.thread_id \
              WHERE items_fts MATCH ?1 AND i.kind = 'transcript' \
-             ORDER BY rank \
+             ORDER BY f.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?3) DESC, rank \
              LIMIT ?2",
         )?;
         let rows = stmt.query_map(
-            params![sanitize_fts5_query(query), limit as i64],
+            params![sanitize_fts5_query(query), limit as i64, fts5_all_words(query)],
             Self::row_to_transcript_segment,
         )?;
         self.drop_copy_hits(
@@ -4173,11 +4224,11 @@ impl Store {
              JOIN items i ON i.id = f.rowid \
              JOIN meeting m ON m.id = i.thread_id \
              WHERE items_fts MATCH ?1 AND i.kind = 'transcript' \
-             ORDER BY rank \
+             ORDER BY f.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?3) DESC, rank \
              LIMIT ?2",
         )?;
         let rows = stmt.query_map(
-            params![sanitize_fts5_query(query), limit as i64],
+            params![sanitize_fts5_query(query), limit as i64, fts5_all_words(query)],
             Self::row_to_transcript_segment_with_ts,
         )?;
         self.drop_copy_hits(
@@ -4250,11 +4301,11 @@ impl Store {
              JOIN meeting m ON m.id = i.thread_id \
              JOIN meeting_snapshot s ON s.id = i.source_id \
              WHERE items_fts MATCH ?1 AND i.kind = 'snapshot' \
-             ORDER BY rank \
+             ORDER BY f.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?3) DESC, rank \
              LIMIT ?2",
         )?;
         let rows = stmt.query_map(
-            params![sanitize_fts5_query(query), limit as i64],
+            params![sanitize_fts5_query(query), limit as i64, fts5_all_words(query)],
             Self::row_to_snapshot_hit,
         )?;
         self.drop_copy_hits(
@@ -5087,7 +5138,7 @@ impl Store {
     /// past that id by an unrelated later scan. `threads` rows themselves are NOT
     /// per-device (one Gmail thread is the same conversation regardless of which
     /// device's sync delivered which message) -- only the scan cursor is.
-    fn run_thread_state_sync_job(&self, now_unix_ms: i64) -> rusqlite::Result<bool> {
+    pub fn run_thread_state_sync_job(&self, now_unix_ms: i64) -> rusqlite::Result<bool> {
         let tx = self.conn.unchecked_transaction()?;
 
         let device_ids: Vec<String> = {
@@ -6069,6 +6120,54 @@ impl Store {
         Ok(())
     }
 
+    /// Email threads whose messages match `query`, best match first, one entry per thread
+    /// (its best-matching message). Ask sees email only through threads, and a thread's
+    /// summary needs a model and covers only the threads waiting on the user, so without
+    /// this a fact said in an email was invisible to Ask (eval harness finding 3).
+    pub fn search_email_thread_keyword(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<EmailThreadHit>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.id, t.source, t.external_thread_id, t.account_email, t.subject, t.message_count, \
+                    t.last_activity_ts_unix_ms, t.last_message_from, t.summary, t.status, t.summarize_status, \
+                    COALESCE(json_extract(i.actors, '$[0]'), ''), i.ts_unix_ms, COALESCE(i.body_text, '') \
+             FROM items_fts f \
+             JOIN items i ON i.id = f.rowid \
+             JOIN threads t ON t.source = i.source \
+                 AND t.external_thread_id = json_extract(i.refs, '$.gmail_thread_id') \
+                 AND t.account_email = json_extract(i.refs, '$.account_email') \
+             WHERE items_fts MATCH ?1 AND i.kind = 'email' \
+             ORDER BY f.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?3) DESC, rank \
+             LIMIT ?2",
+        )?;
+        // Several messages of one thread can match; fetch extra rows so `limit` threads remain.
+        let rows = stmt.query_map(
+            params![sanitize_fts5_query(query), (limit * 4) as i64, fts5_all_words(query)],
+            |row| {
+                Ok(EmailThreadHit {
+                    thread: Self::row_to_thread(row)?,
+                    from: row.get(11)?,
+                    ts_unix_ms: row.get(12)?,
+                    body: row.get(13)?,
+                })
+            },
+        )?;
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for hit in rows {
+            let hit = hit?;
+            if seen.insert(hit.thread.id) {
+                out.push(hit);
+                if out.len() == limit {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// FR-MEM-2 (keyword half): FTS5 full-text search over captured text and window titles.
     pub fn search_keyword(&self, query: &str, limit: usize) -> rusqlite::Result<Vec<CaptureItem>> {
         let mut stmt = self.conn.prepare(
@@ -6076,11 +6175,11 @@ impl Store {
              FROM items_fts f \
              JOIN items i ON i.id = f.rowid \
              WHERE items_fts MATCH ?1 AND i.kind = 'capture' \
-             ORDER BY rank \
+             ORDER BY f.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?3) DESC, rank \
              LIMIT ?2",
         )?;
         let rows = stmt.query_map(
-            params![sanitize_fts5_query(query), limit as i64],
+            params![sanitize_fts5_query(query), limit as i64, fts5_all_words(query)],
             Self::row_to_item,
         )?;
         rows.collect()
@@ -6097,10 +6196,10 @@ impl Store {
              FROM items_fts f \
              JOIN items i ON i.id = f.rowid \
              WHERE items_fts MATCH ?1 AND i.kind IN ('capture', 'snapshot') \
-             ORDER BY rank \
+             ORDER BY f.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?3) DESC, rank \
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![sanitize_fts5_query(query), limit as i64], |row| {
+        let rows = stmt.query_map(params![sanitize_fts5_query(query), limit as i64, fts5_all_words(query)], |row| {
             row.get(0)
         })?;
         rows.collect()
@@ -7736,6 +7835,7 @@ impl Store {
                 params![meeting_id, text, i as i64, now_unix_ms],
             )?;
         }
+        topics::steps::sync_meeting_item_state(&self.conn, meeting_id)?;
         Ok(())
     }
 
@@ -7829,11 +7929,29 @@ impl Store {
         completed: bool,
         now_unix_ms: i64,
     ) -> rusqlite::Result<()> {
-        self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "UPDATE meeting_action_item SET completed = ?2, updated_unix_ms = ?3 WHERE id = ?1",
             params![id, completed as i64, now_unix_ms],
         )?;
-        Ok(())
+        let item: Option<(i64, String)> = tx
+            .query_row(
+                "SELECT meeting_id, text FROM meeting_action_item WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((meeting_id, text)) = item {
+            topics::steps::sync_step_for_item(
+                self,
+                &tx,
+                meeting_id,
+                &text,
+                completed,
+                now_unix_ms,
+            )?;
+        }
+        tx.commit()
     }
 
     pub fn delete_meeting_action_item(&self, id: i64) -> rusqlite::Result<()> {
@@ -7888,6 +8006,7 @@ impl Store {
                 params![meeting_id, text, existing_max + 1 + i as i64, now_unix_ms],
             )?;
         }
+        topics::steps::sync_meeting_item_state(&tx, meeting_id)?;
         tx.commit()?;
         Ok(())
     }
@@ -8841,6 +8960,44 @@ impl Store {
             payload.person_key.clone(),
             payload,
         )
+    }
+
+    /// Enqueues an upsert of a seed topic, in the caller's transaction. A store with no device
+    /// id enqueues nothing.
+    pub(crate) fn enqueue_topic_seed_outbox(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        payload: &topics::seeds::TopicSeedPayload,
+    ) -> rusqlite::Result<()> {
+        self.enqueue_upsert_tx(tx, OUTBOX_ROW_TYPE_TOPIC_SEED, payload.key.clone(), payload)
+    }
+
+    /// Enqueues an upsert of a Jev verdict, in the caller's transaction. A store with no device
+    /// id enqueues nothing.
+    pub(crate) fn enqueue_topic_verdict_outbox(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        payload: &topics::judge::TopicVerdictPayload,
+    ) -> rusqlite::Result<()> {
+        self.enqueue_upsert_tx(
+            tx,
+            OUTBOX_ROW_TYPE_TOPIC_VERDICT,
+            payload.source_key.clone(),
+            payload,
+        )
+    }
+
+    /// Enqueues an upsert of a topic page row (`OUTBOX_ROW_TYPE_TOPIC_STEP`, `_EXTRACTION`,
+    /// `_ROLE` or `_NAMES`), in the caller's transaction. A store with no device id enqueues
+    /// nothing.
+    pub(crate) fn enqueue_topic_page_outbox(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        row_type: &str,
+        aggregate_id: String,
+        payload: &impl serde::Serialize,
+    ) -> rusqlite::Result<()> {
+        self.enqueue_upsert_tx(tx, row_type, aggregate_id, payload)
     }
 
     /// Enqueues an upsert of a `meeting_speaker` row, in the caller's transaction. A store
@@ -10922,13 +11079,15 @@ mod tests {
     fn sanitize_fts5_query_wraps_each_token_in_escaped_quotes() {
         assert_eq!(
             sanitize_fts5_query("what did we discuss?"),
-            "\"what\" \"did\" \"we\" \"discuss?\""
+            "\"what\" OR \"did\" OR \"we\" OR \"discuss?\""
         );
         assert_eq!(
             sanitize_fts5_query("what's slipping"),
-            "\"what's\" \"slipping\""
+            "\"what's\" OR \"slipping\""
         );
-        assert_eq!(sanitize_fts5_query("say \"hi\""), "\"say\" \"\"\"hi\"\"\"");
+        assert_eq!(sanitize_fts5_query("say \"hi\""), "\"say\" OR \"\"\"hi\"\"\"");
+        assert_eq!(sanitize_fts5_query("budget"), "\"budget\"");
+        assert_eq!(fts5_all_words("Falcon budget?"), "\"Falcon\" \"budget?\"");
     }
 
     #[test]
@@ -14973,14 +15132,13 @@ mod tests {
             .unwrap();
 
         store.backfill_transcript_segments_batch(10).unwrap();
-        let all_valid_1 = store
-            .search_transcript_keyword("valid line one", 10)
-            .unwrap();
-        let all_valid_2 = store
-            .search_transcript_keyword("valid line two", 10)
-            .unwrap();
+        // Keyword search ORs its words, so match on the word only one line has.
+        let all_valid_1 = store.search_transcript_keyword("one", 10).unwrap();
+        let all_valid_2 = store.search_transcript_keyword("two", 10).unwrap();
+        let garbage = store.search_transcript_keyword("garbage", 10).unwrap();
         assert_eq!(all_valid_1.len(), 1);
         assert_eq!(all_valid_2.len(), 1);
+        assert!(garbage.is_empty());
     }
 
     #[test]
@@ -18974,6 +19132,28 @@ mod tests {
             params![device_id, ts_unix_ms, actors_json, subject, refs_json, external_id, ts_unix_ms],
         ).unwrap();
         store.conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn search_email_thread_keyword_returns_one_hit_per_thread_best_match_first() {
+        let store = Store::open_in_memory().unwrap();
+        let body = |id: i64, text: &str| {
+            store.conn.execute("UPDATE items SET body_text = ?1 WHERE id = ?2", params![text, id]).unwrap();
+        };
+        let a1 = insert_email_item(&store, "dev-1", "m-1", "thread-1", "me@x.com", "priya@x.com", "me@x.com", "Falcon", 1000);
+        let a2 = insert_email_item(&store, "dev-1", "m-2", "thread-1", "me@x.com", "priya@x.com", "me@x.com", "Falcon", 2000);
+        let b1 = insert_email_item(&store, "dev-1", "m-3", "thread-2", "me@x.com", "sam@x.com", "me@x.com", "Other", 3000);
+        body(a1, "The Falcon budget is 40k for Q3");
+        body(a2, "Falcon budget confirmed, 40k");
+        body(b1, "Falcon offsite moved to Friday");
+        while store.run_thread_state_sync_job(5000).unwrap() {}
+
+        let hits = store.search_email_thread_keyword("What is the Falcon budget?", 5).unwrap();
+        assert_eq!(hits.len(), 2, "one entry per thread");
+        assert_eq!(hits[0].thread.external_thread_id, "thread-1");
+        assert!(hits[0].body.contains("budget"));
+        assert_eq!(hits[1].thread.external_thread_id, "thread-2");
+        assert!(store.search_email_thread_keyword("zebra", 5).unwrap().is_empty());
     }
 
     #[test]

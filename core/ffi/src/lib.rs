@@ -28,6 +28,7 @@ mod models_ffi;
 mod prompts_ffi;
 mod oauth_ffi;
 mod sync_ffi;
+mod topics_ffi;
 mod update_ffi;
 mod workspace_ffi;
 mod write_action_ffi;
@@ -1802,6 +1803,32 @@ pub extern "C" fn whimbrel_threads_needing_attention(
     let Ok(threads) = store.threads_needing_attention(limit as usize) else {
         return ptr::null_mut();
     };
+    match serde_json::to_string(&threads) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Email threads whose messages match `query` (see `Store::search_email_thread_keyword`),
+/// each as Ask sees it: its summary followed by the matching message. Returns a JSON
+/// array of `memory::Thread`, or null on a null/invalid handle or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_memory_search_email_threads(
+    handle: *mut StoreHandle,
+    query: *const c_char,
+    limit: usize,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(query) = cstr_to_string(query) else {
+        return ptr::null_mut();
+    };
+    let store = unsafe { &(*handle).0 };
+    let Ok(hits) = store.search_email_thread_keyword(&query, limit) else {
+        return ptr::null_mut();
+    };
+    let threads: Vec<memory::Thread> = hits.into_iter().map(llm::thread_with_matching_email).collect();
     match serde_json::to_string(&threads) {
         Ok(json) => json_to_c_string(json),
         Err(_) => ptr::null_mut(),

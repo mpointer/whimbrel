@@ -788,6 +788,101 @@ details summary {
   gap: var(--space-sm);
 }
 
+/* The Topics tab (topics piece 2): the list beside the page. */
+.topics {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: var(--space-lg);
+  align-items: start;
+}
+
+.topics-list ul {
+  list-style: none;
+  margin: 0 0 var(--space-md);
+  padding: 0;
+}
+
+.topic-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  border: none;
+  border-radius: var(--radius-card);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.topic-row--active {
+  background: var(--color-background-card);
+}
+
+.topic-page {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.topic-steps,
+.topic-recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* The meeting Ask bar (issue 246) reuses Ask's turns; its answers scroll in a short panel, as on the Mac. */
+.meeting-ask .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.meeting-ask .composer {
+  align-items: center;
+}
+
+.meeting-ask-answers {
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.topic-step-text {
+  margin: 0;
+}
+
+.topic-step-text--done {
+  text-decoration: line-through;
+}
+
+.topic-overdue {
+  color: var(--color-accent-primary);
+}
+
+.link-button {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-accent-primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.topic-chip {
+  font-size: var(--text-caption);
+}
+
 .today {
   max-width: var(--content-width);
 }

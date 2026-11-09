@@ -3,8 +3,8 @@
     "seed": 20261104,
     "profile": "full",
     "embedder": "fake",
-    "now_unix_ms": 1793754000000,
-    "git_sha": "ae50605d",
+    "now_unix_ms": 1794052800000,
+    "git_sha": "e1749aa9",
     "counts": {
       "meetings": 40,
       "transcript_lines": 1015,
@@ -23,49 +23,49 @@
         "hit_rate": 0.0,
         "partial_hit_rate": 0.0,
         "mrr": 0.0,
-        "mean_items": 20.0
+        "mean_items": 44.56
       },
       "changed": {
         "questions": 16,
-        "hit_rate": 0.0,
-        "partial_hit_rate": 0.0,
-        "mrr": 0.0,
-        "mean_items": 20.0
+        "hit_rate": 0.875,
+        "partial_hit_rate": 0.875,
+        "mrr": 0.11244125939849625,
+        "mean_items": 44.625
       },
       "changed_earlier": {
         "questions": 16,
-        "hit_rate": 0.0,
-        "partial_hit_rate": 0.0,
-        "mrr": 0.0,
-        "mean_items": 20.0
+        "hit_rate": 0.25,
+        "partial_hit_rate": 0.25,
+        "mrr": 0.015119949494949495,
+        "mean_items": 44.625
       },
       "dated": {
         "questions": 18,
-        "hit_rate": 0.7222222222222222,
-        "partial_hit_rate": 0.7222222222222222,
-        "mrr": 0.14708953031693145,
-        "mean_items": 57.55555555555556
+        "hit_rate": 0.7777777777777778,
+        "partial_hit_rate": 0.7777777777777778,
+        "mrr": 0.12710664962367144,
+        "mean_items": 66.94444444444444
       },
       "email": {
         "questions": 35,
-        "hit_rate": 0.0,
-        "partial_hit_rate": 0.0,
-        "mrr": 0.0,
-        "mean_items": 26.34285714285714
+        "hit_rate": 0.6,
+        "partial_hit_rate": 0.8,
+        "mrr": 0.16010513296227585,
+        "mean_items": 49.285714285714285
       },
       "multi": {
         "questions": 18,
         "hit_rate": 0.0,
-        "partial_hit_rate": 0.0,
-        "mrr": 0.0,
-        "mean_items": 20.0
+        "partial_hit_rate": 1.0,
+        "mrr": 0.15172619681386001,
+        "mean_items": 45.0
       },
       "single": {
         "questions": 13,
-        "hit_rate": 0.0,
-        "partial_hit_rate": 0.0,
-        "mrr": 0.0,
-        "mean_items": 20.0
+        "hit_rate": 1.0,
+        "partial_hit_rate": 1.0,
+        "mrr": 0.06973707451968322,
+        "mean_items": 44.69230769230769
       }
     }
   },
@@ -77,49 +77,49 @@
         "hit_rate": 0.0,
         "partial_hit_rate": 0.0,
         "mrr": 0.0,
-        "mean_items": 30.0
+        "mean_items": 44.8
       },
       "changed": {
         "questions": 16,
         "hit_rate": 0.3125,
         "partial_hit_rate": 0.3125,
-        "mrr": 0.07222222222222223,
-        "mean_items": 29.9375
+        "mrr": 0.04285714285714286,
+        "mean_items": 44.6875
       },
       "changed_earlier": {
         "questions": 16,
         "hit_rate": 0.5,
         "partial_hit_rate": 0.5,
-        "mrr": 0.049916974365503776,
-        "mean_items": 29.9375
+        "mrr": 0.03406723484848485,
+        "mean_items": 44.6875
       },
       "dated": {
         "questions": 18,
-        "hit_rate": 0.7222222222222222,
-        "partial_hit_rate": 0.7222222222222222,
-        "mrr": 0.14708953031693145,
-        "mean_items": 57.55555555555556
+        "hit_rate": 0.7777777777777778,
+        "partial_hit_rate": 0.7777777777777778,
+        "mrr": 0.12710664962367144,
+        "mean_items": 66.94444444444444
       },
       "email": {
         "questions": 35,
-        "hit_rate": 0.0,
-        "partial_hit_rate": 0.0,
-        "mrr": 0.0,
-        "mean_items": 34.34285714285714
+        "hit_rate": 0.7714285714285715,
+        "partial_hit_rate": 0.8,
+        "mrr": 0.15068130282415992,
+        "mean_items": 49.4
       },
       "multi": {
         "questions": 18,
         "hit_rate": 0.0,
         "partial_hit_rate": 0.9444444444444444,
-        "mrr": 0.2040120292313275,
-        "mean_items": 30.0
+        "mrr": 0.10769765716270406,
+        "mean_items": 44.77777777777778
       },
       "single": {
         "questions": 13,
         "hit_rate": 0.6923076923076923,
         "partial_hit_rate": 0.6923076923076923,
-        "mrr": 0.08356137326725561,
-        "mean_items": 30.0
+        "mrr": 0.04230898201722,
+        "mean_items": 44.61538461538461
       }
     }
   }

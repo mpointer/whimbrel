@@ -139,6 +139,17 @@ export function MeetingsCard() {
         <input type="checkbox" checked={settings.autoStart} onChange={(e) => save({ ...settings, autoStart: e.target.checked })} />
         {t("Start recording automatically after a 10-second countdown")}
       </label>
+      <label className="toggle">
+        <input
+          type="checkbox"
+          checked={settings.liveTranscript}
+          onChange={(e) => save({ ...settings, liveTranscript: e.target.checked })}
+        />
+        {t("Live transcript during meetings")}
+      </label>
+      <p className="muted small">
+        {t("Shows what's being said while you record. The full transcript is still made after the meeting and replaces the live one. The live text stays on this PC, and turning this off deletes it.")}
+      </p>
       {/* "Forward me a live question": shown off, and locked, until there is a name to listen for. */}
       <label className="toggle">
         <input

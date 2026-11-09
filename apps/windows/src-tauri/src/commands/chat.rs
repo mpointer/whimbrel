@@ -177,17 +177,17 @@ fn run(store: &StoreHandle, ask: &Ask, send: &dyn Fn(ChatEvent)) {
 
 /// Whether a failed `prepare_ask` still leaves the blocking answer to try: a spent monthly budget
 /// on the streaming provider does, since the blocking chain skips it for the next provider.
-fn streams_past(error: &api::ApiError) -> bool {
+pub(crate) fn streams_past(error: &api::ApiError) -> bool {
     matches!(error, api::ApiError::BudgetSpent(_))
 }
 
 /// Reports a failed question to the UI and the log (the error, never the question).
-fn fail(send: &dyn Fn(ChatEvent), error: CommandError, partial: bool) {
+pub(crate) fn fail(send: &dyn Fn(ChatEvent), error: CommandError, partial: bool) {
     tracing::warn!(error = %error, partial, "question failed");
     send(ChatEvent::Failed { error, partial });
 }
 
-fn blocking_started(effective: &RoutingSettings, context: &[ContextEntry]) -> ChatEvent {
+pub(crate) fn blocking_started(effective: &RoutingSettings, context: &[ContextEntry]) -> ChatEvent {
     let (provider, model) = chat::answering(effective);
     ChatEvent::Started { run_id: None, provider: provider.into(), model, context: context.to_vec() }
 }
@@ -264,7 +264,7 @@ fn finish(
     let cited: Vec<&ContextEntry> = context.iter().filter(|e| citations.contains(&e.item)).collect();
     let citations_json = serde_json::to_string(&cited).unwrap_or_else(|_| "[]".into());
     let conversation_id = persist(store, ask.conversation_id, &ask.query, &answer, citations_json, model);
-    send(ChatEvent::Completed { answer: answer.clone(), citations, conversation_id });
+    send(ChatEvent::Completed { answer: answer.clone(), citations, conversation_id, narrowed: false });
     let (None, Some(id)) = (ask.conversation_id, conversation_id) else { return };
     let routing = chat::title_routing(&ask.settings, chat::ollama_serves(&ask.settings.ollama_model))
         .routing_config(&ask.keys, &Instructions::default());

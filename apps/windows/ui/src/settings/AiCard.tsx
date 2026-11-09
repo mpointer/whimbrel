@@ -7,6 +7,7 @@ import {
   openExternal,
   providerModels,
   setApiKey,
+  setApiKeySync,
   setImageSearchKey,
   setPrompt,
   setProviderBudget,
@@ -34,7 +35,7 @@ import {
   parseCapDollars,
   providerLabel,
   providers,
-  showsOnRamp,
+  onRampOnceKnown,
   surfaces,
   thisMonth,
   usageCost,
@@ -50,7 +51,8 @@ function message(e: unknown): string {
 export function AiCard() {
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [ollamaUp, setOllamaUp] = useState(false);
+  // Null until the probe answers, so the on-ramp isn't drawn and then taken away.
+  const [ollamaUp, setOllamaUp] = useState<boolean | null>(null);
   const { status: local } = localModelDownload.use();
 
   useEffect(() => {
@@ -83,7 +85,7 @@ export function AiCard() {
         {t("AI & routing")}
       </h2>
       {error && <p role="alert">{error}</p>}
-      {showsOnRamp(settings.routing, settings.keys, ollamaUp, !!local?.installed) && <OnRamp google={info("google")} />}
+      {onRampOnceKnown(settings.routing, settings.keys, ollamaUp, local ? local.installed : null) && <OnRamp google={info("google")} />}
       {local?.installed && (
         <div className="toolbar">
           <button className="mode" onClick={() => void localModelRemove().then(localModelDownload.setStatus, (e: unknown) => setError(message(e)))}>
@@ -125,6 +127,15 @@ export function AiCard() {
             setApiKey(k.provider, key)
               .then((keys) => {
                 setSettings({ ...settings, keys });
+                setError(null);
+              })
+              .catch((e: unknown) => setError(message(e)))
+          }
+          syncEnabled={k.syncEnabled}
+          onSync={(enabled) =>
+            setApiKeySync(k.provider, enabled)
+              .then((keys) => {
+                setSettings((s) => s && { ...s, keys });
                 setError(null);
               })
               .catch((e: unknown) => setError(message(e)))
@@ -357,6 +368,8 @@ function KeyRow(props: {
   budgetCents: number | null;
   onBudget: (dollars: number | null) => void;
   onSave: (key: string | null) => Promise<void>;
+  syncEnabled: boolean;
+  onSync: (enabled: boolean) => void;
 }) {
   const { info, provider, saved } = props;
   const [draft, setDraft] = useState("");
@@ -423,6 +436,11 @@ function KeyRow(props: {
           </button>
         )}
       </form>
+      {/* Off by default; the key moves only between devices that have this on (as on the Mac). */}
+      <label className="toggle">
+        <input type="checkbox" checked={props.syncEnabled} onChange={(e) => props.onSync(e.target.checked)} />
+        {t("Sync to devices")}
+      </label>
       {info && (
         <span className="field-row">
           {info.keyPageUrl && (

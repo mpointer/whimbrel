@@ -12,6 +12,7 @@ pub mod import;
 pub mod language;
 pub mod library;
 pub mod mcp;
+pub mod meeting_ask;
 pub mod meetings;
 pub mod models;
 pub mod prep;
@@ -25,6 +26,8 @@ pub mod snapshots;
 pub mod status;
 pub mod sync;
 pub mod today;
+pub mod topic_page;
+pub mod topics;
 pub mod workspace;
 
 use schemars::JsonSchema;

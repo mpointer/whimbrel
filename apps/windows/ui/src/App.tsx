@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { approvalsCount, takePendingOpenMeeting } from "./api";
+import { approvalsCount, takePendingOpenMeeting, takePendingOpenTopic } from "./api";
 import { RetentionNotice } from "./settings/RetentionNotice";
 import { UpdateBanner } from "./settings/UpdateBanner";
 import { bootstrapModels } from "./settings/modelBootstrap";
@@ -15,7 +15,9 @@ import { MeetingsView } from "./meetings/MeetingsView";
 import { TodayView } from "./today/TodayView";
 import { DEFAULT_TAB, tabs, type TabId } from "./tabs";
 import { t } from "./l10n";
-import { SkinHeader, SkinIcon, TAB_ICON } from "./SkinIcon";
+import { SkinHeader, TabIcon } from "./SkinIcon";
+import { TopicsView } from "./topics/TopicsView";
+import { OPEN_TOPIC_EVENT } from "./topics/TopicChip";
 import "./decoration.css";
 
 export function App() {
@@ -67,6 +69,27 @@ export function App() {
     });
     return () => void unlisten.then((stop) => stop());
   }, []);
+  // A topic one of the ways in asked for (Today, a meeting, the prep brief, search, the tray).
+  const [topicRequest, setTopicRequest] = useState<{ seq: number; topicId: number } | null>(null);
+  const openTopic = (topicId: number) => {
+    setTopicRequest((r) => ({ seq: (r?.seq ?? 0) + 1, topicId }));
+    setActive("topics");
+  };
+  useEffect(() => {
+    const unlisten = listen<number>(OPEN_TOPIC_EVENT, (event) => openTopic(event.payload));
+    return () => void unlisten.then((stop) => stop());
+  }, []);
+  // A topic the tray popup asked for: read on mount (opening it may have just created this window)
+  // and whenever the popup says one is waiting.
+  useEffect(() => {
+    const take = () =>
+      takePendingOpenTopic().then((id) => {
+        if (id != null) openTopic(id);
+      }, () => {});
+    take();
+    const unlisten = listen("open-topic-pending", take);
+    return () => void unlisten.then((stop) => stop());
+  }, []);
   // Missing models download in the background, with no prompt (Release 1 item 1.1).
   useEffect(bootstrapModels, []);
   const allTabs = tabs();
@@ -87,7 +110,7 @@ export function App() {
                 className={each.id === active ? "tab tab--active" : "tab"}
                 onClick={() => chooseTab(each.id)}
               >
-                <SkinIcon role={TAB_ICON[each.id]} />
+                <TabIcon id={each.id} />
                 {each.label}
                 {each.id === "automations" && waiting > 0 && (
                   <span className="tab-badge" role="status" aria-label={waitingLabel(waiting)}>
@@ -126,6 +149,8 @@ export function App() {
           <MeetingsView open={openMeeting} />
         ) : tab.id === "library" ? (
           <LibraryView askRequest={askRequest} onAskHandled={() => setAskRequest(null)} onOpenSettings={() => openSettings("ai")} />
+        ) : tab.id === "topics" ? (
+          <TopicsView request={topicRequest} />
         ) : tab.id === "automations" ? (
           <AutomationsView onWaiting={setWaiting} />
         ) : (

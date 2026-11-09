@@ -1,9 +1,9 @@
-// The five top-level tabs — docs/12 §6: same names and order as the Mac's
-// WhimbrelShellView. Settings is a tab here, not a separate window (Windows convention).
+// The top-level tabs — docs/12 §6: same names and order as the Mac's WhimbrelShellView
+// (Topics after Library, topics piece 2). Settings is a tab here, not a separate window (Windows convention).
 
 import { t } from "./l10n";
 
-export type TabId = "today" | "meetings" | "library" | "automations" | "settings";
+export type TabId = "today" | "meetings" | "library" | "topics" | "automations" | "settings";
 
 export interface Tab {
   id: TabId;
@@ -18,6 +18,7 @@ export function tabs(): readonly Tab[] {
     { id: "today", label: t("Today") },
     { id: "meetings", label: t("Meetings") },
     { id: "library", label: t("Library") },
+    { id: "topics", label: t("Topics") },
     { id: "automations", label: t("Automations") },
     { id: "settings", label: t("Settings") },
   ];

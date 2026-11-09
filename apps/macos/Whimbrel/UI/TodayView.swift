@@ -34,6 +34,8 @@ struct TodayView: View {
     @State private var pendingApprovalCount: Int = 0
     /// The prep brief for the next upcoming meeting, when one has been prepared.
     @State private var nextPrep: CoreMeetingPrep?
+    @State private var topicsByEvent: [String: TopicRef] = [:]
+    @State private var topicsByMeeting: [Int64: TopicRef] = [:]
 
     /// Everything Today shows, read from this view's state and `AppState` at render time.
     private var content: TodayContent {
@@ -47,7 +49,8 @@ struct TodayView: View {
             activeMeetingId: appState.activeMeetingId, processingMeetingId: appState.processingMeetingId,
             nextPrep: nextPrep, pendingApprovalCount: pendingApprovalCount, attentionThreads: attentionThreads,
             briefRecap: briefRecap, digest: digest, digestError: digestError, isGeneratingDigest: isGeneratingDigest,
-            deviceId: appState.deviceId, deviceRows: rows, deviceLabels: labels, followups: followups
+            deviceId: appState.deviceId, deviceRows: rows, deviceLabels: labels, followups: followups,
+            topicsByEvent: topicsByEvent, topicsByMeeting: topicsByMeeting, upcomingWeek: appState.upcomingWeekMeetings
         )
     }
 
@@ -131,6 +134,10 @@ struct TodayView: View {
             // The prep brief belongs to the next unfinished occurrence; refetch when that changes.
             refresh()
         }
+        .onChange(of: content.upcomingWeek.map(\.id)) { _, _ in
+            // The week's calendar read can land after Today's first refresh; its rows need their topics.
+            refresh()
+        }
         .onChange(of: appState.routineScheduler.recentRuns) { _, _ in
             // Meeting Prep writes the brief minutes before the start, while Today sits open.
             refresh()
@@ -169,9 +176,18 @@ struct TodayView: View {
     private func refresh() {
         guard let store = appState.coreStore else { recentLoaded = true; loadDigestIfNeeded(); return }
         let nextPrepKey = content.upcoming.first.map { TodayLogic.prepKey(eventId: $0.id, start: $0.start) }
+        let events = (appState.allUpcomingMeetings + appState.upcomingWeekMeetings).map { (id: $0.id, title: $0.title) }
         CoreMemoryStore.accessQueue.async {
             let prep = nextPrepKey.flatMap { store.meetingPrep(key: $0) }
             let meetings = store.recentMeetingsGrouped(limit: 10)
+            let eventTopics = Dictionary(
+                events.compactMap { e in store.topicForEvent(eventId: e.id, title: e.title).map { (e.id, $0) } },
+                uniquingKeysWith: { first, _ in first }
+            )
+            let meetingTopics = Dictionary(
+                meetings.compactMap { m in store.topicForMeeting(meetingId: m.id).map { (m.id, $0) } },
+                uniquingKeysWith: { first, _ in first }
+            )
             let threads = store.threadsNeedingAttention(limit: 5) ?? []
             let pending = store.pendingApprovals() ?? []
             let open = store.openFollowups()
@@ -187,6 +203,8 @@ struct TodayView: View {
                 if brief == nil { loadDigestIfNeeded() }
                 nextPrep = prep
                 recentMeetings = meetings
+                topicsByEvent = eventTopics
+                topicsByMeeting = meetingTopics
                 // A Today built mid-meeting is live from its first render, so `liveMeetingId` never changes
                 // and the draft is loaded here. Here, not on appear: the replaced pane's `onDisappear` flush
                 // is already queued on `accessQueue` ahead of this read, so the draft holds its last notes.

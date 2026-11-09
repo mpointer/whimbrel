@@ -1872,6 +1872,161 @@ final class CoreMemoryStore {
         }
     }
 
+    /// Indexes and clusters one batch of topic sources. 1 = more work, 0 = idle, -1 = error.
+    func runTopicsBatch() -> Int64 {
+        whimbrel_topics_run_batch(handle)
+    }
+
+    /// Judges up to `max` queued sources with TypeSafe. Returns the count processed, -2 when
+    /// the key was rejected, -3 when the first pass's budget is spent, -4 when today's
+    /// allowance is spent (resumes tomorrow), -5 when core has no budget (Start again), -1 on
+    /// error.
+    func runTopicJudgeBatch(apiKey: String, max: Int, usdPerMillion: Double) -> Int64 {
+        apiKey.withCString { whimbrel_topics_run_judge_batch(handle, $0, UInt64(max), usdPerMillion) }
+    }
+
+    /// Size and cost of judging the current queue, or nil on failure.
+    func topicJudgeEstimate(usdPerMillion: Double) -> TopicSortSettings.Estimate? {
+        guard let out = whimbrel_topics_judge_estimate_json(handle, usdPerMillion) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        struct Raw: Decodable { let sources: Int; let tokens: Int; let usd: Double; let indexing: Bool }
+        guard let raw = try? JSONDecoder().decode(Raw.self, from: Data(String(cString: out).utf8)) else { return nil }
+        return .init(sources: raw.sources, tokens: raw.tokens, usd: raw.usd, indexing: raw.indexing)
+    }
+
+    /// Allows judging up to `budgetTokens` and resets the tokens used. True on success.
+    func topicJudgeStart(budgetTokens: Int64) -> Bool {
+        whimbrel_topics_judge_start(handle, budgetTokens) == 0
+    }
+
+    /// Reads up to `max` queued sources for steps. `apiKey` nil or blank runs the local model
+    /// (never a hosted one); a key runs TypeSafe. Returns the count processed, -2 key rejected,
+    /// -3 over budget, -4 paused for today, -5 not started, -6 no local model, -1 on error.
+    func runTopicStepsBatch(routing: CoreRoutingConfig, ollamaModel: String, apiKey: String?, max: Int, usdPerMillion: Double) -> Int64 {
+        guard let data = try? JSONEncoder().encode(routing) else { return -1 }
+        return String(decoding: data, as: UTF8.self).withCString { r in
+            ollamaModel.withCString { m in
+                (apiKey ?? "").withCString { whimbrel_topics_run_steps_batch(handle, r, m, $0, UInt64(max), usdPerMillion) }
+            }
+        }
+    }
+
+    /// Size and cost of reading the current queue for steps, or nil on failure.
+    func topicStepsEstimate(usdPerMillion: Double) -> TopicSortSettings.Estimate? {
+        topicJSON(whimbrel_topics_steps_estimate_json(handle, usdPerMillion))
+    }
+
+    /// Allows the paid steps pass up to `budgetTokens`. True on success.
+    func topicStepsStart(budgetTokens: Int64) -> Bool {
+        whimbrel_topics_steps_start(handle, budgetTokens) == 0
+    }
+
+    struct TopicNames: Decodable { let names: [String]; let suggested: [String] }
+
+    /// "Names I go by" and the suggestions for it, or nil on failure.
+    func topicNames() -> TopicNames? {
+        topicJSON(whimbrel_topics_names_json(handle))
+    }
+
+    /// Replaces "Names I go by". True on success.
+    func topicNamesSet(_ names: [String]) -> Bool {
+        guard let data = try? JSONEncoder().encode(names) else { return false }
+        return String(decoding: data, as: UTF8.self).withCString { whimbrel_topics_names_set_json(handle, $0) } == 0
+    }
+
+    /// Seed topics (named by the user), or nil on failure.
+    func topicSeeds() -> [TopicSeed]? {
+        guard let out = whimbrel_topics_seeds_json(handle) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return try? JSONDecoder().decode([TopicSeed].self, from: Data(String(cString: out).utf8))
+    }
+
+    /// Creates (`key` nil) or updates a seed. True on success.
+    func topicSeedSave(key: String?, name: String, aliases: [String], kind: String?) -> Bool {
+        struct Input: Encodable { let key: String?; let name: String; let aliases: [String]; let kind: String? }
+        guard let data = try? JSONEncoder().encode(Input(key: key, name: name, aliases: aliases, kind: kind)),
+              let out = String(decoding: data, as: UTF8.self).withCString({ whimbrel_topics_seed_save_json(handle, $0) })
+        else { return false }
+        whimbrel_core_free_string(out)
+        return true
+    }
+
+    func topicSeedDelete(key: String) -> Bool {
+        key.withCString { whimbrel_topics_seed_delete(handle, $0) } == 0
+    }
+
+    func topicSeedMerge(keep: String, absorb: String) -> Bool {
+        keep.withCString { k in absorb.withCString { whimbrel_topics_seed_merge(handle, k, $0) } } == 0
+    }
+
+    /// Suggested topics, or nil on failure.
+    func topicSuggestions(limit: Int = 20) -> [TopicSuggestion]? {
+        guard let out = whimbrel_topics_suggestions_json(handle, UInt32(limit)) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return try? JSONDecoder().decode([TopicSuggestion].self, from: Data(String(cString: out).utf8))
+    }
+
+    func topicSuggestionAccept(topicId: Int64, name: String) -> Bool {
+        name.withCString { whimbrel_topics_suggestion_accept(handle, topicId, $0) } == 0
+    }
+
+    func topicSuggestionDismiss(topicId: Int64) -> Bool {
+        whimbrel_topics_suggestion_dismiss(handle, topicId) == 0
+    }
+
+    /// Decodes a core JSON string (snake_case keys) and frees it; nil on NULL or bad JSON.
+    private func topicJSON<T: Decodable>(_ out: UnsafeMutablePointer<CChar>?) -> T? {
+        guard let out else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        do {
+            return try decoder.decode(T.self, from: Data(String(cString: out).utf8))
+        } catch {
+            Self.log.error("topics: could not decode \(String(describing: T.self), privacy: .public): \(String(describing: error), privacy: .public)")
+            return nil
+        }
+    }
+
+    /// The Topics tab's list (live seed topics by name), or nil on failure.
+    func topicPageList() -> [TopicListEntry]? {
+        topicJSON(whimbrel_topics_page_list_json(handle))
+    }
+
+    /// One topic's page, or nil when it is absent (or on failure).
+    func topicPage(topicId: Int64) -> TopicPage? {
+        topicJSON(whimbrel_topics_page_json(handle, topicId))
+    }
+
+    /// Applies a step action. True on success or an unknown key (the step is gone).
+    func topicStepAction(key: String, action: TopicStepAction) -> Bool {
+        guard let data = try? JSONEncoder().encode(action) else { return false }
+        let code = key.withCString { k in
+            String(decoding: data, as: UTF8.self).withCString { whimbrel_topics_step_action(handle, k, $0) }
+        }
+        return code >= 0
+    }
+
+    /// Sets (empty clears) the role text of seed topic `topicKey`. True on success.
+    func topicRoleSet(topicKey: String, text: String) -> Bool {
+        topicKey.withCString { k in text.withCString { whimbrel_topics_role_set(handle, k, $0) } } == 0
+    }
+
+    /// The meeting's topic, or nil when it has none (or on failure).
+    func topicForMeeting(meetingId: Int64) -> TopicRef? {
+        topicJSON(whimbrel_topics_for_meeting_json(handle, meetingId))
+    }
+
+    /// A calendar event's topic (series topic, else a seed its title names), or nil.
+    func topicForEvent(eventId: String, title: String) -> TopicRef? {
+        topicJSON(eventId.withCString { e in title.withCString { whimbrel_topics_for_event_json(handle, e, $0) } })
+    }
+
+    /// Live seed topics whose aliases appear in `text`, or nil on failure.
+    func topicsNamedIn(text: String) -> [TopicRef]? {
+        topicJSON(text.withCString { whimbrel_topics_named_in_json(handle, $0) })
+    }
+
     /// Queues a priority job for every thread currently waiting on the user. Returns the
     /// number queued, or -1 on error.
     func seedThreadPriorityJobs() -> Int64 {
@@ -2352,6 +2507,14 @@ final class CoreMemoryStore {
         guard let json = whimbrel_threads_needing_attention(handle, UInt64(limit)) else { return nil }
         defer { whimbrel_core_free_string(json) }
         return decode(json)
+    }
+
+    /// Email threads whose messages match `query`, each carrying the matching message
+    /// (see `whimbrel_memory_search_email_threads`). Ask cites these as threads.
+    func searchEmailThreads(_ query: String, limit: Int) -> [CoreThread] {
+        guard let json = query.withCString({ whimbrel_memory_search_email_threads(handle, $0, limit) }) else { return [] }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json) ?? []
     }
 
     /// Fetches one thread by id, fresh from the store — used by the per-thread detail
@@ -4802,4 +4965,139 @@ struct SkinReconcileReport: Decodable, Equatable {
     var error: String?
 
     enum CodingKeys: String, CodingKey { case changed, deleted, pushAll = "push_all", error }
+}
+
+// MARK: - Topic page (decoded with `.convertFromSnakeCase`)
+
+struct TopicRef: Codable, Hashable {
+    let topicId: Int64
+    let key: String
+    let name: String
+}
+
+struct TopicListEntry: Codable, Identifiable {
+    let topic: TopicRef
+    let kind: String?
+    let nextMeetingUnixMs: Int64?
+    let openMine: Int64
+    var id: Int64 { topic.topicId }
+}
+
+/// Where a link opens: a `WindowGroup` id and its `Int64` value.
+struct TopicOpenTarget: Codable, Hashable {
+    let window: String
+    let id: Int64
+}
+
+struct StepView: Codable, Identifiable {
+    let key: String
+    let text: String
+    /// "mine" or "theirs".
+    let direction: String
+    let sourceKind: String
+    let sourceTitle: String
+    let fromScreen: Bool
+    let open: TopicOpenTarget?
+    let askedAtUnixMs: Int64
+    /// "YYYY-MM-DD".
+    let dueDate: String?
+    let status: String
+    let confirmed: Bool
+    let note: String?
+    let closedBy: String?
+    var id: String { key }
+}
+
+/// Core's `SummaryLead`: `kind` "date" (label, date) or "step" (text, due_date).
+struct TopicSummaryLead: Codable {
+    let kind: String
+    let label: String?
+    let date: String?
+    let text: String?
+    let dueDate: String?
+}
+
+struct TopicNextMeeting: Codable {
+    /// One (email domain, count) pair; core sends it as a two-element array.
+    struct Org: Codable, Hashable {
+        let domain: String
+        let count: Int64
+        init(from decoder: Decoder) throws {
+            var c = try decoder.unkeyedContainer()
+            domain = try c.decode(String.self)
+            count = try c.decode(Int64.self)
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.unkeyedContainer()
+            try c.encode(domain)
+            try c.encode(count)
+        }
+    }
+    let title: String
+    let startUnixMs: Int64
+    /// Attendees other than Mike.
+    let attendeesByOrg: [Org]
+    /// Attendees whose address is exactly one of Mike's.
+    let me: Int64
+}
+
+struct TopicRole: Codable {
+    let text: String
+    let edited: Bool
+}
+
+struct TopicMember: Codable, Identifiable {
+    let sourceId: Int64
+    let kind: String
+    let refId: Int64?
+    let tsUnixMs: Int64
+    let title: String
+    let stub: Bool
+    let open: TopicOpenTarget?
+    var id: String { "\(sourceId)-\(kind)-\(refId ?? 0)-\(tsUnixMs)" }
+}
+
+struct TopicPage: Codable {
+    let topic: TopicRef
+    let kind: String?
+    let role: TopicRole
+    let lead: TopicSummaryLead?
+    let nextMeeting: TopicNextMeeting?
+    let youOwe: [StepView]
+    let owedToYou: [StepView]
+    let done: [StepView]
+    let older: [StepView]
+    let recent: [TopicMember]
+    let recentTotal: Int64
+}
+
+/// Core's `StepAction`, encoded as `{"action": ..}` plus its fields.
+enum TopicStepAction: Encodable {
+    case done, reopen, confirm
+    case dismiss(reason: String)
+    case note(String)
+    case edit(text: String, dueDate: String?)
+
+    private enum Keys: String, CodingKey { case action, reason, confirmed, text, dueDate = "due_date" }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Keys.self)
+        switch self {
+        case .done: try c.encode("done", forKey: .action)
+        case .reopen: try c.encode("reopen", forKey: .action)
+        case .confirm:
+            try c.encode("confirm", forKey: .action)
+            try c.encode(true, forKey: .confirmed)
+        case .dismiss(let reason):
+            try c.encode("dismiss", forKey: .action)
+            try c.encode(reason, forKey: .reason)
+        case .note(let text):
+            try c.encode("note", forKey: .action)
+            try c.encode(text, forKey: .text)
+        case .edit(let text, let dueDate):
+            try c.encode("edit", forKey: .action)
+            try c.encode(text, forKey: .text)
+            try c.encode(dueDate, forKey: .dueDate)
+        }
+    }
 }

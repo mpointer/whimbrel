@@ -5,6 +5,13 @@ struct MenuBarContentView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
+    @State private var nextTopic: TopicRef?
+
+    /// The next calendar event that has not ended (the list looks back 15 minutes).
+    private var next: QualifyingMeeting? {
+        let now = Date()
+        return appState.allUpcomingMeetings.filter { $0.endDate > now }.min { $0.startDate < $1.startDate }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
@@ -23,6 +30,23 @@ struct MenuBarContentView: View {
             Text(appState.statusSummary)
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
+
+            if let next {
+                VStack(alignment: .leading, spacing: Spacing.xs) {
+                    Text("Next: \(next.title), \(next.startDate.formatted(.dateTime.hour().minute()))")
+                        .font(.whimbrelBody(.caption))
+                        .foregroundStyle(Color.whimbrelTextPrimary)
+                        .lineLimit(2)
+                    if let nextTopic { TopicChip(topic: nextTopic) }
+                }
+                .task(id: next.id) {
+                    guard let store = appState.coreStore else { nextTopic = nil; return }
+                    let (id, title) = (next.id, next.title)
+                    nextTopic = await withCheckedContinuation { done in
+                        CoreMemoryStore.accessQueue.async { done.resume(returning: store.topicForEvent(eventId: id, title: title)) }
+                    }
+                }
+            }
 
             if appState.activeMeetingId != nil {
                 Button("End Meeting") {

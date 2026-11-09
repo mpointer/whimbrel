@@ -207,7 +207,24 @@ pub async fn transcription_benchmark(state: State<'_, AppState>) -> Result<Trans
     let busy = state.meetings.as_ref().is_some_and(|m| m.is_recording()) || state.pipeline.as_ref().is_some_and(|p| p.processing().is_some());
     if state.settings.lock().unwrap().turbo_speed().is_none() && !busy {
         let paths = state.paths.clone();
-        if let Some(speed) = tauri::async_runtime::spawn_blocking(move || crate::meetings::benchmark::estimate(&paths)).await.ok().flatten() {
+        let marker = crate::meetings::benchmark::marker(&paths);
+        let measured = match crate::meetings::benchmark::attempt(marker.is_file()) {
+            crate::meetings::benchmark::Attempt::GiveUp => {
+                // 0 keeps the turbo offer and Automatic's turbo off, and stops the launch asking again.
+                tracing::warn!("the last engine benchmark never finished (the app closed during it); not running it again");
+                let _ = std::fs::remove_file(&marker);
+                Some(0.0)
+            }
+            crate::meetings::benchmark::Attempt::Run => {
+                if let Err(e) = std::fs::write(&marker, b"") {
+                    tracing::warn!(error = %e, "could not mark the engine benchmark as running");
+                }
+                let speed = tauri::async_runtime::spawn_blocking(move || crate::meetings::benchmark::estimate(&paths)).await.ok().flatten();
+                let _ = std::fs::remove_file(&marker);
+                speed
+            }
+        };
+        if let Some(speed) = measured {
             let mut settings = state.settings.lock().unwrap();
             settings.set_turbo_speed(speed);
             if let Err(e) = settings.save() {

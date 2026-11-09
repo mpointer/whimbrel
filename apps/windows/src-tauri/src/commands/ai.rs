@@ -18,6 +18,8 @@ pub struct ProviderKey {
     pub provider: Provider,
     /// The key with all but its last four characters hidden; `None` when unset.
     pub masked: Option<String>,
+    /// Whether this key syncs to the account's other devices (off unless turned on).
+    pub sync_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
@@ -279,24 +281,31 @@ fn hosted(provider: Provider) -> api::hosted_models::HostedProvider {
     }
 }
 
-/// Saves `key` for a hosted provider, or removes it when `None` or blank.
+/// Saves `key` for a hosted provider, or removes it when `None` or blank. The keys it returns
+/// show sync off; `set_api_key` fills in the switches.
 fn save_api_key(secrets: &dyn SecretStore, provider: Provider, key: Option<&str>) -> Result<Vec<ProviderKey>, CommandError> {
     let account = key_account(provider).ok_or_else(|| CommandError::invalid_input(tr("Ollama doesn't use an API key.", &[])))?;
     match key.map(str::trim).filter(|k| !k.is_empty()) {
         Some(k) => secrets.set_string(APP_SERVICE, account, k)?,
         None => secrets.delete(APP_SERVICE, account)?,
     }
-    api_keys(secrets)
+    api_keys(secrets, &|_| false)
 }
 
-fn api_keys(secrets: &dyn SecretStore) -> Result<Vec<ProviderKey>, CommandError> {
+/// Each hosted provider's key, masked, with whether it syncs (`sync_on`).
+fn api_keys(secrets: &dyn SecretStore, sync_on: &dyn Fn(Provider) -> bool) -> Result<Vec<ProviderKey>, CommandError> {
     Provider::HOSTED
         .into_iter()
         .map(|provider| {
             let stored = secrets.get_string(APP_SERVICE, key_account(provider).unwrap())?;
-            Ok(ProviderKey { provider, masked: stored.as_deref().map(mask_key) })
+            Ok(ProviderKey { provider, masked: stored.as_deref().map(mask_key), sync_enabled: sync_on(provider) })
         })
         .collect()
+}
+
+/// Whether a provider's key sync switch is on in `file`.
+fn key_sync_on(file: &crate::settings::SettingsFile) -> impl Fn(Provider) -> bool + '_ {
+    move |provider| crate::syncing::settings::api_key_field(provider).is_some_and(|field| crate::syncing::settings::api_key_sync_enabled(file, field))
 }
 
 fn now_ms() -> i64 {
@@ -305,8 +314,9 @@ fn now_ms() -> i64 {
 
 #[tauri::command]
 pub async fn ai_settings(state: State<'_, AppState>) -> Result<AiSettings, CommandError> {
-    let (routing, summary_instructions, prompts, budgets, ollama_warning) = {
+    let (routing, summary_instructions, prompts, budgets, ollama_warning, synced) = {
         let settings = state.settings.lock().unwrap();
+        let synced: Vec<Provider> = Provider::HOSTED.into_iter().filter(|p| key_sync_on(&settings)(*p)).collect();
         let prompts = PromptSurface::ALL.iter().map(|&surface| PromptText { surface, text: settings.prompt(surface) }).collect();
         let mut routing = settings.routing();
         let ollama_warning = crate::ollama_default::warning(&settings).map(|(model, fallback)| OllamaWarning { model, fallback });
@@ -314,7 +324,7 @@ pub async fn ai_settings(state: State<'_, AppState>) -> Result<AiSettings, Comma
         if let Some(w) = &ollama_warning {
             routing.ollama_model = w.model.clone();
         }
-        (routing, settings.get(keys::SUMMARY_CUSTOM_PROMPT).unwrap_or_default(), prompts, budget_views(&settings), ollama_warning)
+        (routing, settings.get(keys::SUMMARY_CUSTOM_PROMPT).unwrap_or_default(), prompts, budget_views(&settings), ollama_warning, synced)
     };
     let (spend, usage) = match &state.store {
         Some(store) => {
@@ -324,7 +334,8 @@ pub async fn ai_settings(state: State<'_, AppState>) -> Result<AiSettings, Comma
         None => (None, None),
     };
     let image_search_key = state.secrets.get_string(APP_SERVICE, accounts::IMAGE_SEARCH_API_KEY)?.as_deref().map(mask_key);
-    Ok(AiSettings { routing, keys: api_keys(&*state.secrets)?, summary_instructions, prompts, spend, providers: provider_infos(), usage, budgets, image_search_key, ollama_warning })
+    let keys = api_keys(&*state.secrets, &|p| synced.contains(&p))?;
+    Ok(AiSettings { routing, keys, summary_instructions, prompts, spend, providers: provider_infos(), usage, budgets, image_search_key, ollama_warning })
 }
 
 /// Checks the saved key for `provider` against its model list; for OpenRouter a valid
@@ -408,11 +419,32 @@ pub fn set_summary_instructions(state: State<'_, AppState>, text: String) -> Res
 /// Saves or (with `None` / blank) removes a hosted provider's key.
 #[tauri::command]
 pub fn set_api_key(state: State<'_, AppState>, provider: Provider, key: Option<String>) -> Result<Vec<ProviderKey>, CommandError> {
-    save_api_key(&*state.secrets, provider, key.as_deref())
+    let mut settings = state.settings.lock().unwrap();
+    save_api_key(&*state.secrets, provider, key.as_deref())?;
+    let keys = api_keys(&*state.secrets, &key_sync_on(&settings))?;
+    // Stamped on every save and clear, so this edit beats the account's older copy once the key
+    // syncs (core's "bumped by save/clear of the key"). Only the stamp goes in the settings file.
+    if let Some(field) = crate::syncing::settings::api_key_field(provider) {
+        settings.set_stamp(field, crate::syncing::settings::now_ms());
+        settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
+    }
+    Ok(keys)
+}
+
+/// Turns a hosted provider's key sync on or off on this PC. Off by default; turning it off sends
+/// the account a delete dated by the switch, which never removes a key saved after it.
+#[tauri::command]
+pub fn set_api_key_sync(state: State<'_, AppState>, provider: Provider, enabled: bool) -> Result<Vec<ProviderKey>, CommandError> {
+    let field = crate::syncing::settings::api_key_field(provider).ok_or_else(|| CommandError::invalid_input(tr("Ollama doesn't use an API key.", &[])))?;
+    let mut settings = state.settings.lock().unwrap();
+    crate::syncing::settings::edit(&mut settings, |f| f.set(&crate::syncing::settings::api_key_switch(field), Some(enabled)));
+    settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
+    let keys = api_keys(&*state.secrets, &key_sync_on(&settings));
+    keys
 }
 
 /// Saves or (with `None` / blank) removes the image search key; returns it masked. It stays on this
-/// device, as the provider keys do.
+/// device and never syncs.
 #[tauri::command]
 pub fn set_image_search_key(state: State<'_, AppState>, key: Option<String>) -> Result<Option<String>, CommandError> {
     save_image_search_key(&*state.secrets, key.as_deref())
@@ -530,7 +562,7 @@ mod tests {
         assert_eq!(key_account(Provider::Openrouter), Some("openrouter-api-key"));
         assert_eq!(key_account(Provider::Ollama), None);
         let secrets = crate::secrets::MemorySecrets::default();
-        assert_eq!(api_keys(&secrets).unwrap().iter().map(|k| k.provider).collect::<Vec<_>>(), Provider::HOSTED.to_vec());
+        assert_eq!(api_keys(&secrets, &|_| false).unwrap().iter().map(|k| k.provider).collect::<Vec<_>>(), Provider::HOSTED.to_vec());
     }
 
     #[test]

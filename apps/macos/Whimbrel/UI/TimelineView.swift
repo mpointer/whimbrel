@@ -370,6 +370,8 @@ struct TimelineView: View {
     @State var isGeneratingDigest = false
     @State var meetingPendingDeletion: CoreMeeting?
     @State var headphonesWarningDismissed = false
+    /// Topics the current search or question names, each offered as "Open topic page".
+    @State var namedTopics: [TopicRef] = []
 
     enum SearchMode: String, CaseIterable, Identifiable {
         case recent = "Recent"
@@ -540,11 +542,16 @@ struct TimelineView: View {
                         Button("New Conversation") {
                             exchanges = []
                             activeConversationId = nil
+                            namedTopics = []
                         }
                             .disabled(isBusy)
                             .buttonStyle(.whimbrelSecondary)
                     }
                 }
+            }
+
+            if [.keyword, .semantic, .ask].contains(mode) {
+                ForEach(namedTopics, id: \.topicId) { TopicPageLink(topic: $0) }
             }
 
             if mode == .digest {
@@ -651,6 +658,7 @@ struct TimelineView: View {
             entries = []
             return
         }
+        refreshNamedTopics(store: store)
         switch mode {
         case .recent:
             let includeScreenCaptures = appState.showScreenCaptures
@@ -719,6 +727,21 @@ struct TimelineView: View {
                     isLoadingEntries = false
                 }
             }
+        }
+    }
+
+    /// Keyword, Semantic and Ask offer the topics their text names; the other modes none.
+    /// Ask with an empty field (a mode switch) keeps the topics of the question just asked.
+    func refreshNamedTopics(store: CoreMemoryStore) {
+        guard [.keyword, .semantic, .ask].contains(mode) else { namedTopics = []; return }
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            if mode != .ask { namedTopics = [] }
+            return
+        }
+        CoreMemoryStore.accessQueue.async {
+            let found = store.topicsNamedIn(text: text) ?? []
+            DispatchQueue.main.async { namedTopics = found }
         }
     }
 

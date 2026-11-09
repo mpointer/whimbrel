@@ -68,4 +68,26 @@ final class TodayChromeTests: XCTestCase {
         XCTAssertTrue(TodayChrome.leftovers(of: content, placed: []).contains(.upNext))
         XCTAssertTrue(TodayChrome.leftovers(of: .sample, placed: []).contains(.schedule))
     }
+
+    func test_upcoming_groups_by_day_and_collapses_after_two() {
+        typealias S = TodaySampleContent
+        var content = TodayContent.sample
+        XCTAssertFalse(content.nonEmptySections().contains(.upcoming), "an empty week draws nothing")
+        content.upcomingWeek = [
+            S.event("d3", "Review", S.at(dayOffset: 4, hour: 9)),
+            S.event("d1b", "Lunch", S.at(dayOffset: 1, hour: 12), attendees: ["A", "B", "C"]),
+            S.event("d1a", "Standup", S.at(dayOffset: 1, hour: 9)),
+            S.event("d2", "Planning", S.at(dayOffset: 2, hour: 15), attendees: ["A"]),
+        ]
+        XCTAssertTrue(content.nonEmptySections().contains(.upcoming))
+        let collapsed = TodayRows.upcomingDays(content, expanded: false)
+        XCTAssertEqual(collapsed.map { $0.rows.map(\.title) }, [["Standup", "Lunch"], ["Planning"]])
+        XCTAssertEqual(collapsed[0].heading, "Tomorrow")
+        XCTAssertEqual(collapsed[1].heading, S.at(dayOffset: 2, hour: 0).formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
+        XCTAssertEqual(collapsed[0].rows.map(\.invited), ["", "3 invited"])
+        XCTAssertTrue(TodayRows.upcomingHasMore(content))
+        XCTAssertEqual(TodayRows.upcomingDays(content, expanded: true).count, 3)
+        content.upcomingWeek.removeFirst()
+        XCTAssertFalse(TodayRows.upcomingHasMore(content), "two days fit without the toggle")
+    }
 }

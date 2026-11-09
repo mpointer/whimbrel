@@ -63,6 +63,39 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
             updated_at_unix_ms INTEGER NOT NULL,
             last_member_ts_unix_ms INTEGER
         );
+        CREATE TABLE IF NOT EXISTS topic_seed (
+            topic_id INTEGER PRIMARY KEY,
+            key TEXT NOT NULL UNIQUE,
+            kind TEXT,
+            aliases TEXT NOT NULL,
+            vec BLOB,
+            merged_into_key TEXT,
+            deleted INTEGER NOT NULL DEFAULT 0,
+            updated_at_unix_ms INTEGER NOT NULL
+        );
+        -- ponytail: ~2 KB per source; fine at 50k sources, drop to on-demand rebuild if size matters.
+        CREATE TABLE IF NOT EXISTS topic_source_text (
+            source_id INTEGER PRIMARY KEY,
+            text TEXT NOT NULL
+        );
+        -- Sources Jev should judge: 0 or several alias hits while seed topics exist.
+        -- One source per recurring calendar series; it points at the latest past occurrence.
+        CREATE TABLE IF NOT EXISTS topic_series (
+            series_key TEXT PRIMARY KEY,
+            source_id INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS topic_judge_todo (source_id INTEGER PRIMARY KEY);
+        -- Sources to ask Jev about again although a verdict is stored: they mention a topic
+        -- added or edited on this device since.
+        CREATE TABLE IF NOT EXISTS topic_rejudge (source_id INTEGER PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS topic_verdict (
+            source_key TEXT PRIMARY KEY,
+            topic_key TEXT,
+            work REAL,
+            model TEXT NOT NULL,
+            judged_at_unix_ms INTEGER NOT NULL,
+            updated_at_unix_ms INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS topic_member (
             topic_id INTEGER NOT NULL,
             source_id INTEGER NOT NULL,
@@ -90,11 +123,63 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
         -- Meetings and episodes edited after indexing; topic_index re-indexes and clears them.
         -- Trigger inserts use WHERE NOT EXISTS, not OR IGNORE: an outer UPSERT's conflict
         -- handling overrides a trigger's.
+        -- Capture word 3-grams repeated across episodes (menus, tab bars), per app ('*' for
+        -- every app); see chrome.rs. Replaces topic_chrome_line (one set for every app).
+        DROP TABLE IF EXISTS topic_chrome_line;
+        CREATE TABLE IF NOT EXISTS topic_chrome (
+            app TEXT NOT NULL,
+            hash INTEGER NOT NULL,
+            PRIMARY KEY (app, hash)
+        ) WITHOUT ROWID;
         CREATE TABLE IF NOT EXISTS topic_dirty (
             kind TEXT NOT NULL,
             ref_id INTEGER NOT NULL,
             PRIMARY KEY (kind, ref_id)
         ) WITHOUT ROWID;
+        -- Steps (see steps.rs). due_date is YYYY-MM-DD; direction mine|owed|none.
+        CREATE TABLE IF NOT EXISTS topic_step (
+            key TEXT PRIMARY KEY,
+            topic_key TEXT NOT NULL,
+            source_key TEXT NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_title TEXT NOT NULL,
+            text TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            asked_at_unix_ms INTEGER NOT NULL,
+            due_date TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            dismiss_reason TEXT,
+            confirmed INTEGER NOT NULL DEFAULT 0,
+            note TEXT,
+            closed_by TEXT,
+            origin TEXT NOT NULL DEFAULT 'extracted',
+            updated_at_unix_ms INTEGER NOT NULL,
+            source_id INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_topic_step_topic ON topic_step(topic_key, status);
+        -- The cursor: a source with a row is never read again for steps.
+        CREATE TABLE IF NOT EXISTS topic_extraction (
+            source_key TEXT PRIMARY KEY,
+            topic_key TEXT,
+            dates TEXT NOT NULL,
+            model TEXT NOT NULL,
+            extracted_at_unix_ms INTEGER NOT NULL,
+            updated_at_unix_ms INTEGER NOT NULL,
+            source_id INTEGER
+        );
+        -- Mike's role edits (see page.rs); signals are the topic's [f64; 4] at edit time.
+        -- deleted = 1: back to inferred; the row stays so last write wins across devices.
+        CREATE TABLE IF NOT EXISTS topic_role (
+            topic_key TEXT PRIMARY KEY,
+            text TEXT NOT NULL,
+            signals TEXT NOT NULL,
+            deleted INTEGER NOT NULL DEFAULT 0,
+            updated_at_unix_ms INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS topic_step_attempt (
+            source_id INTEGER PRIMARY KEY,
+            attempts INTEGER NOT NULL
+        );
         DROP TRIGGER IF EXISTS topic_source_items_ad;
         CREATE TRIGGER topic_source_items_ad AFTER DELETE ON items
         WHEN old.kind IN ('email', 'calendar_event', 'snapshot') BEGIN
@@ -118,6 +203,14 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
             DELETE FROM entity_mention WHERE source_id = old.id;
             DELETE FROM topic_member WHERE source_id = old.id;
             DELETE FROM topic_source_vec WHERE rowid = old.id;
+            DELETE FROM topic_source_text WHERE source_id = old.id;
+            DELETE FROM topic_judge_todo WHERE source_id = old.id;
+            DELETE FROM topic_rejudge WHERE source_id = old.id;
+            DELETE FROM topic_series WHERE source_id = old.id;
+            -- Copied text (step text, titles, dates) goes with its source; local-only.
+            DELETE FROM topic_step WHERE source_id = old.id;
+            DELETE FROM topic_extraction WHERE source_id = old.id;
+            DELETE FROM topic_step_attempt WHERE source_id = old.id;
         END;
         -- Any membership change made outside topic_cluster (a deleted source, a removed or
         -- user-added member) marks the topic's cached centroid stale (vec_n = -1);
@@ -176,7 +269,39 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
         END;"
     ))?;
     tx.commit()?;
+    // noise: 1 = never filed or clustered. attempts: failed Jev calls for a queued source.
+    ensure_column(conn, "topic_source", "noise", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(
+        conn,
+        "topic_judge_todo",
+        "attempts",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    // Episodes: characters of summary + window title at the start of the text (NULL for other
+    // kinds), where one alias mention files the episode.
+    ensure_column(conn, "topic_source_text", "head_len", "INTEGER")?;
+    ensure_column(conn, "topic_step", "source_id", "INTEGER")?;
+    ensure_column(conn, "topic_extraction", "source_id", "INTEGER")?;
+    // Pulled rows whose source is not here yet; indexing looks them up by key (`attach_source`).
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_topic_step_unattached ON topic_step(source_key) WHERE source_id IS NULL",
+        [],
+    )?;
     ensure_entity_name_key(conn)
+}
+
+/// Adds `table.column` to databases that predate it. No check first: another connection
+/// can add it between a check and the ALTER, so "duplicate column name" counts as done.
+fn ensure_column(conn: &Connection, table: &str, column: &str, decl: &str) -> rusqlite::Result<()> {
+    match conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"),
+        [],
+    ) {
+        Err(rusqlite::Error::SqliteFailure(_, Some(m))) if m.contains("duplicate column name") => {
+            Ok(())
+        }
+        r => r.map(|_| ()),
+    }
 }
 
 /// Adds and backfills `entity.name_key` on databases created before it existed.
@@ -213,11 +338,15 @@ fn ensure_entity_name_key(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 /// Deletes entities with no mentions and topics with no member rows of any origin.
-/// A topic whose members are all `removed` tombstones is kept (hidden from lists elsewhere).
+/// A topic whose members are all `removed` tombstones is kept (hidden from lists elsewhere),
+/// and so is any topic with a seed record: a deleted seed's record is the tombstone that
+/// stops an older live copy from reviving it.
 pub(crate) fn prune_orphans(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "DELETE FROM entity WHERE id NOT IN (SELECT entity_id FROM entity_mention);
-         DELETE FROM topic WHERE id NOT IN (SELECT topic_id FROM topic_member);
+         DELETE FROM topic WHERE id NOT IN (SELECT topic_id FROM topic_member)
+            AND id NOT IN (SELECT topic_id FROM topic_seed);
+         DELETE FROM topic_seed WHERE topic_id NOT IN (SELECT id FROM topic) AND deleted = 0;
          DELETE FROM topic_stats WHERE topic_id NOT IN (SELECT id FROM topic);
          DELETE FROM topic_idea WHERE topic_id NOT IN (SELECT id FROM topic)
             OR entity_id NOT IN (SELECT id FROM entity);",
@@ -236,6 +365,13 @@ pub(crate) fn stub_sources_for_retention(
     )?;
     let mut n = 0;
     for id in ref_ids {
+        // The stub keeps memberships but not the content copied into steps.
+        for t in ["topic_step", "topic_extraction", "topic_step_attempt"] {
+            conn.execute(
+                &format!("DELETE FROM {t} WHERE source_id IN (SELECT id FROM topic_source WHERE kind = ?1 AND ref_id = ?2)"),
+                params![kind, id],
+            )?;
+        }
         n += stmt.execute(params![kind, id])?;
     }
     Ok(n)
@@ -252,6 +388,21 @@ mod tests {
 
     fn count(s: &Store, sql: &str) -> i64 {
         s.conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    /// The column is already there (added by another connection after any check): no error.
+    #[test]
+    fn ensure_column_tolerates_an_existing_column() {
+        let s = Store::open_in_memory().unwrap();
+        for _ in 0..2 {
+            ensure_column(
+                &s.conn,
+                "topic_source",
+                "noise",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            .unwrap();
+        }
     }
 
     fn add_source(s: &Store, kind: &str, ref_id: i64, title: &str, ts: i64) -> i64 {

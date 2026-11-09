@@ -121,6 +121,9 @@ struct CalendarSummary: Identifiable, Equatable {
 @MainActor
 final class CalendarService: ObservableObject {
     @Published private(set) var upcomingMeetings: [QualifyingMeeting] = []
+    /// Today's "Upcoming" section: the 7 days after today, all-day events left out. Kept apart
+    /// from `upcomingMeetings` so the meeting trigger and today's schedule don't see it.
+    @Published private(set) var upcomingWeek: [QualifyingMeeting] = []
     @Published private(set) var availableCalendars: [CalendarSummary] = []
     /// #64: real diagnostic data (see `qualify`'s `.notice` log below) showed a work
     /// CalDAV/Exchange-bridged event with EVERY optional field EventKit exposes empty --
@@ -167,11 +170,19 @@ final class CalendarService: ObservableObject {
         Calendar.current.startOfDay(for: now.addingTimeInterval(24 * 60 * 60))
     }
 
+    /// The Upcoming window: the 7 calendar days after today, by calendar arithmetic (DST-safe).
+    nonisolated static func weekWindow(now: Date) -> Range<Date> {
+        let cal = Calendar.current, today = cal.startOfDay(for: now)
+        let start = cal.date(byAdding: .day, value: 1, to: today) ?? today
+        return start..<(cal.date(byAdding: .day, value: 7, to: start) ?? start)
+    }
+
     func refresh() {
         let authStatus = EKEventStore.authorizationStatus(for: .event)
         guard authStatus == .fullAccess else {
             log.log("Calendar refresh: skipped, authorizationStatus=\(String(describing: authStatus), privacy: .public) (need .fullAccess)")
             upcomingMeetings = []
+            upcomingWeek = []
             availableCalendars = []
             return
         }
@@ -190,7 +201,12 @@ final class CalendarService: ObservableObject {
         let alwaysQualifyIDs = alwaysQualifyCalendarIDs
         upcomingMeetings = events.compactMap { Self.qualify($0, alwaysQualifyCalendarIDs: alwaysQualifyIDs) }
             .sorted { $0.startDate < $1.startDate }
-        log.log("Calendar refresh: window \(windowStart, privacy: .public)..\(windowEnd, privacy: .public), \(events.count, privacy: .public) events in window, \(self.upcomingMeetings.count, privacy: .public) qualify as meetings")
+        let week = Self.weekWindow(now: now)
+        let weekEvents = store.events(matching: store.predicateForEvents(withStart: week.lowerBound, end: week.upperBound, calendars: nil))
+        upcomingWeek = weekEvents.filter { !$0.isAllDay && week.contains($0.startDate) }
+            .compactMap { Self.qualify($0, alwaysQualifyCalendarIDs: alwaysQualifyIDs, logDrops: false) }
+            .sorted { $0.startDate < $1.startDate }
+        log.log("Calendar refresh: window \(windowStart, privacy: .public)..\(windowEnd, privacy: .public), \(events.count, privacy: .public) events in window, \(self.upcomingMeetings.count, privacy: .public) qualify as meetings, \(self.upcomingWeek.count, privacy: .public) in the next 7 days")
     }
 
     private static let log = Logger(subsystem: "com.mpointer.kestrel", category: "calendar")
@@ -198,7 +214,8 @@ final class CalendarService: ObservableObject {
     /// FR-MTG-1: "events containing a conferencing link or ≥1 other attendee" — or,
     /// per #64 above, any non-all-day event on a calendar the user opted into
     /// `alwaysQualifyCalendarIDs`.
-    private static func qualify(_ event: EKEvent, alwaysQualifyCalendarIDs: Set<String>) -> QualifyingMeeting? {
+    /// `logDrops: false` for the Upcoming pass, so the #64 diagnostic isn't repeated for a week of events every minute.
+    private static func qualify(_ event: EKEvent, alwaysQualifyCalendarIDs: Set<String>, logDrops: Bool = true) -> QualifyingMeeting? {
         guard let identifier = event.eventIdentifier, let startDate = event.startDate, let endDate = event.endDate else {
             return nil
         }
@@ -210,7 +227,7 @@ final class CalendarService: ObservableObject {
             // be sensitive. .notice, not .debug -- .debug messages aren't persisted to
             // the unified log's data store, only visible while actively streaming (same
             // issue AudioCaptureService.logAmplitudeIfNeeded's doc comment covers).
-            log.notice("qualify: dropped \(identifier, privacy: .private) — no link, no other attendees, calendar not opted in. hasLocation=\(event.location != nil, privacy: .public) hasNotes=\(event.notes != nil, privacy: .public) hasURL=\(event.url != nil, privacy: .public) rawAttendeeCount=\(event.attendees?.count ?? 0, privacy: .public) hasOrganizer=\(event.organizer != nil, privacy: .public) isAllDay=\(event.isAllDay, privacy: .public)")
+            if logDrops { log.notice("qualify: dropped \(identifier, privacy: .private) — no link, no other attendees, calendar not opted in. hasLocation=\(event.location != nil, privacy: .public) hasNotes=\(event.notes != nil, privacy: .public) hasURL=\(event.url != nil, privacy: .public) rawAttendeeCount=\(event.attendees?.count ?? 0, privacy: .public) hasOrganizer=\(event.organizer != nil, privacy: .public) isAllDay=\(event.isAllDay, privacy: .public)") }
             return nil
         }
 

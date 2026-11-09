@@ -24,7 +24,10 @@ pub(crate) const MAIN_WINDOW: &str = "main";
 const QUEUE_LOG_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub fn run() {
-    // First, before anything opens a file in it: move the data folder from its old name.
+    // First, while this is the only thread: keep the Vulkan loader away from Dozen, which crashes
+    // the process on Windows on Arm. The supervisor and every helper inherit the setting.
+    crate::gpu::avoid_broken_vulkan_drivers();
+    // Then, before anything opens a file in it: move the data folder from its old name.
     let (paths, settled) = Paths::settle_from_env().expect("LOCALAPPDATA is not set");
     if let Err(e) = paths.ensure_dirs() {
         // No log file yet; stderr is all there is.
@@ -35,6 +38,12 @@ pub fn run() {
     let _log_guard = logging::init(&paths.logs);
     crate::restart::install_panic_log(&paths.logs);
     tracing::info!(version = env!("CARGO_PKG_VERSION"), root = %paths.root.display(), "Whimbrel starting");
+    tracing::info!(
+        vulkan_drivers_disabled = std::env::var(crate::gpu::DRIVERS_DISABLE_ENV).unwrap_or_default(),
+        build = std::env::consts::ARCH,
+        machine = crate::gpu::native_machine(),
+        "GPU setup"
+    );
     // A release launch moves the folder before handing over, so the supervised child
     // usually finds it in place; the re-root count in `state` shows a move happened.
     match &settled {
@@ -111,7 +120,32 @@ pub fn run() {
             commands::sync::sync_revoke_device,
             commands::ai::ai_settings,
             commands::ai::set_api_key,
+            commands::ai::set_api_key_sync,
             commands::ai::set_image_search_key,
+            commands::topic_page::topics_page_list,
+            commands::topic_page::topic_page,
+            commands::topic_page::topic_step_action,
+            commands::topic_page::topic_role_set,
+            commands::topic_page::topic_lookup,
+            commands::topic_page::topics_named_in,
+            commands::topic_page::topic_names,
+            commands::topic_page::set_topic_names,
+            commands::topic_page::topic_steps_state,
+            commands::topic_page::set_topic_steps_enabled,
+            commands::topic_page::topic_steps_estimate,
+            commands::topic_page::start_topic_steps,
+            commands::topics::topic_sort_state,
+            commands::topics::set_typesafe_key,
+            commands::topics::set_topic_sort_enabled,
+            commands::topics::topic_sort_estimate,
+            commands::topics::start_topic_sort,
+            commands::topics::topic_seeds,
+            commands::topics::save_topic_seed,
+            commands::topics::delete_topic_seed,
+            commands::topics::merge_topic_seeds,
+            commands::topics::topic_suggestions,
+            commands::topics::accept_topic_suggestion,
+            commands::topics::dismiss_topic_suggestion,
             commands::ai::set_prompt,
             commands::ai::set_summary_instructions,
             commands::ai::provider_models,
@@ -162,10 +196,13 @@ pub fn run() {
             commands::workspace::meeting_set_spoken_language,
             commands::workspace::meeting_transcribe_again,
             commands::workspace::meeting_live_alerts,
+            commands::workspace::meeting_live_transcript,
             crate::question_alert::question_alert_status,
             crate::question_alert::question_alert_open,
             crate::question_alert::question_alert_dismiss,
             crate::question_alert::take_pending_open_meeting,
+            crate::tray::popup_open_topic,
+            crate::tray::take_pending_open_topic,
             crate::budget_alert::budget_alert_status,
             crate::budget_alert::budget_alert_raise,
             crate::budget_alert::budget_alert_dismiss,
@@ -238,6 +275,7 @@ pub fn run() {
             commands::models::restart_app,
             commands::chat::chat_ask,
             commands::chat::chat_stop,
+            commands::meeting_ask::meeting_ask,
             commands::chat::chat_conversations,
             commands::chat::chat_conversation,
             commands::chat::chat_rename_conversation,
@@ -248,6 +286,7 @@ pub fn run() {
             commands::today::today_overview,
             commands::today::today_recap,
             commands::schedule::today_schedule,
+            commands::schedule::today_upcoming,
             commands::schedule::meeting_record_start_event,
             commands::skins::skins_list,
             commands::skins::skin_image,
@@ -303,6 +342,8 @@ pub fn run() {
                 }
             }
             api::local_model::stop();
+            // Quitting during the engine benchmark isn't the crash its marker stands for.
+            let _ = std::fs::remove_file(crate::meetings::benchmark::marker(&app.state::<AppState>().paths));
             let code = crate::restart::requested_exit_code();
             if code != 0 {
                 tracing::info!(code, "exiting with a requested code");

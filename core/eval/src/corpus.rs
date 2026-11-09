@@ -552,6 +552,8 @@ pub fn generate(
     }
     counts.emails = emails.len();
     store.upsert_email_items(&emails)?;
+    // The app folds synced emails into `threads` in a background job; do the same here.
+    while store.run_thread_state_sync_job(now_unix_ms)? {}
 
     // Calendar events, some in the future for "up next".
     let events: Vec<NewCalendarEventItem> = (0..profile.events)

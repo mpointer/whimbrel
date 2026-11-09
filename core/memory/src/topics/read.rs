@@ -8,7 +8,10 @@ use std::collections::HashSet;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
+use super::aliases::{alias_hits, live_seeds};
 use super::entities::parse_addresses;
+use super::index::calendar_series_key;
+use super::steps::primary_topic_for_source;
 use crate::{now_unix_ms, Store};
 
 const DAY_MS: i64 = 86_400_000;
@@ -84,7 +87,7 @@ fn target(window: &str, id: i64) -> Option<OpenTarget> {
     })
 }
 
-fn open_target(
+pub(crate) fn open_target(
     conn: &Connection,
     kind: &str,
     ref_id: Option<i64>,
@@ -140,7 +143,7 @@ fn summaries(
          FROM topic t \
            LEFT JOIN topic_member m ON m.topic_id = t.id AND m.origin != 'removed' \
            LEFT JOIN topic_source s ON s.id = m.source_id \
-         WHERE t.merged_into IS NULL AND (?1 IS NULL OR t.id = ?1) \
+         WHERE t.merged_into IS NULL AND (?1 IS NULL OR t.id = ?1) AND t.id NOT IN (SELECT topic_id FROM topic_seed WHERE deleted = 1) \
          GROUP BY t.id HAVING COUNT(s.id) >= ?2 AND last >= ?3 \
          ORDER BY last DESC, t.id DESC LIMIT ?4",
     )?;
@@ -164,7 +167,7 @@ fn summaries(
         .collect()
 }
 
-fn members(conn: &Connection, topic_id: i64) -> rusqlite::Result<Vec<TopicMember>> {
+pub(crate) fn members(conn: &Connection, topic_id: i64) -> rusqlite::Result<Vec<TopicMember>> {
     let mut stmt = conn.prepare(
         "SELECT s.id, s.kind, s.ref_id, s.ts_unix_ms, s.title, m.origin, s.stub \
          FROM topic_member m JOIN topic_source s ON s.id = m.source_id \
@@ -192,10 +195,15 @@ fn members(conn: &Connection, topic_id: i64) -> rusqlite::Result<Vec<TopicMember
     Ok(out)
 }
 
-/// Earliest future calendar event whose attendees include a person the topic knows:
-/// by entity mention when the event is indexed, else by attendee address against the
-/// topic's `email:` person keys.
-fn next_event(conn: &Connection, topic_id: i64, now: i64) -> rusqlite::Result<Option<TopicMember>> {
+/// Earliest future calendar event of the topic. An event named for topics (its series'
+/// primary topic, else the seed topics its title names) matches only those; any other
+/// matches when its attendees include a person the topic knows: by entity mention when the
+/// event is indexed, else by attendee address against the topic's `email:` person keys.
+pub(crate) fn next_event(
+    conn: &Connection,
+    topic_id: i64,
+    now: i64,
+) -> rusqlite::Result<Option<TopicMember>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT e.id, e.key FROM entity e \
            JOIN entity_mention em ON em.entity_id = e.id \
@@ -205,9 +213,7 @@ fn next_event(conn: &Connection, topic_id: i64, now: i64) -> rusqlite::Result<Op
     let people: Vec<(i64, String)> = stmt
         .query_map([topic_id], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    if people.is_empty() {
-        return Ok(None);
-    }
+    let seeds = live_seeds(conn)?;
     let ids: HashSet<i64> = people.iter().map(|p| p.0).collect();
     let emails: HashSet<&str> = people
         .iter()
@@ -215,7 +221,7 @@ fn next_event(conn: &Connection, topic_id: i64, now: i64) -> rusqlite::Result<Op
         .collect();
     // ponytail: scans the next 200 events; raise if someone books further ahead than that
     let mut stmt = conn.prepare(
-        "SELECT i.id, i.ts_unix_ms, COALESCE(i.title, ''), i.actors, s.id \
+        "SELECT i.id, i.ts_unix_ms, COALESCE(i.title, ''), i.actors, s.id, i.source, i.external_id \
          FROM items i LEFT JOIN topic_source s ON s.kind = 'calendar_event' AND s.ref_id = i.id \
          WHERE i.kind = 'calendar_event' AND i.ts_unix_ms > ?1 ORDER BY i.ts_unix_ms, i.id LIMIT 200",
     )?;
@@ -223,14 +229,27 @@ fn next_event(conn: &Connection, topic_id: i64, now: i64) -> rusqlite::Result<Op
     while let Some(r) = rows.next()? {
         let (item, ts, title, actors, sid): (i64, i64, String, Option<String>, Option<i64>) =
             (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?);
-        let by_email = actors
-            .and_then(|a| serde_json::from_str::<Vec<String>>(&a).ok())
-            .unwrap_or_default()
-            .iter()
-            .flat_map(|a| parse_addresses(a))
-            .any(|a| emails.contains(a.email.as_str()));
+        let series = match (
+            r.get::<_, Option<String>>(5)?,
+            r.get::<_, Option<String>>(6)?,
+        ) {
+            (Some(src), Some(ext)) => series_topic(conn, &calendar_series_key(&src, &ext))?,
+            _ => None,
+        };
+        let named = match series {
+            Some((t, _)) => vec![t],
+            None => alias_hits(&title, &seeds),
+        };
+        let by_name = named.contains(&topic_id);
+        let by_email = named.is_empty()
+            && actors
+                .and_then(|a| serde_json::from_str::<Vec<String>>(&a).ok())
+                .unwrap_or_default()
+                .iter()
+                .flat_map(|a| parse_addresses(a))
+                .any(|a| emails.contains(a.email.as_str()));
         let by_mention = match sid {
-            Some(sid) => {
+            Some(sid) if named.is_empty() => {
                 let mut m = conn
                     .prepare_cached("SELECT entity_id FROM entity_mention WHERE source_id = ?1")?;
                 let found = m
@@ -238,9 +257,9 @@ fn next_event(conn: &Connection, topic_id: i64, now: i64) -> rusqlite::Result<Op
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 found.iter().any(|e| ids.contains(e))
             }
-            None => false,
+            _ => false,
         };
-        if by_email || by_mention {
+        if by_name || by_email || by_mention {
             return Ok(Some(TopicMember {
                 source_id: sid.unwrap_or(0),
                 kind: "calendar_event".into(),
@@ -254,6 +273,24 @@ fn next_event(conn: &Connection, topic_id: i64, now: i64) -> rusqlite::Result<Op
         }
     }
     Ok(None)
+}
+
+/// The seed topic a calendar series belongs to: its source's primary topic.
+pub(crate) fn series_topic(
+    conn: &Connection,
+    series_key: &str,
+) -> rusqlite::Result<Option<(i64, String)>> {
+    let sid: Option<i64> = conn
+        .query_row(
+            "SELECT source_id FROM topic_series WHERE series_key = ?1",
+            [series_key],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match sid {
+        Some(sid) => primary_topic_for_source(conn, sid),
+        None => Ok(None),
+    }
 }
 
 fn card(
@@ -294,16 +331,17 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT t.id FROM topic t JOIN topic_member m ON m.topic_id = t.id AND m.origin != 'removed' \
                JOIN topic_source s ON s.id = m.source_id \
-             WHERE t.name_dirty = 1 AND t.name_is_user = 0 AND t.merged_into IS NULL \
+             WHERE t.name_dirty = 1 AND t.name_is_user = 0 AND t.merged_into IS NULL AND t.id NOT IN (SELECT topic_id FROM topic_seed WHERE deleted = 1) \
              GROUP BY t.id HAVING COUNT(*) >= 2 ORDER BY MAX(s.ts_unix_ms) DESC, t.id DESC LIMIT ?1",
         )?;
         let ids: Vec<i64> = stmt
             .query_map([limit as i64], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
+        let common = super::cluster::common_phrases(&self.conn)?;
         let mut ents = self.conn.prepare(
-            "SELECT e.display FROM entity e JOIN entity_mention em ON em.entity_id = e.id \
+            "SELECT e.id, e.display FROM entity e JOIN entity_mention em ON em.entity_id = e.id \
                JOIN topic_member m ON m.source_id = em.source_id AND m.topic_id = ?1 AND m.origin != 'removed' \
-             GROUP BY e.id ORDER BY SUM(em.weight) DESC, e.id LIMIT 5",
+             GROUP BY e.id ORDER BY SUM(em.weight) DESC, e.id",
         )?;
         let mut titles = self.conn.prepare(
             "SELECT s.title FROM topic_member m JOIN topic_source s ON s.id = m.source_id \
@@ -315,7 +353,10 @@ impl Store {
                 Ok(TopicNameInput {
                     id,
                     top_entities: ents
-                        .query_map([id], |r| r.get(0))?
+                        .query_map([id], |r| Ok((r.get::<_, i64>(0)?, r.get(1)?)))?
+                        .filter(|e| !e.as_ref().is_ok_and(|(id, _)| common.contains(id)))
+                        .take(5)
+                        .map(|e| e.map(|(_, d)| d))
                         .collect::<rusqlite::Result<_>>()?,
                     sample_titles: titles
                         .query_map([id], |r| r.get(0))?
@@ -646,6 +687,24 @@ mod tests {
     }
 
     #[test]
+    fn next_event_named_for_another_topic_is_not_matched_by_attendees() {
+        let s = Store::open_in_memory().unwrap();
+        let t = s.create_seed_topic("Maximus", &[], None).unwrap().topic_id;
+        s.create_seed_topic("Beta", &[], None).unwrap();
+        let sid = source(&s, "email", None, NOW - DAY, "m", false);
+        member(&s, t, sid, "seed");
+        person(&s, "email:ann@acme.com", "Ann", sid, 1.0);
+        let ev = |ts: i64, title: &str, who: &str| {
+            sql(&s, "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, external_id) VALUES ('d','calendar_event','google_calendar',?1,json_array(?2),?3,'',?1)", params![ts, who, title])
+        };
+        ev(NOW + DAY, "Beta sync", "ann@acme.com"); // Ann, but named for Beta
+        let qbr = ev(NOW + 2 * DAY, "Maximus QBR", "zed@else.com"); // named, no one known
+        ev(NOW + 3 * DAY, "1:1", "ann@acme.com");
+        let ne = s.topic_detail_at(t, NOW).unwrap().unwrap().card.next_event;
+        assert_eq!(ne.unwrap().ref_id, Some(qbr));
+    }
+
+    #[test]
     fn email_member_opens_gmail_thread_window() {
         let s = Store::open_in_memory().unwrap();
         let t = topic(&s, "x");
@@ -718,6 +777,45 @@ mod tests {
         assert!(s.topic_detail_at(t, NOW).unwrap().unwrap().members[0]
             .open
             .is_none());
+    }
+
+    #[test]
+    fn naming_skips_phrases_on_many_episodes() {
+        let s = Store::open_in_memory().unwrap();
+        let t = live_topic(&s, "", 2, NOW);
+        let members: Vec<i64> = s
+            .conn
+            .prepare("SELECT source_id FROM topic_member WHERE topic_id = ?1")
+            .unwrap()
+            .query_map([t], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let mut others = vec![];
+        for i in 0..98 {
+            others.push(source(&s, "episode", Some(i), 1, "e", false));
+        }
+        let phrase = |key: &str, sids: &[i64], w: f64| {
+            sql(&s, "INSERT INTO entity (kind, key, display, updated_at_unix_ms) VALUES ('phrase',?1,?1,0)", [key]);
+            let e = s.conn.last_insert_rowid();
+            for sid in sids {
+                sql(
+                    &s,
+                    "INSERT INTO entity_mention (entity_id, source_id, weight) VALUES (?1,?2,?3)",
+                    params![e, sid, w],
+                );
+            }
+        };
+        // On 4 of 100 episodes (> 3%): never a name, however heavy.
+        phrase(
+            "cursor agents",
+            &[members[0], members[1], others[0], others[1]],
+            5.0,
+        );
+        phrase("falcon launch", &members, 1.0);
+        let need = s.topics_needing_names(10).unwrap();
+        assert_eq!(need[0].id, t);
+        assert_eq!(need[0].top_entities, vec!["falcon launch"]);
     }
 
     #[test]

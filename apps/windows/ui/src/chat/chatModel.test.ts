@@ -19,7 +19,7 @@ describe("applyEvent", () => {
     expect(streaming.text).toBe("The falcon migration [1].");
     expect(isBusy(streaming)).toBe(true);
 
-    const done = applyEvent(streaming, { kind: "completed", answer: "The falcon migration [1].", citations: [{ kind: "capture", id: 4 }], conversationId: 3 });
+    const done = applyEvent(streaming, { kind: "completed", answer: "The falcon migration [1].", citations: [{ kind: "capture", id: 4 }], conversationId: 3, narrowed: false });
     expect(done.status).toBe("done");
     expect(done.runId).toBeNull();
     expect(citedEntries(done.citations, done.context)).toEqual([capture]);

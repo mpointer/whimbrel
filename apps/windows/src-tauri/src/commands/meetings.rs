@@ -55,6 +55,10 @@ pub struct MeetingSettings {
     pub prep_lead_minutes: f64,
     /// "Alert me when someone asks me something". On by default.
     pub live_question_alerts: bool,
+    /// "Live transcript during meetings". On by default, kept on this PC. Turning it off
+    /// deletes every live transcript line stored.
+    #[serde(default = "on")]
+    pub live_transcript: bool,
     /// "Remember people's voices" (speaker names). On by default, kept on this PC.
     #[serde(default = "remember_voices_default")]
     pub remember_voices: bool,
@@ -71,6 +75,10 @@ fn remember_voices_default() -> bool {
     true
 }
 
+fn on() -> bool {
+    true
+}
+
 fn read_settings(settings: &crate::settings::SettingsFile) -> MeetingSettings {
     MeetingSettings {
         heuristic_detection: settings.heuristic_detection_enabled(),
@@ -78,6 +86,7 @@ fn read_settings(settings: &crate::settings::SettingsFile) -> MeetingSettings {
         lead_minutes: settings.lead_minutes(),
         prep_lead_minutes: settings.prep_lead_minutes(),
         live_question_alerts: settings.live_question_enabled(),
+        live_transcript: settings.live_transcript_enabled(),
         remember_voices: settings.remember_voices(),
         other_names: settings.other_names(),
         has_names: !settings.live_question_names().is_empty(),
@@ -88,6 +97,7 @@ fn apply_settings(file: &mut crate::settings::SettingsFile, settings: MeetingSet
     file.set_meeting_settings(settings.heuristic_detection, settings.auto_start, settings.lead_minutes);
     file.set_prep_lead_minutes(settings.prep_lead_minutes);
     file.set_live_question_enabled(settings.live_question_alerts);
+    file.set_live_transcript_enabled(settings.live_transcript);
     file.set_remember_voices(settings.remember_voices);
     crate::syncing::settings::edit(file, |f| f.set_other_names(&settings.other_names));
 }
@@ -99,10 +109,25 @@ pub fn meeting_settings(state: tauri::State<'_, AppState>) -> MeetingSettings {
 
 #[tauri::command]
 pub fn set_meeting_settings(state: tauri::State<'_, AppState>, settings: MeetingSettings) -> Result<MeetingSettings, CommandError> {
-    {
+    let turned_off = {
         let mut file = state.settings.lock().unwrap();
+        let was_on = file.live_transcript_enabled();
         apply_settings(&mut file, settings);
         file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
+        was_on && !file.live_transcript_enabled()
+    };
+    if turned_off {
+        // Off means gone, as on the Mac: every live line, not just this meeting's. Queued after
+        // the setting changed, and the writer reads the setting inside its own store call, so no
+        // line written before this survives it and none is written after.
+        if let Ok(store) = state.store() {
+            let store = store.clone();
+            std::thread::spawn(move || {
+                if let Ok(Err(e)) = store.call_blocking(|s| s.purge_stale_live_segments(i64::MAX / 2)) {
+                    tracing::warn!(error = %e, "could not delete the live transcript");
+                }
+            });
+        }
     }
     Ok(meeting_settings(state))
 }
@@ -165,6 +190,7 @@ mod settings_tests {
                 lead_minutes: 3.0,
                 prep_lead_minutes: 90.0,
                 live_question_alerts: true,
+                live_transcript: true,
                 remember_voices: true,
                 other_names: String::new(),
                 has_names: false,
@@ -182,6 +208,10 @@ mod settings_tests {
         assert!(current.remember_voices, "remembering voices is on by default");
         apply_settings(&mut file, MeetingSettings { remember_voices: false, ..current });
         assert!(!file.remember_voices(), "turned off, the pipeline keeps no voices");
+        let current = read_settings(&file);
+        assert!(current.live_transcript, "the live transcript is on by default");
+        apply_settings(&mut file, MeetingSettings { live_transcript: false, ..current });
+        assert!(!file.live_transcript_enabled());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

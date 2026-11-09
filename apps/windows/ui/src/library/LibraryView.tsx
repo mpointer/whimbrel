@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { libraryEpisodes, libraryRecent, librarySearch, librarySettings, setEpisodeAppHidden, setShowScreenCaptures } from "../api";
 import { AskView } from "../chat/AskView";
+import { TopicPageOffer } from "../topics/TopicChip";
 import type { AskRequest } from "../chat/chatModel";
 import { BetterTranscriptsCard } from "../settings/BetterTranscriptsCard";
 import { DigestView } from "../today/DigestView";
@@ -51,6 +52,8 @@ export function LibraryView({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // The query last searched, for "Open topic page" (topics piece 2).
+  const [searched, setSearched] = useState("");
   const [includeHidden, setIncludeHidden] = useState(false);
   const [showCaptures, setShowCaptures] = useState(true);
   const [hiddenApps, setHiddenApps] = useState<string[]>([]);
@@ -109,6 +112,7 @@ export function LibraryView({
 
   const search = (e: React.FormEvent) => {
     e.preventDefault();
+    setSearched(query);
     run(() => librarySearch(query, mode === "semantic"));
   };
 
@@ -172,6 +176,7 @@ export function LibraryView({
           </button>
         </form>
       )}
+      {(mode === "keyword" || mode === "semantic") && <TopicPageOffer text={searched} />}
       {mode === "semantic" && (
         <p className="muted small">
           {t("Semantic search needs the search model from Settings → Semantic search. Until it is downloaded it finds nothing.")}

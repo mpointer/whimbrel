@@ -23,6 +23,8 @@ pub mod accounts {
     pub const OPENROUTER_API_KEY: &str = "openrouter-api-key";
     /// The Brave Search key the skin maker searches for images with (Mac: `KeychainService.imageSearch`).
     pub const IMAGE_SEARCH_API_KEY: &str = "image-search-api-key";
+    /// The TypeSafe key topic sorting uses (Mac: `KeychainService.typesafe`). Stays on this PC.
+    pub const TYPESAFE_API_KEY: &str = "typesafe-api-key";
     pub const DEVICE_SECRET_KEY: &str = "device-secret-key";
     pub const GROUP_KEY: &str = "group-key";
     pub const GOOGLE_SYNC: &str = "google-sync";

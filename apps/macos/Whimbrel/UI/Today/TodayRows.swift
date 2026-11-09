@@ -31,6 +31,8 @@ struct TodayEventRowModel {
     let showsStart: Bool
     /// Only the next event carries prep state; nil for the rest.
     let prep: Prep?
+    /// The topic this event belongs to, for its chip.
+    let topic: TopicRef?
 }
 
 struct TodayMeetingRowModel {
@@ -40,6 +42,25 @@ struct TodayMeetingRowModel {
     let title: String
     /// "Transcribing…" for the meeting being processed; otherwise the usual subtitle (may be empty).
     let subtitle: String
+    /// The topic this meeting belongs to, for its chip.
+    let topic: TopicRef?
+}
+
+/// One meeting in Today's Upcoming section. A row opens nothing; its topic chip opens the topic.
+struct TodayWeekRowModel: Identifiable {
+    let id: String
+    let timeText: String
+    let title: String
+    /// "3 invited" (the other attendees); empty when there are none.
+    let invited: String
+    let topic: TopicRef?
+}
+
+/// One day of the Upcoming section: "Tomorrow", then e.g. "Wed, Nov 11".
+struct TodayWeekDay: Identifiable {
+    let id: Date
+    let heading: String
+    let rows: [TodayWeekRowModel]
 }
 
 enum TodayRecapModel: Equatable {
@@ -107,6 +128,38 @@ enum TodayRows {
         return .none
     }
 
+    /// Days shown before "Show the rest of the week".
+    static let upcomingCollapsedDays = 2
+    /// Per device, like the rest of Today's view state.
+    static let upcomingExpandedKey = "com.mpointer.kestrel.todayUpcomingExpanded"
+
+    /// The Upcoming section's days, only those with meetings, earliest first; the first
+    /// `upcomingCollapsedDays` unless `expanded`.
+    static func upcomingDays(_ content: TodayContent, expanded: Bool, calendar: Calendar = .current) -> [TodayWeekDay] {
+        let byDay = Dictionary(grouping: content.upcomingWeek) { calendar.startOfDay(for: $0.startDate) }
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: content.now))
+        let days = byDay.keys.sorted().map { day in
+            TodayWeekDay(
+                id: day,
+                heading: day == tomorrow ? String(localized: "Tomorrow") : day.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()),
+                rows: byDay[day, default: []].sorted { $0.startDate < $1.startDate }.map { m in
+                    TodayWeekRowModel(
+                        // A recurring EventKit event repeats its id across occurrences; the start tells them apart.
+                        id: "\(m.id)@\(m.startDate.timeIntervalSince1970)", timeText: MeetingRowText.time(m.startDate), title: m.title,
+                        invited: m.attendees.isEmpty ? "" : String(localized: "\(m.attendees.count) invited"),
+                        topic: content.topicsByEvent[m.id]
+                    )
+                }
+            )
+        }
+        return expanded ? days : Array(days.prefix(upcomingCollapsedDays))
+    }
+
+    /// Whether the section has more days than it shows collapsed (so it needs the toggle).
+    static func upcomingHasMore(_ content: TodayContent, calendar: Calendar = .current) -> Bool {
+        Set(content.upcomingWeek.map { calendar.startOfDay(for: $0.startDate) }).count > upcomingCollapsedDays
+    }
+
     private static func eventRow(_ id: String, content: TodayContent, isNext: Bool) -> TodayEventRowModel? {
         guard let event = content.upcoming.first(where: { $0.id == id }) else { return nil }
         let source = content.events.first { $0.id == id }
@@ -119,7 +172,7 @@ enum TodayRows {
             timeText: MeetingRowText.time(event.start),
             relative: source.flatMap { TodayLogic.relativeStart(event.start, end: $0.endDate, now: content.pinnedNow ?? Date()) },
             attendees: MeetingRowText.attendeeSummary(source?.attendees ?? []),
-            isNext: isNext, showsStart: content.activeMeetingId == nil, prep: prep
+            isNext: isNext, showsStart: content.activeMeetingId == nil, prep: prep, topic: content.topicsByEvent[id]
         )
     }
 
@@ -131,7 +184,8 @@ enum TodayRows {
         guard let meeting = content.recentMeetings.first(where: { $0.id == id }) else { return nil }
         return TodayMeetingRowModel(
             id: id, startUnixMs: meeting.startUnixMs, timeText: MeetingRowText.time(meeting.startUnixMs), title: meeting.title,
-            subtitle: content.processingMeetingId == id ? String(localized: "Transcribing…") : MeetingRowText.subtitle(for: meeting)
+            subtitle: content.processingMeetingId == id ? String(localized: "Transcribing…") : MeetingRowText.subtitle(for: meeting),
+            topic: content.topicsByMeeting[id]
         )
     }
 }

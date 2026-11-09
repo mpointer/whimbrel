@@ -133,6 +133,8 @@ fn supervise(exe: &Path, logs_dir: &Path) -> i32 {
             Next::Exit if code == 0 => return 0,
             Next::Exit => {
                 note(logs_dir, &format!("Whimbrel exited with code {code} (0x{:08X}) after {ran} s: {} crashes in 10 minutes, so not relaunching", code as u32, crashes.len()));
+                // The app can't reach Send feedback; offer the report from here.
+                crate::crash_report::offer(logs_dir, code, crashes.len(), ran);
                 return code;
             }
             Next::Relaunch(delay) => {

@@ -214,26 +214,45 @@ fn snapshot_entry(h: &memory::MeetingSnapshotHit) -> ContextEntry {
     }
 }
 
-/// The candidates a citation can resolve against: the Mac's `fetchContextItems`
-/// (`TimelineView.swift`). Keyword captures, transcripts and slides (5 each), or semantic
-/// when keyword finds none of them, plus 5 routine runs, 10 episodes and 10 threads. A
-/// display resolver only; retrieval for the answer itself is `api::ask`'s own. Errors
-/// read as empty: this never fails a question.
-pub fn fetch_context(store: &memory::Store, query: &str) -> Vec<ContextEntry> {
-    let mut captures = store.search_keyword(query, CONTEXT_LIMIT).unwrap_or_default();
-    let mut transcripts = store.search_transcript_keyword(query, CONTEXT_LIMIT).unwrap_or_default();
-    let mut slides = store.search_snapshot_keyword_with_meeting_ts(query, CONTEXT_LIMIT).unwrap_or_default();
-    if captures.is_empty() && transcripts.is_empty() && slides.is_empty() {
-        captures = store.search_semantic(query, CONTEXT_LIMIT).unwrap_or_default();
-        transcripts = store.search_transcript_semantic(query, CONTEXT_LIMIT).unwrap_or_default();
-        slides = store.search_snapshot_semantic_with_meeting_ts(query, CONTEXT_LIMIT).unwrap_or_default();
+fn thread_entry(t: memory::Thread) -> ContextEntry {
+    ContextEntry {
+        item: ContextItemRef::Thread { id: t.id },
+        label: t.subject.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| tr("(no subject)", &[])),
+        ts_unix_ms: Some(t.last_activity_ts_unix_ms),
+        open: None,
     }
+}
+
+/// Appends the entries whose item isn't in `out` yet (nor earlier in `more`), in order.
+fn add_unseen(out: &mut Vec<ContextEntry>, more: impl IntoIterator<Item = ContextEntry>) {
+    let mut seen: std::collections::HashSet<ContextItemRef> = out.iter().map(|e| e.item).collect();
+    out.extend(more.into_iter().filter(|e| seen.insert(e.item)));
+}
+
+/// The candidates a citation can resolve against: the Mac's `fetchContextItems`
+/// (`TimelineView+Ask.swift`). Keyword captures, transcripts and slides (5 each), then
+/// semantic ones not already listed, 5 routine runs, 10 episodes, the 5 email threads
+/// whose messages match (PR 628), and the 10 threads waiting on the user. A display
+/// resolver only; retrieval for the answer itself is `api::ask`'s own. Errors read as
+/// empty: this never fails a question.
+pub fn fetch_context(store: &memory::Store, query: &str) -> Vec<ContextEntry> {
+    let captures = store.search_keyword(query, CONTEXT_LIMIT).unwrap_or_default();
+    let transcripts = store.search_transcript_keyword(query, CONTEXT_LIMIT).unwrap_or_default();
+    let slides = store.search_snapshot_keyword_with_meeting_ts(query, CONTEXT_LIMIT).unwrap_or_default();
     let mut out: Vec<ContextEntry> = captures
         .iter()
         .map(capture_entry)
         .chain(transcripts.iter().map(transcript_entry))
         .chain(slides.iter().map(|(h, _)| snapshot_entry(h)))
         .collect();
+    // Ask's own retrieval always fuses keyword and semantic hits, so a citation can point at
+    // either; keyword search ORs its words (PR 622) and is rarely empty now. The semantic hits
+    // follow the keyword ones, minus any already listed (as on the Mac).
+    let captures = store.search_semantic(query, CONTEXT_LIMIT).unwrap_or_default();
+    let transcripts = store.search_transcript_semantic(query, CONTEXT_LIMIT).unwrap_or_default();
+    let slides = store.search_snapshot_semantic_with_meeting_ts(query, CONTEXT_LIMIT).unwrap_or_default();
+    let semantic = captures.iter().map(capture_entry).chain(transcripts.iter().map(transcript_entry)).chain(slides.iter().map(|(h, _)| snapshot_entry(h)));
+    add_unseen(&mut out, semantic);
     out.extend(store.recent_routine_runs_across_all(5).unwrap_or_default().into_iter().map(|r| ContextEntry {
         item: ContextItemRef::RoutineRun { id: r.id },
         label: r.routine_name,
@@ -246,12 +265,11 @@ pub fn fetch_context(store: &memory::Store, query: &str) -> Vec<ContextEntry> {
         ts_unix_ms: Some(e.start_ts_unix_ms),
         open: Some(LibraryTarget::Episode { id: e.id }),
     }));
-    out.extend(store.threads_needing_attention(10).unwrap_or_default().into_iter().map(|t| ContextEntry {
-        item: ContextItemRef::Thread { id: t.id },
-        label: t.subject.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| tr("(no subject)", &[])),
-        ts_unix_ms: Some(t.last_activity_ts_unix_ms),
-        open: None,
-    }));
+    // Ask finds email through its thread (PR 628); those come first, then the waiting
+    // threads not already listed.
+    let email = store.search_email_thread_keyword(query, CONTEXT_LIMIT).unwrap_or_default();
+    out.extend(email.into_iter().map(|hit| thread_entry(hit.thread)));
+    add_unseen(&mut out, store.threads_needing_attention(10).unwrap_or_default().into_iter().map(thread_entry));
     out
 }
 
@@ -268,7 +286,7 @@ pub enum ChatEvent {
     /// The stream failed before any output; the blocking path is answering instead.
     FellBack,
     #[serde(rename_all = "camelCase")]
-    Completed { answer: String, citations: Vec<ContextItemRef>, conversation_id: Option<i64> },
+    Completed { answer: String, citations: Vec<ContextItemRef>, conversation_id: Option<i64>, narrowed: bool },
     /// Stopped: the question goes back into the composer.
     Cancelled,
     /// `partial`: some of the answer had streamed before it failed.
@@ -495,6 +513,52 @@ mod tests {
     }
 
     #[test]
+    fn semantic_hits_follow_keyword_hits_without_repeats() {
+        let entry = |item| ContextEntry { item, label: String::new(), ts_unix_ms: None, open: None };
+        let mut out = vec![entry(ContextItemRef::Capture { id: 1 }), entry(ContextItemRef::Transcript { id: 2 })];
+        add_unseen(
+            &mut out,
+            [ContextItemRef::Capture { id: 1 }, ContextItemRef::Capture { id: 3 }, ContextItemRef::Capture { id: 3 }, ContextItemRef::Transcript { id: 2 }].map(entry),
+        );
+        let items: Vec<ContextItemRef> = out.iter().map(|e| e.item).collect();
+        assert_eq!(items, [ContextItemRef::Capture { id: 1 }, ContextItemRef::Transcript { id: 2 }, ContextItemRef::Capture { id: 3 }]);
+    }
+
+    #[test]
+    fn email_threads_that_match_come_first_without_repeats() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let email = |id: &str, thread: &str, subject: &str, body: &str, ts: i64| memory::NewEmailItem {
+            device_id: "dev".into(),
+            external_id: id.into(),
+            ts_unix_ms: ts,
+            from: "priya@example.com".into(),
+            to: "me@example.com".into(),
+            subject: subject.into(),
+            body_text: body.into(),
+            gmail_thread_id: thread.into(),
+            account_email: "me@example.com".into(),
+            gmail_labels: vec!["INBOX".into()],
+            list_unsubscribe: false,
+        };
+        store
+            .upsert_email_items(&[
+                email("m-1", "t-1", "Budget", "The Falcon budget is 40k for Q3", 1_000),
+                email("m-2", "t-2", "Lunch", "Lunch on Friday?", 2_000),
+            ])
+            .unwrap();
+        while store.run_thread_state_sync_job(5_000).unwrap() {}
+        let waiting = store.threads_needing_attention(10).unwrap();
+        let budget = waiting.iter().find(|t| t.external_thread_id == "t-1").expect("the budget thread waits on me").id;
+
+        let context = fetch_context(&store, "What is the Falcon budget?");
+        let threads: Vec<&ContextEntry> = context.iter().filter(|e| matches!(e.item, ContextItemRef::Thread { .. })).collect();
+        assert_eq!(threads[0].item, ContextItemRef::Thread { id: budget }, "the matching thread leads");
+        assert_eq!(threads[0].label, "Budget");
+        assert_eq!(threads.iter().filter(|e| e.item == ContextItemRef::Thread { id: budget }).count(), 1);
+        assert_eq!(threads.len(), 2, "the other waiting thread still follows");
+    }
+
+    #[test]
     fn context_resolves_a_slide_to_its_meeting() {
         let store = memory::Store::open_in_memory().unwrap();
         let meeting = store
@@ -531,7 +595,7 @@ mod tests {
         let v = serde_json::to_value(started).unwrap();
         assert_eq!((v["kind"].as_str(), v["runId"].as_str()), (Some("started"), Some("r")));
         assert_eq!(serde_json::to_value(ChatEvent::FellBack).unwrap(), serde_json::json!({"kind": "fell_back"}));
-        let done = ChatEvent::Completed { answer: "a".into(), citations: vec![ContextItemRef::Episode { id: 7 }], conversation_id: Some(3) };
+        let done = ChatEvent::Completed { answer: "a".into(), citations: vec![ContextItemRef::Episode { id: 7 }], conversation_id: Some(3), narrowed: false };
         let v = serde_json::to_value(done).unwrap();
         assert_eq!(v["citations"][0], serde_json::json!({"kind": "episode", "id": 7}));
         assert_eq!(v["conversationId"], 3);

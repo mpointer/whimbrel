@@ -380,6 +380,17 @@ impl Store {
                  VALUES (?1, ?2, ?3, ?4)",
                 params![t.origin_device_id, t.origin_epoch.as_deref().unwrap_or(""), t.source_meeting_id, t.forgotten_at_unix_ms],
             )?;
+            // Its steps by source key: pulled ones may have no local source_id. A tombstone for this
+            // device's meeting id that matched no meeting here names an earlier database's meeting.
+            if local.is_some()
+                || self.own_device_id().as_deref() != Some(t.origin_device_id.as_str())
+            {
+                crate::topics::steps::delete_meeting_steps(
+                    &tx,
+                    &t.origin_device_id,
+                    t.source_meeting_id,
+                )?;
+            }
             // Rows that reached this device before their meeting and wait for it: it never comes now.
             tx.execute(
                 "DELETE FROM meeting_speaker_pending WHERE origin_device_id = ?1 AND source_meeting_id = ?2",

@@ -119,13 +119,85 @@ fn settings_round(settings: &Mutex<SettingsFile>, store: &StoreHandle, secrets: 
     let key = keys::load_group_key(secrets)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| tr("This PC doesn't hold the account key yet.", &[]))?;
-    super::settings::run_round(settings, store, |local| {
+    super::settings::run_round(settings, store, secrets, |local| {
         api::sync_ops::coordinators::settings_iteration(url, token, &key, local).map_err(|e| e.to_string())
     })
 }
 
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// A step that lasts this long is stuck: a round is bounded at 30 s, and an idle wait is 60 s.
+const STUCK_AFTER: Duration = Duration::from_secs(10 * 60);
+/// How often the watchdog looks.
+const WATCHDOG_EVERY: Duration = Duration::from_secs(60);
+
+/// What the sync loop is doing and since when, so a watchdog can say in the log when it stops
+/// moving (issue 590: the Mac's outbox sent nothing for four days and no log showed why).
+#[derive(Debug)]
+pub struct Heartbeat {
+    step: &'static str,
+    since: Instant,
+    /// The step the watchdog last reported as stuck, so it says so once.
+    reported: Option<(&'static str, Instant)>,
+}
+
+impl Heartbeat {
+    pub fn new(now: Instant) -> Self {
+        Heartbeat { step: "idle", since: now, reported: None }
+    }
+
+    pub fn mark(&mut self, step: &'static str, now: Instant) {
+        self.step = step;
+        self.since = now;
+    }
+
+    /// What the watchdog should log now: `Some((step, how long, stuck))` once when a step passes
+    /// `STUCK_AFTER` (stuck = true) and once when that stuck step finally ends (stuck = false).
+    pub fn check(&mut self, now: Instant) -> Option<(&'static str, Duration, bool)> {
+        if let Some((step, since)) = self.reported {
+            if (step, since) != (self.step, self.since) {
+                self.reported = None;
+                return Some((step, self.since.saturating_duration_since(since), false));
+            }
+            return None;
+        }
+        let lasted = now.saturating_duration_since(self.since);
+        // Idle only lasts long while sync isn't Ready, which the loop logs itself.
+        if self.step != "idle" && lasted >= STUCK_AFTER {
+            self.reported = Some((self.step, self.since));
+            return Some((self.step, lasted, true));
+        }
+        None
+    }
+}
+
+/// Logs a sync step that has stopped moving, and when it moves again.
+fn start_watchdog(heartbeat: Arc<Mutex<Heartbeat>>) {
+    let spawned = std::thread::Builder::new().name("whimbrel-sync-watchdog".into()).spawn(move || loop {
+        std::thread::sleep(WATCHDOG_EVERY);
+        match heartbeat.lock().unwrap().check(Instant::now()) {
+            Some((step, lasted, true)) => tracing::warn!(step, minutes = lasted.as_secs() / 60, "content sync is stuck"),
+            Some((step, lasted, false)) => tracing::info!(step, minutes = lasted.as_secs() / 60, "content sync moved on after being stuck"),
+            None => {}
+        }
+    });
+    if let Err(e) = spawned {
+        tracing::warn!(error = %e, "sync watchdog did not start");
+    }
+}
+
+/// The outbox after a round, for the round's log line: how many changes wait and how old the
+/// oldest is in minutes.
+fn backlog_for_log(store: &StoreHandle) -> (i64, Option<i64>) {
+    let now = now_ms();
+    store
+        .call_blocking(move |s| s.outbox_backlog().ok())
+        .ok()
+        .flatten()
+        .map(|b| (b.pending, b.oldest_unix_ms.map(|t| (now - t).max(0) / 60_000)))
+        .unwrap_or((0, None))
 }
 
 /// Starts the coordinator thread. It lives for the process and does nothing until
@@ -151,14 +223,28 @@ pub fn start(
         }
         let mut schedule = Schedule::default();
         let mut last_label_refresh: Option<Instant> = None;
+        let heartbeat = Arc::new(Mutex::new(Heartbeat::new(Instant::now())));
+        start_watchdog(heartbeat.clone());
+        let mark = |step: &'static str| heartbeat.lock().unwrap().mark(step, Instant::now());
+        let mut was_ready = false;
         loop {
             std::thread::sleep(TICK);
             let credentials = controller.ready_credentials();
+            // Said once each way, so a long pause shows in the log (issue 590).
+            if credentials.is_some() != was_ready {
+                was_ready = credentials.is_some();
+                if was_ready {
+                    tracing::info!("content sync is ready");
+                } else {
+                    tracing::warn!("content sync paused: sync isn't ready");
+                }
+            }
             let Some(trigger) = schedule.decide(credentials.is_some(), Instant::now(), SystemTime::now()) else {
                 continue;
             };
             let Some(credentials) = credentials else { continue };
             let (url, token) = (credentials.turso_database_url, credentials.turso_token);
+            mark("settings round");
             let settings_round = settings_round(&settings, &store, &*secrets, &url, &token);
             match &settings_round {
                 Ok(applied) => tracing::info!(?trigger, applied, "settings sync round ok"),
@@ -169,12 +255,15 @@ pub fn start(
                 crate::budget_alert::push(&store, &settings);
             }
             controller.record_settings_result(settings_round.map(|_| now_ms()));
+            mark("content round");
             let result = run_round(&store, secrets.clone(), device_id.clone(), move |key, s, device| {
                 sync_engine::sync_content(&url, &token, key, s, device).map_err(|e| e.to_string())
             });
+            mark("after round");
+            let (outbox_pending, outbox_oldest_min) = backlog_for_log(&store);
             match &result {
-                Ok(()) => tracing::info!(?trigger, "content sync round ok"),
-                Err(e) => tracing::warn!(?trigger, error = %e, "content sync round failed"),
+                Ok(()) => tracing::info!(?trigger, outbox_pending, ?outbox_oldest_min, "content sync round ok"),
+                Err(e) => tracing::warn!(?trigger, outbox_pending, ?outbox_oldest_min, error = %e, "content sync round failed"),
             }
             // Meetings another device forgot (deletion sync, #584): their rows went in the round,
             // even one that failed later; their files here go now. The list reloads on its own.
@@ -203,6 +292,7 @@ pub fn start(
                     tracing::warn!(error = %e, "device list refresh after sync failed");
                 }
             }
+            mark("idle");
         }
     });
     if let Err(e) = spawned {
@@ -225,6 +315,35 @@ mod tests {
 
     fn in_memory() -> StoreHandle {
         StoreHandle::spawn(|| memory::Store::open_in_memory().map_err(|e| e.to_string())).unwrap()
+    }
+
+    #[test]
+    fn a_stuck_round_is_reported_once_then_when_it_moves_on() {
+        let t0 = Instant::now();
+        let mut h = Heartbeat::new(t0);
+        h.mark("content round", t0);
+        assert_eq!(h.check(t0 + Duration::from_secs(60)), None, "a minute is normal");
+        let stuck = t0 + STUCK_AFTER;
+        assert_eq!(h.check(stuck), Some(("content round", STUCK_AFTER, true)));
+        assert_eq!(h.check(stuck + WATCHDOG_EVERY), None, "said once");
+        let done = stuck + Duration::from_secs(120);
+        h.mark("after round", done);
+        assert_eq!(h.check(done), Some(("content round", STUCK_AFTER + Duration::from_secs(120), false)));
+        assert_eq!(h.check(done + WATCHDOG_EVERY), None);
+    }
+
+    #[test]
+    fn a_long_idle_is_not_stuck() {
+        // Idle lasts as long as sync isn't Ready, which the loop logs itself.
+        let t0 = Instant::now();
+        let mut h = Heartbeat::new(t0);
+        assert_eq!(h.check(t0 + STUCK_AFTER * 6), None);
+    }
+
+    #[test]
+    fn the_round_log_counts_the_outbox() {
+        let store = in_memory();
+        assert_eq!(backlog_for_log(&store), (0, None));
     }
 
     #[test]

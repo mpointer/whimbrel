@@ -2,7 +2,7 @@ import Foundation
 
 /// The parts of Today a layout can place. `nonEmptySections()` lists the ones with something to show.
 enum TodaySection: CaseIterable {
-    case greeting, composer, upNext, schedule, earlier, threads, followups, recap, devices
+    case greeting, composer, upNext, schedule, upcoming, earlier, threads, followups, recap, devices
 }
 
 /// Everything Today shows, as plain values: no store, no `AppState`. `TodayView` builds one from
@@ -34,6 +34,11 @@ struct TodayContent {
     var deviceLabels: [String: String]
     /// Open to-dos Away Mode left behind.
     var followups: [CoreMeetingFollowup] = []
+    /// Topics by calendar event id and by meeting id, for the rows' chips.
+    var topicsByEvent: [String: TopicRef] = [:]
+    var topicsByMeeting: [Int64: TopicRef] = [:]
+    /// The 7 days after today (`AppState.upcomingWeekMeetings`), for the Upcoming section.
+    var upcomingWeek: [QualifyingMeeting] = []
 
     private var clock: Date { pinnedNow ?? Date() }
 
@@ -85,6 +90,7 @@ struct TodayContent {
             case .composer: showComposer
             case .upNext: !agenda.upcomingToday.isEmpty
             case .schedule: !agenda.upcomingToday.isEmpty || !agenda.pastToday.isEmpty
+            case .upcoming: !upcomingWeek.isEmpty
             case .earlier: !agenda.earlier.isEmpty
             case .threads: !attentionThreads.isEmpty
             case .followups: !followups.isEmpty

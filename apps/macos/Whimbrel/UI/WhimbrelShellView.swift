@@ -2,13 +2,14 @@ import AppKit
 import SwiftUI
 import OSLog
 
-/// The five-tab meeting-first shell replacing TimelineView's mode-strip-first entry
+/// The six-tab meeting-first shell replacing TimelineView's mode-strip-first entry
 /// point. TimelineView's own 5 search modes are NOT removed — they relocate into
 /// `.library` as filters (see TodayView/MeetingsListView/library filter wiring).
 enum WhimbrelTab: String, CaseIterable, Identifiable {
     case today = "Today"
     case meetings = "Meetings"
     case library = "Library"
+    case topics = "Topics"
     case automations = "Automations"
     case settings = "Settings"
 
@@ -19,17 +20,31 @@ enum WhimbrelTab: String, CaseIterable, Identifiable {
         case .today: String(localized: "Today")
         case .meetings: String(localized: "Meetings")
         case .library: String(localized: "Library")
+        case .topics: String(localized: "Topics")
         case .automations: String(localized: "Automations")
         case .settings: String(localized: "Settings")
         }
     }
 
-    /// The skin's icon for the tab; Library has no skin role.
+    /// The Go menu's ⌘ number. Topics came later, so it takes the next free one.
+    var goKey: Character {
+        switch self {
+        case .today: "1"
+        case .meetings: "2"
+        case .library: "3"
+        case .automations: "4"
+        case .settings: "5"
+        case .topics: "6"
+        }
+    }
+
+    /// The skin's icon for the tab; Library and Topics have no skin role.
     var icon: Image {
         switch self {
         case .today: return Image(skinRole: .today)
         case .meetings: return Image(skinRole: .meetings)
         case .library: return Image(systemName: "books.vertical")
+        case .topics: return Image(systemName: "tag")
         case .automations: return Image(skinRole: .routines)
         case .settings: return Image(skinRole: .settings)
         }
@@ -93,6 +108,7 @@ struct WhimbrelShellView: View {
                 case .today: TodayView()
                 case .meetings: banded { MeetingsListView() }
                 case .library: banded { TimelineView() }
+                case .topics: banded { TopicsView() }
                 case .automations: banded { AutomationsView() }
                 case .settings: StatusOverviewView(openSettings: openSettings)
                 }
