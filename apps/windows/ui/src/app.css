@@ -1767,6 +1767,41 @@ button.link:focus-visible {
   margin: 0;
 }
 
+/* Settings → Sync & Devices: the phone apps' beta (the Mac's card). */
+.phone-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+}
+
+.phone-card__icon {
+  font-size: var(--text-page-title);
+  color: var(--color-accent-primary);
+}
+
+.phone-card__text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.phone-card__qr {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+/* White behind the code with a small margin, so it scans on a dark theme. */
+.phone-card__qr img {
+  background: var(--qr-backdrop);
+  padding: var(--space-xs);
+  border-radius: 4px;
+}
+
 /* Topics with no named topics (0.9.62 fix): the empty state stands on its own, centred, as on the Mac. */
 .topics-empty {
   max-width: 560px;

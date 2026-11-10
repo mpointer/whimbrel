@@ -93,6 +93,8 @@ describe("the plan (Cloud v1)", () => {
   it("reads Free or Cloud until a date", () => {
     expect(planLine(free, "en-US")).toBe("Free: 1 computer + 1 phone");
     expect(planLine(cloud, "en-US")).toBe("Cloud until November 9, 2027");
+    expect(planLine({ ...cloud, renews: true }, "en-US")).toBe("Cloud until November 9, 2027");
+    expect(planLine({ ...cloud, renews: false }, "en-US")).toBe("Cloud ends November 9, 2027. It won't renew.");
   });
 
   it("offers Upgrade on Free and Manage on Cloud, only with billing open", () => {

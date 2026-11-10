@@ -1,7 +1,7 @@
 <!--
 {
   "title": "Precios: gratis y de código abierto",
-  "description": "Whimbrel es gratis y de código abierto, con todas las funciones y tus propios modelos. Los planes de pago cubrirán servidores que operamos por ti.",
+  "description": "Whimbrel es gratis y de código abierto, con todas las funciones y tus propios modelos. Cloud, a $5 al mes, cubre servidores que operamos por ti.",
   "schema": [
     "software"
   ],
@@ -23,22 +23,22 @@
     },
     {
       "q": "¿Cuánto cuesta la sincronización?",
-      "a": "Nada. La sincronización tiene cifrado de extremo a extremo. En un relay que tú mismo operas, es ilimitada. En el relay que alojamos nosotros, una cuenta gratuita sincroniza una computadora y un teléfono. Los planes Cloud planificados añaden dispositivos ilimitados en nuestro relay."
+      "a": "Nada. La sincronización tiene cifrado de extremo a extremo. En un relay que tú mismo operas, es ilimitada. En el relay que alojamos nosotros, una cuenta gratuita sincroniza una computadora y un teléfono. Cloud añade dispositivos ilimitados en nuestro relay por $5 al mes."
     },
     {
-      "q": "¿Qué incluirán los planes de pago?",
-      "a": "Solo lo que necesita un servidor operado por alguien, o una persona al otro lado: nuestro relay alojado para cualquier cantidad de dispositivos, con copias de seguridad, notificaciones push en tu teléfono y, como plan a futuro, Routines que siguen funcionando mientras tu laptop está cerrada. Los planes de equipo añaden memoria de reuniones compartida y una sola factura. Los detalles y los precios no son definitivos, y todavía no hay nada a la venta."
+      "q": "¿Cuánto cuesta Cloud?",
+      "a": "$5 al mes o $50 al año, más impuestos donde corresponda. Te suscribes desde la app: Settings → Sync & Devices. Cloud te da dispositivos ilimitados en nuestro relay alojado, conserva tu cuenta sin importar cuánto tiempo estés sin usarla e incluye soporte por correo. Todo lo de la app sigue siendo gratis."
     },
     {
-      "q": "¿Puedo comprar un plan hoy?",
-      "a": "Todavía no. Los planes de pago solo saldrán a la venta cuando exista la facturación y los planes estén definidos. Mientras tanto, todo es gratis y no te pediremos una tarjeta."
+      "q": "¿Qué pasa si cancelo?",
+      "a": "Cancela cuando quieras desde Manage subscription en la app. Cloud dura hasta el final del periodo que pagaste y luego tu cuenta pasa a Free: no se borra nada y todos los dispositivos que ya sincronizan siguen sincronizando; solo agregar un dispositivo más allá de una computadora y un teléfono vuelve a requerir Cloud. Los pagos no se reembolsan automáticamente; escríbenos si quieres un reembolso. Si eliminas tu cuenta de Whimbrel, la suscripción también se cancela."
     },
     {
       "q": "¿Mi empresa puede obtener soporte o ejecutar sus propios servidores?",
       "a": "Sí. El relay de sincronización y el feed de actualizaciones son de código abierto y están documentados para autoalojarlos. Si quieres que una persona se responsabilice de tu implementación, <a href=\"mailto:{{site.salesEmail}}?subject=Whimbrel%20support\">habla con nosotros</a> sobre un contrato de soporte."
     }
   ],
-  "sourceHash": "eb851c16c3ba"
+  "sourceHash": "89ec5217d098"
 }
 -->
 {{{crumbs}}}
@@ -46,14 +46,14 @@
   <div class="narrow center">
     <p class="eyebrow">Precios</p>
     <h1>Gratis y de código abierto. Paga solo por los servidores que operamos por ti.</h1>
-    <p class="lede">Whimbrel trabaja en tu computadora con los modelos de IA que elijas, así que toda la app es gratis. Los planes de pago planificados cubren lo que realmente necesita un servidor o una persona: sincronización alojada con copias de seguridad, notificaciones push en tu teléfono y funciones para equipos.</p>
+    <p class="lede">Whimbrel trabaja en tu computadora con los modelos de IA que elijas, así que toda la app es gratis. Cloud cubre lo que realmente necesita un servidor que operamos nosotros: dispositivos ilimitados en nuestro relay de sincronización alojado, por $5 al mes. Las funciones para equipos están planificadas.</p>
   </div>
 </section>
 
 <div class="container">
   <div class="early-access-banner" role="note">
-    <strong>Todavía no hay nada a la venta.</strong>
-    <span>Hoy todas las funciones son gratis. Cloud y Team están planificados; anunciaremos sus funciones y precios cuando exista la facturación.</span>
+    <strong>Todas las funciones de la app son gratis.</strong>
+    <span>Cloud es opcional: añade dispositivos ilimitados en nuestro relay alojado. Team está planificado.</span>
   </div>
 </div>
 
@@ -79,18 +79,20 @@
       </article>
 
       <article class="card plan">
-        <p class="plan-badge">Planificado</p>
         <h2>Cloud</h2>
         <p class="plan-for">Para una persona que quiere que nosotros operemos el servidor.</p>
-        <p class="price"><span class="amount amount-sm">Aún sin precio</span></p>
-        <p class="price-note">Tus modelos y claves, como en Free</p>
-        <a class="btn btn-ghost btn-block" href="/download/#register">Empieza gratis ahora</a>
+        <p class="price"><span class="amount">$5</span> <span class="per">al mes, o $50 al año</span></p>
+        <p class="price-note">Más impuestos donde corresponda</p>
+        <a class="btn btn-primary btn-block" href="/download/#register">Suscríbete desde la app: Settings → Sync &amp; Devices</a>
         <ul class="plan-features">
           <li><strong>Todo lo de Free, más:</strong></li>
-          <li>Nuestro relay alojado para cualquier cantidad de dispositivos</li>
+          <li>Dispositivos ilimitados en nuestro relay alojado</li>
+          <li>Tu cuenta no se elimina por inactividad</li>
+          <li>Soporte por correo</li>
+          <li><strong>Próximamente en Cloud, sin costo adicional:</strong></li>
           <li>Copias de seguridad diarias y restauración</li>
+          <li>Abre tu vault desde cualquier lugar</li>
           <li>Notificaciones push en tu teléfono</li>
-          <li>Routines que siguen funcionando mientras tu laptop está cerrada (en diseño)</li>
         </ul>
       </article>
 
@@ -139,7 +141,7 @@
         <caption class="sr-only">Planes gratuitos y planes de pago de entrada de Whimbrel, Granola y Littlebird</caption>
         <thead><tr><th scope="col">Producto</th><th scope="col">Plan gratuito</th><th scope="col">Plan de pago de entrada</th><th scope="col">Código abierto</th></tr></thead>
         <tbody>
-          <tr><th scope="row">Whimbrel</th><td class="yes">Todas las funciones, historial ilimitado</td><td>No hace falta; Cloud planificado</td><td class="yes">Sí, Apache 2.0</td></tr>
+          <tr><th scope="row">Whimbrel</th><td class="yes">Todas las funciones, historial ilimitado</td><td>No hace falta; Cloud cuesta $5 al mes</td><td class="yes">Sí, Apache 2.0</td></tr>
           <tr><th scope="row">Granola</th><td>Historial de reuniones de 30 días</td><td>Business, $14 por usuario al mes</td><td class="no">No</td></tr>
           <tr><th scope="row">Littlebird</th><td>Créditos de uso diarios</td><td>Plus, $17 al mes facturado anualmente</td><td class="no">No</td></tr>
         </tbody>

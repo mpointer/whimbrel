@@ -442,7 +442,7 @@ writeFileSync(
 );
 writeFileSync(
   join(outDir, "robots.txt"),
-  `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /download/thanks/\nDisallow: /download/unavailable/\nDisallow: /es/download/thanks/\nDisallow: /es/download/unavailable/\nDisallow: /fr/download/thanks/\nDisallow: /fr/download/unavailable/\n\nSitemap: ${siteUrl}/sitemap.xml\n`,
+  `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /download/thanks/\nDisallow: /download/unavailable/\nDisallow: /es/download/thanks/\nDisallow: /es/download/unavailable/\nDisallow: /fr/download/thanks/\nDisallow: /fr/download/unavailable/\nDisallow: /cloud/\n\nSitemap: ${siteUrl}/sitemap.xml\n`,
 );
 
 // Launch blockers that shouldn't break local builds or CI.

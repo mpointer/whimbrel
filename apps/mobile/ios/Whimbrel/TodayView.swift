@@ -8,6 +8,8 @@ struct TodayView: View {
     /// Devices waiting for approval: a local, in-app banner (no push yet).
     let pendingDevices: Int
     let openSettings: () -> Void
+    /// Pushes a topic page onto this tab's path (a meeting's topic chip).
+    let openTopic: (TopicRoute) -> Void
     @StateObject private var model = TodayModel()
     @State private var briefExpanded = false
     @State private var showPrep = false
@@ -35,6 +37,7 @@ struct TodayView: View {
             }
         }
         .navigationDestination(for: Int64.self) { MeetingDetailView(meetingId: $0, sync: sync, labels: labels) }
+        .navigationDestination(for: TopicRoute.self) { TopicPageView(key: $0.key, sync: sync) }
         .task(id: sync.readRevision) { await model.reload(sync: sync, now: Date(), calendar: .current) }
         .refreshable { await sync.syncNow(manual: true) }
         .sheet(isPresented: $showPrep) { PrepSheet(prep: model.prep) }
@@ -125,10 +128,16 @@ struct TodayView: View {
                 Text(model.loaded ? "No meetings yet" : "Loading…").foregroundStyle(Color.theme(.textSecondary))
             }
             ForEach(model.recent) { meeting in
-                NavigationLink(value: meeting.id) {
-                    MeetingRow(meeting: meeting, labels: labels)
+                // The chip sits below the row's link, not inside it, so a tap reaches one of them.
+                VStack(alignment: .leading, spacing: 0) {
+                    NavigationLink(value: meeting.id) {
+                        MeetingRow(meeting: meeting, labels: labels)
+                    }
+                    .buttonStyle(.plain)
+                    if let topic = TopicsModel.chip(for: meeting, in: model.topicChips) {
+                        TopicChipButton(topic: topic) { openTopic(TopicRoute(key: topic.key)) }
+                    }
                 }
-                .buttonStyle(.plain)
             }
         }
     }
@@ -158,10 +167,13 @@ struct TodayView: View {
     }
 }
 
-/// One meeting in a list: title, then time, where it was recorded and how many copies exist.
+/// One meeting in a list: title, then time, where it was recorded and how many copies exist,
+/// and the topic it belongs to as a chip that opens the topic page.
 struct MeetingRow: View {
     let meeting: PhoneMeeting
     let labels: DeviceLabels
+    var topic: PhoneTopicChip? = nil
+    var openTopic: (TopicRoute) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -172,6 +184,9 @@ struct MeetingRow: View {
             Text(subtitle)
                 .font(.subheadline)
                 .foregroundStyle(Color.theme(.textSecondary))
+            if let topic {
+                TopicChipButton(topic: topic) { openTopic(TopicRoute(key: topic.key)) }
+            }
         }
         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         .contentShape(Rectangle())
@@ -184,6 +199,27 @@ struct MeetingRow: View {
         ]
         if let copies = meeting.alsoRecorded, !copies.isEmpty { parts.append("+\(copies.count) \(copies.count == 1 ? "copy" : "copies")") }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// A meeting's topic as a capsule that opens the topic page. Borderless: inside a List row
+/// (Meetings) a borderless button takes its own tap instead of selecting the row.
+struct TopicChipButton: View {
+    let topic: PhoneTopicChip
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(topic.name, systemImage: "tag")
+                .font(.subheadline.weight(.medium))
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .background(Color.theme(.accentSecondary).opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(Color.theme(.accentSecondary))
+        .accessibilityLabel(String(localized: "Topic: \(topic.name)"))
     }
 }
 

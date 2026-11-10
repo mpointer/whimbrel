@@ -2709,6 +2709,13 @@
           "description": "`free` or `cloud`.",
           "type": "string"
         },
+        "renews": {
+          "description": "False once a Cloud subscription is cancelled (\"Cloud ends …\"); None on free, or from an older\nserver, which the UI reads as renewing.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "untilUnixMs": {
           "description": "When a Cloud plan runs to (it renews unless cancelled).",
           "format": "int64",
@@ -5521,6 +5528,35 @@
         "monthToDateCents",
         "byProvider",
         "monthByProvider"
+      ],
+      "type": "object"
+    },
+    "VaultView": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "failed": {
+          "description": "The last write failed: \"Couldn't update the vault…\".",
+          "type": "boolean"
+        },
+        "lastUpdatedUnixMs": {
+          "description": "When the vault was last written, after this folder was chosen.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The chosen folder; empty until one is.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "path",
+        "failed"
       ],
       "type": "object"
     },

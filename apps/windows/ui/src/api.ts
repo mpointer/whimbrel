@@ -89,6 +89,7 @@ import type {
   SkinSources,
   SkinTurnResult,
   TopicListItemView,
+  VaultView,
   UpcomingView,
   TopicPageView,
   StepActionInput,
@@ -180,6 +181,11 @@ export const dismissTopicSuggestion = (topicId: number) => invoke<void>("dismiss
 // The topic page (topics piece 2): the Topics tab, step actions, the ways in, and Settings → Topics.
 /** Today's Upcoming: the next 7 days' meetings, grouped by day. */
 export const todayUpcoming = () => invoke<UpcomingView>("today_upcoming");
+// The living vault (Settings → Capture & Privacy): the switch, the folder and what it last did.
+export const vaultSettings = () => invoke<VaultView>("vault_settings");
+export const setVaultEnabled = (enabled: boolean) => invoke<VaultView>("set_vault_enabled", { enabled });
+/** The native folder picker; unchanged when cancelled. */
+export const chooseVaultFolder = () => invoke<VaultView>("choose_vault_folder");
 export const topicsPageList = () => invoke<TopicListItemView[]>("topics_page_list");
 /** Null when the topic is gone (deleted, or merged away). */
 export const topicPage = (topicId: number) => invoke<TopicPageView | null>("topic_page", { topicId });

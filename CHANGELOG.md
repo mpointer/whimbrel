@@ -4,6 +4,22 @@ Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
 ## [Unreleased]
 
+## [0.9.65] - 2026-11-09
+
+### Mac
+- Settings → Sync & Devices has a card for the phone apps' beta, with a QR code to scan with your phone. If Upgrade or Manage subscription can't reach Stripe, the message now shows right under those buttons.
+- Settings → Your data can keep an Obsidian vault up to date: each topic's page, its people, organizations and meetings, with your own notes kept. This Mac also publishes its topic pages for your phone's Topics tab.
+
+### Windows
+- Settings → Sync & Devices has a card for the phone apps' beta, with a QR code to scan with your phone. If Upgrade or Manage subscription can't reach Stripe, the message now shows right under those buttons.
+- Settings → Capture & Privacy can keep an Obsidian vault up to date: each topic's page, its people, organizations and meetings, with your own notes kept. This PC also publishes its topic pages for your phone's Topics tab.
+
+### iPhone
+- A Topics tab shows each topic's page, built by Whimbrel on your computer.
+
+### All devices
+- After you cancel Cloud, Sync & Devices says "Cloud ends <date>. It won't renew." instead of "Cloud until <date>".
+
 ## [0.9.64] - 2026-11-09
 
 ### Mac

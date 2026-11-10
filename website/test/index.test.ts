@@ -369,6 +369,33 @@ describe("other routes", () => {
     expect(html).toContain('"@type":"FAQPage"');
   });
 
+  it("pricing_states_cloud_price_and_tax", async () => {
+    const html = await (await call(new Request("https://whimbrel.test/pricing/"))).text();
+    expect(html).toContain("$5");
+    expect(html).toContain("$50 a year");
+    expect(html).toContain("Plus tax where applicable");
+    expect(html).not.toContain("Nothing is for sale yet");
+  });
+
+  it("cloud_thanks_and_cancelled_pages_are_noindex", async () => {
+    for (const path of ["/cloud/thanks/", "/cloud/cancelled/"]) {
+      const res = await call(new Request(`https://whimbrel.test${path}`));
+      expect(res.status).toBe(200);
+      expect(await res.text()).toMatch(/<meta name="robots" content="noindex/);
+    }
+  });
+
+  it("robots_disallows_cloud_pages", async () => {
+    const txt = await (await call(new Request("https://whimbrel.test/robots.txt"))).text();
+    expect(txt).toContain("Disallow: /cloud/");
+  });
+
+  it("terms_has_the_cloud_section", async () => {
+    const html = await (await call(new Request("https://whimbrel.test/tos/"))).text();
+    expect(html).toContain("Whimbrel Cloud");
+    expect(html).toContain("cancels the subscription");
+  });
+
   // /changelog/ is built from the repository's CHANGELOG.md, the plain-language notes, not
   // from PR titles; unreleased work and the unreleased iPhone app stay off it.
   it("builds the changelog page from CHANGELOG.md", async () => {

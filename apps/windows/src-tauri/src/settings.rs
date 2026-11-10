@@ -68,6 +68,12 @@ pub mod keys {
     pub const TOPIC_STEPS_ENABLED: &str = "topicSteps.enabled";
     /// Device-local: the user pressed Start on the steps estimate, so TypeSafe may run.
     pub const TOPIC_STEPS_STARTED: &str = "topicSteps.started";
+    /// Device-local, as on the Mac (`VaultSettings`): "Keep an Obsidian vault up to date", the folder,
+    /// when it was last written (Unix ms) and whether the last write failed.
+    pub const VAULT_ENABLED: &str = "vault.enabled";
+    pub const VAULT_PATH: &str = "vault.path";
+    pub const VAULT_LAST_UPDATED: &str = "vault.lastUpdated";
+    pub const VAULT_FAILED: &str = "vault.failed";
     /// Device-local, as on the Mac (`SpeakerNamesSettings.rememberVoices`): "Remember people's
     /// voices". On unless turned off; off keeps no voice embeddings.
     pub const REMEMBER_VOICES: &str = "speakerNames.rememberVoices";
@@ -623,6 +629,45 @@ impl SettingsFile {
 
     pub fn set_topic_steps_started(&mut self, started: bool) {
         self.set(keys::TOPIC_STEPS_STARTED, Some(started));
+    }
+
+    /// The living vault: off by default, as on the Mac.
+    pub fn vault_enabled(&self) -> bool {
+        self.get(keys::VAULT_ENABLED).unwrap_or(false)
+    }
+
+    pub fn set_vault_enabled(&mut self, enabled: bool) {
+        self.set(keys::VAULT_ENABLED, Some(enabled));
+    }
+
+    /// The folder the user chose; empty until one is.
+    pub fn vault_path(&self) -> String {
+        self.get(keys::VAULT_PATH).unwrap_or_default()
+    }
+
+    pub fn set_vault_path(&mut self, path: &str) {
+        self.set(keys::VAULT_PATH, Some(path.to_string()));
+    }
+
+    pub fn vault_last_updated(&self) -> Option<i64> {
+        self.get(keys::VAULT_LAST_UPDATED)
+    }
+
+    pub fn set_vault_last_updated(&mut self, unix_ms: i64) {
+        self.set(keys::VAULT_LAST_UPDATED, Some(unix_ms));
+    }
+
+    /// A new folder hasn't been written yet: no "Last updated" from the old one.
+    pub fn clear_vault_last_updated(&mut self) {
+        self.set::<i64>(keys::VAULT_LAST_UPDATED, None);
+    }
+
+    pub fn vault_failed(&self) -> bool {
+        self.get(keys::VAULT_FAILED).unwrap_or(false)
+    }
+
+    pub fn set_vault_failed(&mut self, failed: bool) {
+        self.set(keys::VAULT_FAILED, Some(failed));
     }
 
     /// Each paid provider's monthly budget in cents, 0 for none, in [`PAID_PROVIDERS`] order: what

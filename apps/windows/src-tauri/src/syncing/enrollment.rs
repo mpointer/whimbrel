@@ -156,7 +156,7 @@ pub(crate) mod tests {
                 list_calls: Arc::new(Mutex::new(0)),
                 approvals: Arc::new(Mutex::new(Vec::new())),
                 names: Arc::new(Mutex::new(Vec::new())),
-                plan: Arc::new(Mutex::new(Ok(AccountPlan { plan: "free".into(), until: None, interval: None, billing: true }))),
+                plan: Arc::new(Mutex::new(Ok(AccountPlan { plan: "free".into(), until: None, interval: None, billing: true, renews: None }))),
                 checkout: Arc::new(Mutex::new(Ok("https://checkout.stripe.test/s".into()))),
                 checkouts: Arc::new(Mutex::new(Vec::new())),
             }

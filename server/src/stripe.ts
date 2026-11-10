@@ -42,8 +42,8 @@ export async function verifyStripeSignature(rawBody: string, header: string | nu
 }
 
 /** Minimal Stripe REST call. Never throws; logs the status only. A redirect is
- * an error (`redirect: "error"`), so the Authorization header can't follow one
- * to another host. */
+ * not followed (`redirect: "manual"`; Workers reject "error"), so the
+ * Authorization header can't follow one to another host: a 3xx is just !ok. */
 export async function stripeRequest(
   key: string,
   method: "GET" | "POST" | "DELETE",
@@ -57,14 +57,15 @@ export async function stripeRequest(
   const headers: Record<string, string> = { authorization: `Bearer ${key}` };
   if (!withQuery) headers["content-type"] = "application/x-www-form-urlencoded";
   try {
-    const res = await fetcher(url, { method, headers, body: withQuery ? undefined : qs, redirect: "error" });
+    const res = await fetcher(url, { method, headers, body: withQuery ? undefined : qs, redirect: "manual" });
     let body: any = null;
     try {
       body = await res.json();
     } catch {
       // non-JSON body
     }
-    if (!res.ok) console.log(`stripe ${method} ${path.split("/")[0]} -> ${res.status}`);
+    // Stripe's error code and the parameter it names, never its message (it can quote an email).
+    if (!res.ok) console.log(`stripe ${method} ${path.split("/")[0]} -> ${res.status} ${body?.error?.code ?? ""} ${body?.error?.param ?? ""}`.trimEnd());
     return { ok: res.ok, status: res.status, body };
   } catch {
     console.log(`stripe ${method} ${path.split("/")[0]} -> network error`);
@@ -76,6 +77,8 @@ export interface PlanState {
   plan: "free" | "cloud";
   untilUnixMs: number;
   interval: "month" | "year" | null;
+  /** False when the subscription is set to cancel (at period end or a set date). */
+  renews: boolean;
 }
 
 /** Maps a Stripe subscription to the plan we store. null = leave the account as is. */
@@ -88,13 +91,17 @@ export function planFromSubscription(sub: any, nowUnixMs: number): PlanState | n
       const end = item?.current_period_end ?? sub.current_period_end;
       if (typeof end !== "number") return null;
       const interval = item?.price?.recurring?.interval;
-      return { plan: "cloud", untilUnixMs: end * 1000, interval: interval === "month" || interval === "year" ? interval : null };
+      // A cancelled subscription stays active until it ends: cancel_at (or the period end) says when.
+      const cancelAt = typeof sub.cancel_at === "number" ? sub.cancel_at : null;
+      const renews = cancelAt === null && sub.cancel_at_period_end !== true;
+      const until = cancelAt !== null ? Math.min(cancelAt, end) : end;
+      return { plan: "cloud", untilUnixMs: until * 1000, interval: interval === "month" || interval === "year" ? interval : null, renews };
     }
     case "canceled":
     case "unpaid":
     case "incomplete_expired":
     case "paused":
-      return { plan: "free", untilUnixMs: (sub.ended_at ?? nowUnixMs / 1000) * 1000, interval: null };
+      return { plan: "free", untilUnixMs: (sub.ended_at ?? nowUnixMs / 1000) * 1000, interval: null, renews: false };
     default:
       return null;
   }

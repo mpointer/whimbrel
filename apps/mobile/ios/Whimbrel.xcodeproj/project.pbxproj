@@ -11,6 +11,7 @@
 		0641EDEE523EE71B93A34AB4 /* DeviceLabels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DAF1F588750FBD56E99DC2D /* DeviceLabels.swift */; };
 		085AFFE231239F32D95B1BAB /* EnrollmentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F6F48A9984FF9FCED2EF129 /* EnrollmentModel.swift */; };
 		08CA5886CD41C5DACC9DDF80 /* TodayModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78A82A1D72948893B72F1C80 /* TodayModelTests.swift */; };
+		F16D6EAE7C5F6FDA0B1C1D01 /* TopicsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B7B37509E4362FC608C74F /* TopicsModelTests.swift */; };
 		0AF5576994DF3B109D58007A /* PhoneSettingsSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = D462F464540BF376A6EC8A9E /* PhoneSettingsSync.swift */; };
 		1EF65E0E4270649602AAAC33 /* MeetingsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2978DE5AF2B7F7DA47FCF04 /* MeetingsModel.swift */; };
 		22DAE8B1B3699903B348A834 /* EnrollmentModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 909D497FDFD9A3E1053339A8 /* EnrollmentModelTests.swift */; };
@@ -41,6 +42,9 @@
 		80522EB44C73362B72EBCF09 /* DictationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B02D831038C96564D1D0616 /* DictationTests.swift */; };
 		854B5B5A219AD8078FBB033B /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 51A5A4599F85DA59A70BCD2E /* InfoPlist.xcstrings */; };
 		88BD1D7951BBA7E189AE72CA /* TodayModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444DCEE207247AAF6418E035 /* TodayModel.swift */; };
+		2769E3EFA677FB34E32B76E1 /* TopicPageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 865519E69EB376E13267334D /* TopicPageView.swift */; };
+		2E80872381F02E8C5C03092F /* TopicsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 992847CB9757B88D1081DEB2 /* TopicsView.swift */; };
+		ECC4B5B4B90803C283EAB120 /* TopicsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 562C3319C926A051B7232CB1 /* TopicsModel.swift */; };
 		948A1AC5A69A727FEE98C793 /* WhimbrelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5DF5B19F3E6749DB9CB5667 /* WhimbrelApp.swift */; };
 		991CF59DEAA9D9E396CCCEF2 /* AskViewLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25EBDE8E7DB1A43210CFD309 /* AskViewLogicTests.swift */; };
 		A0EE09A645A83D330FAA9147 /* ReadAloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28760234C3CF7ECEBC430B7A /* ReadAloud.swift */; };
@@ -98,6 +102,9 @@
 		2F6F48A9984FF9FCED2EF129 /* EnrollmentModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnrollmentModel.swift; sourceTree = "<group>"; };
 		41E11A1AC40086A92F83FDCE /* AskModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskModel.swift; sourceTree = "<group>"; };
 		444DCEE207247AAF6418E035 /* TodayModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayModel.swift; sourceTree = "<group>"; };
+		865519E69EB376E13267334D /* TopicPageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopicPageView.swift; sourceTree = "<group>"; };
+		992847CB9757B88D1081DEB2 /* TopicsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopicsView.swift; sourceTree = "<group>"; };
+		562C3319C926A051B7232CB1 /* TopicsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopicsModel.swift; sourceTree = "<group>"; };
 		44BE9DE32BAC05388D31C7D9 /* ReadLogic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ReadLogic.swift; path = ../../macos/Whimbrel/Support/ReadLogic.swift; sourceTree = "<group>"; };
 		51A5A4599F85DA59A70BCD2E /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		52DF6E84E9F188F4C3AFEC1B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -110,6 +117,7 @@
 		7536678F928829904584BF94 /* CoreMemoryStore+iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CoreMemoryStore+iOS.swift"; sourceTree = "<group>"; };
 		7737B64E6BC17C589CE4E085 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Theme.swift; path = ../../macos/Whimbrel/Support/Theme.swift; sourceTree = "<group>"; };
 		78A82A1D72948893B72F1C80 /* TodayModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayModelTests.swift; sourceTree = "<group>"; };
+		58B7B37509E4362FC608C74F /* TopicsModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopicsModelTests.swift; sourceTree = "<group>"; };
 		7CD459BA55A6ED001C1176DB /* GoogleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleSignIn.swift; sourceTree = "<group>"; };
 		7DAF1F588750FBD56E99DC2D /* DeviceLabels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceLabels.swift; sourceTree = "<group>"; };
 		7E6CC517CE87504AFE639A11 /* DemoFixturesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DemoFixturesTests.swift; sourceTree = "<group>"; };
@@ -191,6 +199,7 @@
 				9CD51D21561E3421D70CF975 /* StorePathTests.swift */,
 				AD7E98EF52AA1B907A1887E3 /* SyncModelTests.swift */,
 				78A82A1D72948893B72F1C80 /* TodayModelTests.swift */,
+				58B7B37509E4362FC608C74F /* TopicsModelTests.swift */,
 			);
 			path = WhimbrelTests;
 			sourceTree = "<group>";
@@ -273,6 +282,9 @@
 				C5CBE46597D3D7AE4651618A /* SyncModel.swift */,
 				82B7844A4B22ABE7D496BAE8 /* ThemedView.swift */,
 				444DCEE207247AAF6418E035 /* TodayModel.swift */,
+				865519E69EB376E13267334D /* TopicPageView.swift */,
+				992847CB9757B88D1081DEB2 /* TopicsView.swift */,
+				562C3319C926A051B7232CB1 /* TopicsModel.swift */,
 				2E24E05B392AB5E6FFA63AC7 /* TodayView.swift */,
 				F5DF5B19F3E6749DB9CB5667 /* WhimbrelApp.swift */,
 			);
@@ -448,6 +460,9 @@
 				D53CBF230DE8ACCDE5DAD5F3 /* ThemeStore.swift in Sources */,
 				B6B9DADA399FF8A59B85F7BA /* ThemedView.swift in Sources */,
 				88BD1D7951BBA7E189AE72CA /* TodayModel.swift in Sources */,
+				2769E3EFA677FB34E32B76E1 /* TopicPageView.swift in Sources */,
+				2E80872381F02E8C5C03092F /* TopicsView.swift in Sources */,
+				ECC4B5B4B90803C283EAB120 /* TopicsModel.swift in Sources */,
 				D05DE3A5745853B439EBAFDE /* TodayView.swift in Sources */,
 				948A1AC5A69A727FEE98C793 /* WhimbrelApp.swift in Sources */,
 			);
@@ -471,6 +486,7 @@
 				28A28A3666AD8150DD9DF13F /* StorePathTests.swift in Sources */,
 				71E747C7C35E491B952F4492 /* SyncModelTests.swift in Sources */,
 				08CA5886CD41C5DACC9DDF80 /* TodayModelTests.swift in Sources */,
+				F16D6EAE7C5F6FDA0B1C1D01 /* TopicsModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -502,7 +518,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.64;
+				MARKETING_VERSION = 0.9.65;
 				PRODUCT_NAME = Whimbrel;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Whimbrel/Bridging-Header.h";
@@ -692,7 +708,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.9.64;
+				MARKETING_VERSION = 0.9.65;
 				PRODUCT_NAME = Whimbrel;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Whimbrel/Bridging-Header.h";

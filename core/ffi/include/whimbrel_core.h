@@ -141,6 +141,16 @@ char *whimbrel_topics_for_meeting_json(StoreHandle *handle, int64_t meeting_id);
 char *whimbrel_topics_for_event_json(StoreHandle *handle, const char *event_id, const char *title);
 /* JSON array of live seed topics whose aliases appear in text. */
 char *whimbrel_topics_named_in_json(StoreHandle *handle, const char *text);
+/* Builds and stores a snapshot of every topic page, stamped built_by. Returns the count, -1 on failure. */
+int64_t whimbrel_topics_publish_snapshots(StoreHandle *handle, const char *built_by);
+/* JSON array of the stored, not-deleted topic page snapshots; NULL on failure. */
+char *whimbrel_topic_snapshots_json(StoreHandle *handle);
+/* One snapshot as JSON; the JSON text "null" when absent or deleted; NULL on failure. */
+char *whimbrel_topic_snapshot_json(StoreHandle *handle, const char *topic_key);
+/* Refreshes the vault at root: {"ok":true,"report":{written,unchanged,archived,deleted,skipped}} or {"ok":false,"error":".."}. */
+char *whimbrel_vault_update(StoreHandle *handle, const char *root);
+/* Local meeting id for a snapshot's MeetingRef (device_id, source_meeting_id), or -1 if unknown. */
+int64_t whimbrel_meeting_id_for_source(StoreHandle *handle, const char *device_id, int64_t source_meeting_id);
 /* Reads up to max queued sources for steps. api_key NULL: the local model (never a hosted one);
  * non-NULL: TypeSafe (pass a key only when "Find steps with TypeSafe" is on). Returns the count
  * processed, -1 failure, -2 key rejected, -3 over budget, -4 paused for today, -5 not started,

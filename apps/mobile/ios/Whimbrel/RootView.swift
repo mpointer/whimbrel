@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The approved phone: Today, Ask, Meetings and Routines, with Settings in a sheet. Record
+/// The approved phone: Today, Ask, Meetings, Topics and Routines, with Settings in a sheet. Record
 /// joins the tab bar in its own milestone; nothing here is a placeholder control.
 struct RootView: View {
     @ObservedObject var sync: SyncModel
@@ -9,20 +9,26 @@ struct RootView: View {
     @State private var showSettings: Bool
     @State private var selection: Int
     @StateObject private var ask: AskModel
-    @State private var meetingsPath: [Int64]
+    /// Every push in the Today, Meetings and Topics stacks goes through its path, so a topic
+    /// opened from a meeting's chip and a meeting opened from that topic stack in order.
+    @State private var todayPath = NavigationPath()
+    @State private var meetingsPath: NavigationPath
+    @State private var topicsPath = NavigationPath()
 
     init(sync: SyncModel, enrollment: EnrollmentModel) {
         self.sync = sync
         self.enrollment = enrollment
         _ask = StateObject(wrappedValue: AskModel(backend: PhoneAskBackend(sync: sync)))
-        var tab = 0, settings = false, path: [Int64] = []
+        var tab = 0, settings = false, path = NavigationPath()
         #if DEBUG
-        // Demo screenshots: `-WhimbrelDemoTab 0|1|2|3`, `-WhimbrelDemoMeeting <id>`, `-WhimbrelDemoSettings`.
+        // Demo screenshots: `-WhimbrelDemoTab 0|1|2|3|4`, `-WhimbrelDemoMeeting <id>`, `-WhimbrelDemoSettings`.
         let args = ProcessInfo.processInfo.arguments
         func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil } }
         tab = value("-WhimbrelDemoTab").flatMap(Int.init) ?? 0
-        path = value("-WhimbrelDemoMeeting").flatMap(Int64.init).map { [$0] } ?? []
-        if !path.isEmpty { tab = 2 }
+        if let meeting = value("-WhimbrelDemoMeeting").flatMap(Int64.init) {
+            path.append(meeting)
+            tab = 2
+        }
         settings = args.contains("-WhimbrelDemoSettings")
         #endif
         _selection = State(initialValue: tab)
@@ -36,12 +42,18 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $selection) {
-            NavigationStack { TodayView(sync: sync, labels: enrollment.deviceLabels, pendingDevices: enrollment.pendingDeviceCount, openSettings: { showSettings = true }) }
+            NavigationStack(path: $todayPath) {
+                TodayView(sync: sync, labels: enrollment.deviceLabels, pendingDevices: enrollment.pendingDeviceCount,
+                          openSettings: { showSettings = true }, openTopic: { todayPath.append($0) })
+            }
                 .tabItem { Label("Today", systemImage: "sun.max") }.tag(0)
             NavigationStack { AskView(sync: sync, model: ask, labels: enrollment.deviceLabels) }
                 .tabItem { Label("Ask", systemImage: "bubble.left.and.text.bubble.right") }.tag(1)
-            NavigationStack(path: $meetingsPath) { MeetingsView(sync: sync, labels: enrollment.deviceLabels) }
+            NavigationStack(path: $meetingsPath) { MeetingsView(sync: sync, labels: enrollment.deviceLabels, openTopic: { meetingsPath.append($0) }) }
                 .tabItem { Label("Meetings", systemImage: "person.2") }.tag(2)
+            // Between Meetings and Routines; Routines keeps tag 3 so its demo flag still works.
+            NavigationStack(path: $topicsPath) { TopicsView(sync: sync, labels: enrollment.deviceLabels) }
+                .tabItem { Label("Topics", systemImage: "tag") }.tag(4)
             NavigationStack { RoutinesView(sync: sync, labels: enrollment.deviceLabels) }
                 .tabItem { Label("Routines", systemImage: "bolt") }.tag(3)
         }

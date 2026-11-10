@@ -1,16 +1,16 @@
 <!--
 {
   "title": "Pricing: Free and Open Source",
-  "description": "Whimbrel is free and open source: every feature, your own models, unlimited sync on your own relay. Planned paid plans cover servers we run for you.",
+  "description": "Whimbrel is free and open source: every feature, your own models, unlimited sync on your own relay. Cloud, $5 a month, covers servers we run for you.",
   "schema": ["software"],
   "priority": 0.8,
   "crumbs": [{ "name": "Pricing", "path": "/pricing/" }],
   "faq": [
     { "q": "Is Whimbrel really free?", "a": "Yes. Every feature in the app is free and open source under the Apache 2.0 license: meeting capture, transcription, screen memory, search, chat, routines, connectors, the MCP server, and end-to-end encrypted sync. Nothing in the app is held back for a paid plan." },
     { "q": "Do I need an AI API key?", "a": "You choose. Run models on your computer with Ollama for free, or bring your own Anthropic, OpenAI, Google Gemini, or OpenRouter key and pay that provider directly. Small tasks go to the cheapest model you have by default, so most people spend under a dollar a month on hosted models. Whimbrel never resells AI usage: there is no hosted model, no token bundle, and no markup on your model bill, on any plan." },
-    { "q": "What does sync cost?", "a": "Nothing. Sync is end-to-end encrypted. On a relay you run yourself, it's unlimited. On the relay we host, a free account syncs one computer and one phone. Planned Cloud plans add unlimited devices on our relay." },
-    { "q": "What will the paid plans include?", "a": "Only things that need a server somebody runs, or a person on the other end: our hosted relay for any number of devices, with backups, push notifications to your phone, and, planned, routines that keep running while your laptop is closed. Team plans add shared meeting memory and one bill. Details and prices aren't final, and nothing is for sale yet." },
-    { "q": "Can I buy a plan today?", "a": "Not yet. Paid plans will only go on sale once billing exists and the plans are settled. Until then everything is free, and you won't be asked for a card." },
+    { "q": "What does sync cost?", "a": "Nothing. Sync is end-to-end encrypted. On a relay you run yourself, it's unlimited. On the relay we host, a free account syncs one computer and one phone. Cloud adds unlimited devices on our relay for $5 a month." },
+    { "q": "What does Cloud cost?", "a": "$5 a month or $50 a year, plus tax where applicable. Subscribe from the app: Settings → Sync & Devices. Cloud gives you unlimited devices on our hosted relay, keeps your account however long you're away, and includes email support. Everything in the app stays free." },
+    { "q": "What happens if I cancel?", "a": "Cancel any time from Manage subscription in the app. Cloud runs to the end of the period you paid for, then your account is on Free: nothing is deleted, and every device already syncing keeps syncing; only adding a device past one computer and one phone needs Cloud again. Payments aren't refunded automatically; write to us if you want a refund. Deleting your Whimbrel account also cancels the subscription." },
     { "q": "Can my company get support or run its own servers?", "a": "Yes. The sync relay and update feed are open source and documented for self-hosting. If you want a person responsible for your deployment, <a href=\"mailto:{{site.salesEmail}}?subject=Whimbrel%20support\">talk to us</a> about a support contract." }
   ]
 }
@@ -20,14 +20,14 @@
   <div class="narrow center">
     <p class="eyebrow">Pricing</p>
     <h1>Free and open source. Pay only for servers we run for you.</h1>
-    <p class="lede">Whimbrel does its work on your computer with the AI models you choose, so the whole app is free. Planned paid plans cover what genuinely needs a server or a person: hosted sync with backups, push to your phone, and team features.</p>
+    <p class="lede">Whimbrel does its work on your computer with the AI models you choose, so the whole app is free. Cloud covers what genuinely needs a server we run: unlimited devices on our hosted sync relay, for $5 a month. Team features are planned.</p>
   </div>
 </section>
 
 <div class="container">
   <div class="early-access-banner" role="note">
-    <strong>Nothing is for sale yet.</strong>
-    <span>Every feature is free today. Cloud and Team are planned; their features and prices will be announced when billing exists.</span>
+    <strong>Every feature in the app is free.</strong>
+    <span>Cloud is optional: it adds unlimited devices on our hosted relay. Team is planned.</span>
   </div>
 </div>
 
@@ -53,18 +53,20 @@
       </article>
 
       <article class="card plan">
-        <p class="plan-badge">Planned</p>
         <h2>Cloud</h2>
         <p class="plan-for">For one person who wants us to run the server.</p>
-        <p class="price"><span class="amount amount-sm">Not yet priced</span></p>
-        <p class="price-note">Your models and keys, as on Free</p>
-        <a class="btn btn-ghost btn-block" href="/download/#register">Start free now</a>
+        <p class="price"><span class="amount">$5</span> <span class="per">a month, or $50 a year</span></p>
+        <p class="price-note">Plus tax where applicable</p>
+        <a class="btn btn-primary btn-block" href="/download/#register">Subscribe from the app: Settings → Sync &amp; Devices</a>
         <ul class="plan-features">
           <li><strong>Everything in Free, plus:</strong></li>
-          <li>Our hosted relay for any number of devices</li>
+          <li>Unlimited devices on our hosted relay</li>
+          <li>Your account isn't deleted for inactivity</li>
+          <li>Email support</li>
+          <li><strong>Coming to Cloud, at no extra cost:</strong></li>
           <li>Daily backups and restore</li>
-          <li>Push notifications to your phone</li>
-          <li>Routines that keep running while your laptop is closed (under design)</li>
+          <li>Open your vault from anywhere</li>
+          <li>Push to your phone</li>
         </ul>
       </article>
 
@@ -113,7 +115,7 @@
         <caption class="sr-only">Free and entry paid plans for Whimbrel, Granola, and Littlebird</caption>
         <thead><tr><th scope="col">Product</th><th scope="col">Free plan</th><th scope="col">Entry paid plan</th><th scope="col">Open source</th></tr></thead>
         <tbody>
-          <tr><th scope="row">Whimbrel</th><td class="yes">Every feature, unlimited history</td><td>None needed; Cloud planned</td><td class="yes">Yes, Apache 2.0</td></tr>
+          <tr><th scope="row">Whimbrel</th><td class="yes">Every feature, unlimited history</td><td>None needed; Cloud is $5 a month</td><td class="yes">Yes, Apache 2.0</td></tr>
           <tr><th scope="row">Granola</th><td>30-day meeting history</td><td>Business, $14 per user/month</td><td class="no">No</td></tr>
           <tr><th scope="row">Littlebird</th><td>Daily usage credits</td><td>Plus, $17/month billed annually</td><td class="no">No</td></tr>
         </tbody>

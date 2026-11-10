@@ -176,6 +176,17 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
             deleted INTEGER NOT NULL DEFAULT 0,
             updated_at_unix_ms INTEGER NOT NULL
         );
+        -- The topic page snapshots (see snapshot.rs): the local build as last published, and
+        -- the ones applied from other devices. Last write wins on built_at_unix_ms.
+        CREATE TABLE IF NOT EXISTS topic_page_snapshot (
+            topic_key TEXT PRIMARY KEY,
+            payload TEXT NOT NULL,
+            built_at_unix_ms INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            published_at_unix_ms INTEGER,
+            own_hash TEXT,
+            own_published_at_unix_ms INTEGER
+        );
         CREATE TABLE IF NOT EXISTS topic_step_attempt (
             source_id INTEGER PRIMARY KEY,
             attempts INTEGER NOT NULL

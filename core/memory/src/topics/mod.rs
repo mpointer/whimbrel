@@ -12,6 +12,7 @@ pub mod page;
 pub mod read;
 pub mod schema;
 pub mod seeds;
+pub mod snapshot;
 pub mod step_text;
 pub mod steps;
 

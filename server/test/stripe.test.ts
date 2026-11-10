@@ -49,13 +49,20 @@ function sub(status: string, extra: any = {}): any {
 }
 
 it("past_due_stays_cloud_until_period_end", () => {
-  expect(planFromSubscription(sub("past_due"), NOW)).toEqual({ plan: "cloud", untilUnixMs: END * 1000, interval: "month" });
+  expect(planFromSubscription(sub("past_due"), NOW)).toEqual({ plan: "cloud", untilUnixMs: END * 1000, interval: "month", renews: true });
   expect(planFromSubscription(sub("active"), NOW)?.plan).toBe("cloud");
   expect(planFromSubscription(sub("trialing"), NOW)?.plan).toBe("cloud");
 });
+it("a_cancelled_subscription_stays_cloud_until_it_ends_and_does_not_renew", () => {
+  // The customer portal sets cancel_at (flexible billing) or cancel_at_period_end.
+  expect(planFromSubscription(sub("active", { cancel_at: END }), NOW)).toEqual({ plan: "cloud", untilUnixMs: END * 1000, interval: "month", renews: false });
+  expect(planFromSubscription(sub("active", { cancel_at_period_end: true }), NOW)?.renews).toBe(false);
+  expect(planFromSubscription(sub("active", { cancel_at: END - 100 }), NOW)?.untilUnixMs).toBe((END - 100) * 1000);
+  expect(planFromSubscription(sub("active", { cancel_at: null, cancel_at_period_end: false }), NOW)?.renews).toBe(true);
+});
 it("unpaid_and_canceled_end_the_plan_at_ended_at_or_now", () => {
-  expect(planFromSubscription(sub("canceled", { ended_at: 1_799_000_000 }), NOW)).toEqual({ plan: "free", untilUnixMs: 1_799_000_000_000, interval: null });
-  expect(planFromSubscription(sub("unpaid"), NOW)).toEqual({ plan: "free", untilUnixMs: NOW, interval: null });
+  expect(planFromSubscription(sub("canceled", { ended_at: 1_799_000_000 }), NOW)).toEqual({ plan: "free", untilUnixMs: 1_799_000_000_000, interval: null, renews: false });
+  expect(planFromSubscription(sub("unpaid"), NOW)).toEqual({ plan: "free", untilUnixMs: NOW, interval: null, renews: false });
   expect(planFromSubscription(sub("incomplete_expired"), NOW)?.plan).toBe("free");
   expect(planFromSubscription(sub("paused"), NOW)?.plan).toBe("free");
 });
@@ -121,13 +128,13 @@ it("billingConfigured_needs_all_four", () => {
 });
 
 it("stripe_request_refuses_redirects_so_the_key_never_leaves", async () => {
-  let redirect: RequestRedirect | undefined;
-  // What fetch does for redirect: "error" on a 3xx: it rejects.
+  let init: RequestInit | undefined;
   const fetcher = (async (_u: string, i: RequestInit) => {
-    redirect = i.redirect;
-    if (i.redirect === "error") throw new TypeError("redirect");
+    init = i;
     return new Response(null, { status: 302, headers: { location: "https://evil.example/" } });
   }) as unknown as typeof fetch;
-  expect(await stripeRequest("sk_test_x", "POST", "checkout/sessions", {}, fetcher)).toEqual({ ok: false, status: 0, body: null });
-  expect(redirect).toBe("error");
+  expect(await stripeRequest("sk_test_x", "POST", "checkout/sessions", {}, fetcher)).toEqual({ ok: false, status: 302, body: null });
+  expect(init?.redirect).toBe("manual");
+  // The Workers runtime accepts these options (it throws on redirect: "error").
+  expect(() => new Request("https://api.stripe.com/v1/checkout/sessions", init)).not.toThrow();
 });

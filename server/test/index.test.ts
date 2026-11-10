@@ -1378,7 +1378,7 @@ it("truncates an over-long device name to 100 characters", async () => {
 });
 
 const IOS = "test-ios-client-id";
-const FREE_PLAN = { plan: "free", planUntilUnixMs: null, planInterval: null, stripeCustomerId: null, stripeSubscriptionId: null } as const;
+const FREE_PLAN = { plan: "free", planUntilUnixMs: null, planInterval: null, stripeCustomerId: null, stripeSubscriptionId: null, planRenews: true } as const;
 
 function mockAud(audience: string) {
   vi.spyOn(googleAuth, "verifyGoogleIdToken").mockResolvedValue({

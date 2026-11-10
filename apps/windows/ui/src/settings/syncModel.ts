@@ -85,12 +85,13 @@ export function deviceTitle(device: DeviceView): string {
 
 // --- Cloud v1 (docs/superpowers/plans/2026-11-09-windows-cloud-v1.md) ---------------------------
 
-/** "Free: 1 computer + 1 phone", or "Cloud until November 9, 2027". */
+/** "Free: 1 computer + 1 phone", "Cloud until November 9, 2027", or once cancelled "Cloud ends November 9,
+ *  2027. It won't renew." A server that doesn't send `renews` is read as renewing. */
 export function planLine(plan: PlanView, locale: string): string {
   if (plan.plan !== "cloud") return t("Free: 1 computer + 1 phone");
   if (plan.untilUnixMs == null) return t("Cloud");
   const date = new Date(plan.untilUnixMs).toLocaleDateString(locale, { month: "long", day: "numeric", year: "numeric" });
-  return t("Cloud until {date}", { date });
+  return plan.renews === false ? t("Cloud ends {date}. It won't renew.", { date }) : t("Cloud until {date}", { date });
 }
 
 /** Upgrade shows only on the free plan with billing open. */

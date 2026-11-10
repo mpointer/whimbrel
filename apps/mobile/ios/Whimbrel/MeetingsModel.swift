@@ -13,6 +13,8 @@ final class MeetingsModel: ObservableObject {
     static let limit = 200
 
     @Published private(set) var meetings: [PhoneMeeting] = []
+    /// The topic each meeting belongs to, by this replica's meeting id.
+    @Published private(set) var topicChips: [Int64: PhoneTopicChip] = [:]
     @Published private(set) var loaded = false
     @Published var deviceFilter: String?
     @Published var query = ""
@@ -26,7 +28,11 @@ final class MeetingsModel: ObservableObject {
     }
 
     func reload(sync: SyncModel) async {
-        meetings = await sync.read { $0.recentMeetings(limit: Self.limit) } ?? []
+        let read = await sync.read { store in
+            (store.recentMeetings(limit: Self.limit), TopicsModel.chipsByMeeting(store.topicSnapshots(), in: store))
+        }
+        meetings = read?.0 ?? []
+        topicChips = read?.1 ?? [:]
         loaded = true
     }
 
