@@ -75,6 +75,8 @@ impl SkinSources {
             Provider::Google => keys.google.is_some(),
             // OpenRouter has no default model; without one there is nothing to call.
             Provider::Openrouter => keys.openrouter.is_some() && !routing.openrouter_model.is_empty(),
+            // Signed in to sync (the credentials are cached only then).
+            Provider::Whimbrel => keys.whimbrel.is_some(),
         };
         SkinSources {
             provider: routing.preferred_provider,

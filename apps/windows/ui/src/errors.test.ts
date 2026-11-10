@@ -68,6 +68,9 @@ describe("a provider failure says why, when core knows", () => {
     expect(describeError({ kind: "provider_failure", reason: { kind: "rate_limited", provider: "anthropic" } })).toBe(
       "Anthropic is busy or out of credit. Try again shortly.",
     );
+    expect(describeError({ kind: "provider_failure", reason: { kind: "credit_exhausted" } })).toBe(
+      "Whimbrel AI credit is used up. Add credit in Settings.",
+    );
   });
 
   it("keeps the general line for a network blip", () => {

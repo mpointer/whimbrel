@@ -27,6 +27,8 @@ struct ProviderModelPicker: View {
         case .openai: return appState.routing.openaiModels
         case .google: return appState.routing.googleModels
         case .openrouter: return appState.routing.openrouterModels
+        // Only the models Whimbrel's server prices.
+        case .whimbrel: return RoutingSettings.whimbrelModels
         }
     }
 
@@ -37,6 +39,7 @@ struct ProviderModelPicker: View {
         case .openai: return appState.routing.isLoadingOpenAIModels
         case .google: return appState.routing.isLoadingGoogleModels
         case .openrouter: return appState.routing.isLoadingOpenRouterModels
+        case .whimbrel: return false
         }
     }
 
@@ -47,6 +50,7 @@ struct ProviderModelPicker: View {
         case .openai: return appState.routing.openaiModelsError
         case .google: return appState.routing.googleModelsError
         case .openrouter: return appState.routing.openrouterModelsError
+        case .whimbrel: return nil
         }
     }
 
@@ -55,7 +59,7 @@ struct ProviderModelPicker: View {
         switch selectedProvider {
         case .ollama:
             if !hostedModelOptions.contains(ollamaModel) { ollamaModel = hostedModelOptions[0] }
-        case .anthropic, .openai, .google, .openrouter:
+        case .anthropic, .openai, .google, .openrouter, .whimbrel:
             if !hostedModelOptions.contains(selectedHostedModel) { selectedHostedModel = hostedModelOptions[0] }
         }
     }
@@ -96,7 +100,7 @@ struct ProviderModelPicker: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 280)
+                .frame(width: 380)
                 .onChange(of: selectedProvider) { _, _ in
                     clampSelectedModelIfNeeded()
                     refreshHostedModelsIfNeeded()
@@ -134,6 +138,10 @@ struct ProviderModelPicker: View {
                     .foregroundStyle(Color.whimbrelWarning)
             } else if selectedProvider == .openrouter && !appState.routing.hasOpenRouterKey {
                 Text("No OpenRouter API key configured. Add one in Settings > AI & Routing.")
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(Color.whimbrelWarning)
+            } else if selectedProvider == .whimbrel && !appState.routing.hasKey(for: .whimbrel) {
+                Text("Sign in to sync to use Whimbrel AI")
                     .font(.whimbrelBody(.caption2))
                     .foregroundStyle(Color.whimbrelWarning)
             } else if let hostedModelsError, selectedProvider == .ollama, !LocalModel.isInstalled {

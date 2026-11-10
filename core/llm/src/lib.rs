@@ -305,12 +305,35 @@ struct AnthropicResponse {
     usage: Option<AnthropicUsage>,
 }
 
+/// How a request to an Anthropic-shaped endpoint proves who is asking: the user's own
+/// key, or Whimbrel's server taking a Google ID token and the device's public key.
+#[derive(Clone)]
+pub enum AnthropicAuth {
+    ApiKey(String),
+    Whimbrel { id_token: String, device_key: String },
+}
+
+/// Hand-written so neither the API key nor the Whimbrel ID token can reach a log.
+impl std::fmt::Debug for AnthropicAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AnthropicAuth::ApiKey(_) => f.write_str("ApiKey(<redacted>)"),
+            AnthropicAuth::Whimbrel { .. } => {
+                f.write_str("Whimbrel { id_token: <redacted>, device_key: <redacted> }")
+            }
+        }
+    }
+}
+
+/// Where Whimbrel AI's Anthropic-compatible proxy lives; clients append `/v1/messages`.
+pub const WHIMBREL_AI_BASE_URL: &str = "https://sync.whimbrelapp.com/ai";
+
 /// Calls the real Anthropic Messages API (FR-CHAT-2). The caller supplies an API key it
 /// already has — this crate never reads one from the environment or a config file, so
 /// key storage (e.g. macOS Keychain) stays entirely the caller's concern.
 pub struct AnthropicClient {
     base_url: String,
-    api_key: String,
+    auth: AnthropicAuth,
     model: String,
     max_tokens: u32,
 }
@@ -325,7 +348,18 @@ impl AnthropicClient {
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             base_url: "https://api.anthropic.com".to_string(),
-            api_key: api_key.into(),
+            auth: AnthropicAuth::ApiKey(api_key.into()),
+            model: model.into(),
+            max_tokens: 16384,
+        }
+    }
+
+    /// Anthropic's models through Whimbrel's server: `Authorization: Bearer <id_token>`
+    /// and `X-Whimbrel-Device` instead of an `x-api-key`.
+    pub fn whimbrel(id_token: impl Into<String>, device_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            base_url: WHIMBREL_AI_BASE_URL.to_string(),
+            auth: AnthropicAuth::Whimbrel { id_token: id_token.into(), device_key: device_key.into() },
             model: model.into(),
             max_tokens: 16384,
         }
@@ -352,8 +386,14 @@ impl LlmClient for AnthropicClient {
                 content: prompt,
             }],
         };
-        let response = ureq::post(&format!("{}/v1/messages", self.base_url))
-            .set("x-api-key", &self.api_key)
+        let http = ureq::post(&format!("{}/v1/messages", self.base_url));
+        let http = match &self.auth {
+            AnthropicAuth::ApiKey(key) => http.set("x-api-key", key),
+            AnthropicAuth::Whimbrel { id_token, device_key } => http
+                .set("Authorization", &format!("Bearer {id_token}"))
+                .set("X-Whimbrel-Device", device_key),
+        };
+        let response = http
             .set("anthropic-version", "2023-06-01")
             .send_json(&request)
             .map_err(ureq_error_to_llm)?;
@@ -2210,6 +2250,19 @@ pub fn estimate_cost_cents(provider: Provider, model: &str, usage: TokenUsage) -
 mod tests {
 
     #[test]
+    fn anthropic_auth_debug_redacts_the_key_and_the_whimbrel_token() {
+        let key = format!("{:?}", AnthropicAuth::ApiKey("sk-ant-secret".into()));
+        assert!(!key.contains("sk-ant-secret"), "{key}");
+        let whimbrel = format!(
+            "{:?}",
+            AnthropicAuth::Whimbrel { id_token: "eyJ-secret-id-token".into(), device_key: "secret-device".into() }
+        );
+        assert!(!whimbrel.contains("eyJ-secret-id-token"), "{whimbrel}");
+        assert!(!whimbrel.contains("secret-device"), "{whimbrel}");
+        assert!(whimbrel.contains("Whimbrel"), "{whimbrel}");
+    }
+
+    #[test]
     fn thread_with_matching_email_redacts_credentials_in_the_message() {
         let thread = memory::Thread {
             id: 1, source: "gmail".into(), external_thread_id: "t".into(), account_email: "me@x.com".into(),
@@ -2371,6 +2424,56 @@ mod tests {
         assert!(head.contains(&format!("X-Title: {OPENROUTER_TITLE}")), "{head}");
         assert!(head.contains(r#""model":"vendor/model:free""#), "{head}");
         assert_eq!(OpenAIClient::openrouter("k", "m").base_url, OPENROUTER_BASE_URL);
+    }
+
+    /// The Whimbrel client is the Anthropic client pointed at Whimbrel's server, with
+    /// the Google ID token and device key in place of `x-api-key`.
+    #[test]
+    fn whimbrel_client_sends_bearer_and_device_not_api_key() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/ai", listener.local_addr().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = std::io::Read::read(&mut conn, &mut buf).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&raw);
+                if let Some(head_end) = text.find("\r\n\r\n") {
+                    let content_length = text
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length: ").or_else(|| l.strip_prefix("Content-Length: ")))
+                        .and_then(|v| v.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if raw.len() >= head_end + 4 + content_length {
+                        break;
+                    }
+                }
+            }
+            let _ = tx.send(String::from_utf8_lossy(&raw).into_owned());
+            let body = r#"{"content":[{"type":"text","text":"pong"}],"stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":1}}"#;
+            let _ = std::io::Write::write_all(
+                &mut conn,
+                format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes(),
+            );
+        });
+        let client = AnthropicClient::whimbrel("id-token-1", "device-key-1", "claude-haiku-4-5").with_base_url(url);
+        assert_eq!(client.complete("ping").unwrap().text, "pong");
+        let head = rx.recv().unwrap();
+        let lower = head.to_lowercase();
+        assert!(head.starts_with("POST /ai/v1/messages "), "{head}");
+        assert!(lower.contains("authorization: bearer id-token-1"), "{head}");
+        assert!(lower.contains("x-whimbrel-device: device-key-1"), "{head}");
+        assert!(!lower.contains("x-api-key"), "{head}");
+        assert_eq!(
+            AnthropicClient::whimbrel("t", "d", "m").base_url,
+            "https://sync.whimbrelapp.com/ai"
+        );
     }
 
     #[test]

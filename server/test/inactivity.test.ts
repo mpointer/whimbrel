@@ -2,6 +2,7 @@ import { it, expect, vi, beforeEach, type MockInstance } from "vitest";
 import * as turso from "../src/turso";
 import * as accounts from "../src/accounts";
 import { runInactivity } from "../src/inactivity";
+import { creditPurchase } from "../src/aiCredit";
 import type { Env } from "../src/index";
 import { FakeSqlExecutor } from "./testHelpers/fakeSqlExecutor";
 
@@ -106,6 +107,30 @@ it("contact after the warning cancels deletion", async () => {
   await accounts.touchLastSeen(db, account.id, device.id, NOW + DAY);
   expect((await runInactivity(db, makeEnv(), NOW + 20 * DAY, fetcher)).deleted).toBe(0);
   expect(del).not.toHaveBeenCalled();
+});
+
+it("an idle account holding Whimbrel AI credit is never warned (credit doesn't expire)", async () => {
+  const db = new FakeSqlExecutor();
+  const { account } = await idle(db, 400);
+  expect(await creditPurchase(db, account.id, 10_000_000, "cs_keep", NOW - 400 * DAY)).toBe(true);
+  const { sent, fetcher } = resend();
+  expect(await runInactivity(db, makeEnv(), NOW, fetcher)).toEqual({ warned: 0, deleted: 0, expiredSwaps: 0 });
+  expect(sent).toHaveLength(0);
+  expect(db.rawAccount(account.id)?.warnedAtUnixMs ?? null).toBeNull();
+});
+
+it("a warned account that holds Whimbrel AI credit is never deleted", async () => {
+  const db = new FakeSqlExecutor();
+  const { account } = await idle(db, 181);
+  const { fetcher } = resend();
+  expect((await runInactivity(db, makeEnv(), NOW, fetcher)).warned).toBe(1);
+  // Credit lands after the warning (a purchase does not count as device contact).
+  expect(await creditPurchase(db, account.id, 1, "cs_late", NOW + DAY)).toBe(true);
+  expect((await runInactivity(db, makeEnv(), NOW + 30 * DAY, fetcher)).deleted).toBe(0);
+  expect(del).not.toHaveBeenCalled();
+  expect(db.rawAccount(account.id)).toBeDefined();
+  // The claim itself refuses too, in case the account is read before the credit lands.
+  expect(await accounts.claimInactiveForDeletion(db, account.id, NOW + 30 * DAY, NOW + 30 * DAY)).toBe(false);
 });
 
 it("unlimited accounts are never warned", async () => {

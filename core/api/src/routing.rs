@@ -10,7 +10,10 @@
 /// key/cap fields are frequently absent (no key saved yet, cap left at its conservative
 /// built-in default). This JSON, sourced from the shell's keychain-backed Settings, is
 /// the only way a hosted link is ever added to the chain.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is written by hand (below) so the API keys and the Whimbrel ID token, a
+/// bearer token that spends the user's prepaid credit, never reach a log.
+#[derive(Clone)]
 pub struct RoutingConfig {
     pub anthropic_key: Option<String>,
     pub openai_key: Option<String>,
@@ -43,6 +46,45 @@ pub struct RoutingConfig {
     /// BCP 47 tag AI output is written in. "" (the default, and en-US with the English
     /// model) adds no language line, so prompts stay byte-identical. Device-local.
     pub output_language: String,
+    /// The signed-in user's Google ID token and this device's public key, for Whimbrel AI.
+    /// Both must be set for the Whimbrel link to exist; the shell refreshes the token.
+    /// (Parsed field by field in [`RoutingConfig::from_json`], so a missing or wrong-typed
+    /// value is `None`, the effect `#[serde(default)]` would have.)
+    pub whimbrel_id_token: Option<String>,
+    pub whimbrel_device_key: Option<String>,
+}
+
+/// Prints `Some("<redacted>")` for a set secret, so a log still shows which are set.
+fn redacted(secret: &Option<String>) -> Option<&'static str> {
+    secret.as_ref().map(|_| "<redacted>")
+}
+
+impl std::fmt::Debug for RoutingConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RoutingConfig")
+            .field("anthropic_key", &redacted(&self.anthropic_key))
+            .field("openai_key", &redacted(&self.openai_key))
+            .field("google_key", &redacted(&self.google_key))
+            .field("typesafe_key", &redacted(&self.typesafe_key))
+            .field("user_daily_cap_cents", &self.user_daily_cap_cents)
+            .field("global_daily_cap_cents", &self.global_daily_cap_cents)
+            .field("sensitive", &self.sensitive)
+            .field("preferred_provider", &self.preferred_provider)
+            .field("preferred_model", &self.preferred_model)
+            .field("custom_instructions", &self.custom_instructions)
+            .field("daily_digest_instructions", &self.daily_digest_instructions)
+            .field("weekly_digest_instructions", &self.weekly_digest_instructions)
+            .field("profile", &self.profile)
+            .field("cheap_first", &self.cheap_first)
+            .field("use_local_model", &self.use_local_model)
+            .field("openrouter_key", &redacted(&self.openrouter_key))
+            .field("openrouter_model", &self.openrouter_model)
+            .field("openrouter_prices", &self.openrouter_prices)
+            .field("output_language", &self.output_language)
+            .field("whimbrel_id_token", &redacted(&self.whimbrel_id_token))
+            .field("whimbrel_device_key", &redacted(&self.whimbrel_device_key))
+            .finish()
+    }
 }
 
 impl Default for RoutingConfig {
@@ -69,6 +111,8 @@ impl Default for RoutingConfig {
             openrouter_model: String::new(),
             openrouter_prices: std::collections::HashMap::new(),
             output_language: String::new(),
+            whimbrel_id_token: None,
+            whimbrel_device_key: None,
         }
     }
 }
@@ -193,6 +237,18 @@ impl RoutingConfig {
                 .map(str::trim)
                 .map(String::from)
                 .unwrap_or_default(),
+            whimbrel_id_token: v
+                .get("whimbrel_id_token")
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .filter(|k| !k.is_empty())
+                .map(String::from),
+            whimbrel_device_key: v
+                .get("whimbrel_device_key")
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .filter(|k| !k.is_empty())
+                .map(String::from),
         }
     }
 
@@ -256,8 +312,23 @@ pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Chai
     let mut google_slot = hosted_link(routing, llm::Provider::Google, google_model);
     let mut openrouter_slot = hosted_link(routing, llm::Provider::OpenRouter, openrouter_model);
 
-    let mut chain = Vec::with_capacity(5);
+    // Whimbrel AI is a link only when the user picked it: it spends their prepaid credit,
+    // so it is never a silent fallback for another provider's failure. Its model is the
+    // user's pick, or the cheap Anthropic default before one is made.
+    let mut whimbrel_slot = if routing.preferred_provider == "whimbrel" {
+        let model = if routing.preferred_model.is_empty() { FALLBACK_ANTHROPIC_MODEL } else { routing.preferred_model.as_str() };
+        hosted_link(routing, llm::Provider::Whimbrel, model)
+    } else {
+        None
+    };
+
+    let mut chain = Vec::with_capacity(6);
     match routing.preferred_provider.as_str() {
+        "whimbrel" => {
+            if let Some(link) = whimbrel_slot.take() {
+                chain.push(link);
+            }
+        }
         "anthropic" => {
             if let Some(link) = anthropic_slot.take() {
                 chain.push(link);
@@ -315,7 +386,8 @@ const CHEAP_ANTHROPIC_MODEL: &str = "claude-haiku-4-5";
 const CHEAP_OPENAI_MODEL: &str = "gpt-4o-mini";
 const CHEAP_GOOGLE_MODEL: &str = "gemini-2.0-flash";
 
-/// The hosted providers `build_chain` knows, in its default fallback order.
+/// The hosted providers `build_chain` knows, in its default fallback order. Whimbrel AI is
+/// not here: it joins a chain only as the preferred provider.
 const HOSTED_PROVIDERS: [llm::Provider; 4] =
     [llm::Provider::Anthropic, llm::Provider::OpenAI, llm::Provider::Google, llm::Provider::OpenRouter];
 
@@ -325,6 +397,7 @@ fn fallback_model(provider: llm::Provider) -> &'static str {
         llm::Provider::OpenAI => FALLBACK_OPENAI_MODEL,
         llm::Provider::Google => FALLBACK_GOOGLE_MODEL,
         llm::Provider::Ollama | llm::Provider::OpenRouter | llm::Provider::Local => "",
+        llm::Provider::Whimbrel => FALLBACK_ANTHROPIC_MODEL,
     }
 }
 
@@ -337,6 +410,7 @@ pub fn cheap_model_for(provider: llm::Provider, available: Option<&[String]>) ->
         llm::Provider::Anthropic => CHEAP_ANTHROPIC_MODEL,
         llm::Provider::OpenAI => CHEAP_OPENAI_MODEL,
         llm::Provider::Google => CHEAP_GOOGLE_MODEL,
+        llm::Provider::Whimbrel => CHEAP_ANTHROPIC_MODEL,
         llm::Provider::Ollama | llm::Provider::OpenRouter | llm::Provider::Local => return "",
     };
     match available {
@@ -388,6 +462,11 @@ fn hosted_link(routing: &RoutingConfig, provider: llm::Provider, model: &str) ->
         llm::Provider::OpenAI => Box::new(llm::OpenAIClient::new(routing.openai_key.clone()?, model)),
         llm::Provider::Google => Box::new(llm::GoogleClient::new(routing.google_key.clone()?, model)),
         llm::Provider::OpenRouter => Box::new(llm::OpenAIClient::openrouter(routing.openrouter_key.clone()?, model)),
+        llm::Provider::Whimbrel => Box::new(llm::AnthropicClient::whimbrel(
+            routing.whimbrel_id_token.clone()?,
+            routing.whimbrel_device_key.clone()?,
+            model,
+        )),
         llm::Provider::Ollama | llm::Provider::Local => return None,
     };
     Some(llm::ChainLink { provider, model: model.to_string(), client })
@@ -396,9 +475,12 @@ fn hosted_link(routing: &RoutingConfig, provider: llm::Provider, model: &str) ->
 /// The light chain: the local model first (when enabled), then every hosted provider
 /// the user holds a key for at its cheap model, cheapest first by `llm::price_rank`.
 fn build_light_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
+    let whimbrel = (routing.preferred_provider == "whimbrel").then_some(llm::Provider::Whimbrel);
     let mut hosted: Vec<llm::ChainLink> = HOSTED_PROVIDERS
         .iter()
-        .filter_map(|&p| hosted_link(routing, p, light_model(routing, p)))
+        .copied()
+        .chain(whimbrel)
+        .filter_map(|p| hosted_link(routing, p, light_model(routing, p)))
         .collect();
     hosted.sort_by(|a, b| llm::price_rank(a.provider, &a.model).total_cmp(&llm::price_rank(b.provider, &b.model)));
     let mut chain = Vec::with_capacity(hosted.len() + 1);
@@ -537,6 +619,95 @@ mod tests {
             google_key: Some("g".into()),
             ..RoutingConfig::default()
         }
+    }
+
+    fn with_whimbrel() -> RoutingConfig {
+        RoutingConfig {
+            whimbrel_id_token: Some("id-token".into()),
+            whimbrel_device_key: Some("device-key".into()),
+            ..all_keys()
+        }
+    }
+
+    #[test]
+    fn debug_output_redacts_the_whimbrel_token_and_every_key() {
+        let cfg = RoutingConfig {
+            anthropic_key: Some("sk-ant-secret-anthropic".into()),
+            openai_key: Some("sk-secret-openai".into()),
+            google_key: Some("secret-google".into()),
+            typesafe_key: Some("secret-typesafe".into()),
+            openrouter_key: Some("sk-or-secret-openrouter".into()),
+            whimbrel_id_token: Some("eyJ-secret-id-token".into()),
+            whimbrel_device_key: Some("secret-device-key".into()),
+            preferred_provider: "whimbrel".into(),
+            ..RoutingConfig::default()
+        };
+        let out = format!("{cfg:?}");
+        for secret in [
+            "sk-ant-secret-anthropic",
+            "sk-secret-openai",
+            "secret-google",
+            "secret-typesafe",
+            "sk-or-secret-openrouter",
+            "eyJ-secret-id-token",
+            "secret-device-key",
+        ] {
+            assert!(!out.contains(secret), "Debug leaked {secret}: {out}");
+        }
+        assert!(out.contains("whimbrel_id_token: Some(\"<redacted>\")"), "{out}");
+        assert!(out.contains("preferred_provider: \"whimbrel\""), "{out}");
+        let alt = format!("{cfg:#?}");
+        assert!(!alt.contains("eyJ-secret-id-token"), "{alt}");
+        // An absent key still reads as None, so the output stays useful.
+        assert!(format!("{:?}", RoutingConfig::default()).contains("whimbrel_id_token: None"));
+    }
+
+    #[test]
+    fn whimbrel_is_never_in_the_default_chain() {
+        let routing = RoutingConfig { preferred_provider: "anthropic".into(), preferred_model: "claude-opus-5".into(), ..with_whimbrel() };
+        for task in [TaskKind::Chat, TaskKind::ConversationTitle] {
+            let chain = build_chain_for(task, "gemma4:12b", &routing);
+            assert!(!providers(&chain).contains(&Provider::Whimbrel), "{task:?}");
+        }
+        assert!(!providers(&build_chain("gemma4:12b", &with_whimbrel())).contains(&Provider::Whimbrel));
+    }
+
+    #[test]
+    fn preferred_whimbrel_comes_first_then_others() {
+        let routing = RoutingConfig { preferred_provider: "whimbrel".into(), preferred_model: "claude-sonnet-5".into(), ..with_whimbrel() };
+        let chain = build_chain("gemma4:12b", &routing);
+        assert_eq!(
+            providers(&chain),
+            vec![Provider::Whimbrel, Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google]
+        );
+        assert_eq!(chain[0].model, "claude-sonnet-5");
+        assert_eq!(chain[2].model, "claude-haiku-4-5", "Anthropic is only a fallback here");
+        // A Whimbrel-only user still gets light tasks done, at the cheap model.
+        let light = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing);
+        assert!(providers(&light).contains(&Provider::Whimbrel));
+    }
+
+    #[test]
+    fn whimbrel_without_token_is_skipped() {
+        for routing in [
+            RoutingConfig { preferred_provider: "whimbrel".into(), ..all_keys() },
+            RoutingConfig { preferred_provider: "whimbrel".into(), whimbrel_id_token: Some("t".into()), ..all_keys() },
+            RoutingConfig { preferred_provider: "whimbrel".into(), whimbrel_device_key: Some("d".into()), ..all_keys() },
+        ] {
+            let chain = build_chain("gemma4:12b", &routing);
+            assert_eq!(providers(&chain), vec![Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google]);
+            assert!(!providers(&build_chain_for(TaskKind::TopicName, "gemma4:12b", &routing)).contains(&Provider::Whimbrel));
+        }
+    }
+
+    #[test]
+    fn from_json_reads_the_whimbrel_credentials() {
+        let r = RoutingConfig::from_json(Some(r#"{"whimbrel_id_token":"t","whimbrel_device_key":"d","preferred_provider":"whimbrel"}"#));
+        assert_eq!((r.whimbrel_id_token.as_deref(), r.whimbrel_device_key.as_deref()), (Some("t"), Some("d")));
+        let r = RoutingConfig::from_json(Some(r#"{"whimbrel_id_token":7}"#));
+        assert_eq!((r.whimbrel_id_token, r.whimbrel_device_key), (None, None));
+        let r = RoutingConfig::from_json(Some("{}"));
+        assert_eq!((r.whimbrel_id_token, r.whimbrel_device_key), (None, None));
     }
 
     #[test]
@@ -844,6 +1015,8 @@ mod tests {
             openrouter_model: String::new(),
             openrouter_prices: Default::default(),
             output_language: String::new(),
+            whimbrel_id_token: None,
+            whimbrel_device_key: None,
         }
     }
 

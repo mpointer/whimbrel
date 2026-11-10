@@ -7,7 +7,9 @@ import { isCloud, kindOf, limitCheck } from "./limits";
 import { storeWrappedKeyForHandoff, fetchAndConsumeWrappedKey } from "./handoff";
 import { ipBucket, rateLimit, rateLimited } from "./rateLimit";
 import { deleteAccount, runInactivity } from "./inactivity";
-import { billingConfigured, planFromSubscription, stripeRequest, subscriptionIdOf, verifyStripeSignature } from "./stripe";
+import { aiBalance, creditPurchase, lastPurchaseMicros, purchaseByStripeRef, refundPurchase, settleStaleHolds } from "./aiCredit";
+import { billingConfigured, isAiCreditEvent, planFromSubscription, stripeRequest, subscriptionIdOf, verifyStripeSignature } from "./stripe";
+import { handleAiMessages } from "./aiProxy";
 import { EMAIL_FROM, EMAIL_REPLY_TO, sendEmail } from "./email";
 import {
   findAccountByGoogleSub,
@@ -46,6 +48,7 @@ import {
   type DeviceRecord,
   type SqlExecutor,
   type SqlRow,
+  type SqlStatement,
 } from "./accounts";
 
 export interface Env {
@@ -72,6 +75,8 @@ export interface Env {
   /** Optional Billing Portal configuration (`bpc_…`) for Whimbrel; the Stripe
    * account is shared, so the default portal could offer another product. */
   STRIPE_PORTAL_CONFIGURATION?: string;
+  /** Whimbrel's own Anthropic key for the AI credit proxy; unset = 503 ai_unavailable. */
+  ANTHROPIC_API_KEY?: string;
   ENROLLMENT_HANDOFF: KVNamespace;
 }
 
@@ -96,6 +101,16 @@ function tursoSqlExecutor(env: Env): SqlExecutor {
       }
       await stmt.run(params);
       return [];
+    },
+    async batch(stmts: SqlStatement[]): Promise<SqlRow[][]> {
+      // With a mode, the client sends one Hrana request: BEGIN IMMEDIATE,
+      // each statement gated on the one before succeeding, COMMIT, and a
+      // ROLLBACK if anything failed. It throws on any statement error.
+      const results = (await conn.batch(
+        stmts.map((s) => ({ sql: s.sql, args: s.params as unknown[] })),
+        "immediate",
+      )) as { rows: SqlRow[] }[];
+      return results.map((r) => r.rows);
     },
   };
 }
@@ -829,6 +844,85 @@ export async function handleBillingCheckout(
   }
 }
 
+/** The AI credit packs, in dollars, and what each costs in cents before tax. */
+const AI_PACKS: Record<string, number> = { "10": 1000, "25": 2500 };
+
+/** Starts a Stripe Checkout session (one-time payment) for a pack of AI
+ * credit and returns its URL. The webhook credits it. */
+export async function handleAiCheckout(
+  request: Request,
+  env: Env,
+  db: SqlExecutor = tursoSqlExecutor(env),
+  fetcher: typeof fetch = fetch,
+  now: number = Date.now(),
+): Promise<Response> {
+  const body = (await readBody(request)) as (AuthenticatedApprovedDeviceRequestBody & { pack?: unknown }) | null;
+  if (!body) return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  const cents = typeof body.pack === "string" && Object.hasOwn(AI_PACKS, body.pack) ? AI_PACKS[body.pack] : null;
+  if (cents === null) return Response.json({ error: "pack_required" }, { status: 400 });
+  if (!billingConfigured(env)) return billingUnavailable();
+  try {
+    const auth = await billingAccount(body, env, db, now);
+    if (auth instanceof Response) return auth;
+    const { account, googleSub } = auth;
+    if (!(await rateLimit(env.ENROLLMENT_HANDOFF, `billing:${googleSub}`, 20, 60 * 60))) return rateLimited();
+    // The Stripe account is shared: the webhook acts only on kind=ai_credit,
+    // on the session (purchase) and on the PaymentIntent (refund).
+    const params: Record<string, string> = {
+      mode: "payment",
+      "line_items[0][price_data][currency]": "usd",
+      "line_items[0][price_data][unit_amount]": String(cents),
+      "line_items[0][price_data][product_data][name]": "Whimbrel AI credit",
+      "line_items[0][price_data][product_data][tax_code]": "txcd_10000000",
+      "line_items[0][price_data][tax_behavior]": "exclusive",
+      "line_items[0][quantity]": "1",
+      "metadata[kind]": "ai_credit",
+      "metadata[account_id]": account.id,
+      "payment_intent_data[metadata][kind]": "ai_credit",
+      "payment_intent_data[metadata][account_id]": account.id,
+      "automatic_tax[enabled]": "true",
+      // Charge in USD only, so the subtotal is always one of AI_PACKS.
+      "adaptive_pricing[enabled]": "false",
+      billing_address_collection: "required",
+      success_url: "https://whimbrelapp.com/ai/thanks/",
+      cancel_url: "https://whimbrelapp.com/ai/cancelled/",
+    };
+    if (account.stripeCustomerId) {
+      params.customer = account.stripeCustomerId;
+      params["customer_update[address]"] = "auto";
+    } else {
+      params.customer_email = account.email;
+    }
+    const res = await stripeRequest(env.STRIPE_SECRET_KEY!, "POST", "checkout/sessions", params, fetcher);
+    if (!res.ok || typeof res.body?.url !== "string") return billingFailed();
+    return Response.json({ url: res.body.url });
+  } catch (err) {
+    return backendError("handleAiCheckout", err);
+  }
+}
+
+/** The caller's AI credit balance and the size of their newest purchase,
+ * both in micro-dollars. */
+export async function handleAiBalance(
+  request: Request,
+  env: Env,
+  db: SqlExecutor = tursoSqlExecutor(env),
+  now: number = Date.now(),
+): Promise<Response> {
+  const body = await readBody(request);
+  if (!body) return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  try {
+    const auth = await billingAccount(body, env, db, now);
+    if (auth instanceof Response) return auth;
+    // Its own bucket: the app polls this, and polling must never block checkout.
+    if (!(await rateLimit(env.ENROLLMENT_HANDOFF, `ai-balance:${auth.googleSub}`, 120, 60 * 60))) return rateLimited();
+    const id = auth.account.id;
+    return Response.json({ balance_micros: await aiBalance(db, id), last_purchase_micros: await lastPurchaseMicros(db, id) });
+  } catch (err) {
+    return backendError("handleAiBalance", err);
+  }
+}
+
 /** Opens the Stripe customer portal for an account that has paid before. */
 export async function handleBillingPortal(
   request: Request,
@@ -915,6 +1009,123 @@ async function alertDeletedAccountSubscription(env: Env, accountId: string, subs
   if (!sent) console.error("billing: deleted account alert not sent", "account", accountId, "subscription", subscriptionId, "customer", customer);
 }
 
+/** Stripe amounts are cents; credit is micro-dollars. */
+const MICROS_PER_CENT = 10_000;
+
+/** Emails the alert address when a paid AI credit session could not be
+ * credited (missing or deleting account, or an unusable payload), so Mike
+ * can refund it by hand. Ids and the amount only. Returns true once the
+ * email is sent; anything else asks Stripe to redeliver the event, so the
+ * alert is tried again rather than lost. */
+async function alertUncreditedAiPurchase(env: Env, session: any, accountId: unknown, reason: string, fetcher: typeof fetch): Promise<Response | null> {
+  const cents = session?.amount_total;
+  const currency = typeof session?.currency === "string" ? session.currency.toUpperCase() : "unknown currency";
+  const amount = typeof cents === "number" ? `${(cents / 100).toFixed(2)} ${currency}` : "an unknown amount";
+  console.error("ai credit: paid session not credited", session?.id, "account", accountId, reason);
+  const sent =
+    !!env.RESEND_API_KEY &&
+    (await sendEmail(
+      env.RESEND_API_KEY,
+      {
+        from: EMAIL_FROM,
+        to: EMAIL_REPLY_TO,
+        subject: "Refund a Whimbrel AI credit purchase that was not credited",
+        text:
+          `Checkout session ${session?.id ?? "unknown"} paid ${amount} for AI credit but was not credited (${reason}, account ${String(accountId)}). ` +
+          `Refund it by hand in Stripe (payment ${typeof session?.payment_intent === "string" ? session.payment_intent : "unknown"}).`,
+      },
+      fetcher,
+    ));
+  if (sent) return null;
+  console.error("ai credit: uncredited alert not sent", "session", session?.id, "account", accountId);
+  return stripeRetryLater();
+}
+
+/** Credits a paid AI credit Checkout Session: its pre-tax subtotal (ruling
+ * R2), once per PaymentIntent (ruling R6: the refund path finds the purchase
+ * by it). Only what was sold is credited: USD, a subtotal that is exactly one
+ * pack, no discount. A paid session that cannot be credited is alerted and
+ * skipped; Stripe is not asked to retry what can never succeed, only an
+ * alert that failed to send. Returns a Response only when Stripe must
+ * retry. */
+async function creditAiSession(env: Env, db: SqlExecutor, session: any, now: number, fetcher: typeof fetch): Promise<Response | null> {
+  if (session?.payment_status !== "paid") {
+    console.log("ai credit: session not paid", session?.id, session?.payment_status);
+    return null;
+  }
+  const accountId = session.metadata?.account_id;
+  const account = typeof accountId === "string" ? await findAccountById(db, accountId) : null;
+  if (!account || account.deletingSinceUnixMs != null) {
+    return alertUncreditedAiPurchase(env, session, accountId, account ? "account being deleted" : "account missing", fetcher);
+  }
+  const cents = session.amount_subtotal;
+  const pi = session.payment_intent;
+  const discount = session.total_details?.amount_discount;
+  if (session.currency !== "usd" || !Object.values(AI_PACKS).includes(cents) || (discount != null && discount !== 0)) {
+    return alertUncreditedAiPurchase(env, session, accountId, "not a USD pack at full price", fetcher);
+  }
+  if (typeof pi !== "string") {
+    return alertUncreditedAiPurchase(env, session, accountId, "no payment intent", fetcher);
+  }
+  if (await creditPurchase(db, account.id, cents * MICROS_PER_CENT, pi, now)) return null;
+  // Not credited: a repeat of a purchase already credited, or the account
+  // was deleted (or claimed for deletion) after it was read above.
+  if (await purchaseByStripeRef(db, pi)) return null;
+  return alertUncreditedAiPurchase(env, session, accountId, "account deleted before the credit landed", fetcher);
+}
+
+/** Handles `charge.refunded`. The purchase is found by the charge's
+ * PaymentIntent. Each refund on the charge is applied once, keyed on the
+ * refund id (ruling R4), and removes its pre-tax share of what was credited:
+ * round(refund / charge amount x credited) (ruling R6). Failed or cancelled
+ * refunds are skipped. Returns a Response only when Stripe must retry. */
+async function refundAiCharge(db: SqlExecutor, key: string, charge: any, now: number, fetcher: typeof fetch): Promise<Response | null> {
+  const piField = charge?.payment_intent;
+  const pi = typeof piField === "string" ? piField : piField?.id;
+  const purchase = typeof pi === "string" ? await purchaseByStripeRef(db, pi) : null;
+  if (!purchase) {
+    // Another product's charge is recorded and ignored. An AI credit charge
+    // with no purchase row may be a refund Stripe sent before the purchase
+    // event: retry (event not recorded) until the purchase lands.
+    let meta = charge?.metadata;
+    if (meta?.kind !== "ai_credit" && typeof piField === "string") {
+      const res = await stripeRequest(key, "GET", `payment_intents/${encodeURIComponent(piField)}`, {}, fetcher);
+      if (!res.ok) return stripeRetryLater();
+      meta = res.body?.metadata;
+    } else if (meta?.kind !== "ai_credit") {
+      meta = piField?.metadata;
+    }
+    if (meta?.kind !== "ai_credit") return null;
+    console.error("ai credit: refund with no purchase row yet", charge?.id, "payment", pi);
+    return stripeRetryLater();
+  }
+  const chargeCents = charge?.amount;
+  if (!Number.isSafeInteger(chargeCents) || chargeCents <= 0) {
+    console.error("ai credit: refunded charge without a whole amount", charge?.id);
+    return null;
+  }
+  // Recent API versions leave `refunds` off the Charge: list them instead.
+  let refunds: any[];
+  if (Array.isArray(charge?.refunds?.data) && charge.refunds.has_more !== true) {
+    refunds = charge.refunds.data;
+  } else {
+    if (typeof charge?.id !== "string") return null;
+    const res = await stripeRequest(key, "GET", "refunds", { charge: charge.id, limit: "100" }, fetcher);
+    if (!res.ok || !Array.isArray(res.body?.data)) return stripeRetryLater();
+    refunds = res.body.data;
+  }
+  for (const r of refunds) {
+    if (typeof r?.id !== "string" || r.status === "failed" || r.status === "canceled") continue;
+    if (!Number.isSafeInteger(r.amount) || r.amount < 0) {
+      console.error("ai credit: refund without a whole amount", r.id);
+      continue;
+    }
+    const micros = Math.round((r.amount / chargeCents) * purchase.micros);
+    await refundPurchase(db, purchase.accountId, micros, r.id, now);
+  }
+  return null;
+}
+
 /** Stripe's webhook. Verified on the raw body; each event id is handled
  * once. The plan comes from a fresh read of the subscription, never the
  * event payload, because Stripe does not order its events. Stripe failures
@@ -947,6 +1158,16 @@ export async function handleBillingWebhook(
   };
   try {
     if (await stripeEventSeen(db, event.id)) return Response.json({ received: true });
+    // Whimbrel AI credit: a one-time payment, never a subscription.
+    const aiSessionEvent = event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded";
+    if (aiSessionEvent && event.data?.object?.mode === "payment") {
+      const retry = isAiCreditEvent(event) ? await creditAiSession(env, db, event.data.object, now, fetcher) : null;
+      return retry ?? (await received());
+    }
+    if (event.type === "charge.refunded") {
+      const retry = await refundAiCharge(db, env.STRIPE_SECRET_KEY!, event.data?.object, now, fetcher);
+      return retry ?? (await received());
+    }
     const subId = subscriptionIdOf(event);
     if (typeof subId !== "string") return await received();
     const key = env.STRIPE_SECRET_KEY!;
@@ -1166,11 +1387,15 @@ export default {
     ctx.waitUntil(
       runInactivity(tursoSqlExecutor(env), env, Date.now(), fetch).then((r) => console.log("inactivity", JSON.stringify(r))),
     );
+    ctx.waitUntil(settleStaleHolds(tursoSqlExecutor(env), Date.now()).then((n) => console.log("ai stale holds settled", n)));
   },
 
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
       const url = new URL(request.url);
+      if (url.pathname === "/ai/v1/messages" && request.method === "POST") {
+        return await handleAiMessages(request, env, ctx, tursoSqlExecutor(env));
+      }
       if (url.pathname === "/v1/auth/google" && request.method === "POST") {
         return await handleGoogleAuth(request, env);
       }
@@ -1194,6 +1419,12 @@ export default {
       }
       if (url.pathname === "/v1/billing/portal" && request.method === "POST") {
         return await handleBillingPortal(request, env);
+      }
+      if (url.pathname === "/v1/ai/checkout" && request.method === "POST") {
+        return await handleAiCheckout(request, env);
+      }
+      if (url.pathname === "/v1/ai/balance" && request.method === "POST") {
+        return await handleAiBalance(request, env);
       }
       if (url.pathname === "/v1/billing/webhook" && request.method === "POST") {
         return await handleBillingWebhook(request, env);

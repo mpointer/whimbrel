@@ -116,3 +116,15 @@ export function subscriptionIdOf(event: any): string | null {
   if (type.startsWith("invoice.")) return obj?.parent?.subscription_details?.subscription ?? obj?.subscription ?? null;
   return null;
 }
+
+/** True for the Stripe events of a Whimbrel AI credit purchase that can be
+ * told from the payload alone: a payment-mode Checkout Session (completed, or
+ * its delayed payment succeeded), or a refunded
+ * charge, carrying `metadata.kind = "ai_credit"`. A refunded charge without
+ * that metadata may still be one; its PaymentIntent says. */
+export function isAiCreditEvent(event: any): boolean {
+  const obj = event?.data?.object;
+  if (obj?.metadata?.kind !== "ai_credit") return false;
+  if (event?.type === "checkout.session.completed" || event?.type === "checkout.session.async_payment_succeeded") return obj?.mode === "payment";
+  return event?.type === "charge.refunded";
+}

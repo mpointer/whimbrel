@@ -128,6 +128,7 @@ pub fn model_options(routing: &RoutingSettings, keys: &ApiKeys) -> Vec<ModelOpti
         Provider::Openai => "OpenAI",
         Provider::Google => "Google",
         Provider::Openrouter => "OpenRouter",
+        Provider::Whimbrel => "Whimbrel AI",
     };
     let mut options = vec![
         ModelOptionView { value: "default".into(), label: tr("Default ({provider})", &[("provider", label(routing.preferred_provider))]) },

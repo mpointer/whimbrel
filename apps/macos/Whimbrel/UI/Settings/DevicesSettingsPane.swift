@@ -27,6 +27,7 @@ struct DevicesSettingsPane: View {
         .onAppear {
             appState.syncState.startDevicesPolling()
             Task { await appState.syncState.refreshPlan() }
+            Task { await appState.syncState.refreshAIBalance() }
         }
         .onChange(of: appState.syncState.status) { old, status in
             // A token renewal is .ready to .ready: not a new arrival.
@@ -59,7 +60,8 @@ struct DevicesSettingsPane: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This deletes the encrypted copy on the sync server and signs out every device. Nothing on your devices is deleted.")
+            let base = String(localized: "This deletes the encrypted copy on the sync server and signs out every device. Nothing on your devices is deleted.")
+            Text([base, appState.syncState.aiCreditForfeitNote].compactMap { $0 }.joined(separator: " "))
         }
     }
 
@@ -336,6 +338,8 @@ struct DevicesSettingsPane: View {
         Divider().overlay(Color.whimbrelBorder)
         Button("Delete my sync account…") {
             confirmingAccountDeletion = true
+            // A fresh balance for the forfeit line in the confirmation.
+            Task { await appState.syncState.refreshAIBalance() }
         }
         .buttonStyle(.whimbrelSecondary)
         .tint(Color.whimbrelError)

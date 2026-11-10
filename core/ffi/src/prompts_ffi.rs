@@ -140,8 +140,12 @@ mod tests {
         assert!(whimbrel_key_check(bogus.as_ptr(), key.as_ptr(), ptr::null()).is_null());
 
         let v: serde_json::Value = serde_json::from_str(&take(whimbrel_providers())).unwrap();
-        assert_eq!(v.as_array().unwrap().len(), 5);
+        assert_eq!(v.as_array().unwrap().len(), 6);
         assert_eq!(v[4]["id"], "openrouter");
+        assert_eq!(v[5]["id"], "whimbrel");
+        assert_eq!(v[5]["name"], "Whimbrel AI");
+        assert!(v[5]["key_prefix"].is_null() && v[5]["key_page_url"].is_null());
+        assert_eq!(v[5]["data_terms"]["note_id"], "whimbrel_ai_passthrough");
         assert_eq!(v[3]["data_terms"]["checked"], "2026-10-29");
         assert_eq!(v[4]["data_terms"]["note_id"], "openrouter_free_logging");
 
@@ -150,6 +154,9 @@ mod tests {
         assert!(hint.contains("start with \"AIza\""), "{hint}");
         assert!(whimbrel_key_format_hint(google.as_ptr(), key.as_ptr()).is_null());
         assert!(whimbrel_key_format_hint(ptr::null(), key.as_ptr()).is_null());
+        // Whimbrel AI has no key, so there is never a hint to give.
+        let whimbrel = CString::new("whimbrel").unwrap();
+        assert!(whimbrel_key_format_hint(whimbrel.as_ptr(), wrong.as_ptr()).is_null());
     }
 
     fn take(ptr: *mut c_char) -> String {

@@ -4,8 +4,18 @@ export interface SqlRow {
   [column: string]: unknown;
 }
 
+export interface SqlStatement {
+  sql: string;
+  params: unknown[];
+}
+
 export interface SqlExecutor {
   execute(sql: string, params: unknown[]): Promise<SqlRow[]>;
+  /** Runs every statement in ONE transaction: all apply or none do (any
+   * statement's error rolls the whole batch back and rejects). Returns
+   * each statement's rows, in order. A statement that matches no rows is
+   * not an error, so later statements must guard on earlier ones. */
+  batch(stmts: SqlStatement[]): Promise<SqlRow[][]>;
 }
 
 /** Not auto-run by this module. Run once against the real Turso
@@ -35,8 +45,32 @@ CREATE TABLE IF NOT EXISTS account (
   plan_interval TEXT,
   stripe_customer_id TEXT,
   stripe_subscription_id TEXT,
-  plan_renews INTEGER NOT NULL DEFAULT 1
+  plan_renews INTEGER NOT NULL DEFAULT 1,
+  ai_credit_micros INTEGER NOT NULL DEFAULT 0,
+  ai_open_holds INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS ai_ledger (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('purchase','usage','refund')),
+  micros INTEGER NOT NULL,
+  model TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  stripe_ref TEXT UNIQUE,
+  created_at_unix_ms INTEGER NOT NULL,
+  shortfall_micros INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS ai_hold (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  micros INTEGER NOT NULL,
+  created_at_unix_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ai_hold_account ON ai_hold(account_id);
+CREATE INDEX IF NOT EXISTS ai_ledger_account ON ai_ledger(account_id);
 
 CREATE TABLE IF NOT EXISTS stripe_event (
   id TEXT PRIMARY KEY,
@@ -517,7 +551,7 @@ export async function claimInactiveForDeletion(
   warnedBeforeUnixMs: number,
 ): Promise<boolean> {
   const rows = await db.execute(
-    "UPDATE account SET deleting_since_unix_ms = ? WHERE id = ? AND deleting_since_unix_ms IS NULL AND warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms) AND NOT EXISTS (SELECT 1 FROM device WHERE device.account_id = account.id AND device.status = 'resetting') RETURNING id",
+    "UPDATE account SET deleting_since_unix_ms = ? WHERE id = ? AND deleting_since_unix_ms IS NULL AND warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms) AND ai_credit_micros <= 0 AND NOT EXISTS (SELECT 1 FROM device WHERE device.account_id = account.id AND device.status = 'resetting') RETURNING id",
     [nowUnixMs, accountId, warnedBeforeUnixMs],
   );
   return rows.length === 1;
@@ -579,6 +613,9 @@ export async function deleteAccountRows(db: SqlExecutor, accountId: string): Pro
   await db.execute("DELETE FROM device WHERE account_id = ?", [accountId]);
   await db.execute("DELETE FROM waitlist WHERE account_id = ?", [accountId]);
   await db.execute("DELETE FROM retired_database WHERE account_id = ?", [accountId]);
+  // Whimbrel AI credit is forfeited with the account.
+  await db.execute("DELETE FROM ai_hold WHERE account_id = ?", [accountId]);
+  await db.execute("DELETE FROM ai_ledger WHERE account_id = ?", [accountId]);
 }
 
 /** Accounts from before last-seen existed count as seen now, never as idle. */
@@ -612,10 +649,12 @@ export async function clearResetNotice(db: SqlExecutor, accountId: string, reset
   ]);
 }
 
-/** Unwarned accounts last seen before `seenBeforeUnixMs`. */
+/** Unwarned accounts last seen before `seenBeforeUnixMs`. Like a live plan,
+ * Whimbrel AI credit exempts an account from the inactivity warning and
+ * deletion (credit doesn't expire), here and in the three statements below. */
 export async function accountsToWarn(db: SqlExecutor, seenBeforeUnixMs: number): Promise<{ id: string; email: string }[]> {
   const rows = await db.execute(
-    "SELECT id, email FROM account WHERE warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?)",
+    "SELECT id, email FROM account WHERE warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?) AND ai_credit_micros <= 0",
     [seenBeforeUnixMs, seenBeforeUnixMs],
   );
   return rows.map((r) => ({ id: r.id as string, email: r.email as string }));
@@ -625,7 +664,7 @@ export async function accountsToWarn(db: SqlExecutor, seenBeforeUnixMs: number):
  * read (which would leave a warning that can never lead to deletion). */
 export async function markWarned(db: SqlExecutor, accountId: string, nowUnixMs: number, seenBeforeUnixMs: number): Promise<void> {
   await db.execute(
-    "UPDATE account SET warned_at_unix_ms = ? WHERE id = ? AND warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?)",
+    "UPDATE account SET warned_at_unix_ms = ? WHERE id = ? AND warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?) AND ai_credit_micros <= 0",
     [nowUnixMs, accountId, seenBeforeUnixMs, seenBeforeUnixMs],
   );
 }
@@ -633,7 +672,7 @@ export async function markWarned(db: SqlExecutor, accountId: string, nowUnixMs: 
 /** Accounts warned before `warnedBeforeUnixMs` with no contact since the warning. */
 export async function accountsToDelete(db: SqlExecutor, warnedBeforeUnixMs: number): Promise<AccountRecord[]> {
   const rows = await db.execute(
-    `SELECT ${ACCOUNT_COLUMNS} FROM account WHERE warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms)`,
+    `SELECT ${ACCOUNT_COLUMNS} FROM account WHERE warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms) AND ai_credit_micros <= 0`,
     [warnedBeforeUnixMs],
   );
   return rows.map(rowToAccount);

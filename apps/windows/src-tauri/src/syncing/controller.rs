@@ -245,6 +245,11 @@ pub struct SyncController {
     plan_failures: std::sync::atomic::AtomicU32,
     /// Bumped by each checkout or portal opening: a newer poll replaces the running one.
     plan_poll: AtomicU64,
+    /// Whimbrel AI: the sync ID token and device key routing reads (`whimbrel_ai::cached`).
+    whimbrel: Arc<crate::whimbrel_ai::Cache>,
+    /// Whimbrel AI: the last credit read, and the poll after a pack's Checkout opens.
+    ai_balance: Mutex<Option<en::AiBalance>>,
+    ai_poll: AtomicU64,
 }
 
 impl SyncController {
@@ -258,7 +263,9 @@ impl SyncController {
             .as_ref()
             .ok()
             .map(|c| Box::new(en::WorkerClient::new(&c.worker_base_url)) as Box<dyn WorkerApi>);
-        Arc::new(Self::build(config, secrets, identity, worker, device_names, POLL_BASE, Box::new(open_in_browser)))
+        let controller = Self::build(config, secrets, identity, worker, device_names, POLL_BASE, Box::new(open_in_browser));
+        crate::whimbrel_ai::install(controller.whimbrel.clone());
+        Arc::new(controller)
     }
 
     fn build(
@@ -290,6 +297,9 @@ impl SyncController {
             plan: Mutex::new(None),
             plan_failures: std::sync::atomic::AtomicU32::new(0),
             plan_poll: AtomicU64::new(0),
+            whimbrel: Arc::new(crate::whimbrel_ai::Cache::default()),
+            ai_balance: Mutex::new(None),
+            ai_poll: AtomicU64::new(0),
         }
     }
 
@@ -536,9 +546,12 @@ impl SyncController {
                 if matches!(me.load_tokens(), Ok(Some(_))) {
                     me.auth_loop(me.generation.load(Ordering::SeqCst));
                 }
+                // Whimbrel AI's credentials at launch, not a tick later: background calls read them.
+                me.whimbrel_upkeep(me.ready_credentials().is_some());
                 loop {
                     std::thread::sleep(TICK);
                     let ready = me.ready_credentials().is_some();
+                    me.whimbrel_upkeep(ready);
                     let now = Instant::now();
                     if ready && is_due(*me.last_auth.lock().unwrap(), REAUTH_EVERY, now) {
                         me.auth_loop(me.generation.load(Ordering::SeqCst));
@@ -667,6 +680,128 @@ impl SyncController {
                     if at_limit && now.as_ref().is_some_and(is_cloud) {
                         me.check_again();
                     }
+                    return;
+                }
+            }
+        });
+    }
+
+    // ---- Whimbrel AI: credentials and credit ----
+
+    /// The upkeep tick's part: while ready, keeps the credentials fresh (every 30 minutes, and
+    /// sooner once less than 10 minutes are left on the token); otherwise forgets them and the
+    /// balance.
+    fn whimbrel_upkeep(&self, ready: bool) {
+        if !ready {
+            self.whimbrel.clear();
+            *self.ai_balance.lock().unwrap() = None;
+            return;
+        }
+        if self.whimbrel.needs_background_refresh(Instant::now(), now_ms()) {
+            if let Err(e) = self.refresh_whimbrel_credentials(crate::whimbrel_ai::BACKGROUND_MIN_VALIDITY) {
+                tracing::warn!(error = %e, "could not refresh the Whimbrel AI credentials");
+            }
+        }
+    }
+
+    /// Before an Ask that Whimbrel AI may answer: refreshes the credentials when none are cached
+    /// or 5 minutes or less are left. A failure keeps what is cached; core then leaves Whimbrel AI
+    /// out, or the server's 401 falls through.
+    pub fn whimbrel_before_ask(&self) {
+        if self.ready_credentials().is_some() && self.whimbrel.needs_ask_refresh(now_ms()) {
+            if let Err(e) = self.refresh_whimbrel_credentials(crate::whimbrel_ai::ASK_MIN_VALIDITY) {
+                tracing::warn!(error = %e, "could not refresh the Whimbrel AI credentials before a question");
+            }
+        }
+    }
+
+    /// Reads an ID token with more than `min_validity` left (refreshing the stored tokens when not)
+    /// and caches it with this PC's device key. Only while ready.
+    pub fn refresh_whimbrel_credentials(&self, min_validity: Duration) -> Result<(), String> {
+        if self.ready_credentials().is_none() {
+            return Ok(());
+        }
+        let id_token = self.id_token_good_for(min_validity)?;
+        // Signed out while the token was being read.
+        if self.ready_credentials().is_none() {
+            return Ok(());
+        }
+        let credentials = crate::whimbrel_ai::Credentials { id_token, device_key: self.identity.device_id.clone() };
+        self.whimbrel.store(credentials, Instant::now());
+        Ok(())
+    }
+
+    /// `fresh_id_token`, but judged by the ID token's own `exp` with `min_validity` to spare: the
+    /// stored tokens' expiry is the access token's, and Whimbrel AI holds the ID token a while.
+    fn id_token_good_for(&self, min_validity: Duration) -> Result<String, String> {
+        let config = self.config.as_ref().map_err(Clone::clone)?;
+        let stored = self.load_tokens()?.ok_or_else(|| tr("Not signed in to Google.", &[]))?;
+        let now = now_ms();
+        if let Some(id_token) = stored.id_token.as_deref().filter(|t| crate::whimbrel_ai::token_good_for(t, min_validity, now)) {
+            return Ok(id_token.to_string());
+        }
+        let refreshed = oauth::refresh_stored(&config.google_provider(), &stored, now).map_err(|e| oauth_message(&e))?;
+        self.save_tokens(&refreshed)?;
+        refreshed.id_token.ok_or_else(|| tr("Google didn't return an ID token.", &[]))
+    }
+
+    /// The Whimbrel AI card.
+    pub fn whimbrel_ai_view(&self) -> crate::syncing::billing::WhimbrelAiView {
+        crate::syncing::billing::WhimbrelAiView::new(self.ready_credentials().is_some(), self.ai_balance.lock().unwrap().as_ref())
+    }
+
+    /// Reads the credit balance. A failed read keeps the last one.
+    pub fn refresh_ai_balance(&self) -> Result<(), String> {
+        if self.ready_credentials().is_none() {
+            return Ok(());
+        }
+        let id_token = self.fresh_id_token()?;
+        let balance = self
+            .worker()?
+            .ai_balance(&id_token, &self.identity.device_id)
+            .map_err(|e| en::user_message_in(&e, &crate::l10n::ui_language()))?;
+        if self.ready_credentials().is_some() {
+            *self.ai_balance.lock().unwrap() = Some(balance);
+        }
+        Ok(())
+    }
+
+    /// Add $10 or Add $25: opens Stripe Checkout for the pack in the browser, then watches the
+    /// balance as Upgrade watches the plan. The error is the line under the buttons.
+    pub fn buy_ai_credit(self: &Arc<Self>, pack: &str) -> Result<(), String> {
+        let pack = crate::syncing::billing::ai_pack(pack).ok_or_else(|| format!("unknown credit pack {pack:?}"))?;
+        let id_token = self.fresh_id_token()?;
+        let url = self
+            .worker()?
+            .ai_checkout(&id_token, &self.identity.device_id, pack)
+            .map_err(|e| crate::syncing::billing::ai_checkout_failure(&e))?;
+        (self.open_url)(&url)?;
+        self.start_ai_balance_poll();
+        Ok(())
+    }
+
+    /// After Checkout opens: reads the balance every `PLAN_POLL_EVERY` for up to `PLAN_POLL_FOR`,
+    /// stopping once the purchase shows (`purchase_landed`).
+    fn start_ai_balance_poll(self: &Arc<Self>) {
+        use crate::syncing::billing::{purchase_landed, PLAN_POLL_EVERY, PLAN_POLL_FOR};
+        let generation = self.ai_poll.fetch_add(1, Ordering::SeqCst) + 1;
+        let me = self.clone();
+        let every = if self.poll_base < Duration::from_secs(1) { self.poll_base } else { PLAN_POLL_EVERY };
+        std::thread::spawn(move || {
+            if me.ai_balance.lock().unwrap().is_none() {
+                let _ = me.refresh_ai_balance();
+            }
+            let start = me.ai_balance.lock().unwrap().clone();
+            let deadline = Instant::now() + PLAN_POLL_FOR;
+            while Instant::now() < deadline {
+                std::thread::sleep(every);
+                if me.ai_poll.load(Ordering::SeqCst) != generation || me.ready_credentials().is_none() {
+                    return;
+                }
+                if me.refresh_ai_balance().is_err() {
+                    continue;
+                }
+                if me.ai_balance.lock().unwrap().as_ref().is_some_and(|now| purchase_landed(start.as_ref(), now)) {
                     return;
                 }
             }
@@ -995,5 +1130,71 @@ mod tests {
         let secrets = Arc::new(MemorySecrets::default());
         let c = controller(FakeWorker::new(approved(), vec![device("PEER", "pending")]), secrets);
         assert!(c.approve("id-PEER").unwrap_err().contains("doesn't hold the account key"));
+    }
+
+    /// A ready controller whose stored ID token is a JWT expiring `exp_in` from now.
+    fn ready_with_id_token(worker: FakeWorker, exp_in: Duration) -> Arc<SyncController> {
+        let secrets = Arc::new(MemorySecrets::default());
+        let c = controller(worker, secrets.clone());
+        let exp = (now_ms() / 1000) + exp_in.as_secs() as i64;
+        let tokens = StoredTokens {
+            access_token: "a".into(),
+            refresh_token: "r".into(),
+            id_token: Some(crate::whimbrel_ai::tests::jwt(exp)),
+            expires_at_unix_ms: i64::MAX / 2,
+            granted_scope: None,
+        };
+        secrets.set_string(GOOGLE_OAUTH_SERVICE, accounts::GOOGLE_SYNC, &serde_json::to_string(&tokens).unwrap()).unwrap();
+        *c.status.lock().unwrap() = SyncStatus::Ready { turso_token: "tok".into(), turso_database_url: "libsql://db".into() };
+        Arc::new(c)
+    }
+
+    #[test]
+    fn whimbrel_credentials_are_cached_only_while_ready() {
+        let c = ready_with_id_token(FakeWorker::new(approved(), vec![]), Duration::from_secs(60 * 60));
+        assert!(c.whimbrel.get().is_none());
+        c.refresh_whimbrel_credentials(crate::whimbrel_ai::BACKGROUND_MIN_VALIDITY).unwrap();
+        let cached = c.whimbrel.get().expect("cached while ready");
+        assert_eq!(cached.device_key, c.identity.device_id, "the device key the billing routes send");
+        assert!(crate::whimbrel_ai::expiry_ms(&cached.id_token).is_some());
+        assert!(!c.whimbrel.needs_background_refresh(Instant::now(), now_ms()), "an hour left is fresh enough");
+
+        // Sync leaves ready: the upkeep tick forgets the credentials and the balance.
+        *c.ai_balance.lock().unwrap() = Some(en::AiBalance { balance_micros: 1, last_purchase_micros: None });
+        *c.status.lock().unwrap() = SyncStatus::NotSignedIn;
+        c.whimbrel_upkeep(false);
+        assert!(c.whimbrel.get().is_none() && c.ai_balance.lock().unwrap().is_none());
+        c.refresh_whimbrel_credentials(crate::whimbrel_ai::ASK_MIN_VALIDITY).unwrap();
+        assert!(c.whimbrel.get().is_none(), "nothing is read while signed out");
+    }
+
+    #[test]
+    fn the_whimbrel_ai_card_reads_the_balance_and_buys_a_pack() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        *worker.ai_balance.lock().unwrap() = Ok(en::AiBalance { balance_micros: 500_000, last_purchase_micros: Some(10_000_000) });
+        let c = ready_with_id_token(worker.clone(), Duration::from_secs(60 * 60));
+        assert_eq!(c.whimbrel_ai_view().balance_micros, None, "nothing read yet");
+        c.refresh_ai_balance().unwrap();
+        let v = c.whimbrel_ai_view();
+        assert_eq!((v.signed_in, v.balance_micros, v.low), (true, Some(500_000), true));
+
+        c.buy_ai_credit("25").unwrap();
+        assert_eq!(*worker.ai_packs.lock().unwrap(), vec!["25".to_string()]);
+        assert!(c.buy_ai_credit("5").is_err(), "only the packs the server sells");
+        // Stripe finishes: the poll picks up the new balance.
+        *worker.ai_balance.lock().unwrap() = Ok(en::AiBalance { balance_micros: 25_500_000, last_purchase_micros: Some(25_000_000) });
+        for _ in 0..300 {
+            if c.whimbrel_ai_view().balance_micros == Some(25_500_000) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(c.whimbrel_ai_view(), crate::syncing::billing::WhimbrelAiView { signed_in: true, balance_micros: Some(25_500_000), low: false });
+
+        *worker.checkout.lock().unwrap() = Err(WorkerError::Http { status: 502, body: "{}".into() });
+        assert_eq!(c.buy_ai_credit("10"), Err("Couldn't reach Stripe. Try again in a minute.".to_string()));
+        *worker.ai_balance.lock().unwrap() = Err(WorkerError::Network);
+        assert!(c.refresh_ai_balance().is_err());
+        assert_eq!(c.whimbrel_ai_view().balance_micros, Some(25_500_000), "a failed read keeps the last balance");
     }
 }

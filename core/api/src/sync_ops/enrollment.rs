@@ -272,6 +272,22 @@ pub struct AccountPlan {
     pub billing: bool,
 }
 
+/// `POST /v1/ai/balance`: the Whimbrel AI credit left and the newest purchase, in micro-dollars
+/// (1,000,000 = $1).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AiBalance {
+    pub balance_micros: i64,
+    #[serde(default)]
+    pub last_purchase_micros: Option<i64>,
+}
+
+impl AiBalance {
+    /// Under 10% of the newest purchase is left (the Mac's `AIBalance.isLow`).
+    pub fn is_low(&self) -> bool {
+        self.last_purchase_micros.is_some_and(|last| last > 0 && self.balance_micros.saturating_mul(10) < last)
+    }
+}
+
 /// One row of `POST /v1/devices`, with the Worker's own camelCase field names.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -388,6 +404,19 @@ impl WorkerClient {
     /// Returns the Stripe customer portal URL.
     pub fn billing_portal(&self, id_token: &str, device_public_key: &str) -> Result<String, WorkerError> {
         let body = self.post("v1/billing/portal", serde_json::json!({ "idToken": id_token, "devicePublicKey": device_public_key }))?;
+        body["url"].as_str().map(str::to_string).ok_or(WorkerError::MalformedResponse)
+    }
+
+    /// Whimbrel AI: the credit balance (`/v1/ai/balance`).
+    pub fn ai_balance(&self, id_token: &str, device_public_key: &str) -> Result<AiBalance, WorkerError> {
+        let body = self.post("v1/ai/balance", serde_json::json!({ "idToken": id_token, "devicePublicKey": device_public_key }))?;
+        serde_json::from_value(body).map_err(|_| WorkerError::MalformedResponse)
+    }
+
+    /// Whimbrel AI: Stripe Checkout for a credit `pack` (`"10"` or `"25"` dollars); returns the URL.
+    /// The device must be approved.
+    pub fn ai_checkout(&self, id_token: &str, device_public_key: &str, pack: &str) -> Result<String, WorkerError> {
+        let body = self.post("v1/ai/checkout", serde_json::json!({ "idToken": id_token, "devicePublicKey": device_public_key, "pack": pack }))?;
         body["url"].as_str().map(str::to_string).ok_or(WorkerError::MalformedResponse)
     }
 
@@ -622,6 +651,34 @@ mod tests {
 
         let (url, _) = worker(200, "{}");
         assert_eq!(WorkerClient::new(&url).billing_checkout("id", "pk", "year"), Err(WorkerError::MalformedResponse));
+    }
+
+    #[test]
+    fn whimbrel_ai_balance_and_checkout_routes() {
+        let (url, rx) = worker(200, r#"{"balance_micros":7420000,"last_purchase_micros":10000000}"#);
+        let balance = WorkerClient::new(&url).ai_balance("id", "pk").unwrap();
+        assert_eq!(balance, AiBalance { balance_micros: 7_420_000, last_purchase_micros: Some(10_000_000) });
+        assert!(!balance.is_low());
+        let req = rx.recv().unwrap();
+        assert!(req.starts_with("POST /v1/ai/balance ") && req.contains(r#""devicePublicKey":"pk""#), "{req}");
+
+        // No purchase yet: never low.
+        let (url, _) = worker(200, r#"{"balance_micros":0,"last_purchase_micros":null}"#);
+        let empty = WorkerClient::new(&url).ai_balance("id", "pk").unwrap();
+        assert_eq!(empty.last_purchase_micros, None);
+        assert!(!empty.is_low());
+        assert!(AiBalance { balance_micros: 999_999, last_purchase_micros: Some(10_000_000) }.is_low());
+        assert!(!AiBalance { balance_micros: 1_000_000, last_purchase_micros: Some(10_000_000) }.is_low());
+
+        let (url, rx) = worker(200, r#"{"url":"https://checkout.example/ai"}"#);
+        assert_eq!(WorkerClient::new(&url).ai_checkout("id", "pk", "25").unwrap(), "https://checkout.example/ai");
+        let req = rx.recv().unwrap();
+        assert!(req.starts_with("POST /v1/ai/checkout ") && req.contains(r#""pack":"25""#), "{req}");
+
+        let (url, _) = worker(503, r#"{"error":"billing_unavailable"}"#);
+        assert!(matches!(WorkerClient::new(&url).ai_checkout("id", "pk", "10"), Err(WorkerError::Http { status: 503, .. })));
+        let (url, _) = worker(200, "{}");
+        assert_eq!(WorkerClient::new(&url).ai_balance("id", "pk"), Err(WorkerError::MalformedResponse));
     }
 
     #[test]

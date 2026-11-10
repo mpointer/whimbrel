@@ -292,6 +292,23 @@ extension TimelineView {
 
     func askIfNeeded(store: CoreMemoryStore) {
         guard !query.isEmpty, !isBusy else { return }
+        // Whimbrel AI needs a live sync ID token: when it may answer and the cached one has
+        // 5 minutes or less left, refresh it first. Busy meanwhile, so a second send waits.
+        let syncState = appState.syncState
+        if selectedProvider == .whimbrel || appState.routing.preferredProvider == .whimbrel, syncState.whimbrelCredentialsNeedRefresh {
+            isAsking = true
+            Task { @MainActor in
+                await syncState.refreshWhimbrelCredentials()
+                isAsking = false
+                askNow(store: store)
+            }
+            return
+        }
+        askNow(store: store)
+    }
+
+    private func askNow(store: CoreMemoryStore) {
+        guard !query.isEmpty, !isBusy else { return }
         let capturedQuery = query
         let capturedOllamaModel = ollamaModel
         let capturedActiveConversationId = activeConversationId
@@ -335,13 +352,17 @@ extension TimelineView {
         // `build_chain` forces Ollama in that mode, and streaming must not leak past it.
         // A hosted route with no key falls to blocking, whose chain builder already
         // handles a missing key by falling back rather than failing.
-        let streamRoute: (provider: InferenceStreamClient.Provider, apiKey: String?)? = {
-            let hosted = { (provider: InferenceStreamClient.Provider, keychain: KeychainService.Provider) -> (InferenceStreamClient.Provider, String?)? in
+        let streamRoute: (provider: InferenceStreamClient.Provider, apiKey: String?, baseURLOverride: String?)? = {
+            let hosted = { (provider: InferenceStreamClient.Provider, keychain: KeychainService.Provider) -> (InferenceStreamClient.Provider, String?, String?)? in
                 guard !appState.routing.localOnlyMode, let key = KeychainService.load(for: keychain), !key.isEmpty else { return nil }
-                return (provider, key)
+                return (provider, key, nil)
             }
             switch effective.provider {
-            case .ollama: return (LocalModel.replacesOllama(appState.routing) ? .local : .ollama, nil)
+            case .ollama: return (LocalModel.replacesOllama(appState.routing) ? .local : .ollama, nil, nil)
+            // The ID token rides `apiKey` and the device key `baseURLOverride`.
+            case .whimbrel:
+                guard !appState.routing.localOnlyMode, let credentials = appState.syncState.whimbrelCredentials else { return nil }
+                return (.whimbrel, credentials.idToken, credentials.deviceKey)
             case .google: return hosted(.google, .google)
             case .anthropic: return hosted(.anthropic, .anthropic)
             case .openai: return hosted(.openai, .openai)
@@ -357,6 +378,7 @@ extension TimelineView {
                 streamProvider: streamRoute.provider,
                 streamModel: effective.modelLabel,
                 streamAPIKey: streamRoute.apiKey,
+                streamBaseURLOverride: streamRoute.baseURLOverride,
                 capturedActiveConversationId: capturedActiveConversationId,
                 isFirstMessageInConversation: isFirstMessageInConversation,
                 routing: routing,
@@ -478,6 +500,7 @@ extension TimelineView {
         streamProvider: InferenceStreamClient.Provider,
         streamModel: String,
         streamAPIKey: String?,
+        streamBaseURLOverride: String? = nil,
         capturedActiveConversationId: Int64?,
         isFirstMessageInConversation: Bool,
         routing: CoreRoutingConfig,
@@ -524,10 +547,11 @@ extension TimelineView {
                         isFirstMessageInConversation: isFirstMessageInConversation,
                         ollamaModel: capturedOllamaModel,
                         answerModel: streamModel,
+                        streamProvider: streamProvider,
                         titleGenEffective: titleGenEffective,
                         fallbackToBlocking: fallbackToBlocking
                     )
-                    streamingAsk.start(prompt: data.prompt, model: streamModel, provider: streamProvider, apiKey: streamAPIKey)
+                    streamingAsk.start(prompt: data.prompt, model: streamModel, provider: streamProvider, apiKey: streamAPIKey, baseURLOverride: streamBaseURLOverride)
                 }
             }
         }
@@ -551,6 +575,16 @@ extension TimelineView {
             isAsking = false
             pendingStreamAsk = nil
             query = pending.query
+        case .failed(let message) where pending.streamProvider == .whimbrel && message.hasPrefix("HTTP 402"):
+            // The Whimbrel AI credit is used up (a 402 from Whimbrel's server). Say so, and
+            // don't retry through the chain, which would only meet the same 402.
+            pendingStreamAsk = nil
+            isAsking = false
+            appState.coreStore?.discardAsk(prepareId: pending.prepareId)
+            query = pending.query
+            if activeConversationId == pending.activeConversationId {
+                exchanges.append(ChatExchange(query: pending.query, result: .failure(.providerFailureBecause(.creditExhausted)), contextItems: pending.contextItems))
+            }
         case .failed:
             pendingStreamAsk = nil
             if streamingAsk.streamedText.isEmpty {

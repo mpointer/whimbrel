@@ -1425,6 +1425,74 @@
         }
       }
     },
+    "Add $10" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "10 $ hinzufügen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agregar 10 $"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter 10 $"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter 10 $"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adicionar US$ 10"
+          }
+        }
+      }
+    },
+    "Add $25" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "25 $ hinzufügen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agregar 25 $"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter 25 $"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter 25 $"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adicionar US$ 25"
+          }
+        }
+      }
+    },
     "Add a fact" : {
       "localizations" : {
         "de" : {
@@ -7804,6 +7872,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Criar token"
+          }
+        }
+      }
+    },
+    "Credit is running low." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Guthaben wird knapp."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Te queda poco crédito."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le crédit est presque épuisé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Votre crédit est bientôt épuisé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O crédito está acabando."
           }
         }
       }
@@ -24755,6 +24857,40 @@
         }
       }
     },
+    "Sign in to sync to use Whimbrel AI" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Melden Sie sich bei Sync an, um Whimbrel AI zu nutzen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inicia sesión en la sincronización para usar Whimbrel AI"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connectez-vous à la synchro pour utiliser Whimbrel AI"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connectez-vous à la synchro pour utiliser Whimbrel AI"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Faça login na sincronização para usar o Whimbrel AI"
+          }
+        }
+      }
+    },
     "Signing in…" : {
       "localizations" : {
         "de" : {
@@ -32540,6 +32676,40 @@
         }
       }
     },
+    "Whimbrel AI credit is used up. Add credit in Settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Guthaben für Whimbrel AI ist aufgebraucht. Laden Sie es unter Einstellungen auf."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se agotó el crédito de Whimbrel AI. Agrega crédito en Ajustes."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le crédit Whimbrel AI est épuisé. Ajoutez du crédit dans Réglages."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le crédit Whimbrel AI est épuisé. Ajoutez du crédit dans Réglages."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O crédito do Whimbrel AI acabou. Adicione crédito em Configurações."
+          }
+        }
+      }
+    },
     "Whimbrel closed unexpectedly {n} times, so it won't restart on its own. A report with its recent logs was saved (email addresses and meeting titles removed).\n\nEmail the report to Whimbrel now?" : {
       "localizations" : {
         "de" : {
@@ -34318,6 +34488,40 @@
         }
       }
     },
+    "Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ihre Anfrage läuft über den Server von Whimbrel zu Anthropic. Whimbrel speichert, wie viele Tokens verbraucht wurden, nicht, was Sie gefragt haben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu solicitud pasa por el servidor de Whimbrel hasta Anthropic. Whimbrel guarda un registro de los tokens usados, no de lo que preguntaste."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Votre demande passe par le serveur de Whimbrel jusqu'à Anthropic. Whimbrel conserve un relevé des jetons utilisés, pas de ce que vous avez demandé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Votre demande passe par le serveur de Whimbrel jusqu'à Anthropic. Whimbrel conserve un relevé des jetons utilisés, pas de ce que vous avez demandé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sua solicitação passa pelo servidor do Whimbrel até a Anthropic. O Whimbrel guarda um registro dos tokens usados, não do que você pediu."
+          }
+        }
+      }
+    },
     "Your role" : {
       "localizations" : {
         "de" : {
@@ -35096,6 +35300,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "A v{version} está pronta."
+          }
+        }
+      }
+    },
+    "{amount} left" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "{amount} übrig"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quedan {amount}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "{amount} restants"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "{amount} restants"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "{amount} restantes"
           }
         }
       }

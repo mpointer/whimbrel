@@ -87,10 +87,12 @@ export function greeting(name: string, now: Date, locale: string): { kicker: str
 
 /**
  * Whether Library's Ask can answer now (the Mac's TodayComposer.askAvailable): a local model always
- * can; a hosted provider needs a saved key and local-only mode off.
+ * can; a hosted provider needs a saved key and local-only mode off. Whimbrel AI needs sync signed in
+ * (`whimbrelSignedIn`) in place of a key.
  */
-export function askAvailable(routing: RoutingSettings, keys: ProviderKey[]): boolean {
+export function askAvailable(routing: RoutingSettings, keys: ProviderKey[], whimbrelSignedIn = false): boolean {
   if (routing.preferredProvider === "ollama") return true;
+  if (routing.preferredProvider === "whimbrel") return !routing.localOnly && whimbrelSignedIn;
   // OpenRouter also needs a picked model: without one, core adds no link for it.
   if (routing.preferredProvider === "openrouter" && !routing.openrouterModel.trim()) return false;
   return !routing.localOnly && keys.some((k) => k.provider === routing.preferredProvider && !!k.masked);
@@ -109,6 +111,8 @@ export function askModelLabel(routing: RoutingSettings): string {
       return routing.googleModel;
     case "openrouter":
       return routing.openrouterModel;
+    case "whimbrel":
+      return routing.whimbrelModel;
   }
 }
 

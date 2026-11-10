@@ -13,12 +13,33 @@ struct AccountPlan: Decodable, Equatable {
     var isCloud: Bool { plan == "cloud" }
 }
 
+/// `POST /v1/ai/balance`: the Whimbrel AI credit left and the newest purchase, in
+/// micro-dollars (1,000,000 = $1).
+struct AIBalance: Decodable, Equatable {
+    let balanceMicros: Int64
+    let lastPurchaseMicros: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case balanceMicros = "balance_micros"
+        case lastPurchaseMicros = "last_purchase_micros"
+    }
+
+    /// Under 10% of the newest purchase is left.
+    var isLow: Bool {
+        guard let last = lastPurchaseMicros, last > 0 else { return false }
+        return balanceMicros * 10 < last
+    }
+}
+
 /// The billing routes `SyncState` calls: `SyncBillingClient` in the app, a fake in tests.
 /// Mac-only, so `SyncWorker` (shared with the iPhone) stays as it is.
 protocol SyncBilling: AnyObject {
     func accountPlan(idToken: String, devicePublicKey: String) async throws -> AccountPlan
     func checkoutURL(idToken: String, devicePublicKey: String, interval: String) async throws -> URL
     func portalURL(idToken: String, devicePublicKey: String) async throws -> URL
+    func aiBalance(idToken: String, devicePublicKey: String) async throws -> AIBalance
+    /// `pack` is "10" or "25" (dollars).
+    func aiCheckoutURL(idToken: String, devicePublicKey: String, pack: String) async throws -> URL
 }
 
 /// The core's blocking billing calls, run off the main actor, with its error envelope mapped
@@ -58,6 +79,41 @@ final class SyncBillingClient: SyncBilling {
             } } }
             return Self.outcome(json, URLReply.self).flatMap(\.parsed)
         }.value.get()
+    }
+
+    // The Whimbrel AI routes have no core call yet, so these POST directly. Same body and
+    // the same `SyncAPIError` mapping as the billing routes above. The token is never logged.
+
+    func aiBalance(idToken: String, devicePublicKey: String) async throws -> AIBalance {
+        let data = try await post("v1/ai/balance", ["idToken": idToken, "devicePublicKey": devicePublicKey])
+        guard let balance = try? JSONDecoder().decode(AIBalance.self, from: data) else { throw SyncAPIError.malformedResponse }
+        return balance
+    }
+
+    func aiCheckoutURL(idToken: String, devicePublicKey: String, pack: String) async throws -> URL {
+        let data = try await post("v1/ai/checkout", ["idToken": idToken, "devicePublicKey": devicePublicKey, "pack": pack])
+        guard let reply = try? JSONDecoder().decode(URLReply.self, from: data) else { throw SyncAPIError.malformedResponse }
+        return try reply.parsed.get()
+    }
+
+    private func post(_ path: String, _ body: [String: String]) async throws -> Data {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+        request.httpBody = try JSONEncoder().encode(body)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw SyncAPIError.networkError(error)
+        }
+        guard let http = response as? HTTPURLResponse else { throw SyncAPIError.malformedResponse }
+        guard http.statusCode == 200 else {
+            throw SyncAPIError.httpError(status: http.statusCode, body: String(decoding: data, as: UTF8.self))
+        }
+        return data
     }
 
     private struct URLReply: Decodable {

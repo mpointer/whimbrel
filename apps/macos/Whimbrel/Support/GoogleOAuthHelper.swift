@@ -127,6 +127,23 @@ final class GoogleOAuthHelper: NSObject {
         return idToken
     }
 
+    /// The stored Google ID token if its own `exp` is more than `minimumValidity` seconds
+    /// away, else a freshly refreshed one. `validIdToken()` would return a token with only a
+    /// minute left; Whimbrel AI caches the token, so it needs a longer margin.
+    func validIdToken(minimumValidity: TimeInterval) async throws -> String {
+        guard let stored = try readStoredTokens() else {
+            throw GoogleOAuthError.notAuthorized
+        }
+        if let idToken = stored.idToken, let exp = JWTExpiry.date(of: idToken),
+           exp.timeIntervalSinceNow > minimumValidity {
+            return idToken
+        }
+        guard let idToken = try await refreshAndStore(stored).idToken else {
+            throw GoogleOAuthError.noIdTokenReturned
+        }
+        return idToken
+    }
+
     private func validTokens() async throws -> OAuthStoredTokens {
         guard let stored = try readStoredTokens() else {
             throw GoogleOAuthError.notAuthorized

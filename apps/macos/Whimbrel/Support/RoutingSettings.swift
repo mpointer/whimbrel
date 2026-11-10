@@ -13,6 +13,9 @@ final class RoutingSettings: ObservableObject {
         case google
         /// One key, any model on OpenRouter's catalogue (free ones included).
         case openrouter
+        /// Whimbrel AI: Anthropic models through Whimbrel's server, paid from prepaid
+        /// credit. Signs in with the sync account, so it has no key of its own.
+        case whimbrel
         var id: String { rawValue }
 
         var displayName: String {
@@ -22,6 +25,7 @@ final class RoutingSettings: ObservableObject {
             case .openai: return "OpenAI"
             case .google: return "Google"
             case .openrouter: return "OpenRouter"
+            case .whimbrel: return "Whimbrel AI"
             }
         }
 
@@ -33,6 +37,7 @@ final class RoutingSettings: ObservableObject {
             case .openai: return .openai
             case .google: return .google
             case .openrouter: return .openrouter
+            case .whimbrel: return nil
             }
         }
     }
@@ -50,6 +55,7 @@ final class RoutingSettings: ObservableObject {
     private static let openaiDefaultModelKey = "com.mpointer.kestrel.routingOpenAIDefaultModel"
     private static let googleDefaultModelKey = "com.mpointer.kestrel.routingGoogleDefaultModel"
     private static let openrouterDefaultModelKey = "com.mpointer.kestrel.routingOpenRouterDefaultModel"
+    private static let whimbrelDefaultModelKey = "com.mpointer.kestrel.routingWhimbrelDefaultModel"
     private static let openrouterPricesKey = "com.mpointer.kestrel.routingOpenRouterPrices"
     private static let userDailyCapCentsKey = "com.mpointer.kestrel.routingUserDailyCapCents"
     private static let globalDailyCapCentsKey = "com.mpointer.kestrel.routingGlobalDailyCapCents"
@@ -130,6 +136,21 @@ final class RoutingSettings: ObservableObject {
             SettingsFieldTimestamps.touch("routing.openrouterDefaultModel")
         }
     }
+    /// The Whimbrel AI pick, from Anthropic's model list. Device-local (not synced).
+    @Published var whimbrelDefaultModel: String {
+        didSet { UserDefaults.standard.set(whimbrelDefaultModel, forKey: Self.whimbrelDefaultModelKey) }
+    }
+    /// Models Whimbrel AI offers: only the ids Whimbrel's server prices. The server answers
+    /// any other id with 400 unknown_model, so Anthropic's live list is never used here.
+    /// Keep in step with `AI_PRICES` in server/src/aiProxy.ts.
+    nonisolated static let whimbrelModels = [
+        "claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-sonnet-5",
+        "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5",
+        "claude-fable-5", "claude-fable-5-1",
+    ]
+    /// The sync account's ID token and this device's key (`SyncState.whimbrelCredentials`),
+    /// wired by `AppState`. Read synchronously by `routingConfig`; nil when not signed in.
+    var whimbrelCredentialsProvider: () -> (idToken: String, deviceKey: String)? = { nil }
     /// Cents per 1K input and output tokens per OpenRouter model id, cached from the
     /// catalogue when the key was last checked; core prices calls from it.
     @Published var openrouterPrices: [String: CoreRoutingConfig.Price] {
@@ -147,6 +168,7 @@ final class RoutingSettings: ObservableObject {
         case .openai: return openaiDefaultModel
         case .google: return googleDefaultModel
         case .openrouter: return openrouterDefaultModel
+        case .whimbrel: return whimbrelDefaultModel
         }
     }
     /// `nil` means "never set — use the conservative built-in default"
@@ -342,6 +364,7 @@ final class RoutingSettings: ObservableObject {
         openaiDefaultModel = defaults.string(forKey: Self.openaiDefaultModelKey) ?? "gpt-4o-mini"
         googleDefaultModel = defaults.string(forKey: Self.googleDefaultModelKey) ?? "gemini-2.5-flash"
         openrouterDefaultModel = defaults.string(forKey: Self.openrouterDefaultModelKey) ?? ""
+        whimbrelDefaultModel = defaults.string(forKey: Self.whimbrelDefaultModelKey) ?? "claude-haiku-4-5"
         openrouterPrices = defaults.data(forKey: Self.openrouterPricesKey)
             .flatMap { try? JSONDecoder().decode([String: CoreRoutingConfig.Price].self, from: $0) } ?? [:]
         userDailyCapCents = defaults.object(forKey: Self.userDailyCapCentsKey) as? Int
@@ -364,7 +387,11 @@ final class RoutingSettings: ObservableObject {
     var hasOpenRouterKey: Bool { KeychainService.exists(for: .openrouter) }
     /// Whether any hosted provider has a key: with none and no local model, the AI
     /// screen shows the on-ramp instead of silently falling back.
-    var hasAnyHostedKey: Bool { hasAnthropicKey || hasOpenAIKey || hasGoogleKey || hasOpenRouterKey }
+    /// Whimbrel AI counts when it is the preferred provider and sync credentials are cached.
+    var hasAnyHostedKey: Bool {
+        hasAnthropicKey || hasOpenAIKey || hasGoogleKey || hasOpenRouterKey
+            || (preferredProvider == .whimbrel && hasKey(for: .whimbrel))
+    }
 
     /// Whether `provider` can be called right now: Ollama always, a hosted provider
     /// with its key saved, OpenRouter only once a model is picked too.
@@ -375,6 +402,7 @@ final class RoutingSettings: ObservableObject {
         case .openai: return hasOpenAIKey
         case .google: return hasGoogleKey
         case .openrouter: return hasOpenRouterKey
+        case .whimbrel: return whimbrelCredentialsProvider() != nil
         }
     }
 
@@ -474,7 +502,7 @@ final class RoutingSettings: ObservableObject {
                 if !prices.isEmpty {
                     openrouterPrices = Dictionary(uniqueKeysWithValues: prices.map { ($0.id, CoreRoutingConfig.Price(in: $0.inCentsPer1k, out: $0.outCentsPer1k)) })
                 }
-            case .ollama: break
+            case .ollama, .whimbrel: break
             }
         }
         return check
@@ -599,6 +627,7 @@ final class RoutingSettings: ObservableObject {
         case .openai: hostedModel = openaiDefaultModel
         case .google: hostedModel = googleDefaultModel
         case .openrouter: hostedModel = openrouterDefaultModel
+        case .whimbrel: hostedModel = whimbrelDefaultModel
         case .ollama: hostedModel = ollamaDefaultModel // arbitrary fallback, never actually shown for .ollama
         }
         return (preferredProvider, ollamaDefaultModel, hostedModel)
@@ -618,7 +647,8 @@ final class RoutingSettings: ObservableObject {
         weeklyDigestInstructions: String = "",
         typesafeKey: String? = nil
     ) -> CoreRoutingConfig {
-        CoreRoutingConfig(
+        let whimbrel = whimbrelCredentialsProvider()
+        return CoreRoutingConfig(
             anthropicKey: KeychainService.load(for: .anthropic),
             openaiKey: KeychainService.load(for: .openai),
             googleKey: KeychainService.load(for: .google),
@@ -637,7 +667,9 @@ final class RoutingSettings: ObservableObject {
             openrouterKey: KeychainService.load(for: .openrouter),
             openrouterModel: openrouterDefaultModel,
             openrouterPrices: openrouterPrices,
-            outputLanguage: outputLanguageProvider()
+            outputLanguage: outputLanguageProvider(),
+            whimbrelIdToken: whimbrel?.idToken,
+            whimbrelDeviceKey: whimbrel?.deviceKey
         )
     }
 }

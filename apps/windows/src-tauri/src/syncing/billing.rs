@@ -2,7 +2,7 @@
 //! and what a failed checkout or portal request means. The controller does the calls; this is the part
 //! worth testing.
 
-use api::sync_ops::enrollment::{self as en, AccountPlan, WorkerError};
+use api::sync_ops::enrollment::{self as en, AccountPlan, AiBalance, WorkerError};
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -73,6 +73,54 @@ pub fn interval(value: &str) -> Option<&'static str> {
     }
 }
 
+/// Settings → AI's Whimbrel AI card (the Mac's `whimbrelAICard`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WhimbrelAiView {
+    /// Sync is ready: the balance and the Add buttons show. Otherwise "Sign in to sync to use Whimbrel AI".
+    pub signed_in: bool,
+    /// The credit left, in micro-dollars (1,000,000 = $1); None until a read succeeds.
+    pub balance_micros: Option<i64>,
+    /// Under 10% of the newest purchase is left: "Credit is running low."
+    pub low: bool,
+}
+
+impl WhimbrelAiView {
+    pub fn new(signed_in: bool, balance: Option<&AiBalance>) -> Self {
+        WhimbrelAiView {
+            signed_in,
+            balance_micros: balance.filter(|_| signed_in).map(|b| b.balance_micros),
+            low: signed_in && balance.is_some_and(AiBalance::is_low),
+        }
+    }
+}
+
+/// The credit pack, or `None` for anything the server doesn't sell.
+pub fn ai_pack(value: &str) -> Option<&'static str> {
+    match value {
+        "10" => Some("10"),
+        "25" => Some("25"),
+        _ => None,
+    }
+}
+
+/// Whether a balance read after Checkout opened shows the purchase: the balance rose, or a new
+/// purchase is recorded. Whimbrel AI calls meanwhile only lower it, so they don't count.
+pub fn purchase_landed(start: Option<&AiBalance>, now: &AiBalance) -> bool {
+    match start {
+        None => true,
+        Some(start) => now.balance_micros > start.balance_micros || now.last_purchase_micros != start.last_purchase_micros,
+    }
+}
+
+/// What a failed credit checkout says, under the Add buttons (the Mac's `buyAICredit`).
+pub fn ai_checkout_failure(error: &WorkerError) -> String {
+    match billing_failure(error) {
+        BillingFailure::Message(message) => message,
+        BillingFailure::RefreshPlan | BillingFailure::Unavailable => en::user_message_in(error, &crate::l10n::ui_language()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,6 +137,35 @@ mod tests {
         assert_eq!(billing_failure(&http(502, "stripe")), BillingFailure::Message("Couldn't reach Stripe. Try again in a minute.".into()));
         assert_eq!(billing_failure(&http(429, "rate")), BillingFailure::Message("Too many tries. Try again in a few minutes.".into()));
         assert!(matches!(billing_failure(&WorkerError::Network), BillingFailure::Message(_)));
+    }
+
+    #[test]
+    fn the_whimbrel_ai_card_shows_the_balance_only_while_signed_in() {
+        let low = AiBalance { balance_micros: 900_000, last_purchase_micros: Some(10_000_000) };
+        assert_eq!(WhimbrelAiView::new(true, Some(&low)), WhimbrelAiView { signed_in: true, balance_micros: Some(900_000), low: true });
+        assert_eq!(WhimbrelAiView::new(false, Some(&low)), WhimbrelAiView { signed_in: false, balance_micros: None, low: false });
+        assert_eq!(WhimbrelAiView::new(true, None), WhimbrelAiView { signed_in: true, balance_micros: None, low: false });
+    }
+
+    #[test]
+    fn only_a_purchase_ends_the_balance_poll() {
+        let b = |balance, last| AiBalance { balance_micros: balance, last_purchase_micros: last };
+        let start = b(5_000_000, Some(10_000_000));
+        // Spending meanwhile lowers it: still waiting.
+        assert!(!purchase_landed(Some(&start), &b(4_000_000, Some(10_000_000))));
+        assert!(!purchase_landed(Some(&start), &start));
+        assert!(purchase_landed(Some(&start), &b(15_000_000, Some(10_000_000))));
+        // A new pack the same size, with spending meanwhile, still shows as the newest purchase changing.
+        assert!(purchase_landed(Some(&b(0, None)), &b(0, Some(10_000_000))));
+        assert!(purchase_landed(None, &start));
+    }
+
+    #[test]
+    fn only_ten_and_twenty_five_are_packs() {
+        assert_eq!((ai_pack("10"), ai_pack("25"), ai_pack("5")), (Some("10"), Some("25"), None));
+        assert_eq!(ai_checkout_failure(&http(502, "stripe")), "Couldn't reach Stripe. Try again in a minute.");
+        assert_eq!(ai_checkout_failure(&http(429, "rate")), "Too many tries. Try again in a few minutes.");
+        assert!(!ai_checkout_failure(&http(503, "billing_unavailable")).is_empty());
     }
 
     #[test]

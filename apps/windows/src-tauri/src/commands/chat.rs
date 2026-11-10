@@ -104,10 +104,12 @@ pub fn chat_ask(state: State<'_, AppState>, query: String, conversation_id: Opti
         let s = state.settings.lock().unwrap();
         (s.routing(), s.instructions(PromptSurface::Ask))
     };
-    let ask = Ask { query, conversation_id, settings, keys: ApiKeys::load(&*state.secrets)?, instructions, slow };
+    let mut ask = Ask { query, conversation_id, settings, keys: ApiKeys::load(&*state.secrets)?, instructions, slow };
+    let sync = state.sync.clone();
     std::thread::Builder::new()
         .name("whimbrel-ask".into())
         .spawn(move || {
+            crate::chat::freshen_whimbrel(sync.as_deref(), &ask.settings, &mut ask.keys);
             // A closed window drops the UI's end of the channel. The answer is still
             // finished and persisted, so a failed send is ignored.
             let send = |event: ChatEvent| {
@@ -203,7 +205,7 @@ fn stream(
     context: Vec<ContextEntry>,
     send: &dyn Fn(ChatEvent),
 ) {
-    let Some(run) = api::inference::start(&prepared.prompt, &route.model, route.provider, route.key.as_deref(), None) else {
+    let Some(run) = chat::start_stream(&prepared.prompt, &route) else {
         api::ask::discard_ask(&prepared.prepare_id);
         send(blocking_started(effective, &context));
         return blocking(store, ask, effective, history, &context, send);
@@ -211,7 +213,7 @@ fn stream(
     send(ChatEvent::Started { run_id: Some(run.run_id.clone()), provider: route.provider.into(), model: route.model.clone(), context: context.clone() });
     let end = chat::forward(&run.run_id, api::inference::poll, send, || std::thread::sleep(chat::POLL_INTERVAL));
     api::inference::release(&run.run_id);
-    match chat::terminal_action(&end.outcome, end.produced_output) {
+    match chat::terminal_action_for(route.provider, &end.outcome, end.produced_output) {
         TerminalAction::Finalize => {
             let (prepare_id, text, model, usage) = (prepared.prepare_id, end.text.clone(), route.model.clone(), end.usage);
             let citations = store
@@ -233,6 +235,11 @@ fn stream(
         TerminalAction::Fail => {
             api::ask::discard_ask(&prepared.prepare_id);
             fail(send, CommandError::provider_failure(), true);
+        }
+        TerminalAction::CreditExhausted => {
+            api::ask::discard_ask(&prepared.prepare_id);
+            tracing::info!("Whimbrel AI credit is used up");
+            fail(send, CommandError::ProviderFailure { reason: Some(crate::error::ProviderFailureReason::CreditExhausted) }, false);
         }
     }
 }

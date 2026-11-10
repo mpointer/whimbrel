@@ -31,6 +31,10 @@ pub fn take_notices(store: &memory::Store, now_unix_ms: i64) -> rusqlite::Result
 /// `Err` when `provider`'s budget is spent. For a call pinned to one provider (streaming Ask,
 /// skins). A store read error counts as not over, as `llm::check_spend_cap` treats one.
 pub fn check_provider(store: &memory::Store, provider: llm::Provider, now_unix_ms: i64) -> Result<(), BudgetSpent> {
+    // Whimbrel AI has no local budget: the server's prepaid credit is its limit.
+    if provider == llm::Provider::Whimbrel {
+        return Ok(());
+    }
     match store.provider_over_budget(provider.as_str(), now_unix_ms) {
         Ok(Some((spent_cents, budget_cents))) => Err(BudgetSpent { provider, spent_cents, budget_cents }),
         _ => Ok(()),

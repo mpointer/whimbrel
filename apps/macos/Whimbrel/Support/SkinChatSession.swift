@@ -134,6 +134,8 @@ struct CoreSkinTurnBackend: SkinTurnBackend {
         case .openai: key = config.openaiKey
         case .google: key = config.googleKey
         case .openrouter: key = config.openrouterKey
+        // Core reads Whimbrel AI's ID token and device key from the routing config.
+        case .whimbrel: key = nil
         }
         let dbPath = dbPath, deviceId = deviceId
         return try await Self.offPool {

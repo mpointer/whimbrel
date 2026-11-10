@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { aiSettings, providerModels } from "../api";
+import { aiSettings, providerModels, whimbrelAiStatus } from "../api";
 import type { AiSettings } from "../generated/types";
 import { t } from "../l10n";
 import { onRampOnceKnown } from "../settings/aiModel";
@@ -12,16 +12,18 @@ export function LocalModelCard({ onOpenSettings }: { onOpenSettings?: () => void
   const { status, job } = localModelDownload.use();
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [ollamaUp, setOllamaUp] = useState<boolean | null>(null);
+  const [whimbrelSignedIn, setWhimbrelSignedIn] = useState(false);
 
   useEffect(() => {
     aiSettings().then(setSettings, () => {});
+    whimbrelAiStatus().then((v) => setWhimbrelSignedIn(!!v?.signedIn), () => {});
     providerModels("ollama").then(
       (list) => setOllamaUp(list.length > 0),
       () => setOllamaUp(false),
     );
   }, []);
 
-  const state = cardState(!!settings && onRampOnceKnown(settings.routing, settings.keys, ollamaUp, status ? status.installed : null) === true, status, job);
+  const state = cardState(!!settings && onRampOnceKnown(settings.routing, settings.keys, ollamaUp, status ? status.installed : null, whimbrelSignedIn) === true, status, job);
   if (state === "hidden") return null;
 
   return (

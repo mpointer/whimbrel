@@ -28,6 +28,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::library::MeetingDetail>();
     generator.subschema_for::<super::library::LibrarySettings>();
     generator.subschema_for::<crate::syncing::controller::SyncView>();
+    generator.subschema_for::<crate::syncing::billing::WhimbrelAiView>();
     generator.subschema_for::<crate::syncing::controller::DeviceView>();
     generator.subschema_for::<super::ai::AiSettings>();
     generator.subschema_for::<super::ai::ProviderKey>();

@@ -2,11 +2,12 @@ import { it, expect, vi, beforeEach } from "vitest";
 import * as googleAuth from "../src/googleAuth";
 import * as turso from "../src/turso";
 import * as accounts from "../src/accounts";
-import { handleAccountPlan, handleBillingCheckout, handleBillingPortal, handleBillingWebhook, handleDeleteAccount, handleGoogleAuth } from "../src/index";
+import { handleAccountPlan, handleAiBalance, handleAiCheckout, handleBillingCheckout, handleBillingPortal, handleBillingWebhook, handleDeleteAccount, handleGoogleAuth } from "../src/index";
+import { aiBalance, creditPurchase, placeHold, settleHold } from "../src/aiCredit";
 import { deleteAccount } from "../src/inactivity";
 import type { Env } from "../src/index";
 import { FakeSqlExecutor } from "./testHelpers/fakeSqlExecutor";
-import { env } from "cloudflare:test";
+import { createExecutionContext, env } from "cloudflare:test";
 
 const NOW = 1_800_000_000_000;
 const SUCCESS = "https://whimbrelapp.com/cloud/thanks/";
@@ -261,11 +262,11 @@ it("portal_shares_the_billing_rate_limit", async () => {
 it("the_worker_routes_the_billing_paths", async () => {
   // No DB wired: a 400 on an empty body proves the route exists and parses.
   const worker = (await import("../src/index")).default;
-  for (const p of ["/v1/account/plan", "/v1/billing/checkout", "/v1/billing/portal"]) {
-    const res = await worker.fetch(new Request(`https://example.com${p}`, { method: "POST" }), makeEnv());
+  for (const p of ["/v1/account/plan", "/v1/billing/checkout", "/v1/billing/portal", "/v1/ai/checkout", "/v1/ai/balance"]) {
+    const res = await worker.fetch(new Request(`https://example.com${p}`, { method: "POST" }), makeEnv(), createExecutionContext());
     expect(res.status).toBe(400);
   }
-  const hook = await worker.fetch(new Request("https://example.com/v1/billing/webhook", { method: "POST", body: "{}" }), makeEnv());
+  const hook = await worker.fetch(new Request("https://example.com/v1/billing/webhook", { method: "POST", body: "{}" }), makeEnv(), createExecutionContext());
   expect(hook.status).toBe(400);
   expect(await hook.json()).toEqual({ error: "bad_signature" });
 });
@@ -893,4 +894,442 @@ it("a_webhook_for_a_deleted_account_returns_200_and_writes_nothing", async () =>
   const res = await deliver(db, stripe.fetcher, { id: "evt_late", type: "customer.subscription.deleted", data: { object: { id: "sub_1", metadata: { account_id: account.id } } } });
   expect(res.status).toBe(200);
   expect(db.rawAccount(account.id)).toBeUndefined();
+});
+
+// ---- Whimbrel AI credit ----
+
+const aiCheckout = (db: FakeSqlExecutor, fetcher: typeof fetch, body: object = {}, e: Env = makeEnv()) =>
+  handleAiCheckout(post("/v1/ai/checkout", { ...creds, pack: "10", ...body }), e, db, fetcher, NOW);
+const aiBalanceRoute = (db: FakeSqlExecutor) => handleAiBalance(post("/v1/ai/balance", creds), makeEnv(), db, NOW);
+
+it("ai_checkout_sends_payment_mode_with_metadata_on_both", async () => {
+  const { db, account } = await seeded();
+  const { fetcher, calls } = fakeFetch();
+  const res = await aiCheckout(db, fetcher);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ url: "https://checkout.stripe.com/c/test" });
+  expect(calls).toHaveLength(1);
+  expect(calls[0].url).toBe("https://api.stripe.com/v1/checkout/sessions");
+  const f = calls[0].form;
+  expect(f.get("mode")).toBe("payment");
+  expect(f.get("line_items[0][price_data][currency]")).toBe("usd");
+  expect(f.get("line_items[0][price_data][unit_amount]")).toBe("1000");
+  expect(f.get("line_items[0][price_data][product_data][name]")).toBe("Whimbrel AI credit");
+  expect(f.get("line_items[0][price_data][tax_behavior]")).toBe("exclusive");
+  expect(f.get("line_items[0][quantity]")).toBe("1");
+  expect(f.get("metadata[kind]")).toBe("ai_credit");
+  expect(f.get("metadata[account_id]")).toBe(account.id);
+  expect(f.get("payment_intent_data[metadata][kind]")).toBe("ai_credit");
+  expect(f.get("payment_intent_data[metadata][account_id]")).toBe(account.id);
+  expect(f.get("automatic_tax[enabled]")).toBe("true");
+  expect(f.get("adaptive_pricing[enabled]")).toBe("false");
+  expect(f.get("billing_address_collection")).toBe("required");
+  expect(f.get("success_url")).toBe("https://whimbrelapp.com/ai/thanks/");
+  expect(f.get("cancel_url")).toBe("https://whimbrelapp.com/ai/cancelled/");
+  expect(f.get("line_items[0][price_data][product_data][tax_code]")).toBe("txcd_10000000");
+  expect(f.get("customer_email")).toBe("owner@example.com");
+  expect(f.has("customer_creation")).toBe(false);
+  expect(f.has("customer")).toBe(false);
+  expect(f.has("subscription_data[metadata][account_id]")).toBe(false);
+});
+
+it("ai_checkout_pack_25_is_2500_and_reuses_the_customer", async () => {
+  const { db, account } = await seeded();
+  db.setPlan(account.id, { plan: "free", planUntilUnixMs: null, stripeCustomerId: "cus_9" });
+  const { fetcher, calls } = fakeFetch();
+  expect((await aiCheckout(db, fetcher, { pack: "25" })).status).toBe(200);
+  const f = calls[0].form;
+  expect(f.get("line_items[0][price_data][unit_amount]")).toBe("2500");
+  expect(f.get("customer")).toBe("cus_9");
+  expect(f.get("customer_update[address]")).toBe("auto");
+  expect(f.has("customer_email")).toBe(false);
+  expect(f.has("customer_creation")).toBe(false);
+});
+
+it("ai_checkout_rejects_unknown_pack", async () => {
+  const { db } = await seeded();
+  const { fetcher, calls } = fakeFetch();
+  for (const pack of ["5", 10, undefined, "100"]) {
+    const res = await aiCheckout(db, fetcher, { pack });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "pack_required" });
+  }
+  expect(calls).toHaveLength(0);
+});
+
+it("ai_checkout_is_open_to_cloud_accounts_and_shares_the_billing_rate_limit", async () => {
+  const { db, account } = await seeded();
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 1000 });
+  const { fetcher } = fakeFetch();
+  for (let i = 0; i < 20; i++) expect((await aiCheckout(db, fetcher)).status).toBe(200);
+  expect((await aiCheckout(db, fetcher)).status).toBe(429);
+  // The balance has its own bucket: a spent checkout limit never blocks it.
+  expect((await aiBalanceRoute(db)).status).toBe(200);
+});
+
+it("ai_balance_polling_never_blocks_checkout_and_is_limited_to_120_per_hour", async () => {
+  const { db } = await seeded();
+  const statuses = [];
+  for (let i = 0; i < 121; i++) statuses.push((await aiBalanceRoute(db)).status);
+  expect(statuses.slice(0, 120).every((s) => s === 200)).toBe(true);
+  expect(statuses[120]).toBe(429);
+  expect((await aiCheckout(db, fakeFetch().fetcher)).status).toBe(200);
+});
+
+it("ai_checkout_503_without_billing_settings_and_502_on_stripe_failure", async () => {
+  const { db } = await seeded();
+  const { fetcher, calls } = fakeFetch();
+  expect((await aiCheckout(db, fetcher, {}, makeEnv({ STRIPE_SECRET_KEY: undefined }))).status).toBe(503);
+  expect(calls).toHaveLength(0);
+  const leak = () => new Response(JSON.stringify({ error: { message: "sk_live_leak" } }), { status: 500 });
+  const res = await aiCheckout(db, fakeFetch(leak).fetcher);
+  expect(res.status).toBe(502);
+  expect(await res.text()).not.toContain("leak");
+});
+
+it("ai_balance_reports_balance_and_last_purchase", async () => {
+  const { db, account } = await seeded();
+  const empty = await aiBalanceRoute(db);
+  expect(empty.status).toBe(200);
+  expect(await empty.json()).toEqual({ balance_micros: 0, last_purchase_micros: 0 });
+  await creditPurchase(db, account.id, 25_000_000, "cs_a", NOW - 10);
+  await creditPurchase(db, account.id, 10_000_000, "cs_b", NOW);
+  expect(await (await aiBalanceRoute(db)).json()).toEqual({ balance_micros: 35_000_000, last_purchase_micros: 10_000_000 });
+});
+
+it("ai_balance_without_an_account_is_403", async () => {
+  const res = await handleAiBalance(post("/v1/ai/balance", creds), makeEnv(), new FakeSqlExecutor(), NOW);
+  expect(res.status).toBe(403);
+});
+
+const aiSession = (accountId: string, over: Record<string, unknown> = {}, type = "checkout.session.completed") =>
+  event(type, {
+    id: "cs_ai_1",
+    object: "checkout.session",
+    mode: "payment",
+    payment_status: "paid",
+    payment_intent: "pi_1",
+    customer: "cus_1",
+    subscription: null,
+    currency: "usd",
+    amount_subtotal: 1000,
+    amount_total: 1080,
+    total_details: { amount_discount: 0, amount_shipping: 0, amount_tax: 80 },
+    metadata: { kind: "ai_credit", account_id: accountId },
+    ...over,
+  });
+
+/** Serves `GET /v1/payment_intents/{id}`, `GET /v1/refunds?charge=…` and
+ * Resend sends. Anything else is a 404. Records every URL, and each email. */
+function aiStripeFake(intents: Record<string, object> = {}, refunds: Record<string, object[]> = {}, status = 200) {
+  const calls: string[] = [];
+  const emails: any[] = [];
+  const fetcher = (async (u: string, init: RequestInit) => {
+    if (u.startsWith("https://api.resend.com/")) {
+      emails.push(JSON.parse(String(init.body)));
+      return new Response('{"id":"e"}', { status: 200 });
+    }
+    calls.push(`${init.method ?? "GET"} ${u}`);
+    if (status !== 200) return new Response('{"error":{"message":"down"}}', { status });
+    const url = new URL(u);
+    const pi = url.pathname.split("/v1/payment_intents/")[1];
+    if (pi && intents[pi]) return new Response(JSON.stringify(intents[pi]), { status: 200 });
+    const charge = url.pathname === "/v1/refunds" ? url.searchParams.get("charge") : null;
+    if (charge && refunds[charge]) return new Response(JSON.stringify({ object: "list", data: refunds[charge], has_more: false }), { status: 200 });
+    return new Response('{"error":{"code":"resource_missing"}}', { status: 404 });
+  }) as unknown as typeof fetch;
+  return { fetcher, calls, emails };
+}
+
+const refundOf = (id: string, amount: number, status = "succeeded") => ({ id, object: "refund", amount, status });
+const refundList = (...data: object[]) => ({ object: "list", data, has_more: false });
+/** A $10 pack with $0.80 tax: the charge is 1080 cents. */
+const chargeRefunded = (over: Record<string, unknown>) =>
+  event("charge.refunded", { id: "ch_1", object: "charge", payment_intent: "pi_1", amount: 1080, metadata: {}, ...over });
+
+/** Buys a $10 pack (10,000,000 micros) on pi_1 and $25 of other credit on pi_other. */
+async function boughtTen() {
+  const { db, account } = await seeded();
+  await creditPurchase(db, account.id, 25_000_000, "pi_other", NOW - 1);
+  await deliver(db, aiStripeFake().fetcher, aiSession(account.id));
+  expect(await aiBalance(db, account.id)).toBe(35_000_000);
+  return { db, account };
+}
+
+it("ai_purchase_credits_the_pretax_subtotal_keyed_on_the_payment_intent", async () => {
+  const { db, account } = await seeded();
+  const s = aiStripeFake();
+  const res = await deliver(db, s.fetcher, aiSession(account.id));
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ received: true });
+  expect(await aiBalance(db, account.id)).toBe(10_000_000);
+  expect(db.rawAiLedger()).toEqual([expect.objectContaining({ kind: "purchase", micros: 10_000_000, stripe_ref: "pi_1" })]);
+  expect(s.calls).toHaveLength(0);
+  expect(db.rawAccount(account.id)?.plan ?? "free").toBe("free");
+});
+
+it("duplicate_purchase_event_credits_once", async () => {
+  const { db, account } = await seeded();
+  const s = aiStripeFake();
+  const evt = aiSession(account.id);
+  expect((await deliver(db, s.fetcher, evt)).status).toBe(200);
+  expect((await deliver(db, s.fetcher, evt)).status).toBe(200);
+  // A new event id for the same payment: creditPurchase's own idempotency.
+  expect((await deliver(db, s.fetcher, { ...evt, id: "evt_redelivered" })).status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(10_000_000);
+  expect(db.rawAiLedger().filter((r) => r.kind === "purchase")).toHaveLength(1);
+});
+
+it("non_ai_payment_session_is_ignored", async () => {
+  const { db, account } = await seeded();
+  const s = aiStripeFake();
+  const res = await deliver(db, s.fetcher, aiSession(account.id, { metadata: { account_id: account.id } }));
+  expect(res.status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(0);
+  expect(db.rawAiLedger()).toHaveLength(0);
+  expect(s.calls).toHaveLength(0);
+});
+
+it("unpaid_ai_session_is_ignored", async () => {
+  const { db, account } = await seeded();
+  const res = await deliver(db, aiStripeFake().fetcher, aiSession(account.id, { payment_status: "unpaid" }));
+  expect(res.status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(0);
+  expect(db.rawAiLedger()).toHaveLength(0);
+});
+
+it("async_payment_succeeded_credits_a_delayed_payment_once", async () => {
+  const { db, account } = await seeded();
+  const s = aiStripeFake();
+  expect((await deliver(db, s.fetcher, aiSession(account.id, { payment_status: "unpaid" }))).status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(0);
+  const paid = aiSession(account.id, {}, "checkout.session.async_payment_succeeded");
+  expect((await deliver(db, s.fetcher, paid)).status).toBe(200);
+  expect((await deliver(db, s.fetcher, { ...paid, id: "evt_again" })).status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(10_000_000);
+  expect(db.rawAiLedger()).toHaveLength(1);
+});
+
+it("paid_session_for_a_missing_or_deleting_account_alerts_and_writes_nothing", async () => {
+  const { db, account } = await seeded();
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  const e = makeEnv({ RESEND_API_KEY: "re_test" });
+  const s = aiStripeFake();
+  expect((await deliver(db, s.fetcher, aiSession("acct_gone"), e)).status).toBe(200);
+  expect(await accounts.claimForDeletion(db, account.id, NOW)).toBe(true);
+  expect((await deliver(db, s.fetcher, aiSession(account.id, { id: "cs_ai_2", payment_intent: "pi_2" }), e)).status).toBe(200);
+  expect(db.rawAiLedger()).toHaveLength(0);
+  expect(s.emails).toHaveLength(2);
+  for (const m of s.emails) {
+    expect(m.to).toEqual(["hello@whimbrelapp.com"]);
+    expect(m.subject).toBe("Refund a Whimbrel AI credit purchase that was not credited");
+    expect(m.text).toContain("10.80 USD");
+  }
+  expect(s.emails[0].text).toContain("cs_ai_1");
+  expect(s.emails[0].text).toContain("account missing");
+  expect(s.emails[1].text).toContain("cs_ai_2");
+  expect(s.emails[1].text).toContain("account being deleted");
+  expect(JSON.stringify(s.emails)).not.toContain("owner@example.com");
+  expect(err).toHaveBeenCalled();
+});
+
+it("an_account_deleted_between_lookup_and_credit_alerts_and_credits_nothing", async () => {
+  const { db, account } = await seeded();
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  // The account is read as live, then deleted before the credit lands.
+  db.after("SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews FROM account WHERE id = ?", async () => {
+    expect(await accounts.claimForDeletion(db, account.id, NOW)).toBe(true);
+    await accounts.deleteAccountRows(db, account.id);
+  });
+  const s = aiStripeFake();
+  const evt = aiSession(account.id);
+  expect((await deliver(db, s.fetcher, evt, makeEnv({ RESEND_API_KEY: "re_test" }))).status).toBe(200);
+  expect(db.rawAiLedger()).toHaveLength(0);
+  expect(s.emails).toHaveLength(1);
+  expect(s.emails[0].subject).toBe("Refund a Whimbrel AI credit purchase that was not credited");
+  expect(s.emails[0].text).toContain("cs_ai_1");
+  expect(s.emails[0].text).toContain("pi_1");
+  // Recorded once alerted: a redelivery does not alert again.
+  expect((await deliver(db, s.fetcher, evt, makeEnv({ RESEND_API_KEY: "re_test" }))).status).toBe(200);
+  expect(s.emails).toHaveLength(1);
+  expect(err).toHaveBeenCalled();
+});
+
+it("an_account_claimed_for_deletion_between_lookup_and_credit_is_not_credited", async () => {
+  const { db, account } = await seeded();
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  db.after("SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews FROM account WHERE id = ?", async () => {
+    expect(await accounts.claimForDeletion(db, account.id, NOW)).toBe(true);
+  });
+  const s = aiStripeFake();
+  expect((await deliver(db, s.fetcher, aiSession(account.id), makeEnv({ RESEND_API_KEY: "re_test" }))).status).toBe(200);
+  expect(db.rawAiLedger()).toHaveLength(0);
+  expect(await aiBalance(db, account.id)).toBe(0);
+  expect(s.emails).toHaveLength(1);
+});
+
+it("an_uncredited_alert_that_fails_to_send_asks_stripe_to_retry", async () => {
+  const { db } = await seeded();
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  let resendUp = false;
+  const s = aiStripeFake();
+  const fetcher = (async (u: string, init: RequestInit) => {
+    if (u.startsWith("https://api.resend.com/") && !resendUp) return new Response('{"message":"down"}', { status: 500 });
+    return s.fetcher(u, init);
+  }) as unknown as typeof fetch;
+  const evt = aiSession("acct_gone");
+  const e = makeEnv({ RESEND_API_KEY: "re_test" });
+  // Resend down: not recorded, so Stripe redelivers and the alert is tried again.
+  expect((await deliver(db, fetcher, evt, e)).status).toBe(500);
+  expect(await accounts.stripeEventSeen(db, evt.id)).toBe(false);
+  // No Resend key at all: the alert cannot go out either.
+  expect((await deliver(db, fetcher, evt, makeEnv())).status).toBe(500);
+  expect(await accounts.stripeEventSeen(db, evt.id)).toBe(false);
+  resendUp = true;
+  expect((await deliver(db, fetcher, evt, e)).status).toBe(200);
+  expect(s.emails).toHaveLength(1);
+  expect(await accounts.stripeEventSeen(db, evt.id)).toBe(true);
+  expect((await deliver(db, fetcher, evt, e)).status).toBe(200);
+  expect(s.emails).toHaveLength(1);
+  expect(db.rawAiLedger()).toHaveLength(0);
+});
+
+it("ai_purchase_with_a_bad_amount_writes_nothing", async () => {
+  const { db, account } = await seeded();
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const s = aiStripeFake();
+  expect((await deliver(db, s.fetcher, aiSession(account.id, { amount_subtotal: "1000" }), makeEnv({ RESEND_API_KEY: "re_test" }))).status).toBe(200);
+  expect(s.emails).toHaveLength(1);
+  expect(db.rawAiLedger()).toHaveLength(0);
+  expect(await aiBalance(db, account.id)).toBe(0);
+});
+
+it("full_refund_removes_the_pretax_credit_exactly", async () => {
+  const { db, account } = await boughtTen();
+  const s = aiStripeFake();
+  expect((await deliver(db, s.fetcher, chargeRefunded({ refunds: refundList(refundOf("re_1", 1080)) }))).status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(25_000_000);
+  expect(db.rawAiLedger().filter((r) => r.kind === "refund")).toEqual([
+    expect.objectContaining({ micros: -10_000_000, stripe_ref: "refund:re_1", shortfall_micros: 0 }),
+  ]);
+  expect(s.calls).toHaveLength(0);
+});
+
+it("half_refund_removes_half_the_credit", async () => {
+  const { db, account } = await boughtTen();
+  expect((await deliver(db, aiStripeFake().fetcher, chargeRefunded({ refunds: refundList(refundOf("re_1", 540)) }))).status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(30_000_000);
+});
+
+it("refund_removes_only_unspent_credit", async () => {
+  const { db, account } = await seeded();
+  const s = aiStripeFake();
+  await deliver(db, s.fetcher, aiSession(account.id));
+  const hold = (await placeHold(db, account.id, 8_000_000, NOW))!;
+  await settleHold(db, hold, { model: "m", inputTokens: 1, outputTokens: 1, costMicros: 7_000_000 }, NOW);
+  expect(await aiBalance(db, account.id)).toBe(3_000_000);
+  const res = await deliver(db, s.fetcher, chargeRefunded({ refunds: refundList(refundOf("re_1", 1080)) }));
+  expect(res.status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(0);
+  expect(db.rawAiLedger().filter((r) => r.kind === "refund")).toEqual([
+    expect.objectContaining({ micros: -3_000_000, stripe_ref: "refund:re_1", shortfall_micros: 7_000_000 }),
+  ]);
+  expect(s.calls).toHaveLength(0);
+});
+
+it("refund_lists_the_refunds_when_the_charge_lacks_them", async () => {
+  const { db, account } = await boughtTen();
+  const s = aiStripeFake({}, { ch_1: [refundOf("re_1", 540)] });
+  expect((await deliver(db, s.fetcher, chargeRefunded({}))).status).toBe(200);
+  expect(s.calls).toEqual(["GET https://api.stripe.com/v1/refunds?charge=ch_1&limit=100"]);
+  expect(await aiBalance(db, account.id)).toBe(30_000_000);
+});
+
+it("each_refund_on_a_charge_applies_once", async () => {
+  const { db, account } = await boughtTen();
+  const s = aiStripeFake();
+  await deliver(db, s.fetcher, chargeRefunded({ refunds: refundList(refundOf("re_1", 270)) }));
+  await deliver(db, s.fetcher, chargeRefunded({ refunds: refundList(refundOf("re_2", 540), refundOf("re_1", 270), refundOf("re_x", 999, "failed")) }));
+  expect(await aiBalance(db, account.id)).toBe(35_000_000 - 2_500_000 - 5_000_000);
+  expect(db.rawAiLedger().filter((r) => r.kind === "refund").map((r) => r.stripe_ref)).toEqual(["refund:re_1", "refund:re_2"]);
+});
+
+it("refund_before_purchase_is_retried_not_dropped", async () => {
+  const { db, account } = await seeded();
+  await creditPurchase(db, account.id, 25_000_000, "pi_other", NOW - 1);
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  const s = aiStripeFake();
+  const evt = chargeRefunded({ metadata: { kind: "ai_credit", account_id: account.id }, refunds: refundList(refundOf("re_1", 1080)) });
+  const first = await deliver(db, s.fetcher, evt);
+  expect(first.status).toBe(500);
+  expect(err).toHaveBeenCalledWith("ai credit: refund with no purchase row yet", "ch_1", "payment", "pi_1");
+  expect(db.rawAiLedger().filter((r) => r.kind === "refund")).toHaveLength(0);
+  expect(await aiBalance(db, account.id)).toBe(25_000_000);
+  // The purchase lands, then Stripe redelivers the same refund event.
+  await deliver(db, s.fetcher, aiSession(account.id));
+  expect(await aiBalance(db, account.id)).toBe(35_000_000);
+  expect((await deliver(db, s.fetcher, evt)).status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(25_000_000);
+  expect(s.calls).toHaveLength(0);
+});
+
+/** Delivers `session` with the alert address configured; returns the emails. */
+async function notCredited(over: Record<string, unknown>) {
+  const { db, account } = await seeded();
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const s = aiStripeFake();
+  const evt = aiSession(account.id, over);
+  expect((await deliver(db, s.fetcher, evt, makeEnv({ RESEND_API_KEY: "re_test" }))).status).toBe(200);
+  expect(db.rawAiLedger()).toHaveLength(0);
+  expect(await aiBalance(db, account.id)).toBe(0);
+  // Recorded: a redelivery of the same event is a no-op, not a second alert.
+  expect((await deliver(db, s.fetcher, evt, makeEnv({ RESEND_API_KEY: "re_test" }))).status).toBe(200);
+  expect(s.emails).toHaveLength(1);
+  expect(s.emails[0].subject).toBe("Refund a Whimbrel AI credit purchase that was not credited");
+  expect(s.emails[0].text).toContain("cs_ai_1");
+  return s.emails[0].text as string;
+}
+
+it("non_usd_session_is_not_credited_and_alerts", async () => {
+  const text = await notCredited({ currency: "eur", amount_subtotal: 930, amount_total: 1116 });
+  expect(text).toContain("11.16 EUR");
+});
+
+it("odd_amount_is_not_credited", async () => {
+  for (const amount_subtotal of [999, 2000, 0, 1000.5]) {
+    const text = await notCredited({ amount_subtotal });
+    expect(text).toContain("USD");
+  }
+});
+
+it("discounted_session_is_not_credited", async () => {
+  const text = await notCredited({ amount_subtotal: 1000, amount_total: 540, total_details: { amount_discount: 500, amount_tax: 40 } });
+  expect(text).toContain("5.40 USD");
+});
+
+it("a_session_without_total_details_is_still_credited", async () => {
+  const { db, account } = await seeded();
+  expect((await deliver(db, aiStripeFake().fetcher, aiSession(account.id, { total_details: undefined }))).status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(10_000_000);
+});
+
+it("refund_of_another_products_charge_is_ignored", async () => {
+  const { db, account } = await seeded();
+  await creditPurchase(db, account.id, 10_000_000, "pi_other", NOW);
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  const s = aiStripeFake({ pi_1: { id: "pi_1", metadata: {} } }, { ch_1: [refundOf("re_1", 1080)] });
+  expect((await deliver(db, s.fetcher, chargeRefunded({}))).status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(10_000_000);
+  expect(s.calls).toEqual(["GET https://api.stripe.com/v1/payment_intents/pi_1"]);
+  expect(err).not.toHaveBeenCalled();
+});
+
+it("refund_retries_when_stripe_is_down", async () => {
+  const { db, account } = await boughtTen();
+  const evt = chargeRefunded({});
+  vi.spyOn(console, "log").mockImplementation(() => {});
+  expect((await deliver(db, aiStripeFake({}, {}, 503).fetcher, evt)).status).toBe(500);
+  const s = aiStripeFake({}, { ch_1: [refundOf("re_1", 1080)] });
+  expect((await deliver(db, s.fetcher, evt)).status).toBe(200);
+  expect(await aiBalance(db, account.id)).toBe(25_000_000);
 });

@@ -24,7 +24,7 @@ export type ActionView =
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "Provider".
  */
-export type Provider = ("ollama" | "anthropic" | "openai" | "google") | "openrouter";
+export type Provider = ("ollama" | "anthropic" | "openai" | "google") | "openrouter" | "whimbrel";
 /**
  * The LLM call sites that carry their own free-text instructions — the Mac's
  * `PromptSurface` (`PromptLibrarySettings.swift`). Stored under `prompts.<raw value>`,
@@ -209,6 +209,9 @@ export type ProviderFailureReason =
   | {
       kind: "network";
       provider: string;
+    }
+  | {
+      kind: "credit_exhausted";
     }
   | {
       kind: "other";
@@ -558,6 +561,10 @@ export interface RoutingSettings {
    * `None` = the built-in default cap; `Some(0)` = no cap (Mac semantics).
    */
   userDailyCapCents?: number | null;
+  /**
+   * The Whimbrel AI pick, one of `whimbrel_ai::MODELS`. Device-local (not synced), as on the Mac.
+   */
+  whimbrelModel: string;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -2662,6 +2669,26 @@ export interface VoicePersonView {
   confirmedCount: number;
   name: string;
   personKey: string;
+}
+/**
+ * Settings → AI's Whimbrel AI card (the Mac's `whimbrelAICard`).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "WhimbrelAiView".
+ */
+export interface WhimbrelAiView {
+  /**
+   * The credit left, in micro-dollars (1,000,000 = $1); None until a read succeeds.
+   */
+  balanceMicros?: number | null;
+  /**
+   * Under 10% of the newest purchase is left: "Credit is running low."
+   */
+  low: boolean;
+  /**
+   * Sync is ready: the balance and the Add buttons show. Otherwise "Sign in to sync to use Whimbrel AI".
+   */
+  signedIn: boolean;
 }
 /**
  * One meeting's workspace: what to show, and which parts the user has edited.

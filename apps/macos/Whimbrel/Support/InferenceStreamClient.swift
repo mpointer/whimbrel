@@ -109,8 +109,10 @@ enum InferenceEvent: Decodable, Equatable {
 /// (network I/O happens off-thread already, but polling still does JSON decode work).
 enum InferenceStreamClient {
     /// Providers the core has a streaming adapter for (docs/adr/0002; Gemini per #83).
+    /// `whimbrel` takes the sync ID token as `apiKey` and the device public key as
+    /// `baseURLOverride` (core/ffi `whimbrel_inference_start`).
     enum Provider: String {
-        case ollama, google, anthropic, openai, openrouter, local
+        case ollama, google, anthropic, openai, openrouter, local, whimbrel
     }
 
     /// Starts a streaming run. Returns the new run's id, or nil on invalid input — which

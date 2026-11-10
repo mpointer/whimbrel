@@ -42,7 +42,7 @@ pub fn api_key_field(provider: Provider) -> Option<&'static str> {
         Provider::Openai => Some(API_KEYS[1].0),
         Provider::Google => Some(API_KEYS[2].0),
         Provider::Openrouter => Some(API_KEYS[3].0),
-        Provider::Ollama => None,
+        Provider::Ollama | Provider::Whimbrel => None,
     }
 }
 
@@ -768,6 +768,7 @@ mod tests {
         f.set_vault_path("C:\\Notes");
         f.set_vault_last_updated(1);
         f.set_vault_failed(true);
+        f.set(keys::WHIMBREL_MODEL, Some("claude-sonnet-5"));
         let local = gather(&f);
         assert_eq!(sorted(local.fields.keys().cloned().collect()), sorted(synced_keys()));
         for local_only in [

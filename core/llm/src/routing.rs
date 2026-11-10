@@ -13,6 +13,9 @@ pub enum Provider {
     OpenRouter,
     /// The small downloadable model, run by the bundled helper. The last link of a chain.
     Local,
+    /// Anthropic's models through Whimbrel's server, paid from prepaid Whimbrel credit.
+    /// Used only when it is the user's preferred provider.
+    Whimbrel,
 }
 
 impl Provider {
@@ -32,6 +35,7 @@ impl Provider {
             Provider::Google => "google",
             Provider::OpenRouter => "openrouter",
             Provider::Local => "local",
+            Provider::Whimbrel => "whimbrel",
         }
     }
 
@@ -44,6 +48,7 @@ impl Provider {
             "google" => Some(Provider::Google),
             "openrouter" => Some(Provider::OpenRouter),
             "local" => Some(Provider::Local),
+            "whimbrel" => Some(Provider::Whimbrel),
             _ => None,
         }
     }
@@ -162,6 +167,8 @@ pub enum ProviderFailureKind {
     Unauthorized { #[serde(serialize_with = "provider_id")] provider: Provider },
     RateLimited { #[serde(serialize_with = "provider_id")] provider: Provider },
     Network { #[serde(serialize_with = "provider_id")] provider: Provider },
+    /// Whimbrel's server answered 402: the prepaid credit can't cover the request.
+    CreditExhausted,
     /// Never the provider's error text: some bodies echo a masked key, and a transport
     /// error's URL can carry one (`?key=`). The HTTP status, when there was one.
     Other { #[serde(serialize_with = "provider_id")] provider: Provider, status: Option<u16> },
@@ -185,6 +192,7 @@ impl ProviderFailureKind {
             {
                 Self::OllamaModelMissing { model: model.to_string() }
             }
+            LlmError::Http { status: 402, .. } if provider == Provider::Whimbrel => Self::CreditExhausted,
             LlmError::Http { status: 401 | 403, .. } => Self::Unauthorized { provider },
             LlmError::Http { status: 429, .. } => Self::RateLimited { provider },
             LlmError::Network(_) => Self::Network { provider },
@@ -202,6 +210,7 @@ impl ProviderFailureKind {
             Provider::Google => "Google",
             Provider::OpenRouter => "OpenRouter",
             Provider::Local => "The downloaded model",
+            Provider::Whimbrel => "Whimbrel AI",
         };
         match self {
             Self::OllamaModelMissing { model } => format!(
@@ -213,6 +222,7 @@ impl ProviderFailureKind {
                 format!("{} rejected the API key. Check it in Settings → AI Providers.", name(provider))
             }
             Self::RateLimited { provider } => format!("{} is busy or out of credit. Try again shortly.", name(provider)),
+            Self::CreditExhausted => "Whimbrel AI credit is used up. Add credit in Settings.".into(),
             Self::Network { .. } | Self::Other { .. } => "Every AI provider failed.".into(),
         }
     }
@@ -248,7 +258,7 @@ pub fn take_last_chain_failures() -> Vec<ProviderFailureKind> {
 /// Whether a link's error is that link's own problem, so the next link may well succeed:
 /// the retryable ones (429, 5xx), plus a provider that's unreachable or answered with
 /// something unreadable, a key it refuses (401/403), a model it doesn't have (404), a
-/// timeout (408), or a capability it lacks. The fallback links exist for exactly these.
+/// timeout (408), Whimbrel credit that ran out (402), or a capability it lacks. The fallback links exist for exactly these.
 /// Before, only 429/5xx moved on, so a local Ollama that wasn't running, or didn't have
 /// the configured model, failed every call even with working hosted keys behind it (seen
 /// on Windows: Ollama answered 404 for `gemma4:12b`, and Ask failed outright). A
@@ -257,7 +267,7 @@ pub fn falls_through(err: &LlmError) -> bool {
     match err {
         LlmError::Network(_) | LlmError::Provider(_) | LlmError::NotImplemented(_) => true,
         LlmError::Http { status, .. } => {
-            is_retryable(err) || matches!(status, 401 | 403 | 404 | 408)
+            is_retryable(err) || matches!(status, 401 | 402 | 403 | 404 | 408)
         }
     }
 }
@@ -400,6 +410,63 @@ mod tests {
         let other = c(Provider::Google, keyed);
         assert_eq!(other, ProviderFailureKind::Other { provider: Provider::Google, status: Some(400) });
         assert!(!serde_json::to_string(&other).unwrap().contains("AIza"), "no provider text");
+    }
+
+    #[test]
+    fn credit_exhausted_falls_through() {
+        let chain = [
+            link(Provider::Whimbrel, Some(|| http(402))),
+            link(Provider::Anthropic, None),
+        ];
+        assert!(falls_through(&http(402)));
+        assert_eq!(try_chain(&chain, |l| l.client.complete("q")).map(|(_, l)| l.provider), Some(Provider::Anthropic));
+        let failing = [
+            link(Provider::Whimbrel, Some(|| http(402))),
+            link(Provider::Anthropic, Some(|| http(503))),
+        ];
+        assert_eq!(
+            try_chain_with_failures(&failing, |l| l.client.complete("q")).err(),
+            Some(vec![
+                ProviderFailureKind::CreditExhausted,
+                ProviderFailureKind::Other { provider: Provider::Anthropic, status: Some(503) },
+            ])
+        );
+        assert_eq!(
+            serde_json::to_string(&ProviderFailureKind::CreditExhausted).unwrap(),
+            r#"{"kind":"credit_exhausted"}"#
+        );
+        assert_eq!(
+            ProviderFailureKind::CreditExhausted.user_message(),
+            "Whimbrel AI credit is used up. Add credit in Settings."
+        );
+    }
+
+    #[test]
+    fn whimbrel_failures_are_classified() {
+        let c = |e: LlmError| ProviderFailureKind::classify(Provider::Whimbrel, "m", &e);
+        assert_eq!(c(http(402)), ProviderFailureKind::CreditExhausted);
+        assert_eq!(c(http(429)), ProviderFailureKind::RateLimited { provider: Provider::Whimbrel });
+        assert_eq!(c(http(401)), ProviderFailureKind::Unauthorized { provider: Provider::Whimbrel });
+        assert_eq!(c(http(400)), ProviderFailureKind::Other { provider: Provider::Whimbrel, status: Some(400) });
+        // Only Whimbrel's server speaks of credit; another provider's 402 stays Other.
+        assert_eq!(
+            ProviderFailureKind::classify(Provider::Anthropic, "m", &http(402)),
+            ProviderFailureKind::Other { provider: Provider::Anthropic, status: Some(402) }
+        );
+    }
+
+    #[test]
+    fn provider_parse_round_trips_whimbrel() {
+        assert_eq!(Provider::Whimbrel.as_str(), "whimbrel");
+        assert_eq!(Provider::parse("whimbrel"), Some(Provider::Whimbrel));
+        assert!(!Provider::Whimbrel.is_local());
+        for p in [Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google, Provider::OpenRouter, Provider::Local, Provider::Whimbrel] {
+            assert_eq!(Provider::parse(p.as_str()), Some(p));
+        }
+        assert_eq!(
+            ProviderFailureKind::RateLimited { provider: Provider::Whimbrel }.user_message(),
+            "Whimbrel AI is busy or out of credit. Try again shortly."
+        );
     }
 
     #[test]

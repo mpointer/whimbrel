@@ -14,11 +14,14 @@ import {
   setRoutingSettings,
   setSummaryInstructions,
   usageRows,
+  whimbrelAiBuy,
+  whimbrelAiRefresh,
+  whimbrelAiStatus,
 } from "../api";
 import { localModelDownload } from "../chat/localModel";
 import { describeError, isCommandError } from "../errors";
 import { t, useL10n } from "../l10n";
-import type { AiSettings, PromptSurface, Provider, ProviderInfoView, RoutingSettings, UsageRowView, UsageView } from "../generated/types";
+import type { AiSettings, PromptSurface, Provider, ProviderInfoView, RoutingSettings, UsageRowView, UsageView, WhimbrelAiView } from "../generated/types";
 import {
   capToDollars,
   costLine,
@@ -42,6 +45,7 @@ import {
   usageTime,
   usageTokens,
   usageTotalsLine,
+  whimbrelBalanceLine,
 } from "./aiModel";
 
 function message(e: unknown): string {
@@ -54,6 +58,8 @@ export function AiCard() {
   // Null until the probe answers, so the on-ramp isn't drawn and then taken away.
   const [ollamaUp, setOllamaUp] = useState<boolean | null>(null);
   const { status: local } = localModelDownload.use();
+  const whimbrel = useWhimbrelAi();
+  const whimbrelSignedIn = !!whimbrel?.signedIn;
 
   useEffect(() => {
     aiSettings()
@@ -85,7 +91,7 @@ export function AiCard() {
         {t("AI & routing")}
       </h2>
       {error && <p role="alert">{error}</p>}
-      {onRampOnceKnown(settings.routing, settings.keys, ollamaUp, local ? local.installed : null) && <OnRamp google={info("google")} />}
+      {onRampOnceKnown(settings.routing, settings.keys, ollamaUp, local ? local.installed : null, whimbrelSignedIn) && <OnRamp google={info("google")} />}
       {local?.installed && (
         <div className="toolbar">
           <button className="mode" onClick={() => void localModelRemove().then(localModelDownload.setStatus, (e: unknown) => setError(message(e)))}>
@@ -96,7 +102,7 @@ export function AiCard() {
       <Routing
         routing={settings.routing}
         onChange={saveRouting}
-        notice={hostedNotice(settings.routing, settings.keys)}
+        notice={hostedNotice(settings.routing, settings.keys, whimbrelSignedIn)}
         onError={setError}
       />
       {settings.ollamaWarning && (
@@ -104,6 +110,7 @@ export function AiCard() {
           {ollamaWarningLine(settings.ollamaWarning)}
         </p>
       )}
+      <WhimbrelAiCard view={whimbrel} />
       <h3 className="section-label">{t("API keys")}</h3>
       <p className="muted small">{t("Stored in Windows Credential Manager under the same names the Mac's Keychain uses.")}</p>
       {settings.keys.map((k) => (
@@ -179,6 +186,81 @@ export function AiCard() {
   );
 }
 
+/**
+ * The Whimbrel AI card's state: the shell's last read at once, then a fresh balance, then the
+ * shell's view every 5 s (it polls the server itself after Add $10 or Add $25) and a fresh read
+ * whenever the window comes back to the front.
+ */
+function useWhimbrelAi(): WhimbrelAiView | null {
+  const [view, setView] = useState<WhimbrelAiView | null>(null);
+  useEffect(() => {
+    let live = true;
+    const show = (v: WhimbrelAiView) => live && setView(v);
+    const read = () => void whimbrelAiStatus().then(show, () => undefined);
+    const refresh = () => void whimbrelAiRefresh().then(show, () => undefined);
+    read();
+    refresh();
+    const timer = setInterval(read, 5000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+  return view;
+}
+
+/**
+ * Whimbrel AI: prepaid Anthropic credit through Whimbrel's server, signed in with sync (the Mac's
+ * `whimbrelAICard`). The balance, the two packs (Stripe Checkout in the browser), and the data note.
+ */
+function WhimbrelAiCard(props: { view: WhimbrelAiView | null }) {
+  const [view, setView] = useState(props.view);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setView(props.view), [props.view]);
+  const buy = (pack: "10" | "25") => {
+    setBusy(true);
+    setError(null);
+    whimbrelAiBuy(pack)
+      .then(setView, (e: unknown) => setError(message(e)))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="stack-sm key-block" data-testid="whimbrel-ai-card">
+      <h3 className="section-label">{providerLabel("whimbrel")}</h3>
+      {view?.signedIn ? (
+        <>
+          {view.balanceMicros != null && (
+            <p>
+              <strong>{whimbrelBalanceLine(view.balanceMicros)}</strong>
+            </p>
+          )}
+          {view.low && <p className="small budget-over">{t("Credit is running low.")}</p>}
+          <span className="field-row">
+            <button type="button" className="mode" disabled={busy} onClick={() => buy("10")}>
+              {t("Add $10")}
+            </button>
+            <button type="button" className="mode" disabled={busy} onClick={() => buy("25")}>
+              {t("Add $25")}
+            </button>
+          </span>
+          {error && (
+            <p className="small" role="alert">
+              {error}
+            </p>
+          )}
+        </>
+      ) : (
+        <p className="muted small">{t("Sign in to sync to use Whimbrel AI")}</p>
+      )}
+      {/* Core's `whimbrel_ai_passthrough` note, in the user's language (as on the Mac, PR 691). */}
+      <p className="muted small">{t("Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked.")}</p>
+    </div>
+  );
+}
+
 /** Shown when nothing can answer: no hosted key and no local model reachable. */
 function OnRamp(props: { google: ProviderInfoView | undefined }) {
   const openUrl = (url: string | null | undefined) => url && void openExternal(url);
@@ -225,6 +307,12 @@ function Routing(props: {
 
   useEffect(() => setModel(routing[modelField(provider)]), [provider, routing]);
   useEffect(() => setListError(null), [provider]);
+  // Whimbrel AI's list is the priced models, known without a key: show it at once.
+  useEffect(() => {
+    if (provider === "whimbrel" && !models.whimbrel) {
+      providerModels("whimbrel").then((loaded) => setModels((m) => ({ ...m, whimbrel: loaded })), () => undefined);
+    }
+  }, [provider, models.whimbrel]);
 
   // The result and any error show beside the button, not at the foot of the card.
   const loadModels = () => {
@@ -294,11 +382,13 @@ function Routing(props: {
               onBlur={(e) => saveModel(e.target.value)}
             />
           )}
-          <button type="button" className="mode" disabled={loading} onClick={loadModels}>
-            {loading ? t("Loading…") : list ? t("Reload") : t("Load models")}
-          </button>
+          {provider !== "whimbrel" && (
+            <button type="button" className="mode" disabled={loading} onClick={loadModels}>
+              {loading ? t("Loading…") : list ? t("Reload") : t("Load models")}
+            </button>
+          )}
         </span>
-        {list && (
+        {list && provider !== "whimbrel" && (
           <span className="muted small">
             {t("{count} models from {provider}.", { count: list.length, provider: providerLabel(provider) })}
           </span>

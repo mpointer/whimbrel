@@ -18,6 +18,8 @@ struct YourDataSettingsPane: View {
     @State private var dataFolderBytes: Int64 = 0
     @State private var mediaBytes: Int64 = 0
     @State private var usageTotals: CoreUsageTotals?
+    /// Core's provider table, for Whimbrel AI's data sentence (the AI Providers card's).
+    @State private var providerRows: [CoreProviderInfo] = CoreMemoryStore.providers()
     @State private var alsoDeleteSyncAccount = false
     @State private var deleting = false
     @State private var exportStatus: String?
@@ -128,6 +130,10 @@ struct YourDataSettingsPane: View {
         if appState.routing.hasKey(for: .openai) { providers.append("OpenAI") }
         if appState.routing.hasKey(for: .google) { providers.append("Google") }
         if appState.routing.hasKey(for: .openrouter) { providers.append("OpenRouter") }
+        // Whimbrel AI counts once it is the chosen provider and signed in (core adds it to
+        // a chain only then); its row's data sentence then joins "sees".
+        let whimbrelAI = appState.routing.preferredProvider == .whimbrel && appState.routing.hasKey(for: .whimbrel)
+        if whimbrelAI { providers.append("Whimbrel AI") }
         var syncOn = false
         if case .ready = appState.syncState.status { syncOn = true }
         let accounts = Set(appState.gmailConnectorState.accounts.map(\.email) + appState.calendarConnectorState.accounts.map(\.email)).sorted()
@@ -137,7 +143,8 @@ struct YourDataSettingsPane: View {
             syncOn: syncOn,
             syncDevices: appState.syncState.devices.count,
             googleAccounts: accounts,
-            typesafeOn: KeychainService.load(for: .typesafe)?.isEmpty == false
+            typesafeOn: KeychainService.load(for: .typesafe)?.isEmpty == false,
+            whimbrelAITerms: whimbrelAI ? providerRows.first(where: { $0.id == "whimbrel" })?.dataTerms?.localizedText : nil
         )
     }
 
@@ -178,6 +185,8 @@ struct YourDataSettingsPane: View {
                 deleteFailure = nil
                 alsoDeleteSyncAccount = false
                 confirmingDelete = true
+                // A fresh balance for the forfeit line if the sync account goes too.
+                Task { await appState.syncState.refreshAIBalance() }
             }
             .buttonStyle(.whimbrelSecondary)
             .tint(Color.whimbrelError)
@@ -279,8 +288,9 @@ struct YourDataSettingsPane: View {
             if case .ready = appState.syncState.status {
                 Toggle("Also delete my sync account", isOn: $alsoDeleteSyncAccount)
                 Text(alsoDeleteSyncAccount
-                     ? "The encrypted copy on the sync server is deleted and every device is signed out of sync. Your other devices keep their own data."
-                     : "Sync is on. This Mac will download everything again from your other devices unless you also delete your sync account.")
+                     ? [String(localized: "The encrypted copy on the sync server is deleted and every device is signed out of sync. Your other devices keep their own data."),
+                        appState.syncState.aiCreditForfeitNote].compactMap { $0 }.joined(separator: " ")
+                     : String(localized: "Sync is on. This Mac will download everything again from your other devices unless you also delete your sync account."))
                     .font(.whimbrelBody(.body))
                     .foregroundStyle(alsoDeleteSyncAccount ? Color.whimbrelTextSecondary : Color.whimbrelError)
                     .fixedSize(horizontal: false, vertical: true)

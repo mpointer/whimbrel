@@ -1,4 +1,4 @@
-import type { SqlExecutor, SqlRow } from "../../src/accounts";
+import type { SqlExecutor, SqlRow, SqlStatement } from "../../src/accounts";
 
 /** Minimal in-memory fake covering exactly the queries accounts.ts issues
  * — not a general SQL engine, just enough to test real accounts.ts query
@@ -24,13 +24,22 @@ export class FakeSqlExecutor implements SqlExecutor {
       planRenews?: boolean;
       stripeCustomerId?: string | null;
       stripeSubscriptionId?: string | null;
+      aiCreditMicros?: number;
+      aiOpenHolds?: number;
     }
   >();
+  private aiLedger: SqlRow[] = [];
+  private aiHolds = new Map<string, SqlRow>();
   private devices = new Map<string, SqlRow>();
   private waitlist: SqlRow[] = [];
   private retired: SqlRow[] = [];
   private creations: SqlRow[] = [];
   private stripeEvents = new Set<string>();
+  /** SQLite's changes(): rows changed by the last UPDATE that sets it.
+   * Only the AI credit statements that read it also set it. */
+  private lastChanges = 0;
+  /** Number of batches run (test peek). */
+  batches = 0;
 
   /** Test seam: simulate a pending inactivity warning. */
   markWarned(accountId: string, at: number) {
@@ -76,6 +85,12 @@ export class FakeSqlExecutor implements SqlExecutor {
   rawRetired(): SqlRow[] {
     return this.retired;
   }
+  rawAiLedger(): SqlRow[] {
+    return this.aiLedger;
+  }
+  rawAiHolds(): SqlRow[] {
+    return [...this.aiHolds.values()];
+  }
 
   private hooks: { prefix: string; fn: () => Promise<void> }[] = [];
 
@@ -85,8 +100,25 @@ export class FakeSqlExecutor implements SqlExecutor {
     this.hooks.push({ prefix, fn });
   }
 
+  /** All statements run synchronously, so no other call can interleave,
+   * on live state; a throw restores the snapshot taken first. That is the
+   * same all-or-nothing contract as one SQLite transaction. */
+  async batch(stmts: SqlStatement[]): Promise<SqlRow[][]> {
+    const fields = ["accounts", "devices", "waitlist", "retired", "creations", "stripeEvents", "aiLedger", "aiHolds", "lastChanges"] as const;
+    const self = this as unknown as Record<string, unknown>;
+    const snapshot = fields.map((f) => structuredClone(self[f]));
+    try {
+      const out = stmts.map((s) => this.run(s.sql, s.params));
+      this.batches++;
+      return out;
+    } catch (err) {
+      fields.forEach((f, i) => (self[f] = snapshot[i]));
+      throw err;
+    }
+  }
+
   async execute(sql: string, params: unknown[]): Promise<SqlRow[]> {
-    const rows = await this.run(sql, params);
+    const rows = this.run(sql, params);
     const q = sql.replace(/\s+/g, " ").trim();
     const hook = this.hooks.find((h) => q.startsWith(h.prefix));
     if (hook) {
@@ -96,7 +128,7 @@ export class FakeSqlExecutor implements SqlExecutor {
     return rows;
   }
 
-  private async run(sql: string, params: unknown[]): Promise<SqlRow[]> {
+  private run(sql: string, params: unknown[]): SqlRow[] {
     const q = sql.replace(/\s+/g, " ").trim();
     const accountRow = (a: {
       id: string;
@@ -451,7 +483,7 @@ export class FakeSqlExecutor implements SqlExecutor {
     }
     if (
       q ===
-      "SELECT id, email FROM account WHERE warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?)"
+      "SELECT id, email FROM account WHERE warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?) AND ai_credit_micros <= 0"
     ) {
       return [...this.accounts.values()]
         .filter(
@@ -459,22 +491,23 @@ export class FakeSqlExecutor implements SqlExecutor {
             a.warnedAtUnixMs == null &&
             a.lastSeenUnixMs != null &&
             a.lastSeenUnixMs < (params[0] as number) &&
-            (a.planUntilUnixMs == null || a.planUntilUnixMs < (params[1] as number)),
+            (a.planUntilUnixMs == null || a.planUntilUnixMs < (params[1] as number)) &&
+            (a.aiCreditMicros ?? 0) <= 0,
         )
         .map((a) => ({ id: a.id, email: a.email }));
     }
     if (
       q ===
-      "UPDATE account SET warned_at_unix_ms = ? WHERE id = ? AND warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?)"
+      "UPDATE account SET warned_at_unix_ms = ? WHERE id = ? AND warned_at_unix_ms IS NULL AND last_seen_unix_ms < ? AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < ?) AND ai_credit_micros <= 0"
     ) {
       const [at, id, before] = params as [number, string, number];
       const a = this.accounts.get(id);
-      if (a && a.warnedAtUnixMs == null && a.lastSeenUnixMs != null && a.lastSeenUnixMs < before && (a.planUntilUnixMs == null || a.planUntilUnixMs < (params[3] as number))) a.warnedAtUnixMs = at;
+      if (a && a.warnedAtUnixMs == null && a.lastSeenUnixMs != null && a.lastSeenUnixMs < before && (a.planUntilUnixMs == null || a.planUntilUnixMs < (params[3] as number)) && (a.aiCreditMicros ?? 0) <= 0) a.warnedAtUnixMs = at;
       return [];
     }
     if (
       q ===
-      "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews FROM account WHERE warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms)"
+      "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews FROM account WHERE warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms) AND ai_credit_micros <= 0"
     ) {
       return [...this.accounts.values()]
         .filter(
@@ -483,7 +516,8 @@ export class FakeSqlExecutor implements SqlExecutor {
             a.warnedAtUnixMs < (params[0] as number) &&
             a.lastSeenUnixMs != null &&
             a.lastSeenUnixMs < a.warnedAtUnixMs &&
-            (a.planUntilUnixMs == null || a.planUntilUnixMs < a.warnedAtUnixMs),
+            (a.planUntilUnixMs == null || a.planUntilUnixMs < a.warnedAtUnixMs) &&
+            (a.aiCreditMicros ?? 0) <= 0,
         )
         .map(accountRow);
     }
@@ -497,7 +531,7 @@ export class FakeSqlExecutor implements SqlExecutor {
     }
     if (
       q ===
-      "UPDATE account SET deleting_since_unix_ms = ? WHERE id = ? AND deleting_since_unix_ms IS NULL AND warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms) AND NOT EXISTS (SELECT 1 FROM device WHERE device.account_id = account.id AND device.status = 'resetting') RETURNING id"
+      "UPDATE account SET deleting_since_unix_ms = ? WHERE id = ? AND deleting_since_unix_ms IS NULL AND warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms) AND ai_credit_micros <= 0 AND NOT EXISTS (SELECT 1 FROM device WHERE device.account_id = account.id AND device.status = 'resetting') RETURNING id"
     ) {
       const [at, id, warnedBefore] = params as [number, string, number];
       const a = this.accounts.get(id);
@@ -508,7 +542,8 @@ export class FakeSqlExecutor implements SqlExecutor {
         !(a.warnedAtUnixMs < warnedBefore) ||
         a.lastSeenUnixMs == null ||
         !(a.lastSeenUnixMs < a.warnedAtUnixMs) ||
-        (a.planUntilUnixMs != null && !(a.planUntilUnixMs < a.warnedAtUnixMs))
+        (a.planUntilUnixMs != null && !(a.planUntilUnixMs < a.warnedAtUnixMs)) ||
+        (a.aiCreditMicros ?? 0) > 0
       )
         return [];
       if (resetting(id)) return [];
@@ -534,6 +569,133 @@ export class FakeSqlExecutor implements SqlExecutor {
     }
     if (q === "SELECT 1 FROM account WHERE data_db_name = ?") {
       return [...this.accounts.values()].filter((a) => a.dataDbName === params[0]).map(() => ({ 1: 1 }));
+    }
+    // ---- Whimbrel AI credit (aiCredit.ts) ----
+    const holdOf = (id: unknown) => this.aiHolds.get(id as string);
+    const pushLedger = (r: SqlRow) => {
+      if (this.aiLedger.some((l) => l.id === r.id)) throw new Error("UNIQUE constraint failed: ai_ledger.id");
+      if (!["purchase", "usage", "refund"].includes(r.kind as string)) throw new Error("CHECK constraint failed: kind");
+      this.aiLedger.push(r);
+    };
+    const ledgerCols = "INSERT INTO ai_ledger (id, account_id, kind, micros, model, input_tokens, output_tokens, stripe_ref, created_at_unix_ms)";
+    if (q === "SELECT ai_credit_micros FROM account WHERE id = ?") {
+      const a = this.accounts.get(params[0] as string);
+      return a ? [{ ai_credit_micros: a.aiCreditMicros ?? 0 }] : [];
+    }
+    if (
+      q ===
+      "UPDATE account SET ai_credit_micros = ai_credit_micros - ?, ai_open_holds = ai_open_holds + 1 WHERE id = ? AND ai_credit_micros >= ? AND ai_open_holds < 4 RETURNING ai_credit_micros, ai_open_holds"
+    ) {
+      const [micros, id, atLeast] = params as [number, string, number];
+      const a = this.accounts.get(id);
+      this.lastChanges = 0;
+      if (!a || !((a.aiCreditMicros ?? 0) >= atLeast) || !((a.aiOpenHolds ?? 0) < 4)) return [];
+      a.aiCreditMicros = (a.aiCreditMicros ?? 0) - micros;
+      a.aiOpenHolds = (a.aiOpenHolds ?? 0) + 1;
+      this.lastChanges = 1;
+      return [{ ai_credit_micros: a.aiCreditMicros, ai_open_holds: a.aiOpenHolds }];
+    }
+    if (q === "INSERT INTO ai_hold (id, account_id, micros, created_at_unix_ms) SELECT ?, ?, ?, ? WHERE changes() = 1 RETURNING id") {
+      const [id, account_id, micros, created_at_unix_ms] = params;
+      if (this.lastChanges !== 1) return [];
+      if (this.aiHolds.has(id as string)) throw new Error("UNIQUE constraint failed: ai_hold.id");
+      this.aiHolds.set(id as string, { id, account_id, micros, created_at_unix_ms });
+      return [{ id }];
+    }
+    if (
+      q ===
+      "UPDATE account SET ai_credit_micros = ai_credit_micros + (SELECT micros FROM ai_hold WHERE id = ?) - MIN(COALESCE(?, (SELECT micros FROM ai_hold WHERE id = ?)), ai_credit_micros + (SELECT micros FROM ai_hold WHERE id = ?)), ai_open_holds = MAX(ai_open_holds - 1, 0) WHERE id = (SELECT account_id FROM ai_hold WHERE id = ?)"
+    ) {
+      const h = holdOf(params[0]);
+      const a = h && this.accounts.get(h.account_id as string);
+      if (!h || !a) return [];
+      const held = h.micros as number;
+      const balance = a.aiCreditMicros ?? 0;
+      const cost = (params[1] as number | null) ?? held;
+      a.aiCreditMicros = balance + held - Math.min(cost, balance + held);
+      a.aiOpenHolds = Math.max((a.aiOpenHolds ?? 0) - 1, 0);
+      return [];
+    }
+    if (q === `${ledgerCols} SELECT ?, account_id, 'usage', -COALESCE(?, micros), ?, ?, ?, NULL, ? FROM ai_hold WHERE id = ?`) {
+      const [id, cost, model, input_tokens, output_tokens, created_at_unix_ms, holdId] = params;
+      const h = holdOf(holdId);
+      if (!h) return [];
+      const micros = -((cost as number | null) ?? (h.micros as number));
+      pushLedger({ id, account_id: h.account_id, kind: "usage", micros, model, input_tokens, output_tokens, stripe_ref: null, created_at_unix_ms, shortfall_micros: null });
+      return [];
+    }
+    if (q === "DELETE FROM ai_hold WHERE id = ?") {
+      this.aiHolds.delete(params[0] as string);
+      return [];
+    }
+    if (q === `${ledgerCols} SELECT ?, id, 'purchase', ?, NULL, NULL, NULL, ?, ? FROM account WHERE id = ? AND deleting_since_unix_ms IS NULL ON CONFLICT(stripe_ref) DO NOTHING RETURNING id`) {
+      const [id, micros, stripe_ref, created_at_unix_ms, account_id] = params;
+      const a = this.accounts.get(account_id as string);
+      if (!a || a.deletingSinceUnixMs != null) return [];
+      if (this.aiLedger.some((l) => l.stripe_ref === stripe_ref)) return [];
+      pushLedger({ id, account_id, kind: "purchase", micros, model: null, input_tokens: null, output_tokens: null, stripe_ref, created_at_unix_ms, shortfall_micros: null });
+      return [{ id }];
+    }
+    if (q === "UPDATE account SET ai_credit_micros = ai_credit_micros + ? WHERE id = ? AND EXISTS (SELECT 1 FROM ai_ledger WHERE id = ?)") {
+      const [plus, id, ledgerId] = params as [number, string, string];
+      const a = this.accounts.get(id);
+      if (a && this.aiLedger.some((l) => l.id === ledgerId)) a.aiCreditMicros = (a.aiCreditMicros ?? 0) + plus;
+      return [];
+    }
+    if (
+      q ===
+      "INSERT INTO ai_ledger (id, account_id, kind, micros, model, input_tokens, output_tokens, stripe_ref, created_at_unix_ms, shortfall_micros) SELECT ?, id, 'refund', -MIN(?, ai_credit_micros), NULL, NULL, NULL, ?, ?, ? - MIN(?, ai_credit_micros) FROM account WHERE id = ? ON CONFLICT(stripe_ref) DO NOTHING RETURNING micros"
+    ) {
+      const [id, refund, stripe_ref, created_at_unix_ms, , , accountId] = params;
+      const a = this.accounts.get(accountId as string);
+      if (!a || this.aiLedger.some((l) => l.stripe_ref === stripe_ref)) return [];
+      const removed = Math.min(refund as number, a.aiCreditMicros ?? 0);
+      const micros = -removed;
+      pushLedger({
+        id,
+        account_id: accountId,
+        kind: "refund",
+        micros,
+        model: null,
+        input_tokens: null,
+        output_tokens: null,
+        stripe_ref,
+        created_at_unix_ms,
+        shortfall_micros: (refund as number) - removed,
+      });
+      return [{ micros }];
+    }
+    if (
+      q ===
+      "UPDATE account SET ai_credit_micros = ai_credit_micros + (SELECT micros FROM ai_ledger WHERE id = ?) WHERE id = ? AND EXISTS (SELECT 1 FROM ai_ledger WHERE id = ?)"
+    ) {
+      const row = this.aiLedger.find((l) => l.id === params[0]);
+      const a = this.accounts.get(params[1] as string);
+      if (a && row) a.aiCreditMicros = (a.aiCreditMicros ?? 0) + (row.micros as number);
+      return [];
+    }
+    if (q === "SELECT micros FROM ai_ledger WHERE account_id = ? AND kind = 'purchase' ORDER BY created_at_unix_ms DESC, rowid DESC LIMIT 1") {
+      // Insertion order stands in for rowid.
+      const rows = this.aiLedger.filter((l) => l.account_id === params[0] && l.kind === "purchase");
+      let newest: SqlRow | undefined;
+      for (const r of rows) if (!newest || (r.created_at_unix_ms as number) >= (newest.created_at_unix_ms as number)) newest = r;
+      return newest ? [{ micros: newest.micros }] : [];
+    }
+    if (q === "SELECT account_id, micros FROM ai_ledger WHERE stripe_ref = ? AND kind = 'purchase'") {
+      return this.aiLedger.filter((l) => l.stripe_ref === params[0] && l.kind === "purchase").map((l) => ({ account_id: l.account_id, micros: l.micros }));
+    }
+    if (q === "SELECT id FROM ai_hold WHERE created_at_unix_ms < ?") {
+      return [...this.aiHolds.values()]
+        .filter((h) => (h.created_at_unix_ms as number) < (params[0] as number))
+        .map((h) => ({ id: h.id }));
+    }
+    if (q === "DELETE FROM ai_hold WHERE account_id = ?") {
+      for (const [id, h] of this.aiHolds) if (h.account_id === params[0]) this.aiHolds.delete(id);
+      return [];
+    }
+    if (q === "DELETE FROM ai_ledger WHERE account_id = ?") {
+      this.aiLedger = this.aiLedger.filter((l) => l.account_id !== params[0]);
+      return [];
     }
     throw new Error(`FakeSqlExecutor: unrecognized query: ${q}`);
   }

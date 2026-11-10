@@ -290,6 +290,10 @@ fn skin_client(routing: &RoutingSettings, keys: &ApiKeys) -> Result<(llm::Provid
         Provider::Openai => (llm::Provider::OpenAI, Box::new(llm::OpenAIClient::new(key(&keys.openai)?, &model))),
         Provider::Google => (llm::Provider::Google, Box::new(llm::GoogleClient::new(key(&keys.google)?, &model))),
         Provider::Openrouter => (llm::Provider::OpenRouter, Box::new(llm::OpenAIClient::openrouter(key(&keys.openrouter)?, &model))),
+        Provider::Whimbrel => {
+            let c = keys.whimbrel.as_ref().ok_or_else(|| CommandError::not_configured(set_up_line()))?;
+            (llm::Provider::Whimbrel, Box::new(llm::AnthropicClient::whimbrel(c.id_token.clone(), c.device_key.clone(), &model)))
+        }
     };
     Ok((provider, model, client))
 }

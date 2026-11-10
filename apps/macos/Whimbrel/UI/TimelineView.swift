@@ -244,6 +244,8 @@ struct PendingStreamAsk {
     /// Ollama route, the picked Gemini model on the Google route (#83). Recorded via
     /// `finalizeAsk` for the usage log; `ollamaModel` stays the title-gen model.
     let answerModel: String
+    /// The provider the answer streams from; a Whimbrel AI 402 shows the credit message.
+    var streamProvider: InferenceStreamClient.Provider = .ollama
     let titleGenEffective: (provider: RoutingSettings.Provider, modelLabel: String)
     /// Runs `askBlocking` with this same turn's already-captured arguments — used only
     /// when the stream reaches `.failed` with zero output ever emitted (see

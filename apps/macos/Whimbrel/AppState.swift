@@ -480,6 +480,7 @@ final class AppState: ObservableObject {
         SkinStore.shared.installBundledAndUserSkins()
         appearanceSettings.apply()
         routing.profileProvider = { [profile] in profile.routingProfile }
+        routing.whimbrelCredentialsProvider = { [syncState] in syncState.whimbrelCredentials }
         slowStore = coreStore.flatMap { primary in
             CoreMemoryStore.accessQueue.sync { CoreMemoryStore(secondaryTo: primary, path: SpikePaths.database) }
         }

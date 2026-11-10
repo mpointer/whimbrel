@@ -830,6 +830,13 @@ pub extern "C" fn whimbrel_skin_turn(
         "openai" => (llm::Provider::OpenAI, Box::new(llm::OpenAIClient::new(key, &model))),
         "google" => (llm::Provider::Google, Box::new(llm::GoogleClient::new(key, &model))),
         "openrouter" => (llm::Provider::OpenRouter, Box::new(llm::OpenAIClient::openrouter(key, &model))),
+        "whimbrel" => {
+            let routing = parse_routing_config(routing_config_json);
+            let (Some(id_token), Some(device_key)) = (routing.whimbrel_id_token, routing.whimbrel_device_key) else {
+                return ptr::null_mut();
+            };
+            (llm::Provider::Whimbrel, Box::new(llm::AnthropicClient::whimbrel(id_token, device_key, &model)))
+        }
         _ => return ptr::null_mut(),
     };
     let Some(store) = open_as_device(&db_path, device_id) else {

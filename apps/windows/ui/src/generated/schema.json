@@ -3025,6 +3025,11 @@
           "const": "openrouter",
           "description": "One key, any model on OpenRouter's catalogue, free ones included.",
           "type": "string"
+        },
+        {
+          "const": "whimbrel",
+          "description": "Whimbrel AI: Anthropic models through Whimbrel's server, paid from prepaid credit. It signs in\nwith the sync account, so it has no key of its own, and core uses it only when preferred.",
+          "type": "string"
         }
       ]
     },
@@ -3135,6 +3140,19 @@
           "required": [
             "kind",
             "provider"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Whimbrel's server answered 402: the prepaid Whimbrel AI credit can't cover the request.",
+          "properties": {
+            "kind": {
+              "const": "credit_exhausted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
           ],
           "type": "object"
         },
@@ -3621,6 +3639,10 @@
             "integer",
             "null"
           ]
+        },
+        "whimbrelModel": {
+          "description": "The Whimbrel AI pick, one of `whimbrel_ai::MODELS`. Device-local (not synced), as on the Mac.",
+          "type": "string"
         }
       },
       "required": [
@@ -3630,6 +3652,7 @@
         "openaiModel",
         "googleModel",
         "openrouterModel",
+        "whimbrelModel",
         "localOnly",
         "cheapFirst",
         "useLocalModel"
@@ -5578,6 +5601,32 @@
         "personKey",
         "name",
         "confirmedCount"
+      ],
+      "type": "object"
+    },
+    "WhimbrelAiView": {
+      "description": "Settings → AI's Whimbrel AI card (the Mac's `whimbrelAICard`).",
+      "properties": {
+        "balanceMicros": {
+          "description": "The credit left, in micro-dollars (1,000,000 = $1); None until a read succeeds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "low": {
+          "description": "Under 10% of the newest purchase is left: \"Credit is running low.\"",
+          "type": "boolean"
+        },
+        "signedIn": {
+          "description": "Sync is ready: the balance and the Add buttons show. Otherwise \"Sign in to sync to use Whimbrel AI\".",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "signedIn",
+        "low"
       ],
       "type": "object"
     },

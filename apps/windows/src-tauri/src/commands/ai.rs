@@ -161,6 +161,7 @@ pub fn provider_infos() -> Vec<ProviderInfoView> {
                 "openai" => Provider::Openai,
                 "google" => Provider::Google,
                 "openrouter" => Provider::Openrouter,
+                "whimbrel" => Provider::Whimbrel,
                 _ => return None,
             };
             Some(ProviderInfoView {
@@ -266,7 +267,8 @@ fn key_account(provider: Provider) -> Option<&'static str> {
         Provider::Openai => Some(accounts::OPENAI_API_KEY),
         Provider::Google => Some(accounts::GOOGLE_API_KEY),
         Provider::Openrouter => Some(accounts::OPENROUTER_API_KEY),
-        Provider::Ollama => None,
+        // Whimbrel AI signs in with the sync account; it has no key.
+        Provider::Ollama | Provider::Whimbrel => None,
     }
 }
 
@@ -278,6 +280,9 @@ fn hosted(provider: Provider) -> api::hosted_models::HostedProvider {
         Provider::Google => HostedProvider::Google,
         Provider::Openrouter => HostedProvider::OpenRouter,
         Provider::Ollama => HostedProvider::Ollama,
+        // Never asked for a key check or a live list (`provider_models` answers from the priced
+        // list first); Anthropic is what serves it.
+        Provider::Whimbrel => HostedProvider::Anthropic,
     }
 }
 
@@ -468,6 +473,10 @@ pub fn set_prompt(state: State<'_, AppState>, surface: PromptSurface, text: Stri
 /// The provider's model list (a network call; Ollama is asked on localhost).
 #[tauri::command]
 pub async fn provider_models(state: State<'_, AppState>, provider: Provider) -> Result<Vec<String>, CommandError> {
+    // Only the ids Whimbrel's server prices: it answers any other with 400 unknown_model.
+    if provider == Provider::Whimbrel {
+        return Ok(crate::whimbrel_ai::MODELS.iter().map(|m| m.to_string()).collect());
+    }
     let key = match key_account(provider) {
         Some(account) => state
             .secrets
@@ -569,6 +578,9 @@ mod tests {
     fn the_provider_table_reaches_the_ui_with_every_core_row() {
         let infos = provider_infos();
         assert_eq!(infos.len(), api::providers::PROVIDERS.len(), "a core row with an id this enum lacks would be dropped silently");
+        let whimbrel = infos.iter().find(|p| p.id == Provider::Whimbrel).unwrap();
+        assert_eq!((whimbrel.name.as_str(), whimbrel.key_page_url.as_deref()), ("Whimbrel AI", None));
+        assert!(whimbrel.data_terms.as_ref().unwrap().text.starts_with("Your request goes through Whimbrel's server to Anthropic."));
         let google = infos.iter().find(|p| p.id == Provider::Google).unwrap();
         assert!(google.key_page_url.as_deref().unwrap().starts_with("https://"));
         assert_eq!(google.data_terms.as_ref().unwrap().checked.len(), 10);

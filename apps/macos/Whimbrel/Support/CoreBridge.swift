@@ -726,6 +726,10 @@ struct CoreRoutingConfig: Encodable {
     var openrouterPrices: [String: Price] = [:]
     /// BCP 47 tag notes and summaries are written in; "" adds no language line (AppLanguage.outputTag).
     var outputLanguage: String = ""
+    /// The signed-in sync account's Google ID token and this device's public key, for
+    /// Whimbrel AI (`SyncState.whimbrelCredentials`); nil when sync isn't signed in.
+    var whimbrelIdToken: String? = nil
+    var whimbrelDeviceKey: String? = nil
 
     /// Cents per 1K tokens, in and out, as core's price table counts.
     struct Price: Codable, Equatable {
@@ -743,7 +747,8 @@ struct CoreRoutingConfig: Encodable {
             weeklyDigestInstructions: weeklyDigestInstructions, profile: profile,
             cheapFirst: cheapFirst, useLocalModel: useLocalModel,
             openrouterKey: openrouterKey, openrouterModel: openrouterModel, openrouterPrices: openrouterPrices,
-            outputLanguage: outputLanguage
+            outputLanguage: outputLanguage,
+            whimbrelIdToken: whimbrelIdToken, whimbrelDeviceKey: whimbrelDeviceKey
         )
     }
 
@@ -767,6 +772,8 @@ struct CoreRoutingConfig: Encodable {
         case openrouterKey = "openrouter_key"
         case openrouterModel = "openrouter_model"
         case openrouterPrices = "openrouter_prices"
+        case whimbrelIdToken = "whimbrel_id_token"
+        case whimbrelDeviceKey = "whimbrel_device_key"
     }
 }
 
@@ -1020,6 +1027,8 @@ enum CoreLLMError: Error, Equatable, Decodable {
         case noProviderConfigured
         case unauthorized(provider: String)
         case rateLimited(provider: String)
+        /// The Whimbrel AI prepaid credit is used up.
+        case creditExhausted
 
         private enum CodingKeys: String, CodingKey { case kind, model, provider }
 
@@ -1031,6 +1040,7 @@ enum CoreLLMError: Error, Equatable, Decodable {
             case "no_provider_configured": self = .noProviderConfigured
             case "unauthorized": self = .unauthorized(provider: try container.decode(String.self, forKey: .provider))
             case "rate_limited": self = .rateLimited(provider: try container.decode(String.self, forKey: .provider))
+            case "credit_exhausted": self = .creditExhausted
             default: throw DecodingError.dataCorruptedError(forKey: .kind, in: container, debugDescription: "no message of its own")
             }
         }
@@ -1091,6 +1101,8 @@ enum CoreLLMError: Error, Equatable, Decodable {
         case .providerFailureBecause(.rateLimited(let provider)):
             let name = Self.providerNames[provider] ?? provider
             return String(localized: "\(name) is busy or out of credit. Try again shortly.")
+        case .providerFailureBecause(.creditExhausted):
+            return String(localized: "Whimbrel AI credit is used up. Add credit in Settings.")
         case .noTranscript:
             return String(localized: "There is no transcript for this meeting to ask about.")
         case let .budgetSpent(provider, spentCents, budgetCents):
@@ -1111,7 +1123,8 @@ enum CoreLLMError: Error, Equatable, Decodable {
     var opensAIProvidersSettings: Bool {
         switch self {
         case .budgetSpent, .providerFailureBecause(.ollamaModelMissing), .providerFailureBecause(.ollamaNotRunning),
-             .providerFailureBecause(.noProviderConfigured), .providerFailureBecause(.unauthorized):
+             .providerFailureBecause(.noProviderConfigured), .providerFailureBecause(.unauthorized),
+             .providerFailureBecause(.creditExhausted):
             return true
         default:
             return false
@@ -1119,7 +1132,7 @@ enum CoreLLMError: Error, Equatable, Decodable {
     }
 
     /// Display names for core's paid provider ids (`RoutingSettings.Provider.displayName`).
-    static let providerNames = ["anthropic": "Anthropic", "openai": "OpenAI", "google": "Google", "openrouter": "OpenRouter"]
+    static let providerNames = ["anthropic": "Anthropic", "openai": "OpenAI", "google": "Google", "openrouter": "OpenRouter", "whimbrel": "Whimbrel AI"]
 }
 
 /// A provider reached 80 or 100 percent of its monthly budget (`memory::provider_budget::BudgetNotice`).

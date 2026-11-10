@@ -25,7 +25,7 @@ pub struct ProviderInfo {
     /// `llm::Provider::as_str()`.
     pub id: &'static str,
     pub name: &'static str,
-    /// Where the user creates a key. `None` for Ollama, which has none.
+    /// Where the user creates a key. `None` for Ollama and Whimbrel AI, which have none.
     pub key_page_url: Option<&'static str>,
     /// The provider's data-use policy for API traffic.
     pub policy_url: Option<&'static str>,
@@ -39,7 +39,7 @@ pub struct ProviderInfo {
     pub cheap_model: &'static str,
 }
 
-pub const PROVIDERS: [ProviderInfo; 5] = [
+pub const PROVIDERS: [ProviderInfo; 6] = [
     ProviderInfo {
         id: "ollama",
         name: "Ollama",
@@ -93,6 +93,19 @@ pub const PROVIDERS: [ProviderInfo; 5] = [
         }),
         cheap_model: "",
     },
+    ProviderInfo {
+        id: "whimbrel",
+        name: "Whimbrel AI",
+        key_page_url: None,
+        policy_url: Some("https://whimbrelapp.com/privacy/"),
+        key_prefix: None,
+        data_terms: Some(DataTermsNote {
+            id: "whimbrel_ai_passthrough",
+            text: "Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked.",
+            checked: "2026-11-10",
+        }),
+        cheap_model: "claude-haiku-4-5",
+    },
 ];
 
 pub fn info(id: &str) -> Option<&'static ProviderInfo> {
@@ -128,10 +141,13 @@ mod tests {
 
     #[test]
     fn every_provider_in_the_llm_enum_has_a_row_and_the_ids_match() {
-        for p in [llm::Provider::Ollama, llm::Provider::Anthropic, llm::Provider::OpenAI, llm::Provider::Google, llm::Provider::OpenRouter] {
+        for p in [llm::Provider::Ollama, llm::Provider::Anthropic, llm::Provider::OpenAI, llm::Provider::Google, llm::Provider::OpenRouter, llm::Provider::Whimbrel] {
             let row = info(p.as_str()).unwrap_or_else(|| panic!("no row for {}", p.as_str()));
             assert_eq!(row.id, p.as_str());
-            if !p.is_local() {
+            if p == llm::Provider::Whimbrel {
+                // Whimbrel AI has no key to create or recognise: its credit is the account.
+                assert!(row.key_page_url.is_none() && row.key_prefix.is_none() && row.policy_url.is_some());
+            } else if !p.is_local() {
                 assert!(row.key_page_url.is_some() && row.policy_url.is_some() && row.key_prefix.is_some(), "{}", row.id);
             }
             assert_eq!(row.cheap_model, crate::routing::cheap_model_for(p, None), "{}", row.id);
@@ -147,7 +163,20 @@ mod tests {
                 assert_eq!(note.checked.len(), 10, "{} note needs an ISO date", p.id);
             }
         }
-        assert!(PROVIDERS.iter().filter(|p| p.data_terms.is_some()).map(|p| p.id).eq(["google", "openrouter"]));
+        assert!(PROVIDERS.iter().filter(|p| p.data_terms.is_some()).map(|p| p.id).eq(["google", "openrouter", "whimbrel"]));
+    }
+
+    #[test]
+    fn whimbrel_row_says_what_the_server_keeps() {
+        let row = info("whimbrel").unwrap();
+        assert_eq!(row.name, "Whimbrel AI");
+        assert_eq!(row.policy_url, Some("https://whimbrelapp.com/privacy/"));
+        assert_eq!(row.cheap_model, info("anthropic").unwrap().cheap_model);
+        assert_eq!(
+            row.data_terms.as_ref().unwrap().text,
+            "Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked."
+        );
+        assert_eq!(format_hint("whimbrel", "anything"), None);
     }
 
     #[test]
