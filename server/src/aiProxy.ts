@@ -6,28 +6,133 @@ import { allowedAudiences, googleJwks, verifyGoogleIdToken } from "./googleAuth"
 import { rateLimit, rateLimited } from "./rateLimit";
 import type { Env } from "./index";
 
+/** One set of Anthropic list prices, in micro-dollars per million tokens. */
+export interface AiPrice {
+  input: number;
+  output: number;
+  cacheWrite: number;
+  cacheRead: number;
+}
+
 /** Anthropic list prices in micro-dollars per million tokens ($1/MTok =
- * 1_000_000), for every Anthropic model id the app offers (the ids in
- * core/llm/src/lib.rs `pricing_for` and core/api/src/routing.rs).
+ * 1_000_000), for every Anthropic model id the app offers or has offered
+ * (the ids in core/llm/src/lib.rs `pricing_for` and core/api/src/routing.rs).
+ * Ids the app no longer offers stay priced, so a pick stored on an older app
+ * still goes through.
  *
- * Source: the claude-api skill's "Current Models" table and
- * shared/models.md (skill cache dated 2026-10-06), read on 2026-11-10.
- * Ruling R1: these prices change, so re-read them when Anthropic changes
- * them. Cache writes are the 5-minute TTL rate, 1.25x input
- * (shared/prompt-caching.md). Cache reads are 0.1x input, except where the
- * skill names a model's own rate (Fable 5.1: $0.25/MTok). */
-export const AI_PRICES: Record<string, { input: number; output: number; cacheWrite: number; cacheRead: number }> = {
+ * Source: https://platform.claude.com/docs/en/about-claude/pricing, read
+ * 2026-11-10. Ruling R1: these prices change, so re-read that page when
+ * Anthropic changes them. `cacheWrite` is the 5-minute TTL rate (1.25x
+ * input). `cacheRead` is the page's own "cache hits" rate: 0.1x input for
+ * most models, 0.05x for Opus 5.5 and Sonnet 5.5, 0.025x for Fable 5.1 and
+ * 5.2.
+ *
+ * `over100k` is a second set of prices for a request whose prompt is over
+ * 100,000 tokens (Haiku 5.5 only). The prompt counts every input token,
+ * cache reads and cache writes included. */
+export const AI_PRICES: Record<string, AiPrice & { over100k?: AiPrice }> = {
   "claude-haiku-4-5": { input: 1_000_000, output: 5_000_000, cacheWrite: 1_250_000, cacheRead: 100_000 },
   "claude-haiku-4-5-20251001": { input: 1_000_000, output: 5_000_000, cacheWrite: 1_250_000, cacheRead: 100_000 },
+  "claude-haiku-5-5": {
+    input: 100_000,
+    output: 500_000,
+    cacheWrite: 125_000,
+    cacheRead: 10_000,
+    over100k: { input: 500_000, output: 2_500_000, cacheWrite: 625_000, cacheRead: 50_000 },
+  },
   "claude-sonnet-4-6": { input: 3_000_000, output: 15_000_000, cacheWrite: 3_750_000, cacheRead: 300_000 },
   "claude-sonnet-5": { input: 2_000_000, output: 10_000_000, cacheWrite: 2_500_000, cacheRead: 200_000 },
+  "claude-sonnet-5-5": { input: 2_000_000, output: 10_000_000, cacheWrite: 2_500_000, cacheRead: 100_000 },
   "claude-opus-4-6": { input: 5_000_000, output: 25_000_000, cacheWrite: 6_250_000, cacheRead: 500_000 },
   "claude-opus-4-7": { input: 5_000_000, output: 25_000_000, cacheWrite: 6_250_000, cacheRead: 500_000 },
   "claude-opus-4-8": { input: 5_000_000, output: 25_000_000, cacheWrite: 6_250_000, cacheRead: 500_000 },
   "claude-opus-5": { input: 5_000_000, output: 25_000_000, cacheWrite: 6_250_000, cacheRead: 500_000 },
+  "claude-opus-5-5": { input: 4_000_000, output: 20_000_000, cacheWrite: 5_000_000, cacheRead: 200_000 },
   "claude-fable-5": { input: 10_000_000, output: 50_000_000, cacheWrite: 12_500_000, cacheRead: 1_000_000 },
   "claude-fable-5-1": { input: 10_000_000, output: 50_000_000, cacheWrite: 12_500_000, cacheRead: 250_000 },
+  "claude-fable-5-2": { input: 8_000_000, output: 40_000_000, cacheWrite: 10_000_000, cacheRead: 200_000 },
 };
+
+/** The prompt length (in tokens) above which `over100k` prices apply. */
+const LONG_PROMPT_TOKENS = 100_000;
+
+/** The prices for a prompt of `promptTokens` input tokens on `model`. */
+function priceFor(model: string, promptTokens: number): AiPrice {
+  const p = AI_PRICES[model];
+  if (!p) throw new RangeError(`no price for model ${model}`);
+  return p.over100k && promptTokens > LONG_PROMPT_TOKENS ? p.over100k : p;
+}
+
+/** The models the app offers for Whimbrel AI, newest first. Every id is in
+ * AI_PRICES. Left out: the dated alias claude-haiku-4-5-20251001, and models
+ * a newer one replaces at the same or a lower price (Fable 5, Opus 4.6 and
+ * 4.7). Those stay priced for picks stored on older apps. */
+export const AI_MODELS: { id: string; display_name: string }[] = [
+  { id: "claude-opus-5-5", display_name: "Claude Opus 5.5" },
+  { id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5" },
+  { id: "claude-haiku-5-5", display_name: "Claude Haiku 5.5" },
+  { id: "claude-fable-5-2", display_name: "Claude Fable 5.2" },
+  { id: "claude-fable-5-1", display_name: "Claude Fable 5.1" },
+  { id: "claude-opus-5", display_name: "Claude Opus 5" },
+  { id: "claude-sonnet-5", display_name: "Claude Sonnet 5" },
+  { id: "claude-opus-4-8", display_name: "Claude Opus 4.8" },
+  { id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6" },
+  { id: "claude-haiku-4-5", display_name: "Claude Haiku 4.5" },
+];
+
+const ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models?limit=1000";
+/** KV key for the live-checked list; an hour old at most. */
+export const AI_MODELS_CACHE_KEY = "ai-models:v1";
+const AI_MODELS_CACHE_SECONDS = 60 * 60;
+
+/** The models Whimbrel AI offers right now: AI_MODELS, less any Anthropic's
+ * `GET /v1/models` no longer lists, with Anthropic's display names. A dated
+ * id (`<id>-20251001`) counts as listing `<id>`. The checked list is kept in
+ * KV for an hour. With no key, a failed call, or no offered model in
+ * Anthropic's answer, it is AI_MODELS as written, uncached, so the next call
+ * tries again. Only AI_MODELS ids ever come back, so every one is priced. */
+export async function offeredAiModels(
+  env: Env,
+  fetcher: typeof fetch = fetch,
+): Promise<{ id: string; display_name: string }[]> {
+  const cached = await env.ENROLLMENT_HANDOFF.get(AI_MODELS_CACHE_KEY).catch(() => null);
+  if (cached) {
+    try {
+      const list = JSON.parse(cached);
+      if (Array.isArray(list) && list.length > 0 && list.every((m) => isObject(m) && Object.hasOwn(AI_PRICES, m.id))) return list;
+    } catch {
+      // A bad entry is replaced below.
+    }
+  }
+  if (!env.ANTHROPIC_API_KEY) return AI_MODELS;
+  let live: Map<string, string>;
+  try {
+    const res = await fetcher(ANTHROPIC_MODELS_URL, {
+      headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": ANTHROPIC_VERSION },
+    });
+    if (!res.ok) return AI_MODELS;
+    const body: any = await res.json();
+    if (!Array.isArray(body?.data)) return AI_MODELS;
+    live = new Map();
+    for (const m of body.data) {
+      if (isObject(m) && typeof m.id === "string") live.set(m.id, typeof m.display_name === "string" ? m.display_name : "");
+    }
+  } catch {
+    return AI_MODELS;
+  }
+  const listed = (id: string): string | undefined => {
+    if (live.has(id)) return live.get(id);
+    for (const [liveId, name] of live) if (liveId.startsWith(`${id}-`) && /^\d{8}$/.test(liveId.slice(id.length + 1))) return name;
+    return undefined;
+  };
+  const models = AI_MODELS.flatMap((m) => {
+    const name = listed(m.id);
+    return name === undefined ? [] : [{ id: m.id, display_name: name || m.display_name }];
+  });
+  if (models.length === 0) return AI_MODELS;
+  await env.ENROLLMENT_HANDOFF.put(AI_MODELS_CACHE_KEY, JSON.stringify(models), { expirationTtl: AI_MODELS_CACHE_SECONDS }).catch(() => {});
+  return models;
+}
 
 /** The `usage` object of an Anthropic Messages response. */
 export interface AnthropicUsage {
@@ -55,11 +160,12 @@ const tokens = (n: unknown): number => (typeof n === "number" && Number.isSafeIn
  * micros. Integer math up to the one division, so there is no float drift.
  * Cache writes are 1.25x input (the `cacheWrite` price), except 1-hour
  * writes, which are 2x input. The proxy rejects a 1-hour TTL, so those
- * should never appear; they are priced in case they do. */
+ * should never appear; they are priced in case they do. The price tier
+ * comes from the request's whole prompt: input, cache writes and cache
+ * reads. */
 export function costMicros(model: string, usage: AnthropicUsage): number {
-  const p = AI_PRICES[model];
-  if (!p) throw new RangeError(`no price for model ${model}`);
   const written = tokens(usage.cache_creation_input_tokens);
+  const p = priceFor(model, tokens(usage.input_tokens) + written + tokens(usage.cache_read_input_tokens));
   const oneHour = tokens(usage.cache_creation?.ephemeral_1h_input_tokens);
   const fiveMinute = Math.max(written - oneHour, tokens(usage.cache_creation?.ephemeral_5m_input_tokens));
   const sum =
@@ -76,9 +182,11 @@ export function costMicros(model: string, usage: AnthropicUsage): number {
  * UTF-8 byte of the body as one input token at the dearer of the input and
  * cache-write prices, plus every output token `max_tokens` allows, x 1.3.
  * The bound holds because the allowlist below admits text only (ruling R9):
- * no tokenizer yields more tokens than bytes of text. */
-function holdEstimate(model: string, bodyBytes: number, maxTokens: number): number {
-  const p = AI_PRICES[model];
+ * no tokenizer yields more tokens than bytes of text. The same bound picks
+ * the price tier: a body of at most 100,000 bytes holds at most 100,000
+ * tokens, so its prompt can't reach the over-100K prices. */
+export function holdEstimate(model: string, bodyBytes: number, maxTokens: number): number {
+  const p = priceFor(model, bodyBytes);
   return Math.ceil(((bodyBytes * Math.max(p.input, p.cacheWrite) + maxTokens * p.output) * 13) / (10 * 1_000_000));
 }
 

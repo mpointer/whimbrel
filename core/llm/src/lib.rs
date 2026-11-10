@@ -2135,6 +2135,24 @@ fn pricing_for(model: &str) -> ModelPricing {
     match model {
         // Anthropic's published per-1M rates (cached 2026-06-24), divided down to per-1K:
         // haiku-4-5 $1/$5, sonnet-5 $2/$10, opus-5 and opus-4.x $5/$25, fable $10/$50.
+        // Read 2026-11-10: haiku-5-5 $0.10/$0.50 (its up-to-100K-token tier, the cheaper
+        // of its two), sonnet-5-5 $2/$10, opus-5-5 $4/$20, fable-5-2 $8/$40.
+        "claude-haiku-5-5" => ModelPricing {
+            in_cents_per_1k: 0.01,
+            out_cents_per_1k: 0.05,
+        },
+        "claude-sonnet-5-5" => ModelPricing {
+            in_cents_per_1k: 0.2,
+            out_cents_per_1k: 1.0,
+        },
+        "claude-opus-5-5" => ModelPricing {
+            in_cents_per_1k: 0.4,
+            out_cents_per_1k: 2.0,
+        },
+        "claude-fable-5-2" => ModelPricing {
+            in_cents_per_1k: 0.8,
+            out_cents_per_1k: 4.0,
+        },
         "claude-haiku-4-5" | "claude-haiku-4-5-20251001" => ModelPricing {
             in_cents_per_1k: 0.1,
             out_cents_per_1k: 0.5,

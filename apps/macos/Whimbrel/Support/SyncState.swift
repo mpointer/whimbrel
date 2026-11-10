@@ -982,6 +982,15 @@ final class SyncState: ObservableObject {
         }
     }
 
+    /// The models Whimbrel AI offers (`POST /v1/ai/models`), newest first. Throws when sync
+    /// isn't `.ready` or the read fails; `RoutingSettings` then keeps its built-in list.
+    func fetchAIModels() async throws -> [String] {
+        guard let signIn, let billing, case .ready = status else { throw SyncAPIError.malformedResponse }
+        let devicePublicKeyBase64 = try loadOrThrowDevicePublicKey()
+        let idToken = try await signIn.validIdToken()
+        return try await billing.aiModels(idToken: idToken, devicePublicKey: devicePublicKeyBase64)
+    }
+
     /// Opens Stripe Checkout for a Whimbrel AI credit pack ("10" or "25") in the browser,
     /// then re-reads the balance as Upgrade re-reads the plan.
     func buyAICredit(pack: String) async {

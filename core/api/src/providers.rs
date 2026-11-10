@@ -104,7 +104,7 @@ pub const PROVIDERS: [ProviderInfo; 6] = [
             text: "Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked.",
             checked: "2026-11-10",
         }),
-        cheap_model: "claude-haiku-4-5",
+        cheap_model: "claude-haiku-5-5",
     },
 ];
 
@@ -171,7 +171,7 @@ mod tests {
         let row = info("whimbrel").unwrap();
         assert_eq!(row.name, "Whimbrel AI");
         assert_eq!(row.policy_url, Some("https://whimbrelapp.com/privacy/"));
-        assert_eq!(row.cheap_model, info("anthropic").unwrap().cheap_model);
+        assert_eq!(row.cheap_model, "claude-haiku-5-5");
         assert_eq!(
             row.data_terms.as_ref().unwrap().text,
             "Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked."

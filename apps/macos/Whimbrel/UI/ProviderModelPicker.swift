@@ -27,8 +27,8 @@ struct ProviderModelPicker: View {
         case .openai: return appState.routing.openaiModels
         case .google: return appState.routing.googleModels
         case .openrouter: return appState.routing.openrouterModels
-        // Only the models Whimbrel's server prices.
-        case .whimbrel: return RoutingSettings.whimbrelModels
+        // Only the models Whimbrel's server prices: its list, or the built-in one.
+        case .whimbrel: return appState.routing.whimbrelModelOptions
         }
     }
 
@@ -39,7 +39,7 @@ struct ProviderModelPicker: View {
         case .openai: return appState.routing.isLoadingOpenAIModels
         case .google: return appState.routing.isLoadingGoogleModels
         case .openrouter: return appState.routing.isLoadingOpenRouterModels
-        case .whimbrel: return false
+        case .whimbrel: return appState.routing.isLoadingWhimbrelModels
         }
     }
 
@@ -50,7 +50,7 @@ struct ProviderModelPicker: View {
         case .openai: return appState.routing.openaiModelsError
         case .google: return appState.routing.googleModelsError
         case .openrouter: return appState.routing.openrouterModelsError
-        case .whimbrel: return nil
+        case .whimbrel: return appState.routing.whimbrelModelsError
         }
     }
 
@@ -59,8 +59,12 @@ struct ProviderModelPicker: View {
         switch selectedProvider {
         case .ollama:
             if !hostedModelOptions.contains(ollamaModel) { ollamaModel = hostedModelOptions[0] }
-        case .anthropic, .openai, .google, .openrouter, .whimbrel:
+        case .anthropic, .openai, .google, .openrouter:
             if !hostedModelOptions.contains(selectedHostedModel) { selectedHostedModel = hostedModelOptions[0] }
+        case .whimbrel:
+            if !hostedModelOptions.contains(selectedHostedModel) {
+                selectedHostedModel = RoutingSettings.whimbrelFallback(in: hostedModelOptions)
+            }
         }
     }
 
@@ -84,6 +88,9 @@ struct ProviderModelPicker: View {
                 clampSelectedModelIfNeeded()
             case .openrouter where appState.routing.openrouterModels.isEmpty && appState.routing.hasOpenRouterKey:
                 await appState.routing.refreshOpenRouterModels()
+                clampSelectedModelIfNeeded()
+            case .whimbrel where appState.routing.fetchedWhimbrelModels.isEmpty && appState.routing.hasKey(for: .whimbrel):
+                await appState.routing.refreshWhimbrelModels()
                 clampSelectedModelIfNeeded()
             default:
                 break

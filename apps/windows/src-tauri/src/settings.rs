@@ -221,7 +221,7 @@ impl Default for RoutingSettings {
             openai_model: "gpt-4o-mini".into(),
             google_model: "gemini-2.5-flash".into(),
             openrouter_model: String::new(),
-            whimbrel_model: "claude-haiku-4-5".into(),
+            whimbrel_model: crate::whimbrel_ai::DEFAULT_MODEL.into(),
             user_daily_cap_cents: None,
             global_daily_cap_cents: None,
             local_only: false,
@@ -511,10 +511,7 @@ impl SettingsFile {
             openai_model: self.get(keys::OPENAI_MODEL).unwrap_or(d.openai_model),
             google_model: self.get(keys::GOOGLE_MODEL).unwrap_or(d.google_model),
             openrouter_model: self.get(keys::OPENROUTER_MODEL).unwrap_or(d.openrouter_model),
-            whimbrel_model: self
-                .get::<String>(keys::WHIMBREL_MODEL)
-                .filter(|m| crate::whimbrel_ai::MODELS.contains(&m.as_str()))
-                .unwrap_or(d.whimbrel_model),
+            whimbrel_model: crate::whimbrel_ai::resolve_pick(self.get(keys::WHIMBREL_MODEL), &crate::whimbrel_ai::offered()),
             user_daily_cap_cents: self.get(keys::USER_DAILY_CAP_CENTS),
             global_daily_cap_cents: self.get(keys::GLOBAL_DAILY_CAP_CENTS),
             local_only: self.get(keys::LOCAL_ONLY_MODE).unwrap_or(d.local_only),
@@ -1329,14 +1326,14 @@ mod tests {
         assert_eq!(serde_json::to_value(Provider::Whimbrel).unwrap(), "whimbrel");
         let path = temp_path("whimbrel");
         let mut s = SettingsFile::load(&path);
-        assert_eq!(s.routing().whimbrel_model, "claude-haiku-4-5");
+        assert_eq!(s.routing().whimbrel_model, "claude-sonnet-5-5");
         let routing = RoutingSettings { preferred_provider: Provider::Whimbrel, whimbrel_model: "claude-sonnet-5".into(), ..RoutingSettings::default() };
         s.set_routing(&routing);
         assert_eq!(s.routing().whimbrel_model, "claude-sonnet-5");
         assert_eq!(s.routing().preferred_model(), "claude-sonnet-5");
         // A model the server doesn't price never reaches a call.
         s.set(keys::WHIMBREL_MODEL, Some("claude-made-up"));
-        assert_eq!(s.routing().whimbrel_model, "claude-haiku-4-5");
+        assert_eq!(s.routing().whimbrel_model, "claude-sonnet-5-5");
 
         let creds = crate::whimbrel_ai::Credentials { id_token: "jwt".into(), device_key: "pk".into() };
         let keys = ApiKeys { whimbrel: Some(creds), ..ApiKeys::default() };

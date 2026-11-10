@@ -420,6 +420,14 @@ impl WorkerClient {
         body["url"].as_str().map(str::to_string).ok_or(WorkerError::MalformedResponse)
     }
 
+    /// Whimbrel AI: the models it offers (`/v1/ai/models`), newest first. Every id is one the
+    /// server prices. A server that predates the route answers 404.
+    pub fn ai_models(&self, id_token: &str, device_public_key: &str) -> Result<Vec<String>, WorkerError> {
+        let body = self.post("v1/ai/models", serde_json::json!({ "idToken": id_token, "devicePublicKey": device_public_key }))?;
+        let models = body["models"].as_array().ok_or(WorkerError::MalformedResponse)?;
+        Ok(models.iter().filter_map(|m| m["id"].as_str()).filter(|id| !id.is_empty()).map(str::to_string).collect())
+    }
+
     /// Requires the caller's own device to already be `approved` (enforced server-side).
     pub fn list_devices(&self, id_token: &str, device_public_key: &str) -> Result<Vec<DeviceRecord>, WorkerError> {
         let body = self.post("v1/devices", serde_json::json!({ "idToken": id_token, "devicePublicKey": device_public_key }))?;
@@ -679,6 +687,15 @@ mod tests {
         assert!(matches!(WorkerClient::new(&url).ai_checkout("id", "pk", "10"), Err(WorkerError::Http { status: 503, .. })));
         let (url, _) = worker(200, "{}");
         assert_eq!(WorkerClient::new(&url).ai_balance("id", "pk"), Err(WorkerError::MalformedResponse));
+
+        let (url, rx) = worker(200, r#"{"models":[{"id":"claude-opus-5-5","display_name":"Claude Opus 5.5"},{"id":"claude-sonnet-5-5"},{"id":""}]}"#);
+        assert_eq!(WorkerClient::new(&url).ai_models("id", "pk").unwrap(), vec!["claude-opus-5-5", "claude-sonnet-5-5"]);
+        let req = rx.recv().unwrap();
+        assert!(req.starts_with("POST /v1/ai/models ") && req.contains(r#""devicePublicKey":"pk""#), "{req}");
+        let (url, _) = worker(404, r#"{"error":"not_found"}"#);
+        assert!(matches!(WorkerClient::new(&url).ai_models("id", "pk"), Err(WorkerError::Http { status: 404, .. })));
+        let (url, _) = worker(200, "{}");
+        assert_eq!(WorkerClient::new(&url).ai_models("id", "pk"), Err(WorkerError::MalformedResponse));
     }
 
     #[test]

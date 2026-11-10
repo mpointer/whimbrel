@@ -178,7 +178,74 @@ final class RoutineScheduler: ObservableObject {
             // output-summary notification.
             let needsApproval = run.status == "pending_approval" && routine?.autoApproveWriteActions != true
             let prepKey = routine?.template == "meeting_prep" ? TodayLogic.prepKey(runOutputJson: run.outputJson) : nil
+            if let prepKey {
+                // Once per brief on this Mac: a copy of it that syncs in later must not post again.
+                guard !Self.prepWasNotified(prepKey) else { continue }
+                Self.markPrepNotified(prepKey)
+            }
             postNotification(for: run, routineName: routine?.name, needsApproval: needsApproval, prepKey: prepKey)
+        }
+    }
+
+    // MARK: - Prep ready for briefs from another device
+
+    /// Brief keys this Mac has posted "Prep ready" for, with when (unix ms). Local to this Mac.
+    private static let notifiedPrepKeysKey = "com.mpointer.kestrel.notifiedPrepKeys"
+    /// Keys older than this are dropped: their meetings are long over.
+    private static let notifiedPrepKeepMs: Int64 = 7 * 24 * 60 * 60 * 1000
+    /// Only a brief prepared this recently is announced after a sync, so the first sync on a new
+    /// Mac (or after an update) doesn't post a backlog of briefs the user already saw elsewhere.
+    private static let syncedPrepFreshMs: Int64 = 30 * 60 * 1000
+
+    private static func prepWasNotified(_ key: String, defaults: UserDefaults = .standard) -> Bool {
+        (defaults.dictionary(forKey: notifiedPrepKeysKey) as? [String: Int64])?[key] != nil
+    }
+
+    private static func markPrepNotified(_ key: String, defaults: UserDefaults = .standard, now: Date = Date()) {
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        var keys = (defaults.dictionary(forKey: notifiedPrepKeysKey) as? [String: Int64]) ?? [:]
+        keys = keys.filter { $0.value >= nowMs - notifiedPrepKeepMs }
+        keys[key] = nowMs
+        defaults.set(keys, forKey: notifiedPrepKeysKey)
+    }
+
+    /// The meeting start a Meeting Prep run's output JSON names, in unix ms.
+    nonisolated static func prepStartUnixMs(runOutputJson: String) -> Int64? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(runOutputJson.utf8)) as? [String: Any],
+              let start = object["start_unix_ms"] as? NSNumber else { return nil }
+        return start.int64Value
+    }
+
+    /// After a content sync: posts "Prep ready" for each brief another device prepared, when its
+    /// meeting has not started, this Mac has not posted it before, and Meeting Prep is on here.
+    /// A brief this Mac made itself is announced by the tick (`handleCompletedRuns`).
+    func announceSyncedPrep(store: CoreMemoryStore) {
+        CoreMemoryStore.accessQueue.async { [weak self] in
+            let prepRoutines = (store.listRoutines() ?? []).filter { $0.template == "meeting_prep" }
+            guard let routine = prepRoutines.first(where: \.enabled) else { return }
+            let ids = Set(prepRoutines.map(\.id))
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let due: [(run: CoreRoutineRun, key: String)] = (store.recentRoutineRuns(limit: 50) ?? []).compactMap { run in
+                guard ids.contains(run.routineId), run.status == "success", run.originDeviceId != nil,
+                      run.ranAtUnixMs >= nowMs - RoutineScheduler.syncedPrepFreshMs,
+                      let key = TodayLogic.prepKey(runOutputJson: run.outputJson),
+                      let start = RoutineScheduler.prepStartUnixMs(runOutputJson: run.outputJson), start > nowMs,
+                      store.meetingPrep(key: key)?.brief != nil
+                else { return nil }
+                let plain = CoreRoutineRun(
+                    id: run.id, routineId: run.routineId, ranAtUnixMs: run.ranAtUnixMs, status: run.status,
+                    outputSummary: run.outputSummary, outputJson: run.outputJson
+                )
+                return (plain, key)
+            }
+            guard !due.isEmpty else { return }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for item in due where !Self.prepWasNotified(item.key) {
+                    Self.markPrepNotified(item.key)
+                    self.postNotification(for: item.run, routineName: routine.name, needsApproval: false, prepKey: item.key)
+                }
+            }
         }
     }
 
@@ -189,7 +256,7 @@ final class RoutineScheduler: ObservableObject {
         // (Daily Brief, Focus Time, EOD Recap), so a fixed "Daily Brief" title mislabels
         // two of them, including the approval prompts this feature exists to surface.
         content.title = routineName ?? "Routines"
-        content.body = needsApproval ? String(localized: "Needs your approval") : run.outputSummary
+        content.body = needsApproval ? String(localized: "Needs your approval") : run.displaySummary
         content.sound = .default
         var identifier = "routine-run-\(run.id)"
         if let prepKey {

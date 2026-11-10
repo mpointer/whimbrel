@@ -494,6 +494,7 @@ struct AIProvidersSettingsPane: View {
         .onChange(of: appState.routing.anthropicModels) { _, _ in clampDefaultModelIfNeeded() }
         .onChange(of: appState.routing.openaiModels) { _, _ in clampDefaultModelIfNeeded() }
         .onChange(of: appState.routing.googleModels) { _, _ in clampDefaultModelIfNeeded() }
+        .onChange(of: appState.routing.fetchedWhimbrelModels) { _, _ in clampDefaultModelIfNeeded() }
         .onAppear {
             refreshSpend()
             refreshUsage()
@@ -512,11 +513,19 @@ struct AIProvidersSettingsPane: View {
             if appState.routing.hasOpenRouterKey && appState.routing.openrouterModels.isEmpty {
                 Task { await appState.routing.refreshOpenRouterModels() }
             }
+            if appState.routing.hasKey(for: .whimbrel) && appState.routing.fetchedWhimbrelModels.isEmpty {
+                Task { await appState.routing.refreshWhimbrelModels() }
+            }
             clampDefaultModelIfNeeded()
             Task { await appState.syncState.refreshAIBalance() }
         }
         .onChange(of: appState.syncState.status) { _, status in
-            if case .ready = status { Task { await appState.syncState.refreshAIBalance() } }
+            if case .ready = status {
+                Task { await appState.syncState.refreshAIBalance() }
+                if appState.routing.fetchedWhimbrelModels.isEmpty {
+                    Task { await appState.routing.refreshWhimbrelModels() }
+                }
+            }
         }
     }
 
@@ -550,6 +559,13 @@ struct AIProvidersSettingsPane: View {
                         .foregroundStyle(Color.whimbrelError)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                modelStatusRow(
+                    hasKey: appState.routing.hasKey(for: .whimbrel),
+                    isLoading: appState.routing.isLoadingWhimbrelModels,
+                    models: appState.routing.whimbrelModelOptions,
+                    error: appState.routing.whimbrelModelsError,
+                    refresh: { Task { await appState.routing.refreshWhimbrelModels() } }
+                )
             } else {
                 Text("Sign in to sync to use Whimbrel AI")
                     .font(.whimbrelBody(.caption))
@@ -582,7 +598,7 @@ struct AIProvidersSettingsPane: View {
         case .openai: return appState.routing.openaiModels
         case .google: return appState.routing.googleModels
         case .openrouter: return appState.routing.openrouterModels
-        case .whimbrel: return RoutingSettings.whimbrelModels
+        case .whimbrel: return appState.routing.whimbrelModelOptions
         }
     }
 
@@ -634,7 +650,7 @@ struct AIProvidersSettingsPane: View {
         case .anthropic: appState.routing.anthropicDefaultModel = defaultModelOptions[0]
         case .openai: appState.routing.openaiDefaultModel = defaultModelOptions[0]
         case .google: appState.routing.googleDefaultModel = defaultModelOptions[0]
-        case .whimbrel: appState.routing.whimbrelDefaultModel = defaultModelOptions[0]
+        case .whimbrel: appState.routing.whimbrelDefaultModel = RoutingSettings.whimbrelFallback(in: defaultModelOptions)
         // OpenRouter is never snapped to a model the user did not pick: an unpicked
         // model keeps it out of the chain on purpose. Ollama keeps the user's pick too:
         // an installed model stands in, in memory (`RoutingSettings.ollamaDefaultModel`),

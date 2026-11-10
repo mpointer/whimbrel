@@ -223,6 +223,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
             if let topic = event.topic { TopicChip(topic: topic) }
             if let relative = event.relative { SkinText(relative, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             if !event.attendees.isEmpty { SkinText(event.attendees, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
+            if case let .ready(prep) = event.prep { PrepReadyChip(prepKey: prep.eventId) }
             if event.showsStart { ReferenceLink(String(localized: "Start"), role: .primary) { actions.startMeeting(event.event) } }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -237,6 +238,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
             }
             if let topic = meeting.topic { TopicChip(topic: topic) }
             if !meeting.invited.isEmpty { SkinText(meeting.invited, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
+            if let prep = meeting.prep { PrepReadyChip(prepKey: prep.eventId) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -388,7 +390,7 @@ struct ReferencePrepLine: View {
         switch prep {
         case let .ready(prep):
             HStack(spacing: Spacing.sm) {
-                SkinText("Prep ready", role: .label).foregroundStyle(Color.whimbrelTextSecondary)
+                PrepReadyChip(prepKey: prep.eventId)
                 ReferenceLink(expanded ? String(localized: "Hide brief") : String(localized: "Open brief")) { expanded.toggle() }
             }
             if expanded { MeetingPrepView(prep: prep) }

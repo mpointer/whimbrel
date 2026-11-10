@@ -302,6 +302,7 @@ code, kbd { font-family: var(--mono); font-size: .9em; background: var(--bg-alt)
 .footer-grid h2 { font: 600 .78rem var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--text-2); margin-bottom: 14px; }
 .footer-grid nav a { display: block; color: var(--text); text-decoration: none; margin-bottom: 10px; }
 .footer-grid nav a:hover { color: var(--accent); }
+.footer-grid .footer-tag { margin: -6px 0 12px; font-size: .86rem; }
 .footer-grid .brand { margin-bottom: 12px; }
 .legal { margin-top: 40px; font-size: .85rem; }
 .video-wrap { width: min(980px, 100%); }

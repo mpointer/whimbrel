@@ -481,6 +481,7 @@ final class AppState: ObservableObject {
         appearanceSettings.apply()
         routing.profileProvider = { [profile] in profile.routingProfile }
         routing.whimbrelCredentialsProvider = { [syncState] in syncState.whimbrelCredentials }
+        routing.whimbrelModelsFetcher = { [syncState] in try await syncState.fetchAIModels() }
         slowStore = coreStore.flatMap { primary in
             CoreMemoryStore.accessQueue.sync { CoreMemoryStore(secondaryTo: primary, path: SpikePaths.database) }
         }
@@ -695,6 +696,13 @@ final class AppState: ObservableObject {
                 return RoutineHost.gate(primaryId: self.routineHost.primaryDeviceId, ownId: self.deviceId, approvedDeviceIds: approved)
             }
         )
+        // A "Prep ready" for briefs another device prepared, once each sync lands.
+        if let coreStore {
+            contentSyncCoordinator.$lastSyncedAt.dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in self?.routineScheduler.announceSyncedPrep(store: coreStore) }
+                .store(in: &cancellables)
+        }
         Task { await profileSuggestions.reload() }
         Task { await syncState.silentResumeIfPossible() }
         // Ollama's installed models, now and every 10 minutes: they decide which one stands in
@@ -1616,6 +1624,8 @@ final class AppState: ObservableObject {
     }
 
     private func showMeetingAlert(for prompt: QualifyingMeeting, autoStart: Bool) {
+        meetingAlertPanel.onOpenPrep = { [weak self] key in self?.showPrepBrief(key: key) }
+        defer { lookUpAlertPrep(for: prompt) }
         meetingAlertPanel.show(
             for: prompt,
             autoStart: autoStart,
@@ -1632,6 +1642,20 @@ final class AppState: ObservableObject {
                 Task { @MainActor in self.meetingTrigger.dismissPrompt() }
             }
         )
+    }
+
+    /// Offers "Open brief" on the meeting-start pop-up when the meeting has a readable brief.
+    private func lookUpAlertPrep(for meeting: QualifyingMeeting) {
+        guard let coreStore else { return }
+        nonisolated(unsafe) let store = coreStore
+        let key = TodayLogic.prepKey(eventId: meeting.id, start: meeting.startDate)
+        let meetingId = meeting.id
+        CoreMemoryStore.accessQueue.async {
+            let found = store.meetingPrep(key: key)?.brief != nil
+            DispatchQueue.main.async { [weak self] in
+                self?.meetingAlertPanel.setPrep(key: found ? key : nil, forMeetingId: meetingId)
+            }
+        }
     }
 
     /// A completed meeting with a part whose recording is still on disk but has no

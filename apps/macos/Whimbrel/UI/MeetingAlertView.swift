@@ -10,59 +10,73 @@ struct MeetingAlertView: View {
     var body: some View {
         if let meeting = controller.meeting {
             AccentBarRow(color: meeting.source != .detected ? Color.whimbrelAccentPrimary : Color.whimbrelAccentSecondary) {
-                HStack(alignment: .top, spacing: Spacing.md) {
-                    iconView(for: meeting)
-                        .frame(width: 32, height: 32)
+                VStack(alignment: .leading, spacing: Spacing.sm) {
+                    HStack(alignment: .top, spacing: Spacing.md) {
+                        iconView(for: meeting)
+                            .frame(width: 32, height: 32)
 
-                    VStack(alignment: .leading, spacing: Spacing.xs) {
-                        Text(controller.earlierTitle != nil ? "Recording as a New Meeting"
-                             : meeting.source != .detected ? "Meeting Starting Soon" : "Meeting Detected")
-                            .font(.whimbrelBody(.callout).bold())
-                            .foregroundStyle(Color.whimbrelTextPrimary)
-                        Text(meeting.title)
-                            .font(.whimbrelBody(.caption))
-                            .foregroundStyle(Color.whimbrelTextSecondary)
-                            .lineLimit(1)
-                        if let earlierTitle = controller.earlierTitle {
-                            Text("Ended “\(earlierTitle)” and saved it separately.")
-                                .font(.whimbrelBody(.caption2))
+                        VStack(alignment: .leading, spacing: Spacing.xs) {
+                            Text(controller.earlierTitle != nil ? "Recording as a New Meeting"
+                                 : meeting.source != .detected ? "Meeting Starting Soon" : "Meeting Detected")
+                                .font(.whimbrelBody(.callout).bold())
+                                .foregroundStyle(Color.whimbrelTextPrimary)
+                            Text(meeting.title)
+                                .font(.whimbrelBody(.caption))
                                 .foregroundStyle(Color.whimbrelTextSecondary)
                                 .lineLimit(1)
+                            if let earlierTitle = controller.earlierTitle {
+                                Text("Ended “\(earlierTitle)” and saved it separately.")
+                                    .font(.whimbrelBody(.caption2))
+                                    .foregroundStyle(Color.whimbrelTextSecondary)
+                                    .lineLimit(1)
+                            }
+                            if let seconds = controller.secondsRemaining {
+                                Text("Auto-starting in \(seconds)s…")
+                                    .font(.whimbrelBody(.caption2))
+                                    .foregroundStyle(Color.whimbrelTextSecondary)
+                            }
                         }
-                        if let seconds = controller.secondsRemaining {
-                            Text("Auto-starting in \(seconds)s…")
-                                .font(.whimbrelBody(.caption2))
-                                .foregroundStyle(Color.whimbrelTextSecondary)
-                        }
-                    }
 
-                    Spacer(minLength: Spacing.sm)
+                        Spacer(minLength: Spacing.sm)
 
-                    VStack(alignment: .trailing, spacing: Spacing.xs) {
-                        if controller.earlierTitle != nil {
-                            Button("Keep together") { controller.acceptTapped() }
-                                .buttonStyle(.whimbrelSecondary)
-                                .font(.whimbrelBody(.caption2))
-                                .help("Undo the split: record this as part of the earlier meeting")
-                        } else {
-                            startRecordingControl
-                        }
-                        HStack(spacing: Spacing.xs) {
-                            if let join = controller.joinTarget {
-                                Button("Join") { controller.joinTapped() }
+                        Group {
+                            if controller.earlierTitle != nil {
+                                Button("Keep together") { controller.acceptTapped() }
                                     .buttonStyle(.whimbrelSecondary)
                                     .font(.whimbrelBody(.caption2))
-                                    .accessibilityLabel("Join on \(join.provider.displayName)")
+                                    .help("Undo the split: record this as part of the earlier meeting")
+                            } else {
+                                startRecordingControl
                             }
-                            Button("Dismiss") { controller.dismissTapped() }
+                        }
+                        .fixedSize()
+                    }
+
+                    // Its own row under the text, so up to three buttons never squeeze the
+                    // title or wrap their labels.
+                    HStack(spacing: Spacing.xs) {
+                        Spacer(minLength: 0)
+                        if controller.prepKey != nil {
+                            Button("Open brief") { controller.openPrepTapped() }
                                 .buttonStyle(.whimbrelSecondary)
                                 .font(.whimbrelBody(.caption2))
                         }
+                        if let join = controller.joinTarget {
+                            Button("Join") { controller.joinTapped() }
+                                .buttonStyle(.whimbrelSecondary)
+                                .font(.whimbrelBody(.caption2))
+                                .accessibilityLabel("Join on \(join.provider.displayName)")
+                        }
+                        Button("Dismiss") { controller.dismissTapped() }
+                            .buttonStyle(.whimbrelSecondary)
+                            .font(.whimbrelBody(.caption2))
                     }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
                 }
             }
             .whimbrelCard()
-            .frame(width: 360)
+            .frame(width: 420)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -81,7 +95,7 @@ struct MeetingAlertView: View {
             controller.acceptTapped()
         }
         .menuStyle(.borderlessButton)
-        .padding(.horizontal, Spacing.lg)
+        .padding(.horizontal, Spacing.md)
         .padding(.vertical, Spacing.sm)
         .background(Color.whimbrelAccentPrimary)
         .foregroundStyle(Color.whimbrelTextOnAccent)
@@ -90,8 +104,8 @@ struct MeetingAlertView: View {
     }
 
     /// Real running-app icon for a detected meeting (matching the bundle IDs
-    /// `MeetingHeuristicDetector` tracks); a generic calendar glyph for a
-    /// calendar-triggered one, since there's no running app to attribute it to.
+    /// `MeetingHeuristicDetector` tracks); for a
+    /// calendar-triggered one, Whimbrel's own icon, since there's no running app to attribute it to.
     @ViewBuilder
     private func iconView(for meeting: QualifyingMeeting) -> some View {
         if let bundleID = meeting.appBundleID,
@@ -100,10 +114,10 @@ struct MeetingAlertView: View {
                 .resizable()
                 .scaledToFit()
         } else {
-            Image(systemName: "calendar")
+            // A calendar meeting has no running app to show, so it shows Whimbrel's own icon.
+            Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
                 .scaledToFit()
-                .foregroundStyle(Color.whimbrelAccentPrimary)
         }
     }
 }

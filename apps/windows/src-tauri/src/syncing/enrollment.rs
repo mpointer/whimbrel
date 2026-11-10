@@ -29,6 +29,8 @@ pub trait WorkerApi: Send + Sync {
     fn ai_balance(&self, id_token: &str, device_public_key: &str) -> Result<AiBalance, WorkerError>;
     /// Whimbrel AI: Stripe Checkout for a credit pack (`"10"` or `"25"`): the URL to open.
     fn ai_checkout(&self, id_token: &str, device_public_key: &str, pack: &str) -> Result<String, WorkerError>;
+    /// Whimbrel AI: the models it offers, newest first (404 from a server that predates the route).
+    fn ai_models(&self, id_token: &str, device_public_key: &str) -> Result<Vec<String>, WorkerError>;
 }
 
 impl WorkerApi for en::WorkerClient {
@@ -62,6 +64,9 @@ impl WorkerApi for en::WorkerClient {
     }
     fn ai_checkout(&self, id_token: &str, pk: &str, pack: &str) -> Result<String, WorkerError> {
         en::WorkerClient::ai_checkout(self, id_token, pk, pack)
+    }
+    fn ai_models(&self, id_token: &str, pk: &str) -> Result<Vec<String>, WorkerError> {
+        en::WorkerClient::ai_models(self, id_token, pk)
     }
 }
 
@@ -158,6 +163,7 @@ pub(crate) mod tests {
         pub checkouts: Arc<Mutex<Vec<String>>>,
         pub ai_balance: Arc<Mutex<Result<AiBalance, WorkerError>>>,
         pub ai_packs: Arc<Mutex<Vec<String>>>,
+        pub ai_models: Arc<Mutex<Result<Vec<String>, WorkerError>>>,
     }
 
     impl FakeWorker {
@@ -173,6 +179,7 @@ pub(crate) mod tests {
                 checkouts: Arc::new(Mutex::new(Vec::new())),
                 ai_balance: Arc::new(Mutex::new(Ok(AiBalance { balance_micros: 0, last_purchase_micros: None }))),
                 ai_packs: Arc::new(Mutex::new(Vec::new())),
+                ai_models: Arc::new(Mutex::new(Err(WorkerError::Http { status: 404, body: String::new() }))),
             }
         }
     }
@@ -212,6 +219,9 @@ pub(crate) mod tests {
         fn ai_checkout(&self, _: &str, _: &str, pack: &str) -> Result<String, WorkerError> {
             self.ai_packs.lock().unwrap().push(pack.into());
             self.checkout.lock().unwrap().clone()
+        }
+        fn ai_models(&self, _: &str, _: &str) -> Result<Vec<String>, WorkerError> {
+            self.ai_models.lock().unwrap().clone()
         }
     }
 

@@ -4,6 +4,17 @@ Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
 ## [Unreleased]
 
+## [0.9.67] - 2026-11-10
+
+### Mac
+- Whimbrel AI offers Claude Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.2, and its model list now comes from Whimbrel's server, so it stays current. Settings → AI Providers has Refresh Models on the Whimbrel AI card. With no model chosen, Whimbrel AI uses Sonnet 5.5.
+- Meeting prep briefs show up wherever you look. A brief prepared on your other Mac appears on Today after a sync and posts "Prep ready". Today and Upcoming rows with a brief have a "Prep ready" chip that opens it. The menu bar's next meeting and the meeting-start pop-up have "Open brief". The pop-up's buttons now sit on their own row, and it shows the Whimbrel icon.
+- When Meeting Prep can't write a brief (no model available, or an answer it can't read), the run shows as failed in Routines with the reason, once per meeting.
+
+### Windows
+- Whimbrel AI offers Claude Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.2, and its model list now comes from Whimbrel's server, so it stays current. Settings → AI has Refresh Models.
+- When Meeting Prep can't write a brief, the run shows as failed in Routines with the reason, once per meeting.
+
 ## [0.9.66] - 2026-11-10
 
 ### Mac

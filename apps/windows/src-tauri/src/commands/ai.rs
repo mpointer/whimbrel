@@ -473,9 +473,16 @@ pub fn set_prompt(state: State<'_, AppState>, surface: PromptSurface, text: Stri
 /// The provider's model list (a network call; Ollama is asked on localhost).
 #[tauri::command]
 pub async fn provider_models(state: State<'_, AppState>, provider: Provider) -> Result<Vec<String>, CommandError> {
-    // Only the ids Whimbrel's server prices: it answers any other with 400 unknown_model.
+    // Whimbrel AI: its server's list (every id priced), or the built-in one when that can't be
+    // read: offline, signed out of sync, or a server that predates the route.
     if provider == Provider::Whimbrel {
-        return Ok(crate::whimbrel_ai::MODELS.iter().map(|m| m.to_string()).collect());
+        let Some(sync) = state.sync.clone() else { return Ok(crate::whimbrel_ai::offered()) };
+        let reading = sync.clone();
+        let read = tokio::task::spawn_blocking(move || reading.refresh_ai_models()).await;
+        if let Ok(Err(e)) = read {
+            tracing::info!(error = %e, "Whimbrel AI's model list wasn't read; the built-in list stands");
+        }
+        return Ok(sync.whimbrel_models());
     }
     let key = match key_account(provider) {
         Some(account) => state

@@ -5,7 +5,7 @@ import Foundation
 /// Labels stay Whimbrel's: Start, Open, Open brief, Hide brief, Try again.
 struct TodayEventRowModel {
     enum Prep: Equatable {
-        /// The next event has no prep with a readable brief: "No prep yet".
+        /// The next event has no prep with a readable brief: "No prep yet". Only the next event says so.
         case missing
         case ready(CoreMeetingPrep)
 
@@ -29,7 +29,7 @@ struct TodayEventRowModel {
     let isNext: Bool
     /// Start is offered only while no meeting is active.
     let showsStart: Bool
-    /// Only the next event carries prep state; nil for the rest.
+    /// `.ready` for any event with a brief; `.missing` only for the next event; nil otherwise.
     let prep: Prep?
     /// The topic this event belongs to, for its chip.
     let topic: TopicRef?
@@ -54,6 +54,8 @@ struct TodayWeekRowModel: Identifiable {
     /// "3 invited" (the other attendees); empty when there are none.
     let invited: String
     let topic: TopicRef?
+    /// The meeting's brief, for its "Prep ready" chip; nil when it has none.
+    var prep: CoreMeetingPrep? = nil
 }
 
 /// One day of the Upcoming section: "Tomorrow", then e.g. "Wed, Nov 11".
@@ -119,7 +121,7 @@ enum TodayRows {
     /// The Daily Brief, else the digest, else the digest error with a Try again that is off while generating.
     static func recap(_ content: TodayContent) -> TodayRecapModel {
         if let run = content.briefRecap {
-            return .brief(text: run.outputSummary, origin: run.originDeviceId.map(content.deviceLabel(for:)))
+            return .brief(text: run.displaySummary, origin: run.originDeviceId.map(content.deviceLabel(for:)))
         } else if let digest = content.digest {
             return .digest(text: digest.summary)
         } else if let message = content.digestError {
@@ -147,7 +149,7 @@ enum TodayRows {
                         // A recurring EventKit event repeats its id across occurrences; the start tells them apart.
                         id: "\(m.id)@\(m.startDate.timeIntervalSince1970)", timeText: MeetingRowText.time(m.startDate), title: m.title,
                         invited: m.attendees.isEmpty ? "" : String(localized: "\(m.attendees.count) invited"),
-                        topic: content.topicsByEvent[m.id]
+                        topic: content.topicsByEvent[m.id], prep: content.prep(eventId: m.id, start: m.startDate)
                     )
                 }
             )
@@ -164,7 +166,9 @@ enum TodayRows {
         guard let event = content.upcoming.first(where: { $0.id == id }) else { return nil }
         let source = content.events.first { $0.id == id }
         var prep: TodayEventRowModel.Prep?
-        if isNext {
+        if let p = content.prep(eventId: event.id, start: event.start) {
+            prep = .ready(p)
+        } else if isNext {
             if let p = content.nextPrep, TodayLogic.prep(p, isFor: event), p.brief != nil { prep = .ready(p) } else { prep = .missing }
         }
         return TodayEventRowModel(

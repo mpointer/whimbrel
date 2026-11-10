@@ -22,6 +22,8 @@ import {
   usageTokens,
   usageTotalsLine,
   whimbrelBalanceLine,
+  whimbrelSnap,
+  WHIMBREL_DEFAULT_MODEL,
 } from "./aiModel";
 
 describe("a chosen Ollama model that isn't installed", () => {
@@ -219,4 +221,15 @@ it("keeps the saved model selectable when the provider's list lacks it", () => {
 it("maps each provider to its model field", () => {
   expect(modelField("openai")).toBe("openaiModel");
   expect(routing[modelField("google")]).toBe("gemini-2.5-flash");
+});
+
+describe("whimbrelSnap", () => {
+  it("leaves an offered pick, and snaps any other to Sonnet 5.5 or the first offered", () => {
+    const offered = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
+    expect(WHIMBREL_DEFAULT_MODEL).toBe("claude-sonnet-5-5");
+    expect(whimbrelSnap(offered, "claude-haiku-5-5")).toBeNull();
+    expect(whimbrelSnap(offered, "claude-opus-4-7")).toBe("claude-sonnet-5-5");
+    expect(whimbrelSnap(["claude-opus-5-5", "claude-haiku-5-5"], "claude-opus-4-7")).toBe("claude-opus-5-5");
+    expect(whimbrelSnap([], "claude-opus-4-7")).toBeNull();
+  });
 });

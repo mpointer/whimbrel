@@ -17,9 +17,14 @@ final class MeetingAlertPanelController: ObservableObject {
     @Published fileprivate(set) var secondsRemaining: Int?
     /// Set when the panel reports a split (`showKeepTogether`): the earlier meeting's title.
     @Published fileprivate(set) var earlierTitle: String?
+    /// The showing meeting's brief key, when it has a readable brief. Set by `setPrep` once the
+    /// lookup lands; nil hides "Open brief".
+    @Published fileprivate(set) var prepKey: String?
+    /// Opens a brief by key. Set once by `AppState`.
+    var onOpenPrep: ((String) -> Void)?
 
     private static let countdownSeconds = 10
-    private static let panelSize = NSSize(width: 380, height: 132)
+    private static let panelSize = NSSize(width: 440, height: 132)
     private static let screenMargin: CGFloat = 16
 
     private var panel: NSPanel?
@@ -41,6 +46,7 @@ final class MeetingAlertPanelController: ObservableObject {
     ) {
         self.meeting = meeting
         earlierTitle = nil
+        prepKey = nil
         self.onAccept = onAccept
         self.onAcceptAndOpenTimeline = onAcceptAndOpenTimeline
         self.onDismiss = onDismiss
@@ -93,6 +99,7 @@ final class MeetingAlertPanelController: ObservableObject {
         meeting = nil
         secondsRemaining = nil
         earlierTitle = nil
+        prepKey = nil
         onAccept = nil
         onAcceptAndOpenTimeline = nil
         onDismiss = nil
@@ -125,6 +132,19 @@ final class MeetingAlertPanelController: ObservableObject {
     func joinTapped() {
         guard let target = joinTarget else { return }
         NSWorkspace.shared.open(target.urlToOpen { NSWorkspace.shared.urlForApplication(toOpen: $0) != nil })
+    }
+
+    /// Shows "Open brief" for `key` while the panel still shows `meetingId` (a late lookup for an
+    /// earlier meeting is ignored).
+    func setPrep(key: String?, forMeetingId meetingId: String) {
+        guard meeting?.id == meetingId else { return }
+        prepKey = key
+    }
+
+    /// Opens the brief; like Join, leaves the panel and its Record choice alone.
+    func openPrepTapped() {
+        guard let prepKey else { return }
+        onOpenPrep?(prepKey)
     }
 
     func dismissTapped() {

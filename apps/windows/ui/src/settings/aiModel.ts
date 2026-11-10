@@ -33,6 +33,18 @@ export const modelField = (provider: Provider): ModelField => `${provider}Model`
  * list doesn't have it (retired, or typed by hand), so loading a list never silently
  * changes what's saved.
  */
+/** The Whimbrel AI model used until the user picks one (the Mac's `whimbrelDefault`). */
+export const WHIMBREL_DEFAULT_MODEL = "claude-sonnet-5-5";
+
+/**
+ * The model a Whimbrel AI pick snaps to when `options` doesn't hold it: the default when offered,
+ * else the first option (the Mac's `whimbrelFallback`). `null` when `current` is offered.
+ */
+export function whimbrelSnap(options: string[], current: string): string | null {
+  if (options.length === 0 || options.includes(current)) return null;
+  return options.includes(WHIMBREL_DEFAULT_MODEL) ? WHIMBREL_DEFAULT_MODEL : options[0];
+}
+
 export function modelOptions(list: string[], current: string): string[] {
   const c = current.trim();
   return c && !list.includes(c) ? [c, ...list] : list;

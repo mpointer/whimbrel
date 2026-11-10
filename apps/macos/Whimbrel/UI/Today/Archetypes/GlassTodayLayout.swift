@@ -167,6 +167,7 @@ struct GlassTodayLayout: TodayArchetypeView {
                 SkinText(meeting.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
                 if let topic = meeting.topic { TopicChip(topic: topic) }
                 if !meeting.invited.isEmpty { SkinText(meeting.invited, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
+                if let prep = meeting.prep { PrepReadyChip(prepKey: prep.eventId) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

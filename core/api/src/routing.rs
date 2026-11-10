@@ -314,9 +314,9 @@ pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Chai
 
     // Whimbrel AI is a link only when the user picked it: it spends their prepaid credit,
     // so it is never a silent fallback for another provider's failure. Its model is the
-    // user's pick, or the cheap Anthropic default before one is made.
+    // user's pick, or Whimbrel's default before one is made.
     let mut whimbrel_slot = if routing.preferred_provider == "whimbrel" {
-        let model = if routing.preferred_model.is_empty() { FALLBACK_ANTHROPIC_MODEL } else { routing.preferred_model.as_str() };
+        let model = if routing.preferred_model.is_empty() { FALLBACK_WHIMBREL_MODEL } else { routing.preferred_model.as_str() };
         hosted_link(routing, llm::Provider::Whimbrel, model)
     } else {
         None
@@ -386,6 +386,11 @@ const CHEAP_ANTHROPIC_MODEL: &str = "claude-haiku-4-5";
 const CHEAP_OPENAI_MODEL: &str = "gpt-4o-mini";
 const CHEAP_GOOGLE_MODEL: &str = "gemini-2.0-flash";
 
+/// Whimbrel AI's own models, apart from the Anthropic key's: the server prices the newer
+/// ids (server/src/aiProxy.ts `AI_PRICES`), and the Mac picks Sonnet 5.5 by default.
+const CHEAP_WHIMBREL_MODEL: &str = "claude-haiku-5-5";
+const FALLBACK_WHIMBREL_MODEL: &str = "claude-sonnet-5-5";
+
 /// The hosted providers `build_chain` knows, in its default fallback order. Whimbrel AI is
 /// not here: it joins a chain only as the preferred provider.
 const HOSTED_PROVIDERS: [llm::Provider; 4] =
@@ -397,7 +402,7 @@ fn fallback_model(provider: llm::Provider) -> &'static str {
         llm::Provider::OpenAI => FALLBACK_OPENAI_MODEL,
         llm::Provider::Google => FALLBACK_GOOGLE_MODEL,
         llm::Provider::Ollama | llm::Provider::OpenRouter | llm::Provider::Local => "",
-        llm::Provider::Whimbrel => FALLBACK_ANTHROPIC_MODEL,
+        llm::Provider::Whimbrel => FALLBACK_WHIMBREL_MODEL,
     }
 }
 
@@ -410,7 +415,7 @@ pub fn cheap_model_for(provider: llm::Provider, available: Option<&[String]>) ->
         llm::Provider::Anthropic => CHEAP_ANTHROPIC_MODEL,
         llm::Provider::OpenAI => CHEAP_OPENAI_MODEL,
         llm::Provider::Google => CHEAP_GOOGLE_MODEL,
-        llm::Provider::Whimbrel => CHEAP_ANTHROPIC_MODEL,
+        llm::Provider::Whimbrel => CHEAP_WHIMBREL_MODEL,
         llm::Provider::Ollama | llm::Provider::OpenRouter | llm::Provider::Local => return "",
     };
     match available {

@@ -51,7 +51,7 @@ struct RoutinesInboxView: View {
                         }
                         .buttonStyle(.plain)
                         HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
-                            Text(run.outputSummary)
+                            Text(run.displaySummary)
                                 .font(.whimbrelBody(.body))
                                 .foregroundStyle(Color.whimbrelTextPrimary)
                                 .lineLimit(expandedRunId == run.id ? nil : 2)
