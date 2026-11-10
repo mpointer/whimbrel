@@ -72,6 +72,8 @@ pub const OUTBOX_ROW_TYPE_TOPIC_STEP: &str = "topic_step";
 pub const OUTBOX_ROW_TYPE_TOPIC_EXTRACTION: &str = "topic_extraction";
 pub const OUTBOX_ROW_TYPE_TOPIC_ROLE: &str = "topic_role";
 pub const OUTBOX_ROW_TYPE_TOPIC_NAMES: &str = "topic_names";
+/// The phone-sized topic page (`topics::snapshot`): one row per topic, by its topic key.
+pub const OUTBOX_ROW_TYPE_TOPIC_PAGE_SNAPSHOT: &str = "topic_page_snapshot";
 /// Bounds applied to a routine run pulled from another device (see `apply_synced_routine_run`).
 const SYNCED_RUN_MAX_FUTURE_MS: i64 = 5 * 60 * 1000;
 const SYNCED_RUN_MAX_SUMMARY_CHARS: usize = 20_000;

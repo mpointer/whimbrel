@@ -1,6 +1,14 @@
 import SwiftUI
 import AppKit
 
+/// UserDefaults keys for the Obsidian vault the topic scheduler keeps up to date.
+enum VaultSettings {
+    static let enabledKey = "vault.enabled"
+    static let pathKey = "vault.path"
+    static let lastUpdatedKey = "vault.lastUpdated"
+    static let failedKey = "vault.failed"
+}
+
 /// Settings → Capture & Privacy → Your data: what is on this Mac, what leaves it, and the
 /// two actions that take it all or remove it all (trust surface spec,
 /// docs/superpowers/specs/2026-11-04-trust-surface-design.md).
@@ -19,6 +27,10 @@ struct YourDataSettingsPane: View {
     @State private var deleteTyped = ""
     @State private var deleteFailure: String?
     @AppStorage(YourData.deleteLeftoversKey) private var deleteLeftovers = ""
+    @AppStorage(VaultSettings.enabledKey) private var vaultEnabled = false
+    @AppStorage(VaultSettings.pathKey) private var vaultPath = ""
+    @AppStorage(VaultSettings.lastUpdatedKey) private var vaultLastUpdated = 0.0
+    @AppStorage(VaultSettings.failedKey) private var vaultFailed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -133,6 +145,8 @@ struct YourDataSettingsPane: View {
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
+            vaultSection
+            Divider().overlay(Color.whimbrelBorder)
             HStack {
                 Button(exporting ? "Exporting…" : "Export everything…") { exportEverything() }
                     .buttonStyle(.whimbrelSecondary)
@@ -168,6 +182,48 @@ struct YourDataSettingsPane: View {
             .buttonStyle(.whimbrelSecondary)
             .tint(Color.whimbrelError)
         }
+    }
+
+    private var vaultSection: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            Toggle("Keep an Obsidian vault up to date", isOn: $vaultEnabled)
+            HStack {
+                Button("Choose folder…") { chooseVaultFolder() }
+                    .buttonStyle(.whimbrelSecondary)
+                if !vaultPath.isEmpty {
+                    Text(vaultPath)
+                        .font(.whimbrelBody(.caption))
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            if vaultEnabled, !vaultPath.isEmpty, vaultLastUpdated > 0 {
+                let when = RelativeDateTimeFormatter().localizedString(for: Date(timeIntervalSince1970: vaultLastUpdated), relativeTo: Date())
+                Text("Last updated \(when)")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+            }
+            if vaultEnabled, !vaultPath.isEmpty, vaultFailed {
+                Text("Couldn't update the vault. Check that the folder exists and Whimbrel can write to it.")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelError)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func chooseVaultFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        // A new folder has not been written yet: no "Last updated" from the old one.
+        if url.path != vaultPath { vaultLastUpdated = 0 }
+        vaultPath = url.path
+        vaultFailed = false
     }
 
     private func refresh() {

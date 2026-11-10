@@ -5112,6 +5112,40 @@
         }
       }
     },
+    "Choose folder…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ordner auswählen …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Elegir carpeta…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisir un dossier…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choisir un dossier…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escolher pasta…"
+          }
+        }
+      }
+    },
     "Choose transcripts (.vtt, .srt, .txt) or a Granola CSV" : {
       "localizations" : {
         "de" : {
@@ -5278,6 +5312,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cloud"
+          }
+        }
+      }
+    },
+    "Cloud ends {date}. It won't renew." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud endet am {date}. Es wird nicht verlängert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud termina el {date}. No se renovará."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud se termine le {date}. Il ne sera pas renouvelé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cloud se termine le {date}. Il ne sera pas renouvelé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Cloud termina em {date}. Ele não será renovado."
           }
         }
       }
@@ -7668,6 +7736,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Não foi possível cortar a gravação"
+          }
+        }
+      }
+    },
+    "Couldn't update the vault. Check that the folder exists and Whimbrel can write to it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Vault konnte nicht aktualisiert werden. Prüfen Sie, ob der Ordner existiert und Whimbrel darin schreiben darf."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo actualizar el vault. Comprueba que la carpeta existe y que Whimbrel puede escribir en ella."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de mettre à jour le coffre. Vérifiez que le dossier existe et que Whimbrel peut y écrire."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de mettre à jour le coffre. Vérifiez que le dossier existe et que Whimbrel peut y écrire."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível atualizar o vault. Verifique se a pasta existe e se o Whimbrel pode gravar nela."
           }
         }
       }
@@ -12122,6 +12224,40 @@
         }
       }
     },
+    "Join the beta" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An der Beta teilnehmen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Únete a la beta"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rejoindre la bêta"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rejoindre la bêta"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Participe do beta"
+          }
+        }
+      }
+    },
     "Just written." : {
       "localizations" : {
         "de" : {
@@ -12186,6 +12322,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Manter"
+          }
+        }
+      }
+    },
+    "Keep an Obsidian vault up to date" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einen Obsidian-Vault aktuell halten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mantener actualizado un vault de Obsidian"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Garder un coffre Obsidian à jour"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Garder un coffre Obsidian à jour"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manter um vault do Obsidian atualizado"
           }
         }
       }
@@ -12900,6 +13070,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Última sincronização falhou: {error}"
+          }
+        }
+      }
+    },
+    "Last updated {time}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zuletzt aktualisiert: {time}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Última actualización: {time}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dernière mise à jour : {time}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dernière mise à jour : {time}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Última atualização: {time}"
           }
         }
       }
@@ -20166,6 +20370,40 @@
         }
       }
     },
+    "QR code for the phone beta page" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "QR-Code für die Beta-Seite der Telefon-App"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Código QR de la página de la beta para teléfono"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Code QR de la page bêta pour téléphone"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Code QR de la page bêta pour téléphone"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Código QR da página do beta para celular"
+          }
+        }
+      }
+    },
     "Quality" : {
       "localizations" : {
         "de" : {
@@ -20536,6 +20774,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Ler as transcrições das reuniões palavra por palavra e permitir que as buscas incluam o que foi dito nas reuniões. Esta é a mais sensível das três."
+          }
+        }
+      }
+    },
+    "Read your meeting notes, decisions and action items on iPhone or Android. The apps are in beta." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lesen Sie Ihre Besprechungsnotizen, Entscheidungen und Aufgaben auf dem iPhone oder unter Android. Die Apps sind in der Beta."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lee tus notas de reuniones, decisiones y tareas pendientes en iPhone o Android. Las apps están en beta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lisez vos notes de réunion, décisions et actions à mener sur iPhone ou Android. Les applis sont en bêta."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lisez vos notes de réunion, décisions et suivis sur iPhone ou Android. Les applis sont en bêta."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leia as notas das suas reuniões, decisões e itens de ação no iPhone ou no Android. Os apps estão em beta."
           }
         }
       }
@@ -23075,6 +23347,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Diga como você quer que o skin seja."
+          }
+        }
+      }
+    },
+    "Scan with your phone" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit dem Telefon scannen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escanéalo con tu teléfono"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scannez avec votre téléphone"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Balayez avec votre téléphone"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Escaneie com seu celular"
           }
         }
       }
@@ -32774,6 +33080,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "O Whimbrel aprende uma voz quando você confirma ou corrige um nome. As vozes ficam nos seus dispositivos e na sua sincronização criptografada."
+          }
+        }
+      }
+    },
+    "Whimbrel on your phone" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel auf Ihrem Telefon"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel en tu teléfono"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel sur votre téléphone"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel sur votre téléphone"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel no seu celular"
           }
         }
       }

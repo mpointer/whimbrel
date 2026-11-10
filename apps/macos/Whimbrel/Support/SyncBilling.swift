@@ -6,6 +6,8 @@ struct AccountPlan: Decodable, Equatable {
     let plan: String
     let until: Int64?
     let interval: String?
+    /// False once a Cloud subscription is cancelled; nil from a server that predates it.
+    var renews: Bool? = nil
     let billing: Bool
 
     var isCloud: Bool { plan == "cloud" }
@@ -93,10 +95,12 @@ final class SyncBillingClient: SyncBilling {
 }
 
 enum PlanCopy {
-    /// "Free: 1 computer + 1 phone" or "Cloud until November 9, 2027" (in the user's locale).
+    /// "Free: 1 computer + 1 phone", "Cloud until November 9, 2027", or after a cancel
+    /// "Cloud ends November 9, 2027. It won't renew." (in the user's locale).
     static func line(_ plan: AccountPlan) -> String {
         guard plan.isCloud, let until = plan.until else { return String(localized: "Free: 1 computer + 1 phone") }
         let date = Date(timeIntervalSince1970: Double(until) / 1000).formatted(.dateTime.month(.wide).day().year())
+        if plan.renews == false { return String(localized: "Cloud ends \(date). It won't renew.") }
         return String(localized: "Cloud until \(date)")
     }
 }

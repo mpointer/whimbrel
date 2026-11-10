@@ -777,6 +777,7 @@ export async function handleAccountPlan(
       plan: cloud ? "cloud" : "free",
       until: cloud ? account.planUntilUnixMs : null,
       interval: cloud ? account.planInterval : null,
+      renews: cloud ? account.planRenews : null,
       billing: billingConfigured(env),
     });
   } catch (err) {

@@ -1,3 +1,4 @@
+import CoreImage.CIFilterBuiltins
 import SwiftUI
 
 struct DevicesSettingsPane: View {
@@ -17,8 +18,7 @@ struct DevicesSettingsPane: View {
             Text("Sync your timeline across Macs. Sign in once per device, then approve new devices from here.")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
-            Link("Whimbrel for iPhone and Android is in beta. Request to join", destination: URL(string: "https://whimbrelapp.com/mobile-beta/")!)
-                .font(.whimbrelBody(.caption))
+            MobileBetaCard()
 
             Divider().overlay(Color.whimbrelBorder)
 
@@ -192,6 +192,16 @@ struct DevicesSettingsPane: View {
         Text("Plus tax where applicable. Opens Stripe in your browser. Cloud adds unlimited devices on our sync server.")
             .font(.whimbrelBody(.caption))
             .foregroundStyle(Color.whimbrelTextSecondary)
+        billingError
+    }
+
+    @ViewBuilder
+    private var billingError: some View {
+        if let billingError = appState.syncState.billingError {
+            Text(billingError)
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelError)
+        }
     }
 
     @ViewBuilder
@@ -315,6 +325,7 @@ struct DevicesSettingsPane: View {
                         }
                         .buttonStyle(.whimbrelSecondary)
                         .disabled(working)
+                        billingError
                     } else {
                         upgradeButtons
                     }
@@ -329,4 +340,53 @@ struct DevicesSettingsPane: View {
         .buttonStyle(.whimbrelSecondary)
         .tint(Color.whimbrelError)
     }
+}
+
+/// The phone apps' beta sign-up: a card with a button and a QR code to scan with the phone.
+private struct MobileBetaCard: View {
+    private static let url = URL(string: "https://whimbrelapp.com/mobile-beta/")!
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Spacing.lg) {
+            Image(systemName: "iphone.gen3")
+                .font(.system(size: 28))
+                .foregroundStyle(Color.whimbrelAccentPrimary)
+            VStack(alignment: .leading, spacing: Spacing.sm) {
+                Text("Whimbrel on your phone")
+                    .font(.whimbrelBody(.headline))
+                    .foregroundStyle(Color.whimbrelTextPrimary)
+                Text("Read your meeting notes, decisions and action items on iPhone or Android. The apps are in beta.")
+                    .font(.whimbrelBody(.callout))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Link(destination: Self.url) { Text("Join the beta") }
+                    .buttonStyle(.whimbrelPrimary)
+            }
+            Spacer(minLength: 0)
+            if let qr = Self.qrCode {
+                VStack(spacing: Spacing.xs) {
+                    Image(nsImage: qr)
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: 84, height: 84)
+                        .padding(Spacing.xs)
+                        .background(Color(white: 1)) // a QR code needs a white quiet zone in every theme, so this is deliberately not a token
+                        .accessibilityLabel(Text("QR code for the phone beta page"))
+                    Text("Scan with your phone")
+                        .font(.whimbrelBody(.caption))
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                }
+            }
+        }
+        .whimbrelCard()
+    }
+
+    private static let qrCode: NSImage? = {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(url.absoluteString.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage,
+              let cg = CIContext().createCGImage(output, from: output.extent) else { return nil }
+        return NSImage(cgImage: cg, size: output.extent.size)
+    }()
 }

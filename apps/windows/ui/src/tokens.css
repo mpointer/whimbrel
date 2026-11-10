@@ -20,6 +20,8 @@
   --color-selection: #eae1cd;
   --color-highlight: #f6e8d0;
   --color-text-on-accent: #ffffff;
+  /* Behind the phone beta QR code: white in every theme and skin, or a phone camera can't read it. */
+  --qr-backdrop: #ffffff;
 
   /* 4 pt spacing scale: xs … xxl */
   --space-xs: 4px;

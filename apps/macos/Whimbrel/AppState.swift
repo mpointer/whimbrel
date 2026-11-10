@@ -733,6 +733,7 @@ final class AppState: ObservableObject {
         scheduleEpisodeSegmentStep()
         scheduleReplyPriorityStep()
         scheduleTopicsStep()
+        scheduleTopicVaultStep(after: 60)
         scheduleTopicStepsStep()
         scheduleScreenTextIngestStep()
         scheduleTranscriptBackfillStep()
@@ -2221,6 +2222,40 @@ final class AppState: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + (more == 1 || judged > 0 ? 0.1 : 60)) { [weak self] in
                 self?.scheduleTopicsStep()
             }
+        }
+    }
+
+    /// Publishes topic pages for the phone, once this launch has finished a content-sync
+    /// round, then refreshes the Obsidian vault when it is switched on and a folder is chosen.
+    /// Every 300 s, first run about 60 s after launch; a failure is stored for Settings and
+    /// waits for the next tick. The vault settings live in UserDefaults (see `VaultSettings`),
+    /// so the slow lane reads them directly.
+    private func scheduleTopicVaultStep(after delay: Double = 300) {
+        guard let slow = slowStore else { return }
+        CoreMemoryStore.slowLaneQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            // A computer that was off publishes only after it has pulled what the others did
+            // meanwhile: its build is the newest, so a stale page would win on every device.
+            // `lastSyncedAt` is set by this launch's first good round. The vault is local only.
+            let pulled = DispatchQueue.main.sync { self?.contentSyncCoordinator.lastSyncedAt != nil }
+            // 0 is expected until the store has its own device id.
+            if pulled, slow.publishTopicSnapshots(builtBy: Host.current().localizedName ?? "Mac") < 0 {
+                Logger(subsystem: "com.mpointer.kestrel", category: "topics")
+                    .error("Publishing topic pages for the phone failed")
+            }
+            let defaults = UserDefaults.standard
+            let path = defaults.string(forKey: VaultSettings.pathKey) ?? ""
+            if defaults.bool(forKey: VaultSettings.enabledKey), !path.isEmpty {
+                switch slow.updateVault(root: URL(fileURLWithPath: path)) {
+                case .success:
+                    defaults.set(Date().timeIntervalSince1970, forKey: VaultSettings.lastUpdatedKey)
+                    defaults.set(false, forKey: VaultSettings.failedKey)
+                case .failure(let error):
+                    Logger(subsystem: "com.mpointer.kestrel", category: "vault")
+                        .error("Vault update failed: \(error.message, privacy: .private)")
+                    defaults.set(true, forKey: VaultSettings.failedKey)
+                }
+            }
+            DispatchQueue.main.async { self?.scheduleTopicVaultStep() }
         }
     }
 

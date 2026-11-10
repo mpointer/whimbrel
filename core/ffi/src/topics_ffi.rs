@@ -414,6 +414,80 @@ pub extern "C" fn whimbrel_topics_steps_start(handle: *mut StoreHandle, budget_t
     status(store(handle).map(|s| s.start_topic_steps_judging(budget_tokens)))
 }
 
+/// Builds and stores a snapshot of every topic page, stamped `built_by` (this device's name).
+/// Returns the number of snapshots written, `-1` on a null handle, unreadable argument or error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_topics_publish_snapshots(
+    handle: *mut StoreHandle,
+    built_by: *const c_char,
+) -> i64 {
+    let (Some(s), Some(built_by)) = (store(handle), cstr_to_string(built_by)) else {
+        return -1;
+    };
+    match s.publish_topic_page_snapshots(&built_by, api::util::now_unix_ms()) {
+        Ok(n) => n as i64,
+        Err(_) => -1,
+    }
+}
+
+/// Every stored, not-deleted topic page snapshot as a JSON array; NULL on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_topic_snapshots_json(handle: *mut StoreHandle) -> *mut c_char {
+    out(store(handle)
+        .and_then(|s| s.topic_page_snapshots().ok())
+        .and_then(|l| to_json(&l)))
+}
+
+/// One topic's snapshot as JSON; the JSON text `null` when absent or deleted; NULL on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_topic_snapshot_json(
+    handle: *mut StoreHandle,
+    topic_key: *const c_char,
+) -> *mut c_char {
+    let (Some(s), Some(key)) = (store(handle), cstr_to_string(topic_key)) else {
+        return ptr::null_mut();
+    };
+    out(s
+        .topic_page_snapshot(&key)
+        .ok()
+        .map(|o| o.filter(|snap| !snap.deleted))
+        .and_then(|o| to_json(&o)))
+}
+
+/// Refreshes the vault under `root`: `{"ok":true,"report":{written,unchanged,archived,deleted,
+/// skipped}}` or `{"ok":false,"error":".."}`; NULL on a null handle or unreadable root.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_vault_update(
+    handle: *mut StoreHandle,
+    root: *const c_char,
+) -> *mut c_char {
+    let (Some(s), Some(root)) = (store(handle), cstr_to_string(root)) else {
+        return ptr::null_mut();
+    };
+    let result = api::topics_export::update_vault(s, std::path::Path::new(&root), api::util::now_unix_ms());
+    out(Some(match result {
+        Ok(report) => json!({ "ok": true, "report": report }),
+        Err(e) => json!({ "ok": false, "error": format!("{e:?}") }),
+    }))
+}
+
+/// The local meeting id for a snapshot's `MeetingRef` (`device_id`, `source_meeting_id`), or
+/// `-1` when this database has no such meeting, on a null handle or an unreadable argument.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meeting_id_for_source(
+    handle: *mut StoreHandle,
+    device_id: *const c_char,
+    source_meeting_id: i64,
+) -> i64 {
+    let (Some(s), Some(device_id)) = (store(handle), cstr_to_string(device_id)) else {
+        return -1;
+    };
+    match s.meeting_id_for_source(&device_id, source_meeting_id) {
+        Ok(Some(id)) => id,
+        _ => -1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -836,6 +910,60 @@ mod tests {
                 -6
             );
         }
+        whimbrel_memory_close(h);
+    }
+    #[test]
+    fn snapshots_json_round_trips() {
+        let (_d, h, _) = open();
+        unsafe { &(*h).0 }.set_own_device_id("mac-1");
+        let saved = json(whimbrel_topics_seed_save_json(
+            h,
+            c(r#"{"key":null,"name":"Maximus","aliases":[],"kind":null}"#).as_ptr(),
+        ));
+        let key = saved["key"].as_str().unwrap().to_string();
+        assert_eq!(whimbrel_topics_publish_snapshots(h, c("MacBook").as_ptr()), 1);
+        let all = json(whimbrel_topic_snapshots_json(h));
+        assert_eq!(all.as_array().unwrap().len(), 1);
+        assert_eq!(all[0]["topic_key"], key.as_str());
+        assert_eq!(all[0]["built_by"], "MacBook");
+        let one = json(whimbrel_topic_snapshot_json(h, c(&key).as_ptr()));
+        assert_eq!(one, all[0]);
+        // Unknown key: the JSON text "null".
+        assert!(json(whimbrel_topic_snapshot_json(h, c("nope").as_ptr())).is_null());
+        // A deleted snapshot reads as null too, and drops out of the list.
+        assert_eq!(whimbrel_topics_seed_delete(h, c(&key).as_ptr()), 0);
+        assert_eq!(whimbrel_topics_publish_snapshots(h, c("MacBook").as_ptr()), 1);
+        assert!(json(whimbrel_topic_snapshot_json(h, c(&key).as_ptr())).is_null());
+        assert!(json(whimbrel_topic_snapshots_json(h)).as_array().unwrap().is_empty());
+        // Null handle and null argument fail.
+        assert_eq!(whimbrel_topics_publish_snapshots(ptr::null_mut(), c("x").as_ptr()), -1);
+        assert_eq!(whimbrel_topics_publish_snapshots(h, ptr::null()), -1);
+        assert!(whimbrel_topic_snapshots_json(ptr::null_mut()).is_null());
+        whimbrel_memory_close(h);
+    }
+
+    #[test]
+    fn vault_update_reports_error_json_for_missing_root() {
+        let (d, h, _) = open();
+        let missing = d.path().join("no-such-dir");
+        let v = json(whimbrel_vault_update(h, c(missing.to_str().unwrap()).as_ptr()));
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].as_str().is_some_and(|e| !e.is_empty()));
+        let root = d.path().join("vault");
+        std::fs::create_dir(&root).unwrap();
+        let v = json(whimbrel_vault_update(h, c(root.to_str().unwrap()).as_ptr()));
+        assert_eq!(v["ok"], true, "{v}");
+        assert!(v["report"]["written"].is_number());
+        assert!(whimbrel_vault_update(h, ptr::null()).is_null());
+        whimbrel_memory_close(h);
+    }
+
+    #[test]
+    fn meeting_id_for_unknown_source_is_minus_one() {
+        let (_d, h, _) = open();
+        assert_eq!(whimbrel_meeting_id_for_source(h, c("peer-9").as_ptr(), 77), -1);
+        assert_eq!(whimbrel_meeting_id_for_source(ptr::null_mut(), c("peer-9").as_ptr(), 77), -1);
+        assert_eq!(whimbrel_meeting_id_for_source(h, ptr::null(), 77), -1);
         whimbrel_memory_close(h);
     }
 }

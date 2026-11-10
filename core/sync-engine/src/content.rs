@@ -55,6 +55,10 @@ pub(crate) const ROW_TYPE_TOPIC_EXTRACTION: &str = memory::OUTBOX_ROW_TYPE_TOPIC
 pub(crate) const ROW_TYPE_TOPIC_ROLE: &str = memory::OUTBOX_ROW_TYPE_TOPIC_ROLE;
 pub(crate) const ROW_TYPE_TOPIC_NAMES: &str = memory::OUTBOX_ROW_TYPE_TOPIC_NAMES;
 pub(crate) const ROW_TYPE_TOPIC_PAGE_CAPABILITY: &str = "topic_page_capability";
+/// The phone-sized topic page snapshot (one row per topic): builds that announce
+/// `topic_page_capability` still drop this row type, so it waits for `topic_snapshot_capability`.
+pub(crate) const ROW_TYPE_TOPIC_PAGE_SNAPSHOT: &str = memory::OUTBOX_ROW_TYPE_TOPIC_PAGE_SNAPSHOT;
+pub(crate) const ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY: &str = "topic_snapshot_capability";
 
 /// The relay bytes of image chunks one pass moves from (or to) one peer, so a skin with large images
 /// spreads over several rounds instead of holding the store or overrunning `SYNC_TIMEOUT`. Counted on
@@ -360,7 +364,8 @@ pub(crate) fn outbox_entity_identity(op: &memory::ClaimedOutboxOperation) -> Opt
         | ROW_TYPE_TOPIC_STEP
         | ROW_TYPE_TOPIC_EXTRACTION
         | ROW_TYPE_TOPIC_ROLE
-        | ROW_TYPE_TOPIC_NAMES => Some(format!("{}:{}", op.row_type, op.aggregate_id)),
+        | ROW_TYPE_TOPIC_NAMES
+        | ROW_TYPE_TOPIC_PAGE_SNAPSHOT => Some(format!("{}:{}", op.row_type, op.aggregate_id)),
         _ => None,
     }
 }
@@ -399,7 +404,9 @@ async fn push_items_capability_marker(
     // Topic rows wait in the outbox until every peer has said this (`dispatch_outbox`).
     push_marker(conn, group_key, device_id, ROW_TYPE_TOPICS_CAPABILITY).await?;
     // Topic page rows wait the same way for this one.
-    push_marker(conn, group_key, device_id, ROW_TYPE_TOPIC_PAGE_CAPABILITY).await
+    push_marker(conn, group_key, device_id, ROW_TYPE_TOPIC_PAGE_CAPABILITY).await?;
+    // Snapshot rows wait the same way for this one.
+    push_marker(conn, group_key, device_id, ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY).await
 }
 
 /// One capability marker at `local_seq` 0, idempotent (see `push_items_capability_marker`).
@@ -1408,6 +1415,18 @@ fn apply_parent_row(
             };
             store
                 .apply_synced_topic_names(&names)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_TOPIC_PAGE_SNAPSHOT => {
+            // Last write wins on `built_at_unix_ms`; a bad or out-of-range build is dropped.
+            let Ok(snap) =
+                serde_json::from_slice::<memory::topics::snapshot::TopicPageSnapshot>(plaintext)
+            else {
+                return Ok(());
+            };
+            store
+                .apply_synced_topic_page_snapshot(&snap, now_unix_ms())
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             return Ok(());
         }
@@ -3059,10 +3078,7 @@ pub(crate) mod tests {
             MAX_ROWS_PER_PULL_PASS
         );
         assert_eq!(
-            store_b
-                .search_keyword(&format!("peer captured text {total_rows}"), 10)
-                .unwrap()
-                .len(),
+            captures_with_text(&store_b, &format!("peer captured text {total_rows}")),
             0
         );
 
@@ -3073,10 +3089,7 @@ pub(crate) mod tests {
         // Second call resumes from the persisted cursor and finishes the backlog.
         assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), total_rows);
         assert_eq!(
-            store_b
-                .search_keyword(&format!("peer captured text {total_rows}"), 10)
-                .unwrap()
-                .len(),
+            captures_with_text(&store_b, &format!("peer captured text {total_rows}")),
             1
         );
     }
@@ -3158,10 +3171,7 @@ pub(crate) mod tests {
         // 1..=500 on the second pass too, never reaching row 501 onward.
         assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), backlog_end);
         assert_eq!(
-            store_b
-                .search_keyword(&format!("backlog text {backlog_end}"), 10)
-                .unwrap()
-                .len(),
+            captures_with_text(&store_b, &format!("backlog text {backlog_end}")),
             1,
             "the last row of the backlog, well past MAX_ROWS_PER_PULL_PASS, must have been applied"
         );
@@ -3234,7 +3244,7 @@ pub(crate) mod tests {
             }
         }
         let store_b = Store::open_in_memory().unwrap();
-        let found = |text: &str| store_b.search_keyword(text, 10).unwrap().len();
+        let found = |text: &str| captures_with_text(&store_b, text);
         let zero = std::time::Duration::ZERO;
 
         let more = pull_content_with_budget(
@@ -3392,10 +3402,7 @@ pub(crate) mod tests {
         assert!(!more);
         assert_eq!(store_b.get_sync_cursor("device-a").unwrap(), total);
         assert_eq!(
-            store_b
-                .search_keyword(&format!("alpha row {total}"), 10)
-                .unwrap()
-                .len(),
+            captures_with_text(&store_b, &format!("alpha row {total}")),
             1
         );
     }
@@ -4588,6 +4595,74 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn pushes_the_snapshot_capability_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("shared.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let store = Store::open_in_memory().unwrap();
+        let group_key = GroupKey::generate();
+
+        push_content(&conn, &group_key, &store, "dev-a")
+            .await
+            .unwrap();
+
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM sync_row WHERE device_id = ?1 AND row_type = ?2",
+                params!["dev-a", ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY],
+            )
+            .await
+            .unwrap();
+        let n: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(n, 1);
+    }
+
+    fn snapshot_json(key: &str, built_at: i64) -> serde_json::Value {
+        serde_json::json!({
+            "topic_key": key, "name": "Maximus", "kind": null, "deleted": false, "lead": null,
+            "role": null, "next_meeting": null, "you_owe": [], "owed_to_you": [], "done": [],
+            "recent": [], "recent_total": 0, "truncated": false,
+            "built_at_unix_ms": built_at, "built_by": "device-a",
+        })
+    }
+
+    #[test]
+    fn applies_a_pulled_snapshot() {
+        let store = Store::open_in_memory().unwrap();
+        let body = serde_json::to_vec(&snapshot_json("maximus", crate::now_unix_ms())).unwrap();
+        apply_parent_row(&store, "peer", 1, ROW_TYPE_TOPIC_PAGE_SNAPSHOT, &body).unwrap();
+        let got = store.topic_page_snapshot("maximus").unwrap().expect("stored");
+        assert_eq!(got.name, "Maximus");
+
+        // A payload that does not parse is dropped, like the other topic rows.
+        apply_parent_row(&store, "peer", 2, ROW_TYPE_TOPIC_PAGE_SNAPSHOT, b"not json").unwrap();
+        let wrong = serde_json::to_vec(&serde_json::json!({ "topic_key": "x" })).unwrap();
+        apply_parent_row(&store, "peer", 3, ROW_TYPE_TOPIC_PAGE_SNAPSHOT, &wrong).unwrap();
+        assert!(store.topic_page_snapshot("x").unwrap().is_none());
+        assert_eq!(store.topic_page_snapshots().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn snapshot_identity_is_tagged() {
+        let op = memory::ClaimedOutboxOperation {
+            row_type: ROW_TYPE_TOPIC_PAGE_SNAPSHOT.to_string(),
+            aggregate_id: "maximus".to_string(),
+            operation_id: "op".to_string(),
+            device_id: "device-a".to_string(),
+            local_seq: 1,
+            aggregate_type: ROW_TYPE_TOPIC_PAGE_SNAPSHOT.to_string(),
+            operation_kind: memory::OutboxOperationKind::Upsert,
+            payload_json: "{}".to_string(),
+            connector: memory::OUTBOX_CONNECTOR.to_string(),
+            attempts: 0,
+        };
+        assert_eq!(
+            outbox_entity_identity(&op).as_deref(),
+            Some("topic_page_snapshot:maximus")
+        );
+    }
+
+    #[tokio::test]
     async fn push_content_marker_is_idempotent_across_multiple_rounds() {
         let dir = tempfile::tempdir().unwrap();
         let conn = local_connection(&dir.path().join("shared.db")).await;
@@ -5420,6 +5495,18 @@ pub(crate) mod tests {
             .is_some()
     }
 
+    /// Applied captures whose text is exactly `text`. `search_keyword` matches ANY word
+    /// of the query (#622), so its bare result count also counts every row that shares
+    /// one word ("peer captured text 1" for "peer captured text 503").
+    fn captures_with_text(store: &Store, text: &str) -> usize {
+        store
+            .search_keyword(text, 1000)
+            .unwrap()
+            .iter()
+            .filter(|item| item.text == text)
+            .count()
+    }
+
     #[tokio::test]
     async fn a_peer_with_no_round_budget_left_fetches_one_row() {
         let dir = tempfile::tempdir().unwrap();
@@ -5574,25 +5661,10 @@ pub(crate) mod tests {
             applied(&store, 4, ROW_TYPE_ITEMS),
             "items capture inside the window"
         );
-        assert!(store
-            .search_keyword("legacy old capture", 10)
-            .unwrap()
-            .is_empty());
-        assert!(store
-            .search_keyword("items old capture", 10)
-            .unwrap()
-            .is_empty());
-        assert_eq!(
-            store
-                .search_keyword("legacy new capture", 10)
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            store.search_keyword("items new capture", 10).unwrap().len(),
-            1
-        );
+        assert_eq!(captures_with_text(&store, "legacy old capture"), 0);
+        assert_eq!(captures_with_text(&store, "items old capture"), 0);
+        assert_eq!(captures_with_text(&store, "legacy new capture"), 1);
+        assert_eq!(captures_with_text(&store, "items new capture"), 1);
         assert_eq!(
             store.get_sync_cursor("dev-a").unwrap(),
             4,

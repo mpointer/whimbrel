@@ -764,6 +764,10 @@ mod tests {
         f.set_topic_sort_started(true);
         f.set_topic_steps_enabled(true);
         f.set_topic_steps_started(true);
+        f.set_vault_enabled(true);
+        f.set_vault_path("C:\\Notes");
+        f.set_vault_last_updated(1);
+        f.set_vault_failed(true);
         let local = gather(&f);
         assert_eq!(sorted(local.fields.keys().cloned().collect()), sorted(synced_keys()));
         for local_only in [
@@ -781,6 +785,10 @@ mod tests {
             keys::TOPIC_SORT_STARTED,
             keys::TOPIC_STEPS_ENABLED,
             keys::TOPIC_STEPS_STARTED,
+            keys::VAULT_ENABLED,
+            keys::VAULT_PATH,
+            keys::VAULT_LAST_UPDATED,
+            keys::VAULT_FAILED,
         ] {
             assert!(!local.fields.contains_key(local_only), "{local_only} stays on this PC");
         }

@@ -797,7 +797,7 @@ mod tests {
     }
 
     fn plan(name: &str, billing: bool) -> api::sync_ops::enrollment::AccountPlan {
-        api::sync_ops::enrollment::AccountPlan { plan: name.into(), until: None, interval: None, billing }
+        api::sync_ops::enrollment::AccountPlan { plan: name.into(), until: None, interval: None, billing, renews: None }
     }
 
     #[test]

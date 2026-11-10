@@ -42,5 +42,6 @@ pub mod skin_sync;
 pub mod state;
 pub mod store_actor;
 pub mod syncing;
+pub mod topic_vault;
 pub mod topics;
 pub mod tray;

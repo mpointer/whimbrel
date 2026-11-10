@@ -79,5 +79,10 @@ extension DemoSyncStore: PhoneReadStore {
         guard start >= fromUnixMs, start < untilUnixMs else { return [] }
         return [PhoneCalendarEvent(externalId: "demo-next", source: "google_calendar", title: "Customer call: Acme pricing", startUnixMs: start, attendees: ["Priya Nair", "Sam Rivera", "Ann Lee"])]
     }
+
+    // No demo topic pages yet: the Topics tab shows its empty state.
+    func topicSnapshots() -> [PhoneTopicSnapshot] { [] }
+    func topicSnapshot(key: String) -> PhoneTopicSnapshot? { nil }
+    func meetingId(deviceId: String, sourceMeetingId: Int64) -> Int64? { nil }
 }
 #endif

@@ -373,7 +373,9 @@ impl AppState {
             // The suggestion call holds the store across a model call, so it goes on the slow lane.
             let slow = self.slow_store.as_ref().unwrap_or(store).clone();
             let own_device_id = self.identity.as_ref().map(|i| i.device_id.clone());
-            crate::jobs::start_profile_suggestions(slow, self.settings.clone(), self.secrets.clone(), own_device_id, self.approved_devices());
+            crate::jobs::start_profile_suggestions(slow.clone(), self.settings.clone(), self.secrets.clone(), own_device_id, self.approved_devices());
+            // Topic pages for the phone and the Obsidian vault: the slow lane, as on the Mac.
+            crate::topic_vault::start(slow, self.settings.clone(), self.sync.clone());
         }
     }
 

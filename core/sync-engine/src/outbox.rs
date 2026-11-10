@@ -16,7 +16,7 @@ use sync::GroupKey;
 use crate::content::{
     all_peers_have_marker, all_peers_items_capable, content_row_aad, is_missing_entity_tag_column,
     outbox_entity_identity, tag_for, CompactionBudget, ENTITY_TAG_COLUMN_SEEN, MAX_SKIN_CHUNK_BYTES_PER_PASS,
-    ROW_TYPE_TOPICS_CAPABILITY, ROW_TYPE_TOPIC_PAGE_CAPABILITY,
+    ROW_TYPE_TOPICS_CAPABILITY, ROW_TYPE_TOPIC_PAGE_CAPABILITY, ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY,
 };
 use crate::SyncEngineError;
 
@@ -89,6 +89,9 @@ pub(crate) async fn dispatch_outbox_at(
             memory::OUTBOX_ROW_TYPE_TOPIC_ROLE,
             memory::OUTBOX_ROW_TYPE_TOPIC_NAMES,
         ]);
+    }
+    if !all_peers_have_marker(conn, device_id, ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY).await? {
+        held.push(memory::OUTBOX_ROW_TYPE_TOPIC_PAGE_SNAPSHOT);
     }
     let mut summary = OutboxDispatchSummary::default();
     let mut parent_terminal: HashMap<i64, Option<bool>> = HashMap::new();
@@ -1307,6 +1310,50 @@ mod tests {
             a.self_names().unwrap(),
             vec!["Mike".to_string(), "MP".to_string()]
         );
+    }
+
+    /// Builds that announce `topic_page_capability` still drop snapshot rows, so a snapshot waits
+    /// for `topic_snapshot_capability` from every peer while other topic rows go on.
+    #[tokio::test]
+    async fn snapshot_rows_wait_for_every_peer_marker() {
+        use crate::content::{push_marker, ROW_TYPE_ITEMS_CAPABILITY, ROW_TYPE_TOPICS_CAPABILITY};
+        let (_dir, conn, group_key) = relay_and_store().await;
+        for marker in [
+            ROW_TYPE_ITEMS_CAPABILITY,
+            ROW_TYPE_TOPICS_CAPABILITY,
+            "topic_page_capability",
+        ] {
+            push_marker(&conn, &group_key, "device-old", marker).await.unwrap();
+        }
+        let a = topic_store("device-a");
+        a.create_seed_topic("Maximus", &[], None).unwrap();
+        recent_email(&a, "e1", "Maximus SOW");
+        topic_index(&a);
+        read_steps(&a);
+        a.set_self_names(&["Mike P".into()]).unwrap();
+        a.publish_topic_page_snapshots("device-a", crate::now_unix_ms()).unwrap();
+        assert_eq!(outbox_count(&a, "topic_page_snapshot"), 1);
+        assert!(outbox_count(&a, "topic_step") >= 1);
+
+        let t = t0();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t).await.unwrap();
+        assert_eq!(
+            relay_rows(&conn, "device-a", "topic_page_snapshot").await,
+            0,
+            "held"
+        );
+        assert!(
+            relay_rows(&conn, "device-a", "topic_step").await >= 1,
+            "other topic rows still go"
+        );
+
+        push_marker(&conn, &group_key, "device-old", "topic_snapshot_capability")
+            .await
+            .unwrap();
+        dispatch_outbox_at(&conn, &group_key, &a, "device-a", t + DEFERRED_RECHECK_MS + 1)
+            .await
+            .unwrap();
+        assert_eq!(relay_rows(&conn, "device-a", "topic_page_snapshot").await, 1);
     }
 
     /// Piece-1 builds announce `topics_capability` but drop unknown row types, so step, extraction,

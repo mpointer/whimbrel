@@ -266,6 +266,9 @@ pub struct AccountPlan {
     pub plan: String,
     pub until: Option<i64>,
     pub interval: Option<String>,
+    /// False once a Cloud subscription is cancelled; None from a server that predates it.
+    #[serde(default)]
+    pub renews: Option<bool>,
     pub billing: bool,
 }
 
@@ -595,9 +598,15 @@ mod tests {
     fn billing_routes() {
         let (url, rx) = worker(200, r#"{"plan":"cloud","until":1790000000000,"interval":"year","billing":true}"#);
         let plan = WorkerClient::new(&url).account_plan("id", "pk").unwrap();
-        assert_eq!(plan, AccountPlan { plan: "cloud".into(), until: Some(1790000000000), interval: Some("year".into()), billing: true });
+        assert_eq!(plan, AccountPlan { plan: "cloud".into(), until: Some(1790000000000), interval: Some("year".into()), renews: None, billing: true });
         let req = rx.recv().unwrap();
         assert!(req.starts_with("POST /v1/account/plan "), "{req}");
+
+        // A cancelled plan says it won't renew, and the field survives the trip back to JSON (the Mac reads it there).
+        let (url, _rx) = worker(200, r#"{"plan":"cloud","until":1790000000000,"interval":"month","renews":false,"billing":true}"#);
+        let plan = WorkerClient::new(&url).account_plan("id", "pk").unwrap();
+        assert_eq!(plan.renews, Some(false));
+        assert!(serde_json::to_string(&plan).unwrap().contains(r#""renews":false"#));
 
         let (url, rx) = worker(200, r#"{"url":"https://checkout.example/c"}"#);
         assert_eq!(WorkerClient::new(&url).billing_checkout("id", "pk", "month").unwrap(), "https://checkout.example/c");

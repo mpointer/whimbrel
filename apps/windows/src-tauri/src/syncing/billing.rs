@@ -28,11 +28,14 @@ pub struct PlanView {
     pub interval: Option<String>,
     /// Billing is open: Upgrade and Manage show only when it is.
     pub billing: bool,
+    /// False once a Cloud subscription is cancelled ("Cloud ends …"); None on free, or from an older
+    /// server, which the UI reads as renewing.
+    pub renews: Option<bool>,
 }
 
 impl From<&AccountPlan> for PlanView {
     fn from(p: &AccountPlan) -> Self {
-        PlanView { plan: p.plan.clone(), until_unix_ms: p.until, interval: p.interval.clone(), billing: p.billing }
+        PlanView { plan: p.plan.clone(), until_unix_ms: p.until, interval: p.interval.clone(), billing: p.billing, renews: p.renews }
     }
 }
 
@@ -95,8 +98,11 @@ mod tests {
 
     #[test]
     fn the_view_carries_the_plan() {
-        let p = AccountPlan { plan: "cloud".into(), until: Some(1_790_000_000_000), interval: Some("year".into()), billing: true };
+        let p = AccountPlan { plan: "cloud".into(), until: Some(1_790_000_000_000), interval: Some("year".into()), billing: true, renews: Some(false) };
         assert!(is_cloud(&p));
-        assert_eq!(PlanView::from(&p), PlanView { plan: "cloud".into(), until_unix_ms: Some(1_790_000_000_000), interval: Some("year".into()), billing: true });
+        assert_eq!(
+            PlanView::from(&p),
+            PlanView { plan: "cloud".into(), until_unix_ms: Some(1_790_000_000_000), interval: Some("year".into()), billing: true, renews: Some(false) }
+        );
     }
 }

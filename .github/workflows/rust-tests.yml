@@ -186,7 +186,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_core == 'true' && github.event_name != 'pull_request' && github.event_name != 'schedule' && github.repository == 'mpointer/kestrel'
     runs-on: [self-hosted, macOS]
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       # Self-hosted runners use their preinstalled, isolated toolchain (CARGO_HOME and

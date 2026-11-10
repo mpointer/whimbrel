@@ -21,6 +21,7 @@ export class FakeSqlExecutor implements SqlExecutor {
       plan?: "free" | "cloud";
       planUntilUnixMs?: number | null;
       planInterval?: "month" | "year" | null;
+      planRenews?: boolean;
       stripeCustomerId?: string | null;
       stripeSubscriptionId?: string | null;
     }
@@ -44,6 +45,7 @@ export class FakeSqlExecutor implements SqlExecutor {
       plan: "free" | "cloud";
       planUntilUnixMs: number | null;
       planInterval?: "month" | "year" | null;
+      planRenews?: boolean;
       stripeCustomerId?: string | null;
       stripeSubscriptionId?: string | null;
     },
@@ -55,6 +57,7 @@ export class FakeSqlExecutor implements SqlExecutor {
       plan: p.plan,
       planUntilUnixMs: p.planUntilUnixMs,
       planInterval: p.planInterval ?? null,
+      ...(p.planRenews === undefined ? {} : { planRenews: p.planRenews }),
       stripeCustomerId: p.stripeCustomerId ?? null,
       stripeSubscriptionId: p.stripeSubscriptionId ?? null,
     });
@@ -105,6 +108,7 @@ export class FakeSqlExecutor implements SqlExecutor {
       plan?: "free" | "cloud";
       planUntilUnixMs?: number | null;
       planInterval?: "month" | "year" | null;
+      planRenews?: boolean;
       stripeCustomerId?: string | null;
       stripeSubscriptionId?: string | null;
     }) => ({
@@ -119,9 +123,10 @@ export class FakeSqlExecutor implements SqlExecutor {
       plan_interval: a.planInterval ?? null,
       stripe_customer_id: a.stripeCustomerId ?? null,
       stripe_subscription_id: a.stripeSubscriptionId ?? null,
+      plan_renews: a.planRenews === false ? 0 : 1,
     });
 
-    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id FROM account WHERE google_sub = ?") {
+    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews FROM account WHERE google_sub = ?") {
       const [googleSub] = params as [string];
       const found = [...this.accounts.values()].find((a) => a.googleSub === googleSub);
       return found ? [accountRow(found)] : [];
@@ -365,19 +370,19 @@ export class FakeSqlExecutor implements SqlExecutor {
       this.accounts.set(id, { ...a, stripeCustomerId: customerId });
       return [{ id }];
     }
-    const applyPlanSet = "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, stripe_subscription_id = ?";
+    const applyPlanSet = "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, plan_renews = ?, stripe_subscription_id = ?";
     if (q === `${applyPlanSet}, warned_at_unix_ms = NULL WHERE id = ? AND deleting_since_unix_ms IS NULL RETURNING id`) {
-      const [plan, planUntilUnixMs, planInterval, stripeSubscriptionId, id] = params as ["cloud", number, "month" | "year" | null, string, string];
+      const [plan, planUntilUnixMs, planInterval, renews, stripeSubscriptionId, id] = params as ["cloud", number, "month" | "year" | null, number, string, string];
       const a = this.accounts.get(id);
       if (!a || a.deletingSinceUnixMs != null) return [];
-      this.accounts.set(id, { ...a, plan, planUntilUnixMs, planInterval, stripeSubscriptionId, warnedAtUnixMs: null });
+      this.accounts.set(id, { ...a, plan, planUntilUnixMs, planInterval, planRenews: renews !== 0, stripeSubscriptionId, warnedAtUnixMs: null });
       return [{ id }];
     }
     if (q === `${applyPlanSet} WHERE id = ? AND stripe_subscription_id = ? AND deleting_since_unix_ms IS NULL RETURNING id`) {
-      const [plan, planUntilUnixMs, planInterval, stripeSubscriptionId, id, current] = params as ["free", number, null, string, string, string];
+      const [plan, planUntilUnixMs, planInterval, renews, stripeSubscriptionId, id, current] = params as ["free", number, null, number, string, string, string];
       const a = this.accounts.get(id);
       if (!a || a.deletingSinceUnixMs != null || a.stripeSubscriptionId !== current) return [];
-      this.accounts.set(id, { ...a, plan, planUntilUnixMs, planInterval, stripeSubscriptionId });
+      this.accounts.set(id, { ...a, plan, planUntilUnixMs, planInterval, planRenews: renews !== 0, stripeSubscriptionId });
       return [{ id }];
     }
     if (q === "SELECT 1 FROM stripe_event WHERE id = ?") {
@@ -390,7 +395,7 @@ export class FakeSqlExecutor implements SqlExecutor {
     // ---- account deletion and the inactivity cron ----
     const resetting = (accountId: string) =>
       [...this.devices.values()].some((d) => d.account_id === accountId && d.status === "resetting");
-    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id FROM account WHERE id = ?") {
+    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews FROM account WHERE id = ?") {
       const a = this.accounts.get(params[0] as string);
       return a ? [accountRow(a)] : [];
     }
@@ -469,7 +474,7 @@ export class FakeSqlExecutor implements SqlExecutor {
     }
     if (
       q ===
-      "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id FROM account WHERE warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms)"
+      "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews FROM account WHERE warned_at_unix_ms < ? AND last_seen_unix_ms < warned_at_unix_ms AND (plan_until_unix_ms IS NULL OR plan_until_unix_ms < warned_at_unix_ms)"
     ) {
       return [...this.accounts.values()]
         .filter(
@@ -517,14 +522,14 @@ export class FakeSqlExecutor implements SqlExecutor {
       a.deletingSinceUnixMs = at;
       return [{ id }];
     }
-    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id FROM account WHERE deleting_since_unix_ms < ?") {
+    if (q === "SELECT id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews FROM account WHERE deleting_since_unix_ms < ?") {
       return [...this.accounts.values()]
         .filter((a) => a.deletingSinceUnixMs != null && a.deletingSinceUnixMs < (params[0] as number))
         .map(accountRow);
     }
     if (q === "UPDATE account SET plan = 'free', stripe_subscription_id = NULL WHERE id = ?") {
       const a = this.accounts.get(params[0] as string);
-      if (a) this.accounts.set(a.id, { ...a, plan: "free", stripeSubscriptionId: null });
+      if (a) this.accounts.set(a.id, { ...a, plan: "free", stripeSubscriptionId: null, planRenews: true });
       return [];
     }
     if (q === "SELECT 1 FROM account WHERE data_db_name = ?") {

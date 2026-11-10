@@ -7,6 +7,8 @@ final class TodayModel: ObservableObject {
     @Published private(set) var upNext: PhoneCalendarEvent?
     @Published private(set) var prep: PhoneMeetingPrep?
     @Published private(set) var recent: [PhoneMeeting] = []
+    /// The topic each recent meeting belongs to, by this replica's meeting id.
+    @Published private(set) var topicChips: [Int64: PhoneTopicChip] = [:]
     /// False until the first read finished, so the view can tell "loading" from "nothing".
     @Published private(set) var loaded = false
 
@@ -15,6 +17,7 @@ final class TodayModel: ObservableObject {
         let event: PhoneCalendarEvent?
         let prep: PhoneMeetingPrep?
         let meetings: [PhoneMeeting]
+        let chips: [Int64: PhoneTopicChip]
     }
 
     /// The newest successful Daily Brief run dated today, from any device.
@@ -45,7 +48,8 @@ final class TodayModel: ObservableObject {
                 runs: store.routineRuns(limit: 50),
                 event: event,
                 prep: event.flatMap { Self.prep(for: $0, in: store) },
-                meetings: store.recentMeetings(limit: 10)
+                meetings: store.recentMeetings(limit: 10),
+                chips: TopicsModel.chipsByMeeting(store.topicSnapshots(), in: store)
             )
         }
         if let snapshot {
@@ -53,8 +57,9 @@ final class TodayModel: ObservableObject {
             upNext = snapshot.event
             prep = snapshot.prep
             recent = snapshot.meetings
+            topicChips = snapshot.chips
         } else {
-            brief = nil; upNext = nil; prep = nil; recent = []
+            brief = nil; upNext = nil; prep = nil; recent = []; topicChips = [:]
         }
         loaded = true
     }

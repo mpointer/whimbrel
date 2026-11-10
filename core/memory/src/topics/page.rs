@@ -54,9 +54,11 @@ pub struct StepView {
     pub confirmed: bool,
     pub note: Option<String>,
     pub closed_by: Option<String>,
+    /// When the step row last changed (for a done step, about when it was done).
+    pub updated_at_unix_ms: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SummaryLead {
     Date {
@@ -69,7 +71,7 @@ pub enum SummaryLead {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NextMeeting {
     pub title: String,
     pub start_unix_ms: i64,
@@ -80,7 +82,7 @@ pub struct NextMeeting {
     pub me: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoleView {
     pub text: String,
     pub edited: bool,
@@ -217,7 +219,8 @@ fn keys_json(keys: &[String]) -> String {
 fn steps(conn: &Connection, keys: &[String]) -> rusqlite::Result<Vec<StepView>> {
     let mut stmt = conn.prepare(
         "SELECT st.key, st.text, st.direction, st.source_kind, st.source_title, st.asked_at_unix_ms, \
-           st.due_date, st.status, st.confirmed, st.note, st.closed_by, st.source_id, s.kind, s.ref_id, s.stub \
+           st.due_date, st.status, st.confirmed, st.note, st.closed_by, st.source_id, s.kind, s.ref_id, s.stub, \
+           st.updated_at_unix_ms \
          FROM topic_step st LEFT JOIN topic_source s ON s.id = st.source_id \
          WHERE st.topic_key IN (SELECT value FROM json_each(?1)) \
            AND st.direction != 'none' AND st.status != 'dismissed' \
@@ -242,6 +245,7 @@ fn steps(conn: &Connection, keys: &[String]) -> rusqlite::Result<Vec<StepView>> 
                     confirmed: r.get(8)?,
                     note: r.get(9)?,
                     closed_by: r.get(10)?,
+                    updated_at_unix_ms: r.get(15)?,
                 },
                 (r.get(11)?, r.get(12)?, r.get(13)?, r.get(14)?),
             ))

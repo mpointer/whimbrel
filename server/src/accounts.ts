@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS account (
   plan_until_unix_ms INTEGER,
   plan_interval TEXT,
   stripe_customer_id TEXT,
-  stripe_subscription_id TEXT
+  stripe_subscription_id TEXT,
+  plan_renews INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS stripe_event (
@@ -101,13 +102,15 @@ export interface AccountRecord {
   planInterval: "month" | "year" | null;
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
+  /** False once a Cloud subscription is cancelled: it ends at planUntilUnixMs. */
+  planRenews: boolean;
 }
 
 /** Thrown when a route touches an account that is claimed for deletion. */
 export class AccountDeletingError extends Error {}
 
 export const ACCOUNT_COLUMNS =
-  "id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id";
+  "id, email, google_sub, data_db_name, data_db_url, deleting_since_unix_ms, plan, plan_until_unix_ms, plan_interval, stripe_customer_id, stripe_subscription_id, plan_renews";
 
 /** "resetting" is a pending swap device partway through a fresh-start
  * reset: it is treated like "pending" everywhere until the reset finishes. */
@@ -333,15 +336,15 @@ export async function setStripeCustomer(db: SqlExecutor, accountId: string, cust
  * is on, so a late event for an old subscription never ends a newer one.
  * Nothing is written to an account claimed for deletion. */
 export async function applyPlan(db: SqlExecutor, accountId: string, subscriptionId: string, state: PlanState): Promise<boolean> {
-  const set = [state.plan, state.untilUnixMs, state.interval, subscriptionId];
+  const set = [state.plan, state.untilUnixMs, state.interval, state.renews ? 1 : 0, subscriptionId];
   const rows =
     state.plan === "cloud"
       ? await db.execute(
-          "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, stripe_subscription_id = ?, warned_at_unix_ms = NULL WHERE id = ? AND deleting_since_unix_ms IS NULL RETURNING id",
+          "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, plan_renews = ?, stripe_subscription_id = ?, warned_at_unix_ms = NULL WHERE id = ? AND deleting_since_unix_ms IS NULL RETURNING id",
           [...set, accountId],
         )
       : await db.execute(
-          "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, stripe_subscription_id = ? WHERE id = ? AND stripe_subscription_id = ? AND deleting_since_unix_ms IS NULL RETURNING id",
+          "UPDATE account SET plan = ?, plan_until_unix_ms = ?, plan_interval = ?, plan_renews = ?, stripe_subscription_id = ? WHERE id = ? AND stripe_subscription_id = ? AND deleting_since_unix_ms IS NULL RETURNING id",
           [...set, accountId, subscriptionId],
         );
   return rows.length === 1;
@@ -674,6 +677,7 @@ function rowToAccount(row: SqlRow): AccountRecord {
     planInterval: row.plan_interval === "month" || row.plan_interval === "year" ? row.plan_interval : null,
     stripeCustomerId: row.stripe_customer_id == null ? null : (row.stripe_customer_id as string),
     stripeSubscriptionId: row.stripe_subscription_id == null ? null : (row.stripe_subscription_id as string),
+    planRenews: row.plan_renews == null ? true : Number(row.plan_renews) !== 0,
   };
 }
 

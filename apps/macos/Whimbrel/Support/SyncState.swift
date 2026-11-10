@@ -57,6 +57,8 @@ final class SyncState: ObservableObject {
     /// re-sending a key to one peer doesn't blow away an otherwise-healthy
     /// `.ready` state and its device list.
     @Published private(set) var actionError: String?
+    /// Why Upgrade or Manage subscription didn't open Stripe; shown under those buttons.
+    @Published private(set) var billingError: String?
     /// The account's plan (`POST /v1/account/plan`); nil until the first read succeeds, and
     /// kept as it was when a later read fails.
     @Published private(set) var plan: AccountPlan?
@@ -745,7 +747,7 @@ final class SyncState: ObservableObject {
 
     private func openBilling(_ fetchURL: (SyncBilling, String, String) async throws -> URL) async {
         guard let signIn, let billing else { return }
-        actionError = nil
+        billingError = nil
         do {
             let devicePublicKeyBase64 = try loadOrThrowDevicePublicKey()
             let idToken = try await signIn.validIdToken()
@@ -759,11 +761,11 @@ final class SyncState: ObservableObject {
             // server's, which moves or hides the buttons.
             await refreshPlan()
         } catch SyncAPIError.httpError(502, _) {
-            actionError = String(localized: "Couldn't reach Stripe. Try again in a minute.")
+            billingError = String(localized: "Couldn't reach Stripe. Try again in a minute.")
         } catch SyncAPIError.httpError(429, _) {
-            actionError = String(localized: "Too many tries. Try again in a few minutes.")
+            billingError = String(localized: "Too many tries. Try again in a few minutes.")
         } catch {
-            actionError = userMessage(for: error)
+            billingError = userMessage(for: error)
         }
     }
 

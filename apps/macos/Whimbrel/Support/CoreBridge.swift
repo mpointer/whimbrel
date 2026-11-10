@@ -819,6 +819,20 @@ struct CoreExportAllReport: Codable, Equatable {
     let topicsWritten: Int
 }
 
+/// A failed `whimbrel_vault_update`: `message` is core's raw error text, for the log.
+struct CoreVaultError: Error, Equatable {
+    let message: String
+}
+
+/// The `report` of `whimbrel_vault_update` (core/api::topics_export::VaultReport).
+struct CoreVaultReport: Decodable, Equatable {
+    let written: Int
+    let unchanged: Int
+    let archived: Int
+    let deleted: Int
+    let skipped: Int
+}
+
 /// JSON shape matching `whimbrel_usage_totals` (core/api::usage::UsageTotals): spend in
 /// cents for the windows the Model usage screen shows, UTC days.
 struct CoreUsageTotals: Codable, Equatable {
@@ -1870,6 +1884,27 @@ final class CoreMemoryStore {
         apiKey.withCString { keyPtr in
             whimbrel_threads_run_priority_batch(handle, keyPtr, UInt64(maxJobs))
         }
+    }
+
+    /// Publishes this device's topic pages for the phone. Returns the count published; 0 is
+    /// normal until the store has its own device id, and -1 is an error.
+    func publishTopicSnapshots(builtBy: String) -> Int {
+        Int(builtBy.withCString { whimbrel_topics_publish_snapshots(handle, $0) })
+    }
+
+    /// Brings the Obsidian vault under `root` up to date. The failure is the raw message
+    /// from core (or a short note when core gave nothing); callers log it and show their own text.
+    func updateVault(root: URL) -> Result<CoreVaultReport, CoreVaultError> {
+        guard let json = root.path.withCString({ whimbrel_vault_update(handle, $0) }) else {
+            return .failure(.init(message: "no reply from core"))
+        }
+        defer { whimbrel_core_free_string(json) }
+        struct Reply: Decodable { let ok: Bool; let report: CoreVaultReport?; let error: String? }
+        guard let reply = try? JSONDecoder().decode(Reply.self, from: Data(String(cString: json).utf8)) else {
+            return .failure(.init(message: "unreadable reply from core"))
+        }
+        if reply.ok, let report = reply.report { return .success(report) }
+        return .failure(.init(message: reply.error ?? "unknown error"))
     }
 
     /// Indexes and clusters one batch of topic sources. 1 = more work, 0 = idle, -1 = error.

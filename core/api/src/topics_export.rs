@@ -13,8 +13,9 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use memory::topics::page::{StepView, SummaryLead, TopicPage};
 use memory::topics::read::{TopicDetail, TopicEntityMention, TopicMember};
-use memory::Store;
+use memory::{Meeting, Store};
 use serde::{Deserialize, Serialize};
 
 use crate::envelope::{ApiError, ApiResult};
@@ -27,6 +28,17 @@ const TOPIC_LIMIT: usize = 1_000_000;
 const MAX_TEXT_CHARS: usize = 300;
 /// Same for a topic's status line.
 const MAX_STATUS_CHARS: usize = 200;
+/// Meeting summary and notes text: each line is capped at this many chars, and at most
+/// `MAX_BLOCK_LINES` lines are kept.
+const MAX_BLOCK_LINE_CHARS: usize = 2_000;
+const MAX_BLOCK_LINES: usize = 2_000;
+/// "Done recently" on a topic file: steps done in the last 30 days.
+const DONE_RECENT_DAYS: i64 = 30;
+/// A meeting file's generated body stays well under `MAX_SCAN_BYTES`, or the next scan would
+/// skip the file and write a second copy.
+const MAX_MEETING_BODY_BYTES: usize = 1024 * 1024;
+const TRUNCATED: &str = "_Truncated. See the full meeting in Whimbrel._";
+const DAY_MS: i64 = 86_400_000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportReport {
@@ -43,6 +55,7 @@ enum Owner {
     Topic(i64),
     Person(i64),
     Org(i64),
+    Meeting(i64),
 }
 
 impl Owner {
@@ -51,6 +64,7 @@ impl Owner {
             Owner::Topic(i) => format!("topic-{i}"),
             Owner::Person(i) => format!("person-{i}"),
             Owner::Org(i) => format!("org-{i}"),
+            Owner::Meeting(i) => format!("meeting-{i}"),
         }
     }
 
@@ -61,6 +75,7 @@ impl Owner {
             "topic" => Some(Owner::Topic(n)),
             "person" => Some(Owner::Person(n)),
             "org" => Some(Owner::Org(n)),
+            "meeting" => Some(Owner::Meeting(n)),
             _ => None,
         }
     }
@@ -70,6 +85,7 @@ impl Owner {
             Owner::Topic(_) => "Topics",
             Owner::Person(_) => "People",
             Owner::Org(_) => "Organizations",
+            Owner::Meeting(_) => "Meetings",
         }
     }
 }
@@ -102,7 +118,12 @@ fn clean(s: &str) -> String {
 /// Untrusted text for Markdown body lines: cannot form links, wikilinks, headings, HTML or
 /// table cells, and is always a single line. Capped at `MAX_TEXT_CHARS` before escaping.
 fn md_text(s: &str) -> String {
-    let cleaned = clean(&cap(s, MAX_TEXT_CHARS));
+    md_text_capped(s, MAX_TEXT_CHARS)
+}
+
+/// [`md_text`] with its own cap.
+fn md_text_capped(s: &str, n: usize) -> String {
+    let cleaned = clean(&cap(s, n));
     let chars: Vec<char> = cleaned.chars().collect();
     let mut out = String::new();
     for (i, &c) in chars.iter().enumerate() {
@@ -122,12 +143,26 @@ fn md_text(s: &str) -> String {
 /// [`md_text`] for a line that stands alone: its first character must not open a list item,
 /// rule or similar.
 fn md_line(s: &str) -> String {
-    let t = md_text(&cap(s, MAX_STATUS_CHARS));
+    no_block_start(md_text(&cap(s, MAX_STATUS_CHARS)))
+}
+
+/// Escapes a first character that would open a list item, rule or similar.
+fn no_block_start(t: String) -> String {
     if t.starts_with(['-', '+', '~']) {
         format!("\\{t}")
     } else {
         t
     }
+}
+
+/// Untrusted multi-line text (meeting summary, notes): each line is escaped as [`md_line`]
+/// with a longer cap, so no line can become a heading, rule, link or `## My notes`.
+fn md_block(s: &str) -> String {
+    s.lines()
+        .take(MAX_BLOCK_LINES)
+        .map(|l| no_block_start(md_text_capped(l, MAX_BLOCK_LINE_CHARS)))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn cap(s: &str, n: usize) -> String {
@@ -517,7 +552,20 @@ fn head(
         extra,
         md_text(title)
     );
+    // A leading section with an empty heading (the topic's summary line) comes first, right
+    // under the title, then the status line as a paragraph of its own.
+    let (lead, sections) = match sections.split_first() {
+        Some((("", lines), rest)) => (lines.as_slice(), rest),
+        _ => (&[][..], sections),
+    };
+    for l in lead {
+        s.push_str(l);
+        s.push('\n');
+    }
     if let Some(st) = status.map(md_line).filter(|t| !t.is_empty()) {
+        if !lead.is_empty() {
+            s.push('\n');
+        }
         s.push_str(&st);
         s.push('\n');
     }
@@ -534,6 +582,8 @@ fn head(
 struct TopicData {
     detail: TopicDetail,
     mentions: Vec<TopicEntityMention>,
+    /// `Some` for a named (seed) topic: the topic page's sections.
+    page: Option<TopicPage>,
 }
 
 struct Entity {
@@ -546,14 +596,21 @@ struct Entity {
 /// `## My notes`: the generated sections may name content the user deleted, so they go.
 /// `strip_notes` empties the notes too (merge: notes moved). A file with no `## My notes`
 /// line keeps its body, since its notes can't be told apart from generated text.
-fn archive_file(wh: &Path, ex: &Existing, strip_notes: bool, now_ms: i64) -> io::Result<()> {
+fn archive_file(
+    wh: &Path,
+    owner: Owner,
+    ex: &Existing,
+    strip_notes: bool,
+    now_ms: i64,
+) -> io::Result<()> {
     let dir = wh.join("Archive");
     ensure_dir(&dir)?;
     let (fm, rest) = ex.text.split_at(ex.fm_end);
-    let note = format!(
-        "> Archived {}: this topic no longer exists in Whimbrel.\n",
-        iso_date(now_ms)
-    );
+    let what = match owner {
+        Owner::Meeting(_) => "this meeting is no longer in a topic",
+        _ => "this topic no longer exists",
+    };
+    let note = format!("> Archived {}: {what} in Whimbrel.\n", iso_date(now_ms));
     let text = match ex.notes() {
         Some(notes) => {
             let heading = rest
@@ -590,7 +647,7 @@ fn resolve_whimbrel(root: &Path) -> io::Result<PathBuf> {
     for e in fs::read_dir(&target)? {
         let name = e?.file_name();
         let name = name.to_string_lossy();
-        let ours = ["People", "Organizations", "Topics", "Archive"].contains(&&*name);
+        let ours = ["People", "Organizations", "Topics", "Meetings", "Archive"].contains(&&*name);
         if !name.starts_with('.') && !ours {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -606,15 +663,168 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
     fs::create_dir_all(root).map_err(ioe)?;
     let wh = resolve_whimbrel(root).map_err(ioe)?;
     ensure_dir(&wh).map_err(ioe)?;
+    write_owners(store, &wh, link_base, false, now_ms)
+}
+
+/// Brings the living vault at `root/Whimbrel/` up to date: the same files and rules as
+/// [`export`]. `root` (the folder the user picked) must already exist; it is never created.
+pub fn update_vault(store: &Store, root: &Path, now_ms: i64) -> ApiResult<ExportReport> {
+    if !fs::metadata(root).map_err(ioe)?.is_dir() {
+        return Err(ApiError::ProviderFailure);
+    }
+    let wh = resolve_whimbrel(root).map_err(ioe)?;
+    ensure_dir(&wh).map_err(ioe)?;
+    write_owners(store, &wh, "", true, now_ms)
+}
+
+/// "SOW due 2026-11-14 · next call 2026-11-18 10:00": the topic page's lead and next meeting.
+fn summary_line(page: &TopicPage) -> Option<String> {
+    let mut parts = vec![];
+    match &page.lead {
+        Some(SummaryLead::Date { label, date }) => {
+            parts.push(format!("{} {}", md_text(label), md_text(date)))
+        }
+        Some(SummaryLead::Step { text, due_date }) => parts.push(match due_date {
+            Some(d) => format!("{} due {}", md_text(text), md_text(d)),
+            None => md_text(text),
+        }),
+        None => {}
+    }
+    if let Some(n) = &page.next_meeting {
+        parts.push(format!("next call {}", local_time(n.start_unix_ms)));
+    }
+    let line = parts.join(" · ");
+    (!line.trim().is_empty()).then(|| no_block_start(line))
+}
+
+/// Local date and time, as the topic page shows a meeting's start.
+fn local_time(ms: i64) -> String {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_millis_opt(ms)
+        .single()
+        .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| iso_date(ms))
+}
+
+/// One step line: its text, its source (a wikilink to the meeting file when a meeting with a
+/// file is the source) and its due date.
+fn step_line(s: &StepView, stems: &HashMap<Owner, String>) -> String {
+    let meeting = s
+        .open
+        .as_ref()
+        .filter(|o| o.window == "meeting-detail")
+        .and_then(|o| stems.get(&Owner::Meeting(o.id)));
+    let mut line = format!("- {}", no_block_start(md_text(&s.text)));
+    match meeting {
+        Some(stem) => line.push_str(&format!(" · [[{stem}]]")),
+        None => {
+            let kind = md_text(&capitalize(&s.source_kind));
+            let title = md_text(&s.source_title);
+            match (kind.is_empty(), title.is_empty()) {
+                (_, true) if !kind.is_empty() => line.push_str(&format!(" · {kind}")),
+                (false, false) => line.push_str(&format!(" · {kind}: {title}")),
+                (true, false) => line.push_str(&format!(" · {title}")),
+                _ => {}
+            }
+        }
+    }
+    if let Some(d) = s.due_date.as_deref().map(md_text).filter(|d| !d.is_empty()) {
+        line.push_str(&format!(" · due {d}"));
+    }
+    line
+}
+
+/// The topic page's sections, in its order, ahead of Members/People/Organizations.
+fn page_sections(
+    page: &TopicPage,
+    stems: &HashMap<Owner, String>,
+    now_ms: i64,
+) -> Vec<(&'static str, Vec<String>)> {
+    let steps = |v: &[StepView]| -> Vec<String> { v.iter().map(|s| step_line(s, stems)).collect() };
+    let role = no_block_start(md_text(&page.role.text));
+    let next: Vec<String> = page
+        .next_meeting
+        .iter()
+        .flat_map(|n| {
+            let mut v = vec![format!(
+                "- {} · {}",
+                local_time(n.start_unix_ms),
+                md_text(&n.title)
+            )];
+            let mut who: Vec<String> = n
+                .attendees_by_org
+                .iter()
+                .map(|(d, c)| format!("{c} {}", md_text(d)))
+                .collect();
+            if n.me > 0 {
+                who.push(format!("{} you", n.me));
+            }
+            if !who.is_empty() {
+                v.push(format!("- {}", who.join(" · ")));
+            }
+            v
+        })
+        .collect();
+    // A done step's row last changed when it was done.
+    let since = now_ms - DONE_RECENT_DAYS * DAY_MS;
+    let done: Vec<StepView> = page
+        .done
+        .iter()
+        .filter(|s| s.updated_at_unix_ms >= since)
+        .cloned()
+        .collect();
+    vec![
+        ("", summary_line(page).into_iter().collect()),
+        (
+            "Your role",
+            if role.is_empty() { vec![] } else { vec![role] },
+        ),
+        ("Next meeting", next),
+        ("You owe", steps(&page.you_owe)),
+        ("Owed to you", steps(&page.owed_to_you)),
+        ("Done recently", steps(&done)),
+    ]
+}
+
+/// `vault`: the living vault, where a vanished owner's file is always archived (never
+/// deleted) so wikilinks to it keep resolving.
+fn write_owners(
+    store: &Store,
+    wh: &Path,
+    link_base: &str,
+    vault: bool,
+    now_ms: i64,
+) -> ApiResult<ExportReport> {
+    let wh = wh.to_path_buf();
     let mut report = ExportReport::default();
 
     // Live owners.
     let mut topics: BTreeMap<i64, TopicData> = BTreeMap::new();
     let mut entities: BTreeMap<i64, Entity> = BTreeMap::new();
+    let mut meetings: BTreeMap<i64, Meeting> = BTreeMap::new();
     for t in store.list_topics(false, TOPIC_LIMIT).map_err(db)? {
         let Some(detail) = store.topic_detail(t.id).map_err(db)? else {
             continue;
         };
+        let page = store
+            .topic_page(t.id, now_ms)
+            .map_err(db)?
+            .filter(|p| p.topic.topic_id == t.id);
+        // Meeting files: only for the meetings of a named topic.
+        if page.is_some() {
+            for m in detail.members.iter().filter(|m| m.origin != "removed") {
+                let Some(o) = m.open.as_ref().filter(|o| o.window == "meeting-detail") else {
+                    continue;
+                };
+                if meetings.contains_key(&o.id) {
+                    continue;
+                }
+                if let Some(mt) = store.get_meeting(o.id).map_err(db)? {
+                    meetings.insert(o.id, mt);
+                }
+            }
+        }
         let mentions = store.topic_entity_mentions(t.id).map_err(db)?;
         for m in &mentions {
             let e = entities.entry(m.entity_id).or_insert_with(|| Entity {
@@ -626,7 +836,14 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
                 e.topics.push(t.id);
             }
         }
-        topics.insert(t.id, TopicData { detail, mentions });
+        topics.insert(
+            t.id,
+            TopicData {
+                detail,
+                mentions,
+                page,
+            },
+        );
     }
     let owner_of = |id: i64, e: &Entity| {
         if e.org {
@@ -637,6 +854,7 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
     };
     let mut live: Vec<Owner> = topics.keys().map(|&i| Owner::Topic(i)).collect();
     live.extend(entities.iter().map(|(&i, e)| owner_of(i, e)));
+    live.extend(meetings.keys().map(|&i| Owner::Meeting(i)));
     let live_set: HashSet<Owner> = live.iter().copied().collect();
 
     // Existing files and stems.
@@ -655,6 +873,10 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
         let name = match o {
             Owner::Topic(i) => topics[&i].detail.summary.name.clone(),
             Owner::Person(i) | Owner::Org(i) => entities[&i].display.clone(),
+            Owner::Meeting(i) => {
+                let m = &meetings[&i];
+                format!("{} {}", iso_date(m.start_unix_ms), m.title)
+            }
         };
         let dir = wh.join(o.folder());
         let stem = unique_stem(&file_stem(&name), &mut used, &dir);
@@ -669,7 +891,7 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
         .collect();
     vanished.sort_by_key(|(_, ex)| ex.path.clone());
     let mut appended: HashMap<Owner, Vec<String>> = HashMap::new();
-    let mut to_archive: Vec<(&Existing, bool)> = vec![];
+    let mut to_archive: Vec<(Owner, &Existing, bool)> = vec![];
     let mut to_delete: Vec<&Existing> = vec![];
     for (&o, ex) in vanished {
         let survivor = match o {
@@ -684,8 +906,9 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
         };
         let notes = ex.notes();
         match (survivor, notes) {
-            // Nothing of the user's to keep (merged or not): delete (spec §7.3).
-            (_, Some(n)) if n.trim().is_empty() => to_delete.push(ex),
+            // Nothing of the user's to keep (merged or not): delete (spec §7.3), except in
+            // the living vault, which archives.
+            (_, Some(n)) if n.trim().is_empty() && !vault => to_delete.push(ex),
             (Some(s), Some(n)) => {
                 if !n.trim().is_empty() {
                     let name = ex.title().map(clean).unwrap_or_else(|| o.tag());
@@ -695,9 +918,9 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
                         .or_default()
                         .push(format!("> From merged topic \"{name}\":\n{n}{nl}"));
                 }
-                to_archive.push((ex, true));
+                to_archive.push((o, ex, true));
             }
-            _ => to_archive.push((ex, false)),
+            _ => to_archive.push((o, ex, false)),
         }
     }
 
@@ -732,9 +955,17 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
                         } else {
                             t
                         };
-                        match rel_link(m) {
-                            Some(u) => line.push_str(&format!("[{t}]({u})")),
-                            None => line.push_str(&t),
+                        let meeting = m
+                            .open
+                            .as_ref()
+                            .filter(|x| x.window == "meeting-detail")
+                            .and_then(|x| stems.get(&Owner::Meeting(x.id)));
+                        // Without a link base (the vault) there is nothing to open in the app:
+                        // a meeting links its file, anything else is plain text.
+                        match (link_base.is_empty(), meeting, rel_link(m)) {
+                            (true, Some(stem), _) => line.push_str(&format!("[[{stem}]]")),
+                            (true, None, _) | (false, _, None) => line.push_str(&t),
+                            (false, _, Some(u)) => line.push_str(&format!("[{t}]({u})")),
                         }
                         let mut with: Vec<i64> = td
                             .mentions
@@ -753,6 +984,11 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
                         line
                     })
                     .collect();
+                let mut sections = td
+                    .page
+                    .as_ref()
+                    .map(|p| page_sections(p, &stems, now_ms))
+                    .unwrap_or_default();
                 let ids = |kind: &str| -> Vec<i64> {
                     let mut v: Vec<i64> = td
                         .mentions
@@ -771,16 +1007,17 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
                     .into_iter()
                     .map(|i| wikilink(Owner::Org(i)))
                     .collect();
+                sections.extend([
+                    ("Members", members),
+                    ("People", people),
+                    ("Organizations", orgs),
+                ]);
                 head(
                     o,
                     &sm.name,
                     sm.last_member_ts_unix_ms,
                     sm.status_line.as_deref(),
-                    &[
-                        ("Members", members),
-                        ("People", people),
-                        ("Organizations", orgs),
-                    ],
+                    &sections,
                     owned.get(&o),
                 )
             }
@@ -804,6 +1041,24 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
                     &[("Topics", list)],
                     owned.get(&o),
                 )
+            }
+            Owner::Meeting(id) => {
+                let m = &meetings[&id];
+                let mut body = head(o, &m.title, m.start_unix_ms, None, &[], owned.get(&o));
+                // No transcript: the vault carries the summary, decisions, action items,
+                // open questions and notes, every line escaped as untrusted text.
+                let mut sections = crate::your_data::meeting_sections(m, &md_block);
+                if sections.len() > MAX_MEETING_BODY_BYTES {
+                    let mut cut = MAX_MEETING_BODY_BYTES;
+                    while !sections.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    let cut = sections[..cut].rfind('\n').map_or(0, |i| i + 1);
+                    sections.truncate(cut);
+                    sections.push_str(&format!("\n{TRUNCATED}\n"));
+                }
+                body.push_str(&sections);
+                body
             }
         };
         let path = &paths[&o];
@@ -855,8 +1110,8 @@ pub fn export(store: &Store, root: &Path, link_base: &str, now_ms: i64) -> ApiRe
         fs::remove_file(&ex.path).map_err(ioe)?;
         report.deleted += 1;
     }
-    for (ex, strip) in to_archive {
-        archive_file(&wh, ex, strip, now_ms).map_err(ioe)?;
+    for (o, ex, strip) in to_archive {
+        archive_file(&wh, o, ex, strip, now_ms).map_err(ioe)?;
         report.archived += 1;
     }
     Ok(report)
@@ -1533,5 +1788,295 @@ mod tests {
         assert!(md_line(&big).chars().count() <= 2 * MAX_STATUS_CHARS);
         assert!(t.elapsed() < std::time::Duration::from_secs(2));
         assert_eq!(md_text("see WWW.x.com"), "see WWW\\.x.com");
+    }
+
+    /// A live seed topic "Pricing" with a meeting member (which has a transcript line) and an
+    /// email member, an upcoming event that names it, and four steps: one you owe from the
+    /// meeting, one owed to you, one done 3 days ago and one done 40 days ago.
+    /// Returns the meeting id.
+    fn living(e: &Env) -> i64 {
+        use memory::{MeetingStatus, MeetingTrigger, NewMeeting, NewTranscriptSegment};
+        let seed = e.store.create_seed_topic("Pricing", &[], None).unwrap();
+        let mid = e
+            .store
+            .insert_meeting(&NewMeeting {
+                device_id: "d".into(),
+                start_unix_ms: NOW - 2 * DAY,
+                end_unix_ms: None,
+                title: "Q3 pricing sync".into(),
+                attendees: vec![],
+                trigger: MeetingTrigger::Calendar,
+                audio_path: None,
+                status: MeetingStatus::Completed,
+            })
+            .unwrap();
+        e.c.execute(
+            "UPDATE meeting SET summary_tldr = 'Prices go up in March.' WHERE id = ?1",
+            [mid],
+        )
+        .unwrap();
+        e.store
+            .insert_transcript_segments(&[NewTranscriptSegment {
+                meeting_id: mid,
+                start_cs: 0,
+                speaker_label: "SPEAKER_00".into(),
+                text: "TRANSCRIPT LINE".into(),
+            }])
+            .unwrap();
+        let mut sids = vec![];
+        for (kind, r, ts, title) in [
+            ("meeting", Some(mid), NOW - 2 * DAY, "Q3 pricing sync"),
+            ("email", None, NOW - DAY, "SOW"),
+        ] {
+            e.c.execute(
+                "INSERT INTO topic_source (kind, ref_id, ts_unix_ms, title, indexed_at_unix_ms) VALUES (?1, ?2, ?3, ?4, 0)",
+                params![kind, r, ts, title],
+            )
+            .unwrap();
+            let sid = e.c.last_insert_rowid();
+            e.c.execute(
+                "INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'seed')",
+                [seed.topic_id, sid],
+            )
+            .unwrap();
+            sids.push(sid);
+        }
+        for (key, kind, title, text, dir, at, status, sid, due) in [
+            ("owe", "meeting", "Q3 pricing sync", "Send the SOW", "mine", NOW - 2 * DAY, "open", sids[0], Some("2099-01-01")),
+            ("owed", "email", "SOW", "Sign the SOW", "owed", NOW - DAY, "open", sids[1], None),
+            ("done", "email", "SOW", "Book the room", "mine", NOW - 3 * DAY, "done", sids[1], None),
+            ("old", "email", "SOW", "Ancient chore", "mine", NOW - 40 * DAY, "done", sids[1], None),
+        ] {
+            e.c.execute(
+                "INSERT INTO topic_step (key, topic_key, source_key, source_kind, source_title, text, direction, \
+                 asked_at_unix_ms, due_date, status, updated_at_unix_ms, source_id) VALUES (?1, ?2, 'x', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?7, ?10)",
+                params![key, seed.key, kind, title, text, dir, at, due, status, sid],
+            )
+            .unwrap();
+        }
+        e.c.execute(
+            "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, external_id) \
+             VALUES ('d', 'calendar_event', 'google_calendar', ?1, '[\"Ann <ann@acme.com>\"]', 'Pricing review', '', 'ev1')",
+            [NOW + DAY],
+        )
+        .unwrap();
+        mid
+    }
+
+    fn meeting_stem() -> String {
+        format!("{} Q3 pricing sync", iso_date(NOW - 2 * DAY))
+    }
+
+    #[test]
+    fn topic_file_has_page_sections_in_order() {
+        let e = env();
+        living(&e);
+        run(&e);
+        let t = read(&e, "Topics/Pricing.md");
+        let order = [
+            "# Pricing",
+            "## Your role",
+            "## Next meeting",
+            "## You owe",
+            "## Owed to you",
+            "## Done recently",
+            "## Members",
+            "## My notes",
+        ];
+        let at: Vec<usize> = order
+            .iter()
+            .map(|h| t.find(&format!("\n{h}\n")).unwrap_or_else(|| panic!("{h} missing in {t}")))
+            .collect();
+        assert!(at.windows(2).all(|w| w[0] < w[1]), "{t}");
+        // The summary line comes first, right under the heading.
+        let after = &t[at[0] + "\n# Pricing\n".len()..];
+        assert!(after.starts_with("Send the SOW due 2099-01-01 · next call "), "{t}");
+        assert!(t.contains("\n## Next meeting\n- ") && t.contains("Pricing review"), "{t}");
+        assert!(t.contains("1 acme.com"), "{t}");
+        assert!(t.contains("\n## Owed to you\n- Sign the SOW · Email: SOW\n"), "{t}");
+        assert!(t.contains("\n## Done recently\n- Book the room · Email: SOW\n## Members\n"), "{t}");
+        assert!(!t.contains("Ancient chore"), "{t}");
+        assert_eq!(run(&e).written, 0);
+    }
+
+    #[test]
+    fn meeting_files_are_written_and_linked() {
+        let e = env();
+        let mid = living(&e);
+        run(&e);
+        let stem = meeting_stem();
+        let t = read(&e, "Topics/Pricing.md");
+        assert!(
+            t.contains(&format!("\n## You owe\n- Send the SOW · [[{stem}]] · due 2099-01-01\n")),
+            "{t}"
+        );
+        let m = read(&e, &format!("Meetings/{stem}.md"));
+        assert!(m.contains(&format!("\nwhimbrel_id: meeting-{mid}\n")), "{m}");
+        assert!(m.contains("\n# Q3 pricing sync\n") && m.contains("\n## Summary\n\nPrices go up in March.\n"), "{m}");
+        assert!(!m.contains("TRANSCRIPT") && !m.contains("## Transcript"), "{m}");
+        assert!(m.ends_with("\n## My notes\n"), "{m}");
+    }
+
+    #[test]
+    fn renamed_meeting_file_is_still_updated() {
+        let e = env();
+        living(&e);
+        update_vault(&e.store, &e.root, NOW).unwrap();
+        let dir = wh(&e, "Meetings");
+        fs::rename(dir.join(format!("{}.md", meeting_stem())), dir.join("Mine.md")).unwrap();
+        e.c.execute("UPDATE meeting SET notes = 'Fresh notes here'", []).unwrap();
+        let r = update_vault(&e.store, &e.root, NOW).unwrap();
+        assert!(r.written >= 1, "{r:?}");
+        assert!(read(&e, "Meetings/Mine.md").contains("Fresh notes here"));
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        assert!(read(&e, "Topics/Pricing.md").contains("[[Mine]]"));
+    }
+
+    #[test]
+    fn vault_update_into_missing_folder_errors_cleanly() {
+        let e = env();
+        living(&e);
+        let missing = e.root.join("missing");
+        assert!(update_vault(&e.store, &missing, NOW).is_err());
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn summary_line_comes_before_status_line() {
+        let e = env();
+        living(&e);
+        e.c.execute("UPDATE topic SET status_line = 'Going well'", []).unwrap();
+        run(&e);
+        let t = read(&e, "Topics/Pricing.md");
+        let (_, after) = t.split_once("\n# Pricing\n").unwrap();
+        assert!(after.starts_with("Send the SOW due 2099-01-01 · next call "), "{t}");
+        assert!(after.contains("\n\nGoing well\n## Your role\n"), "{t}");
+    }
+
+    #[test]
+    fn done_recently_uses_the_done_time() {
+        let e = env();
+        living(&e);
+        // Asked 40 days ago, done yesterday.
+        e.c.execute(
+            "UPDATE topic_step SET updated_at_unix_ms = ?1 WHERE key = 'old'",
+            [NOW - DAY],
+        )
+        .unwrap();
+        run(&e);
+        let t = read(&e, "Topics/Pricing.md");
+        let done = t.split_once("\n## Done recently\n").unwrap().1;
+        let done = done.split_once("\n## ").unwrap().0;
+        assert!(done.contains("- Ancient chore · Email: SOW"), "{t}");
+        assert!(done.contains("- Book the room · Email: SOW"), "{t}");
+    }
+
+    #[test]
+    fn vault_archives_vanished_owner_without_notes() {
+        let e = env();
+        living(&e);
+        // A third member keeps the topic alive when the meeting leaves it.
+        e.c.execute(
+            "INSERT INTO topic_source (kind, ref_id, ts_unix_ms, title, indexed_at_unix_ms) VALUES ('email', NULL, ?1, 'Other', 0)",
+            [NOW - DAY],
+        )
+        .unwrap();
+        let sid = e.c.last_insert_rowid();
+        e.c.execute(
+            "INSERT INTO topic_member (topic_id, source_id, origin) SELECT topic_id, ?1, 'seed' FROM topic_seed",
+            [sid],
+        )
+        .unwrap();
+        update_vault(&e.store, &e.root, NOW).unwrap();
+        let stem = meeting_stem();
+        assert!(wh(&e, &format!("Meetings/{stem}.md")).exists());
+        e.c.execute(
+            "UPDATE topic_member SET origin = 'removed' WHERE source_id = (SELECT id FROM topic_source WHERE kind = 'meeting')",
+            [],
+        )
+        .unwrap();
+        let r = update_vault(&e.store, &e.root, NOW).unwrap();
+        assert_eq!((r.archived, r.deleted), (1, 0), "{r:?}");
+        assert!(!wh(&e, &format!("Meetings/{stem}.md")).exists());
+        let a = read(&e, &format!("Archive/{stem}.md"));
+        assert!(
+            a.contains("this meeting is no longer in a topic") && a.ends_with("## My notes\n"),
+            "{a}"
+        );
+        // The topic stays, and its step falls back to a plain source.
+        assert!(read(&e, "Topics/Pricing.md").contains("- Send the SOW · Meeting: Q3 pricing sync · due"));
+    }
+
+    #[test]
+    fn huge_meeting_is_truncated_and_found_again() {
+        let e = env();
+        living(&e);
+        let line = "word ".repeat(300);
+        let big = vec![line.as_str(); 1_500].join("\n");
+        e.c.execute("UPDATE meeting SET summary_tldr = ?1", [&big]).unwrap();
+        update_vault(&e.store, &e.root, NOW).unwrap();
+        e.c.execute("UPDATE meeting SET notes = 'Changed'", []).unwrap();
+        update_vault(&e.store, &e.root, NOW).unwrap();
+        let names: Vec<String> = fs::read_dir(wh(&e, "Meetings"))
+            .unwrap()
+            .map(|f| f.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, [format!("{}.md", meeting_stem())]);
+        let m = read(&e, &format!("Meetings/{}", names[0]));
+        assert!(m.len() < MAX_SCAN_BYTES as usize, "{}", m.len());
+        assert!(m.contains(&format!("\n{TRUNCATED}\n## My notes\n")), "{}", &m[m.len() - 200..]);
+    }
+
+    #[test]
+    fn second_vault_update_writes_nothing() {
+        let e = env();
+        living(&e);
+        let first = update_vault(&e.store, &e.root, NOW).unwrap();
+        assert!(first.written >= 2, "{first:?}");
+        let r = update_vault(&e.store, &e.root, NOW).unwrap();
+        assert_eq!(
+            (r.written, r.unchanged, r.archived, r.deleted, r.skipped),
+            (0, first.written, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn vault_member_lines_link_meeting_files_and_nothing_else() {
+        let e = env();
+        living(&e);
+        update_vault(&e.store, &e.root, NOW).unwrap();
+        let t = read(&e, "Topics/Pricing.md");
+        let stem = meeting_stem();
+        assert!(t.contains(&format!(" · Meeting · [[{stem}]]\n")), "{t}");
+        assert!(t.contains(" · Email · SOW\n"), "{t}");
+        assert!(!t.contains("](") && !t.contains("open?kind="), "{t}");
+    }
+
+    #[test]
+    fn meeting_body_keeps_blank_lines() {
+        let e = env();
+        living(&e);
+        e.c.execute("UPDATE meeting SET notes = 'First para.' || char(10) || char(10) || 'Second para.'", []).unwrap();
+        run(&e);
+        let m = read(&e, &format!("Meetings/{}.md", meeting_stem()));
+        assert!(m.contains("## Summary\n\nPrices go up in March.\n\n## Notes\n\nFirst para.\n\nSecond para.\n"), "{m}");
+    }
+
+    #[test]
+    fn hostile_meeting_text_stays_inert() {
+        let e = env();
+        living(&e);
+        e.c.execute(
+            "UPDATE meeting SET notes = '## My notes' || char(10) || '[[Secrets]] ](http://evil) ---' || char(10) || '---', \
+             summary_decisions_json = '[\"# H\", \"x](http://evil)\"]'",
+            [],
+        )
+        .unwrap();
+        run(&e);
+        let m = read(&e, &format!("Meetings/{}.md", meeting_stem()));
+        let body = m[4..].split_once("\n---\n").unwrap().1;
+        assert_eq!(body.lines().filter(|l| *l == "## My notes").count(), 1, "{m}");
+        assert!(!body.contains("[[Secrets]]") && !body.contains("](http://evil"), "{m}");
+        assert!(!body.lines().any(|l| l.starts_with("---") || l.starts_with("# H")), "{m}");
     }
 }

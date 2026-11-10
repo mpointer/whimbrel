@@ -18,6 +18,7 @@ import { SkinGallery } from "./SkinGallery";
 import { StatusPage } from "./StatusPage";
 import { SyncCard } from "./SyncCard";
 import { TopicsCard } from "./TopicsCard";
+import { VaultCard } from "./VaultCard";
 import { TopicStepsCard } from "./TopicStepsCard";
 import { TypeSafeCard } from "./TypeSafeCard";
 
@@ -88,6 +89,7 @@ function SectionCards({ section, onRetentionSaved }: { section: Exclude<Settings
         <>
           <CaptureCard />
           <RetentionCard onSaved={onRetentionSaved} />
+          <VaultCard />
         </>
       );
     case "meetings":

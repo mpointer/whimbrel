@@ -50,6 +50,14 @@ final class FakeStore: MeetingSyncStore, PhoneReadStore {
     func upcomingEvents(fromUnixMs: Int64, untilUnixMs: Int64, limit: Int) -> [PhoneCalendarEvent] {
         Array(events.filter { $0.startUnixMs >= fromUnixMs && $0.startUnixMs < untilUnixMs }.sorted { $0.startUnixMs < $1.startUnixMs }.prefix(limit))
     }
+    var topics: [PhoneTopicSnapshot] = []
+    /// (device id, source meeting id) to this replica's meeting id.
+    var meetingIds: [PhoneMeetingRef: Int64] = [:]
+    func topicSnapshots() -> [PhoneTopicSnapshot] { topics }
+    func topicSnapshot(key: String) -> PhoneTopicSnapshot? { topics.first { $0.topicKey == key } }
+    func meetingId(deviceId: String, sourceMeetingId: Int64) -> Int64? {
+        meetingIds[PhoneMeetingRef(deviceId: deviceId, sourceMeetingId: sourceMeetingId)]
+    }
 }
 
 @MainActor

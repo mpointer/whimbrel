@@ -4,6 +4,8 @@ import SwiftUI
 struct MeetingsView: View {
     @ObservedObject var sync: SyncModel
     let labels: DeviceLabels
+    /// Pushes a topic page onto this tab's path (a meeting's topic chip).
+    let openTopic: (TopicRoute) -> Void
     @StateObject private var model = MeetingsModel()
 
     var body: some View {
@@ -13,7 +15,9 @@ struct MeetingsView: View {
             ForEach(sections) { section in
                 Section {
                     ForEach(section.meetings) { meeting in
-                        NavigationLink(value: meeting.id) { MeetingRow(meeting: meeting, labels: labels) }
+                        NavigationLink(value: meeting.id) {
+                            MeetingRow(meeting: meeting, labels: labels, topic: TopicsModel.chip(for: meeting, in: model.topicChips)) { openTopic($0) }
+                        }
                             .listRowBackground(Color.theme(.backgroundPage))
                     }
                 } header: {
@@ -36,6 +40,7 @@ struct MeetingsView: View {
         .navigationTitle("Meetings")
         .searchable(text: $model.query, prompt: String(localized: "Search titles"))
         .navigationDestination(for: Int64.self) { MeetingDetailView(meetingId: $0, sync: sync, labels: labels) }
+        .navigationDestination(for: TopicRoute.self) { TopicPageView(key: $0.key, sync: sync) }
         .task(id: sync.readRevision) { await model.reload(sync: sync) }
         .refreshable { await sync.syncNow(manual: true) }
     }

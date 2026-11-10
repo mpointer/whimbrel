@@ -66,21 +66,28 @@ it("plan_reports_free_with_billing_flag", async () => {
   const { db } = await seeded();
   const res = await handleAccountPlan(post("/v1/account/plan", creds), makeEnv(), db, NOW);
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ plan: "free", until: null, interval: null, billing: true });
+  expect(await res.json()).toEqual({ plan: "free", until: null, interval: null, renews: null, billing: true });
 });
 
 it("plan_reports_cloud_until_and_interval", async () => {
   const { db, account } = await seeded();
   db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 1000, planInterval: "year" });
   const res = await handleAccountPlan(post("/v1/account/plan", creds), makeEnv(), db, NOW);
-  expect(await res.json()).toEqual({ plan: "cloud", until: NOW + 1000, interval: "year", billing: true });
+  expect(await res.json()).toEqual({ plan: "cloud", until: NOW + 1000, interval: "year", renews: true, billing: true });
+});
+
+it("plan_reports_a_cancelled_cloud_plan_as_not_renewing", async () => {
+  const { db, account } = await seeded();
+  db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 1000, planInterval: "month", planRenews: false });
+  const res = await handleAccountPlan(post("/v1/account/plan", creds), makeEnv(), db, NOW);
+  expect(await res.json()).toEqual({ plan: "cloud", until: NOW + 1000, interval: "month", renews: false, billing: true });
 });
 
 it("plan_reports_free_once_the_period_has_ended", async () => {
   const { db, account } = await seeded();
   db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW - 1, planInterval: "year" });
   const res = await handleAccountPlan(post("/v1/account/plan", creds), makeEnv(), db, NOW);
-  expect(await res.json()).toEqual({ plan: "free", until: null, interval: null, billing: true });
+  expect(await res.json()).toEqual({ plan: "free", until: null, interval: null, renews: null, billing: true });
 });
 
 it("plan_billing_false_when_a_stripe_setting_is_missing", async () => {
@@ -582,9 +589,9 @@ it("events_without_a_subscription_are_recorded_and_ignored", async () => {
 it("applyPlan_free_only_ends_the_stored_subscription", async () => {
   const { db, account } = await seeded();
   db.setPlan(account.id, { plan: "cloud", planUntilUnixMs: NOW + 1000, stripeSubscriptionId: "sub_2" });
-  expect(await accounts.applyPlan(db, account.id, "sub_1", { plan: "free", untilUnixMs: NOW, interval: null })).toBe(false);
+  expect(await accounts.applyPlan(db, account.id, "sub_1", { plan: "free", untilUnixMs: NOW, interval: null, renews: false })).toBe(false);
   expect(db.rawAccount(account.id)?.plan).toBe("cloud");
-  expect(await accounts.applyPlan(db, account.id, "sub_2", { plan: "free", untilUnixMs: NOW, interval: null })).toBe(true);
+  expect(await accounts.applyPlan(db, account.id, "sub_2", { plan: "free", untilUnixMs: NOW, interval: null, renews: false })).toBe(true);
   expect(db.rawAccount(account.id)?.plan).toBe("free");
 });
 

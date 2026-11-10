@@ -122,7 +122,40 @@ fn escape_md(s: &str) -> String {
     s.replace('\r', "").replace("\n#", "\n\\#")
 }
 
-fn meeting_markdown(store: &Store, m: &memory::Meeting) -> ApiResult<(String, usize)> {
+/// A meeting's Summary, Decisions, Action items, Open questions and Notes sections, with
+/// every piece of meeting text passed through `esc`. The Obsidian vault reuses it with its
+/// own, stricter escaping (`topics_export`).
+pub(crate) fn meeting_sections(m: &memory::Meeting, esc: &dyn Fn(&str) -> String) -> String {
+    let mut md = String::new();
+    if let Some(tldr) = &m.summary_tldr {
+        md.push_str("## Summary\n\n");
+        md.push_str(&esc(tldr));
+        md.push_str("\n\n");
+    }
+    for (heading, list) in [
+        ("Decisions", &m.summary_decisions),
+        ("Action items", &m.summary_action_items),
+        ("Open questions", &m.summary_open_questions),
+    ] {
+        if !list.is_empty() {
+            md.push_str(&format!("## {heading}\n\n"));
+            for line in list {
+                md.push_str(&format!("- {}\n", esc(line)));
+            }
+            md.push('\n');
+        }
+    }
+    if let Some(notes) = &m.notes {
+        if !notes.trim().is_empty() {
+            md.push_str("## Notes\n\n");
+            md.push_str(&esc(notes));
+            md.push_str("\n\n");
+        }
+    }
+    md
+}
+
+pub(crate) fn meeting_markdown(store: &Store, m: &memory::Meeting) -> ApiResult<(String, usize)> {
     let mut md = String::new();
     md.push_str("---\n");
     md.push_str(&format!("whimbrel_meeting_id: {}\n", m.id));
@@ -138,31 +171,7 @@ fn meeting_markdown(store: &Store, m: &memory::Meeting) -> ApiResult<(String, us
     }
     md.push_str("---\n\n");
     md.push_str(&format!("# {}\n\n", escape_md(&m.title)));
-    if let Some(tldr) = &m.summary_tldr {
-        md.push_str("## Summary\n\n");
-        md.push_str(&escape_md(tldr));
-        md.push_str("\n\n");
-    }
-    for (heading, list) in [
-        ("Decisions", &m.summary_decisions),
-        ("Action items", &m.summary_action_items),
-        ("Open questions", &m.summary_open_questions),
-    ] {
-        if !list.is_empty() {
-            md.push_str(&format!("## {heading}\n\n"));
-            for line in list {
-                md.push_str(&format!("- {}\n", escape_md(line)));
-            }
-            md.push('\n');
-        }
-    }
-    if let Some(notes) = &m.notes {
-        if !notes.trim().is_empty() {
-            md.push_str("## Notes\n\n");
-            md.push_str(&escape_md(notes));
-            md.push_str("\n\n");
-        }
-    }
+    md.push_str(&meeting_sections(m, &escape_md));
     let mut lines = 0usize;
     let mut offset = 0usize;
     let mut transcript = String::new();

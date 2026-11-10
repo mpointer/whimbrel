@@ -1715,6 +1715,11 @@ export interface PlanView {
    */
   plan: string;
   /**
+   * False once a Cloud subscription is cancelled ("Cloud ends …"); None on free, or from an older
+   * server, which the UI reads as renewing.
+   */
+  renews?: boolean | null;
+  /**
    * When a Cloud plan runs to (it renews unless cancelled).
    */
   untilUnixMs?: number | null;
@@ -2627,6 +2632,25 @@ export interface UsageRowView {
   provider: string;
   task: string;
   tsUnixMs: number;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "VaultView".
+ */
+export interface VaultView {
+  enabled: boolean;
+  /**
+   * The last write failed: "Couldn't update the vault…".
+   */
+  failed: boolean;
+  /**
+   * When the vault was last written, after this folder was chosen.
+   */
+  lastUpdatedUnixMs?: number | null;
+  /**
+   * The chosen folder; empty until one is.
+   */
+  path: string;
 }
 /**
  * A person with a remembered voice (Settings → Meetings → Remembered voices…).
