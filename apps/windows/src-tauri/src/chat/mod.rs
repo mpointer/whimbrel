@@ -432,7 +432,7 @@ mod tests {
         let route = stream_route(&routing(Provider::Whimbrel), &signed_in).unwrap();
         assert_eq!(
             (route.provider, route.model.as_str(), route.key.as_deref(), route.device_key.as_deref()),
-            ("whimbrel", "claude-haiku-4-5", Some("jwt"), Some("pk"))
+            ("whimbrel", "claude-sonnet-5-5", Some("jwt"), Some("pk"))
         );
         assert!(!format!("{route:?}").contains("jwt"), "the token is never printed");
         assert_eq!(stream_route(&routing(Provider::Whimbrel), &keys(None)), None, "not signed in to sync: the blocking chain");

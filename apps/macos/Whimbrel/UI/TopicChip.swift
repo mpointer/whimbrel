@@ -21,6 +21,18 @@ struct TopicChip: View {
     }
 }
 
+/// "Prep ready" on a meeting row that has a brief; a tap opens the brief, as Routines' "Open brief" does.
+struct PrepReadyChip: View {
+    @EnvironmentObject var appState: AppState
+    /// The stored brief's key (`CoreMeetingPrep.eventId`).
+    let prepKey: String
+
+    var body: some View {
+        WhimbrelSourceChip(systemImage: "doc.text", text: String(localized: "Prep ready"), onTap: { appState.showPrepBrief(key: prepKey) })
+            .help(String(localized: "Open brief"))
+    }
+}
+
 /// "Open topic page: {name}", shown above search results or an answer whose text names a topic.
 struct TopicPageLink: View {
     @EnvironmentObject var appState: AppState

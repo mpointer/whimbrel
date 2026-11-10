@@ -34,6 +34,8 @@ struct TodayView: View {
     @State private var pendingApprovalCount: Int = 0
     /// The prep brief for the next upcoming meeting, when one has been prepared.
     @State private var nextPrep: CoreMeetingPrep?
+    /// Briefs for today's events and the week's, by `TodayLogic.prepKey`, for the "Prep ready" chips.
+    @State private var prepByKey: [String: CoreMeetingPrep] = [:]
     @State private var topicsByEvent: [String: TopicRef] = [:]
     @State private var topicsByMeeting: [Int64: TopicRef] = [:]
 
@@ -50,7 +52,8 @@ struct TodayView: View {
             nextPrep: nextPrep, pendingApprovalCount: pendingApprovalCount, attentionThreads: attentionThreads,
             briefRecap: briefRecap, digest: digest, digestError: digestError, isGeneratingDigest: isGeneratingDigest,
             deviceId: appState.deviceId, deviceRows: rows, deviceLabels: labels, followups: followups,
-            topicsByEvent: topicsByEvent, topicsByMeeting: topicsByMeeting, upcomingWeek: appState.upcomingWeekMeetings
+            topicsByEvent: topicsByEvent, topicsByMeeting: topicsByMeeting, upcomingWeek: appState.upcomingWeekMeetings,
+            prepByKey: prepByKey
         )
     }
 
@@ -130,8 +133,8 @@ struct TodayView: View {
             // Starting or ending a meeting while sitting on Today must show up at once.
             refresh()
         }
-        .onChange(of: content.upcoming.first.map { TodayLogic.prepKey(eventId: $0.id, start: $0.start) }) { _, _ in
-            // The prep brief belongs to the next unfinished occurrence; refetch when that changes.
+        .onChange(of: content.upcoming.map { TodayLogic.prepKey(eventId: $0.id, start: $0.start) }) { _, _ in
+            // Each unfinished occurrence can have its own brief; refetch when the list changes.
             refresh()
         }
         .onChange(of: content.upcomingWeek.map(\.id)) { _, _ in
@@ -140,6 +143,10 @@ struct TodayView: View {
         }
         .onChange(of: appState.routineScheduler.recentRuns) { _, _ in
             // Meeting Prep writes the brief minutes before the start, while Today sits open.
+            refresh()
+        }
+        .onChange(of: appState.contentSyncCoordinator.lastSyncedAt) { _, _ in
+            // A brief another device prepared arrives by sync, as in the Routines list.
             refresh()
         }
         .onChange(of: content.liveMeetingId) { _, newValue in
@@ -177,8 +184,14 @@ struct TodayView: View {
         guard let store = appState.coreStore else { recentLoaded = true; loadDigestIfNeeded(); return }
         let nextPrepKey = content.upcoming.first.map { TodayLogic.prepKey(eventId: $0.id, start: $0.start) }
         let events = (appState.allUpcomingMeetings + appState.upcomingWeekMeetings).map { (id: $0.id, title: $0.title) }
+        let prepKeys = Set((appState.allUpcomingMeetings + appState.upcomingWeekMeetings).map { TodayLogic.prepKey(eventId: $0.id, start: $0.startDate) })
         CoreMemoryStore.accessQueue.async {
             let prep = nextPrepKey.flatMap { store.meetingPrep(key: $0) }
+            // A full key finds only that occurrence's brief; keep the ones that read.
+            let preps = Dictionary(
+                prepKeys.compactMap { key in store.meetingPrep(key: key).flatMap { $0.brief != nil ? (key, $0) : nil } },
+                uniquingKeysWith: { first, _ in first }
+            )
             let meetings = store.recentMeetingsGrouped(limit: 10)
             let eventTopics = Dictionary(
                 events.compactMap { e in store.topicForEvent(eventId: e.id, title: e.title).map { (e.id, $0) } },
@@ -202,6 +215,7 @@ struct TodayView: View {
                 briefRecap = brief
                 if brief == nil { loadDigestIfNeeded() }
                 nextPrep = prep
+                prepByKey = preps
                 recentMeetings = meetings
                 topicsByEvent = eventTopics
                 topicsByMeeting = meetingTopics

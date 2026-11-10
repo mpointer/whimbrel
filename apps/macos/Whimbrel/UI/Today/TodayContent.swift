@@ -39,10 +39,17 @@ struct TodayContent {
     var topicsByMeeting: [Int64: TopicRef] = [:]
     /// The 7 days after today (`AppState.upcomingWeekMeetings`), for the Upcoming section.
     var upcomingWeek: [QualifyingMeeting] = []
+    /// Prep briefs with a readable brief, by `TodayLogic.prepKey`, for today's events and the week's.
+    var prepByKey: [String: CoreMeetingPrep] = [:]
 
     private var clock: Date { pinnedNow ?? Date() }
 
     func deviceLabel(for id: String) -> String { deviceLabels[id] ?? id }
+
+    /// The brief for one occurrence of an event, when it has a readable one.
+    func prep(eventId: String, start: Date) -> CoreMeetingPrep? {
+        prepByKey[TodayLogic.prepKey(eventId: eventId, start: start)]
+    }
 
     /// The Ask composer shows only when no call is live or starting.
     var showComposer: Bool { liveMeetingId == nil && activeMeetingId == nil }

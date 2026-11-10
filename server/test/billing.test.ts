@@ -2,9 +2,10 @@ import { it, expect, vi, beforeEach } from "vitest";
 import * as googleAuth from "../src/googleAuth";
 import * as turso from "../src/turso";
 import * as accounts from "../src/accounts";
-import { handleAccountPlan, handleAiBalance, handleAiCheckout, handleBillingCheckout, handleBillingPortal, handleBillingWebhook, handleDeleteAccount, handleGoogleAuth } from "../src/index";
+import { handleAccountPlan, handleAiBalance, handleAiCheckout, handleAiModels, handleBillingCheckout, handleBillingPortal, handleBillingWebhook, handleDeleteAccount, handleGoogleAuth } from "../src/index";
 import { aiBalance, creditPurchase, placeHold, settleHold } from "../src/aiCredit";
 import { deleteAccount } from "../src/inactivity";
+import { AI_MODELS, AI_MODELS_CACHE_KEY, AI_PRICES } from "../src/aiProxy";
 import type { Env } from "../src/index";
 import { FakeSqlExecutor } from "./testHelpers/fakeSqlExecutor";
 import { createExecutionContext, env } from "cloudflare:test";
@@ -262,7 +263,7 @@ it("portal_shares_the_billing_rate_limit", async () => {
 it("the_worker_routes_the_billing_paths", async () => {
   // No DB wired: a 400 on an empty body proves the route exists and parses.
   const worker = (await import("../src/index")).default;
-  for (const p of ["/v1/account/plan", "/v1/billing/checkout", "/v1/billing/portal", "/v1/ai/checkout", "/v1/ai/balance"]) {
+  for (const p of ["/v1/account/plan", "/v1/billing/checkout", "/v1/billing/portal", "/v1/ai/checkout", "/v1/ai/balance", "/v1/ai/models"]) {
     const res = await worker.fetch(new Request(`https://example.com${p}`, { method: "POST" }), makeEnv(), createExecutionContext());
     expect(res.status).toBe(400);
   }
@@ -999,6 +1000,36 @@ it("ai_balance_reports_balance_and_last_purchase", async () => {
 
 it("ai_balance_without_an_account_is_403", async () => {
   const res = await handleAiBalance(post("/v1/ai/balance", creds), makeEnv(), new FakeSqlExecutor(), NOW);
+  expect(res.status).toBe(403);
+});
+
+it("ai_models_lists_priced_models_newest_first_for_a_signed_in_caller", async () => {
+  await env.ENROLLMENT_HANDOFF.delete(AI_MODELS_CACHE_KEY);
+  const { db } = await seeded();
+  const live = () =>
+    new Response(JSON.stringify({ data: [{ id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5" }, { id: "claude-opus-5-5", display_name: "Claude Opus 5.5" }] }));
+  const res = await handleAiModels(post("/v1/ai/models", creds), makeEnv({ ANTHROPIC_API_KEY: "sk-ant-x" }), db, NOW, fakeFetch(live).fetcher);
+  expect(res.status).toBe(200);
+  const { models } = (await res.json()) as { models: { id: string; display_name: string }[] };
+  expect(models.map((m) => m.id)).toEqual(["claude-opus-5-5", "claude-sonnet-5-5"]);
+  for (const m of models) expect(Object.hasOwn(AI_PRICES, m.id)).toBe(true);
+  await env.ENROLLMENT_HANDOFF.delete(AI_MODELS_CACHE_KEY);
+});
+
+it("ai_models_falls_back_to_the_priced_list_when_anthropic_fails", async () => {
+  await env.ENROLLMENT_HANDOFF.delete(AI_MODELS_CACHE_KEY);
+  const { db } = await seeded();
+  const down = () => new Response("upstream down", { status: 503 });
+  const res = await handleAiModels(post("/v1/ai/models", creds), makeEnv({ ANTHROPIC_API_KEY: "sk-ant-x" }), db, NOW, fakeFetch(down).fetcher);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { models: { id: string }[] };
+  expect(body).toEqual({ models: AI_MODELS });
+  expect(body.models[0].id).toBe("claude-opus-5-5");
+  expect(body.models.some((m) => m.id === "claude-haiku-4-5-20251001")).toBe(false);
+});
+
+it("ai_models_without_an_account_is_403", async () => {
+  const res = await handleAiModels(post("/v1/ai/models", creds), makeEnv(), new FakeSqlExecutor(), NOW, fakeFetch().fetcher);
   expect(res.status).toBe(403);
 });
 

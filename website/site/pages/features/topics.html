@@ -1,0 +1,90 @@
+<!--
+{
+  "title": "Topics: One Page per Customer, Product, and Project",
+  "description": "One page per customer, product, or project: the next meeting, the steps you owe, and your latest email and activity, filed by Whimbrel.",
+  "schema": ["software"],
+  "priority": 0.7,
+  "ogType": "article",
+  "crumbs": [{ "name": "Features", "path": "/#features" }, { "name": "Topics", "path": "/features/topics/" }],
+  "faq": [
+    { "q": "Do I have to set up topics by hand?", "a": "You name the ones you care about, with any other names they go by, in Settings → Topics. Whimbrel also suggests topics it finds across your meetings, email, and notes, and adds nothing until you accept." },
+    { "q": "Where do the steps on a topic page come from?", "a": "From the action items of your meetings, and from email and Teams chats filed under the topic. Whimbrel quotes the line it found and links back to where it came from. You can check a step off, add a note, edit it, or dismiss it as not yours." },
+    { "q": "Does my data leave my computer?", "a": "Not by default. Your local model sorts items and finds steps on your own machine. If you add a TypeSafe key, you can switch either job to TypeSafe: it sends short, redacted excerpts, shows a cost estimate first, and waits for you to press Start. Topic pages that reach your phone are synced end-to-end encrypted." },
+    { "q": "Do topics work on all my devices?", "a": "Yes. Topics, steps, what you checked off, and your notes sync between your Mac and Windows computers, end-to-end encrypted. The iPhone app has a Topics tab with each topic's page. It is read-only for now." }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Topics</p>
+    <h1>Everything about a customer, on one page.</h1>
+    <p class="lede">Name the customers, products, and projects you care about. Whimbrel files your email, meetings, calendar, and screen activity under them, and keeps a page for each one.</p>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="section-head">
+      <h2>Before the call, you know where things stand.</h2>
+      <p class="lede">A topic page answers one question first: do I owe anything before this meeting?</p>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature"><h3>The short version on top</h3><p>One line with the next key date or step and the next meeting. For example: "SOW due Fri, Nov 14 · next call Tue, Nov 18, 10:00".</p></article>
+      <article class="card feature"><h3>What you owe, and what's owed to you</h3><p>Steps from meeting action items, email, and Teams chats, each quoted from where it came from, with the date it was asked and the due date when one was given.</p></article>
+      <article class="card feature"><h3>Your role</h3><p>Whimbrel works out whether you lead, support, or are kept informed. Correct it once and it learns from you.</p></article>
+      <article class="card feature"><h3>The next meeting</h3><p>Date, time, and who is attending, counted by company, so you can see who is coming from each side.</p></article>
+      <article class="card feature"><h3>Recent activity</h3><p>The latest emails, meetings, and screens you had open, such as a Salesforce task or a project document, newest first.</p></article>
+      <article class="card feature"><h3>One click from anywhere</h3><p>Open a topic from a meeting on Today, a meeting's notes or prep brief, a search that names it, or your next meeting in the menu bar or tray.</p></article>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="section-head">
+      <h2>Steps you can trust.</h2>
+      <p class="lede">A list of stale or wrong to-dos is worse than none, so Whimbrel shows its work and lets you correct it.</p>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature"><h3>Check off, note, dismiss</h3><p>Check a step off, add a note such as "sent v2 Monday", edit it, or dismiss it as not yours. Meeting action items stay in step with the meeting's own list.</p></article>
+      <article class="card feature"><h3>Closed by what came next</h3><p>When a later email says it's done, the step moves to Done with a note saying what closed it. You can reopen it.</p></article>
+      <article class="card feature"><h3>Old steps step aside</h3><p>A step with no activity on its topic for 60 days moves to an Older list instead of cluttering the page.</p></article>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="section-head">
+      <h2>In your Obsidian vault</h2>
+      <p class="lede">Whimbrel can keep an Obsidian vault up to date. Turn it on in Settings → Your data (Mac) or Settings → Capture &amp; Privacy (Windows). Each topic's page, its people, organizations and meetings are written as notes. Your own notes are kept, and the vault stays on your computer.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="section-head">
+      <h2>On your phone</h2>
+      <p class="lede">The iPhone app has a Topics tab with each topic's page, built by Whimbrel on your computer and synced end-to-end encrypted. It is read-only for now.</p>
+    </div>
+  </div>
+</section>
+
+<section class="ink">
+  <div class="narrow center">
+    <h2>Local first. Your choice after that.</h2>
+    <p class="lede">Your local model sorts items into topics and finds steps on your own computer. With your own TypeSafe key you can switch either job to TypeSafe for better accuracy. It sends short excerpts with secrets removed, shows a cost estimate, and starts only when you press Start.</p>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Topics FAQ</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

@@ -702,6 +702,35 @@ impl SyncController {
                 tracing::warn!(error = %e, "could not refresh the Whimbrel AI credentials");
             }
         }
+        // The model list once per stretch of being ready; a failed read tries again next tick.
+        if self.whimbrel.models().is_none() {
+            if let Err(e) = self.refresh_ai_models() {
+                tracing::info!(error = %e, "Whimbrel AI's model list wasn't read; the built-in list stands");
+            }
+        }
+    }
+
+    /// Reads Whimbrel AI's model list (`/v1/ai/models`). A server that predates the route (404)
+    /// counts as read, leaving the built-in list; any other failure keeps the last list.
+    pub fn refresh_ai_models(&self) -> Result<(), String> {
+        if self.ready_credentials().is_none() {
+            return Ok(());
+        }
+        let id_token = self.fresh_id_token()?;
+        let models = match self.worker()?.ai_models(&id_token, &self.identity.device_id) {
+            Ok(models) => models,
+            Err(en::WorkerError::Http { status: 404, .. }) => Vec::new(),
+            Err(e) => return Err(en::user_message_in(&e, &crate::l10n::ui_language())),
+        };
+        if self.ready_credentials().is_some() {
+            self.whimbrel.store_models(models);
+        }
+        Ok(())
+    }
+
+    /// What the Whimbrel AI picker offers: the server's list once read, else the built-in one.
+    pub fn whimbrel_models(&self) -> Vec<String> {
+        crate::whimbrel_ai::offered_in(Some(&self.whimbrel))
     }
 
     /// Before an Ask that Whimbrel AI may answer: refreshes the credentials when none are cached
@@ -1196,5 +1225,31 @@ mod tests {
         *worker.ai_balance.lock().unwrap() = Err(WorkerError::Network);
         assert!(c.refresh_ai_balance().is_err());
         assert_eq!(c.whimbrel_ai_view().balance_micros, Some(25_500_000), "a failed read keeps the last balance");
+    }
+
+    #[test]
+    fn whimbrel_ai_models_come_from_the_server_with_the_built_in_list_behind() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        let c = ready_with_id_token(worker.clone(), Duration::from_secs(60 * 60));
+        let built_in: Vec<String> = crate::whimbrel_ai::MODELS.iter().map(|m| m.to_string()).collect();
+        // An old server answers 404: the built-in list, and the read counts as done.
+        c.refresh_ai_models().unwrap();
+        assert_eq!((c.whimbrel_models(), c.whimbrel.models()), (built_in.clone(), Some(Vec::new())));
+
+        *worker.ai_models.lock().unwrap() = Ok(vec!["claude-opus-5-5".into(), "claude-sonnet-5-5".into()]);
+        c.refresh_ai_models().unwrap();
+        assert_eq!(c.whimbrel_models(), vec!["claude-opus-5-5", "claude-sonnet-5-5"]);
+        // Offline: the error is shown and the last list stays.
+        *worker.ai_models.lock().unwrap() = Err(WorkerError::Network);
+        assert!(c.refresh_ai_models().is_err());
+        assert_eq!(c.whimbrel_models(), vec!["claude-opus-5-5", "claude-sonnet-5-5"]);
+
+        // Sync leaves ready: the list goes with the credentials, and nothing is read while signed out.
+        *c.status.lock().unwrap() = SyncStatus::NotSignedIn;
+        c.whimbrel_upkeep(false);
+        assert_eq!((c.whimbrel_models(), c.whimbrel.models()), (built_in, None));
+        *worker.ai_models.lock().unwrap() = Ok(vec!["claude-opus-5-5".into()]);
+        c.refresh_ai_models().unwrap();
+        assert_eq!(c.whimbrel.models(), None);
     }
 }

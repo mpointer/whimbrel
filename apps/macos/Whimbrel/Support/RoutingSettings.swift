@@ -140,14 +140,29 @@ final class RoutingSettings: ObservableObject {
     @Published var whimbrelDefaultModel: String {
         didSet { UserDefaults.standard.set(whimbrelDefaultModel, forKey: Self.whimbrelDefaultModelKey) }
     }
-    /// Models Whimbrel AI offers: only the ids Whimbrel's server prices. The server answers
-    /// any other id with 400 unknown_model, so Anthropic's live list is never used here.
-    /// Keep in step with `AI_PRICES` in server/src/aiProxy.ts.
+    /// Models Whimbrel AI offers when the server's list (`POST /v1/ai/models`) can't be
+    /// read: offline, signed out, or a server that predates it. Only ids Whimbrel's server
+    /// prices; it answers any other id with 400 unknown_model, so Anthropic's live list is
+    /// never used here. Keep in step with `AI_PRICES` in server/src/aiProxy.ts.
     nonisolated static let whimbrelModels = [
+        "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2",
         "claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-sonnet-5",
         "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5",
         "claude-fable-5", "claude-fable-5-1",
     ]
+    /// The Whimbrel AI model used until the user picks one.
+    nonisolated static let whimbrelDefault = "claude-sonnet-5-5"
+    /// The model a Whimbrel AI pick snaps to when it isn't in `options`: the default when
+    /// offered, else the first option.
+    nonisolated static func whimbrelFallback(in options: [String]) -> String {
+        options.contains(whimbrelDefault) ? whimbrelDefault : options.first ?? whimbrelDefault
+    }
+    /// The server's list of Whimbrel AI models (`SyncState.fetchAIModels`), wired by `AppState`.
+    var whimbrelModelsFetcher: (() async throws -> [String])?
+    /// What the Whimbrel AI pickers offer: the server's list once read, else the built-in one.
+    var whimbrelModelOptions: [String] {
+        fetchedWhimbrelModels.isEmpty ? Self.whimbrelModels : fetchedWhimbrelModels
+    }
     /// The sync account's ID token and this device's key (`SyncState.whimbrelCredentials`),
     /// wired by `AppState`. Read synchronously by `routingConfig`; nil when not signed in.
     var whimbrelCredentialsProvider: () -> (idToken: String, deviceKey: String)? = { nil }
@@ -344,6 +359,11 @@ final class RoutingSettings: ObservableObject {
     @Published var openaiModelsError: String?
     @Published var googleModelsError: String?
     @Published var openrouterModelsError: String?
+    /// Whimbrel AI's list from its server; empty until read, and then `whimbrelModelOptions`
+    /// falls back to the built-in `whimbrelModels`.
+    @Published var fetchedWhimbrelModels: [String] = []
+    @Published var isLoadingWhimbrelModels = false
+    @Published var whimbrelModelsError: String?
 
     init() {
         let defaults = UserDefaults.standard
@@ -364,7 +384,7 @@ final class RoutingSettings: ObservableObject {
         openaiDefaultModel = defaults.string(forKey: Self.openaiDefaultModelKey) ?? "gpt-4o-mini"
         googleDefaultModel = defaults.string(forKey: Self.googleDefaultModelKey) ?? "gemini-2.5-flash"
         openrouterDefaultModel = defaults.string(forKey: Self.openrouterDefaultModelKey) ?? ""
-        whimbrelDefaultModel = defaults.string(forKey: Self.whimbrelDefaultModelKey) ?? "claude-haiku-4-5"
+        whimbrelDefaultModel = defaults.string(forKey: Self.whimbrelDefaultModelKey) ?? Self.whimbrelDefault
         openrouterPrices = defaults.data(forKey: Self.openrouterPricesKey)
             .flatMap { try? JSONDecoder().decode([String: CoreRoutingConfig.Price].self, from: $0) } ?? [:]
         userDailyCapCents = defaults.object(forKey: Self.userDailyCapCentsKey) as? Int
@@ -548,6 +568,27 @@ final class RoutingSettings: ObservableObject {
         } catch {
             let message = error.localizedDescription
             if ollamaModelsError != message { ollamaModelsError = message }
+        }
+    }
+
+    /// Reads Whimbrel AI's model list from Whimbrel's server. Needs sync sign-in. A server
+    /// that predates the route (404) or a failed read leaves the last list, or the built-in
+    /// one, in place; only a failure other than the old-server 404 is shown.
+    func refreshWhimbrelModels() async {
+        guard let fetch = whimbrelModelsFetcher, hasKey(for: .whimbrel) else {
+            whimbrelModelsError = nil
+            return
+        }
+        isLoadingWhimbrelModels = true
+        whimbrelModelsError = nil
+        defer { isLoadingWhimbrelModels = false }
+        do {
+            let models = try await fetch()
+            if !models.isEmpty { fetchedWhimbrelModels = models }
+        } catch SyncAPIError.httpError(404, _) {
+            // An older server: the built-in list stands in.
+        } catch {
+            whimbrelModelsError = error.localizedDescription
         }
     }
 

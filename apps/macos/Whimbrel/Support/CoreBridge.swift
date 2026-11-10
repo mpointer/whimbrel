@@ -5149,3 +5149,31 @@ enum TopicStepAction: Encodable {
         }
     }
 }
+
+/// A run's summary in the user's language. Core writes summaries in English; Meeting Prep's two
+/// ("Prep ready for <title>", "Prep failed for <title>: <reason>") are rebuilt here from the
+/// title in the run's output JSON. The reason stays as core wrote it. Any other summary is shown
+/// as written.
+enum RoutineRunText {
+    static func summary(_ summary: String, outputJson: String) -> String {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(outputJson.utf8)) as? [String: Any],
+              let title = object["title"] as? String else { return summary }
+        if summary == "Prep ready for \(title)" {
+            return String(localized: "Prep ready for \(title)")
+        }
+        let failedPrefix = "Prep failed for \(title): "
+        if summary.hasPrefix(failedPrefix) {
+            let reason = String(summary.dropFirst(failedPrefix.count))
+            return String(localized: "Prep failed for \(title): \(reason)")
+        }
+        return summary
+    }
+}
+
+extension CoreRoutineRun {
+    var displaySummary: String { RoutineRunText.summary(outputSummary, outputJson: outputJson) }
+}
+
+extension CoreRoutineRunWithName {
+    var displaySummary: String { RoutineRunText.summary(outputSummary, outputJson: outputJson) }
+}

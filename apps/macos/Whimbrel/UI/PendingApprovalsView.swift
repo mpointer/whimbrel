@@ -41,7 +41,7 @@ struct PendingApprovalsView: View {
             } else {
                 ForEach(pending) { run in
                     VStack(alignment: .leading, spacing: Spacing.xs) {
-                        Text(run.outputSummary)
+                        Text(run.displaySummary)
                             .font(.whimbrelBody(.body))
                             .foregroundStyle(Color.whimbrelTextPrimary)
                         accountPicker(for: run)

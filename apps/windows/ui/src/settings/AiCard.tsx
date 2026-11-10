@@ -46,6 +46,7 @@ import {
   usageTokens,
   usageTotalsLine,
   whimbrelBalanceLine,
+  whimbrelSnap,
 } from "./aiModel";
 
 function message(e: unknown): string {
@@ -60,6 +61,9 @@ export function AiCard() {
   const { status: local } = localModelDownload.use();
   const whimbrel = useWhimbrelAi();
   const whimbrelSignedIn = !!whimbrel?.signedIn;
+  // Whimbrel AI's models: its server's list, or the built-in one (`provider_models` falls back).
+  const [whimbrelModels, setWhimbrelModels] = useState<string[] | null>(null);
+  const loadWhimbrelModels = () => providerModels("whimbrel").then(setWhimbrelModels);
 
   useEffect(() => {
     aiSettings()
@@ -101,6 +105,8 @@ export function AiCard() {
       )}
       <Routing
         routing={settings.routing}
+        whimbrelModels={whimbrelModels}
+        loadWhimbrelModels={loadWhimbrelModels}
         onChange={saveRouting}
         notice={hostedNotice(settings.routing, settings.keys, whimbrelSignedIn)}
         onError={setError}
@@ -110,7 +116,7 @@ export function AiCard() {
           {ollamaWarningLine(settings.ollamaWarning)}
         </p>
       )}
-      <WhimbrelAiCard view={whimbrel} />
+      <WhimbrelAiCard view={whimbrel} refreshModels={loadWhimbrelModels} />
       <h3 className="section-label">{t("API keys")}</h3>
       <p className="muted small">{t("Stored in Windows Credential Manager under the same names the Mac's Keychain uses.")}</p>
       {settings.keys.map((k) => (
@@ -215,10 +221,19 @@ function useWhimbrelAi(): WhimbrelAiView | null {
  * Whimbrel AI: prepaid Anthropic credit through Whimbrel's server, signed in with sync (the Mac's
  * `whimbrelAICard`). The balance, the two packs (Stripe Checkout in the browser), and the data note.
  */
-function WhimbrelAiCard(props: { view: WhimbrelAiView | null }) {
+function WhimbrelAiCard(props: { view: WhimbrelAiView | null; refreshModels: () => Promise<void> }) {
   const [view, setView] = useState(props.view);
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const refreshModels = () => {
+    setRefreshing(true);
+    setError(null);
+    props
+      .refreshModels()
+      .catch((e: unknown) => setError(message(e)))
+      .finally(() => setRefreshing(false));
+  };
   useEffect(() => setView(props.view), [props.view]);
   const buy = (pack: "10" | "25") => {
     setBusy(true);
@@ -244,6 +259,9 @@ function WhimbrelAiCard(props: { view: WhimbrelAiView | null }) {
             </button>
             <button type="button" className="mode" disabled={busy} onClick={() => buy("25")}>
               {t("Add $25")}
+            </button>
+            <button type="button" className="mode" disabled={refreshing} onClick={refreshModels}>
+              {refreshing ? t("Loading…") : t("Refresh Models")}
             </button>
           </span>
           {error && (
@@ -289,17 +307,19 @@ function OnRamp(props: { google: ProviderInfoView | undefined }) {
 
 function Routing(props: {
   routing: RoutingSettings;
+  whimbrelModels: string[] | null;
+  loadWhimbrelModels: () => Promise<void>;
   notice: string | null;
   onChange: (r: RoutingSettings) => void;
   onError: (e: string | null) => void;
 }) {
-  const { routing, onChange, notice, onError } = props;
+  const { routing, onChange, notice, onError, whimbrelModels, loadWhimbrelModels } = props;
   const provider = routing.preferredProvider;
   const [model, setModel] = useState(routing[modelField(provider)]);
   const [models, setModels] = useState<Partial<Record<Provider, string[]>>>({});
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  const list = models[provider];
+  const list = provider === "whimbrel" ? (whimbrelModels ?? undefined) : models[provider];
   const [caps, setCaps] = useState({
     user: capToDollars(routing.userDailyCapCents),
     global: capToDollars(routing.globalDailyCapCents),
@@ -307,12 +327,18 @@ function Routing(props: {
 
   useEffect(() => setModel(routing[modelField(provider)]), [provider, routing]);
   useEffect(() => setListError(null), [provider]);
-  // Whimbrel AI's list is the priced models, known without a key: show it at once.
+  // Whimbrel AI's list needs no key: read it from the server when the picker shows it.
   useEffect(() => {
-    if (provider === "whimbrel" && !models.whimbrel) {
-      providerModels("whimbrel").then((loaded) => setModels((m) => ({ ...m, whimbrel: loaded })), () => undefined);
+    if (provider === "whimbrel" && !whimbrelModels) {
+      loadWhimbrelModels().catch(() => undefined);
     }
-  }, [provider, models.whimbrel]);
+  }, [provider, whimbrelModels]);
+  // A pick the list no longer offers snaps to the default, as on the Mac.
+  useEffect(() => {
+    if (provider !== "whimbrel" || !whimbrelModels) return;
+    const snapped = whimbrelSnap(whimbrelModels, routing.whimbrelModel);
+    if (snapped) onChange({ ...routing, whimbrelModel: snapped });
+  }, [provider, whimbrelModels, routing.whimbrelModel]);
 
   // The result and any error show beside the button, not at the foot of the card.
   const loadModels = () => {

@@ -100,7 +100,7 @@ enum ContextDisplayItem: Identifiable {
         switch self {
         case .capture(let item): return item.text
         case .transcript(let segment): return segment.text
-        case .routineRun(let run): return run.outputSummary
+        case .routineRun(let run): return run.displaySummary
         case .episode(let episode): return episode.summary ?? "(summary pending)"
         case .thread(let thread): return thread.summary ?? "(summary pending)"
         case .snapshot(let hit): return hit.text

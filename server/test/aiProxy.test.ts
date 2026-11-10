@@ -2,7 +2,7 @@ import { it, expect, vi, beforeEach } from "vitest";
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import * as googleAuth from "../src/googleAuth";
 import * as accounts from "../src/accounts";
-import { AI_PRICES, costMicros, handleAiMessages } from "../src/aiProxy";
+import { AI_MODELS, AI_MODELS_CACHE_KEY, AI_PRICES, costMicros, handleAiMessages, holdEstimate, offeredAiModels } from "../src/aiProxy";
 import { aiBalance, creditPurchase, placeHold } from "../src/aiCredit";
 import type { Env } from "../src/index";
 import { FakeSqlExecutor } from "./testHelpers/fakeSqlExecutor";
@@ -93,6 +93,123 @@ it("costMicros_is_list_price_times_1_3_rounded_up_to_100", () => {
   expect(costMicros("claude-opus-5", { input_tokens: 2000, output_tokens: 10, cache_creation_input_tokens: 300, cache_read_input_tokens: 4000 })).toBe(
     Math.ceil((raw * 1.3) / 100) * 100,
   );
+});
+
+/** costMicros by hand: `p` per MTok in micros, x1.3, up to 100 micros. */
+const priced = (p: { input: number; output: number; cacheWrite: number; cacheRead: number }, i: number, o: number, w = 0, r = 0) =>
+  Math.ceil((((i * p.input + o * p.output + w * p.cacheWrite + r * p.cacheRead) / 1e6) * 1.3) / 100) * 100;
+
+it("the_new_models_are_priced_from_the_pricing_page", () => {
+  // https://platform.claude.com/docs/en/about-claude/pricing, read 2026-11-10 ($/MTok x 1e6).
+  expect(AI_PRICES["claude-opus-5-5"]).toEqual({ input: 4_000_000, cacheWrite: 5_000_000, cacheRead: 200_000, output: 20_000_000 });
+  expect(AI_PRICES["claude-sonnet-5-5"]).toEqual({ input: 2_000_000, cacheWrite: 2_500_000, cacheRead: 100_000, output: 10_000_000 });
+  expect(AI_PRICES["claude-fable-5-2"]).toEqual({ input: 8_000_000, cacheWrite: 10_000_000, cacheRead: 200_000, output: 40_000_000 });
+  expect(AI_PRICES["claude-haiku-5-5"]).toMatchObject({ input: 100_000, cacheWrite: 125_000, cacheRead: 10_000, output: 500_000 });
+  expect(AI_PRICES["claude-haiku-5-5"].over100k).toEqual({ input: 500_000, cacheWrite: 625_000, cacheRead: 50_000, output: 2_500_000 });
+  // The rows that were already there match the page too.
+  expect(AI_PRICES["claude-sonnet-5"].cacheRead).toBe(200_000);
+  expect(AI_PRICES["claude-opus-5"]).toEqual({ input: 5_000_000, cacheWrite: 6_250_000, cacheRead: 500_000, output: 25_000_000 });
+  expect(AI_PRICES["claude-fable-5-1"]).toEqual({ input: 10_000_000, cacheWrite: 12_500_000, cacheRead: 250_000, output: 50_000_000 });
+  // 2000 in, 300 out, 400 written, 5000 read, x1.3, up to 100 micros.
+  const usage = { input_tokens: 2000, output_tokens: 300, cache_creation_input_tokens: 400, cache_read_input_tokens: 5000 };
+  expect(costMicros("claude-opus-5-5", usage)).toBe(22_100);
+  expect(costMicros("claude-sonnet-5-5", usage)).toBe(11_100);
+  expect(costMicros("claude-fable-5-2", usage)).toBe(42_900);
+  expect(costMicros("claude-haiku-5-5", usage)).toBe(600);
+  for (const m of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-2", "claude-haiku-5-5"]) {
+    expect(costMicros(m, usage), m).toBe(priced(AI_PRICES[m], 2000, 300, 400, 5000));
+  }
+});
+
+it("haiku_5_5_prices_a_prompt_over_100k_tokens_at_the_higher_tier", () => {
+  const { over100k, ...base } = AI_PRICES["claude-haiku-5-5"];
+  // 50K in: tier 1. 50K x $0.10 + 1000 x $0.50 = $0.0055, x1.3 = 7150, up to 7200.
+  expect(costMicros("claude-haiku-5-5", { input_tokens: 50_000, output_tokens: 1000 })).toBe(7200);
+  expect(costMicros("claude-haiku-5-5", { input_tokens: 50_000, output_tokens: 1000 })).toBe(priced(base, 50_000, 1000));
+  // 150K in: tier 2. 150K x $0.50 + 1000 x $2.50 = $0.0775, x1.3 = 100750, up to 100800.
+  expect(costMicros("claude-haiku-5-5", { input_tokens: 150_000, output_tokens: 1000 })).toBe(100_800);
+  expect(costMicros("claude-haiku-5-5", { input_tokens: 150_000, output_tokens: 1000 })).toBe(priced(over100k!, 150_000, 1000));
+  // Exactly 100,000 is still tier 1; the prompt counts cache reads and writes.
+  expect(costMicros("claude-haiku-5-5", { input_tokens: 100_000 })).toBe(priced(base, 100_000, 0));
+  const mixed = { input_tokens: 10_000, cache_creation_input_tokens: 40_000, cache_read_input_tokens: 60_000, output_tokens: 10 };
+  expect(costMicros("claude-haiku-5-5", mixed)).toBe(priced(over100k!, 10_000, 10, 40_000, 60_000));
+});
+
+it("haiku_5_5_hold_uses_the_higher_tier_for_a_body_over_100k_bytes", async () => {
+  const { over100k, ...base } = AI_PRICES["claude-haiku-5-5"];
+  const hold = (p: typeof base, bytes: number, max: number) => Math.ceil(((bytes * Math.max(p.input, p.cacheWrite) + max * p.output) * 13) / 1e7);
+  expect(holdEstimate("claude-haiku-5-5", 100_000, 1024)).toBe(hold(base, 100_000, 1024));
+  expect(holdEstimate("claude-haiku-5-5", 100_001, 1024)).toBe(hold(over100k!, 100_001, 1024));
+
+  // Through the proxy: a 150K-byte body is held at tier 2 and the hold covers a 150K-token prompt.
+  const { db } = await seeded("approved", 100_000_000);
+  const { fetcher, calls } = sseFetcher();
+  const req = messages({ model: "claude-haiku-5-5", max_tokens: 1024, messages: [{ role: "user", content: "a".repeat(150_000) }] });
+  const ctx = createExecutionContext();
+  const res = await handleAiMessages(req, makeEnv(), ctx, db, fetcher, NOW);
+  expect(res.status).toBe(200);
+  const bytes = new TextEncoder().encode(String(calls[0].init.body)).byteLength;
+  expect(bytes).toBeGreaterThan(100_000);
+  const held = 100_000_000 - Number(res.headers.get("x-whimbrel-credit"));
+  expect(held).toBe(Math.ceil(hold(over100k!, bytes, 1024) / 100) * 100);
+  expect(held).toBeGreaterThanOrEqual(costMicros("claude-haiku-5-5", { input_tokens: bytes, output_tokens: 1024 }));
+  await res.text();
+  await waitOnExecutionContext(ctx);
+});
+
+it("the_offered_models_are_priced_newest_first_without_dated_aliases", () => {
+  const ids = AI_MODELS.map((m) => m.id);
+  expect(ids.slice(0, 4)).toEqual(["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"]);
+  for (const id of ids) expect(Object.hasOwn(AI_PRICES, id), id).toBe(true);
+  expect(ids.some((id) => /-\d{8}$/.test(id))).toBe(false);
+  expect(new Set(ids).size).toBe(ids.length);
+});
+
+function modelsFetcher(status: number, data: unknown) {
+  const calls: { url: string; init: RequestInit }[] = [];
+  const fetcher = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    if (status === 0) throw new TypeError("network down");
+    return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
+  }) as unknown as typeof fetch;
+  return { fetcher, calls };
+}
+
+it("offered_models_drop_what_anthropic_no_longer_lists_and_are_cached_for_an_hour", async () => {
+  await env.ENROLLMENT_HANDOFF.delete(AI_MODELS_CACHE_KEY);
+  const live = {
+    data: [
+      { id: "claude-opus-5-5", display_name: "Claude Opus 5.5 (live)" },
+      { id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5" },
+      { id: "claude-haiku-4-5-20251001", display_name: "Claude Haiku 4.5" },
+      { id: "claude-unpriced-9", display_name: "Not priced" },
+    ],
+  };
+  const { fetcher, calls } = modelsFetcher(200, live);
+  const models = await offeredAiModels(makeEnv(), fetcher);
+  expect(models).toEqual([
+    { id: "claude-opus-5-5", display_name: "Claude Opus 5.5 (live)" },
+    { id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5" },
+    { id: "claude-haiku-4-5", display_name: "Claude Haiku 4.5" },
+  ]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0].url).toBe("https://api.anthropic.com/v1/models?limit=1000");
+  expect((calls[0].init.headers as Record<string, string>)["x-api-key"]).toBe("sk-ant-whimbrel");
+  // The second read comes from KV, with no call to Anthropic.
+  expect(await offeredAiModels(makeEnv(), fetcher)).toEqual(models);
+  expect(calls).toHaveLength(1);
+  await env.ENROLLMENT_HANDOFF.delete(AI_MODELS_CACHE_KEY);
+});
+
+it("offered_models_fall_back_to_the_priced_list_and_cache_nothing", async () => {
+  await env.ENROLLMENT_HANDOFF.delete(AI_MODELS_CACHE_KEY);
+  for (const { fetcher } of [modelsFetcher(0, null), modelsFetcher(500, { error: "x" }), modelsFetcher(200, { data: [{ id: "claude-unpriced-9" }] })]) {
+    expect(await offeredAiModels(makeEnv(), fetcher)).toEqual(AI_MODELS);
+  }
+  const none = modelsFetcher(200, { data: [] });
+  expect(await offeredAiModels(makeEnv({ ANTHROPIC_API_KEY: undefined }), none.fetcher)).toEqual(AI_MODELS);
+  expect(none.calls).toHaveLength(0);
+  expect(await env.ENROLLMENT_HANDOFF.get(AI_MODELS_CACHE_KEY)).toBeNull();
 });
 
 it("streams_through_and_settles_real_usage", async () => {

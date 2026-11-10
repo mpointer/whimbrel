@@ -6,6 +6,8 @@ struct MenuBarContentView: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
     @State private var nextTopic: TopicRef?
+    /// The next meeting's brief key, when it has a readable brief.
+    @State private var nextPrepKey: String?
 
     /// The next calendar event that has not ended (the list looks back 15 minutes).
     private var next: QualifyingMeeting? {
@@ -38,13 +40,23 @@ struct MenuBarContentView: View {
                         .foregroundStyle(Color.whimbrelTextPrimary)
                         .lineLimit(2)
                     if let nextTopic { TopicChip(topic: nextTopic) }
-                }
-                .task(id: next.id) {
-                    guard let store = appState.coreStore else { nextTopic = nil; return }
-                    let (id, title) = (next.id, next.title)
-                    nextTopic = await withCheckedContinuation { done in
-                        CoreMemoryStore.accessQueue.async { done.resume(returning: store.topicForEvent(eventId: id, title: title)) }
+                    if let nextPrepKey {
+                        Button("Open brief") { appState.showPrepBrief(key: nextPrepKey) }
+                            .buttonStyle(.whimbrelSecondary)
                     }
+                }
+                // Also rerun when a brief may have landed: this Mac's prep tick, or a sync.
+                .task(id: "\(TodayLogic.prepKey(eventId: next.id, start: next.startDate))|\(appState.routineScheduler.recentRuns.first?.id ?? 0)|\(appState.contentSyncCoordinator.lastSyncedAt?.timeIntervalSince1970 ?? 0)") {
+                    guard let store = appState.coreStore else { nextTopic = nil; nextPrepKey = nil; return }
+                    let (id, title) = (next.id, next.title)
+                    let key = TodayLogic.prepKey(eventId: next.id, start: next.startDate)
+                    let (topic, prepKey) = await withCheckedContinuation { done in
+                        CoreMemoryStore.accessQueue.async {
+                            done.resume(returning: (store.topicForEvent(eventId: id, title: title), store.meetingPrep(key: key)?.brief != nil ? key : nil))
+                        }
+                    }
+                    nextTopic = topic
+                    nextPrepKey = prepKey
                 }
             }
 

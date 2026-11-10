@@ -31,6 +31,22 @@ struct AIBalance: Decodable, Equatable {
     }
 }
 
+/// `POST /v1/ai/models`: the models Whimbrel AI offers, newest first. Every id is one the
+/// server prices; `display_name` is decoded but the pickers show ids, as for the others.
+struct AIModelList: Decodable, Equatable {
+    struct Model: Decodable, Equatable {
+        let id: String
+        let displayName: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case displayName = "display_name"
+        }
+    }
+
+    let models: [Model]
+}
+
 /// The billing routes `SyncState` calls: `SyncBillingClient` in the app, a fake in tests.
 /// Mac-only, so `SyncWorker` (shared with the iPhone) stays as it is.
 protocol SyncBilling: AnyObject {
@@ -38,6 +54,7 @@ protocol SyncBilling: AnyObject {
     func checkoutURL(idToken: String, devicePublicKey: String, interval: String) async throws -> URL
     func portalURL(idToken: String, devicePublicKey: String) async throws -> URL
     func aiBalance(idToken: String, devicePublicKey: String) async throws -> AIBalance
+    func aiModels(idToken: String, devicePublicKey: String) async throws -> [String]
     /// `pack` is "10" or "25" (dollars).
     func aiCheckoutURL(idToken: String, devicePublicKey: String, pack: String) async throws -> URL
 }
@@ -88,6 +105,12 @@ final class SyncBillingClient: SyncBilling {
         let data = try await post("v1/ai/balance", ["idToken": idToken, "devicePublicKey": devicePublicKey])
         guard let balance = try? JSONDecoder().decode(AIBalance.self, from: data) else { throw SyncAPIError.malformedResponse }
         return balance
+    }
+
+    func aiModels(idToken: String, devicePublicKey: String) async throws -> [String] {
+        let data = try await post("v1/ai/models", ["idToken": idToken, "devicePublicKey": devicePublicKey])
+        guard let list = try? JSONDecoder().decode(AIModelList.self, from: data) else { throw SyncAPIError.malformedResponse }
+        return list.models.map(\.id).filter { !$0.isEmpty }
     }
 
     func aiCheckoutURL(idToken: String, devicePublicKey: String, pack: String) async throws -> URL {

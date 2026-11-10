@@ -9,7 +9,7 @@ import { ipBucket, rateLimit, rateLimited } from "./rateLimit";
 import { deleteAccount, runInactivity } from "./inactivity";
 import { aiBalance, creditPurchase, lastPurchaseMicros, purchaseByStripeRef, refundPurchase, settleStaleHolds } from "./aiCredit";
 import { billingConfigured, isAiCreditEvent, planFromSubscription, stripeRequest, subscriptionIdOf, verifyStripeSignature } from "./stripe";
-import { handleAiMessages } from "./aiProxy";
+import { handleAiMessages, offeredAiModels } from "./aiProxy";
 import { EMAIL_FROM, EMAIL_REPLY_TO, sendEmail } from "./email";
 import {
   findAccountByGoogleSub,
@@ -923,6 +923,28 @@ export async function handleAiBalance(
   }
 }
 
+/** The models Whimbrel AI offers (`offeredAiModels`), newest first, for the
+ * app's model picker. Same body and sign-in as the balance, with its own
+ * rate-limit bucket. */
+export async function handleAiModels(
+  request: Request,
+  env: Env,
+  db: SqlExecutor = tursoSqlExecutor(env),
+  now: number = Date.now(),
+  fetcher: typeof fetch = fetch,
+): Promise<Response> {
+  const body = await readBody(request);
+  if (!body) return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  try {
+    const auth = await billingAccount(body, env, db, now);
+    if (auth instanceof Response) return auth;
+    if (!(await rateLimit(env.ENROLLMENT_HANDOFF, `ai-models:${auth.googleSub}`, 60, 60 * 60))) return rateLimited();
+    return Response.json({ models: await offeredAiModels(env, fetcher) });
+  } catch (err) {
+    return backendError("handleAiModels", err);
+  }
+}
+
 /** Opens the Stripe customer portal for an account that has paid before. */
 export async function handleBillingPortal(
   request: Request,
@@ -1425,6 +1447,9 @@ export default {
       }
       if (url.pathname === "/v1/ai/balance" && request.method === "POST") {
         return await handleAiBalance(request, env);
+      }
+      if (url.pathname === "/v1/ai/models" && request.method === "POST") {
+        return await handleAiModels(request, env);
       }
       if (url.pathname === "/v1/billing/webhook" && request.method === "POST") {
         return await handleBillingWebhook(request, env);

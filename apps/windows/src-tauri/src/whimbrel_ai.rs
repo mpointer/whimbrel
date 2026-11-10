@@ -11,10 +11,15 @@
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// The priced model ids, in the Mac's order (`RoutingSettings.whimbrelModels`). Whimbrel's server
-/// answers any other id with 400 `unknown_model`. Keep in step with `AI_PRICES` in
-/// `server/src/aiProxy.ts`.
-pub const MODELS: [&str; 10] = [
+/// The models Whimbrel AI offers when the server's list (`POST /v1/ai/models`) can't be read:
+/// offline, signed out, or a server that predates it. The Mac's `RoutingSettings.whimbrelModels`,
+/// newest first. Only priced ids: Whimbrel's server answers any other with 400 `unknown_model`.
+/// Keep in step with `AI_PRICES` in `server/src/aiProxy.ts`.
+pub const MODELS: [&str; 14] = [
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+    "claude-fable-5-2",
     "claude-haiku-4-5",
     "claude-haiku-4-5-20251001",
     "claude-sonnet-4-6",
@@ -26,6 +31,31 @@ pub const MODELS: [&str; 10] = [
     "claude-fable-5",
     "claude-fable-5-1",
 ];
+
+/// The Whimbrel AI model used until the user picks one (the Mac's `whimbrelDefault`).
+pub const DEFAULT_MODEL: &str = "claude-sonnet-5-5";
+
+/// The model a Whimbrel AI pick snaps to when `options` doesn't offer it: the default when
+/// offered, else the first option (the Mac's `whimbrelFallback`).
+pub fn fallback_in<S: AsRef<str>>(options: &[S]) -> String {
+    if options.iter().any(|m| m.as_ref() == DEFAULT_MODEL) {
+        DEFAULT_MODEL.to_string()
+    } else {
+        options.first().map_or(DEFAULT_MODEL, |m| m.as_ref()).to_string()
+    }
+}
+
+/// The model a saved Whimbrel AI pick resolves to when a call reads the settings. A pick is kept
+/// when the server prices it (the built-in [`MODELS`]) or offers it, even when the server's list no
+/// longer does: `AI_PRICES` keeps those ids priced so an older pick still goes through. Only the
+/// picker snaps an unoffered pick, where the user sees it, as on the Mac. Anything else, or no pick
+/// at all, resolves to [`fallback_in`] `offered`.
+pub fn resolve_pick(saved: Option<String>, offered: &[String]) -> String {
+    match saved {
+        Some(m) if MODELS.contains(&m.as_str()) || offered.contains(&m) => m,
+        _ => fallback_in(offered),
+    }
+}
 
 /// The credentials are re-read at least this often while sync is ready.
 pub const MAX_AGE: Duration = Duration::from_secs(30 * 60);
@@ -57,8 +87,11 @@ struct Cached {
 
 /// The sync controller's credentials. The app installs its one cache with [`install`] so
 /// `ApiKeys::load` can read it; tests use their own.
+///
+/// It also keeps the server's model list (`POST /v1/ai/models`) read since sync became ready:
+/// `None` before a read, empty after a server that predates the route.
 #[derive(Default)]
-pub struct Cache(Mutex<Option<Cached>>);
+pub struct Cache(Mutex<Option<Cached>>, Mutex<Option<Vec<String>>>);
 
 impl Cache {
     pub fn get(&self) -> Option<Credentials> {
@@ -71,9 +104,25 @@ impl Cache {
         *self.0.lock().unwrap() = Some(Cached { credentials, fetched_at: now, expires_at_ms });
     }
 
-    /// Forgets them: sync left ready.
+    /// Forgets them and the model list: sync left ready.
     pub fn clear(&self) {
         *self.0.lock().unwrap() = None;
+        *self.1.lock().unwrap() = None;
+    }
+
+    /// The server's model list, once read since sync became ready.
+    pub fn models(&self) -> Option<Vec<String>> {
+        self.1.lock().unwrap().clone()
+    }
+
+    /// Records a read of the server's list. An empty answer keeps a list already read, as the
+    /// Mac's `refreshWhimbrelModels` does; before one it marks the read done, so the built-in
+    /// list stands.
+    pub fn store_models(&self, models: Vec<String>) {
+        let mut stored = self.1.lock().unwrap();
+        if !models.is_empty() || stored.is_none() {
+            *stored = Some(models);
+        }
     }
 
     pub fn needs_background_refresh(&self, now: Instant, now_ms: i64) -> bool {
@@ -97,6 +146,19 @@ pub fn install(cache: Arc<Cache>) {
 /// The installed cache's credentials: set while sync is ready, else None.
 pub fn cached() -> Option<Credentials> {
     INSTALLED.get().and_then(|c| c.get())
+}
+
+/// What the Whimbrel AI picker offers: the server's list once read, else the built-in [`MODELS`].
+pub fn offered_in(cache: Option<&Cache>) -> Vec<String> {
+    match cache.and_then(Cache::models) {
+        Some(models) if !models.is_empty() => models,
+        _ => MODELS.iter().map(|m| m.to_string()).collect(),
+    }
+}
+
+/// [`offered_in`] the installed cache.
+pub fn offered() -> Vec<String> {
+    offered_in(INSTALLED.get().map(|c| c.as_ref()))
 }
 
 /// A JWT's `exp` claim in unix ms: an unverified read, used only to know when to replace it.
@@ -183,7 +245,45 @@ pub(crate) mod tests {
         let prices = include_str!("../../../../server/src/aiProxy.ts");
         let table = &prices[prices.find("AI_PRICES").unwrap()..];
         let table = &table[..table.find("};").unwrap()];
-        let priced: Vec<&str> = table.lines().filter_map(|l| l.trim().strip_prefix('"')?.split('"').next()).collect();
-        assert_eq!(priced, MODELS.to_vec());
+        let mut priced: Vec<&str> = table.lines().filter_map(|l| l.trim().strip_prefix('"')?.split('"').next()).collect();
+        let mut offered = MODELS.to_vec();
+        priced.sort_unstable();
+        offered.sort_unstable();
+        assert_eq!(priced, offered, "every built-in id priced, and every priced id offered");
+        assert!(MODELS.contains(&DEFAULT_MODEL));
+    }
+
+    #[test]
+    fn the_servers_list_replaces_the_built_in_one_once_read() {
+        let cache = Cache::default();
+        assert_eq!(offered_in(Some(&cache)), MODELS.to_vec(), "nothing read yet");
+        cache.store_models(Vec::new());
+        assert_eq!(cache.models(), Some(Vec::new()), "an old server: read, and nothing to read again");
+        assert_eq!(offered_in(Some(&cache)), MODELS.to_vec());
+        cache.store_models(vec!["claude-opus-5-5".into(), "claude-sonnet-5-5".into()]);
+        cache.store_models(Vec::new());
+        assert_eq!(offered_in(Some(&cache)), vec!["claude-opus-5-5", "claude-sonnet-5-5"], "an empty answer keeps the list");
+        cache.clear();
+        assert_eq!(cache.models(), None);
+        assert_eq!(offered_in(None), MODELS.to_vec());
+    }
+
+    #[test]
+    fn a_priced_pick_holds_at_call_time_even_when_the_server_no_longer_offers_it() {
+        let server: Vec<String> = vec!["claude-opus-5-5".into(), "claude-sonnet-5-5".into(), "claude-next-6".into()];
+        // Priced but not offered: kept (the picker snaps it, not every call).
+        assert_eq!(resolve_pick(Some("claude-opus-4-7".into()), &server), "claude-opus-4-7");
+        // Offered by the server but newer than the built-in list: kept.
+        assert_eq!(resolve_pick(Some("claude-next-6".into()), &server), "claude-next-6");
+        // Neither priced nor offered, or no pick yet: the default.
+        assert_eq!(resolve_pick(Some("claude-made-up".into()), &server), "claude-sonnet-5-5");
+        assert_eq!(resolve_pick(None, &server), "claude-sonnet-5-5");
+    }
+
+    #[test]
+    fn a_pick_snaps_to_the_default_or_the_first_offered() {
+        assert_eq!(fallback_in(&MODELS), "claude-sonnet-5-5");
+        assert_eq!(fallback_in(&["claude-opus-5-5", "claude-haiku-5-5"]), "claude-opus-5-5");
+        assert_eq!(fallback_in::<&str>(&[]), "claude-sonnet-5-5");
     }
 }

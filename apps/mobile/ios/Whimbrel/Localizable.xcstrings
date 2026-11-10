@@ -5985,6 +5985,40 @@
         }
       }
     },
+    "Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ihre Anfrage läuft über den Server von Whimbrel zu Anthropic. Whimbrel speichert, wie viele Tokens verbraucht wurden, nicht, was Sie gefragt haben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu solicitud pasa por el servidor de Whimbrel hasta Anthropic. Whimbrel guarda un registro de los tokens usados, no de lo que preguntaste."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Votre demande passe par le serveur de Whimbrel jusqu'à Anthropic. Whimbrel conserve un relevé des jetons utilisés, pas de ce que vous avez demandé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Votre demande passe par le serveur de Whimbrel jusqu'à Anthropic. Whimbrel conserve un relevé des jetons utilisés, pas de ce que vous avez demandé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sua solicitação passa pelo servidor do Whimbrel até a Anthropic. O Whimbrel guarda um registro dos tokens usados, não do que você pediu."
+          }
+        }
+      }
+    },
     "Your role" : {
       "localizations" : {
         "de" : {

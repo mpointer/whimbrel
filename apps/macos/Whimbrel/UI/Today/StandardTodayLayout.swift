@@ -117,8 +117,8 @@ struct StandardTodayLayout: View {
         }
     }
 
-    /// The 7 days after today, by day, in a card like the schedule's: time, title, topic chip and how
-    /// many are invited. No Start or prep: those belong to the day itself.
+    /// The 7 days after today, by day, in a card like the schedule's: time, title, topic chip, the
+    /// "Prep ready" chip when a brief exists, and how many are invited. No Start: that belongs to the day itself.
     @ViewBuilder
     private var upcomingWeekCard: some View {
         if !content.upcomingWeek.isEmpty {
@@ -138,6 +138,7 @@ struct StandardTodayLayout: View {
                                     .foregroundStyle(Color.whimbrelTextPrimary)
                                     .lineLimit(2)
                                 if let topic = meeting.topic { TopicChip(topic: topic) }
+                                if let prep = meeting.prep { PrepReadyChip(prepKey: prep.eventId) }
                                 if !meeting.invited.isEmpty {
                                     Text(meeting.invited)
                                         .font(.whimbrelBody(.subheadline))
@@ -216,7 +217,11 @@ struct StandardTodayLayout: View {
                             .foregroundStyle(Color.whimbrelTextSecondary)
                             .lineLimit(1)
                     }
-                    if isNext { prepLine(for: event) }
+                    if isNext {
+                        prepLine(for: event)
+                    } else if let prep = content.prep(eventId: event.id, start: event.start) {
+                        PrepReadyChip(prepKey: prep.eventId)
+                    }
                 }
             }
             Spacer(minLength: Spacing.md)
@@ -227,14 +232,14 @@ struct StandardTodayLayout: View {
         }
     }
 
-    /// Only the next event has prep data: a status label, and its brief when one is ready.
+    /// The next event's prep: the "Prep ready" chip with Open brief / Hide brief and the brief inline,
+    /// or "No prep yet". The other rows show only the chip.
     @ViewBuilder
     private func prepLine(for event: TodayUpcoming) -> some View {
-        if let prep = content.nextPrep, TodayLogic.prep(prep, isFor: event), prep.brief != nil {
+        if let prep = content.prep(eventId: event.id, start: event.start)
+            ?? content.nextPrep.flatMap({ TodayLogic.prep($0, isFor: event) && $0.brief != nil ? $0 : nil }) {
             HStack(spacing: Spacing.sm) {
-                Text("Prep ready")
-                    .font(.whimbrelBody(.subheadline))
-                    .foregroundStyle(Color.whimbrelTextSecondary)
+                PrepReadyChip(prepKey: prep.eventId)
                 Button(briefExpanded ? "Hide brief" : "Open brief") { briefExpanded.toggle() }
                     .buttonStyle(.whimbrelQuiet)
             }
@@ -302,7 +307,7 @@ struct StandardTodayLayout: View {
     private func briefRecapSection(_ run: CoreRoutineRunWithName) -> some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             WhimbrelSectionLabel(text: voice.text(.recapHeader, name: ""))
-            Text(run.outputSummary).font(.whimbrelBody(.body)).foregroundStyle(Color.whimbrelTextSecondary)
+            Text(run.displaySummary).font(.whimbrelBody(.body)).foregroundStyle(Color.whimbrelTextSecondary)
             if let origin = run.originDeviceId {
                 Text("From \(content.deviceLabel(for: origin))").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
             }

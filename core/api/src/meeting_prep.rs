@@ -80,13 +80,19 @@ pub fn run_gated(
         } else {
             let prompt = llm::meeting_prep::build_prompt(&meeting.title, &meeting.attendees, &context, profile, lang);
             let Some(answer) = complete(&prompt) else {
-                store.record_summarize_error("meeting_prep", "no model was available to write the brief", now_unix_ms);
+                let reason = "no model was available to write the brief";
+                store.record_summarize_error("meeting_prep", reason, now_unix_ms);
+                // Only a record: a write that fails here must not stop prep for the other meetings.
+                let _ = record_failure_once(store, routine.id, &meeting, reason, now_unix_ms);
                 continue;
             };
             match llm::meeting_prep::parse_brief(&answer.text, &meeting.title, &meeting.attendees, &context) {
                 Ok(brief) => (brief, answer.provider, answer.model),
                 Err(e) => {
-                    store.record_summarize_error("meeting_prep", &e.to_string(), now_unix_ms);
+                    let reason = e.to_string();
+                    store.record_summarize_error("meeting_prep", &reason, now_unix_ms);
+                    // Only a record: a write that fails here must not stop prep for the other meetings.
+                    let _ = record_failure_once(store, routine.id, &meeting, &reason, now_unix_ms);
                     continue;
                 }
             }
@@ -125,6 +131,44 @@ pub fn run_gated(
         });
     }
     Ok(runs)
+}
+
+/// How many of the routine's newest runs are searched for an earlier failure of the same meeting.
+const FAILURE_LOOKBACK_RUNS: usize = 200;
+
+/// Records a `failed` Meeting Prep run for `meeting`, once: the tick retries every minute until
+/// the meeting starts, and a run per retry would bury the list. The run is not returned to the
+/// shell, so no "Prep ready" notification is posted for it; it shows in Routines with `reason`.
+fn record_failure_once(
+    store: &memory::Store,
+    routine_id: i64,
+    meeting: &QualifyingMeeting,
+    reason: &str,
+    now_unix_ms: i64,
+) -> rusqlite::Result<()> {
+    let already = store.recent_routine_runs(routine_id, FAILURE_LOOKBACK_RUNS)?.into_iter().any(|r| {
+        r.status == memory::RunStatus::Failed
+            && serde_json::from_str::<serde_json::Value>(&r.output_json).is_ok_and(|j| {
+                j["event_id"] == meeting.id.as_str() && j["start_unix_ms"] == meeting.start_unix_ms
+            })
+    });
+    if already {
+        return Ok(());
+    }
+    store.insert_routine_run(&memory::NewRoutineRun {
+        routine_id,
+        ran_at_unix_ms: now_unix_ms,
+        status: memory::RunStatus::Failed,
+        output_summary: format!("Prep failed for {}: {}", meeting.title, reason),
+        output_json: serde_json::json!({
+            "event_id": meeting.id,
+            "title": meeting.title,
+            "start_unix_ms": meeting.start_unix_ms,
+            "error": reason,
+        })
+        .to_string(),
+    })?;
+    Ok(())
 }
 
 /// [`run`] with the user's real model chain: the spend caps and Local-only mode are
@@ -310,6 +354,46 @@ mod tests {
 
         let mut ok = |_: &str| Some(good_answer());
         assert_eq!(run(&store, &meetings, 81 * MIN, 30.0, "", "", &mut ok).unwrap().len(), 1, "prepared on the next tick");
+    }
+
+    #[test]
+    fn a_failed_prep_is_recorded_once_per_meeting_as_a_failed_run_with_its_reason() {
+        let store = store(true);
+        earlier_meeting_with(&store, "Ben Lawrick");
+        let routine_id = store.list_routines().unwrap()[0].id;
+        let meetings = [upcoming("evt-9", 100 * MIN, &["Ben Lawrick"])];
+        let failed = |store: &memory::Store| {
+            store
+                .recent_routine_runs(routine_id, 50)
+                .unwrap()
+                .into_iter()
+                .filter(|r| r.status == memory::RunStatus::Failed)
+                .collect::<Vec<_>>()
+        };
+
+        let mut none = |_: &str| -> Option<Completed> { None };
+        assert!(run(&store, &meetings, 80 * MIN, 30.0, "", "", &mut none).unwrap().is_empty(), "a failure is not handed to the shell");
+        let runs = failed(&store);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].output_summary, "Prep failed for evt-9 sync: no model was available to write the brief");
+        let json: serde_json::Value = serde_json::from_str(&runs[0].output_json).unwrap();
+        assert_eq!((json["event_id"].as_str(), json["start_unix_ms"].as_i64()), (Some("evt-9"), Some(100 * MIN)));
+
+        // The retry a minute later fails again, with a different reason: still one failed run.
+        let mut garbled = |_: &str| Some(Completed { text: "sorry".into(), provider: "ollama".into(), model: "m".into() });
+        run(&store, &meetings, 81 * MIN, 30.0, "", "", &mut garbled).unwrap();
+        assert_eq!(failed(&store).len(), 1);
+
+        // Another meeting's failure is its own run.
+        let other = [upcoming("evt-10", 100 * MIN, &["Ben Lawrick"])];
+        run(&store, &other, 82 * MIN, 30.0, "", "", &mut garbled).unwrap();
+        assert_eq!(failed(&store).len(), 2);
+        assert!(failed(&store)[0].output_summary.starts_with("Prep failed for evt-10 sync: "));
+
+        // It shows in the Routines list, and a later success still lands.
+        assert!(store.recent_routine_runs_across_all(50).unwrap().iter().any(|r| r.status == memory::RunStatus::Failed));
+        let mut ok = |_: &str| Some(good_answer());
+        assert_eq!(run(&store, &meetings, 83 * MIN, 30.0, "", "", &mut ok).unwrap().len(), 1);
     }
 
     #[test]
