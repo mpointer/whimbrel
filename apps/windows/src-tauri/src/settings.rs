@@ -26,6 +26,8 @@ pub mod keys {
     pub const OPENAI_MODEL: &str = "routing.openaiDefaultModel";
     pub const GOOGLE_MODEL: &str = "routing.googleDefaultModel";
     pub const OPENROUTER_MODEL: &str = "routing.openrouterDefaultModel";
+    /// Device-local, as on the Mac (never synced): the Whimbrel AI pick, one of `whimbrel_ai::MODELS`.
+    pub const WHIMBREL_MODEL: &str = "routing.whimbrelDefaultModel";
     pub const USER_DAILY_CAP_CENTS: &str = "routing.userDailyCapCents";
     pub const GLOBAL_DAILY_CAP_CENTS: &str = "routing.globalDailyCapCents";
     /// Synced, as on the Mac: `budget.monthlyCents.<provider>` for each paid provider, cents; unset
@@ -150,6 +152,9 @@ pub enum Provider {
     Google,
     /// One key, any model on OpenRouter's catalogue, free ones included.
     Openrouter,
+    /// Whimbrel AI: Anthropic models through Whimbrel's server, paid from prepaid credit. It signs in
+    /// with the sync account, so it has no key of its own, and core uses it only when preferred.
+    Whimbrel,
 }
 
 impl Provider {
@@ -161,9 +166,11 @@ impl Provider {
             Provider::Openai => "openai",
             Provider::Google => "google",
             Provider::Openrouter => "openrouter",
+            Provider::Whimbrel => "whimbrel",
         }
     }
 
+    /// The providers with an API key of their own (Whimbrel AI has none).
     pub const HOSTED: [Provider; 4] = [Provider::Anthropic, Provider::Openai, Provider::Google, Provider::Openrouter];
 }
 
@@ -180,6 +187,8 @@ pub struct RoutingSettings {
     /// core then leaves OpenRouter out of every chain, because their catalogue changes
     /// weekly and there is no fallback model to substitute.
     pub openrouter_model: String,
+    /// The Whimbrel AI pick, one of `whimbrel_ai::MODELS`. Device-local (not synced), as on the Mac.
+    pub whimbrel_model: String,
     /// `None` = the built-in default cap; `Some(0)` = no cap (Mac semantics).
     pub user_daily_cap_cents: Option<i64>,
     pub global_daily_cap_cents: Option<i64>,
@@ -212,6 +221,7 @@ impl Default for RoutingSettings {
             openai_model: "gpt-4o-mini".into(),
             google_model: "gemini-2.5-flash".into(),
             openrouter_model: String::new(),
+            whimbrel_model: "claude-haiku-4-5".into(),
             user_daily_cap_cents: None,
             global_daily_cap_cents: None,
             local_only: false,
@@ -232,6 +242,7 @@ impl RoutingSettings {
             Provider::Openai => &self.openai_model,
             Provider::Google => &self.google_model,
             Provider::Openrouter => &self.openrouter_model,
+            Provider::Whimbrel => &self.whimbrel_model,
         }
     }
 
@@ -243,6 +254,7 @@ impl RoutingSettings {
             Provider::Openai => &self.openai_model,
             Provider::Google => &self.google_model,
             Provider::Openrouter => &self.openrouter_model,
+            Provider::Whimbrel => &self.whimbrel_model,
         }
     }
 
@@ -268,6 +280,9 @@ impl RoutingSettings {
             cheap_first: self.cheap_first,
             use_local_model: self.use_local_model,
             openrouter_key: keys.openrouter.clone(),
+            // Core adds Whimbrel AI to a chain only when it is preferred and both are set.
+            whimbrel_id_token: keys.whimbrel.as_ref().map(|c| c.id_token.clone()),
+            whimbrel_device_key: keys.whimbrel.as_ref().map(|c| c.device_key.clone()),
             openrouter_model: self.openrouter_model.clone(),
             openrouter_prices: self.openrouter_prices.iter().map(|(k, v)| (k.clone(), *v)).collect(),
             output_language: self.output_language.clone(),
@@ -334,6 +349,8 @@ pub struct ApiKeys {
     pub openai: Option<String>,
     pub google: Option<String>,
     pub openrouter: Option<String>,
+    /// Whimbrel AI's sync ID token and device key, from `whimbrel_ai::cached`; None when sync isn't ready.
+    pub whimbrel: Option<crate::whimbrel_ai::Credentials>,
 }
 
 impl ApiKeys {
@@ -345,6 +362,7 @@ impl ApiKeys {
             Provider::Openai => &self.openai,
             Provider::Google => &self.google,
             Provider::Openrouter => &self.openrouter,
+            Provider::Whimbrel => return self.whimbrel.is_some(),
         };
         key.as_deref().is_some_and(|k| !k.is_empty())
     }
@@ -356,6 +374,8 @@ impl std::fmt::Debug for ApiKeys {
             .field("anthropic", &self.anthropic.is_some())
             .field("openai", &self.openai.is_some())
             .field("google", &self.google.is_some())
+            .field("openrouter", &self.openrouter.is_some())
+            .field("whimbrel", &self.whimbrel.is_some())
             .finish()
     }
 }
@@ -367,6 +387,7 @@ impl ApiKeys {
             openai: secrets.get_string(APP_SERVICE, accounts::OPENAI_API_KEY)?,
             google: secrets.get_string(APP_SERVICE, accounts::GOOGLE_API_KEY)?,
             openrouter: secrets.get_string(APP_SERVICE, accounts::OPENROUTER_API_KEY)?,
+            whimbrel: crate::whimbrel_ai::cached(),
         })
     }
 }
@@ -490,6 +511,10 @@ impl SettingsFile {
             openai_model: self.get(keys::OPENAI_MODEL).unwrap_or(d.openai_model),
             google_model: self.get(keys::GOOGLE_MODEL).unwrap_or(d.google_model),
             openrouter_model: self.get(keys::OPENROUTER_MODEL).unwrap_or(d.openrouter_model),
+            whimbrel_model: self
+                .get::<String>(keys::WHIMBREL_MODEL)
+                .filter(|m| crate::whimbrel_ai::MODELS.contains(&m.as_str()))
+                .unwrap_or(d.whimbrel_model),
             user_daily_cap_cents: self.get(keys::USER_DAILY_CAP_CENTS),
             global_daily_cap_cents: self.get(keys::GLOBAL_DAILY_CAP_CENTS),
             local_only: self.get(keys::LOCAL_ONLY_MODE).unwrap_or(d.local_only),
@@ -525,6 +550,7 @@ impl SettingsFile {
         self.set(keys::OPENAI_MODEL, Some(&r.openai_model));
         self.set(keys::GOOGLE_MODEL, Some(&r.google_model));
         self.set(keys::OPENROUTER_MODEL, Some(r.openrouter_model.trim()));
+        self.set(keys::WHIMBREL_MODEL, Some(&r.whimbrel_model));
         self.set(keys::USER_DAILY_CAP_CENTS, r.user_daily_cap_cents);
         self.set(keys::GLOBAL_DAILY_CAP_CENTS, r.global_daily_cap_cents);
         self.set(keys::LOCAL_ONLY_MODE, Some(r.local_only));
@@ -1295,6 +1321,33 @@ mod tests {
         assert!(!path.exists());
         assert_eq!(std::fs::read_to_string(path.with_extension("json.corrupt")).unwrap(), "{ not json");
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn whimbrel_ai_is_keyless_device_local_and_rides_the_routing_config() {
+        assert!(!Provider::HOSTED.contains(&Provider::Whimbrel), "no API key of its own");
+        assert_eq!(serde_json::to_value(Provider::Whimbrel).unwrap(), "whimbrel");
+        let path = temp_path("whimbrel");
+        let mut s = SettingsFile::load(&path);
+        assert_eq!(s.routing().whimbrel_model, "claude-haiku-4-5");
+        let routing = RoutingSettings { preferred_provider: Provider::Whimbrel, whimbrel_model: "claude-sonnet-5".into(), ..RoutingSettings::default() };
+        s.set_routing(&routing);
+        assert_eq!(s.routing().whimbrel_model, "claude-sonnet-5");
+        assert_eq!(s.routing().preferred_model(), "claude-sonnet-5");
+        // A model the server doesn't price never reaches a call.
+        s.set(keys::WHIMBREL_MODEL, Some("claude-made-up"));
+        assert_eq!(s.routing().whimbrel_model, "claude-haiku-4-5");
+
+        let creds = crate::whimbrel_ai::Credentials { id_token: "jwt".into(), device_key: "pk".into() };
+        let keys = ApiKeys { whimbrel: Some(creds), ..ApiKeys::default() };
+        assert!(keys.has(Provider::Whimbrel) && !ApiKeys::default().has(Provider::Whimbrel));
+        assert!(!format!("{keys:?}").contains("jwt"));
+        let cfg = routing.routing_config(&keys, &Instructions::default());
+        assert_eq!((cfg.preferred_provider.as_str(), cfg.preferred_model.as_str()), ("whimbrel", "claude-sonnet-5"));
+        assert_eq!((cfg.whimbrel_id_token.as_deref(), cfg.whimbrel_device_key.as_deref()), (Some("jwt"), Some("pk")));
+        let signed_out = routing.routing_config(&ApiKeys::default(), &Instructions::default());
+        assert_eq!((signed_out.whimbrel_id_token, signed_out.whimbrel_device_key), (None, None));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

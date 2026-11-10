@@ -47,6 +47,8 @@ export function providerFailureReason(reason: ProviderFailureReason): string | n
       return t("{provider} rejected the API key. Check it in Settings → AI.", { provider: name(reason.provider) });
     case "rate_limited":
       return t("{provider} is busy or out of credit. Try again shortly.", { provider: name(reason.provider) });
+    case "credit_exhausted":
+      return t("Whimbrel AI credit is used up. Add credit in Settings.");
     default:
       return null;
   }

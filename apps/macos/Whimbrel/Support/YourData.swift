@@ -27,6 +27,18 @@ enum YourData {
         var syncDevices: Int
         var googleAccounts: [String]
         var typesafeOn: Bool
+        /// Whimbrel AI's data sentence when it is a hosted provider here, else nil.
+        var whimbrelAITerms: String? = nil
+    }
+
+    /// "Keys for A, B." for providers that use a key; Whimbrel AI has none (prepaid credit),
+    /// so it gets its own sentence, alone or after the keys.
+    static func providerState(_ hosted: [String]) -> String {
+        let keyed = hosted.filter { $0 != "Whimbrel AI" }
+        var parts: [String] = []
+        if !keyed.isEmpty { parts.append(String(localized: "Keys for \(keyed.joined(separator: ", ")).")) }
+        if keyed.count != hosted.count { parts.append(String(localized: "Whimbrel AI (prepaid credit).")) }
+        return parts.joined(separator: " ")
     }
 
     static func outbound(_ i: Inputs) -> [Outbound] {
@@ -34,12 +46,13 @@ enum YourData {
             channel: .providers,
             title: String(localized: "AI providers"),
             when: String(localized: "When you ask a question, summarize a meeting, or run a routine with a hosted model."),
-            sees: String(localized: "The provider whose key you added receives the text needed for that request, under its own terms. Known secrets are redacted first."),
+            sees: [String(localized: "The provider whose key you added receives the text needed for that request, under its own terms. Known secrets are redacted first."),
+                   i.whimbrelAITerms].compactMap { $0 }.joined(separator: " "),
             state: i.localOnly
                 ? String(localized: "Local-only mode: nothing is sent.")
                 : i.hostedProviders.isEmpty
                     ? String(localized: "No hosted keys. Only local models run.")
-                    : String(localized: "Keys for \(i.hostedProviders.joined(separator: ", ")).") ,
+                    : Self.providerState(i.hostedProviders),
             active: !i.localOnly && !i.hostedProviders.isEmpty
         )
         let relay = Outbound(

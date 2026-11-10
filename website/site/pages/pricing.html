@@ -7,7 +7,7 @@
   "crumbs": [{ "name": "Pricing", "path": "/pricing/" }],
   "faq": [
     { "q": "Is Whimbrel really free?", "a": "Yes. Every feature in the app is free and open source under the Apache 2.0 license: meeting capture, transcription, screen memory, search, chat, routines, connectors, the MCP server, and end-to-end encrypted sync. Nothing in the app is held back for a paid plan." },
-    { "q": "Do I need an AI API key?", "a": "You choose. Run models on your computer with Ollama for free, or bring your own Anthropic, OpenAI, Google Gemini, or OpenRouter key and pay that provider directly. Small tasks go to the cheapest model you have by default, so most people spend under a dollar a month on hosted models. Whimbrel never resells AI usage: there is no hosted model, no token bundle, and no markup on your model bill, on any plan." },
+    { "q": "Do I need an AI API key?", "a": "You choose. Run models on your computer with Ollama for free, or bring your own Anthropic, OpenAI, Google Gemini, or OpenRouter key and pay that provider directly. Small tasks go to the cheapest model you have by default, so most people spend under a dollar a month on hosted models. Bring your own API key and Whimbrel adds nothing to what your provider charges. Whimbrel AI is optional prepaid credit at cost plus 30%." },
     { "q": "What does sync cost?", "a": "Nothing. Sync is end-to-end encrypted. On a relay you run yourself, it's unlimited. On the relay we host, a free account syncs one computer and one phone. Cloud adds unlimited devices on our relay for $5 a month." },
     { "q": "What does Cloud cost?", "a": "$5 a month or $50 a year, plus tax where applicable. Subscribe from the app: Settings → Sync & Devices. Cloud gives you unlimited devices on our hosted relay, keeps your account however long you're away, and includes email support. Everything in the app stays free." },
     { "q": "What happens if I cancel?", "a": "Cancel any time from Manage subscription in the app. Cloud runs to the end of the period you paid for, then your account is on Free: nothing is deleted, and every device already syncing keeps syncing; only adding a device past one computer and one phone needs Cloud again. Payments aren't refunded automatically; write to us if you want a refund. Deleting your Whimbrel account also cancels the subscription." },
@@ -71,6 +71,21 @@
       </article>
 
       <article class="card plan">
+        <h2>Whimbrel AI</h2>
+        <p class="plan-for">For when you don't want to manage an API key.</p>
+        <p class="price"><span class="amount">$10</span> <span class="per">or $25 of prepaid credit</span></p>
+        <p class="price-note">Plus tax where applicable</p>
+        <a class="btn btn-primary btn-block" href="/download/#register">Buy credit in the app: Settings → AI Providers</a>
+        <ul class="plan-features">
+          <li>Use Claude models without your own API key</li>
+          <li>You pay what you use plus 30%</li>
+          <li>It stops at $0, so there is no surprise bill</li>
+          <li>Credit doesn't expire</li>
+          <li>Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked.</li>
+        </ul>
+      </article>
+
+      <article class="card plan">
         <p class="plan-badge">Planned</p>
         <h2>Team</h2>
         <p class="plan-for">For small teams that share meeting memory.</p>
@@ -100,7 +115,7 @@
         </ul>
       </article>
     </div>
-    <p class="fine muted table-note center">Whimbrel never resells AI usage: no hosted model, no token bundles, no markup on your model bill. <a href="/open-source/">How the open-source model works</a>.</p>
+    <p class="fine muted table-note center">Bring your own API key and Whimbrel adds nothing to what your provider charges. Whimbrel AI is optional prepaid credit at cost plus 30%. <a href="/open-source/">How the open-source model works</a>.</p>
   </div>
 </section>
 
@@ -108,7 +123,7 @@
   <div class="narrow">
     <div class="section-head center">
       <h2>How Whimbrel compares on price</h2>
-      <p class="lede">The plans people pay for in this category start at $14 to $17 a month, with the AI model bundled in. Whimbrel's app is free; you pay your model provider directly, or nothing with local models.</p>
+      <p class="lede">The plans people pay for in this category start at $14 to $17 a month, with the AI model bundled in. Whimbrel's app is free; you pay your model provider directly, pay Whimbrel AI for what you use plus 30%, or pay nothing with local models.</p>
     </div>
     <div class="table-wrap">
       <table class="compare">

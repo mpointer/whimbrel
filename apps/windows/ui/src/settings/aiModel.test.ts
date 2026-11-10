@@ -5,6 +5,7 @@ import {
   costLine,
   dataTermsLine,
   formatCents,
+  formatMicros,
   groupUsageByDay,
   hostedNotice,
   keyCheckLine,
@@ -20,6 +21,7 @@ import {
   usageCost,
   usageTokens,
   usageTotalsLine,
+  whimbrelBalanceLine,
 } from "./aiModel";
 
 describe("a chosen Ollama model that isn't installed", () => {
@@ -32,6 +34,7 @@ describe("a chosen Ollama model that isn't installed", () => {
 
 const routing: RoutingSettings = {
   preferredProvider: "anthropic",
+  whimbrelModel: "claude-haiku-4-5",
   ollamaModel: "gemma4:12b",
   anthropicModel: "claude-haiku-4-5",
   openaiModel: "gpt-4o-mini",
@@ -108,6 +111,26 @@ describe("the on-ramp", () => {
     expect(onRampOnceKnown(routing, saved, null, null)).toBe(false);
     expect(onRampOnceKnown(routing, none, false, true)).toBe(false);
     expect(onRampOnceKnown(routing, none, false, false)).toBe(true);
+  });
+
+  it("counts Whimbrel AI as a hosted provider once it is preferred and sync is signed in", () => {
+    const none = [{ provider: "anthropic" as const, masked: null, syncEnabled: false }];
+    const whimbrel = { ...routing, preferredProvider: "whimbrel" as const };
+    expect(onRampOnceKnown(whimbrel, none, null, null, true)).toBe(false);
+    expect(onRampOnceKnown(whimbrel, none, false, false, false)).toBe(true);
+    // Signed in but not preferred: core never adds it to a chain, so it doesn't count.
+    expect(onRampOnceKnown(routing, none, false, false, true)).toBe(true);
+    expect(hostedNotice(whimbrel, none, false)).toBe("Sign in to sync to use Whimbrel AI");
+    expect(hostedNotice(whimbrel, none, true)).toBeNull();
+    expect(hostedNotice({ ...whimbrel, localOnly: true }, none, true)).toMatch(/Local-only/);
+    expect(modelField("whimbrel")).toBe("whimbrelModel");
+  });
+
+  it("shows the Whimbrel AI balance in dollars, rounded down to the cent", () => {
+    expect(formatMicros(7_429_999)).toBe("$7.42");
+    expect(formatMicros(0)).toBe("$0.00");
+    expect(formatMicros(-5)).toBe("$0.00");
+    expect(whimbrelBalanceLine(25_000_000)).toBe("$25.00 left");
   });
 
   it("notes an OpenRouter default without a pick", () => {

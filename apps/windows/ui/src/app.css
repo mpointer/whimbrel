@@ -187,23 +187,35 @@ body {
   background: var(--color-background-card);
 }
 
+/* A standalone button (Add $10, Check for Updates, …) draws its outline so it reads as clickable.
+   Inside a .mode-picker the picker draws the outline, so its segments stay bare until hovered. */
 .mode {
   font: inherit;
   color: var(--color-text-primary);
   background: transparent;
-  border: 1px solid transparent;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
   padding: var(--space-xs) var(--space-md);
   cursor: pointer;
 }
 
 .mode:hover {
+  border-color: var(--color-text-secondary);
+}
+
+.mode-picker .mode {
+  border-color: transparent;
+}
+
+.mode-picker .mode:hover {
   border-color: var(--color-border);
 }
 
-.mode--active {
+.mode--active,
+.mode-picker .mode--active {
   color: var(--color-text-on-accent);
   background: var(--color-accent-primary);
+  border-color: var(--color-accent-primary);
 }
 
 .mode:focus-visible,

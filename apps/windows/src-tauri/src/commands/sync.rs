@@ -8,6 +8,7 @@ use tauri::State;
 
 use crate::error::CommandError;
 use crate::state::AppState;
+use crate::syncing::billing::WhimbrelAiView;
 use crate::syncing::controller::{DeviceView, SyncController, SyncState, SyncView};
 use crate::l10n::tr;
 
@@ -69,6 +70,40 @@ pub async fn sync_manage_subscription(state: State<'_, AppState>) -> Result<Sync
     let opening = c.clone();
     blocking(move || opening.manage_subscription()).await?;
     Ok(c.view())
+}
+
+/// Settings → AI's Whimbrel AI card: signed in or not, and the last credit read.
+#[tauri::command]
+pub fn whimbrel_ai_status(state: State<'_, AppState>) -> WhimbrelAiView {
+    match &state.sync {
+        Some(c) => c.whimbrel_ai_view(),
+        None => WhimbrelAiView::new(false, None),
+    }
+}
+
+/// Reads the credit again and freshens the credentials (Settings → AI opening, or the window
+/// regaining focus). A failed read keeps the last balance.
+#[tauri::command]
+pub async fn whimbrel_ai_refresh(state: State<'_, AppState>) -> Result<WhimbrelAiView, CommandError> {
+    let c = controller(&state)?;
+    let reading = c.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        if let Err(e) = reading.refresh_whimbrel_credentials(crate::whimbrel_ai::BACKGROUND_MIN_VALIDITY) {
+            tracing::warn!(error = %e, "could not refresh the Whimbrel AI credentials");
+        }
+        reading.refresh_ai_balance()
+    })
+    .await;
+    Ok(c.whimbrel_ai_view())
+}
+
+/// Add $10 or Add $25 (`pack` "10" or "25"): opens Stripe Checkout in the browser.
+#[tauri::command]
+pub async fn whimbrel_ai_buy(state: State<'_, AppState>, pack: String) -> Result<WhimbrelAiView, CommandError> {
+    let c = controller(&state)?;
+    let opening = c.clone();
+    blocking(move || opening.buy_ai_credit(&pack)).await?;
+    Ok(c.whimbrel_ai_view())
 }
 
 #[tauri::command]

@@ -20,11 +20,11 @@
     },
     {
       "q": "L'application envoie-t-elle de la télémétrie ?",
-      "a": "Aucune analyse d'usage, aucun rapport de plantage, aucun suivi. Nos serveurs voient seulement une vérification de mise à jour, au lancement puis une fois par jour, qui envoie un identifiant aléatoire changeant chaque semaine avec la plateforme et la version pour compter les installations, et, si vous utilisez notre relais hébergé, votre compte et la liste de vos appareils. Le contenu synchronisé est chiffré de bout en bout, donc le relais ne le voit jamais."
+      "a": "Aucune analyse d'usage, aucun rapport de plantage, aucun suivi. Nos serveurs voient seulement une vérification de mise à jour, au lancement puis une fois par jour, qui envoie un identifiant aléatoire changeant chaque semaine avec la plateforme et la version pour compter les installations, et, si vous utilisez notre relais hébergé, votre compte et la liste de vos appareils. Le contenu synchronisé est chiffré de bout en bout, donc le relais ne le voit jamais. Si vous choisissez Whimbrel AI, votre demande passe par le serveur de Whimbrel jusqu'à Anthropic. Whimbrel conserve un relevé des jetons utilisés, pas de ce que vous avez demandé."
     },
     {
       "q": "Comment gagnez-vous de l'argent ?",
-      "a": "Avec ce qui nécessite un serveur que nous exploitons ou une personne au bout du fil : un forfait Cloud à 5 $ par mois (ou 50 $ par année), plus les taxes, pour notre relais avec un nombre illimité d'appareils; des forfaits Équipe prévus, et des contrats de soutien pour les entreprises qui s'auto-hébergent. Jamais en revendant de l'utilisation d'IA."
+      "a": "Avec ce qui nécessite un serveur que nous exploitons ou une personne au bout du fil : un forfait Cloud à 5 $ par mois (ou 50 $ par année), plus les taxes, pour notre relais avec un nombre illimité d'appareils; des forfaits Équipe prévus, et des contrats de soutien pour les entreprises qui s'auto-hébergent. Et Whimbrel AI, du crédit prépayé facultatif pour les modèles Claude, au coût plus 30 %."
     },
     {
       "q": "Existe-t-il une alternative open source à Granola ?",
@@ -50,7 +50,7 @@
     <p>Le dépôt public ouvre avec la première version publiée sous le nom Whimbrel. Cette page y renverra à ce moment-là.</p>
 
     <h2>Vos modèles, votre facture</h2>
-    <p>Exécutez des modèles sur votre propre ordinateur avec Ollama, ou apportez une clé Anthropic, OpenAI, Google Gemini ou OpenRouter et payez directement ce fournisseur. Par défaut, les petites tâches vont au modèle le moins cher dont vous disposez, et l'application affiche le coût de chaque appel. Whimbrel n'a aucun modèle hébergé et ne revend jamais d'utilisation d'IA, quel que soit le forfait. Les équipes pourront remettre une clé d'organisation à chaque poste; c'est toujours la clé de l'organisation elle-même.</p>
+    <p>Exécutez des modèles sur votre propre ordinateur avec Ollama, ou apportez une clé Anthropic, OpenAI, Google Gemini ou OpenRouter et payez directement ce fournisseur. Par défaut, les petites tâches vont au modèle le moins cher dont vous disposez, et l'application affiche le coût de chaque appel. Si vous utilisez votre propre clé d'API, Whimbrel n'ajoute rien à ce que facture votre fournisseur. Whimbrel AI est du crédit prépayé facultatif, au coût plus 30 %. Les équipes pourront remettre une clé d'organisation à chaque poste; c'est toujours la clé de l'organisation elle-même.</p>
 
     <h2>Faites tourner votre propre relais</h2>
     <p>La synchronisation entre vos appareils est chiffrée de bout en bout et passe par un petit relais : un Worker Cloudflare, plus une base de données Turso par compte. Vous pouvez utiliser le relais que nous hébergeons, qui synchronise gratuitement un ordinateur et un téléphone, ou faire tourner le vôtre dans votre compte Cloudflare, sans limite d'appareils. Les forfaits gratuits de Cloudflare et de Turso suffisent pour un usage personnel. Le guide d'auto-hébergement est inclus dans le dépôt.</p>
@@ -67,7 +67,7 @@
     <h2>Nos engagements</h2>
     <ul>
       <li>Tout ce qui s'exécute sur votre appareil reste dans l'application gratuite et ouverte.</li>
-      <li>Nous ne revendons ni ne majorons jamais l'utilisation d'IA.</li>
+      <li>Si vous utilisez votre propre clé d'API, nous n'ajoutons rien à ce que facture votre fournisseur. Whimbrel AI est du crédit prépayé facultatif, au coût plus 30 %.</li>
       <li>L'application n'inclut ni analyse d'usage ni suivi. Son seul appel vers nos serveurs est la vérification de mise à jour, au lancement puis une fois par jour, avec un identifiant aléatoire qui change chaque semaine.</li>
     </ul>
   </div>

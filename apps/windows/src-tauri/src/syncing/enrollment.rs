@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use api::sync_ops::enrollment::{self as en, AccountPlan, DeviceRecord, EnrollmentEvent, GoogleAuthResult, GroupKeyDecision, WorkerError};
+use api::sync_ops::enrollment::{self as en, AccountPlan, AiBalance, DeviceRecord, EnrollmentEvent, GoogleAuthResult, GroupKeyDecision, WorkerError};
 
 use crate::identity::DeviceIdentity;
 use crate::secrets::SecretStore;
@@ -25,6 +25,10 @@ pub trait WorkerApi: Send + Sync {
     fn billing_checkout(&self, id_token: &str, device_public_key: &str, interval: &str) -> Result<String, WorkerError>;
     /// Stripe's customer portal: the URL to open.
     fn billing_portal(&self, id_token: &str, device_public_key: &str) -> Result<String, WorkerError>;
+    /// Whimbrel AI: the credit left.
+    fn ai_balance(&self, id_token: &str, device_public_key: &str) -> Result<AiBalance, WorkerError>;
+    /// Whimbrel AI: Stripe Checkout for a credit pack (`"10"` or `"25"`): the URL to open.
+    fn ai_checkout(&self, id_token: &str, device_public_key: &str, pack: &str) -> Result<String, WorkerError>;
 }
 
 impl WorkerApi for en::WorkerClient {
@@ -52,6 +56,12 @@ impl WorkerApi for en::WorkerClient {
     }
     fn billing_portal(&self, id_token: &str, pk: &str) -> Result<String, WorkerError> {
         en::WorkerClient::billing_portal(self, id_token, pk)
+    }
+    fn ai_balance(&self, id_token: &str, pk: &str) -> Result<AiBalance, WorkerError> {
+        en::WorkerClient::ai_balance(self, id_token, pk)
+    }
+    fn ai_checkout(&self, id_token: &str, pk: &str, pack: &str) -> Result<String, WorkerError> {
+        en::WorkerClient::ai_checkout(self, id_token, pk, pack)
     }
 }
 
@@ -146,6 +156,8 @@ pub(crate) mod tests {
         pub plan: Arc<Mutex<Result<AccountPlan, WorkerError>>>,
         pub checkout: Arc<Mutex<Result<String, WorkerError>>>,
         pub checkouts: Arc<Mutex<Vec<String>>>,
+        pub ai_balance: Arc<Mutex<Result<AiBalance, WorkerError>>>,
+        pub ai_packs: Arc<Mutex<Vec<String>>>,
     }
 
     impl FakeWorker {
@@ -159,6 +171,8 @@ pub(crate) mod tests {
                 plan: Arc::new(Mutex::new(Ok(AccountPlan { plan: "free".into(), until: None, interval: None, billing: true, renews: None }))),
                 checkout: Arc::new(Mutex::new(Ok("https://checkout.stripe.test/s".into()))),
                 checkouts: Arc::new(Mutex::new(Vec::new())),
+                ai_balance: Arc::new(Mutex::new(Ok(AiBalance { balance_micros: 0, last_purchase_micros: None }))),
+                ai_packs: Arc::new(Mutex::new(Vec::new())),
             }
         }
     }
@@ -190,6 +204,13 @@ pub(crate) mod tests {
             self.checkout.lock().unwrap().clone()
         }
         fn billing_portal(&self, _: &str, _: &str) -> Result<String, WorkerError> {
+            self.checkout.lock().unwrap().clone()
+        }
+        fn ai_balance(&self, _: &str, _: &str) -> Result<AiBalance, WorkerError> {
+            self.ai_balance.lock().unwrap().clone()
+        }
+        fn ai_checkout(&self, _: &str, _: &str, pack: &str) -> Result<String, WorkerError> {
+            self.ai_packs.lock().unwrap().push(pack.into());
             self.checkout.lock().unwrap().clone()
         }
     }

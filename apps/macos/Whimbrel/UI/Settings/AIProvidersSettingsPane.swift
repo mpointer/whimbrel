@@ -45,6 +45,8 @@ struct AIProvidersSettingsPane: View {
                     .buttonStyle(.whimbrelSecondary)
             }
 
+            whimbrelAICard
+
             providerLinks(for: "anthropic")
             keyRow(
                 title: "Anthropic API Key",
@@ -429,7 +431,7 @@ struct AIProvidersSettingsPane: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 280)
+                .frame(width: 420)
             }
 
             HStack {
@@ -511,7 +513,63 @@ struct AIProvidersSettingsPane: View {
                 Task { await appState.routing.refreshOpenRouterModels() }
             }
             clampDefaultModelIfNeeded()
+            Task { await appState.syncState.refreshAIBalance() }
         }
+        .onChange(of: appState.syncState.status) { _, status in
+            if case .ready = status { Task { await appState.syncState.refreshAIBalance() } }
+        }
+    }
+
+    /// Whimbrel AI: prepaid Anthropic credit through Whimbrel's server, signed in with sync.
+    /// The balance, the two packs (Stripe Checkout in the browser, then the balance is
+    /// re-read as Upgrade re-reads the plan), and the data note.
+    private var whimbrelAICard: some View {
+        let syncState = appState.syncState
+        return VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text("Whimbrel AI").font(.whimbrelBody(.headline)).foregroundStyle(Color.whimbrelTextPrimary)
+            if case .ready = syncState.status {
+                if let balance = syncState.aiBalance {
+                    Text("\(Self.dollars(micros: balance.balanceMicros)) left")
+                        .font(.whimbrelBody(.callout).bold())
+                        .foregroundStyle(Color.whimbrelTextPrimary)
+                    if balance.isLow {
+                        Text("Credit is running low.")
+                            .font(.whimbrelBody(.caption))
+                            .foregroundStyle(Color.whimbrelWarning)
+                    }
+                }
+                HStack(spacing: Spacing.md) {
+                    Button("Add $10") { Task { await syncState.buyAICredit(pack: "10") } }
+                        .buttonStyle(.whimbrelSecondary)
+                    Button("Add $25") { Task { await syncState.buyAICredit(pack: "25") } }
+                        .buttonStyle(.whimbrelSecondary)
+                }
+                if let error = syncState.aiBillingError {
+                    Text(error)
+                        .font(.whimbrelBody(.caption))
+                        .foregroundStyle(Color.whimbrelError)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text("Sign in to sync to use Whimbrel AI")
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+            }
+            if let terms = providers.first(where: { $0.id == "whimbrel" })?.dataTerms {
+                Text(terms.localizedText)
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(Spacing.md)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.whimbrelBorder))
+        .accessibilityIdentifier("whimbrel-ai-card")
+    }
+
+    /// "$7.42" from micro-dollars (1,000,000 = $1), rounded down to the cent.
+    nonisolated static func dollars(micros: Int64) -> String {
+        dollars(max(0, micros) / 10_000)
     }
 
     /// Options for the default-model control below, for whichever provider is currently
@@ -524,6 +582,7 @@ struct AIProvidersSettingsPane: View {
         case .openai: return appState.routing.openaiModels
         case .google: return appState.routing.googleModels
         case .openrouter: return appState.routing.openrouterModels
+        case .whimbrel: return RoutingSettings.whimbrelModels
         }
     }
 
@@ -552,6 +611,7 @@ struct AIProvidersSettingsPane: View {
                     case .openai: appState.routing.openaiDefaultModel = newValue
                     case .google: appState.routing.googleDefaultModel = newValue
                     case .openrouter: appState.routing.openrouterDefaultModel = newValue
+                    case .whimbrel: appState.routing.whimbrelDefaultModel = newValue
                     }
                 }
             )) {
@@ -574,6 +634,7 @@ struct AIProvidersSettingsPane: View {
         case .anthropic: appState.routing.anthropicDefaultModel = defaultModelOptions[0]
         case .openai: appState.routing.openaiDefaultModel = defaultModelOptions[0]
         case .google: appState.routing.googleDefaultModel = defaultModelOptions[0]
+        case .whimbrel: appState.routing.whimbrelDefaultModel = defaultModelOptions[0]
         // OpenRouter is never snapped to a model the user did not pick: an unpicked
         // model keeps it out of the chain on purpose. Ollama keeps the user's pick too:
         // an installed model stands in, in memory (`RoutingSettings.ollamaDefaultModel`),

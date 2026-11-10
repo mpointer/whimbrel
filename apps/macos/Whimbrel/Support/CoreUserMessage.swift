@@ -60,6 +60,8 @@ struct CoreUserMessage: Decodable, Equatable {
             return String(localized: "On Google's free tier, prompts and responses may be used to improve Google's products. The paid tier does not use them that way. Check Google's terms for the current wording.")
         case "openrouter_free_logging":
             return String(localized: "Free models on OpenRouter may log prompts. Paid models follow each upstream provider's policy. Check OpenRouter's privacy page for the current wording.")
+        case "whimbrel_ai_passthrough":
+            return String(localized: "Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked.")
         default: return message
         }
     }

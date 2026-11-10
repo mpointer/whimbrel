@@ -115,6 +115,32 @@ pub fn start(
         _ => return None,
     };
 
+    spawn_run(prompt, model, provider, client)
+}
+
+/// Starts a streaming run through Whimbrel AI. Additive to [`start`] because Whimbrel
+/// needs two credentials (the Google ID token and the device's public key), which the
+/// one-key `start` signature cannot carry. `None` when either is missing or empty.
+pub fn start_whimbrel(prompt: &str, model: &str, id_token: &str, device_key: &str) -> Option<StartedRun> {
+    start_whimbrel_at(prompt, model, id_token, device_key, None)
+}
+
+/// [`start_whimbrel`] against `base_url_override` (tests pass a fake server; null in production).
+fn start_whimbrel_at(
+    prompt: &str,
+    model: &str,
+    id_token: &str,
+    device_key: &str,
+    base_url_override: Option<&str>,
+) -> Option<StartedRun> {
+    let id_token = hosted_key(Some(id_token))?;
+    let device_key = hosted_key(Some(device_key))?;
+    let client = AnthropicStreamingClient::whimbrel(id_token, device_key);
+    // One link, always: a pinned Whimbrel stream that fails (a 402 included) ends there.
+    spawn_run(prompt, model, Provider::Whimbrel, with_base(client, base_url_override, AnthropicStreamingClient::with_base_url))
+}
+
+fn spawn_run(prompt: &str, model: &str, provider: Provider, client: Arc<dyn StreamingLlmClient>) -> Option<StartedRun> {
     let run_id = new_run_id();
     let (tx, rx) = mpsc::channel(256);
     let cancel = CancellationToken::new();
@@ -263,5 +289,65 @@ mod tests {
             run_id: "abc".into(),
         };
         assert_eq!(serde_json::to_string(&run).unwrap(), r#"{"run_id":"abc"}"#);
+    }
+
+    /// A fake Whimbrel server: counts the connections it gets and answers each with 402.
+    fn spawn_402_server() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = hits.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut buf = [0u8; 8192];
+                let _ = stream.read(&mut buf);
+                let body = r#"{"error":"credit_exhausted"}"#;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 402 Payment Required\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), hits)
+    }
+
+    #[test]
+    fn start_whimbrel_refuses_a_missing_token_or_device_key() {
+        assert!(start_whimbrel("hi", "m", "", "d").is_none());
+        assert!(start_whimbrel("hi", "m", "t", "").is_none());
+        // The generic entry point never builds a Whimbrel client from one key.
+        assert!(start("hi", "m", "whimbrel", Some("t"), None).is_none());
+    }
+
+    /// A pinned Whimbrel stream is a one-link chain: a 402 ends the run Failed and the
+    /// next provider is never tried (no second request, no other link to try).
+    #[test]
+    fn pinned_whimbrel_stops_on_402() {
+        let (base_url, hits) = spawn_402_server();
+        let run = start_whimbrel_at("hi", "claude-haiku-4-5", "t", "d", Some(&base_url)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut terminal = None;
+        while Instant::now() < deadline && terminal.is_none() {
+            terminal = poll(&run.run_id).unwrap().into_iter().find(InferenceEvent::is_terminal);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        match terminal.expect("a terminal event") {
+            InferenceEvent::Terminal { outcome: llm::streaming::TerminalOutcome::Failed { message, .. }, .. } => {
+                assert!(message.contains("402"), "{message}");
+            }
+            other => panic!("expected a Failed terminal, got {other:?}"),
+        }
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1, "one request, no fallthrough");
+        // The same 402 is a credit failure to every chain walker.
+        let err = llm::LlmError::Http { status: 402, body: String::new() };
+        assert_eq!(
+            llm::ProviderFailureKind::classify(Provider::Whimbrel, "claude-haiku-4-5", &err),
+            llm::ProviderFailureKind::CreditExhausted
+        );
+        release(&run.run_id);
     }
 }

@@ -182,6 +182,7 @@ describe("the Ask composer", () => {
     ollamaModel: "gemma-local",
     openaiModel: "gpt-mini",
     openrouterModel: "",
+    whimbrelModel: "claude-haiku-4-5",
     preferredProvider: "ollama",
     cheapFirst: true,
     useLocalModel: true,
@@ -211,6 +212,11 @@ describe("the Ask composer", () => {
     expect(askModelLabel(routing({ preferredProvider: "anthropic" }))).toBe("claude-haiku");
     expect(askModelLabel(routing({ preferredProvider: "openai" }))).toBe("gpt-mini");
     expect(askModelLabel(routing({ preferredProvider: "google" }))).toBe("gemini-flash");
+    expect(askModelLabel(routing({ preferredProvider: "whimbrel" }))).toBe("claude-haiku-4-5");
+    // Whimbrel AI has no key: sync signed in stands in for one, and local-only still wins.
+    expect(askAvailable(routing({ preferredProvider: "whimbrel" }), keys(), true)).toBe(true);
+    expect(askAvailable(routing({ preferredProvider: "whimbrel" }), keys("anthropic"), false)).toBe(false);
+    expect(askAvailable(routing({ preferredProvider: "whimbrel", localOnly: true }), keys(), true)).toBe(false);
   });
 
   it("sends the trimmed text and nothing for a blank field", () => {

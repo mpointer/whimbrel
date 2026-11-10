@@ -91,12 +91,15 @@ pub struct StreamRoute {
     /// `api::inference::start`'s provider name.
     pub provider: &'static str,
     pub model: String,
+    /// The API key; for Whimbrel AI, the sync ID token.
     pub key: Option<String>,
+    /// Whimbrel AI only: this PC's device key, sent beside the ID token.
+    pub device_key: Option<String>,
 }
 
 impl std::fmt::Debug for StreamRoute {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StreamRoute").field("provider", &self.provider).field("model", &self.model).field("key", &self.key.is_some()).finish()
+        f.debug_struct("StreamRoute").field("provider", &self.provider).field("model", &self.model).field("key", &self.key.is_some()).field("device_key", &self.device_key.is_some()).finish()
     }
 }
 
@@ -105,12 +108,12 @@ impl std::fmt::Debug for StreamRoute {
 /// (its chain falls back). Local-only mode answers from Ollama whatever is preferred, so
 /// it streams Ollama.
 pub fn stream_route(routing: &RoutingSettings, keys: &ApiKeys) -> Option<StreamRoute> {
-    let ollama = || StreamRoute { provider: "ollama", model: routing.ollama_model.clone(), key: None };
+    let ollama = || StreamRoute { provider: "ollama", model: routing.ollama_model.clone(), key: None, device_key: None };
     if routing.local_only {
         return Some(ollama());
     }
     let hosted = |provider: &'static str, key: &Option<String>, model: &str| {
-        key.clone().filter(|k| !k.is_empty()).map(|key| StreamRoute { provider, model: model.to_string(), key: Some(key) })
+        key.clone().filter(|k| !k.is_empty()).map(|key| StreamRoute { provider, model: model.to_string(), key: Some(key), device_key: None })
     };
     match routing.preferred_provider {
         Provider::Ollama => Some(ollama()),
@@ -120,6 +123,37 @@ pub fn stream_route(routing: &RoutingSettings, keys: &ApiKeys) -> Option<StreamR
         // No model picked yet: the blocking path's chain leaves OpenRouter out.
         Provider::Openrouter if routing.openrouter_model.trim().is_empty() => None,
         Provider::Openrouter => hosted("openrouter", &keys.openrouter, &routing.openrouter_model),
+        // Signed in to sync: the ID token rides `key` and the device key beside it. Not signed in:
+        // the blocking chain, which leaves Whimbrel AI out.
+        Provider::Whimbrel => keys.whimbrel.as_ref().map(|c| StreamRoute {
+            provider: "whimbrel",
+            model: routing.whimbrel_model.clone(),
+            key: Some(c.id_token.clone()),
+            device_key: Some(c.device_key.clone()),
+        }),
+    }
+}
+
+/// Before a question Whimbrel AI may answer (preferred, and not local-only): refreshes the sync ID
+/// token when 5 minutes or less are left, then takes the cached credentials into `keys`. Runs on
+/// the question's own thread: the refresh can call Google.
+pub fn freshen_whimbrel(sync: Option<&crate::syncing::controller::SyncController>, routing: &RoutingSettings, keys: &mut ApiKeys) {
+    if routing.local_only || routing.preferred_provider != Provider::Whimbrel {
+        return;
+    }
+    if let Some(sync) = sync {
+        sync.whimbrel_before_ask();
+    }
+    keys.whimbrel = crate::whimbrel_ai::cached();
+}
+
+/// Starts `route`'s stream: Whimbrel AI through `api::inference::start_whimbrel`, every other
+/// provider through `api::inference::start`. `None` when it couldn't start.
+pub fn start_stream(prompt: &str, route: &StreamRoute) -> Option<api::inference::StartedRun> {
+    match (route.provider, route.key.as_deref(), route.device_key.as_deref()) {
+        ("whimbrel", Some(id_token), Some(device_key)) => api::inference::start_whimbrel(prompt, &route.model, id_token, device_key),
+        ("whimbrel", ..) => None,
+        _ => api::inference::start(prompt, &route.model, route.provider, route.key.as_deref(), None),
     }
 }
 
@@ -129,7 +163,7 @@ pub fn stream_route(routing: &RoutingSettings, keys: &ApiKeys) -> Option<StreamR
 pub fn local_instead(route: Option<StreamRoute>, ollama_up: bool, local_installed: bool) -> Option<StreamRoute> {
     match route {
         Some(r) if r.provider == "ollama" && !ollama_up && local_installed => {
-            Some(StreamRoute { provider: "local", model: api::local_model::MODEL_ID.to_string(), key: None })
+            Some(StreamRoute { provider: "local", model: api::local_model::MODEL_ID.to_string(), key: None, device_key: None })
         }
         other => other,
     }
@@ -146,6 +180,9 @@ pub enum TerminalAction {
     FallBack,
     /// Failed after output had streamed: never silently retry; show an error bubble.
     Fail,
+    /// Whimbrel AI answered 402: the credit is used up. Say so, and don't retry through the chain,
+    /// which would only meet the same 402 (the Mac's `pinned_whimbrel_stops_on_402`).
+    CreditExhausted,
 }
 
 pub fn terminal_action(outcome: &TerminalOutcome, produced_output: bool) -> TerminalAction {
@@ -154,6 +191,15 @@ pub fn terminal_action(outcome: &TerminalOutcome, produced_output: bool) -> Term
         TerminalOutcome::Cancelled => TerminalAction::Restore,
         TerminalOutcome::Failed { .. } if !produced_output => TerminalAction::FallBack,
         TerminalOutcome::Failed { .. } => TerminalAction::Fail,
+    }
+}
+
+/// `terminal_action` for a stream from `provider` (`StreamRoute::provider`): a Whimbrel AI 402
+/// (core's failure text starts `HTTP 402`) stops with the credit message.
+pub fn terminal_action_for(provider: &str, outcome: &TerminalOutcome, produced_output: bool) -> TerminalAction {
+    match outcome {
+        TerminalOutcome::Failed { message, .. } if provider == "whimbrel" && message.starts_with("HTTP 402") => TerminalAction::CreditExhausted,
+        _ => terminal_action(outcome, produced_output),
     }
 }
 
@@ -380,6 +426,24 @@ mod tests {
     }
 
     #[test]
+    fn whimbrel_ai_streams_with_the_sync_credentials_or_not_at_all() {
+        let creds = crate::whimbrel_ai::Credentials { id_token: "jwt".into(), device_key: "pk".into() };
+        let signed_in = ApiKeys { whimbrel: Some(creds), ..keys(None) };
+        let route = stream_route(&routing(Provider::Whimbrel), &signed_in).unwrap();
+        assert_eq!(
+            (route.provider, route.model.as_str(), route.key.as_deref(), route.device_key.as_deref()),
+            ("whimbrel", "claude-haiku-4-5", Some("jwt"), Some("pk"))
+        );
+        assert!(!format!("{route:?}").contains("jwt"), "the token is never printed");
+        assert_eq!(stream_route(&routing(Provider::Whimbrel), &keys(None)), None, "not signed in to sync: the blocking chain");
+        let local = RoutingSettings { local_only: true, ..routing(Provider::Whimbrel) };
+        assert_eq!(stream_route(&local, &signed_in).unwrap().provider, "ollama");
+        // A route missing the device key never starts a stream (it would go out unauthenticated).
+        let half = StreamRoute { device_key: None, ..route };
+        assert!(start_stream("hi", &half).is_none());
+    }
+
+    #[test]
     fn local_only_streams_ollama_and_never_a_hosted_provider() {
         for provider in [Provider::Google, Provider::Anthropic, Provider::Openai] {
             let r = RoutingSettings { local_only: true, ..routing(provider) };
@@ -424,6 +488,13 @@ mod tests {
         assert_eq!(terminal_action(&TerminalOutcome::Cancelled, true), TerminalAction::Restore);
         assert_eq!(terminal_action(&failed, false), TerminalAction::FallBack);
         assert_eq!(terminal_action(&failed, true), TerminalAction::Fail);
+        // Whimbrel AI's 402 stops with the credit line; anyone else's 402, or Whimbrel's 500, falls back.
+        let credit = TerminalOutcome::Failed { class: InferenceFailureClass::Provider, message: "HTTP 402: {\"error\":\"insufficient_credit\"}".into() };
+        assert_eq!(terminal_action_for("whimbrel", &credit, false), TerminalAction::CreditExhausted);
+        assert_eq!(terminal_action_for("anthropic", &credit, false), TerminalAction::FallBack);
+        let server = TerminalOutcome::Failed { class: InferenceFailureClass::Provider, message: "HTTP 500: oops".into() };
+        assert_eq!(terminal_action_for("whimbrel", &server, false), TerminalAction::FallBack);
+        assert_eq!(terminal_action_for("whimbrel", &TerminalOutcome::Completed, true), TerminalAction::Finalize);
     }
 
     #[test]

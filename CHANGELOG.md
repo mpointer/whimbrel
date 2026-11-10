@@ -4,6 +4,14 @@ Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
 ## [Unreleased]
 
+## [0.9.66] - 2026-11-10
+
+### Mac
+- Settings → AI Providers has Whimbrel AI: buy credit and use Claude models without your own key. You pay what you use plus 30%, and it stops when the credit runs out.
+
+### Windows
+- Settings → AI has Whimbrel AI: buy credit and use Claude models without your own key. You pay what you use plus 30%, and it stops when the credit runs out.
+
 ## [0.9.65] - 2026-11-09
 
 ### Mac

@@ -110,6 +110,7 @@ fn provider_for_streamed_answer(routing: &RoutingConfig) -> llm::Provider {
         "openai" => llm::Provider::OpenAI,
         "google" => llm::Provider::Google,
         "openrouter" => llm::Provider::OpenRouter,
+        "whimbrel" => llm::Provider::Whimbrel,
         _ => llm::Provider::Ollama,
     }
 }
@@ -714,9 +715,12 @@ mod tests {
             provider_for_streamed_answer(&routing),
             llm::Provider::Google
         );
-        for (name, provider) in [("anthropic", llm::Provider::Anthropic), ("openai", llm::Provider::OpenAI)] {
+        for (name, provider) in [("anthropic", llm::Provider::Anthropic), ("openai", llm::Provider::OpenAI), ("whimbrel", llm::Provider::Whimbrel)] {
             routing.preferred_provider = name.into();
             assert_eq!(provider_for_streamed_answer(&routing), provider, "{name} spend is logged to {name}");
+            // Whimbrel has no local budget: server credit is its limit.
+            let store = memory::Store::open_in_memory().unwrap();
+            assert!(check_provider(&store, provider, now_unix_ms()).is_ok(), "{name}");
         }
         routing.sensitive = true;
         assert_eq!(

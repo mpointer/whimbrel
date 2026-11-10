@@ -29,13 +29,17 @@ final class MeetingAskSession: ObservableObject {
     @Published var exchanges: [MeetingAskExchange] = []
     @Published var pending: (prepareId: String, index: Int, model: String)?
     @Published var isPreparing = false
+    /// The Whimbrel AI token is being refreshed before a send; busy, so a second send is ignored.
+    @Published var isRefreshingCredentials = false
     /// Identifies the in-flight prepare. Cleared by Stop or teardown, so a late prepare
     /// completion discards its result instead of streaming the transcript.
     private var prepareToken: UUID?
     private var store: CoreMemoryStore?
+    /// The provider the current answer streams from; a Whimbrel AI 402 shows the credit message.
+    private var streamProvider: InferenceStreamClient.Provider = .ollama
     private var subscriptions: [AnyCancellable] = []
 
-    var isBusy: Bool { isPreparing || pending != nil }
+    var isBusy: Bool { isPreparing || isRefreshingCredentials || pending != nil }
 
     init() {
         // Republish the stream's text so the bar redraws, and handle each phase as it is set.
@@ -60,9 +64,10 @@ final class MeetingAskSession: ObservableObject {
     /// `fallback` answers through the governed chain when the streamed provider's budget is spent.
     func submit(
         _ text: String, prompt: String? = nil, meetingId: Int64, store: CoreMemoryStore, routing: CoreRoutingConfig, model: String,
-        route: (provider: InferenceStreamClient.Provider, apiKey: String?)?, noRouteMessage: String,
+        route: (provider: InferenceStreamClient.Provider, apiKey: String?, baseURLOverride: String?)?, noRouteMessage: String,
         fallback: (slowStore: CoreMemoryStore, ollamaModel: String)? = nil
     ) {
+        guard !isBusy else { return }
         self.store = store
         let past = history()
         exchanges.append(MeetingAskExchange(question: text, prompt: prompt))
@@ -96,7 +101,8 @@ final class MeetingAskSession: ObservableObject {
                 case .some(.success(let data)):
                     self.exchanges[index].narrowed = data.narrowed
                     self.pending = (data.prepareId, index, model)
-                    self.streaming.start(prompt: data.prompt, model: model, provider: route.provider, apiKey: route.apiKey)
+                    self.streamProvider = route.provider
+                    self.streaming.start(prompt: data.prompt, model: model, provider: route.provider, apiKey: route.apiKey, baseURLOverride: route.baseURLOverride)
                 }
             }
         }
@@ -194,10 +200,15 @@ final class MeetingAskSession: ObservableObject {
             Self.discard(pending.prepareId, store: store)
             exchanges.remove(at: pending.index)
             self.pending = nil
-        case .failed:
+        case .failed(let message):
             Self.discard(pending.prepareId, store: store)
             exchanges[pending.index].partial = streaming.streamedText
-            exchanges[pending.index].errorText = String(localized: "Couldn't reach the AI provider. Try again.")
+            if streamProvider == .whimbrel, message.hasPrefix("HTTP 402") {
+                // A 402 from Whimbrel's server: the Whimbrel AI credit is used up.
+                show(.providerFailureBecause(.creditExhausted), at: pending.index)
+            } else {
+                exchanges[pending.index].errorText = String(localized: "Couldn't reach the AI provider. Try again.")
+            }
             self.pending = nil
         default:
             break
@@ -335,6 +346,23 @@ struct MeetingAskBar: View {
     }
 
     private func submit(_ text: String) {
+        // Whimbrel AI needs a live sync ID token: refresh it first when 5 minutes or less are
+        // left. The session is busy meanwhile, so a second send is ignored.
+        let syncState = appState.syncState
+        if appState.routing.preferredProvider == .whimbrel, syncState.whimbrelCredentialsNeedRefresh {
+            guard !session.isBusy else { return }
+            session.isRefreshingCredentials = true
+            Task { @MainActor in
+                await syncState.refreshWhimbrelCredentials()
+                session.isRefreshingCredentials = false
+                submitNow(text)
+            }
+            return
+        }
+        submitNow(text)
+    }
+
+    private func submitNow(_ text: String) {
         guard let store = appState.coreStore else { return }
         let defaults = appState.routing.defaultSelection()
         let model = defaults.provider == .ollama ? defaults.ollamaModel : defaults.hostedModel
@@ -343,13 +371,17 @@ struct MeetingAskBar: View {
             customInstructions: appState.promptLibrary.instructions[.ask] ?? "")
         // Local-only mode never streams to a hosted provider; a hosted route with no key
         // cannot stream either, so it reports an error rather than silently going local.
-        let route: (provider: InferenceStreamClient.Provider, apiKey: String?)? = {
-            let hosted = { (p: InferenceStreamClient.Provider, k: KeychainService.Provider) -> (InferenceStreamClient.Provider, String?)? in
+        let route: (provider: InferenceStreamClient.Provider, apiKey: String?, baseURLOverride: String?)? = {
+            let hosted = { (p: InferenceStreamClient.Provider, k: KeychainService.Provider) -> (InferenceStreamClient.Provider, String?, String?)? in
                 guard !appState.routing.localOnlyMode, let key = KeychainService.load(for: k), !key.isEmpty else { return nil }
-                return (p, key)
+                return (p, key, nil)
             }
             switch defaults.provider {
-            case .ollama: return (LocalModel.replacesOllama(appState.routing) ? .local : .ollama, nil)
+            case .ollama: return (LocalModel.replacesOllama(appState.routing) ? .local : .ollama, nil, nil)
+            // The ID token rides `apiKey` and the device key `baseURLOverride`.
+            case .whimbrel:
+                guard !appState.routing.localOnlyMode, let credentials = appState.syncState.whimbrelCredentials else { return nil }
+                return (.whimbrel, credentials.idToken, credentials.deviceKey)
             case .google: return hosted(.google, .google)
             case .anthropic: return hosted(.anthropic, .anthropic)
             case .openai: return hosted(.openai, .openai)
@@ -358,6 +390,8 @@ struct MeetingAskBar: View {
         }()
         let noRouteMessage = appState.routing.localOnlyMode
             ? String(localized: "Local-only mode is on, so Ask can't use a hosted model. Choose a local model in Settings.")
+            : defaults.provider == .whimbrel
+            ? String(localized: "Sign in to sync to use Whimbrel AI")
             : String(localized: "No API key is set for the selected provider. Choose a local model or add a key in Settings.")
         let preset = AskPreset.matching(text)
         session.submit(preset?.label ?? text, prompt: preset?.prompt, meetingId: meeting.id, store: store, routing: routing, model: model, route: route, noRouteMessage: noRouteMessage,

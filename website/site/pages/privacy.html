@@ -15,7 +15,7 @@
     <div class="callout"><p><strong>The short version:</strong> the Whimbrel app keeps your meetings and work history on your own computer. This website only collects what you type into its forms and basic download records, uses them to give you the download or the phone beta and (if you ask) product updates, and never sells them.</p></div>
 
     <h2>The Whimbrel app</h2>
-    <p>Meeting audio, transcripts, notes, and screen-text history are stored in a database on your computer. If you turn on sync, that data is end-to-end encrypted on your device before it is uploaded, and the keys stay on your devices. When you use a hosted AI provider with your own API key, the text needed to answer that request is sent to that provider under its terms; local models through Ollama send nothing off your computer.</p>
+    <p>Meeting audio, transcripts, notes, and screen-text history are stored in a database on your computer. If you turn on sync, that data is end-to-end encrypted on your device before it is uploaded, and the keys stay on your devices. When you use a hosted AI provider with your own API key, the text needed to answer that request is sent to that provider under its terms. If you choose Whimbrel AI instead, the text goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked. Local models through Ollama send nothing off your computer.</p>
 
     <h2 id="leaves">What leaves your computer</h2>
     <p>The app's Settings has a "Your data" pane that shows this same list with your own state next to each row. Nothing on it is on by default except the update check.</p>
@@ -28,8 +28,8 @@
           <tr>
             <td>AI providers</td>
             <td>When you ask a question, summarize a meeting, or run a routine with a hosted model.</td>
-            <td>The provider whose key you added receives the text needed for that request, under its own terms. Known secrets are redacted first.</td>
-            <td>Use Local-only mode or a local model. Nothing is sent.</td>
+            <td>The provider whose key you added receives the text needed for that request, under its own terms. If you use Whimbrel AI instead, the text goes through Whimbrel's server to Anthropic and is not stored. Whimbrel records the token counts and the model, not what you asked. Known secrets are redacted first.</td>
+            <td>Use Local-only mode or a local model. Nothing is sent. Whimbrel AI is off until you buy credit.</td>
           </tr>
           <tr>
             <td>Sync relay</td>
@@ -69,9 +69,9 @@
     </ul>
     <h3>How it's used, stored and shared</h3>
     <ul>
-      <li>Google data is processed and stored on your own computer, in the app's local database. It is not sent to us. We do not run a server that receives your Gmail or Calendar data.</li>
+      <li>Google data is processed and stored on your own computer, in the app's local database. Gmail and Calendar data is read on your computer, and no Whimbrel server receives or stores it. If you choose Whimbrel AI, the text of an Ask, which can include an excerpt of an email or calendar event, passes through Whimbrel's server to Anthropic. Whimbrel doesn't store it and keeps only token counts.</li>
       <li>If you turn on sync, data derived from it is end-to-end encrypted on your device before it is uploaded, and we cannot read it. To know which devices belong to you, the sync service keeps a few things it can read: your Google account's email address and identifier, and each device's name, platform, public key and enrollment dates. The synced items themselves stay encrypted; only technical details such as their type and timestamps are readable.</li>
-      <li>When you ask Whimbrel for a summary, answer or briefing and have chosen a hosted AI provider with your own API key, the text needed for that request, which can include parts of your email or calendar, is sent to that provider under its terms. Known secrets such as API keys and passwords are redacted first. In Local-only mode, or with a local model, nothing leaves your computer. Optional features that send data to another service, such as TypeSafe reply ranking, are off by default and say what they send before you turn them on.</li>
+      <li>When you ask Whimbrel for a summary, answer or briefing and have chosen a hosted AI provider with your own API key, the text needed for that request, which can include parts of your email or calendar, is sent to that provider under its terms. If you have chosen Whimbrel AI, that text goes through Whimbrel's server to Anthropic instead. It is not stored, and Whimbrel keeps a record of tokens used and the model, not what you asked. Known secrets such as API keys and passwords are redacted first. In Local-only mode, or with a local model, nothing leaves your computer. Optional features that send data to another service, such as TypeSafe reply ranking, are off by default and say what they send before you turn them on.</li>
       <li>We do not sell Google data, use it for advertising, or use it to train AI or machine-learning models. People never read it, except where you ask us for help and share it with us yourself, or where the law requires it.</li>
     </ul>
     <p>Whimbrel's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>

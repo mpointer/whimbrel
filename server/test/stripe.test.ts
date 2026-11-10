@@ -1,5 +1,5 @@
 import { it, expect } from "vitest";
-import { billingConfigured, planFromSubscription, stripeRequest, subscriptionIdOf, verifyStripeSignature } from "../src/stripe";
+import { billingConfigured, isAiCreditEvent, planFromSubscription, stripeRequest, subscriptionIdOf, verifyStripeSignature } from "../src/stripe";
 import type { Env } from "../src/index";
 
 const SECRET = "whsec_test_secret";
@@ -137,4 +137,17 @@ it("stripe_request_refuses_redirects_so_the_key_never_leaves", async () => {
   expect(init?.redirect).toBe("manual");
   // The Workers runtime accepts these options (it throws on redirect: "error").
   expect(() => new Request("https://api.stripe.com/v1/checkout/sessions", init)).not.toThrow();
+});
+
+it("isAiCreditEvent_needs_payment_mode_and_the_ai_credit_kind", () => {
+  const ev = (type: string, object: object) => ({ id: "evt", type, data: { object } });
+  const ai = { kind: "ai_credit", account_id: "a" };
+  expect(isAiCreditEvent(ev("checkout.session.completed", { mode: "payment", metadata: ai }))).toBe(true);
+  expect(isAiCreditEvent(ev("checkout.session.async_payment_succeeded", { mode: "payment", metadata: ai }))).toBe(true);
+  expect(isAiCreditEvent(ev("checkout.session.completed", { mode: "subscription", metadata: ai }))).toBe(false);
+  expect(isAiCreditEvent(ev("checkout.session.completed", { mode: "payment", metadata: {} }))).toBe(false);
+  expect(isAiCreditEvent(ev("charge.refunded", { metadata: ai }))).toBe(true);
+  expect(isAiCreditEvent(ev("charge.refunded", { metadata: {} }))).toBe(false);
+  expect(isAiCreditEvent(ev("invoice.paid", { metadata: ai }))).toBe(false);
+  expect(isAiCreditEvent(null)).toBe(false);
 });

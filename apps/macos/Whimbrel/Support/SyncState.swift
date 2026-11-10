@@ -62,6 +62,27 @@ final class SyncState: ObservableObject {
     /// The account's plan (`POST /v1/account/plan`); nil until the first read succeeds, and
     /// kept as it was when a later read fails.
     @Published private(set) var plan: AccountPlan?
+    /// The Whimbrel AI credit (`POST /v1/ai/balance`); nil until the first read succeeds,
+    /// and cleared when sync leaves `.ready`.
+    @Published private(set) var aiBalance: AIBalance?
+    /// Why Add $10 or Add $25 didn't open Stripe; shown under those buttons.
+    @Published private(set) var aiBillingError: String?
+    /// The sync account's Google ID token and this device's public key, for Whimbrel AI.
+    /// Refreshed every `whimbrelCredentialsMaxAge` while sync is `.ready`, and before an
+    /// Ask once older than that; nil whenever sync isn't `.ready`. Read synchronously by
+    /// `RoutingSettings.routingConfig`. Never logged.
+    private(set) var whimbrelCredentials: (idToken: String, deviceKey: String)?
+    private var whimbrelCredentialsAt: Date?
+    /// The cached ID token's `exp`; nil when unknown, which counts as about to expire.
+    private var whimbrelCredentialsExpiry: Date?
+    private var whimbrelRefreshTask: Task<Void, Never>?
+    private var aiBalancePollTask: Task<Void, Never>?
+    static let whimbrelCredentialsMaxAge: TimeInterval = 30 * 60
+    /// An Ask reuses the cached token only with more than this left.
+    nonisolated static let whimbrelAskMinimumValidity: TimeInterval = 5 * 60
+    /// The background refresher replaces the token once less than this is left, so
+    /// background calls (routines, titles), which read the cache, never send a dead one.
+    nonisolated static let whimbrelBackgroundMinimumValidity: TimeInterval = 10 * 60
     /// The last plan read failed while no plan is held: the limit screen says so instead of
     /// showing nothing.
     @Published private(set) var planReadFailed = false
@@ -863,6 +884,149 @@ final class SyncState: ObservableObject {
         }
         guard status != newValue else { return }
         status = newValue
+        updateWhimbrelCredentialsRefresh()
+    }
+
+    // MARK: - Whimbrel AI: credentials and credit
+
+    /// While `.ready`: keeps `whimbrelCredentials` fresh. It refreshes every 30 minutes, and
+    /// sooner whenever less than 10 minutes of the token are left. Otherwise: clears them
+    /// and the balance.
+    private func updateWhimbrelCredentialsRefresh() {
+        if case .ready = status {
+            guard whimbrelRefreshTask == nil else { return }
+            whimbrelRefreshTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    guard let self else { return }
+                    if self.whimbrelBackgroundRefreshDue {
+                        await self.refreshWhimbrelCredentials(minimumValidity: Self.whimbrelBackgroundMinimumValidity)
+                    }
+                    try? await Task.sleep(for: .seconds(self.whimbrelNextRefreshDelay))
+                }
+            }
+        } else {
+            whimbrelRefreshTask?.cancel()
+            whimbrelRefreshTask = nil
+            aiBalancePollTask?.cancel()
+            aiBalancePollTask = nil
+            whimbrelCredentials = nil
+            whimbrelCredentialsAt = nil
+            whimbrelCredentialsExpiry = nil
+            if aiBalance != nil { aiBalance = nil }
+        }
+    }
+
+    /// Seconds until the cached token's `exp`; 0 when there is none or it is unknown.
+    private var whimbrelSecondsLeft: TimeInterval {
+        guard whimbrelCredentials != nil, let expiry = whimbrelCredentialsExpiry else { return 0 }
+        return expiry.timeIntervalSinceNow
+    }
+
+    private var whimbrelBackgroundRefreshDue: Bool {
+        guard let at = whimbrelCredentialsAt else { return true }
+        return Date().timeIntervalSince(at) >= Self.whimbrelCredentialsMaxAge
+            || whimbrelSecondsLeft < Self.whimbrelBackgroundMinimumValidity
+    }
+
+    /// Until the next background check: 30 minutes, or until 10 minutes before `exp` if
+    /// that is sooner; at least 30 seconds, so a failing refresh doesn't spin.
+    private var whimbrelNextRefreshDelay: TimeInterval {
+        let untilLow = whimbrelSecondsLeft - Self.whimbrelBackgroundMinimumValidity
+        return max(30, min(Self.whimbrelCredentialsMaxAge, untilLow))
+    }
+
+    /// Reads an ID token with more than `minimumValidity` seconds left (refreshed when not)
+    /// and the device key. A failure keeps the last pair; the next tick or Ask tries again.
+    func refreshWhimbrelCredentials(minimumValidity: TimeInterval = SyncState.whimbrelAskMinimumValidity) async {
+        guard let signIn, case .ready = status else { return }
+        do {
+            let deviceKey = try loadOrThrowDevicePublicKey()
+            let idToken = try await signIn.validIdToken(minimumValidity: minimumValidity)
+            // Signed out while the token was being read.
+            guard case .ready = status else { return }
+            // Not @Published (a tuple): views that ask `hasKey(for: .whimbrel)` redraw on this.
+            if whimbrelCredentials == nil { objectWillChange.send() }
+            whimbrelCredentials = (idToken, deviceKey)
+            whimbrelCredentialsAt = Date()
+            whimbrelCredentialsExpiry = JWTExpiry.date(of: idToken)
+        } catch {
+            log.log("refreshWhimbrelCredentials: failed (\(String(describing: type(of: error)), privacy: .public))")
+        }
+    }
+
+    /// Whether a Whimbrel request must refresh the credentials first: signed in, and none
+    /// cached or 5 minutes or less left on the token. Checked before every Ask.
+    var whimbrelCredentialsNeedRefresh: Bool {
+        guard case .ready = status else { return false }
+        return whimbrelSecondsLeft <= Self.whimbrelAskMinimumValidity
+    }
+
+    /// The account-deletion line for unspent Whimbrel AI credit, which deletion forfeits;
+    /// nil when the last balance read is $0 or there is none.
+    var aiCreditForfeitNote: String? {
+        guard let micros = aiBalance?.balanceMicros, micros > 0 else { return nil }
+        let amount = AIProvidersSettingsPane.dollars(micros: micros)
+        return String(localized: "Your Whimbrel AI credit of \(amount) will be lost.")
+    }
+
+    func refreshAIBalance() async {
+        guard let signIn, let billing, case .ready = status else { return }
+        do {
+            let devicePublicKeyBase64 = try loadOrThrowDevicePublicKey()
+            let idToken = try await signIn.validIdToken()
+            let fetched = try await billing.aiBalance(idToken: idToken, devicePublicKey: devicePublicKeyBase64)
+            guard case .ready = status else { return }
+            if aiBalance != fetched { aiBalance = fetched }
+        } catch {
+            // Keep the last balance; the next open or poll tick tries again.
+        }
+    }
+
+    /// Opens Stripe Checkout for a Whimbrel AI credit pack ("10" or "25") in the browser,
+    /// then re-reads the balance as Upgrade re-reads the plan.
+    func buyAICredit(pack: String) async {
+        guard let signIn, let billing else { return }
+        aiBillingError = nil
+        do {
+            let devicePublicKeyBase64 = try loadOrThrowDevicePublicKey()
+            let idToken = try await signIn.validIdToken()
+            let url = try await billing.aiCheckoutURL(idToken: idToken, devicePublicKey: devicePublicKeyBase64, pack: pack)
+            NSWorkspace.shared.open(url)
+            startAIBalancePoll()
+        } catch SyncAPIError.httpError(502, _) {
+            aiBillingError = String(localized: "Couldn't reach Stripe. Try again in a minute.")
+        } catch SyncAPIError.httpError(429, _) {
+            aiBillingError = String(localized: "Too many tries. Try again in a few minutes.")
+        } catch {
+            aiBillingError = userMessage(for: error)
+        }
+    }
+
+    /// After Checkout opens: re-reads the balance every 15 seconds and whenever Whimbrel comes
+    /// back to the front, until it changes or 15 minutes pass (60 reads, inside the server's
+    /// 120 an hour).
+    private func startAIBalancePoll() {
+        aiBalancePollTask?.cancel()
+        aiBalancePollTask = Task { [weak self] in
+            guard let self else { return }
+            if self.aiBalance == nil { await self.refreshAIBalance() }
+            let start = self.aiBalance
+            let activation = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in await self?.refreshAIBalance() }
+            }
+            defer { NotificationCenter.default.removeObserver(activation) }
+            let deadline = Date().addingTimeInterval(Self.planPollDuration)
+            while !Task.isCancelled, Date() < deadline {
+                try? await Task.sleep(nanoseconds: Self.planPollIntervalSeconds * 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                await self.refreshAIBalance()
+                // Only the purchase counts: Whimbrel calls meanwhile lower the balance.
+                if let now = self.aiBalance, let start,
+                   now.balanceMicros <= start.balanceMicros, now.lastPurchaseMicros == start.lastPurchaseMicros { continue }
+                if self.aiBalance != nil { break }
+            }
+            if !Task.isCancelled { self.aiBalancePollTask = nil }
+        }
     }
 
     private func setDevices(_ newValue: [SyncDeviceRecord]) {
@@ -971,10 +1135,26 @@ final class SyncState: ObservableObject {
 protocol SyncSignIn: AnyObject {
     func authorize(presentationContextProvider: ASWebAuthenticationPresentationContextProviding) async throws
     func validIdToken() async throws -> String
+    /// An ID token whose `exp` is more than `minimumValidity` seconds away, refreshing if not.
+    func validIdToken(minimumValidity: TimeInterval) async throws -> String
     func deleteStoredTokens()
 }
 
+extension SyncSignIn {
+    /// Fakes that don't model expiry return their one token.
+    func validIdToken(minimumValidity: TimeInterval) async throws -> String { try await validIdToken() }
+}
+
 extension GoogleOAuthHelper: SyncSignIn {}
+
+/// The `exp` claim of a JWT as a date: an unverified, read-only decode of the payload,
+/// used only to know when a cached ID token must be replaced. Nil if it has none.
+enum JWTExpiry {
+    static func date(of jwt: String) -> Date? {
+        guard let exp = CoreMemoryStore.oauthJwtClaims(jwt)?["exp"] as? NSNumber else { return nil }
+        return Date(timeIntervalSince1970: exp.doubleValue)
+    }
+}
 
 /// Where `SyncState` keeps the device secret key and group key: the Keychain in the app.
 protocol SyncKeyStore {

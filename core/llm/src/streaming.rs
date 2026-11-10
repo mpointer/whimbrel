@@ -769,7 +769,7 @@ fn google_chunk_to_events(
 /// `max_tokens` headroom as the blocking `AnthropicClient`.
 pub struct AnthropicStreamingClient {
     base_url: String,
-    api_key: String,
+    auth: crate::AnthropicAuth,
     http: reqwest::Client,
 }
 
@@ -777,7 +777,16 @@ impl AnthropicStreamingClient {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             base_url: "https://api.anthropic.com".to_string(),
-            api_key: api_key.into(),
+            auth: crate::AnthropicAuth::ApiKey(api_key.into()),
+            http: reqwest::Client::new(),
+        }
+    }
+
+    /// Anthropic's models through Whimbrel's server; see `AnthropicClient::whimbrel`.
+    pub fn whimbrel(id_token: impl Into<String>, device_key: impl Into<String>) -> Self {
+        Self {
+            base_url: crate::WHIMBREL_AI_BASE_URL.to_string(),
+            auth: crate::AnthropicAuth::Whimbrel { id_token: id_token.into(), device_key: device_key.into() },
             http: reqwest::Client::new(),
         }
     }
@@ -791,7 +800,10 @@ impl AnthropicStreamingClient {
 #[async_trait]
 impl StreamingLlmClient for AnthropicStreamingClient {
     fn provider(&self) -> Provider {
-        Provider::Anthropic
+        match self.auth {
+            crate::AnthropicAuth::ApiKey(_) => Provider::Anthropic,
+            crate::AnthropicAuth::Whimbrel { .. } => Provider::Whimbrel,
+        }
     }
 
     async fn stream(
@@ -805,14 +817,18 @@ impl StreamingLlmClient for AnthropicStreamingClient {
             "stream": true,
             "messages": [{"role": "user", "content": request.prompt}],
         });
+        let post = self.http.post(format!("{}/v1/messages", self.base_url));
+        let post = match &self.auth {
+            crate::AnthropicAuth::ApiKey(key) => post.header("x-api-key", key),
+            crate::AnthropicAuth::Whimbrel { id_token, device_key } => post
+                .header("Authorization", format!("Bearer {id_token}"))
+                .header("X-Whimbrel-Device", device_key),
+        };
         let response = tokio::select! {
             _ = cancel.cancelled() => {
                 return Err(LlmError::Network("cancelled before connecting".into()));
             }
-            result = self
-                .http
-                .post(format!("{}/v1/messages", self.base_url))
-                .header("x-api-key", &self.api_key)
+            result = post
                 .header("anthropic-version", "2023-06-01")
                 .json(&body)
                 .send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
@@ -1644,6 +1660,14 @@ mod tests {
         let chain = vec![StreamingChainLink { provider, model: "test-model".to_string(), client }];
         supervisor.drive(request, &chain, CancellationToken::new(), now).await;
         sink.events()
+    }
+
+    #[test]
+    fn streaming_whimbrel_reports_its_provider() {
+        assert_eq!(AnthropicStreamingClient::new("k").provider(), Provider::Anthropic);
+        let client = AnthropicStreamingClient::whimbrel("id-token", "device-key");
+        assert_eq!(client.provider(), Provider::Whimbrel);
+        assert_eq!(client.base_url, "https://sync.whimbrelapp.com/ai");
     }
 
     /// Anthropic's framing: `event:` + `data:` lines, input usage on `message_start`,

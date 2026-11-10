@@ -52,6 +52,8 @@ pub enum ProviderFailureReason {
     Unauthorized { provider: String },
     RateLimited { provider: String },
     Network { provider: String },
+    /// Whimbrel's server answered 402: the prepaid Whimbrel AI credit can't cover the request.
+    CreditExhausted,
     Other { provider: String, status: Option<u16> },
 }
 
@@ -65,6 +67,7 @@ impl From<llm::ProviderFailureKind> for ProviderFailureReason {
             K::Unauthorized { provider } => Self::Unauthorized { provider: provider.as_str().into() },
             K::RateLimited { provider } => Self::RateLimited { provider: provider.as_str().into() },
             K::Network { provider } => Self::Network { provider: provider.as_str().into() },
+            K::CreditExhausted => Self::CreditExhausted,
             K::Other { provider, status } => Self::Other { provider: provider.as_str().into(), status },
         }
     }
@@ -80,6 +83,7 @@ impl ProviderFailureReason {
             "openai" => "OpenAI".to_string(),
             "google" => "Google".to_string(),
             "openrouter" => "OpenRouter".to_string(),
+            "whimbrel" => "Whimbrel AI".to_string(),
             other => other.to_string(),
         };
         Some(match self {
@@ -91,6 +95,7 @@ impl ProviderFailureReason {
             Self::NoProviderConfigured => tr("No AI provider is set up. Add one in Settings → AI.", &[]),
             Self::Unauthorized { provider } => tr("{provider} rejected the API key. Check it in Settings → AI.", &[("provider", &name(provider))]),
             Self::RateLimited { provider } => tr("{provider} is busy or out of credit. Try again shortly.", &[("provider", &name(provider))]),
+            Self::CreditExhausted => tr("Whimbrel AI credit is used up. Add credit in Settings.", &[]),
             Self::Network { .. } | Self::Other { .. } => return None,
         })
     }

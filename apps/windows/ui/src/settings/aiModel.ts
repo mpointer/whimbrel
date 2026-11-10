@@ -8,6 +8,7 @@ export const providers = (): { id: Provider; label: string }[] => [
   { id: "openai", label: "OpenAI" },
   { id: "google", label: "Google" },
   { id: "openrouter", label: "OpenRouter" },
+  { id: "whimbrel", label: "Whimbrel AI" },
 ];
 
 export const providerLabel = (p: Provider) => providers().find((x) => x.id === p)!.label;
@@ -22,7 +23,7 @@ export const surfaces = (): { id: PromptSurface; label: string }[] => [
   { id: "threadSummary", label: t("Thread summaries") },
 ];
 
-type ModelField = "ollamaModel" | "anthropicModel" | "openaiModel" | "googleModel" | "openrouterModel";
+type ModelField = "ollamaModel" | "anthropicModel" | "openaiModel" | "googleModel" | "openrouterModel" | "whimbrelModel";
 
 /** The `RoutingSettings` field holding `provider`'s default model. */
 export const modelField = (provider: Provider): ModelField => `${provider}Model`;
@@ -59,10 +60,12 @@ export function keyLine(key: Pick<ProviderKey, "masked">): string {
   return key.masked ? t("Saved · {key}", { key: key.masked }) : t("Not set");
 }
 
-/** Why hosted providers won't be used right now, if they won't. */
-export function hostedNotice(routing: RoutingSettings, keys: ProviderKey[]): string | null {
+/** Why hosted providers won't be used right now, if they won't. `whimbrelSignedIn`: sync is ready,
+ * which Whimbrel AI needs in place of a key. */
+export function hostedNotice(routing: RoutingSettings, keys: ProviderKey[], whimbrelSignedIn = false): string | null {
   if (routing.localOnly) return t("Local-only mode is on: every request goes to Ollama on this PC.");
   if (routing.preferredProvider === "ollama") return null;
+  if (routing.preferredProvider === "whimbrel") return whimbrelSignedIn ? null : t("Sign in to sync to use Whimbrel AI");
   const key = keys.find((k) => k.provider === routing.preferredProvider);
   if (!key?.masked) return t("{provider} has no API key, so requests fall back to Ollama.", { provider: providerLabel(routing.preferredProvider) });
   if (routing.preferredProvider === "openrouter" && !routing.openrouterModel.trim()) {
@@ -154,11 +157,23 @@ export function groupUsageByDay(rows: UsageRowView[], locale: string): { day: st
 }
 
 /**
- * Whether the on-ramp card shows: no hosted key is saved and Ollama did not answer (or
+ * Whether a hosted provider can answer: a key is saved, or Whimbrel AI is the preferred provider and
+ * sync is signed in (the Mac's `hasAnyHostedKey`).
+ */
+export const hasHostedProvider = (routing: RoutingSettings, keys: ProviderKey[], whimbrelSignedIn = false): boolean =>
+  keys.some((k) => k.masked) || (routing.preferredProvider === "whimbrel" && whimbrelSignedIn);
+
+/**
+ * Whether the on-ramp card shows: no hosted provider can answer and Ollama did not answer (or
  * local is off), so chat, summaries and routines have nothing to call.
  */
-export const showsOnRamp = (routing: RoutingSettings, keys: ProviderKey[], ollamaUp: boolean, localModelInstalled = false): boolean =>
-  !(routing.useLocalModel && ollamaUp) && !keys.some((k) => k.masked) && !localModelInstalled;
+export const showsOnRamp = (
+  routing: RoutingSettings,
+  keys: ProviderKey[],
+  ollamaUp: boolean,
+  localModelInstalled = false,
+  whimbrelSignedIn = false,
+): boolean => !(routing.useLocalModel && ollamaUp) && !hasHostedProvider(routing, keys, whimbrelSignedIn) && !localModelInstalled;
 
 /**
  * The on-ramp once it can be decided: null while the Ollama probe or the local model's status is
@@ -170,9 +185,16 @@ export const onRampOnceKnown = (
   keys: ProviderKey[],
   ollamaUp: boolean | null,
   localModelInstalled: boolean | null,
+  whimbrelSignedIn = false,
 ): boolean | null => {
-  // A saved hosted key decides it at once: no probe can bring the on-ramp back.
-  if (keys.some((k) => k.masked)) return false;
+  // A hosted provider decides it at once: no probe can bring the on-ramp back.
+  if (hasHostedProvider(routing, keys, whimbrelSignedIn)) return false;
   if (ollamaUp === null || localModelInstalled === null) return null;
-  return showsOnRamp(routing, keys, ollamaUp, localModelInstalled);
+  return showsOnRamp(routing, keys, ollamaUp, localModelInstalled, whimbrelSignedIn);
 };
+
+/** "$7.42" from micro-dollars (1,000,000 = $1), rounded down to the cent (the Mac's `dollars(micros:)`). */
+export const formatMicros = (micros: number): string => formatDollars(Math.floor(Math.max(0, micros) / 10_000));
+
+/** The Whimbrel AI card's balance line, once a read has succeeded. */
+export const whimbrelBalanceLine = (micros: number): string => t("{amount} left", { amount: formatMicros(micros) });

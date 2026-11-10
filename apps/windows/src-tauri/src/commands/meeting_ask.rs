@@ -84,7 +84,7 @@ pub fn meeting_ask(
         let s = state.settings.lock().unwrap();
         (s.routing(), s.instructions(PromptSurface::Ask))
     };
-    let ask = MeetingAsk {
+    let mut ask = MeetingAsk {
         meeting_id,
         query,
         history: history_turns(&history),
@@ -93,9 +93,11 @@ pub fn meeting_ask(
         instructions,
         slow,
     };
+    let sync = state.sync.clone();
     std::thread::Builder::new()
         .name("whimbrel-meeting-ask".into())
         .spawn(move || {
+            crate::chat::freshen_whimbrel(sync.as_deref(), &ask.settings, &mut ask.keys);
             // A page that went away drops the UI's end of the channel; the run still ends
             // cleanly (finalized or discarded), so a failed send is ignored.
             let send = |event: ChatEvent| {
@@ -141,7 +143,7 @@ fn stream(
     prepared: api::ask::PreparedMeetingAskData,
     send: &dyn Fn(ChatEvent),
 ) {
-    let Some(run) = api::inference::start(&prepared.prompt, &route.model, route.provider, route.key.as_deref(), None) else {
+    let Some(run) = chat::start_stream(&prepared.prompt, &route) else {
         api::ask::discard_ask(&prepared.prepare_id);
         send(blocking_started(effective, &[]));
         return blocking(ask, effective, send);
@@ -149,7 +151,7 @@ fn stream(
     send(ChatEvent::Started { run_id: Some(run.run_id.clone()), provider: route.provider.into(), model: route.model.clone(), context: vec![] });
     let end = chat::forward(&run.run_id, api::inference::poll, send, || std::thread::sleep(chat::POLL_INTERVAL));
     api::inference::release(&run.run_id);
-    match chat::terminal_action(&end.outcome, end.produced_output) {
+    match chat::terminal_action_for(route.provider, &end.outcome, end.produced_output) {
         TerminalAction::Finalize => {
             let (prepare_id, text, model, usage) = (prepared.prepare_id, end.text.clone(), route.model.clone(), end.usage);
             let citations = store
@@ -171,6 +173,11 @@ fn stream(
         TerminalAction::Fail => {
             api::ask::discard_ask(&prepared.prepare_id);
             fail(send, CommandError::provider_failure(), true);
+        }
+        TerminalAction::CreditExhausted => {
+            api::ask::discard_ask(&prepared.prepare_id);
+            tracing::info!("Whimbrel AI credit is used up");
+            fail(send, CommandError::ProviderFailure { reason: Some(crate::error::ProviderFailureReason::CreditExhausted) }, false);
         }
     }
 }

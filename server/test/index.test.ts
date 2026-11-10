@@ -18,7 +18,7 @@ import { FakeSqlExecutor } from "./testHelpers/fakeSqlExecutor";
 import { deleteAccount, runInactivity } from "../src/inactivity";
 import * as handoff from "../src/handoff";
 import { fetchAndConsumeWrappedKey } from "../src/handoff";
-import { env } from "cloudflare:test";
+import { createExecutionContext, env } from "cloudflare:test";
 
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
@@ -55,7 +55,7 @@ beforeEach(() => {
 });
 
 it("returns 404 for an unrouted path", async () => {
-  const response = await worker.fetch(new Request("https://example.com/nope"), makeEnv());
+  const response = await worker.fetch(new Request("https://example.com/nope"), makeEnv(), createExecutionContext());
   expect(response.status).toBe(404);
 });
 
@@ -69,33 +69,34 @@ it("returns 502 instead of an unhandled exception when the real Turso connection
   const response = await worker.fetch(
     postAuth({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv({ TURSO_DATABASE_URL: "" }),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(502);
 });
 
 it("returns 400 when idToken is missing", async () => {
-  const response = await worker.fetch(postAuth({ devicePublicKey: "key" }), makeEnv());
+  const response = await worker.fetch(postAuth({ devicePublicKey: "key" }), makeEnv(), createExecutionContext());
   expect(response.status).toBe(400);
 });
 
 it("returns 400 when devicePublicKey is missing", async () => {
-  const response = await worker.fetch(postAuth({ idToken: "token" }), makeEnv());
+  const response = await worker.fetch(postAuth({ idToken: "token" }), makeEnv(), createExecutionContext());
   expect(response.status).toBe(400);
 });
 
 it("returns 400 when idToken is an empty string", async () => {
-  const response = await worker.fetch(postAuth({ idToken: "", devicePublicKey: "key" }), makeEnv());
+  const response = await worker.fetch(postAuth({ idToken: "", devicePublicKey: "key" }), makeEnv(), createExecutionContext());
   expect(response.status).toBe(400);
 });
 
 it("returns 400 when devicePublicKey is an empty string", async () => {
-  const response = await worker.fetch(postAuth({ idToken: "token", devicePublicKey: "" }), makeEnv());
+  const response = await worker.fetch(postAuth({ idToken: "token", devicePublicKey: "" }), makeEnv(), createExecutionContext());
   expect(response.status).toBe(400);
 });
 
 it("returns 400 from /v1/devices when devicePublicKey is an empty string", async () => {
-  const response = await worker.fetch(postDevices({ idToken: "token", devicePublicKey: "" }), makeEnv());
+  const response = await worker.fetch(postDevices({ idToken: "token", devicePublicKey: "" }), makeEnv(), createExecutionContext());
   expect(response.status).toBe(400);
 });
 
@@ -104,14 +105,14 @@ it("returns 400 for a malformed JSON body instead of a 500", async () => {
     method: "POST",
     body: "not valid json{{{",
   });
-  const response = await worker.fetch(request, makeEnv());
+  const response = await worker.fetch(request, makeEnv(), createExecutionContext());
   expect(response.status).toBe(400);
 });
 
 it("returns 401 when Google ID token verification fails", async () => {
   vi.spyOn(googleAuth, "verifyGoogleIdToken").mockRejectedValue(new Error("bad token"));
 
-  const response = await worker.fetch(postAuth({ idToken: "bad", devicePublicKey: "key" }), makeEnv());
+  const response = await worker.fetch(postAuth({ idToken: "bad", devicePublicKey: "key" }), makeEnv(), createExecutionContext());
 
   expect(response.status).toBe(401);
 });
@@ -126,6 +127,7 @@ it("returns 403 when the verified email is not on the allowlist", async () => {
   const response = await worker.fetch(
     postAuth({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(403);
@@ -142,6 +144,7 @@ it("returns 403 for every email when the allowlist is empty", async () => {
   const response = await worker.fetch(
     postAuth({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv({ ALLOWED_GOOGLE_EMAILS: "" }),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(403);
@@ -159,6 +162,7 @@ it("returns 502 when the account/token backend throws", async () => {
   const response = await worker.fetch(
     postAuth({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(502);
@@ -201,6 +205,7 @@ it("provisions a new data-plane database only for a brand new account, then mint
   const response = await worker.fetch(
     postAuth({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv({ ENROLLMENT_HANDOFF: env.ENROLLMENT_HANDOFF }),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(200);
@@ -256,6 +261,7 @@ it("does not provision a new database for an account that already exists", async
   const response = await worker.fetch(
     postAuth({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv({ ENROLLMENT_HANDOFF: env.ENROLLMENT_HANDOFF }),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(200);
@@ -308,6 +314,7 @@ it("marks a second device pending instead of minting a token", async () => {
   const response = await worker.fetch(
     postAuth({ idToken: "good-token", devicePublicKey: "device-b-key" }),
     makeEnv({ UNLIMITED_EMAILS: "owner@example.com" }), // predates the device limit
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(200);
@@ -352,6 +359,7 @@ it("returns 403 for a previously revoked device", async () => {
   const response = await worker.fetch(
     postAuth({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(403);
@@ -394,6 +402,7 @@ it("returns pending status for a device that already exists and is still pending
   const response = await worker.fetch(
     postAuth({ idToken: "good-token", devicePublicKey: "device-b-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(200);
@@ -532,7 +541,7 @@ it("integration: two different accounts get tokens scoped to two different data-
 });
 
 it("returns 400 from /v1/devices when idToken is missing", async () => {
-  const response = await worker.fetch(postDevices({ devicePublicKey: "key" }), makeEnv());
+  const response = await worker.fetch(postDevices({ devicePublicKey: "key" }), makeEnv(), createExecutionContext());
   expect(response.status).toBe(400);
 });
 
@@ -542,6 +551,7 @@ it("returns 401 from /v1/devices when Google ID token verification fails", async
   const response = await worker.fetch(
     postDevices({ idToken: "bad", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(401);
@@ -557,6 +567,7 @@ it("returns 403 from /v1/devices when the verified email is not on the allowlist
   const response = await worker.fetch(
     postDevices({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(403);
@@ -573,6 +584,7 @@ it("returns 403 from /v1/devices when the caller's account doesn't exist", async
   const response = await worker.fetch(
     postDevices({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(403);
@@ -589,6 +601,7 @@ it("returns 502 from /v1/devices when the account/token backend throws", async (
   const response = await worker.fetch(
     postDevices({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(502);
@@ -622,6 +635,7 @@ it("returns 403 from /v1/devices when the caller's own device isn't approved", a
   const response = await worker.fetch(
     postDevices({ idToken: "good-token", devicePublicKey: "device-b-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(403);
@@ -678,6 +692,7 @@ it("lists an account's devices for an approved caller", async () => {
   const response = await worker.fetch(
     postDevices({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(200);
@@ -725,6 +740,7 @@ it("returns 400 from the approve route when wrappedGroupKey is missing", async (
   const response = await worker.fetch(
     postApprove("device-2", { idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
   expect(response.status).toBe(400);
 });
@@ -744,6 +760,7 @@ it("returns 502 from the approve route when the account/token backend throws dur
       wrappedGroupKey: "wrapped-blob",
     }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(502);
@@ -764,6 +781,7 @@ it("returns 403 from the approve route when the caller isn't an approved device"
       wrappedGroupKey: "wrapped-blob",
     }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(403);
@@ -802,6 +820,7 @@ it("returns 404 from the approve route for a target device that doesn't exist", 
       wrappedGroupKey: "wrapped-blob",
     }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(404);
@@ -850,6 +869,7 @@ it("returns 404 (not 403) from the approve route for a target device on a differ
       wrappedGroupKey: "wrapped-blob",
     }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(404);
@@ -898,6 +918,7 @@ it("returns 400 from the approve route when the target device is revoked", async
       wrappedGroupKey: "wrapped-blob",
     }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(400);
@@ -947,6 +968,7 @@ it("allows re-approving an already-approved device (recovers from an expired han
       wrappedGroupKey: "wrapped-blob",
     }),
     testEnv,
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(200);
@@ -1012,6 +1034,7 @@ it("returns 403 from the revoke route when the caller isn't an approved device",
   const response = await worker.fetch(
     postRevoke("device-2", { idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(403);
@@ -1046,6 +1069,7 @@ it("returns 404 from the revoke route for a target device that doesn't exist", a
   const response = await worker.fetch(
     postRevoke("no-such-device", { idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(404);
@@ -1090,6 +1114,7 @@ it("returns 404 (not 403) from the revoke route for a target device on a differe
   const response = await worker.fetch(
     postRevoke("device-other-account", { idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(404);
@@ -1134,6 +1159,7 @@ it("returns 400 from the revoke route when the target device is already revoked"
   const response = await worker.fetch(
     postRevoke("device-2", { idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(400);
@@ -1179,6 +1205,7 @@ it("revokes an approved device and rotates all tokens for the account's database
   const response = await worker.fetch(
     postRevoke("device-2", { idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(200);
@@ -1233,6 +1260,7 @@ it("returns 400 from the set-name route when name is missing", async () => {
   const response = await worker.fetch(
     postSetName({ idToken: "good-token", devicePublicKey: "device-a-key" }),
     makeEnv(),
+    createExecutionContext(),
   );
   expect(response.status).toBe(400);
 });
@@ -1241,6 +1269,7 @@ it("returns 400 from the set-name route when name is an empty string", async () 
   const response = await worker.fetch(
     postSetName({ idToken: "good-token", devicePublicKey: "device-a-key", name: "" }),
     makeEnv(),
+    createExecutionContext(),
   );
   expect(response.status).toBe(400);
 });
@@ -1256,6 +1285,7 @@ it("returns 403 from the set-name route when the caller isn't an approved device
   const response = await worker.fetch(
     postSetName({ idToken: "good-token", devicePublicKey: "device-a-key", name: "MacBook Pro" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(403);
@@ -1290,6 +1320,7 @@ it("sets the calling device's own name", async () => {
   const response = await worker.fetch(
     postSetName({ idToken: "good-token", devicePublicKey: "device-a-key", name: "MacBook Pro" }),
     makeEnv(),
+    createExecutionContext(),
   );
 
   expect(response.status).toBe(200);
@@ -2074,7 +2105,7 @@ it("delete without confirm is refused", async () => {
   expect(del).not.toHaveBeenCalled();
   expect(db.rawAccount(account.id)).toBeDefined();
   // Routed by the Worker (refused before any database work).
-  const routed = await worker.fetch(post("/v1/account/delete", { idToken: "t", devicePublicKey: "k" }), makeEnv());
+  const routed = await worker.fetch(post("/v1/account/delete", { idToken: "t", devicePublicKey: "k" }), makeEnv(), createExecutionContext());
   expect(await routed.json()).toEqual({ error: "reset_confirm_required" });
 });
 

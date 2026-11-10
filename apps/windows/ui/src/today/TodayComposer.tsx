@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { aiSettings } from "../api";
+import { aiSettings, whimbrelAiStatus } from "../api";
 import { t } from "../l10n";
 import { askAvailable, askModelLabel, composerPrompt } from "./todayModel";
 
@@ -22,8 +22,8 @@ export function TodayComposer({
   const [text, setText] = useState("");
 
   const load = useCallback(() => {
-    aiSettings()
-      .then((s) => setState({ available: askAvailable(s.routing, s.keys), model: askModelLabel(s.routing) }))
+    Promise.all([aiSettings(), whimbrelAiStatus().catch(() => null)])
+      .then(([s, w]) => setState({ available: askAvailable(s.routing, s.keys, !!w?.signedIn), model: askModelLabel(s.routing) }))
       .catch(() => setState(null));
   }, []);
 

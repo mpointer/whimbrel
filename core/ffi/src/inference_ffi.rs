@@ -16,7 +16,8 @@ use crate::{cstr_to_string, json_to_c_string};
 /// (including a hosted provider with no key, so a missing key can never be silently
 /// downgraded to a different provider — ADR 0002 §7). `base_url_override` is null in
 /// production (Ollama defaults to `http://localhost:11434`, Gemini to Google's API host);
-/// tests pass a fake server's URL.
+/// tests pass a fake server's URL. For `"whimbrel"`, `api_key` is the Google ID token and
+/// `base_url_override` is the device's public key (both required).
 ///
 /// Returns immediately — the actual network/model work runs on the registry's own Tokio
 /// runtime, never on the caller's thread and never behind `StoreHandle`.
@@ -37,13 +38,19 @@ pub extern "C" fn whimbrel_inference_start(
     let provider = cstr_to_string(provider).unwrap_or_else(|| "ollama".to_string());
     let api_key = cstr_to_string(api_key);
     let base_url_override = cstr_to_string(base_url_override);
-    let Some(started) = api::inference::start(
-        &prompt,
-        &model,
-        &provider,
-        api_key.as_deref(),
-        base_url_override.as_deref(),
-    ) else {
+    // Whimbrel AI needs two credentials, so it cannot ride `start`'s one key: for it,
+    // `api_key` carries the Google ID token and `base_url_override` the device's public key.
+    let started = if provider == "whimbrel" {
+        api::inference::start_whimbrel(
+            &prompt,
+            &model,
+            api_key.as_deref().unwrap_or_default(),
+            base_url_override.as_deref().unwrap_or_default(),
+        )
+    } else {
+        api::inference::start(&prompt, &model, &provider, api_key.as_deref(), base_url_override.as_deref())
+    };
+    let Some(started) = started else {
         return ptr::null_mut();
     };
     match serde_json::to_string(&started) {
@@ -112,6 +119,27 @@ mod tests {
             .to_string();
         crate::whimbrel_core_free_string(ptr);
         serde_json::from_str(&json).unwrap()
+    }
+
+    /// "whimbrel" routes to `start_whimbrel`: the ID token rides `api_key`, the device key
+    /// rides `base_url_override`, and either one missing is a refusal, never a downgrade.
+    #[test]
+    fn whimbrel_start_needs_both_credentials() {
+        let (prompt, model, provider) = (to_cstring("hi"), to_cstring("claude-haiku-4-5"), to_cstring("whimbrel"));
+        let (token, device) = (to_cstring("id-token"), to_cstring("device-key"));
+        let start = |token: *const c_char, device: *const c_char| {
+            whimbrel_inference_start(prompt.as_ptr(), model.as_ptr(), provider.as_ptr(), token, device)
+        };
+        assert!(start(token.as_ptr(), ptr::null()).is_null());
+        assert!(start(ptr::null(), device.as_ptr()).is_null());
+        let started = start(token.as_ptr(), device.as_ptr());
+        assert!(!started.is_null());
+        let json = unsafe { std::ffi::CStr::from_ptr(started) }.to_str().unwrap().to_string();
+        crate::whimbrel_core_free_string(started);
+        let run_id = serde_json::from_str::<serde_json::Value>(&json).unwrap()["run_id"].as_str().unwrap().to_string();
+        let run_id_c = to_cstring(&run_id);
+        whimbrel_inference_cancel(run_id_c.as_ptr());
+        whimbrel_inference_release(run_id_c.as_ptr());
     }
 
     fn start_run(prompt: &str, model: &str, base_url: &str) -> String {
