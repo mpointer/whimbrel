@@ -6,6 +6,7 @@ import {
   mergeTopicSeeds,
   saveTopicSeed,
   topicSeeds,
+  topicNamingStatus,
   topicSuggestions,
 } from "../api";
 import type { TopicSeedView, TopicSuggestionView } from "../generated/types";
@@ -20,6 +21,8 @@ type Editing = { seed: TopicSeedView | null };
 export function TopicsCard() {
   const [seeds, setSeeds] = useState<TopicSeedView[]>([]);
   const [suggestions, setSuggestions] = useState<TopicSuggestionView[]>([]);
+  // Suggested topics still showing a placeholder until a model names them (PR 720).
+  const [placeholders, setPlaceholders] = useState(0);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [merging, setMerging] = useState<string | null>(null);
@@ -30,6 +33,7 @@ export function TopicsCard() {
   const reload = useCallback(() => {
     topicSeeds().then(setSeeds, () => {});
     topicSuggestions().then(setSuggestions, () => {});
+    topicNamingStatus().then((v) => setPlaceholders(v.placeholderCount), () => {});
   }, []);
 
   useEffect(() => {
@@ -182,6 +186,7 @@ export function TopicsCard() {
       </ul>
 
       <h3>{t("Suggested")}</h3>
+      {placeholders > 0 && <p className="muted small">{t("Some suggested topics have placeholder names until an AI model names them.")}</p>}
       {suggestions.length === 0 && (
         <p className="muted small">
           {t("When a theme shows up across several of your meetings, emails and notes, Whimbrel suggests it here. Nothing is added until you press Add.")}

@@ -1,0 +1,88 @@
+<!--
+{
+  "title": "Give Claude and Your AI Tools Your Work Context",
+  "description": "Whimbrel remembers your meetings and what was on your screen, on your own computer, and lets Claude and other AI tools ask it through a local MCP server.",
+  "schema": ["software"],
+  "noindex": true,
+  "priority": 0.6,
+  "faq": [
+    { "q": "Which AI tools can use my Whimbrel memory?", "a": "Any tool that can connect to an MCP server on the same computer, such as Claude Desktop. Whimbrel gives you the configuration to paste in. Tools that work with files, such as Claude Code or Codex, can also read the Obsidian vault Whimbrel keeps up to date." },
+    { "q": "What can a connected tool see?", "a": "Only what you grant. Each tool gets its own access token with scopes: memory (screen history and day summaries), meetings (titles and summaries), and transcripts (what was said). A tool with the memory scope alone cannot read a transcript. The tools are read-only, and the text of your email is not exposed." },
+    { "q": "Does my memory get uploaded so the tools can reach it?", "a": "No. The MCP server runs on your computer and answers on your computer. Whimbrel has no hosted copy of your memory. What the AI tool does with an answer is up to that tool: if it uses a hosted model, the answer it was given goes to that model." },
+    { "q": "Can I use it from Claude on the web or on my phone?", "a": "Not yet. The MCP server answers tools running on the same computer as Whimbrel." },
+    { "q": "Does Whimbrel take screenshots?", "a": "No. It reads the text of the window you are working in through the operating system's accessibility interfaces. You can exclude any app or website from capture, and pause it from the menu bar or tray." },
+    { "q": "What does it cost?", "a": "The app is free and open source, including the MCP server. Use a local model or your own API key and Whimbrel adds nothing to what your provider charges. See the pricing page." }
+  ]
+}
+-->
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">For people who work in Claude, ChatGPT, Cursor or Codex</p>
+    <h1>Give Claude your whole workday, not only your meetings.</h1>
+    <p class="lede">Your AI tools start every conversation knowing nothing about your work. Whimbrel remembers your meetings and what was on your screen, on your own computer, and lets the tools you choose ask it.</p>
+    <div class="hero-actions" style="justify-content:center">
+      <a class="btn btn-primary btn-lg" href="/download/?platform=mac#register" data-platform-link="mac">Download for Mac</a>
+      <a class="btn btn-ghost btn-lg" href="/download/?platform=windows#register" data-platform-link="windows">Download for Windows</a>
+    </div>
+    <ul class="hero-meta" style="justify-content:center">
+      <li>Local MCP server, read-only</li>
+      <li>You grant each tool its own access</li>
+      <li>Free and open source</li>
+    </ul>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="section-head">
+      <h2>Meeting notetakers hand your AI a transcript. That is one hour of your day.</h2>
+      <p class="lede">The rest of your work happened in documents, tickets, threads and browser tabs. Whimbrel captures that too, as text, and makes it something your tools can search.</p>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature"><h3>Meetings, without a bot</h3><p>Transcripts with speaker names, summaries, decisions and action items, recorded from your computer's own audio and transcribed on your machine.</p></article>
+      <article class="card feature"><h3>What was on your screen</h3><p>The text of the windows you worked in, kept as a searchable timeline. Text, not screenshots, so it stays light and easy to exclude from.</p></article>
+      <article class="card feature"><h3>One question, all of it</h3><p>A connected tool can ask for the context behind a question and get the matching meeting lines, screen history and recent work together.</p></article>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="section-head">
+      <h2>What a connected tool can ask.</h2>
+      <p class="lede">Seven read-only tools over a local MCP server. Each client gets a token with only the scopes you choose.</p>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature"><h3>Search your memory</h3><p><code>search_memory</code> and <code>assemble_context</code>: keyword and meaning search across screen history and meeting speech, ranked together.</p></article>
+      <article class="card feature"><h3>Read your meetings</h3><p><code>list_meetings</code>, <code>get_meeting</code> and <code>get_transcript</code>: summaries with decisions and action items, and the full transcript when you grant it.</p></article>
+      <article class="card feature"><h3>Reconstruct a day</h3><p><code>get_timeline</code> and <code>get_daily_digest</code>: what you worked on, in order, for "what was I doing on Tuesday?"</p></article>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="section-head">
+      <h2>Or as plain files.</h2>
+      <p class="lede">Whimbrel can keep an Obsidian vault up to date: a note for each customer and project, its people, organizations and meetings, with your own notes preserved. Point Claude Code, Codex or any agent that reads a folder at it.</p>
+    </div>
+  </div>
+</section>
+
+<section class="ink">
+  <div class="narrow center">
+    <h2>Your memory is not on our servers.</h2>
+    <p class="lede">The memory is a database on your computer and the MCP server answers from it locally. There is no hosted copy for a tool, or for us, to read. Run Whimbrel's own summaries and answers on a local model, or on your own API key.</p>
+    <p><a href="/features/screen-memory/">How screen memory works →</a></p>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Questions about connecting AI tools</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

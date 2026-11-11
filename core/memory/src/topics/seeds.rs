@@ -70,6 +70,8 @@ pub struct TopicSuggestion {
     pub kinds: Vec<String>,
 }
 
+/// At least 5 non-removed members from at least 2 source kinds.
+pub(super) const SUGGESTION_HAVING: &str = "COUNT(*) >= 5 AND COUNT(DISTINCT s.kind) >= 2";
 const DISMISSED_PREFIX: &str = "topic_suggestion_dismissed:";
 
 /// Queues sources to be re-matched against this seed: its former `seed` members (dropped
@@ -457,20 +459,31 @@ impl Store {
         )
     }
 
+    /// WHERE terms every listed suggestion meets, with the HAVING in `SUGGESTION_HAVING`
+    /// (rows joined as `t` topic, `m` member, `s` source). Shared with the model naming
+    /// pass and the placeholder count so none of them can drift from the list.
+    pub(super) fn suggestion_where() -> String {
+        format!(
+            "t.merged_into IS NULL AND t.id NOT IN (SELECT topic_id FROM topic_seed) \
+             AND NOT EXISTS (SELECT 1 FROM kv_meta WHERE key = '{DISMISSED_PREFIX}' || t.id)"
+        )
+    }
+
     /// Named auto topics (never a seed, not merged) with at least 5 non-removed members from
     /// at least 2 source kinds, biggest first, minus the ones dismissed on this device.
     pub fn topic_suggestions(&self, limit: usize) -> rusqlite::Result<Vec<TopicSuggestion>> {
         let mut stmt = self.conn.prepare(
-            "SELECT t.id, t.name, COUNT(*), GROUP_CONCAT(DISTINCT s.kind) \
-             FROM topic t JOIN topic_member m ON m.topic_id = t.id AND m.origin != 'removed' \
-               JOIN topic_source s ON s.id = m.source_id \
-             WHERE t.merged_into IS NULL AND t.name != '' AND t.name_dirty = 0 \
-               AND t.id NOT IN (SELECT topic_id FROM topic_seed) \
-               AND NOT EXISTS (SELECT 1 FROM kv_meta WHERE key = ?1 || t.id) \
-             GROUP BY t.id HAVING COUNT(*) >= 5 AND COUNT(DISTINCT s.kind) >= 2 \
-             ORDER BY COUNT(*) DESC, t.id LIMIT ?2",
+            &format!(
+                "SELECT t.id, t.name, COUNT(*), GROUP_CONCAT(DISTINCT s.kind) \
+                 FROM topic t JOIN topic_member m ON m.topic_id = t.id AND m.origin != 'removed' \
+                   JOIN topic_source s ON s.id = m.source_id \
+                 WHERE t.name != '' AND t.name_dirty = 0 AND {} \
+                 GROUP BY t.id HAVING {SUGGESTION_HAVING} \
+                 ORDER BY COUNT(*) DESC, t.id LIMIT ?1",
+                Self::suggestion_where()
+            ),
         )?;
-        let rows = stmt.query_map(params![DISMISSED_PREFIX, limit as i64], |r| {
+        let rows = stmt.query_map(params![limit as i64], |r| {
             let kinds: String = r.get(3)?;
             Ok(TopicSuggestion {
                 topic_id: r.get(0)?,

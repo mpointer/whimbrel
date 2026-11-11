@@ -47,7 +47,7 @@ struct TodayView: View {
         labels[appState.deviceId] = appState.deviceLabel(for: appState.deviceId)
         if let origin = briefRecap?.originDeviceId { labels[origin] = appState.deviceLabel(for: origin) }
         return TodayContent(
-            name: appState.profile.name, now: Date(), pinnedNow: nil, events: appState.allUpcomingMeetings,
+            name: appState.profile.name, now: Date(), pinnedNow: nil, events: appState.todayPanelMeetings,
             recentMeetings: recentMeetings, recentLoaded: recentLoaded, calendarGranted: appState.permissions.calendarGranted || !appState.calendarConnectorState.accounts.isEmpty,
             activeMeetingId: appState.activeMeetingId, processingMeetingId: appState.processingMeetingId,
             nextPrep: nextPrep, pendingApprovalCount: pendingApprovalCount, attentionThreads: attentionThreads,
@@ -104,7 +104,8 @@ struct TodayView: View {
                     RecordingNoticeCard(
                         settings: appState.recordingNoticeSettings, meetingId: meetingId, chat: appState.recordingNoticeChat
                     )
-                })
+                }),
+                snapshotsSection: AnyView(LiveMeetingSnapshots(meetingId: meetingId, store: appState.coreStore))
             )
             .id(meetingId)
         )

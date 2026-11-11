@@ -2381,6 +2381,15 @@ export interface TopicNamesView {
   suggested: string[];
 }
 /**
+ * Settings → Topics: how many suggested topics still show a placeholder name (PR 720).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicNamingView".
+ */
+export interface TopicNamingView {
+  placeholderCount: number;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "TopicNextMeetingView".
  */

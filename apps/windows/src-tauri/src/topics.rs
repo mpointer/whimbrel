@@ -133,6 +133,55 @@ pub fn active_key(settings: &Mutex<SettingsFile>, secrets: &dyn SecretStore) -> 
     secrets.get_string(APP_SERVICE, accounts::TYPESAFE_API_KEY).ok().flatten().filter(|k| !k.trim().is_empty())
 }
 
+/// How soon the naming loop runs again: soon while a model is naming topics (more may be waiting),
+/// otherwise every five minutes. A failing model names nothing, so it never loops fast; core also
+/// waits a day before trying a failed topic again. The Mac's pacing.
+pub fn next_naming_delay(model_named: usize) -> Duration {
+    if model_named > 0 {
+        Duration::from_secs(5)
+    } else {
+        Duration::from_secs(300)
+    }
+}
+
+/// Starts the topic-naming loop (PR 720): an AI model names suggested topics that still show a
+/// placeholder, at most 10 a round, through the user's routing and keys (synced keys and Whimbrel AI
+/// included). On `store` the slow lane: a model call holds the store. A local model waits for AC
+/// power and an idle minute, as the other local-model jobs do.
+pub fn start_naming(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, secrets: Arc<dyn SecretStore>) {
+    let spawned = std::thread::Builder::new().name("whimbrel-topic-names".into()).spawn(move || {
+        let mut delay = Duration::from_secs(120);
+        loop {
+            std::thread::sleep(delay);
+            delay = next_naming_delay(0);
+            let routing = settings.lock().unwrap().routing();
+            if routing.preferred_provider == crate::settings::Provider::Ollama && !heavy_jobs_allowed(on_ac_power(), idle_duration()) {
+                continue;
+            }
+            let keys = ApiKeys::load(&*secrets).unwrap_or_default();
+            let config = routing.routing_config(&keys, &Instructions::default());
+            let ollama = routing.ollama_model.clone();
+            let named = store.call_blocking(move |s| {
+                let model = (!ollama.is_empty()).then_some(ollama.as_str());
+                api::topics::run_naming_batch(s, &config, model, chrono::Utc::now().timestamp_millis(), 10).map_err(|e| format!("{e:?}"))
+            });
+            match named {
+                Ok(Ok(report)) => {
+                    if report.named > 0 {
+                        tracing::info!(named = report.named, model_named = report.model_named, fallback = report.fallback, "topics: named suggestions");
+                    }
+                    delay = next_naming_delay(report.model_named);
+                }
+                Ok(Err(e)) => tracing::warn!(error = %e, "topics: the naming batch failed"),
+                Err(_) => break,
+            }
+        }
+    });
+    if let Err(e) = spawned {
+        tracing::error!(error = %e, "topic naming did not start");
+    }
+}
+
 /// Starts the topics loop on `store` (the background lane: a TypeSafe call holds the store).
 /// It runs for the life of the process and stops when the store actor does.
 pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, secrets: Arc<dyn SecretStore>, status: Arc<TopicSortStatus>) {
@@ -316,6 +365,12 @@ pub fn suggestions(store: &memory::Store, limit: usize) -> Result<Vec<TopicSugge
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn naming_runs_again_soon_only_while_a_model_is_naming() {
+        assert_eq!(next_naming_delay(3), Duration::from_secs(5));
+        assert_eq!(next_naming_delay(0), Duration::from_secs(300), "a failing or idle model waits five minutes");
+    }
 
     fn outcome(f: impl FnOnce(&mut TopicJudgeOutcome)) -> TopicJudgeOutcome {
         let mut o = TopicJudgeOutcome::default();

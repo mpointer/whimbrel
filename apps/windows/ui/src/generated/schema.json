@@ -4822,6 +4822,19 @@
       ],
       "type": "object"
     },
+    "TopicNamingView": {
+      "description": "Settings → Topics: how many suggested topics still show a placeholder name (PR 720).",
+      "properties": {
+        "placeholderCount": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "placeholderCount"
+      ],
+      "type": "object"
+    },
     "TopicNextMeetingView": {
       "properties": {
         "attendeesByOrg": {

@@ -4,6 +4,7 @@ import { approvalsCount, takePendingOpenMeeting, takePendingOpenTopic } from "./
 import { RetentionNotice } from "./settings/RetentionNotice";
 import { UpdateBanner } from "./settings/UpdateBanner";
 import { SignInBanner } from "./settings/SignInBanner";
+import { SyncStoppedLine } from "./settings/SyncStoppedLine";
 import { bootstrapModels } from "./settings/modelBootstrap";
 import { ModelStatusLine } from "./settings/ModelStatusLine";
 import { SettingsView } from "./settings/SettingsView";
@@ -123,6 +124,7 @@ export function App() {
           ))}
         </ul>
         <ModelStatusLine />
+        <SyncStoppedLine onOpen={() => openSettings("status")} />
       </nav>
       <div className="stage">
       <SkinHeader />

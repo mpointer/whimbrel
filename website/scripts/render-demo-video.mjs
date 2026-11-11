@@ -2,8 +2,9 @@
 //   site/media/whimbrel-tour.mp4 (H.264), whimbrel-tour.webm (VP9), whimbrel-tour-poster.jpg
 // Needs Playwright (with Chromium) and ffmpeg on PATH. Run: node scripts/render-demo-video.mjs
 //
-// This is an animated walkthrough of the app's UI, not a screen recording. When a real
-// screen recording exists, drop it in as site/media/whimbrel-tour.mp4/.webm instead and
+// The tour shows real app screens (demo/shots/, captured by scripts/capture-app-shots.py
+// from the Windows UI with demo data) with captions; it is not a screen recording. When a
+// real recording exists, drop it in as site/media/whimbrel-tour.mp4/.webm instead and
 // update demoVideo.duration in site/config.json.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
@@ -46,8 +47,8 @@ const ff = (...args) => execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-ss
 
 ff("-vf", "fps=30", "-c:v", "libx264", "-preset", "slow", "-crf", "26", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", join(media, "whimbrel-tour.mp4"));
 ff("-vf", "fps=30", "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "38", "-row-mt", "1", "-an", join(media, "whimbrel-tour.webm"));
-// Poster: a frame from scene 2 (live notes), the most representative shot.
-execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-ss", String(Number(start) + 17), "-i", raw, "-frames:v", "1", "-q:v", "3", join(media, "whimbrel-tour-poster.jpg")]);
+// Poster: a frame from scene 3 (the client page), once both columns have appeared.
+execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-ss", String(Number(start) + 33), "-i", raw, "-frames:v", "1", "-q:v", "3", join(media, "whimbrel-tour-poster.jpg")]);
 
 rmSync(scratch, { recursive: true, force: true });
 console.log(`rendered ${(probe - Number(start)).toFixed(1)}s tour → site/media/`);

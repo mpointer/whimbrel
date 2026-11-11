@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AiSettings, SyncView } from "../generated/types";
-import { aiLines, backlogStalled, BACKLOG_STALLED_MS, diskSize, relativeTime, routineLines, storageLines, syncLines, updateLines } from "./statusModel";
+import { aiLines, backlogStalled, BACKLOG_STALLED_MS, diskSize, relativeTime, routineLines, storageLines, syncLines, syncStopped, updateLines } from "./statusModel";
 
 const NOW = Date.UTC(2026, 10, 7, 12, 0);
 const MIN = 60_000;
@@ -22,10 +22,23 @@ describe("syncLines", () => {
     expect(syncLines(ready({ state: "waitingForApproval" }), [], null, NOW, "en")).toEqual(["Sync is setting up."]);
   });
 
-  it("says why sync needs attention instead of calling it setting up", () => {
+  it("says why sync stopped, that it retries, when it last worked and what waits (#590)", () => {
+    const retries = "Sync stopped. Whimbrel tries again every 30 minutes and when this PC wakes.";
     const refused = ready({ state: "error", message: "This Google account isn't allowed to sign in" });
-    expect(syncLines(refused, [], null, NOW, "en")).toEqual(["This Google account isn't allowed to sign in"]);
-    expect(syncLines(ready({ state: "error" }), [], null, NOW, "en")).toEqual(["Needs attention"]);
+    expect(syncLines(refused, [], null, NOW, "en")).toEqual(["This Google account isn't allowed to sign in", retries]);
+    expect(syncLines(ready({ state: "error" }), [], null, NOW, "en")).toEqual(["Needs attention", retries]);
+    const stopped = ready({ state: "error", message: "Your Google sign-in expired. Sign in again.", contentLastSyncedMs: NOW - 4 * 24 * 3600_000 });
+    const lines = syncLines(stopped, [], { outboxPending: 12, outboxOldestMs: NOW - 4 * 24 * 3600_000 }, NOW, "en");
+    expect(lines.slice(0, 2)).toEqual(["Your Google sign-in expired. Sign in again.", retries]);
+    expect(lines[2]).toMatch(/^Content last synced /);
+    expect(lines[3]).toMatch(/^Changes waiting to send: 12, the oldest from /);
+  });
+
+  it("puts Sync stopped in the sidebar only for a sign-in problem", () => {
+    expect(syncStopped(ready({ state: "error" }))).toBe(true);
+    expect(syncStopped(ready())).toBe(false);
+    expect(syncStopped(ready({ state: "notSignedIn" }))).toBe(false);
+    expect(syncStopped(null)).toBe(false);
   });
 
   it("counts approved devices and says when content and settings last synced", () => {

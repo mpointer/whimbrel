@@ -74,6 +74,26 @@ fn save(file: &SettingsFile) -> Result<(), CommandError> {
     file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))
 }
 
+/// Settings → Topics: how many suggested topics still show a placeholder name (PR 720).
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicNamingView {
+    pub placeholder_count: i64,
+}
+
+#[tauri::command]
+pub async fn topic_naming_status(state: State<'_, AppState>) -> Result<TopicNamingView, CommandError> {
+    state
+        .store()?
+        .call(|s| {
+            api::topics::naming_status(s)
+                .map(|n| TopicNamingView { placeholder_count: n.provisional_count })
+                .map_err(|e| format!("{e:?}"))
+        })
+        .await?
+        .map_err(CommandError::store)
+}
+
 #[tauri::command]
 pub fn topic_sort_state(state: State<'_, AppState>) -> Result<TopicSortView, CommandError> {
     view(&state.settings.lock().unwrap(), &*state.secrets, &state.topic_sort)

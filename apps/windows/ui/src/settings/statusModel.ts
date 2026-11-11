@@ -42,8 +42,9 @@ export function syncLines(
 ): string[] {
   if (!view) return [];
   if (view.state === "notSignedIn" || view.state === "notConfigured") return [t("Sync is off.")];
-  // A refused sign-in ("This Google account isn't allowed to sign in") says why, not "setting up".
-  if (view.state === "error") return [view.message ?? stateLabel("error")];
+  // A refused sign-in ("This Google account isn't allowed to sign in") says why, not "setting up". A stopped
+  // sync also says that it retries, when it last worked and what is waiting, so a long stop can't go unnoticed (#590).
+  if (view.state === "error") return stoppedLines(view, status, nowMs, locale);
   if (view.state !== "ready") return [t("Sync is setting up.")];
   const lines: string[] = [];
   const approved = devices.filter((d) => d.status === "approved").length;
@@ -58,6 +59,25 @@ export function syncLines(
   }
   return lines;
 }
+
+/** Sync stopped by a sign-in problem: why, that it retries on its own, when content last synced, and what waits. */
+function stoppedLines(
+  view: SyncView,
+  status: Pick<StatusView, "outboxPending" | "outboxOldestMs"> | null,
+  nowMs: number,
+  locale: string,
+): string[] {
+  const lines = [view.message ?? stateLabel("error"), t("Sync stopped. Whimbrel tries again every 30 minutes and when this PC wakes.")];
+  if (view.contentLastSyncedMs != null) lines.push(t("Content last synced {when}", { when: relativeTime(view.contentLastSyncedMs, nowMs, locale) }));
+  if (status && status.outboxPending > 0 && status.outboxOldestMs != null) {
+    const oldest = new Date(status.outboxOldestMs).toLocaleString(locale, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    lines.push(t("Changes waiting to send: {count}, the oldest from {when}", { count: status.outboxPending, when: oldest }));
+  }
+  return lines;
+}
+
+/** Whether the sidebar says sync stopped: a sign-in problem, not "off" or "setting up". */
+export const syncStopped = (view: Pick<SyncView, "state"> | null): boolean => view?.state === "error";
 
 /** A provider's plain name: "Ollama", not the picker's "Ollama (on this PC)". */
 function providerName(ai: Pick<AiSettings, "providers">, id: Provider): string {

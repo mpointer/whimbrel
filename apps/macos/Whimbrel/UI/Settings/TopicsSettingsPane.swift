@@ -23,6 +23,23 @@ struct TopicSuggestion: Decodable, Identifiable, Equatable {
     enum CodingKeys: String, CodingKey { case topicId = "topic_id", name, itemCount = "item_count" }
 }
 
+struct TopicNamingReport: Decodable, Equatable {
+    let named: Int
+    let fallback: Int
+    /// Names a model wrote; placeholders are in `named` but not here.
+    let modelNamed: Int
+}
+
+struct TopicNamingStatus: Decodable, Equatable {
+    let provisionalCount: Int
+    let lastNamingFailureUnixMs: Int64?
+}
+
+/// The note under Suggested when some names are placeholders.
+enum TopicPlaceholderNote {
+    static func isVisible(provisionalCount: Int) -> Bool { provisionalCount > 0 }
+}
+
 /// Settings > Topics: the topics the user named (with aliases and a kind) and the ones
 /// Whimbrel suggests.
 struct TopicsSettingsPane: View {
@@ -38,6 +55,7 @@ struct TopicsSettingsPane: View {
     @State private var names: [String] = []
     @State private var suggestedNames: [String] = []
     @State private var newName = ""
+    @State private var provisionalCount = 0
 
 
     var body: some View {
@@ -140,6 +158,10 @@ struct TopicsSettingsPane: View {
             Text("Suggested").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
             if suggestions.isEmpty {
                 Text("When a theme shows up across several of your meetings, emails and notes, Whimbrel suggests it here. Nothing is added until you press Add.")
+                    .font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+            }
+            if TopicPlaceholderNote.isVisible(provisionalCount: provisionalCount) {
+                Text("Some suggested topics have placeholder names until an AI model names them.")
                     .font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
             }
             ForEach(suggestions) { s in
@@ -285,7 +307,9 @@ struct TopicsSettingsPane: View {
             let s = store.topicSeeds()
             let g = store.topicSuggestions()
             let n = store.topicNames()
+            let p = store.topicNamingStatus()?.provisionalCount
             DispatchQueue.main.async {
+                if let p { provisionalCount = p }
                 if let s { seeds = s }
                 if let g { suggestions = g }
                 if let n { names = n.names; suggestedNames = n.suggested }

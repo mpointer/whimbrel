@@ -83,6 +83,11 @@ final class ThemeLoaderTests: XCTestCase {
 
     // MARK: contrast
 
+    /// The meeting alert's Start Recording label is textOnAccent on accentPrimary; keep that pair guarded.
+    func testTheOnAccentPairIsARequiredContrastPair() {
+        XCTAssertTrue(ThemeContrast.requiredPairs.contains { $0.0 == .textOnAccent && $0.1 == .accentPrimary })
+    }
+
     func testContrastRatioMatchesWcagKnownValues() {
         XCTAssertEqual(ThemeContrast.ratio(0x000000, 0xFFFFFF), 21, accuracy: 0.01)
         XCTAssertEqual(ThemeContrast.ratio(0xFFFFFF, 0xFFFFFF), 1, accuracy: 0.001)

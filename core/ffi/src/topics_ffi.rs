@@ -195,6 +195,43 @@ pub extern "C" fn whimbrel_topics_suggestions_json(
     out(list())
 }
 
+/// Names up to `limit` topics with the user's AI model, through the same routing, spend
+/// cap and budgets as other background model tasks. Unnamed topics first, then placeholder
+/// names not tried in the last day; the first model failure ends the batch. Returns
+/// `{"named","fallback","model_named"}` (`model_named`: names a model wrote), or NULL on a null handle or database error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_topics_run_naming_batch(
+    handle: *mut StoreHandle,
+    routing_json: *const c_char,
+    ollama_model: *const c_char,
+    limit: u32,
+) -> *mut c_char {
+    let run = || {
+        let s = store(handle)?;
+        let routing = api::RoutingConfig::from_json(cstr_to_string(routing_json).as_deref());
+        let model = cstr_to_string(ollama_model).filter(|m| !m.trim().is_empty());
+        let r = api::topics::run_naming_batch(
+            s,
+            &routing,
+            model.as_deref(),
+            api::util::now_unix_ms(),
+            limit as usize,
+        )
+        .ok()?;
+        Some(json!({ "named": r.named, "fallback": r.fallback, "model_named": r.model_named }))
+    };
+    out(run())
+}
+
+/// `{"provisional_count","last_naming_failure_unix_ms"}`: topics still showing a placeholder
+/// name, and when a naming batch last got no name from a model (null if never). NULL on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_topics_naming_status_json(handle: *mut StoreHandle) -> *mut c_char {
+    out(store(handle)
+        .and_then(|s| api::topics::naming_status(s).ok())
+        .map(|n| json!({ "provisional_count": n.provisional_count, "last_naming_failure_unix_ms": n.last_naming_failure_unix_ms })))
+}
+
 /// Turns suggestion `topic_id` into a seed named `name`. `0` ok, `-1` failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_topics_suggestion_accept(
@@ -617,6 +654,34 @@ mod tests {
             whimbrel_topics_run_judge_batch(ptr::null_mut(), c("k").as_ptr(), 5, 3.0),
             -1
         );
+        whimbrel_memory_close(h);
+    }
+
+    #[test]
+    fn naming_batch_and_status_round_trip() {
+        let (_d, h, path) = open();
+        let st = json(whimbrel_topics_naming_status_json(h));
+        assert_eq!(st["provisional_count"], 0);
+        assert!(st["last_naming_failure_unix_ms"].is_null());
+        assert!(whimbrel_topics_naming_status_json(ptr::null_mut()).is_null());
+        assert!(whimbrel_topics_run_naming_batch(ptr::null_mut(), ptr::null(), ptr::null(), 5).is_null());
+
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute("INSERT INTO topic (created_at_unix_ms, updated_at_unix_ms) VALUES (0, 0)", []).unwrap();
+        let t = conn.last_insert_rowid();
+        for i in 0..5 {
+            let kind = if i % 2 == 0 { "email" } else { "meeting" };
+            conn.execute("INSERT INTO topic_source (kind, ref_id, ts_unix_ms, title, indexed_at_unix_ms) VALUES (?2, ?1, ?1, 'x', 0)", rusqlite::params![i + 1, kind]).unwrap();
+            let sid = conn.last_insert_rowid();
+            conn.execute("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'auto')", [t, sid]).unwrap();
+        }
+        // Local-only with no local model: nothing may be called, so the placeholder is used.
+        let routing = c(r#"{"sensitive":true}"#);
+        let r = json(whimbrel_topics_run_naming_batch(h, routing.as_ptr(), ptr::null(), 10));
+        assert_eq!((r["named"].as_i64(), r["fallback"].as_i64(), r["model_named"].as_i64()), (Some(1), Some(1), Some(0)));
+        let st = json(whimbrel_topics_naming_status_json(h));
+        assert_eq!(st["provisional_count"], 1);
+        assert!(st["last_naming_failure_unix_ms"].as_i64().unwrap() > 0);
         whimbrel_memory_close(h);
     }
 

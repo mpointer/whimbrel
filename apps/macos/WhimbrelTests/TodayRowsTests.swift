@@ -127,7 +127,7 @@ final class TodayRowsTests: XCTestCase {
 
         // Edges: every meeting upcoming puts the marker first, every meeting past puts it last.
         XCTAssertEqual(TodayRows.timelineNowIndex(entries, now: entries[0].start.addingTimeInterval(-60)), 0)
-        XCTAssertEqual(TodayRows.timelineNowIndex(entries, now: entries[4].start.addingTimeInterval(60)), entries.count)
+        XCTAssertEqual(TodayRows.timelineNowIndex(entries, now: entries[4].end.addingTimeInterval(60)), entries.count, "past means ended: a meeting still running stays after the marker")
     }
 
     /// A meeting that has started but not ended sits after the Now marker, drawn as running; only the next one carries a hint.

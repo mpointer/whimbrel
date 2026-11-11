@@ -256,14 +256,15 @@ pub fn start(
             }
             controller.record_settings_result(settings_round.map(|_| now_ms()));
             mark("content round");
+            let (outbox_before, _) = backlog_for_log(&store);
             let result = run_round(&store, secrets.clone(), device_id.clone(), move |key, s, device| {
                 sync_engine::sync_content(&url, &token, key, s, device).map_err(|e| e.to_string())
             });
             mark("after round");
             let (outbox_pending, outbox_oldest_min) = backlog_for_log(&store);
             match &result {
-                Ok(()) => tracing::info!(?trigger, outbox_pending, ?outbox_oldest_min, "content sync round ok"),
-                Err(e) => tracing::warn!(?trigger, outbox_pending, ?outbox_oldest_min, error = %e, "content sync round failed"),
+                Ok(()) => tracing::info!(?trigger, outbox_before, outbox_pending, ?outbox_oldest_min, "content sync round ok"),
+                Err(e) => tracing::warn!(?trigger, outbox_before, outbox_pending, ?outbox_oldest_min, error = %e, "content sync round failed"),
             }
             // Meetings another device forgot (deletion sync, #584): their rows went in the round,
             // even one that failed later; their files here go now. The list reloads on its own.

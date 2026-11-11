@@ -21,7 +21,11 @@ const ACTIVE_DAYS: i64 = 30;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TopicNameInput {
     pub id: i64,
+    /// The name now stored (empty for a topic never named).
+    pub current_name: String,
     pub top_entities: Vec<String>,
+    /// `entity.kind` for each of `top_entities` ("person", "org", ...).
+    pub top_entity_kinds: Vec<String>,
     pub sample_titles: Vec<String>,
 }
 
@@ -382,18 +386,53 @@ fn card(
 impl Store {
     /// Dirty, non-user-named, live topics with at least 2 members, most recent first.
     pub fn topics_needing_names(&self, limit: usize) -> rusqlite::Result<Vec<TopicNameInput>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT t.id FROM topic t JOIN topic_member m ON m.topic_id = t.id AND m.origin != 'removed' \
+        self.name_candidates("t.name_dirty = 1", "COUNT(*) >= 2", limit, 0)
+    }
+
+    /// For the model pass: only topics that are (or would be) listed suggestions (see
+    /// `suggestion_where`), dirty or holding a placeholder name, minus any whose last failed
+    /// model attempt is newer than `retry_before_ms`. Dirty ones come first.
+    pub fn topics_needing_names_due(
+        &self,
+        limit: usize,
+        retry_before_ms: i64,
+    ) -> rusqlite::Result<Vec<TopicNameInput>> {
+        let cond = format!(
+            "(t.name_dirty = 1 OR t.name_fallback_at_unix_ms IS NOT NULL) \
+             AND (t.name_attempt_at_unix_ms IS NULL OR t.name_attempt_at_unix_ms <= ?2) AND {}",
+            Self::suggestion_where()
+        );
+        self.name_candidates(
+            &cond,
+            super::seeds::SUGGESTION_HAVING,
+            limit,
+            retry_before_ms,
+        )
+    }
+
+    fn name_candidates(
+        &self,
+        cond: &str,
+        having: &str,
+        limit: usize,
+        retry_before_ms: i64,
+    ) -> rusqlite::Result<Vec<TopicNameInput>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT t.id, t.name FROM topic t JOIN topic_member m ON m.topic_id = t.id AND m.origin != 'removed' \
                JOIN topic_source s ON s.id = m.source_id \
-             WHERE t.name_dirty = 1 AND t.name_is_user = 0 AND t.merged_into IS NULL AND t.id NOT IN (SELECT topic_id FROM topic_seed WHERE deleted = 1) \
-             GROUP BY t.id HAVING COUNT(*) >= 2 ORDER BY MAX(s.ts_unix_ms) DESC, t.id DESC LIMIT ?1",
-        )?;
-        let ids: Vec<i64> = stmt
-            .query_map([limit as i64], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
+             WHERE {cond} AND t.name_is_user = 0 AND t.merged_into IS NULL AND t.id NOT IN (SELECT topic_id FROM topic_seed WHERE deleted = 1) \
+             GROUP BY t.id HAVING {having} ORDER BY t.name_dirty DESC, MAX(s.ts_unix_ms) DESC, t.id DESC LIMIT ?1"
+        ))?;
+        let rows: Vec<(i64, String)> = if cond.contains("?2") {
+            stmt.query_map(params![limit as i64, retry_before_ms], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        } else {
+            stmt.query_map([limit as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?
+        };
         let common = super::cluster::common_phrases(&self.conn)?;
         let mut ents = self.conn.prepare(
-            "SELECT e.id, e.display FROM entity e JOIN entity_mention em ON em.entity_id = e.id \
+            "SELECT e.id, e.display, e.kind FROM entity e JOIN entity_mention em ON em.entity_id = e.id \
                JOIN topic_member m ON m.source_id = em.source_id AND m.topic_id = ?1 AND m.origin != 'removed' \
              GROUP BY e.id ORDER BY SUM(em.weight) DESC, e.id",
         )?;
@@ -402,16 +441,20 @@ impl Store {
              WHERE m.topic_id = ?1 AND m.origin != 'removed' AND s.title != '' \
              ORDER BY s.ts_unix_ms DESC, s.id DESC LIMIT 8",
         )?;
-        ids.into_iter()
-            .map(|id| {
+        rows.into_iter()
+            .map(|(id, current_name)| {
+                let ents: Vec<(String, String)> = ents
+                    .query_map([id], |r| Ok((r.get::<_, i64>(0)?, r.get(1)?, r.get(2)?)))?
+                    .filter(|e| !e.as_ref().is_ok_and(|(id, _, _)| common.contains(id)))
+                    .take(5)
+                    .map(|e| e.map(|(_, d, k)| (d, k)))
+                    .collect::<rusqlite::Result<_>>()?;
+                let (top_entities, top_entity_kinds) = ents.into_iter().unzip();
                 Ok(TopicNameInput {
                     id,
-                    top_entities: ents
-                        .query_map([id], |r| Ok((r.get::<_, i64>(0)?, r.get(1)?)))?
-                        .filter(|e| !e.as_ref().is_ok_and(|(id, _)| common.contains(id)))
-                        .take(5)
-                        .map(|e| e.map(|(_, d)| d))
-                        .collect::<rusqlite::Result<_>>()?,
+                    current_name,
+                    top_entities,
+                    top_entity_kinds,
                     sample_titles: titles
                         .query_map([id], |r| r.get(0))?
                         .collect::<rusqlite::Result<_>>()?,
@@ -430,7 +473,8 @@ impl Store {
     ) -> rusqlite::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         let n = tx.execute(
-            "UPDATE topic SET name = ?2, status_line = ?3, name_dirty = 0, updated_at_unix_ms = ?4 \
+            "UPDATE topic SET name = ?2, status_line = ?3, name_dirty = 0, updated_at_unix_ms = ?4, \
+               name_fallback_at_unix_ms = NULL, name_attempt_at_unix_ms = NULL \
              WHERE id = ?1 AND name_is_user = 0",
             params![id, name, status_line, now_unix_ms()],
         )?;
@@ -444,6 +488,74 @@ impl Store {
             )?;
         }
         tx.commit()
+    }
+
+    /// Stores a placeholder name from the entity-list fallback: not dirty (so the list is never
+    /// blank) but marked provisional, so a later model pass replaces it. No-op for user names.
+    pub fn apply_fallback_topic_name(&self, id: i64, name: &str, now_ms: i64) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let n = tx.execute(
+            "UPDATE topic SET name = ?2, status_line = NULL, name_dirty = 0, updated_at_unix_ms = ?3, \
+               name_fallback_at_unix_ms = ?3 WHERE id = ?1 AND name_is_user = 0",
+            params![id, name, now_ms],
+        )?;
+        if n > 0 {
+            tx.execute(
+                "INSERT INTO topic_stats (topic_id, vec_n, named_members) VALUES (?1, -1, \
+                   (SELECT COUNT(*) FROM topic_member WHERE topic_id = ?1 AND origin != 'removed')) \
+                 ON CONFLICT(topic_id) DO UPDATE SET named_members = excluded.named_members",
+                [id],
+            )?;
+        }
+        tx.commit()
+    }
+
+    /// Records a failed model attempt for `id`; it is not offered again for a day.
+    pub fn note_topic_name_attempt(&self, id: i64, now_ms: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE topic SET name_attempt_at_unix_ms = ?2 WHERE id = ?1 AND name_is_user = 0",
+            params![id, now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// Live auto topics whose name is still a placeholder.
+    pub fn provisional_topic_count(&self) -> rusqlite::Result<i64> {
+        // The listed suggestions (see `topic_suggestions`) that hold a placeholder.
+        self.conn.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM (SELECT t.id FROM topic t \
+                   JOIN topic_member m ON m.topic_id = t.id AND m.origin != 'removed' \
+                   JOIN topic_source s ON s.id = m.source_id \
+                 WHERE t.name != '' AND t.name_dirty = 0 AND t.name_is_user = 0 \
+                   AND t.name_fallback_at_unix_ms IS NOT NULL AND {} \
+                 GROUP BY t.id HAVING {})",
+                Self::suggestion_where(),
+                super::seeds::SUGGESTION_HAVING
+            ),
+            [],
+            |r| r.get(0),
+        )
+    }
+
+    /// When a naming batch last failed to get a name from a model (device-local).
+    pub fn topic_naming_last_failure(&self) -> rusqlite::Result<Option<i64>> {
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM kv_meta WHERE key = 'topic_naming_last_failure_ms'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()?
+            .and_then(|v| v.parse().ok()))
+    }
+
+    pub fn set_topic_naming_last_failure(&self, now_ms: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO kv_meta (key, value) VALUES ('topic_naming_last_failure_ms', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [now_ms.to_string()],
+        )?;
+        Ok(())
     }
 
     pub fn list_topics(

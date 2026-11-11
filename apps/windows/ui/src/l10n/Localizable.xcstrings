@@ -12836,6 +12836,40 @@
         }
       }
     },
+    "Keep slides" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Folien behalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conservar diapositivas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder les diapositives"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder les diapositives"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter slides"
+          }
+        }
+      }
+    },
     "Keep snapshots" : {
       "localizations" : {
         "de" : {
@@ -12968,6 +13002,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Mantendo dados"
+          }
+        }
+      }
+    },
+    "Kept slides stay even if the meeting is deleted." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Behaltene Folien bleiben auch, wenn die Besprechung gelöscht wird."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las diapositivas conservadas se quedan aunque se elimine la reunión."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les diapositives gardées restent même si la réunion est supprimée."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les diapositives gardées restent même si la réunion est supprimée."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os slides mantidos continuam mesmo se a reunião for excluída."
           }
         }
       }
@@ -19931,6 +19999,118 @@
         }
       }
     },
+    "Otherwise slides are deleted with the meeting after {count} days (Settings → Capture & Privacy)." : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Sonst werden Folien nach {count} Tag mit der Besprechung gelöscht (Einstellungen → Aufnahme & Datenschutz)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Sonst werden Folien nach {count} Tagen mit der Besprechung gelöscht (Einstellungen → Aufnahme & Datenschutz)."
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Otherwise slides are deleted with the meeting after {count} day (Settings → Capture & Privacy)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Otherwise slides are deleted with the meeting after {count} days (Settings → Capture & Privacy)."
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Si no, las diapositivas se eliminan con la reunión después de {count} día (Ajustes → Captura y privacidad)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Si no, las diapositivas se eliminan con la reunión después de {count} días (Ajustes → Captura y privacidad)."
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Sinon, les diapositives sont supprimées avec la réunion après {count} jour (Paramètres → Capture et confidentialité)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Sinon, les diapositives sont supprimées avec la réunion après {count} jours (Paramètres → Capture et confidentialité)."
+                }
+              }
+            }
+          }
+        },
+        "fr-CA" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Sinon, les diapositives sont supprimées avec la réunion après {count} jour (Réglages → Capture et confidentialité)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Sinon, les diapositives sont supprimées avec la réunion après {count} jours (Réglages → Capture et confidentialité)."
+                }
+              }
+            }
+          }
+        },
+        "pt" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Caso contrário, os slides são excluídos com a reunião após {count} dia (Configurações → Captura e privacidade)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "Caso contrário, os slides são excluídos com a reunião após {count} dias (Configurações → Captura e privacidade)."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Owed to you" : {
       "localizations" : {
         "de" : {
@@ -26002,6 +26182,40 @@
         }
       }
     },
+    "Some suggested topics have placeholder names until an AI model names them." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einige vorgeschlagene Themen haben vorläufige Namen, bis ein KI-Modell sie benennt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Algunos temas sugeridos tienen nombres provisionales hasta que un modelo de IA los nombre."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Certains sujets suggérés portent un nom provisoire jusqu'à ce qu'un modèle d'IA les nomme."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Certains sujets suggérés portent un nom provisoire jusqu'à ce qu'un modèle d'IA les nomme."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alguns tópicos sugeridos têm nomes provisórios até que um modelo de IA os nomeie."
+          }
+        }
+      }
+    },
     "Someone else…" : {
       "localizations" : {
         "de" : {
@@ -27742,6 +27956,74 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Configurando sincronia"
+          }
+        }
+      }
+    },
+    "Sync stopped" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sync angehalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La sincronización se detuvo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchro arrêtée"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Synchro arrêtée"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sincronização parada"
+          }
+        }
+      }
+    },
+    "Sync stopped. Whimbrel tries again every 30 minutes and when this PC wakes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sync angehalten. Whimbrel versucht es alle 30 Minuten erneut und wenn dieser PC aufwacht."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La sincronización se detuvo. Whimbrel lo vuelve a intentar cada 30 minutos y cuando este PC se activa."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchro est arrêtée. Whimbrel réessaie toutes les 30 minutes et quand ce PC sort de veille."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchro est arrêtée. Whimbrel réessaie toutes les 30 minutes et quand ce PC sort de veille."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A sincronização parou. O Whimbrel tenta novamente a cada 30 minutos e quando este PC sai do modo de suspensão."
           }
         }
       }

@@ -278,12 +278,25 @@ final class AppState: ObservableObject {
         Self.todaysMeetings(eventKit: calendar.upcomingMeetings, oauth: googleCalendarPolling.oauthMeetings, now: Date())
     }
 
+    /// What the Today panel and the At a Glance schedule show: `allUpcomingMeetings` without
+    /// the meetings the user declined and the all-day events, the same rule Upcoming uses.
+    /// The meeting trigger and the other consumers keep reading `allUpcomingMeetings`.
+    var todayPanelMeetings: [QualifyingMeeting] {
+        Self.todaysMeetings(eventKit: calendar.upcomingMeetings, oauth: googleCalendarPolling.oauthMeetings, now: Date(), forPanel: true)
+    }
+
     /// The connector keeps every future occurrence of a recurring meeting (for years
     /// ahead), while EventKit covers only the rest of today, so the connector's list is
-    /// cut to the same window before merging.
-    nonisolated static func todaysMeetings(eventKit: [QualifyingMeeting], oauth: [QualifyingMeeting], now: Date) -> [QualifyingMeeting] {
-        let end = CalendarService.todayWindowEnd(now: now)
-        return CoreMemoryStore.mergeMeetings(eventKit: eventKit, oauth: oauth.filter { $0.startDate < end })
+    /// cut to the same window before merging. `forPanel` also drops all-day events and
+    /// declined meetings; it is off for the trigger, which must still see them.
+    nonisolated static func todaysMeetings(eventKit: [QualifyingMeeting], oauth: [QualifyingMeeting], now: Date, forPanel: Bool = false, calendar: Calendar = .current) -> [QualifyingMeeting] {
+        let end = CalendarService.todayWindowEnd(now: now, calendar: calendar)
+        // All-day events are dropped before the merge: `isAllDay` is not part of the JSON that
+        // round-trips through core, so a merged meeting always reads false. EventKit is the only
+        // source that needs it; Google all-day events never get here (core skips events with no
+        // dateTime). Declined is on the wire, so it is filtered after the merge.
+        let merged = CoreMemoryStore.mergeMeetings(eventKit: forPanel ? eventKit.filter { !$0.isAllDay } : eventKit, oauth: oauth.filter { $0.startDate < end })
+        return forPanel ? merged.filter { $0.selfResponse != .declined } : merged
     }
 
     /// How far ahead the phones get calendar events: today plus tomorrow, so a reminder
@@ -792,12 +805,14 @@ final class AppState: ObservableObject {
             }
         }
         contentSyncCoordinator.observeSyncState()
+        syncState.onSyncReset = { [weak self] in self?.contentSyncCoordinator.forgetSyncHistory() }
         scheduleJobsBatchStep()
         scheduleEpisodeSegmentStep()
         scheduleReplyPriorityStep()
         scheduleTopicsStep()
         scheduleTopicVaultStep(after: 60)
         scheduleTopicStepsStep()
+        scheduleTopicNamingStep()
         scheduleScreenTextIngestStep()
         scheduleTranscriptBackfillStep()
 
@@ -2212,7 +2227,14 @@ final class AppState: ObservableObject {
             }
             let processed = store.runJobsBatch(maxJobs: 1)
             CoreMemoryStore.slowLaneQueue.async { [weak self] in
-                let threadsSummarized = slow?.runThreadSummarizeBatch(model: ollamaModel, maxJobs: 1, customInstructions: threadSummaryInstructions) ?? 0
+                // "Use local model" off keeps Ollama idle; read on main right before the call
+                // (the slow lane never waits on main, so this cannot deadlock).
+                let localAllowed: Bool = DispatchQueue.main.sync { [weak self] in
+                    self.map { RoutingSettings.localSummariesAllowed(useLocalModel: $0.routing.useLocalModel, localOnlyMode: $0.routing.localOnlyMode) } ?? false
+                }
+                let threadsSummarized = localAllowed
+                    ? (slow?.runThreadSummarizeBatch(model: ollamaModel, maxJobs: 1, customInstructions: threadSummaryInstructions) ?? 0)
+                    : 0
                 guard processed > 0 || threadsSummarized > 0 else {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
                         self?.scheduleJobsBatchStep()
@@ -2249,7 +2271,12 @@ final class AppState: ObservableObject {
                 // Segmenting stays always-on (#52); the Ollama summary waits for the same
                 // AC-power + idle gate as thread summaries, as on Windows, so a backlog
                 // doesn't load the summary model while the user is working.
-                let summarized = PowerIdleGate.isEligibleForBackgroundWork()
+                // Also skipped while "Use local model" is off; read on main right before the call
+                // (the slow lane never waits on main, so this cannot deadlock).
+                let localAllowed: Bool = DispatchQueue.main.sync { [weak self] in
+                    self.map { RoutingSettings.localSummariesAllowed(useLocalModel: $0.routing.useLocalModel, localOnlyMode: $0.routing.localOnlyMode) } ?? false
+                }
+                let summarized = PowerIdleGate.isEligibleForBackgroundWork() && localAllowed
                     ? (slow?.runEpisodeSummarizeBatch(model: ollamaModel, maxJobs: 1, customInstructions: episodeSummaryInstructions) ?? 0)
                     : 0
                 guard segmented > 0 || summarized > 0 else {
@@ -2414,6 +2441,34 @@ final class AppState: ObservableObject {
                     self.refreshTopicStepsEstimate()
                 }
                 self.scheduleTopicStepsStep(after: result > 0 ? 0.1 : 60)
+            }
+        }
+    }
+
+    /// Names suggested topics with the user's AI model (10 per run), under the AC + idle gate,
+    /// through the routing and spend limits of other background model tasks. Core tries a
+    /// placeholder-named topic at most once a day after a failure, so an idle poll is cheap.
+    /// Inputs are read in one `main.sync`, as in `scheduleTopicStepsStep`.
+    private func scheduleTopicNamingStep(after delay: Double = 120) {
+        guard let slow = slowStore else { return }
+        CoreMemoryStore.slowLaneQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard PowerIdleGate.isEligibleForBackgroundWork() else {
+                DispatchQueue.main.async { self?.scheduleTopicNamingStep(after: 60) }
+                return
+            }
+            typealias Inputs = (routing: CoreRoutingConfig, model: String)
+            let inputs = DispatchQueue.main.sync { () -> Inputs? in
+                guard let self else { return nil }
+                return (
+                    self.routing.routingConfig(preferredProvider: self.routing.preferredProvider, preferredModel: self.routing.preferredModel),
+                    self.routing.ollamaDefaultModel
+                )
+            }
+            guard let inputs else { return }
+            // Only names a model wrote earn the fast cadence: placeholders from a failing model do not.
+            let named = slow.runTopicNamingBatch(routing: inputs.routing, ollamaModel: inputs.model, limit: 10)?.modelNamed ?? 0
+            DispatchQueue.main.async { [weak self] in
+                self?.scheduleTopicNamingStep(after: named > 0 ? 5 : 300)
             }
         }
     }

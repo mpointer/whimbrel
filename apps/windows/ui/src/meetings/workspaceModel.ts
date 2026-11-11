@@ -122,3 +122,14 @@ export function withoutSnapshot(view: SnapshotsView, id: number): SnapshotsView 
 export function slidesLabel(view: SnapshotsView): string {
   return t("Slides ({n})", { n: view.snapshots.length });
 }
+
+/**
+ * The line under the slides header: what "Keep slides" changes. Windows never shrinks slides; they go
+ * when their meeting is deleted, by hand or by retention after `meetingDays` (Settings → Capture & Privacy),
+ * unless kept. `null` is "Keep forever", so only a manual delete removes them.
+ */
+export function keepSlidesNote(meetingDays: number | null | undefined): string {
+  const kept = t("Kept slides stay even if the meeting is deleted.");
+  if (meetingDays == null) return kept;
+  return `${t("Otherwise slides are deleted with the meeting after {count} days (Settings → Capture & Privacy).", { count: meetingDays })} ${kept}`;
+}

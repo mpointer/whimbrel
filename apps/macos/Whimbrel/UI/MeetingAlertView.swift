@@ -81,24 +81,44 @@ struct MeetingAlertView: View {
         }
     }
 
-    /// A single button whose main tap starts recording immediately; its attached
-    /// dropdown (SwiftUI's `Menu(_:primaryAction:)`) offers the one alternate action —
-    /// mirrors the reference screenshot's "Start Recording [chevron] / & open
-    /// Littlebird" control.
+    /// One capsule: the main tap starts recording immediately, and a chevron beside it opens
+    /// the one alternate action. Two plain controls, not `Menu(primaryAction:)` with
+    /// `.menuStyle(.borderlessButton)`: that style draws its label with AppKit's own control
+    /// text color and ignores `foregroundStyle`, so in light mode the label came out in the
+    /// system color (not the theme's on-accent color) on the accent fill and was hard to read.
+    /// Plain button styles honor `foregroundStyle`, and `textOnAccent` on `accentPrimary` is
+    /// already held to 4.5:1 in every palette by `ThemeContrast.requiredPairs`.
     private var startRecordingControl: some View {
-        Menu {
-            Button("Start Recording & Open Whimbrel") { controller.acceptAndOpenTimelineTapped() }
-        } label: {
-            Text("Start Recording")
-                .font(.whimbrelBody(.callout).weight(.medium))
-        } primaryAction: {
-            controller.acceptTapped()
+        HStack(spacing: 0) {
+            Button { controller.acceptTapped() } label: {
+                Text("Start Recording")
+                    .font(.whimbrelBody(.callout).weight(.medium))
+                    .padding(.leading, Spacing.md)
+                    .padding(.trailing, Spacing.sm)
+                    .padding(.vertical, Spacing.sm)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Rectangle()
+                .fill(Color.whimbrelTextOnAccent.opacity(0.35))
+                .frame(width: 1, height: 16)
+            Menu {
+                Button("Start Recording & Open Whimbrel") { controller.acceptAndOpenTimelineTapped() }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .padding(.horizontal, Spacing.sm)
+                    .padding(.vertical, Spacing.sm)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .accessibilityLabel("Start Recording & Open Whimbrel")
         }
-        .menuStyle(.borderlessButton)
-        .padding(.horizontal, Spacing.md)
-        .padding(.vertical, Spacing.sm)
-        .background(Color.whimbrelAccentPrimary)
         .foregroundStyle(Color.whimbrelTextOnAccent)
+        .background(Color.whimbrelAccentPrimary)
         .clipShape(Capsule())
         .contentShape(Capsule())
     }

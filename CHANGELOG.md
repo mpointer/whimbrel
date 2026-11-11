@@ -2,6 +2,23 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.69] - 2026-11-11
+
+### All devices
+- Suggested topics get real names from your AI model (one short call each, within your spend limits), instead of a list of people's emails. Until then they show a friendlier placeholder.
+
+### Mac
+- The "Start Recording" button on the meeting alert is easier to read in light mode.
+- Episode and thread summaries no longer run on the local model when "Use local model" is off.
+- Today's schedule no longer shows meetings you declined or all-day events, and the day now ends at the right midnight on daylight saving change days.
+- If sync stops after a sign-in problem, the Mac now retries on its own every 30 minutes and on wake, instead of waiting for a relaunch, and Settings and the sidebar say when sync stopped.
+- Slides show live in the meeting view while you record. The slides toggle is now "Keep slides at full size", and says what it does.
+
+### Windows
+- Suggested topics get names written by your AI model, as on the Mac, instead of a list of the people in them. Settings → Topics says when some still wait for one.
+- If sync stops after a sign-in problem, Windows now retries on its own every 30 minutes and when the PC wakes, instead of waiting for a relaunch. A brief Google outage no longer stops sync at all. Settings → Status and the sidebar say when sync stopped and how many changes are waiting.
+- While you record, the slides strip sits under the notices and above the live transcript. Its toggle is now "Keep slides", with a line saying what it keeps.
+
 ## [0.9.68] - 2026-11-11
 
 ### All devices

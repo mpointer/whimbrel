@@ -307,6 +307,11 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Episodes: characters of summary + window title at the start of the text (NULL for other
     // kinds), where one alias mention files the episode.
     ensure_column(conn, "topic_source_text", "head_len", "INTEGER")?;
+    // Local only (the topic table is never synced): set while the name is a placeholder
+    // from the entity-list fallback, and the last failed model attempt to replace it.
+    ensure_column(conn, "topic", "name_fallback_at_unix_ms", "INTEGER")?;
+    ensure_column(conn, "topic", "name_attempt_at_unix_ms", "INTEGER")?;
+    mark_old_auto_names_provisional(conn)?;
     ensure_column(conn, "topic_step", "source_id", "INTEGER")?;
     ensure_column(conn, "topic_extraction", "source_id", "INTEGER")?;
     // Pulled rows whose source is not here yet; indexing looks them up by key (`attach_source`).
@@ -315,6 +320,26 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
         [],
     )?;
     ensure_entity_name_key(conn)
+}
+
+/// Once per database: before AI naming, no model ever named a topic, so every automatic
+/// name already stored is an entity-list placeholder. Marks them as placeholders so the
+/// naming pass replaces them and Settings counts them. A kv_meta flag (not "was the column
+/// just added") keeps it to one run even where a test build already added the column.
+fn mark_old_auto_names_provisional(conn: &Connection) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    let first = tx.execute(
+        "INSERT OR IGNORE INTO kv_meta (key, value) VALUES ('topic_fallback_names_marked', '1')",
+        [],
+    )?;
+    if first > 0 {
+        tx.execute(
+            "UPDATE topic SET name_fallback_at_unix_ms = ?1 \
+             WHERE name_is_user = 0 AND name != '' AND name_fallback_at_unix_ms IS NULL",
+            [crate::now_unix_ms()],
+        )?;
+    }
+    tx.commit()
 }
 
 /// Adds `table.column` to databases that predate it. No check first: another connection
@@ -430,6 +455,39 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    /// Names stored before AI naming become placeholders once; later model names stay put.
+    #[test]
+    fn old_auto_names_are_marked_provisional_once() {
+        let s = Store::open_in_memory().unwrap();
+        let add = |name: &str, user: i64| {
+            s.conn
+                .execute(
+                    "INSERT INTO topic (name, name_is_user, name_dirty, created_at_unix_ms, updated_at_unix_ms) VALUES (?1, ?2, 0, 0, 0)",
+                    params![name, user],
+                )
+                .unwrap();
+            s.conn.last_insert_rowid()
+        };
+        let auto = add("a@x.com · b@y.com", 0);
+        let user = add("Kitchen remodel", 1);
+        let blank = add("", 0);
+        // As on a database that predates the flag.
+        s.conn.execute("DELETE FROM kv_meta WHERE key = 'topic_fallback_names_marked'", []).unwrap();
+        mark_old_auto_names_provisional(&s.conn).unwrap();
+        let marked = |id: i64| -> bool {
+            s.conn
+                .query_row("SELECT name_fallback_at_unix_ms IS NOT NULL FROM topic WHERE id = ?1", [id], |r| r.get(0))
+                .unwrap()
+        };
+        assert!(marked(auto));
+        assert!(!marked(user));
+        assert!(!marked(blank));
+        // A model names it; the next open must not mark it again.
+        s.conn.execute("UPDATE topic SET name = 'Q3 planning', name_fallback_at_unix_ms = NULL WHERE id = ?1", [auto]).unwrap();
+        mark_old_auto_names_provisional(&s.conn).unwrap();
+        assert!(!marked(auto));
     }
 
     fn add_source(s: &Store, kind: &str, ref_id: i64, title: &str, ts: i64) -> i64 {

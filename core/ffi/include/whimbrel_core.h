@@ -156,6 +156,12 @@ int64_t whimbrel_meeting_id_for_source(StoreHandle *handle, const char *device_i
  * processed, -1 failure, -2 key rejected, -3 over budget, -4 paused for today, -5 not started,
  * -6 no local model (or an unreachable one). */
 int64_t whimbrel_topics_run_steps_batch(StoreHandle *handle, const char *routing_json, const char *ollama_model, const char *api_key, uint64_t max, double usd_per_million);
+/* Names up to limit topics with the user's AI model (routing, spend cap and budgets as other
+ * background model tasks; ollama_model NULL or empty = none). Unnamed topics first, then placeholder
+ * names not tried in the last day; the first model failure ends the batch. {"named","fallback","model_named"} (model_named: names a model wrote); NULL on failure. */
+char *whimbrel_topics_run_naming_batch(StoreHandle *handle, const char *routing_json, const char *ollama_model, uint32_t limit);
+/* {"provisional_count","last_naming_failure_unix_ms"|null}: topics with a placeholder name. NULL on failure. */
+char *whimbrel_topics_naming_status_json(StoreHandle *handle);
 /* {"sources","tokens","usd","indexing"} for the steps pass. */
 char *whimbrel_topics_steps_estimate_json(StoreHandle *handle, double usd_per_million);
 /* Allows the paid steps pass up to budget_tokens. 0 ok, -1 failure. */

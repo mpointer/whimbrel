@@ -2024,6 +2024,23 @@ final class CoreMemoryStore {
         keep.withCString { k in absorb.withCString { whimbrel_topics_seed_merge(handle, k, $0) } } == 0
     }
 
+    /// Names up to `limit` topics with the user's AI model, through the routing, spend cap and
+    /// budgets of other background model tasks. The first model failure ends the batch.
+    /// Returns nil on failure.
+    func runTopicNamingBatch(routing: CoreRoutingConfig, ollamaModel: String, limit: Int) -> TopicNamingReport? {
+        guard let data = try? JSONEncoder().encode(routing) else { return nil }
+        return String(decoding: data, as: UTF8.self).withCString { r in
+            ollamaModel.withCString { m in
+                topicJSON(whimbrel_topics_run_naming_batch(handle, r, m, UInt32(limit)))
+            }
+        }
+    }
+
+    /// How many topics still show a placeholder name, or nil on failure.
+    func topicNamingStatus() -> TopicNamingStatus? {
+        topicJSON(whimbrel_topics_naming_status_json(handle))
+    }
+
     /// Suggested topics, or nil on failure.
     func topicSuggestions(limit: Int = 20) -> [TopicSuggestion]? {
         guard let out = whimbrel_topics_suggestions_json(handle, UInt32(limit)) else { return nil }

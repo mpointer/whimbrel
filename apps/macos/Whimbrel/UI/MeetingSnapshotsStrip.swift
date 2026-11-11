@@ -104,8 +104,44 @@ enum SnapshotThumbnails {
     }
 }
 
+/// The slides toggle's label and what it does, from the user's Storage settings.
+enum SnapshotsStripCopy {
+    static var keepLabel: String { String(localized: "Keep slides at full size") }
+
+    static func explanation(shrinkAfterDays: Int, keepFullImagesForever: Bool) -> String {
+        if keepFullImagesForever {
+            return String(localized: "Kept slides stay even if the meeting is deleted.")
+        }
+        return String(localized: "Otherwise slides are shrunk after \(shrinkAfterDays) days (Settings → Retention). Kept slides stay even if the meeting is deleted.")
+    }
+}
+
+/// The slides strip for the in-meeting view: owns its model and reloads it as each slide is
+/// captured, for this meeting only (the same notification the meeting page listens to).
+struct LiveMeetingSnapshots: View {
+    let meetingId: Int64
+    let store: CoreMemoryStore?
+    @StateObject private var model: MeetingSnapshotsModel
+
+    init(meetingId: Int64, store: CoreMemoryStore?) {
+        self.meetingId = meetingId
+        self.store = store
+        _model = StateObject(wrappedValue: MeetingSnapshotsModel(meetingId: meetingId, store: store))
+    }
+
+    var body: some View {
+        MeetingSnapshotsStrip(model: model)
+            .onReceive(NotificationCenter.default.publisher(for: MeetingSnapshotService.didChange)) { note in
+                guard note.userInfo?["meetingId"] as? Int64 == meetingId else { return }
+                Task { await model.reload() }
+            }
+            .task { await model.reload() }
+    }
+}
+
 struct MeetingSnapshotsStrip: View {
     @ObservedObject var model: MeetingSnapshotsModel
+    @EnvironmentObject private var appState: AppState
 
     var body: some View {
         if !model.snapshots.isEmpty {
@@ -115,7 +151,7 @@ struct MeetingSnapshotsStrip: View {
                         .font(.whimbrelBody(.callout).bold())
                         .foregroundStyle(Color.whimbrelTextPrimary)
                     Spacer()
-                    Toggle("Keep snapshots", isOn: Binding(
+                    Toggle(SnapshotsStripCopy.keepLabel, isOn: Binding(
                         get: { model.keep },
                         set: { v in Task { await model.setKeep(v) } }
                     ))
@@ -126,6 +162,12 @@ struct MeetingSnapshotsStrip: View {
                         .buttonStyle(.whimbrelSecondary)
                         .controlSize(.small)
                 }
+                Text(SnapshotsStripCopy.explanation(
+                    shrinkAfterDays: appState.mediaSettings.shrinkImagesAfterDays,
+                    keepFullImagesForever: appState.mediaSettings.keepFullImagesForever))
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 ScrollView(.horizontal, showsIndicators: true) {
                     HStack(spacing: Spacing.sm) {
                         ForEach(model.snapshots) { snap in thumbnail(snap) }
