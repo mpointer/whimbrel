@@ -278,6 +278,13 @@ final class RoutingSettings: ObservableObject {
             SettingsFieldTimestamps.touch("routing.cheapFirst")
         }
     }
+    /// Whether a background job that only ever calls Ollama (thread and episode summaries) may
+    /// run: "Use local model" on, or Local-only mode (which always uses the local model). Off,
+    /// the job waits; it never falls back to a hosted model. Same rule as Windows.
+    nonisolated static func localSummariesAllowed(useLocalModel: Bool, localOnlyMode: Bool) -> Bool {
+        useLocalModel || localOnlyMode
+    }
+
     /// Whether Ollama is a link in the chain at all. Off saves a refused connection on
     /// every call for a Mac without Ollama; ignored in local-only mode. On by default.
     @Published var useLocalModel: Bool {

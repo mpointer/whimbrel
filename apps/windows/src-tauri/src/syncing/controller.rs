@@ -30,6 +30,11 @@ pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// The Worker's Turso token lasts one day (`DEVICE_TOKEN_EXPIRATION`); renew at half.
 pub const REAUTH_EVERY: Duration = Duration::from_secs(12 * 60 * 60);
 pub const DEVICE_REFRESH_EVERY: Duration = Duration::from_secs(10 * 60);
+/// While sync is stopped by a sign-in problem (an error, the device limit, too many attempts), it tries
+/// again this often, and at once after the PC wakes, instead of waiting for a relaunch (Mac #590).
+pub const RETRY_STOPPED_EVERY: Duration = Duration::from_secs(30 * 60);
+/// A gap between upkeep ticks this long means the PC slept.
+const WOKE_AFTER: Duration = Duration::from_secs(3 * 60);
 const TICK: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -220,7 +225,25 @@ pub struct ReadyCredentials {
 
 enum StepError {
     Token(String),
+    /// Google couldn't be reached to renew the sign-in (no network, Google down): retried with
+    /// backoff like a Worker hiccup, never a stop. The credentials in use stay until it works.
+    TokenTransient(String),
     Worker(WorkerError),
+}
+
+/// How a failed Google refresh counts: only a revoked grant (`invalid_grant`) or a missing ID token
+/// stops sync; a refresh that couldn't get through is retried.
+fn refresh_step_error(e: &OAuthError) -> StepError {
+    match e {
+        OAuthError::TokenRefreshFailed => StepError::TokenTransient(oauth_message(e)),
+        _ => StepError::Token(oauth_message(e)),
+    }
+}
+
+/// Whether the upkeep tick should try a stopped sync again: it is stopped by a sign-in problem, and
+/// either the PC just woke or [`RETRY_STOPPED_EVERY`] has passed since the last try.
+pub fn should_retry_stopped(stopped: bool, woke: bool, last_retry: Option<Instant>, now: Instant) -> bool {
+    stopped && (woke || is_due(last_retry, RETRY_STOPPED_EVERY, now))
 }
 
 type Opener = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
@@ -240,6 +263,8 @@ pub struct SyncController {
     devices: Mutex<Vec<DeviceRecord>>,
     last_auth: Mutex<Option<Instant>>,
     last_devices: Mutex<Option<Instant>>,
+    /// When the upkeep tick last tried a stopped sync again.
+    last_retry: Mutex<Option<Instant>>,
     content: Mutex<ContentStatus>,
     settings: Mutex<ContentStatus>,
     open_url: Opener,
@@ -294,6 +319,7 @@ impl SyncController {
             devices: Mutex::new(Vec::new()),
             last_auth: Mutex::new(None),
             last_devices: Mutex::new(None),
+            last_retry: Mutex::new(None),
             content: Mutex::new(ContentStatus::default()),
             settings: Mutex::new(ContentStatus::default()),
             open_url,
@@ -391,21 +417,29 @@ impl SyncController {
 
     /// An unexpired Google ID token, refreshing the stored tokens if needed.
     fn fresh_id_token(&self) -> Result<String, String> {
-        let config = self.config.as_ref().map_err(Clone::clone)?;
-        let stored = self.load_tokens()?.ok_or_else(|| tr("Not signed in to Google.", &[]))?;
+        self.fresh_id_token_step().map_err(|e| match e {
+            StepError::Token(m) | StepError::TokenTransient(m) => m,
+            StepError::Worker(e) => en::user_message_in(&e, &crate::l10n::ui_language()),
+        })
+    }
+
+    /// [`Self::fresh_id_token`], keeping whether a failed refresh is worth retrying.
+    fn fresh_id_token_step(&self) -> Result<String, StepError> {
+        let config = self.config.as_ref().map_err(|e| StepError::Token(e.clone()))?;
+        let stored = self.load_tokens().map_err(StepError::Token)?.ok_or_else(|| StepError::Token(tr("Not signed in to Google.", &[])))?;
         let now = now_ms();
         let tokens = if stored.is_fresh(now) && stored.id_token.is_some() {
             stored
         } else {
-            let refreshed = oauth::refresh_stored(&config.google_provider(), &stored, now).map_err(|e| oauth_message(&e))?;
-            self.save_tokens(&refreshed)?;
+            let refreshed = oauth::refresh_stored(&config.google_provider(), &stored, now).map_err(|e| refresh_step_error(&e))?;
+            self.save_tokens(&refreshed).map_err(StepError::Token)?;
             refreshed
         };
-        tokens.id_token.ok_or_else(|| tr("Google didn't return an ID token.", &[]))
+        tokens.id_token.ok_or_else(|| StepError::Token(tr("Google didn't return an ID token.", &[])))
     }
 
     fn auth_once(&self) -> Result<EnrollmentEvent, StepError> {
-        let id_token = self.fresh_id_token().map_err(StepError::Token)?;
+        let id_token = self.fresh_id_token_step()?;
         let worker = self.worker().map_err(StepError::Token)?;
         enrollment::authenticate(worker, &id_token, &self.identity, &*self.secrets).map_err(StepError::Worker)
     }
@@ -460,6 +494,11 @@ impl SyncController {
                 }
                 Err(StepError::Worker(e)) => {
                     tracing::warn!(error = ?e, "sync worker request failed; retrying");
+                    delay = (delay * 2).clamp(self.poll_base, self.poll_base * 10);
+                }
+                // Google out of reach: the status (and a Ready's credentials) stay as they are.
+                Err(StepError::TokenTransient(message)) => {
+                    tracing::warn!(error = %message, "renewing the Google sign-in failed; retrying");
                     delay = (delay * 2).clamp(self.poll_base, self.poll_base * 10);
                 }
                 Err(StepError::Token(message)) => {
@@ -551,12 +590,24 @@ impl SyncController {
                 }
                 // Whimbrel AI's credentials at launch, not a tick later: background calls read them.
                 me.whimbrel_upkeep(me.ready_credentials().is_some());
+                let mut last_tick = Instant::now();
                 loop {
                     std::thread::sleep(TICK);
                     let ready = me.ready_credentials().is_some();
                     me.whimbrel_upkeep(ready);
                     let now = Instant::now();
+                    let woke = now.duration_since(last_tick) >= WOKE_AFTER;
+                    last_tick = now;
+                    if woke {
+                        tracing::info!(ready, "the PC woke; checking sync");
+                    }
                     if ready && is_due(*me.last_auth.lock().unwrap(), REAUTH_EVERY, now) {
+                        me.auth_loop(me.generation.load(Ordering::SeqCst));
+                    }
+                    // A stopped sync used to wait for a relaunch (Mac #590): try again on wake and every 30 minutes.
+                    if should_retry_stopped(me.stopped_retryably(), woke, *me.last_retry.lock().unwrap(), now) {
+                        *me.last_retry.lock().unwrap() = Some(now);
+                        tracing::warn!(status = %*me.status.lock().unwrap(), "sync is stopped; trying again");
                         me.auth_loop(me.generation.load(Ordering::SeqCst));
                     }
                     if ready && is_due(*me.last_devices.lock().unwrap(), DEVICE_REFRESH_EVERY, now) {
@@ -570,6 +621,13 @@ impl SyncController {
                 }
             })
             .ok();
+    }
+
+    /// Stopped by a sign-in problem that trying again can fix: an error, the device limit or too many
+    /// attempts, with Google tokens still stored. Signed out or never set up is not "stopped".
+    fn stopped_retryably(&self) -> bool {
+        let stopped = matches!(*self.status.lock().unwrap(), SyncStatus::Error { .. } | SyncStatus::DeviceLimit { .. } | SyncStatus::RateLimited);
+        stopped && matches!(self.load_tokens(), Ok(Some(_)))
     }
 
     /// Re-authenticate now, e.g. after content sync fails in an auth-shaped way (Task 6).
@@ -1014,6 +1072,22 @@ mod tests {
     fn device_views_put_this_device_first() {
         let views = device_views(&[device("MAC", "approved"), device("ME", "pending")], "ME");
         assert_eq!(views.iter().map(|v| (v.public_key.as_str(), v.this_device)).collect::<Vec<_>>(), vec![("ME", true), ("MAC", false)]);
+    }
+
+    #[test]
+    fn a_stopped_sync_is_tried_again_on_wake_and_every_half_hour() {
+        let t = Instant::now();
+        assert!(should_retry_stopped(true, false, None, t), "the first tick after it stops");
+        assert!(!should_retry_stopped(true, false, Some(t), t + Duration::from_secs(29 * 60)));
+        assert!(should_retry_stopped(true, false, Some(t), t + RETRY_STOPPED_EVERY));
+        assert!(should_retry_stopped(true, true, Some(t), t + Duration::from_secs(60)), "waking tries at once");
+        assert!(!should_retry_stopped(false, true, None, t), "a running or signed-out sync is left alone");
+    }
+
+    #[test]
+    fn only_a_revoked_google_grant_stops_sync() {
+        assert!(matches!(refresh_step_error(&OAuthError::TokenRefreshFailed), StepError::TokenTransient(_)), "Google out of reach retries");
+        assert!(matches!(refresh_step_error(&OAuthError::RefreshTokenRevoked), StepError::Token(_)));
     }
 
     #[test]

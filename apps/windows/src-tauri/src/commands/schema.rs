@@ -79,6 +79,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<crate::live_alerts::LiveAlertView>();
     generator.subschema_for::<crate::commands::workspace::LiveTranscriptView>();
     generator.subschema_for::<super::topics::TopicSortView>();
+    generator.subschema_for::<super::topics::TopicNamingView>();
     generator.subschema_for::<super::topics::TopicSortEstimate>();
     generator.subschema_for::<super::topics::TopicSeedView>();
     generator.subschema_for::<super::topics::TopicSuggestionView>();

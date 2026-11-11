@@ -23,6 +23,8 @@ struct DevicesSettingsPane: View {
             Divider().overlay(Color.whimbrelBorder)
 
             content
+
+            StaleSyncLine(sync: appState.contentSyncCoordinator, inset: 0)
         }
         .onAppear {
             appState.syncState.startDevicesPolling()

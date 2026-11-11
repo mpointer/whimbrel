@@ -6,6 +6,7 @@ import {
   overrideOf,
   phaseTitle,
   prunedThumbnails,
+  keepSlidesNote,
   slidesLabel,
   snapshotKey,
   thumbnailsToFetch,
@@ -169,5 +170,18 @@ describe("the slides strip", () => {
     expect(after.snapshots.map((s) => s.id)).toEqual([1, 3]);
     expect(after.keep).toBe(true);
     expect(withoutSnapshot(strip, 99).snapshots).toHaveLength(3);
+  });
+});
+
+describe("keepSlidesNote", () => {
+  it("names the retention window when meetings are deleted after a while", () => {
+    expect(keepSlidesNote(90)).toBe(
+      "Otherwise slides are deleted with the meeting after 90 days (Settings → Capture & Privacy). Kept slides stay even if the meeting is deleted.",
+    );
+  });
+
+  it("says only that kept slides survive a delete when meetings are kept forever", () => {
+    expect(keepSlidesNote(null)).toBe("Kept slides stay even if the meeting is deleted.");
+    expect(keepSlidesNote(undefined)).toBe("Kept slides stay even if the meeting is deleted.");
   });
 });

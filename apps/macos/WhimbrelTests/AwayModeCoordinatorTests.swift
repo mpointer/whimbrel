@@ -63,9 +63,13 @@ private final class FakeAwayEnvironment: AwayEnvironment {
         return state
     }
 
+    /// Runs inside `startCapture`, while the coordinator's own join is still in progress.
+    var onCapture: (() -> Void)?
+
     func startCapture(_ m: QualifyingMeeting) async -> Int64? {
         stateAtCapture.append(lastState)
         isRecording = true
+        onCapture?()
         return captureId
     }
 
@@ -354,14 +358,21 @@ final class AwayModeCoordinatorTests: XCTestCase {
         XCTAssertTrue(env.followups.isEmpty)
     }
 
+    /// Checked from inside the capture call, so the run is certainly still in progress. (Polling
+    /// with `Task.yield()` raced: the scripted run could finish before the check, and then the
+    /// mic really did mean the user was present.)
     func test_own_join_is_not_user_presence() async {
         let env = FakeAwayEnvironment(states: Array(repeating: .inMeeting(micMuted: true, videoOff: true), count: 3) + [.ended])
         let c = coordinator(env)
-        let run = Task { await c.run(for: meeting()) }
-        for _ in 0..<1000 where env.stateAtCapture.isEmpty { await Task.yield() }
-        env.isMicInUse = true
-        XCTAssertFalse(c.userIsPresent)
-        _ = await run.value
+        var presentDuringOwnJoin: Bool?
+        env.onCapture = { [unowned c] in
+            env.isMicInUse = true
+            presentDuringOwnJoin = c.userIsPresent
+        }
+        _ = await c.run(for: meeting())
+        XCTAssertEqual(presentDuringOwnJoin, false)
+        // Once the run is over, the same mic use does count as the user.
+        XCTAssertTrue(c.userIsPresent)
     }
 
     func test_google_calendar_meeting_eligible() {

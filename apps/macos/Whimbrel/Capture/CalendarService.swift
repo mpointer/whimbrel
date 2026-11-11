@@ -44,6 +44,8 @@ struct QualifyingMeeting: Identifiable, Equatable {
     let selfResponse: SelfResponse?
     /// `attendees` with their emails, for naming the recording's speakers.
     var attendeeDetails: [CoreAttendee] = []
+    /// An all-day calendar event (EventKit only; never sent over the wire). The Today panel hides these.
+    var isAllDay: Bool = false
 }
 
 /// Mirrors core's `SelfResponse` (snake_case on the wire).
@@ -173,8 +175,10 @@ final class CalendarService: ObservableObject {
     }
 
     /// The end of the meeting window: the start of tomorrow.
-    nonisolated static func todayWindowEnd(now: Date) -> Date {
-        Calendar.current.startOfDay(for: now.addingTimeInterval(24 * 60 * 60))
+    /// Calendar arithmetic, not `now + 24h`: a 23- or 25-hour day would skip or repeat a day.
+    nonisolated static func todayWindowEnd(now: Date, calendar: Calendar = .current) -> Date {
+        let today = calendar.startOfDay(for: now)
+        return calendar.date(byAdding: .day, value: 1, to: today) ?? today.addingTimeInterval(24 * 60 * 60)
     }
 
     /// The Upcoming window: the 7 calendar days after today, by calendar arithmetic (DST-safe).
@@ -266,7 +270,8 @@ final class CalendarService: ObservableObject {
             organizerName: event.organizer?.name,
             selfIsOrganizer: event.organizer?.isCurrentUser ?? false,
             selfResponse: (event.attendees ?? []).first(where: \.isCurrentUser).flatMap { selfResponse(from: $0.participantStatus) },
-            attendeeDetails: otherAttendees.map(attendee(from:))
+            attendeeDetails: otherAttendees.map(attendee(from:)),
+            isAllDay: event.isAllDay
         )
     }
 

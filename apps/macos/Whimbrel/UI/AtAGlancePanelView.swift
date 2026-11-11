@@ -46,12 +46,12 @@ struct AtAGlancePanelView: View {
                 Text("Grant Calendar access in Settings, or connect a Google Calendar account, to see upcoming meetings.")
                     .font(.whimbrelBody(.caption2))
                     .foregroundStyle(Color.whimbrelTextSecondary)
-            } else if appState.allUpcomingMeetings.isEmpty {
+            } else if appState.todayPanelMeetings.isEmpty {
                 Text("No upcoming meetings left today.")
                     .font(.whimbrelBody(.caption2))
                     .foregroundStyle(Color.whimbrelTextSecondary)
             } else {
-                ForEach(appState.allUpcomingMeetings) { meeting in
+                ForEach(appState.todayPanelMeetings) { meeting in
                     scheduleRow(for: meeting)
                 }
             }

@@ -220,7 +220,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
         {view.processingStage && <p role="status">{view.processingStage}</p>}
       </header>
 
-      {(view.phase === "during" || view.phase === "after") && <SlidesStrip meetingId={meetingId} refresh={now} />}
+      {view.phase === "after" && <SlidesStrip meetingId={meetingId} refresh={now} />}
 
       {view.phase === "before" && (
         <div className="toolbar">
@@ -238,6 +238,8 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
           </p>
           {!view.readOnly && <RecordingNoticeCard meetingId={meetingId} />}
           <LiveAlertsSection meetingId={meetingId} recording={true} endedUnixMs={null} />
+          {/* The slides so far, live, under the notices and above the transcript (the Mac's in-meeting view). */}
+          <SlidesStrip meetingId={meetingId} refresh={now} />
           <div ref={liveBox}>
             <LiveTranscriptPane meetingId={meetingId} onView={setLiveView} />
           </div>

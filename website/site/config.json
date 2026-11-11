@@ -14,12 +14,12 @@
   },
   "demoVideo": {
     "title": "Whimbrel product tour",
-    "description": "A 48-second walkthrough of Whimbrel: a meeting captured without a bot, live notes, a cited answer from your own work history, and a meeting-prep routine.",
+    "description": "A one-minute walkthrough of Whimbrel with Wi-Fi off: a meeting recorded without a bot and transcribed on the computer, its summary, a page for the client, and a cited answer from a local model.",
     "mp4": "/media/whimbrel-tour.mp4",
     "webm": "/media/whimbrel-tour.webm",
     "poster": "/media/whimbrel-tour-poster.jpg",
-    "uploadDate": "2026-10-16T00:00:00-04:00",
-    "duration": "PT48S"
+    "uploadDate": "2026-11-11T00:00:00-05:00",
+    "duration": "PT57S"
   },
   "contactEmail": "hello@whimbrelapp.com",
   "salesEmail": "mike@futuremeanswered.com",

@@ -272,6 +272,8 @@ private struct StatusOverviewView: View {
     private var syncLines: [String] {
         guard case .ready = appState.syncState.status else {
             if case .notSignedIn = appState.syncState.status { return [String(localized: "Sync is off.")] }
+            // A sync that worked and then stopped isn't "setting up" (#590).
+            if let line = appState.contentSyncCoordinator.stoppedLine() { return [line] }
             return [String(localized: "Sync is setting up.")]
         }
         var lines: [String] = []
@@ -378,17 +380,20 @@ private struct HideWindowTitle: NSViewRepresentable {
 /// Sidebar footer: what the background model download is doing. Nothing once it's done.
 /// Says so when content sync has gone quiet. Rechecks on a timer, because a stuck round
 /// publishes nothing.
-private struct StaleSyncLine: View {
+struct StaleSyncLine: View {
     @ObservedObject var sync: ContentSyncCoordinator
+    var inset: CGFloat = Spacing.md
 
     var body: some View {
         SwiftUI.TimelineView(.periodic(from: .now, by: 300)) { context in
             if sync.isStale(now: context.date), let last = sync.lastSuccess {
-                Text("Sync hasn't worked since \(last.formatted(date: .abbreviated, time: .shortened)). Whimbrel keeps trying.")
+                Text(sync.retryPossible
+                     ? String(localized: "Sync hasn't worked since \(last.formatted(date: .abbreviated, time: .shortened)). Whimbrel keeps trying.")
+                     : String(localized: "Sync hasn't worked since \(last.formatted(date: .abbreviated, time: .shortened))."))
                     .font(.whimbrelBody(.caption2))
                     .foregroundStyle(Color.whimbrelError)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, Spacing.md)
+                    .padding(.horizontal, inset)
             }
         }
     }

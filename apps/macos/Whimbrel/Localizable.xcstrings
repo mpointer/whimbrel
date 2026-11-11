@@ -15344,6 +15344,40 @@
         }
       }
     },
+    "Keep slides at full size" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Folien in voller Größe behalten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conservar diapositivas a tamaño completo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder les diapositives en taille réelle"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Garder les diapositives en taille réelle"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Manter slides em tamanho original"
+          }
+        }
+      }
+    },
     "Keep snapshots" : {
       "localizations" : {
         "de" : {
@@ -15442,6 +15476,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Manter juntos"
+          }
+        }
+      }
+    },
+    "Kept slides stay even if the meeting is deleted." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Behaltene Folien bleiben auch, wenn die Besprechung gelöscht wird."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Las diapositivas conservadas se quedan aunque se elimine la reunión."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les diapositives gardées restent même si la réunion est supprimée."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Les diapositives gardées restent même si la réunion est supprimée."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Os slides mantidos continuam mesmo se a reunião for excluída."
           }
         }
       }
@@ -22569,6 +22637,40 @@
         }
       }
     },
+    "Otherwise slides are shrunk after %lld days (Settings → Retention). Kept slides stay even if the meeting is deleted." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sonst werden Folien nach %lld Tagen verkleinert (Einstellungen → Aufbewahrung). Behaltene Folien bleiben auch, wenn die Besprechung gelöscht wird."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Si no, las diapositivas se reducen después de %lld días (Ajustes → Retención). Las diapositivas conservadas se quedan aunque se elimine la reunión."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sinon, les diapositives sont réduites après %lld jours (Réglages → Conservation). Les diapositives gardées restent même si la réunion est supprimée."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sinon, les diapositives sont réduites après %lld jours (Réglages → Conservation). Les diapositives gardées restent même si la réunion est supprimée."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Caso contrário, os slides são reduzidos após %lld dias (Configurações → Retenção). Os slides mantidos continuam mesmo se a reunião for excluída."
+          }
+        }
+      }
+    },
     "Outlook 365" : {
       "localizations" : {
         "de" : {
@@ -28450,6 +28552,40 @@
         }
       }
     },
+    "Some suggested topics have placeholder names until an AI model names them." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Einige vorgeschlagene Themen haben vorläufige Namen, bis ein KI-Modell sie benennt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Algunos temas sugeridos tienen nombres provisionales hasta que un modelo de IA los nombre."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Certains sujets suggérés portent un nom provisoire jusqu'à ce qu'un modèle d'IA les nomme."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Certains sujets suggérés portent un nom provisoire jusqu'à ce qu'un modèle d'IA les nomme."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alguns tópicos sugeridos têm nomes provisórios até que um modelo de IA os nomeie."
+          }
+        }
+      }
+    },
     "Some work Exchange/CalDAV accounts don't sync a conferencing link or attendee list at all, so those events never qualify above. Opt a calendar in here and every non-all-day event on it counts as a meeting." : {
       "localizations" : {
         "de" : {
@@ -30288,6 +30424,40 @@
         }
       }
     },
+    "Sync hasn't worked since %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sync funktioniert seit %@ nicht."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La sincronización no funciona desde %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchronisation ne fonctionne plus depuis %@."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchronisation ne fonctionne plus depuis %@."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A sincronização não funciona desde %@."
+          }
+        }
+      }
+    },
     "Sync hasn't worked since %@. Whimbrel keeps trying." : {
       "localizations" : {
         "de" : {
@@ -30624,6 +30794,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Relay de sincronização"
+          }
+        }
+      }
+    },
+    "Sync stopped. Whimbrel keeps trying." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Sync wurde gestoppt. Whimbrel versucht es weiter."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La sincronización se detuvo. Whimbrel sigue intentándolo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchronisation s'est arrêtée. Whimbrel continue d'essayer."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La synchronisation s'est arrêtée. Whimbrel continue d'essayer."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "A sincronização parou. O Whimbrel continua tentando."
           }
         }
       }

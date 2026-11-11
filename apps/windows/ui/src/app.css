@@ -1345,6 +1345,11 @@ button.link.transcript-speaker {
   color: var(--color-warning);
 }
 
+/* The sidebar's "Sync stopped" line (issue 590). */
+.sync-stopped .link {
+  color: var(--color-warning);
+}
+
 /* Settings → Connected accounts / Gmail: an account whose Google sign-in expired. */
 .sign-in-expired {
   color: var(--color-warning);
@@ -1606,6 +1611,10 @@ button.link:focus-visible {
 
 .slides-header .section-label {
   margin: 0;
+}
+
+.slides-note {
+  margin: 0 0 var(--space-sm);
 }
 
 .slides-header .toggle {

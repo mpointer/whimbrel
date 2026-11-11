@@ -12,6 +12,7 @@ import type {
   SeedInput,
   TopicSeedView,
   TopicSortEstimate,
+  TopicNamingView,
   TopicSortView,
   TopicSuggestionView,
   UpdateCheck,
@@ -180,6 +181,7 @@ export const topicSeeds = () => invoke<TopicSeedView[]>("topic_seeds");
 export const saveTopicSeed = (seed: SeedInput) => invoke<TopicSeedView>("save_topic_seed", { seed });
 export const deleteTopicSeed = (key: string) => invoke<void>("delete_topic_seed", { key });
 export const mergeTopicSeeds = (keep: string, absorb: string) => invoke<void>("merge_topic_seeds", { keep, absorb });
+export const topicNamingStatus = () => invoke<TopicNamingView>("topic_naming_status");
 export const topicSuggestions = () => invoke<TopicSuggestionView[]>("topic_suggestions");
 export const acceptTopicSuggestion = (topicId: number, name: string) => invoke<TopicSeedView>("accept_topic_suggestion", { topicId, name });
 export const dismissTopicSuggestion = (topicId: number) => invoke<void>("dismiss_topic_suggestion", { topicId });

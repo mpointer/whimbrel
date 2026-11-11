@@ -4,10 +4,10 @@ import XCTest
 /// The phones get the next 48 hours of calendar events, while the Mac's own surfaces
 /// (Today, the menu bar, the meeting trigger) keep their today-only window.
 final class CalendarSyncHorizonTests: XCTestCase {
-    private func meeting(id: String, title: String, start: Date, source: MeetingSource, response: SelfResponse? = nil) -> QualifyingMeeting {
+    private func meeting(id: String, title: String, start: Date, source: MeetingSource, response: SelfResponse? = nil, allDay: Bool = false) -> QualifyingMeeting {
         QualifyingMeeting(
             id: id, title: title, startDate: start, endDate: start.addingTimeInterval(1800),
-            attendees: ["alice@x.com"], conferenceLink: nil, source: source, appBundleID: nil, organizerEmail: nil, organizerName: nil, selfIsOrganizer: false, selfResponse: response
+            attendees: ["alice@x.com"], conferenceLink: nil, source: source, appBundleID: nil, organizerEmail: nil, organizerName: nil, selfIsOrganizer: false, selfResponse: response, isAllDay: allDay
         )
     }
 
@@ -151,5 +151,63 @@ final class CalendarSyncHorizonTests: XCTestCase {
         XCTAssertFalse(CalendarService.fetchSucceeded(accessible: true, calendarCount: 0))
         XCTAssertFalse(CalendarService.fetchSucceeded(accessible: false, calendarCount: 4))
         XCTAssertTrue(CalendarService.fetchSucceeded(accessible: true, calendarCount: 1))
+    }
+
+    // MARK: Today panel filter (#657)
+
+    func testPanelHidesDeclinedAndAllDayButTheTriggerListKeepsThem() {
+        let t = now.addingTimeInterval(3600)
+        let declined = meeting(id: "d", title: "Declined", start: t, source: .calendar, response: .declined)
+        let allDay = meeting(id: "a", title: "Offsite", start: now, source: .calendar, allDay: true)
+        let kept = meeting(id: "k", title: "Standup", start: t.addingTimeInterval(3600), source: .calendar, response: .tentative)
+        let declinedOAuth = meeting(id: "od", title: "Skipped", start: t.addingTimeInterval(7200), source: .googleCalendar, response: .declined)
+        let all = AppState.todaysMeetings(eventKit: [declined, allDay, kept], oauth: [declinedOAuth], now: now)
+        XCTAssertEqual(Set(all.map(\.id)), ["d", "a", "k", "od"])
+        let panel = AppState.todaysMeetings(eventKit: [declined, allDay, kept], oauth: [declinedOAuth], now: now, forPanel: true)
+        XCTAssertEqual(panel.map(\.id), ["k"])
+    }
+
+    // MARK: DST-safe window (#657)
+
+    private func newYork() -> Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "America/New_York")!
+        return c
+    }
+
+    private func ny(_ cal: Calendar, _ y: Int, _ m: Int, _ d: Int, _ h: Int, _ min: Int = 0) -> Date {
+        cal.date(from: DateComponents(year: y, month: m, day: d, hour: h, minute: min))!
+    }
+
+    func testWindowEndOnTheEveningBeforeSpringForwardIsTheStartOfTomorrow() {
+        let cal = newYork()
+        let end = CalendarService.todayWindowEnd(now: ny(cal, 2026, 3, 7, 23, 30), calendar: cal)
+        XCTAssertEqual(end, ny(cal, 2026, 3, 8, 0))
+    }
+
+    func testWindowEndJustAfterMidnightOnFallBackDayIsTheStartOfTomorrow() {
+        let cal = newYork()
+        let now = ny(cal, 2026, 11, 1, 0, 30)
+        let end = CalendarService.todayWindowEnd(now: now, calendar: cal)
+        XCTAssertEqual(end, ny(cal, 2026, 11, 2, 0))
+        XCTAssertGreaterThan(end, now)
+    }
+
+    func testTriggerListKeepsTheLaterTodayMeetingJustAfterMidnightOnFallBack() {
+        let cal = newYork()
+        let now = ny(cal, 2026, 11, 1, 0, 30)
+        let evening = meeting(id: "e", title: "Evening", start: ny(cal, 2026, 11, 1, 23, 45), source: .googleCalendar)
+        let tomorrow = meeting(id: "t", title: "Tomorrow", start: ny(cal, 2026, 11, 2, 0, 15), source: .googleCalendar)
+        let result = AppState.todaysMeetings(eventKit: [], oauth: [evening, tomorrow], now: now, calendar: cal)
+        XCTAssertEqual(result.map(\.id), ["e"])
+    }
+
+    func testTriggerListDoesNotReachIntoTheDayAfterTomorrowOnSpringForwardEve() {
+        let cal = newYork()
+        let now = ny(cal, 2026, 3, 7, 23, 30)
+        let today = meeting(id: "a", title: "Late", start: ny(cal, 2026, 3, 7, 23, 45), source: .googleCalendar)
+        let tomorrow = meeting(id: "b", title: "Tomorrow", start: ny(cal, 2026, 3, 8, 0, 30), source: .googleCalendar)
+        let result = AppState.todaysMeetings(eventKit: [], oauth: [today, tomorrow], now: now, calendar: cal)
+        XCTAssertEqual(result.map(\.id), ["a"])
     }
 }

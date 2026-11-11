@@ -22,6 +22,13 @@ final class RoutingSettingsTests: XCTestCase {
         super.tearDown()
     }
 
+    func testOllamaOnlyBackgroundSummariesFollowUseLocalModelAndLocalOnly() {
+        XCTAssertTrue(RoutingSettings.localSummariesAllowed(useLocalModel: true, localOnlyMode: false))
+        XCTAssertFalse(RoutingSettings.localSummariesAllowed(useLocalModel: false, localOnlyMode: false))
+        XCTAssertTrue(RoutingSettings.localSummariesAllowed(useLocalModel: false, localOnlyMode: true), "local-only always uses the local model")
+        XCTAssertTrue(RoutingSettings.localSummariesAllowed(useLocalModel: true, localOnlyMode: true))
+    }
+
     @MainActor
     func testCheapFirstAndUseLocalModelDefaultOnPersistAndReachTheRoutingJSON() throws {
         let settings = RoutingSettings()

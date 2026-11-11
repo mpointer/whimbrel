@@ -144,6 +144,7 @@ pub fn run() {
             commands::vault::set_vault_enabled,
             commands::vault::choose_vault_folder,
             commands::topics::topic_sort_state,
+            commands::topics::topic_naming_status,
             commands::topics::set_typesafe_key,
             commands::topics::set_topic_sort_enabled,
             commands::topics::topic_sort_estimate,

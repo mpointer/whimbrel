@@ -41,6 +41,25 @@ extension SyncStatus: CustomStringConvertible {
     }
 }
 
+extension SyncStatus {
+    /// A stop that signing in again quietly can end (#590): a refused renewal (`.error`) or a
+    /// device limit that has since lifted. The rest wait on the user (signed out, approval,
+    /// group key) or on `enableSync`'s own retry (`rateLimited`), or already work.
+    var isResumable: Bool {
+        switch self {
+        case .error, .deviceLimit: return true
+        case .notSignedIn, .signingIn, .waitingForApproval, .waitingForGroupKey, .rateLimited, .ready: return false
+        }
+    }
+
+    /// Whether "sync hasn't worked since" can apply: sync is running, or stopped and trying again.
+    /// Signed out or waiting on approval is not a stall.
+    var canBeStale: Bool {
+        if case .ready = self { return true }
+        return isResumable
+    }
+}
+
 /// Orchestrates device enrollment/pairing end to end: the device keypair
 /// and group key (Keychain, via `SyncKeychain`), Google Sign-In (via a
 /// `GoogleOAuthHelper` scoped to `openid email` — a different scope and
@@ -132,6 +151,18 @@ final class SyncState: ObservableObject {
     /// While the delete call runs, resume and renew stay out: a renew's probe could find the
     /// account still there and clear `deletePending` just before the reply is lost.
     private var deleteInFlight = false
+    /// A swap's call is running (`swap(replacing:)`), so a background resume stays out.
+    private var swapInFlight = false
+    /// `enableSync` is between its start and end.
+    private var signInInFlight = false
+    /// Called after a deletion has wiped this Mac's sync state, so the sync history it kept can go too.
+    var onSyncReset: (() -> Void)?
+    /// A sign-in, device swap, fresh start or deletion is running in this process, or a swap is
+    /// waiting to be approved. Not the persisted `freshStartPending`: if its reply was lost and
+    /// the follow-up failed it stays set, and the resume is how a fresh start gets settled.
+    var interactiveFlowActive: Bool {
+        signInInFlight || swapInFlight || freshStartInFlight || deleteInFlight || swapHolderName != nil
+    }
     /// Whether the waiting poll is running (for tests).
     var isWaitingPollRunning: Bool { waitingPollTask != nil }
 
@@ -208,6 +239,8 @@ final class SyncState: ObservableObject {
             return
         }
         setStatus(.signingIn)
+        signInInFlight = true
+        defer { signInInFlight = false }
         do {
             let devicePublicKeyBase64 = try ensureDeviceKeypair()
             try await signIn.authorize(presentationContextProvider: presentationContextProvider)
@@ -513,6 +546,8 @@ final class SyncState: ObservableObject {
     func swap(replacing holder: LimitHolder) async {
         guard let signIn, let syncClient else { return }
         actionError = nil
+        swapInFlight = true
+        defer { swapInFlight = false }
         do {
             let devicePublicKeyBase64 = try loadOrThrowDevicePublicKey()
             let idToken = try await signIn.validIdToken()
@@ -682,6 +717,7 @@ final class SyncState: ObservableObject {
         plan = nil
         planReadFailed = false
         if !keepSignIn { setStatus(.notSignedIn) }
+        onSyncReset?()
     }
 
     func stopWaitingPoll() {

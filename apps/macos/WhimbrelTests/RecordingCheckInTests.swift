@@ -124,6 +124,12 @@ final class RecordingCheckInTests: XCTestCase {
 }
 
 final class StatusMenuCopyTests: XCTestCase {
+    func testPlaceholderNoteShowsOnlyWithProvisionalNames() {
+        XCTAssertFalse(TopicPlaceholderNote.isVisible(provisionalCount: 0))
+        XCTAssertTrue(TopicPlaceholderNote.isVisible(provisionalCount: 1))
+        XCTAssertTrue(TopicPlaceholderNote.isVisible(provisionalCount: 12))
+    }
+
     func test_menu_titles_resolve_from_catalog() {
         XCTAssertEqual(StatusMenuCopy.lowDiskStart, String(localized: "Whimbrel didn't start recording: less than 5 GB free on this Mac."))
         XCTAssertEqual(StatusMenuCopy.checkInWarning, String(localized: "Still recording? Whimbrel stops in 5 minutes unless you choose Keep recording."))

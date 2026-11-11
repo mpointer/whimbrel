@@ -83,13 +83,16 @@ struct ActiveMeetingView: View {
     /// which has `appState` in the environment). Nil leaves the notes editor alone.
     let liveSection: AnyView?
     let noticeSection: AnyView?
+    /// The slides captured so far (built by the host, which owns the store). Nil shows nothing.
+    let snapshotsSection: AnyView?
 
     @StateObject private var autosave: ActiveNoteAutosaveController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         model: ActiveMeetingModel, initialNotes: String, onSaveNotes: @escaping (String, Int64) -> Bool,
-        onStop: @escaping () -> Void, liveSection: AnyView? = nil, noticeSection: AnyView? = nil
+        onStop: @escaping () -> Void, liveSection: AnyView? = nil, noticeSection: AnyView? = nil,
+        snapshotsSection: AnyView? = nil
     ) {
         self.model = model
         self.initialNotes = initialNotes
@@ -97,6 +100,7 @@ struct ActiveMeetingView: View {
         self.onStop = onStop
         self.liveSection = liveSection
         self.noticeSection = noticeSection
+        self.snapshotsSection = snapshotsSection
         _autosave = StateObject(wrappedValue: ActiveNoteAutosaveController(onSave: onSaveNotes))
     }
 
@@ -105,6 +109,7 @@ struct ActiveMeetingView: View {
             header
             Divider().overlay(Color.whimbrelBorder)
             if let noticeSection { noticeSection.padding(Spacing.md) }
+            if let snapshotsSection { snapshotsSection.padding(.horizontal, Spacing.lg).padding(.bottom, Spacing.sm) }
             if let liveSection { liveSection }
             TextEditor(text: $autosave.noteText)
                 .font(.whimbrelBody(.body))

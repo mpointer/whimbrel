@@ -34,8 +34,10 @@ final class ContentSyncBackoffTests: XCTestCase {
 
     private func stale(hours: Double, failures: Int = 0, roundMinutes: Double? = nil) -> Bool {
         let now = Date()
-        return SyncTiming.isStale(now: now, lastSuccess: now.addingTimeInterval(-hours * 3600), consecutiveFailures: failures,
-                                  roundStartedAt: roundMinutes.map { now.addingTimeInterval(-$0 * 60) })
+        // A failure is a round that finished after the last success.
+        let finished = failures > 0 ? now.addingTimeInterval(-60) : now.addingTimeInterval(-hours * 3600)
+        return SyncTiming.isStale(now: now, lastSuccess: now.addingTimeInterval(-hours * 3600), lastRoundFinishedAt: finished,
+                                  lastActivityAt: now.addingTimeInterval(-60), roundStartedAt: roundMinutes.map { now.addingTimeInterval(-$0 * 60) })
     }
 
     func testFailingForTwoHoursIsStale() {
@@ -44,7 +46,9 @@ final class ContentSyncBackoffTests: XCTestCase {
     }
 
     func testAMacThatJustWokeIsNotStale() {
-        XCTAssertFalse(stale(hours: 12))
+        let now = Date()
+        XCTAssertFalse(SyncTiming.isStale(now: now, lastSuccess: now.addingTimeInterval(-12 * 3600), lastRoundFinishedAt: now.addingTimeInterval(-12 * 3600),
+                                          lastActivityAt: now.addingTimeInterval(-30), roundStartedAt: nil))
     }
 
     func testAStuckRoundIsStale() {
@@ -53,6 +57,6 @@ final class ContentSyncBackoffTests: XCTestCase {
     }
 
     func testNeverSyncedIsNotStale() {
-        XCTAssertFalse(SyncTiming.isStale(now: Date(), lastSuccess: nil, consecutiveFailures: 3, roundStartedAt: nil))
+        XCTAssertFalse(SyncTiming.isStale(now: Date(), lastSuccess: nil, lastRoundFinishedAt: nil, lastActivityAt: nil, roundStartedAt: nil))
     }
 }

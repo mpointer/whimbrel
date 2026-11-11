@@ -7,11 +7,12 @@ import {
   meetingSnapshots,
   meetingSnapshotsShow,
   meetingSnapshotThumbnail,
+  retentionSettings,
 } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { SnapshotsView, SnapshotView, Thumbnail } from "../generated/types";
 import { useL10n } from "../l10n";
-import { prunedThumbnails, slidesLabel, snapshotKey, thumbnailsToFetch, withoutSnapshot } from "./workspaceModel";
+import { keepSlidesNote, prunedThumbnails, slidesLabel, snapshotKey, thumbnailsToFetch, withoutSnapshot } from "./workspaceModel";
 
 /** How long "Copied" stays up. */
 const NOTICE_MS = 2_000;
@@ -30,7 +31,15 @@ export function SlidesStrip({ meetingId, refresh }: { meetingId: number; refresh
   const [thumbnails, setThumbnails] = useState<Map<string, Thumbnail>>(new Map());
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Retention's meeting window, for the line under the header; undefined until read, null for forever.
+  const [meetingDays, setMeetingDays] = useState<number | null | undefined>(undefined);
   const { t } = useL10n();
+
+  useEffect(() => {
+    retentionSettings()
+      .then((v) => setMeetingDays(v.settings.meetingDays ?? null))
+      .catch(() => setMeetingDays(null));
+  }, []);
   // Keys already fetched or on their way, so a slow thumbnail isn't asked for twice.
   const requested = useRef(new Set<string>());
 
@@ -96,12 +105,13 @@ export function SlidesStrip({ meetingId, refresh }: { meetingId: number; refresh
         <h4 className="section-label">{slidesLabel(view)}</h4>
         <label className="toggle small">
           <input type="checkbox" checked={view.keep} onChange={(e) => setKeep(e.target.checked)} />
-          {t("Keep snapshots")}
+          {t("Keep slides")}
         </label>
         <button className="mode small" onClick={() => run(() => meetingSnapshotsShow(meetingId, null))}>
           {t("Show in Explorer")}
         </button>
       </div>
+      {meetingDays !== undefined && <p className="muted small slides-note">{keepSlidesNote(meetingDays)}</p>}
       <ul className="slides-row">
         {view.snapshots.map((snapshot) => {
           const thumbnail = thumbnails.get(snapshotKey(snapshot));
