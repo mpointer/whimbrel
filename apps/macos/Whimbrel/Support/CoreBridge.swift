@@ -65,6 +65,23 @@ struct NewTranscriptSegmentInput: Encodable {
 
 /// One calendar-event item to upsert — matches
 /// `whimbrel_memory_upsert_calendar_event_items`'s expected per-element JSON shape.
+/// One meeting a calendar reports, for `whimbrel_calendar_presence_replace`.
+struct PresentEvent: Codable, Equatable {
+    let externalId: String
+    let startUnixMs: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case externalId = "external_id"
+        case startUnixMs = "start_unix_ms"
+    }
+}
+
+/// JSON shape of the presence calls' result.
+struct CalendarMarkOutcome: Codable, Equatable {
+    let marked: Int
+    let unmarked: Int
+}
+
 struct NewCalendarEventItemInput: Codable, Equatable {
     let deviceId: String
     let source: String
@@ -3164,6 +3181,33 @@ final class CoreMemoryStore {
         guard let itemsJSON = try? JSONEncoder().encode(items),
               let itemsString = String(data: itemsJSON, encoding: .utf8) else { return false }
         return itemsString.withCString { whimbrel_memory_upsert_calendar_event_items(handle, $0) }
+    }
+
+    /// Tells core everything `source`/`account` shows in [windowStart, windowEnd): what is listed
+    /// is present, the rest of this device's future rows in that window are marked removed.
+    /// Call on `accessQueue`. Nil on error.
+    @discardableResult
+    func calendarPresenceReplace(source: String, account: String, windowStart: Date, windowEnd: Date, present: [PresentEvent]) -> CalendarMarkOutcome? {
+        guard let data = try? JSONEncoder().encode(present) else { return nil }
+        let presentJSON = String(decoding: data, as: UTF8.self)
+        let startMs = Int64(windowStart.timeIntervalSince1970 * 1000), endMs = Int64(windowEnd.timeIntervalSince1970 * 1000)
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        guard let out = source.withCString({ s in account.withCString { a in presentJSON.withCString { p in
+            whimbrel_calendar_presence_replace(handle, s, a, startMs, endMs, p, nowMs)
+        } } }) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return try? JSONDecoder().decode(CalendarMarkOutcome.self, from: Data(String(cString: out).utf8))
+    }
+
+    /// The account was disconnected: everything it reported is now absent. Call on `accessQueue`.
+    @discardableResult
+    func calendarForgetAccount(source: String, account: String) -> CalendarMarkOutcome? {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        guard let out = source.withCString({ s in account.withCString { a in
+            whimbrel_calendar_forget_account(handle, s, a, nowMs)
+        } }) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return try? JSONDecoder().decode(CalendarMarkOutcome.self, from: Data(String(cString: out).utf8))
     }
 
     /// FR-MTG-5: generates a meeting summary by blending `notes` with `transcript`,

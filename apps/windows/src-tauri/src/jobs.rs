@@ -7,8 +7,14 @@
 //! - **Jobs loop:** `run_jobs_batch` (the `reindex_sweep` embedding backfill and
 //!   `thread_state_sync`) plus thread summaries. Gated like the Mac's `PowerIdleGate`:
 //!   on AC power and idle for at least 60 s, because embedding compute is the heavy part.
-//! - **Episode loop:** episode segmentation plus episode summaries, ungated (the Mac's
-//!   #52: gating episodes behind AC + idle left them barely running).
+//! - **Episode loop:** episode segmentation, ungated (the Mac's #52: gating segmentation behind
+//!   AC + idle left episodes barely forming), plus episode summaries, which wait for the same AC
+//!   power and idle gate as thread summaries (plan 2026-11-11, 1b). That is the Mac's
+//!   `scheduleEpisodeSegmentStep` (`AppState.swift`), whose comment already said "as on Windows".
+//!
+//! Both loops summarize with local Ollama only while "Use local model" is on, or local-only mode
+//! is (plan 2026-11-11, 1b). Before that, any running Ollama got the work whatever the settings
+//! said: a user who picked a hosted provider still ran a 12B model in the background.
 //!
 //! Each loop sends one job per turn to the store actor, so capture inserts interleave,
 //! and reschedules after 0.1 s when it did work, 30 s when it didn't.
@@ -102,10 +108,24 @@ fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-/// The Ollama model the background summaries use, and the language they're written in.
-fn summarize_with(settings: &Mutex<SettingsFile>) -> (String, String) {
+/// The Ollama model the background summaries use, and the language they're written in; `None`
+/// while the settings keep background work off the local model.
+fn summarize_with(settings: &Mutex<SettingsFile>) -> Option<(String, String)> {
     let routing = settings.lock().unwrap().routing();
-    (routing.ollama_model, routing.output_language)
+    local_summaries_allowed(routing.use_local_model, routing.local_only).then_some((routing.ollama_model, routing.output_language))
+}
+
+/// Background summaries use local Ollama only while "Use local model" is on, or local-only mode
+/// is (which always uses the local model). Off, they wait: sending them to a hosted model would
+/// spend money or credit with no one asking.
+pub fn local_summaries_allowed(use_local_model: bool, local_only: bool) -> bool {
+    use_local_model || local_only
+}
+
+/// Episode summaries wait for AC power and idle, like thread summaries; segmentation doesn't (see
+/// the module comment).
+pub fn episode_summaries_allowed(on_ac: bool, idle: Duration) -> bool {
+    heavy_jobs_allowed(on_ac, idle)
 }
 
 /// Starts both loops. They run for the life of the process and stop when the store
@@ -122,14 +142,16 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>) {
                     delay = IDLE_DELAY;
                     continue;
                 }
-                let summarize = probe.reachable().then(|| summarize_with(&settings));
+                let summarize = probe.reachable().then(|| summarize_with(&settings)).flatten();
+                let model = summarize.as_ref().map_or_else(String::new, |(m, _)| m.clone());
                 let turn = store.call_blocking(move |s| {
                     let started = Instant::now();
                     let jobs = s.run_jobs_batch(1, now_ms()).unwrap_or(0);
                     let jobs_ms = started.elapsed().as_millis() as u64;
                     let threads = summarize.map_or(0, |(model, lang)| api::jobs::run_thread_summarize_batch(s, &model, 1, "", &lang).unwrap_or(0));
                     if started.elapsed() >= SLOW_TURN {
-                        tracing::info!(jobs, jobs_ms, threads, total_ms = started.elapsed().as_millis() as u64, "slow jobs turn");
+                        let summarize_ms = started.elapsed().as_millis() as u64 - jobs_ms;
+                        tracing::info!(jobs, jobs_ms, threads, summarize_ms, model = %model, total_ms = started.elapsed().as_millis() as u64, "slow jobs turn");
                     }
                     jobs + threads
                 });
@@ -145,14 +167,18 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>) {
         let mut delay = BUSY_DELAY;
         loop {
             std::thread::sleep(delay);
-            let summarize = probe.reachable().then(|| summarize_with(&settings));
+            let on_ac = on_ac_power();
+            let idle = idle_duration();
+            let summarize = (episode_summaries_allowed(on_ac, idle) && probe.reachable()).then(|| summarize_with(&settings)).flatten();
+            let model = summarize.as_ref().map_or_else(String::new, |(m, _)| m.clone());
             let turn = store.call_blocking(move |s| {
                 let started = Instant::now();
                 let segmented = s.run_episode_segment_batch(1, now_ms()).unwrap_or(0);
                 let segment_ms = started.elapsed().as_millis() as u64;
                 let summarized = summarize.map_or(0, |(model, lang)| api::jobs::run_episode_summarize_batch(s, &model, 1, "", &lang).unwrap_or(0));
                 if started.elapsed() >= SLOW_TURN {
-                    tracing::info!(segmented, segment_ms, summarized, total_ms = started.elapsed().as_millis() as u64, "slow episode turn");
+                    let summarize_ms = started.elapsed().as_millis() as u64 - segment_ms;
+                    tracing::info!(segmented, segment_ms, summarized, summarize_ms, model = %model, on_ac, idle_s = idle.as_secs(), total_ms = started.elapsed().as_millis() as u64, "slow episode turn");
                 }
                 segmented + summarized
             });
@@ -278,6 +304,31 @@ fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_summaries_follow_use_local_model_and_wait_for_ac_and_idle() {
+        assert!(local_summaries_allowed(true, false));
+        assert!(!local_summaries_allowed(false, false), "off: a running Ollama no longer gets the work");
+        assert!(local_summaries_allowed(false, true), "local-only always uses the local model");
+        assert!(episode_summaries_allowed(true, HEAVY_IDLE));
+        assert!(!episode_summaries_allowed(false, HEAVY_IDLE), "on battery the episode summaries wait");
+        assert!(!episode_summaries_allowed(true, Duration::from_secs(5)), "and while the user is working");
+    }
+
+    #[test]
+    fn summarize_with_reads_the_switch() {
+        let path = std::env::temp_dir().join(format!("whimbrel-jobs-summarize-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let settings = Mutex::new(SettingsFile::load(&path));
+        assert!(summarize_with(&settings).is_some(), "on by default");
+        {
+            let mut s = settings.lock().unwrap();
+            let routing = crate::settings::RoutingSettings { use_local_model: false, ..s.routing() };
+            s.set_routing(&routing);
+        }
+        assert_eq!(summarize_with(&settings), None);
+        let _ = std::fs::remove_file(&path);
+    }
 
     fn written() -> Profile {
         Profile { role: "CTO".into(), ..Profile::default() }

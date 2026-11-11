@@ -10,4 +10,7 @@ interface PhoneReadStore {
     fun routineRuns(limit: Int): List<PhoneRoutineRun>
     fun prep(eventId: String): PhoneMeetingPrep?
     fun upcomingEvents(fromUnixMs: Long, untilUnixMs: Long, limit: Int): List<PhoneCalendarEvent>
+
+    /** Topic pages as the computer built them; empty when none have synced. */
+    fun topicSnapshots(): List<PhoneTopicSnapshot>
 }

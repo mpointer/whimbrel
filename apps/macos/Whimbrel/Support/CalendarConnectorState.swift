@@ -33,7 +33,10 @@ final class CalendarConnectorState: ObservableObject {
     private static let scope = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events openid email"
     private static let oldFixedKeychainAccount = "google-calendar-connector"
 
+    private weak var coreStore: CoreMemoryStore?
+
     init(coreStore: CoreMemoryStore?) {
+        self.coreStore = coreStore
         accountStore = ConnectedAccountStore(connectorId: "calendar", store: coreStore)
         do {
             // Both `try` calls are resolved into locals before either stored property is
@@ -187,6 +190,14 @@ final class CalendarConnectorState: ObservableObject {
         oauthHelpers.removeValue(forKey: email)
         accounts.removeAll { $0.email == email }
         clearNeedsReconnect(email)
+        // Its meetings are no longer reported by anyone: hide them here and on the other devices.
+        if let store = coreStore {
+            CoreMemoryStore.accessQueue.async {
+                store.calendarForgetAccount(source: "google_calendar", account: email)
+            }
+        } else {
+            log.error("removeAccount: no store, so \(email, privacy: .private)'s meetings were not hidden")
+        }
         Task {
             await accountStore.remove(email)
             defaultEmail = accountStore.defaultEmail

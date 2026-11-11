@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { gmailAccounts, gmailConnect, gmailDeleteStoredMail, gmailDisconnect } from "../api";
+import { gmailAccounts, gmailConnect, gmailReconnect, gmailDeleteStoredMail, gmailDisconnect } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { GmailAccounts } from "../generated/types";
 import { useL10n } from "../l10n";
@@ -53,7 +53,14 @@ export function GmailCard() {
           {state.accounts.map((account) => (
             <li key={account.email} className="field-row">
               <span>{account.email}</span>
-              {account.needsReconnect ? (
+              {account.signInExpired ? (
+                <>
+                  <span className="small sign-in-expired">{t("Sign-in expired")}</span>
+                  <button className="mode mode--active" disabled={busy || !canConnect(state)} onClick={() => run(() => gmailReconnect(account.email))}>
+                    {t("Sign in again")}
+                  </button>
+                </>
+              ) : account.needsReconnect ? (
                 <button className="mode mode--active" disabled={busy || !canConnect(state)} onClick={() => run(gmailConnect)}>
                   {t("Reconnect")}
                 </button>

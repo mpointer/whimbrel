@@ -144,15 +144,19 @@ struct PhoneCalendarEvent: Decodable, Identifiable, Equatable {
     let title: String
     let startUnixMs: Int64
     let attendees: [String]
+    /// The SQLite row id in the replica (higher = inserted later); absent from older payloads.
+    let rowId: Int64?
 
     var id: String { externalId }
 
-    enum CodingKeys: String, CodingKey { case externalId = "external_id", source, title, startUnixMs = "start_unix_ms", attendees }
+    enum CodingKeys: String, CodingKey {
+        case externalId = "external_id", source, title, startUnixMs = "start_unix_ms", attendees, rowId = "row_id"
+    }
 
     /// For tests and demo fixtures.
-    init(externalId: String, source: String, title: String, startUnixMs: Int64, attendees: [String]) {
+    init(externalId: String, source: String, title: String, startUnixMs: Int64, attendees: [String], rowId: Int64? = nil) {
         self.externalId = externalId; self.source = source; self.title = title
-        self.startUnixMs = startUnixMs; self.attendees = attendees
+        self.startUnixMs = startUnixMs; self.attendees = attendees; self.rowId = rowId
     }
 }
 

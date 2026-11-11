@@ -8,7 +8,8 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-use crate::commands::library::{meeting_row, MeetingRow};
+use crate::commands::library::{has_summary, meeting_row, MeetingRow};
+use crate::commands::prep::event_prep_key;
 use crate::commands::today::day_bounds;
 use crate::device_labels::DeviceLabeler;
 use crate::error::CommandError;
@@ -30,7 +31,14 @@ pub struct ScheduleEvent {
     pub attendees: Vec<String>,
     /// The local meeting recorded for this event, when there is one (recording now or done).
     pub recorded_meeting_id: Option<i64>,
+    /// The Prep chip's key (the stored brief's own id) when a readable brief exists; Today only.
+    pub prep_key: Option<String>,
+    /// The recorded meeting has a non-empty summary; false when there is no recording.
+    pub has_summary: bool,
+    /// The recorded meeting's summary action items; 0 when there is no recording.
+    pub action_item_count: u32,
 }
+
 
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -75,13 +83,20 @@ pub fn build_schedule(
     today.sort_by_key(|e| e.start_unix_ms);
     let events: Vec<ScheduleEvent> = today
         .into_iter()
-        .map(|e| ScheduleEvent {
-            event_id: e.id.clone(),
-            title: e.title.clone(),
-            start_unix_ms: e.start_unix_ms,
-            end_unix_ms: e.end_unix_ms,
-            attendees: e.attendees.clone(),
-            recorded_meeting_id: recorded_meeting_id(e, meetings),
+        .map(|e| {
+            let recorded_id = recorded_meeting_id(e, meetings);
+            let recorded = recorded_id.and_then(|id| meetings.iter().find(|m| m.id == id));
+            ScheduleEvent {
+                event_id: e.id.clone(),
+                title: e.title.clone(),
+                start_unix_ms: e.start_unix_ms,
+                end_unix_ms: e.end_unix_ms,
+                attendees: e.attendees.clone(),
+                recorded_meeting_id: recorded_id,
+                prep_key: None,
+                has_summary: recorded.is_some_and(has_summary),
+                action_item_count: recorded.map_or(0, |m| m.summary_action_items.len() as u32),
+            }
         })
         .collect();
     let mut earlier: Vec<&memory::Meeting> = meetings
@@ -90,6 +105,15 @@ pub fn build_schedule(
         .collect();
     earlier.sort_by_key(|m| std::cmp::Reverse(m.start_unix_ms));
     ScheduleView { events, earlier_today: earlier.into_iter().map(|m| meeting_row(m, labeler)).collect(), recording }
+}
+
+/// Fills in each event's Prep chip key, which `build_schedule` leaves empty: its brief by occurrence.
+/// (The earlier-today meetings get theirs from `meeting_chips`, as the Meetings list does.)
+pub(crate) fn add_prep_keys(s: &memory::Store, view: &mut ScheduleView) -> Result<(), String> {
+    for e in &mut view.events {
+        e.prep_key = event_prep_key(s, &e.event_id, e.start_unix_ms, &e.title)?;
+    }
+    Ok(())
 }
 
 /// Today's Upcoming section (docs/superpowers/specs/2026-11-08-today-upcoming-design.md): the days after
@@ -140,6 +164,9 @@ pub fn build_upcoming(calendar: &[QualifyingMeeting], days: &[(String, i64, i64)
                     end_unix_ms: e.end_unix_ms,
                     attendees: e.attendees.clone(),
                     recorded_meeting_id: None,
+                    prep_key: None,
+                    has_summary: false,
+                    action_item_count: 0,
                 })
                 .collect();
             Some(UpcomingDay { date: date.clone(), tomorrow: i == 0, events })
@@ -179,7 +206,12 @@ pub async fn today_schedule(state: State<'_, AppState>) -> Result<ScheduleView, 
         .call(move |s| s.recent_meetings(RECONCILE_WINDOW).map_err(|e| e.to_string()))
         .await?
         .map_err(CommandError::store)?;
-    Ok(build_schedule(&calendar, &meetings, now, day_start, day_end, recording, &labeler))
+    let mut view = build_schedule(&calendar, &meetings, now, day_start, day_end, recording, &labeler);
+    state
+        .store()?
+        .call(move |s| add_prep_keys(s, &mut view).map(|()| view))
+        .await?
+        .map_err(CommandError::store)
 }
 
 /// Start recording one of today's calendar events: its title, invitees and start, and the meeting app
@@ -373,6 +405,47 @@ mod tests {
         let v = view(&[over], &[m.clone()], now);
         assert!(v.events.is_empty());
         assert_eq!(v.earlier_today.iter().map(|r| r.id).collect::<Vec<_>>(), [m.id]);
+    }
+
+    #[test]
+    fn a_recorded_event_carries_its_summary_and_action_items() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let now = DAY_START + 600 * MIN;
+        let ev = event("a", "Acme sync", now - 5 * MIN, 30);
+        let mut m = put(&store, "Acme sync", ev.start_unix_ms);
+        m.summary_tldr = Some("We shipped.".into());
+        m.summary_action_items = vec!["Send the quote".into(), "Book a room".into()];
+        let v = view(&[ev.clone(), event("b", "Later", now + 60 * MIN, 30)], &[m.clone()], now);
+        assert_eq!((v.events[0].has_summary, v.events[0].action_item_count), (true, 2));
+        assert_eq!((v.events[1].has_summary, v.events[1].action_item_count), (false, 0), "not recorded");
+        m.summary_tldr = Some(String::new());
+        assert!(!view(&[ev], &[m], now).events[0].has_summary, "an empty summary is no summary");
+    }
+
+    #[test]
+    fn prep_keys_are_filled_from_the_store() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let now = DAY_START + 600 * MIN;
+        let brief = r#"{"summary":{"text":"x","sources":[]},"attendees":[],"open_items":[],"open_questions":[],"sources":[]}"#;
+        let save = |id: &str, start: i64, title: &str| {
+            store
+                .save_meeting_prep(&memory::prep::MeetingPrepRow {
+                    event_id: id.into(),
+                    title: title.into(),
+                    start_unix_ms: start,
+                    generated_at_unix_ms: 0,
+                    brief_json: brief.into(),
+                    provider: "p".into(),
+                    model: "m".into(),
+                })
+                .unwrap()
+        };
+        let ev = event("evt", "Acme sync", now + 30 * MIN, 30);
+        save(&memory::prep::prep_key("evt", ev.start_unix_ms), ev.start_unix_ms, "Acme sync");
+        let mut v = view(&[ev.clone(), event("bare", "No brief", now + 90 * MIN, 30)], &[], now);
+        add_prep_keys(&store, &mut v).unwrap();
+        assert_eq!(v.events[0].prep_key, Some(memory::prep::prep_key("evt", ev.start_unix_ms)));
+        assert_eq!(v.events[1].prep_key, None);
     }
 
     #[test]

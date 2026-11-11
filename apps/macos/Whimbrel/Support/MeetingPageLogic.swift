@@ -32,8 +32,8 @@ enum MeetingDayGrouping {
             let daysAgo = calendar.dateComponents([.day], from: day, to: today).day ?? 0
             let title: String
             switch daysAgo {
-            case ..<1: title = "Today"
-            case 1: title = "Yesterday"
+            case ..<1: title = String(localized: "day.today", defaultValue: "Today", comment: "Day heading in the Meetings list: the current day")
+            case 1: title = String(localized: "day.yesterday", defaultValue: "Yesterday", comment: "Day heading in the Meetings list: the previous day")
             case 2...6: title = weekday.string(from: date)
             default: title = full.string(from: date)
             }

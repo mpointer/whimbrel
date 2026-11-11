@@ -34,6 +34,8 @@ internal object Native : CoreNative {
         nSyncWorkerSwapDevice(baseUrl.toCString(), idToken.toCString(), devicePublicKey.toCString(), (platform ?: "").toCString(), replaceDeviceId.toCString()).fromCOutput()
     override fun syncWorkerJoinWaitlist(baseUrl: String, idToken: String, devicePublicKey: String, wantsJson: String, platform: String?): String? =
         nSyncWorkerJoinWaitlist(baseUrl.toCString(), idToken.toCString(), devicePublicKey.toCString(), wantsJson.toCString(), (platform ?: "").toCString()).fromCOutput()
+    override fun syncWorkerAccountPlan(baseUrl: String, idToken: String, devicePublicKey: String): String? =
+        nSyncWorkerAccountPlan(baseUrl.toCString(), idToken.toCString(), devicePublicKey.toCString()).fromCOutput()
     override fun syncWorkerErrorIsPermanent(errorJson: String): Boolean = nSyncWorkerErrorIsPermanent(errorJson.toCString())
     override fun syncWorkerErrorCode(errorJson: String): String? = nSyncWorkerErrorCode(errorJson.toCString()).fromCOutput()
     override fun oauthJwtClaims(jwt: String): String? = nOauthJwtClaims(jwt.toCString()).fromCOutput()
@@ -59,6 +61,7 @@ internal object Native : CoreNative {
     override fun meetingPrepGet(handle: Long, eventId: String): String? = nMeetingPrepGet(handle, eventId.toCString()).fromCOutput()
     override fun memoryUpcomingCalendarEvents(handle: Long, fromUnixMs: Long, untilUnixMs: Long, limit: Long): String? =
         nMemoryUpcomingCalendarEvents(handle, fromUnixMs, untilUnixMs, limit).fromCOutput()
+    override fun topicSnapshotsJson(handle: Long): String? = nTopicSnapshotsJson(handle).fromCOutput()
 
     private external fun nCoreVersion(): ByteArray?
     private external fun nMemoryOpen(path: ByteArray): Long
@@ -77,6 +80,7 @@ internal object Native : CoreNative {
     private external fun nSyncWorkerSetDeviceName(baseUrl: ByteArray, idToken: ByteArray, devicePublicKey: ByteArray, name: ByteArray): ByteArray?
     private external fun nSyncWorkerSwapDevice(baseUrl: ByteArray, idToken: ByteArray, devicePublicKey: ByteArray, platform: ByteArray, replaceDeviceId: ByteArray): ByteArray?
     private external fun nSyncWorkerJoinWaitlist(baseUrl: ByteArray, idToken: ByteArray, devicePublicKey: ByteArray, wantsJson: ByteArray, platform: ByteArray): ByteArray?
+    private external fun nSyncWorkerAccountPlan(baseUrl: ByteArray, idToken: ByteArray, devicePublicKey: ByteArray): ByteArray?
     private external fun nSyncWorkerErrorIsPermanent(errorJson: ByteArray): Boolean
     private external fun nSyncWorkerErrorCode(errorJson: ByteArray): ByteArray?
     private external fun nOauthJwtClaims(jwt: ByteArray): ByteArray?
@@ -95,4 +99,5 @@ internal object Native : CoreNative {
     private external fun nRoutinesRecentRuns(handle: Long, limit: Long): ByteArray?
     private external fun nMeetingPrepGet(handle: Long, eventId: ByteArray): ByteArray?
     private external fun nMemoryUpcomingCalendarEvents(handle: Long, from: Long, until: Long, limit: Long): ByteArray?
+    private external fun nTopicSnapshotsJson(handle: Long): ByteArray?
 }

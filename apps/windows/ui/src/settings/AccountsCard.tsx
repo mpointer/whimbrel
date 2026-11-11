@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { calendarAccounts, calendarConnect, calendarDisconnect, calendarSyncNow } from "../api";
+import { calendarAccounts, calendarConnect, calendarDisconnect, calendarReconnect, calendarSyncNow } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { CalendarAccounts } from "../generated/types";
 import { t, useL10n } from "../l10n";
@@ -56,6 +56,14 @@ export function AccountsCard() {
           {accounts.emails.map((email) => (
             <li key={email} className="field-row">
               <span>{email}</span>
+              {accounts.signInExpired.includes(email) && (
+                <>
+                  <span className="small sign-in-expired">{t("Sign-in expired")}</span>
+                  <button className="mode mode--active" disabled={busy || accounts.blocked != null} onClick={() => run(() => calendarReconnect(email))}>
+                    {t("Sign in again")}
+                  </button>
+                </>
+              )}
               <button className="mode" disabled={busy} onClick={() => run(() => calendarDisconnect(email))}>
                 {t("Disconnect")}
               </button>

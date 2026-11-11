@@ -5,6 +5,8 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { skinImage } from "../../api";
 import { DeviceChip } from "../../library/LibraryView";
 import { t } from "../../l10n";
+import { MeetingChips } from "../../meetings/MeetingCard";
+import type { MeetingCardTarget, MeetingChip } from "../../meetings/meetingCardModel";
 import {
   devicesLine,
   heldSeparator,
@@ -23,7 +25,23 @@ export interface TodayActions {
   openMeeting(meetingId: number): void;
   retryRecap(): void;
   toggleBrief(): void;
+  /** A Prep chip: the brief stored under this key. */
+  showPrepBrief(key: string): void;
+  /** A topic chip: the topic's page. */
+  openTopic(topicId: number): void;
 }
+
+/** A row's chips (Prep ready, Summary, action items, topic), routed through the layout's actions. */
+export function RowChips({ chips, card, props }: { chips: MeetingChip[]; card: MeetingCardTarget; props: TodayLayoutProps }) {
+  const open = (target: MeetingCardTarget) => {
+    if (target.kind === "meeting") props.actions.openMeeting(target.id);
+    else if (target.kind === "brief") props.actions.showPrepBrief(target.key);
+    else if (target.kind === "topic") props.actions.openTopic(target.id);
+  };
+  return <MeetingChips chips={chips} card={card} onOpen={open} />;
+}
+
+const hasPrepChip = (chips: MeetingChip[]) => chips.some((c) => c.kind === "prep");
 
 /** What every layout is given: Today's model plus the skin's voice, imagery and the live pieces (the composer
  *  and the next meeting's brief) that only TodayView can build. */
@@ -101,15 +119,16 @@ export function BracketLink({ label, onClick, disabled, primary }: { label: stri
 
 // --- the prep line ----------------------------------------------------------------------------
 
-/** The next event's prep state: "No prep yet", or "Prep ready" with Open brief / Hide brief and the brief. */
-export function PrepLine({ prep, props, bracket }: { prep: "ready" | "none" | null; props: TodayLayoutProps; bracket?: boolean }) {
+/** The next event's prep state: "No prep yet", or "Prep ready" with Open brief / Hide brief and the brief.
+ *  With `chip` the row already shows a Prep ready chip, so only the toggle is drawn. */
+export function PrepLine({ prep, props, bracket, chip }: { prep: "ready" | "none" | null; props: TodayLayoutProps; bracket?: boolean; chip?: boolean }) {
   if (prep === null) return null;
   if (prep === "none") return <SkinText role="label" className="tone-secondary">{t("No prep yet")}</SkinText>;
   const label = props.brief.open ? t("Hide brief") : t("Open brief");
   return (
     <>
       <span className="prep-line">
-        <SkinText role="label" className="tone-secondary">{t("Prep ready")}</SkinText>
+        {!chip && <SkinText role="label" className="tone-secondary">{t("Prep ready")}</SkinText>}
         {bracket ? (
           <BracketLink label={label} onClick={props.actions.toggleBrief} />
         ) : (
@@ -174,7 +193,8 @@ export function EventLine({
     <>
       {detail && row.relative && <SkinText role="label" className="tone-secondary">{row.relative}</SkinText>}
       {row.attendees && <SkinText role="label" className="tone-secondary">{row.attendees}</SkinText>}
-      {detail && <PrepLine prep={row.prep} props={props} bracket={bracket} />}
+      <RowChips chips={row.chips} card={row.card} props={props} />
+      {detail && <PrepLine prep={row.prep} props={props} bracket={bracket} chip={hasPrepChip(row.chips)} />}
     </>
   );
   const action = <StartOrOpen row={row} props={props} bracket={bracket} />;
@@ -216,7 +236,12 @@ export function EventLine({
 export function HeldLine({ row, props, shape, bracket }: { row: HeldRow; props: TodayLayoutProps; shape: RowShape; bracket?: boolean }) {
   const time = <SkinText role="numerals" className="tone-secondary line-time">{row.timeText}</SkinText>;
   const title = <SkinText lines={2} className="tone-primary">{row.title}</SkinText>;
-  const sub = row.subtitle ? <SkinText role="label" className="tone-secondary">{row.subtitle}</SkinText> : null;
+  const sub = (
+    <>
+      {row.subtitle ? <SkinText role="label" className="tone-secondary">{row.subtitle}</SkinText> : null}
+      <RowChips chips={row.chips} card={row.card} props={props} />
+    </>
+  );
   const action = bracket ? (
     <BracketLink label={t("Open")} onClick={() => props.actions.openMeeting(row.id)} />
   ) : (

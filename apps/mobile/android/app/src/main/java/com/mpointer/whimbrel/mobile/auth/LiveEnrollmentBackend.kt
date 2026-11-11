@@ -1,6 +1,7 @@
 package com.mpointer.whimbrel.mobile.auth
 
 import android.app.Activity
+import com.mpointer.whimbrel.mobile.core.AccountPlan
 import com.mpointer.whimbrel.mobile.core.GoogleAuthResult
 import com.mpointer.whimbrel.mobile.core.SyncDeviceRecord
 import com.mpointer.whimbrel.mobile.core.SyncWorkerClient
@@ -33,4 +34,7 @@ class LiveEnrollmentBackend(
 
     override suspend fun joinWaitlist(idToken: String, devicePublicKey: String, wants: List<String>) =
         worker.joinWaitlist(idToken, devicePublicKey, wants)
+
+    override suspend fun accountPlan(idToken: String, devicePublicKey: String): AccountPlan =
+        worker.accountPlan(idToken, devicePublicKey)
 }

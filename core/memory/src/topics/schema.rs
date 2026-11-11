@@ -13,6 +13,9 @@ use crate::EMBEDDING_DIM;
 /// `topic_cluster` prunes only then.
 pub(crate) const PRUNE_DIRTY_KEY: &str = "topic_prune_dirty";
 
+/// The `kv_meta` cursor of the calendar-event indexer (see `index::hw_get`).
+pub(crate) const CALENDAR_HW_KEY: &str = "topic_index_hw:calendar_event";
+
 /// Called at the end of `Store::init`, after every `ALTER TABLE` the triggers depend on
 /// (`meeting.summary_tldr`, `episodes.hidden`).
 pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -20,6 +23,10 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
     // MCP server) would otherwise interleave the DROP TRIGGER / CREATE TRIGGER pairs below,
     // and the second create fails with "trigger ... already exists". Rolled back on error.
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let (old_nr, new_nr) = (
+        crate::calendar_flags::calendar_not_removed("old"),
+        crate::calendar_flags::calendar_not_removed("new"),
+    );
     tx.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS topic_source (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -195,6 +202,15 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
         CREATE TRIGGER topic_source_items_ad AFTER DELETE ON items
         WHEN old.kind IN ('email', 'calendar_event', 'snapshot') BEGIN
             DELETE FROM topic_source WHERE kind = old.kind AND ref_id = old.id;
+        END;
+        -- A meeting marked removed loses its source; when it is unmarked (by this device's
+        -- presence, a peer's sync, or a re-poll that changes it) the indexer cursor moves
+        -- back to just before it, so it is indexed again. Rows already indexed re-scan as no-ops.
+        DROP TRIGGER IF EXISTS topic_calendar_unmarked;
+        CREATE TRIGGER topic_calendar_unmarked AFTER UPDATE OF flags ON items
+        WHEN new.kind = 'calendar_event' AND NOT ({old_nr}) AND ({new_nr}) BEGIN
+            UPDATE kv_meta SET value = MIN(CAST(value AS INTEGER), new.id - 1)
+             WHERE key = '{CALENDAR_HW_KEY}';
         END;
         CREATE TRIGGER IF NOT EXISTS topic_source_meeting_ad AFTER DELETE ON meeting BEGIN
             DELETE FROM topic_source WHERE kind = 'meeting' AND ref_id = old.id;

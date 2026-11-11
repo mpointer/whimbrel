@@ -105,6 +105,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::general::GeneralSettings>();
     generator.subschema_for::<super::language::LanguageSettings>();
     generator.subschema_for::<super::prep::NextMeetingView>();
+    generator.subschema_for::<super::prep::MeetingChipsView>();
     generator.subschema_for::<super::prep::PrepBriefView>();
     generator.subschema_for::<super::prep::PrepAttendee>();
     generator.subschema_for::<super::prep::PrepClaim>();

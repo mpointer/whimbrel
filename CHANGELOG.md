@@ -2,7 +2,29 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
-## [Unreleased]
+## [0.9.68] - 2026-11-11
+
+### All devices
+- Phone reminders (Cloud, iPhone and Android): a notification before each meeting, and a morning list of the steps you owe that are due. Settings → Reminders sets how early, and when the morning list arrives.
+- Cancelled Google Calendar meetings now disappear from Whimbrel on Mac and Windows.
+- Meetings that are cancelled, declined, deleted or moved after they reach your phone now disappear there too, and a moved meeting shows only at its new time. Disconnecting a Google account hides its meetings; reconnecting brings them back. A meeting that comes back shows again.
+
+### Mac
+- Today shows your day as a timeline with a Now marker, and the Meetings tab is a compact list. Meetings are clear cards and rows that open with a click, with chips for prep, summary, action items and topic. An upcoming meeting opens its prep brief or topic. The next meeting says how soon it starts.
+- Calendar sync covers the next 48 hours instead of the rest of today, so tomorrow's early meetings reach your phone before this Mac wakes. Meetings you declined are left out.
+
+### Android
+- The update prompt's Download now gets the newest app file directly, instead of a release page that may not have one.
+
+### Windows
+- A meeting's action items show their full text, wrapped onto more lines, instead of a short box you had to scroll inside.
+- When a Google Calendar or Gmail sign-in expires, Whimbrel says which account on every page and in Settings, with a Sign in again button that opens Google at that account. A brief outage at Google no longer reads as an expired sign-in.
+- Background summaries go easier on laptops. With "Use local model (Ollama)" off, they no longer run on Ollama just because it's running. Activity summaries now wait until the PC is plugged in and you've stepped away, as on the Mac.
+- The app log records this PC's memory, cores and power, and every 5 minutes how much CPU and memory Whimbrel and Ollama use, with no content and no other programs' names. Send feedback's report includes the same facts, so a slow PC can be diagnosed from it.
+- Meeting Prep's "Prep ready" and "Prep failed" lines in Routines show in your language.
+- Calendar sync covers the next 48 hours instead of the rest of today, so tomorrow's early meetings reach your other devices before this PC wakes.
+- Meetings you declined are no longer synced to your other devices, so phones won't remind you about them.
+- Today's schedule is a timeline: one card per meeting, earlier ones included, on a line with a "Now" marker that moves through the day. Each card shows the time range, how many people, and chips for Prep ready, Summary, action items and the topic; click a card or chip to open it. The Meetings list groups meetings under Today, Yesterday and the day, with the time and length beside each one and the same chips. The schedule also refreshes after each calendar sync.
 
 ## [0.9.67] - 2026-11-10
 

@@ -431,6 +431,7 @@ pub fn report(state: &AppState) -> String {
     report_text(
         &[
             ("App", app),
+            ("This PC", crate::perf_log::report_lines()),
             ("AI", ai),
             ("Capture", capture),
             ("Sync", sync),

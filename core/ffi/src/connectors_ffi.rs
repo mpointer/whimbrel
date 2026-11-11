@@ -7,6 +7,7 @@ use std::ptr;
 
 use api::connectors::calendar::{self, QualifyingMeeting};
 use api::connectors::gmail;
+use memory::calendar_presence::PresentEvent;
 
 use crate::{cstr_to_string, json_to_c_string, StoreHandle};
 
@@ -53,6 +54,66 @@ pub extern "C" fn whimbrel_connector_calendar_apply(
     };
     let store = unsafe { &(*handle).0 };
     match calendar::apply(store, &email, &result_json, &existing, now_unix_ms) {
+        Ok(outcome) => encode(&outcome),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// EventKit's full list for `source`/`account` over `[window_start, window_end)`; rows
+/// this device owns that nobody reports any more are marked removed. `present_json` is
+/// `[{"external_id","start_unix_ms"}]`. Returns `{"marked","unmarked"}` or NULL on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_calendar_presence_replace(
+    handle: *mut StoreHandle,
+    source: *const c_char,
+    account: *const c_char,
+    window_start: i64,
+    window_end: i64,
+    present_json: *const c_char,
+    now_unix_ms: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let (Some(source), Some(account), Some(present_json)) =
+        (cstr_to_string(source), cstr_to_string(account), cstr_to_string(present_json))
+    else {
+        return ptr::null_mut();
+    };
+    #[derive(serde::Deserialize)]
+    struct Present {
+        external_id: String,
+        start_unix_ms: i64,
+    }
+    let Ok(raw) = serde_json::from_str::<Vec<Present>>(&present_json) else {
+        return ptr::null_mut();
+    };
+    let present: Vec<PresentEvent> =
+        raw.into_iter().map(|p| PresentEvent { external_id: p.external_id, start_unix_ms: p.start_unix_ms }).collect();
+    let store = unsafe { &(*handle).0 };
+    match store.calendar_presence_replace(&source, &account, Some((window_start, window_end)), &present, now_unix_ms) {
+        Ok(outcome) => encode(&outcome),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// The account was disconnected: everything it reported is now absent. Returns
+/// `{"marked","unmarked"}` or NULL on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_calendar_forget_account(
+    handle: *mut StoreHandle,
+    source: *const c_char,
+    account: *const c_char,
+    now_unix_ms: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let (Some(source), Some(account)) = (cstr_to_string(source), cstr_to_string(account)) else {
+        return ptr::null_mut();
+    };
+    let store = unsafe { &(*handle).0 };
+    match store.forget_calendar_account(&source, &account, now_unix_ms) {
         Ok(outcome) => encode(&outcome),
         Err(_) => ptr::null_mut(),
     }
@@ -187,5 +248,53 @@ mod tests {
         assert_eq!(take(whimbrel_meeting_link_detect(none.as_ptr())), serde_json::Value::Null);
         let bad = CString::new("nope").unwrap();
         assert!(whimbrel_calendar_merge_meetings(bad.as_ptr(), oauth.as_ptr()).is_null());
+    }
+
+    /// A store handle whose own device is `mac-1`, holding two future google rows.
+    fn handle_with_rows() -> *mut StoreHandle {
+        let dir = tempfile::tempdir().unwrap();
+        let db = CString::new(dir.keep().join("t.sqlite").to_str().unwrap()).unwrap();
+        let handle = crate::whimbrel_memory_open(db.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        unsafe { &(*handle).0 }.set_own_device_id("mac-1");
+        let items = CString::new(r#"[
+            {"device_id":"mac-1","source":"google_calendar","external_id":"a#5","ts_unix_ms":5000,"title":"A","actors":[]},
+            {"device_id":"mac-1","source":"google_calendar","external_id":"b#6","ts_unix_ms":6000,"title":"B","actors":[]}]"#).unwrap();
+        assert!(crate::whimbrel_memory_upsert_calendar_event_items(handle, items.as_ptr()));
+        handle
+    }
+
+    fn shown_ids(handle: *mut StoreHandle) -> Vec<String> {
+        unsafe { &(*handle).0 }.upcoming_calendar_events(0, i64::MAX, 50).unwrap().into_iter().map(|r| r.external_id).collect()
+    }
+
+    #[test]
+    fn presence_replace_ffi_round_trips() {
+        let handle = handle_with_rows();
+        let (src, acct) = (CString::new("google_calendar").unwrap(), CString::new("x@g").unwrap());
+        let both = CString::new(r#"[{"external_id":"a#5","start_unix_ms":5000},{"external_id":"b#6","start_unix_ms":6000}]"#).unwrap();
+        let out = take(whimbrel_calendar_presence_replace(handle, src.as_ptr(), acct.as_ptr(), 0, 10_000, both.as_ptr(), 1000));
+        assert_eq!(out, serde_json::json!({"marked": 0, "unmarked": 0}));
+        let only_a = CString::new(r#"[{"external_id":"a#5","start_unix_ms":5000}]"#).unwrap();
+        let out = take(whimbrel_calendar_presence_replace(handle, src.as_ptr(), acct.as_ptr(), 0, 10_000, only_a.as_ptr(), 1001));
+        assert_eq!(out, serde_json::json!({"marked": 1, "unmarked": 0}));
+        assert_eq!(shown_ids(handle), ["a#5"]);
+        let bad = CString::new("nope").unwrap();
+        assert!(whimbrel_calendar_presence_replace(handle, src.as_ptr(), acct.as_ptr(), 0, 10_000, bad.as_ptr(), 1002).is_null());
+        assert!(whimbrel_calendar_presence_replace(ptr::null_mut(), src.as_ptr(), acct.as_ptr(), 0, 10_000, both.as_ptr(), 1002).is_null());
+        crate::whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn forget_account_ffi_round_trips() {
+        let handle = handle_with_rows();
+        let (src, acct) = (CString::new("google_calendar").unwrap(), CString::new("x@g").unwrap());
+        let both = CString::new(r#"[{"external_id":"a#5","start_unix_ms":5000},{"external_id":"b#6","start_unix_ms":6000}]"#).unwrap();
+        take(whimbrel_calendar_presence_replace(handle, src.as_ptr(), acct.as_ptr(), 0, 10_000, both.as_ptr(), 1000));
+        let out = take(whimbrel_calendar_forget_account(handle, src.as_ptr(), acct.as_ptr(), 1001));
+        assert_eq!(out, serde_json::json!({"marked": 2, "unmarked": 0}));
+        assert!(shown_ids(handle).is_empty());
+        assert!(whimbrel_calendar_forget_account(ptr::null_mut(), src.as_ptr(), acct.as_ptr(), 1002).is_null());
+        crate::whimbrel_memory_close(handle);
     }
 }

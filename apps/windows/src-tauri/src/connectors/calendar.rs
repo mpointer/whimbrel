@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use api::connectors::calendar::{self, QualifyingMeeting};
+use api::connectors::calendar::{self, QualifyingMeeting, SelfResponse};
 use api::meetings::trigger;
 use mcp_host::McpHost;
 use tauri::{AppHandle, Emitter};
@@ -113,8 +113,8 @@ impl Poller {
         Ok(outcome.meetings)
     }
 
-    /// Writes one round's meetings (`todays_events`) into the store as calendar rows, so they show up
-    /// in the Library and in Ask's context like the Mac's do.
+    /// Writes one round's meetings (`upcoming_events`) into the store as calendar rows, so they show
+    /// up in the Library and in Ask's context like the Mac's do, and sync to the phones.
     fn store_events(&self, meetings: Vec<QualifyingMeeting>) {
         let device_id = self.device_id.clone();
         let count = meetings.len();
@@ -132,12 +132,19 @@ impl Poller {
     }
 }
 
-/// The calendar rows for one round: every account's meetings, in account order, cut to today (the
-/// connector keeps every occurrence of a recurring meeting, years ahead) and merged with
-/// `merge_meetings`, so a meeting on two accounts is one row and the first account's copy always wins.
-pub fn todays_events(per_account: &[Vec<QualifyingMeeting>], tomorrow_start_unix_ms: i64) -> Vec<QualifyingMeeting> {
-    let all: Vec<QualifyingMeeting> =
-        per_account.iter().flatten().filter(|m| m.start_unix_ms < tomorrow_start_unix_ms).cloned().collect();
+/// The calendar rows for one round: every account's meetings, in account order, cut at
+/// `window_end_unix_ms` (the connector keeps every occurrence of a recurring meeting, years ahead)
+/// and merged with `merge_meetings`, so a meeting on two accounts is one row and the first
+/// account's copy always wins. Meetings the user declined are left out, as the Mac's sync does, so
+/// phones never remind about them. The filter runs before the merge, so a meeting declined on one
+/// account and accepted on another is still stored from the accepted copy.
+pub fn upcoming_events(per_account: &[Vec<QualifyingMeeting>], window_end_unix_ms: i64) -> Vec<QualifyingMeeting> {
+    let all: Vec<QualifyingMeeting> = per_account
+        .iter()
+        .flatten()
+        .filter(|m| m.start_unix_ms < window_end_unix_ms && m.self_response != Some(SelfResponse::Declined))
+        .cloned()
+        .collect();
     calendar::merge_meetings(&[], &all)
 }
 
@@ -152,14 +159,14 @@ pub fn store_events(store: &memory::Store, meetings: &[QualifyingMeeting], devic
     store.upsert_calendar_event_items(&items).map_err(|e| e.to_string())
 }
 
-/// The start of tomorrow on this PC's clock: the end of the window the Mac stores (`todayWindowEnd`).
-fn tomorrow_start(now: chrono::DateTime<chrono::Local>) -> i64 {
-    use chrono::TimeZone;
-    let tomorrow = now.date_naive() + chrono::Days::new(1);
-    chrono::Local
-        .from_local_datetime(&tomorrow.and_hms_opt(0, 0, 0).expect("midnight exists"))
-        .earliest()
-        .map_or(now.timestamp_millis() + 24 * 60 * 60 * 1000, |t| t.timestamp_millis())
+/// How far ahead the stored meetings reach. Phone reminders (spec 2026-11-10-phone-reminders-and-
+/// managed-ai-design.md, "Meeting horizon") need tomorrow's early meetings before the computer
+/// wakes, so the computers sync the next 48 hours, not the rest of today.
+pub const SYNC_HORIZON_MS: i64 = 48 * 60 * 60 * 1000;
+
+/// The end of the stored window: [`SYNC_HORIZON_MS`] from `now_unix_ms`.
+pub fn sync_window_end(now_unix_ms: i64) -> i64 {
+    now_unix_ms + SYNC_HORIZON_MS
 }
 
 /// The calendar half of the meetings service: polls the connected accounts and prompts
@@ -262,7 +269,7 @@ impl CalendarService {
             let known = self.known.lock().unwrap();
             emails.iter().filter_map(|e| known.get(e).cloned()).collect()
         };
-        self.poller.store_events(todays_events(&per_account, tomorrow_start(chrono::Local::now())));
+        self.poller.store_events(upcoming_events(&per_account, sync_window_end(chrono::Utc::now().timestamp_millis())));
         {
             let mut status = self.status.lock().unwrap();
             status.error = failure;
@@ -392,35 +399,47 @@ mod tests {
 
         // Merged first: one row, the first account's copy, and a second poll changes nothing.
         let store = memory::Store::open_in_memory().unwrap();
-        let round = todays_events(&[work.clone(), home.clone()], now + DAY);
+        let round = upcoming_events(&[work.clone(), home.clone()], now + DAY);
         assert_eq!(round.len(), 1, "one row for the shared invite");
         assert_eq!(round[0].title, "Partner Sync", "the first account's copy");
         store_events(&store, &round, "pc").unwrap();
         let first = pending(&store, 0);
         assert_eq!(first.len(), 1);
-        store_events(&store, &todays_events(&[work, home], now + DAY), "pc").unwrap();
+        store_events(&store, &upcoming_events(&[work, home], now + DAY), "pc").unwrap();
         assert!(pending(&store, first[0]).is_empty(), "no second local_seq change");
     }
 
     #[test]
-    fn only_todays_meetings_are_stored() {
+    fn the_next_48_hours_of_meetings_are_stored() {
         let now = 1_800_000_000_000;
-        let tomorrow = now + 6 * 60 * 60 * 1000;
+        let end = sync_window_end(now);
+        assert_eq!(end - now, 2 * DAY);
         let account = vec![
             at("a", "Standup", now, &["me", "you"]),
-            at("b", "Standup", tomorrow + 1, &["me", "you"]),
-            at("c", "Standup", now + 700 * DAY, &["me", "you"]),
+            at("b", "Early call", now + DAY + 60 * 60 * 1000, &["me", "you"]),
+            at("c", "Standup", end - 1, &["me", "you"]),
+            at("d", "Standup", end, &["me", "you"]),
+            at("e", "Standup", now + 700 * DAY, &["me", "you"]),
         ];
-        let round = todays_events(&[account], tomorrow);
-        assert_eq!(round.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["a"]);
+        let round = upcoming_events(&[account], end);
+        assert_eq!(round.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["a", "b", "c"], "tomorrow's early call is in; past 48 hours is out");
     }
 
     #[test]
-    fn tomorrow_starts_at_local_midnight() {
-        use chrono::{TimeZone, Timelike};
-        let now = chrono::Local.with_ymd_and_hms(2026, 10, 30, 8, 31, 0).single().unwrap();
-        let start = chrono::Local.timestamp_millis_opt(tomorrow_start(now)).single().unwrap();
-        assert_eq!((start.date_naive(), start.hour(), start.minute()), (now.date_naive() + chrono::Days::new(1), 0, 0));
+    fn declined_meetings_are_not_stored() {
+        let now = 1_800_000_000_000;
+        let declined = |m: QualifyingMeeting| QualifyingMeeting { self_response: Some(SelfResponse::Declined), ..m };
+        let work = vec![
+            at("a", "Standup", now, &["me", "you"]),
+            declined(at("b", "Offsite", now + 1, &["me", "you"])),
+            QualifyingMeeting { self_response: Some(SelfResponse::Tentative), ..at("c", "Review", now + 2, &["me", "you"]) },
+            declined(at("d", "Board sync", now + 3, &["me@work", "you"])),
+        ];
+        // The same Board sync, accepted on the home account.
+        let home = vec![QualifyingMeeting { self_response: Some(SelfResponse::Accepted), ..at("d", "Board sync", now + 3, &["me@home", "you"]) }];
+        let round = upcoming_events(&[work, home], sync_window_end(now));
+        assert_eq!(round.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["a", "c", "d"], "only the declined Offsite is left out");
+        assert_eq!(round[2].self_response, Some(SelfResponse::Accepted), "the accepted copy is the one stored");
     }
 
     #[test]

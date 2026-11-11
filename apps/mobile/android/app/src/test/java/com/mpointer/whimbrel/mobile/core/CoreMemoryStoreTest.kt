@@ -42,6 +42,17 @@ class CoreMemoryStoreTest {
     }
 
     @Test
+    fun topicSnapshotsDecodeAndFailQuietly() {
+        val s = store()
+        native.topicSnapshotsReply = """[{"topic_key":"acme","name":"Acme","you_owe":[{"text":"Send","due_date":"2026-11-12"}]}]"""
+        assertEquals(listOf("acme"), s.topicSnapshots().map { it.topicKey })
+        native.topicSnapshotsReply = "nope"
+        assertEquals(emptyList<Any>(), s.topicSnapshots())
+        native.topicSnapshotsReply = null
+        assertEquals(emptyList<Any>(), s.topicSnapshots())
+    }
+
+    @Test
     fun malformedReadJsonGivesEmptyListOrNull() {
         val s = store()
         native.groupedReply = "not json"

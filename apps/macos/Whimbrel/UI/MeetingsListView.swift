@@ -17,6 +17,14 @@ enum ImportSummary {
     }
 }
 
+/// A reload counter the store queue can read without hopping to the main thread.
+final class LoadGeneration {
+    private let lock = NSLock()
+    private var value = 0
+    var current: Int { lock.lock(); defer { lock.unlock() }; return value }
+    func bump() -> Int { lock.lock(); defer { lock.unlock() }; value += 1; return value }
+}
+
 /// A calm searchable list of meetings, opening `MeetingDetailContentView` (After
 /// state) on selection. Preserves the existing meeting-detail window (opened from
 /// Timeline via `openWindow(id: "meeting-detail", value:)`) untouched — this is a new,
@@ -37,6 +45,14 @@ struct MeetingsListView: View {
     @State private var selectedDraft: CoreMeetingNoteDraft?
     @State private var selectedActionItems: [CoreMeetingActionItem] = []
     @State private var selectedTopic: TopicRef?
+    /// Chip lookups for the loaded meetings, filled by one batch after the list lands. Rows render
+    /// without them first; a meeting missing here simply has no Topic or Prep chip.
+    @State private var topicByMeetingId: [Int64: TopicRef] = [:]
+    @State private var prepKeyByMeetingId: [Int64: String] = [:]
+    /// Bumped on every reload; a batch that starts or finishes after a newer reload began is dropped.
+    @State private var loadGeneration = LoadGeneration()
+    /// The sorted meeting ids the last applied chip batch covered; nil before the first.
+    @State private var lastBatchedIds: [Int64]?
     /// The meeting id `selectedDraft`/`selectedActionItems` actually belong to — used to
     /// gate `MeetingDetailContentView`'s construction until its real data has loaded, and
     /// to force a fresh instance per meeting (`.id(selectedMeetingId)` below).
@@ -80,6 +96,25 @@ struct MeetingsListView: View {
         refresh()
     }
 
+    /// One card model per meeting, in order. A meeting absent from `topics` / `preps` gets no such chip.
+    static func rowModels(meetings: [CoreMeeting], topics: [Int64: TopicRef], preps: [Int64: String], now: Date) -> [MeetingCardModel] {
+        meetings.map { MeetingCardModel.forRecorded($0, prepKey: preps[$0.id], topic: topics[$0.id], now: now) }
+    }
+
+    /// Why a reload ran. Only `.appeared` (the view or window came back) may skip the chip batch.
+    enum ChipBatchTrigger { case appeared, meetingsChanged }
+
+    /// Whether the chip lookups need re-running: the first time, after any change to the meetings
+    /// (a processed meeting gains its topic under the same id), or when the set of ids differs.
+    static func needsChipBatch(ids: [Int64], lastBatched: [Int64]?, trigger: ChipBatchTrigger) -> Bool {
+        guard let lastBatched, trigger == .appeared else { return true }
+        return ids.sorted() != lastBatched.sorted()
+    }
+
+    /// The key `showPrepBrief` looks up. `eventId` already holds the stored key ("event@startMs", or
+    /// the bare event id on older rows); `meetingPrep(key:)` finds both, so pass it through unchanged.
+    static func prepKey(for prep: CoreMeetingPrep) -> String { prep.eventId }
+
     private var groups: [MeetingDayGroup] {
         MeetingDayGrouping.groups(
             filteredMeetings.map { (id: $0.id, startUnixMs: $0.startUnixMs) },
@@ -97,11 +132,11 @@ struct MeetingsListView: View {
         }
         .onAppear {
             Self.log.log("onAppear fired, appState.coreStore is \(appState.coreStore == nil ? "nil" : "non-nil", privacy: .public)")
-            refresh()
+            refresh(.appeared)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             guard let window = notification.object as? NSWindow, window.title == "Whimbrel" else { return }
-            refresh()
+            refresh(.appeared)
         }
         // A meeting forgotten on another device was deleted here by sync.
         .onReceive(NotificationCenter.default.publisher(for: MeetingLifecycle.meetingsDidChange)) { _ in refresh() }
@@ -165,9 +200,17 @@ struct MeetingsListView: View {
     }
 
     private func meetingRow(_ meeting: CoreMeeting) -> some View {
-        MeetingRowView(
-            title: meeting.title, subtitle: MeetingRowText.subtitle(for: meeting),
-            time: MeetingRowText.time(meeting.startUnixMs), action: { selectedMeetingId = meeting.id }
+        let model = Self.rowModels(meetings: [meeting], topics: topicByMeetingId, preps: prepKeyByMeetingId, now: Date())[0]
+        return MeetingListRow(
+            model: model,
+            onOpen: { selectedMeetingId = meeting.id },
+            onChip: { chip in
+                switch chip {
+                case let .prep(key): appState.showPrepBrief(key: key)
+                case let .topic(id, _): appState.openTopic(id)
+                case .summary, .actionItems: selectedMeetingId = meeting.id
+                }
+            }
         )
     }
 
@@ -197,19 +240,41 @@ struct MeetingsListView: View {
         }
     }
 
-    private func refresh() {
+    private func refresh(_ trigger: ChipBatchTrigger = .meetingsChanged) {
         guard let store = appState.coreStore else {
             Self.log.error("refresh: appState.coreStore is nil, cannot load meetings")
             hasLoaded = true
             return
         }
         Self.log.log("refresh: starting recentMeetings(limit: 200) fetch")
+        let generation = loadGeneration.bump()
+        let counter = loadGeneration
+        let lastBatched = lastBatchedIds
         CoreMemoryStore.accessQueue.async {
             let result = store.recentMeetingsGrouped(limit: 200)
             DispatchQueue.main.async {
                 Self.log.log("refresh: assigning \(result.count, privacy: .public) meetings to state")
                 meetings = result
                 hasLoaded = true
+            }
+            // One batch for the chips, on the same queue turn; rows are already showing. Skip it when a
+            // newer reload is already queued, or when the same meetings were batched last time.
+            guard generation == counter.current else { return }
+            let ids = result.map(\.id).sorted()
+            guard Self.needsChipBatch(ids: ids, lastBatched: lastBatched, trigger: trigger) else { return }
+            var topics: [Int64: TopicRef] = [:]
+            var preps: [Int64: String] = [:]
+            for meeting in result {
+                if let topic = store.topicForMeeting(meetingId: meeting.id) { topics[meeting.id] = topic }
+                if let prep = store.meetingPrep(meetingId: meeting.id), prep.brief != nil {
+                    preps[meeting.id] = Self.prepKey(for: prep)
+                }
+            }
+            DispatchQueue.main.async {
+                guard generation == counter.current else { return }
+                topicByMeetingId = topics
+                prepKeyByMeetingId = preps
+                lastBatchedIds = ids
             }
         }
     }

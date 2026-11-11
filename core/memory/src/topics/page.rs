@@ -1016,6 +1016,46 @@ mod tests {
         assert_eq!(list[0].next_meeting_unix_ms, Some(NOW + 4 * DAY_MS));
     }
 
+    fn remove_event(s: &Store, item: i64) {
+        sql(
+            s,
+            "UPDATE items SET flags = '{\"removed\":true,\"changed_at\":9}' WHERE id = ?1",
+            params![item],
+        );
+    }
+
+    #[test]
+    fn topic_snapshot_next_meeting_skips_removed() {
+        let s = Store::open_in_memory().unwrap();
+        let t = seed(&s, "Maximus");
+        let first = event(&s, "a1", NOW + DAY_MS, "Maximus QBR", &[]);
+        event(&s, "a2", NOW + 2 * DAY_MS, "Maximus follow-up", &[]);
+        assert_eq!(
+            s.topic_page(t.topic_id, NOW).unwrap().unwrap().next_meeting.unwrap().start_unix_ms,
+            NOW + DAY_MS
+        );
+        remove_event(&s, first);
+        let p = s.topic_page(t.topic_id, NOW).unwrap().unwrap();
+        assert_eq!(p.next_meeting.unwrap().start_unix_ms, NOW + 2 * DAY_MS);
+        assert_eq!(
+            s.topic_page_list(NOW).unwrap()[0].next_meeting_unix_ms,
+            Some(NOW + 2 * DAY_MS)
+        );
+        let snap = s.build_topic_page_snapshot(t.topic_id, "Mac", NOW).unwrap().unwrap();
+        assert_eq!(snap.next_meeting.unwrap().start_unix_ms, NOW + 2 * DAY_MS);
+    }
+
+    #[test]
+    fn topic_members_skip_a_removed_calendar_row_indexed_before_the_mark() {
+        let s = Store::open_in_memory().unwrap();
+        let t = seed(&s, "Maximus");
+        let item = event(&s, "m1", NOW - DAY_MS, "Maximus sync", &[]);
+        filed(&s, t.topic_id, "calendar_event", Some(item), NOW - DAY_MS, "auto");
+        assert_eq!(super::super::read::members(&s.conn, t.topic_id).unwrap().len(), 1);
+        remove_event(&s, item);
+        assert!(super::super::read::members(&s.conn, t.topic_id).unwrap().is_empty());
+    }
+
     #[test]
     fn attendees_split_by_domain() {
         let s = Store::open_in_memory().unwrap();

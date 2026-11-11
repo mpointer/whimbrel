@@ -237,6 +237,8 @@ describe("the schedule card", () => {
     endUnixMs: NOW + 60 * MIN,
     attendees: [],
     recordedMeetingId: null,
+    hasSummary: false,
+    actionItemCount: 0,
     ...over,
   });
 

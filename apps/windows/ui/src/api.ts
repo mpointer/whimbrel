@@ -72,6 +72,7 @@ import type {
   ImportView,
   RecordingNoticeSettings,
   NextMeetingView,
+  MeetingChipsView,
   TranscriptView,
   TrimInfo,
   WorkspaceView,
@@ -374,9 +375,11 @@ export const meetingLiveTranscript = (id: number) => invoke<LiveTranscriptView>(
 
 export const calendarAccounts = () => invoke<CalendarAccounts>("calendar_accounts");
 export const calendarConnect = () => invoke<CalendarAccounts>("calendar_connect");
+export const calendarReconnect = (email: string) => invoke<CalendarAccounts>("calendar_reconnect", { email });
 export const calendarDisconnect = (email: string) => invoke<CalendarAccounts>("calendar_disconnect", { email });
 export const gmailAccounts = () => invoke<GmailAccounts>("gmail_accounts");
 export const gmailConnect = () => invoke<GmailAccounts>("gmail_connect");
+export const gmailReconnect = (email: string) => invoke<GmailAccounts>("gmail_reconnect", { email });
 export const gmailDisconnect = (email: string) => invoke<GmailAccounts>("gmail_disconnect", { email });
 export const gmailDeleteStoredMail = (email: string) => invoke<GmailAccounts>("gmail_delete_stored_mail", { email });
 export const mcpServerState = () => invoke<McpServerView>("mcp_server_state");
@@ -444,5 +447,9 @@ export const chatSpend = () => invoke<ChatSpend>("chat_spend");
 export const todayOverview = () => invoke<TodayOverview>("today_overview");
 /** The next calendar meeting and its Meeting Prep brief, if any. */
 export const nextMeetingPrep = () => invoke<NextMeetingView | null>("next_meeting_prep");
+/** The brief a Prep chip names, by its key; nothing when it is gone or unreadable. */
+export const meetingPrepBrief = (key: string) => invoke<NextMeetingView | null>("meeting_prep_brief", { key });
+/** Each recorded meeting's Prep chip key and topic, in one call. */
+export const meetingChips = (ids: number[]) => invoke<MeetingChipsView[]>("meeting_chips", { ids });
 /** Serves today's cached recap unless `refresh`; otherwise calls a model (slow, costs). */
 export const todayRecap = (refresh: boolean) => invoke<TodayRecap>("today_recap", { refresh });

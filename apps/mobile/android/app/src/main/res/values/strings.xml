@@ -133,6 +133,26 @@
     <string name="settings_sync_now">Sync now</string>
     <string name="settings_theme">Theme</string>
     <string name="settings_theme_selected">Selected</string>
+    <string name="reminders_channel_name">Reminders</string>
+    <string name="reminders_section">Reminders</string>
+    <string name="reminders_need_cloud">Reminders come with Cloud.</string>
+    <string name="reminders_upgrade">Upgrade in Whimbrel on your computer.</string>
+    <string name="reminders_meeting_toggle">Meeting reminders</string>
+    <string name="reminders_lead_label">Remind me</string>
+    <string name="reminders_digest_toggle">Steps due today</string>
+    <string name="reminders_digest_at">At</string>
+    <string name="reminders_denied">Notifications are off for Whimbrel. Turn them on in the Settings app.</string>
+    <string name="reminders_footer">Reminders use your last sync.</string>
+    <string name="reminder_meeting_in">%1$s in %2$d minutes</string>
+    <string name="reminder_with_topic">%1$s · %2$s</string>
+    <plurals name="reminders_lead_minutes">
+        <item quantity="one">%d minute before</item>
+        <item quantity="other">%d minutes before</item>
+    </plurals>
+    <plurals name="reminder_steps_due">
+        <item quantity="one">%d step due today</item>
+        <item quantity="other">%d steps due today</item>
+    </plurals>
     <string name="device_name_fallback">Android phone</string>
     <string name="sync_error_failed">Couldn\'t sync. Will retry automatically.</string>
     <string name="sync_error_unreachable">Couldn\'t reach the server. Will retry automatically.</string>

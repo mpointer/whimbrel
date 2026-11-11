@@ -16,7 +16,7 @@ import {
 } from "../layoutModel";
 import { t } from "../../l10n";
 import { UpcomingBody } from "../UpcomingCard";
-import { HeldLine, PrepLine, ScheduleLines, SkinImage, SkinText, applyCaps, useWidth, type TodayLayoutProps } from "./parts";
+import { HeldLine, PrepLine, RowChips, ScheduleLines, SkinImage, SkinText, applyCaps, useWidth, type TodayLayoutProps } from "./parts";
 
 const PITCH_PADDING = 12;
 const LABEL_HEIGHT = 36;
@@ -95,7 +95,8 @@ function Scoreboard({ row, props, title }: { row: EventRow; props: TodayLayoutPr
           <SkinText role="display" lines={2} size={20} className="tone-primary">{row.title}</SkinText>
           {row.relative && <SkinText role="label" className="tone-secondary">{row.relative}</SkinText>}
           {row.attendees && <SkinText role="label" className="tone-secondary">{row.attendees}</SkinText>}
-          <PrepLine prep={row.prep} props={props} />
+          <RowChips chips={row.chips} card={row.card} props={props} />
+          <PrepLine prep={row.prep} props={props} chip={row.chips.some((c) => c.kind === "prep")} />
         </div>
         <EventAction row={row} props={props} />
       </div>

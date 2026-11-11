@@ -5,6 +5,7 @@
 
 use std::sync::OnceLock;
 
+use memory::calendar_presence::{MarkOutcome, PresentEvent};
 use memory::{NewCalendarEventItem, Store};
 
 use super::ToolCall;
@@ -225,6 +226,10 @@ pub fn qualifying_meetings_from_list_events(json: &str) -> Vec<QualifyingMeeting
 pub struct SyncResult {
     pub active_meetings: Vec<QualifyingMeeting>,
     pub cancelled_external_ids: Vec<String>,
+    /// Raw Google event ids of non-cancelled events that are no longer meetings for
+    /// this user: `qualify` rejects them, or the user's own response is declined.
+    #[serde(default)]
+    pub dropped_event_ids: Vec<String>,
     pub next_sync_token: Option<String>,
     pub needs_full_resync: bool,
 }
@@ -245,6 +250,12 @@ pub fn sync_result_from_json(json: &str) -> SyncResult {
     SyncResult {
         cancelled_external_ids: events.iter().filter(|e| is_cancelled(e)).filter_map(|e| e.id.clone()).collect(),
         active_meetings: events.iter().filter(|e| !is_cancelled(e)).filter_map(qualify).collect(),
+        dropped_event_ids: events
+            .iter()
+            .filter(|e| !is_cancelled(e))
+            .filter(|e| qualify(e).is_none_or(|m| m.self_response == Some(SelfResponse::Declined)))
+            .filter_map(|e| e.id.clone())
+            .collect(),
         next_sync_token: response.next_sync_token,
         needs_full_resync: false,
     }
@@ -309,15 +320,22 @@ pub struct ApplyOutcome {
     /// The account's known meetings after folding the result in.
     pub meetings: Vec<QualifyingMeeting>,
     pub cancelled_count: usize,
-    /// Deleting the cancelled events failed, so the token was deliberately not saved:
-    /// Google never re-reports a cancellation against a newer token.
+    /// Recording the result in the presence table failed, so the token was deliberately
+    /// not saved: Google never re-reports a cancellation against a newer token. (The
+    /// name predates presence tracking; shells already read it.)
     pub deletion_failed: bool,
     pub token_saved: bool,
+    /// This device's rows the result hid / brought back.
+    pub marked: usize,
+    pub unmarked: usize,
 }
 
-/// Phase 2: apply one `sync_events` result. Cancelled events are deleted from `items`
-/// directly (the generic upsert path has no notion of an item disappearing); the new
-/// token is saved only after that succeeds.
+/// Phase 2: apply one `sync_events` result. Rows are never deleted: the result is
+/// recorded as which meetings this account reports, and `memory` marks this device's
+/// own rows removed (or brings them back) so the normal items sync carries it to other
+/// devices. The new token is saved only after that succeeds. A complete baseline (no
+/// token before, one now) replaces the account's presence; anything else is a delta
+/// that touches only the events it names.
 pub fn apply(
     store: &Store,
     account_email: &str,
@@ -328,18 +346,46 @@ pub fn apply(
     let result = sync_result_from_json(result_json);
     if result.needs_full_resync {
         store.clear_calendar_sync_token(account_email)?;
-        return Ok(ApplyOutcome { needs_full_resync: true, meetings: existing.to_vec(), cancelled_count: 0, deletion_failed: false, token_saved: false });
+        return Ok(ApplyOutcome { needs_full_resync: true, meetings: existing.to_vec(), cancelled_count: 0, deletion_failed: false, token_saved: false, marked: 0, unmarked: 0 });
     }
     let meetings = apply_sync_result(existing, &result, now_unix_ms);
-    let deletion_failed = !result.cancelled_external_ids.is_empty()
-        && store.delete_calendar_event_items(&result.cancelled_external_ids).is_err();
+    // Decided before the token is saved below.
+    let was_baseline = store.get_calendar_sync_token(account_email)?.is_none();
+    let present: Vec<PresentEvent> = result
+        .active_meetings
+        .iter()
+        .filter(|m| m.self_response != Some(SelfResponse::Declined))
+        .map(|m| PresentEvent { external_id: calendar_external_id(&m.id, m.start_unix_ms), start_unix_ms: m.start_unix_ms })
+        .collect();
+    let write = if was_baseline && result.next_sync_token.is_some() {
+        store.calendar_presence_replace("google_calendar", account_email, None, &present, now_unix_ms)
+    } else {
+        let absent: Vec<String> = result.cancelled_external_ids.iter().chain(&result.dropped_event_ids).cloned().collect();
+        if present.is_empty() && absent.is_empty() {
+            Ok(MarkOutcome::default())
+        } else {
+            store.calendar_presence_update("google_calendar", account_email, &present, &absent, now_unix_ms)
+        }
+    };
+    let (deletion_failed, marks) = match write {
+        Ok(m) => (false, m),
+        Err(_) => (true, MarkOutcome::default()),
+    };
     let mut token_saved = false;
     if !deletion_failed {
         if let Some(token) = &result.next_sync_token {
             token_saved = store.set_calendar_sync_token(account_email, token).is_ok();
         }
     }
-    Ok(ApplyOutcome { needs_full_resync: false, meetings, cancelled_count: result.cancelled_external_ids.len(), deletion_failed, token_saved })
+    Ok(ApplyOutcome {
+        needs_full_resync: false,
+        meetings,
+        cancelled_count: result.cancelled_external_ids.len(),
+        deletion_failed,
+        token_saved,
+        marked: marks.marked,
+        unmarked: marks.unmarked,
+    })
 }
 
 /// The `items` calendar-event upsert input for a calendar-sourced meeting; `None` for
@@ -361,6 +407,12 @@ impl From<CalendarEventItemInput> for NewCalendarEventItem {
     }
 }
 
+/// The `items.external_id` of one occurrence: `"{event id}#{start secs}"`. Presence
+/// entries must use exactly this, so it lives in one place.
+pub fn calendar_external_id(event_id: &str, start_unix_ms: i64) -> String {
+    format!("{}#{}", event_id, start_unix_ms.div_euclid(1000))
+}
+
 pub fn calendar_event_item(meeting: &QualifyingMeeting, device_id: &str) -> Option<CalendarEventItemInput> {
     let source = match meeting.source {
         MeetingSource::Calendar => "apple_calendar",
@@ -370,7 +422,7 @@ pub fn calendar_event_item(meeting: &QualifyingMeeting, device_id: &str) -> Opti
     Some(CalendarEventItemInput {
         device_id: device_id.to_string(),
         source: source.to_string(),
-        external_id: format!("{}#{}", meeting.id, meeting.start_unix_ms.div_euclid(1000)),
+        external_id: calendar_external_id(&meeting.id, meeting.start_unix_ms),
         ts_unix_ms: meeting.start_unix_ms,
         title: meeting.title.clone(),
         actors: meeting.attendees.clone(),
@@ -573,7 +625,7 @@ mod tests {
     }
 
     fn sync(active: Vec<QualifyingMeeting>, cancelled: &[&str]) -> SyncResult {
-        SyncResult { active_meetings: active, cancelled_external_ids: cancelled.iter().map(|s| s.to_string()).collect(), next_sync_token: None, needs_full_resync: false }
+        SyncResult { active_meetings: active, cancelled_external_ids: cancelled.iter().map(|s| s.to_string()).collect(), dropped_event_ids: vec![], next_sync_token: None, needs_full_resync: false }
     }
 
     #[test]
@@ -651,8 +703,180 @@ mod tests {
 
     // ---- sync_request / apply against a real store ----
 
+    const START_MS: i64 = 4_102_480_800_000; // 2100-01-01T10:00:00Z
+
+    fn event_json(id: &str, extra: &str) -> String {
+        format!(
+            r#"{{"id": "{id}", "summary": "{id}", "start": {{"dateTime": "2100-01-01T10:00:00Z"}}, "end": {{"dateTime": "2100-01-01T11:00:00Z"}}, "hangoutLink": "https://meet.google.com/abc"{extra}}}"#
+        )
+    }
+
+    fn result_json(events: &[String], token: Option<&str>) -> String {
+        let token = token.map(|t| format!(r#", "nextSyncToken": "{t}""#)).unwrap_or_default();
+        format!(r#"{{"items": [{}]{token}}}"#, events.join(","))
+    }
+
+    /// A store whose own device is `dev-1`, holding one row per id (all at START_MS).
+    fn store_with_rows(ids: &[&str]) -> Store {
+        let store = Store::open_in_memory().unwrap();
+        store.set_own_device_id("dev-1");
+        let items: Vec<NewCalendarEventItem> = ids
+            .iter()
+            .map(|id| {
+                let mut m = mapping_meeting(MeetingSource::GoogleCalendar);
+                m.id = id.to_string();
+                m.start_unix_ms = START_MS;
+                calendar_event_item(&m, "dev-1").unwrap().into()
+            })
+            .collect();
+        store.upsert_calendar_event_items(&items).unwrap();
+        store
+    }
+
+    fn shown(store: &Store) -> Vec<String> {
+        store.upcoming_calendar_events(0, i64::MAX, 50).unwrap().into_iter().map(|r| r.external_id).collect()
+    }
+
+    fn xid(id: &str) -> String {
+        calendar_external_id(id, START_MS)
+    }
+
     #[test]
-    fn request_carries_the_stored_token_and_apply_advances_it_only_after_deletions_succeed() {
+    fn external_id_format_is_shared_with_the_item_mapping() {
+        let mut m = mapping_meeting(MeetingSource::GoogleCalendar);
+        m.id = "abc".into();
+        m.start_unix_ms = 1_234_567;
+        assert_eq!(calendar_external_id("abc", 1_234_567), "abc#1234");
+        assert_eq!(calendar_event_item(&m, "d").unwrap().external_id, "abc#1234");
+    }
+
+    #[test]
+    fn sync_result_reports_dropped_and_declined_events() {
+        let declined = event_json("dec", r#", "attendees": [{"email": "me@x.com", "self": true, "responseStatus": "declined"}]"#);
+        let unqualified = r#"{"id": "bare", "start": {"dateTime": "2100-01-01T10:00:00Z"}, "end": {"dateTime": "2100-01-01T11:00:00Z"}}"#.to_string();
+        let r = sync_result_from_json(&result_json(&[event_json("ok", ""), declined, unqualified, r#"{"id": "gone", "status": "cancelled"}"#.into()], Some("t")));
+        assert_eq!(r.cancelled_external_ids, ["gone"]);
+        let mut dropped = r.dropped_event_ids.clone();
+        dropped.sort();
+        assert_eq!(dropped, ["bare", "dec"]);
+    }
+
+    #[test]
+    fn apply_marks_cancelled_events_instead_of_deleting() {
+        let store = store_with_rows(&["evt-1", "evt-2"]);
+        let baseline = result_json(&[event_json("evt-1", ""), event_json("evt-2", "")], Some("tok-0"));
+        let out = apply(&store, "a@x.com", &baseline, &[], 0).unwrap();
+        assert!(!out.deletion_failed && out.token_saved);
+        assert_eq!(shown(&store), [xid("evt-1"), xid("evt-2")]);
+
+        let delta = result_json(&[r#"{"id": "evt-2", "status": "cancelled"}"#.into()], Some("tok-1"));
+        let out = apply(&store, "a@x.com", &delta, &[], 5).unwrap();
+        assert!(!out.deletion_failed && out.token_saved);
+        assert_eq!((out.marked, out.unmarked), (1, 0));
+        assert_eq!(shown(&store), [xid("evt-1")]);
+        // Bringing it back un-hides it.
+        let back = result_json(&[event_json("evt-2", "")], Some("tok-2"));
+        let out = apply(&store, "a@x.com", &back, &[], 6).unwrap();
+        assert_eq!((out.marked, out.unmarked), (0, 1));
+        assert_eq!(shown(&store).len(), 2);
+    }
+
+    #[test]
+    fn apply_hides_a_moved_meetings_old_slot() {
+        let store = store_with_rows(&["evt-1"]);
+        let baseline = result_json(&[event_json("evt-1", "")], Some("tok-0"));
+        apply(&store, "a@x.com", &baseline, &[], 0).unwrap();
+        // The meeting moves an hour later: the delta reports the same id at a new start,
+        // and this device has already stored a row for the new slot.
+        let t2 = START_MS + 3_600_000;
+        let moved = meeting("evt-1", "evt-1", t2, MeetingSource::GoogleCalendar);
+        store.upsert_calendar_event_items(&[calendar_event_item(&moved, "dev-1").unwrap().into()]).unwrap();
+        let moved_json = r#"{"id": "evt-1", "summary": "evt-1", "start": {"dateTime": "2100-01-01T11:00:00Z"}, "end": {"dateTime": "2100-01-01T12:00:00Z"}, "hangoutLink": "https://meet.google.com/abc"}"#;
+        let delta = result_json(&[moved_json.into()], Some("tok-1"));
+        let out = apply(&store, "a@x.com", &delta, &[], 5).unwrap();
+        assert!(!out.deletion_failed && out.token_saved);
+        assert_eq!((out.marked, out.unmarked), (1, 0));
+        let new_id = calendar_external_id("evt-1", t2);
+        assert_eq!(shown(&store), [new_id]);
+    }
+
+    #[test]
+    fn reconnect_after_forget_restores_meetings() {
+        let store = store_with_rows(&["evt-1", "evt-2"]);
+        let seed = result_json(&[event_json("evt-1", ""), event_json("evt-2", "")], Some("tok-0"));
+        apply(&store, "a@x.com", &seed, &[], 0).unwrap();
+        // Disconnect: the rows are hidden and the stored token goes with the account.
+        let out = store.forget_calendar_account("google_calendar", "a@x.com", 5).unwrap();
+        assert_eq!(out.marked, 2);
+        assert!(shown(&store).is_empty());
+        assert_eq!(store.get_calendar_sync_token("a@x.com").unwrap(), None);
+        // Reconnect: no token is sent, so the first sync is a baseline ...
+        assert_eq!(sync_request(&store, "a@x.com").unwrap().args_json, "{}");
+        // ... and its replace brings back everything still on the calendar.
+        let again = result_json(&[event_json("evt-1", ""), event_json("evt-2", "")], Some("tok-1"));
+        let out = apply(&store, "a@x.com", &again, &[], 6).unwrap();
+        assert_eq!((out.marked, out.unmarked), (0, 2));
+        assert_eq!(shown(&store), [xid("evt-1"), xid("evt-2")]);
+    }
+
+    #[test]
+    fn delta_after_restart_marks_only_reported_changes() {
+        // The app relaunched: token and presence are stored, but the in-memory list of
+        // known meetings is empty. The first call is a delta folded onto nothing.
+        let store = store_with_rows(&["evt-1", "evt-2", "evt-3"]);
+        let seed = result_json(&[event_json("evt-1", ""), event_json("evt-2", ""), event_json("evt-3", "")], Some("stored"));
+        apply(&store, "a@x.com", &seed, &[], 0).unwrap();
+        let delta = result_json(&[r#"{"id": "evt-3", "status": "cancelled"}"#.into(), event_json("evt-1", "")], Some("tok-1"));
+        let out = apply(&store, "a@x.com", &delta, &[], 5).unwrap();
+        assert_eq!((out.marked, out.unmarked), (1, 0));
+        assert_eq!(shown(&store), [xid("evt-1"), xid("evt-2")]);
+    }
+
+    #[test]
+    fn baseline_without_token_does_not_replace() {
+        let store = store_with_rows(&["evt-1", "evt-2"]);
+        let seed = result_json(&[event_json("evt-1", ""), event_json("evt-2", "")], Some("tok-0"));
+        apply(&store, "a@x.com", &seed, &[], 0).unwrap();
+        // Token lost; a response with no next token is not a complete baseline, so it
+        // must not make evt-2 absent just because it was not listed.
+        store.clear_calendar_sync_token("a@x.com").unwrap();
+        let partial = result_json(&[event_json("evt-1", "")], None);
+        let out = apply(&store, "a@x.com", &partial, &[], 5).unwrap();
+        assert_eq!((out.marked, out.unmarked), (0, 0));
+        assert_eq!(shown(&store).len(), 2);
+    }
+
+    #[test]
+    fn declined_or_unqualified_update_marks_row() {
+        let store = store_with_rows(&["evt-1", "evt-2"]);
+        let seed = result_json(&[event_json("evt-1", ""), event_json("evt-2", "")], Some("tok-0"));
+        apply(&store, "a@x.com", &seed, &[], 0).unwrap();
+        let declined = event_json("evt-1", r#", "attendees": [{"email": "me@x.com", "self": true, "responseStatus": "declined"}]"#);
+        let out = apply(&store, "a@x.com", &result_json(&[declined], Some("tok-1")), &[], 5).unwrap();
+        assert_eq!(out.marked, 1);
+        assert_eq!(shown(&store), [xid("evt-2")]);
+        // No longer a meeting (link and attendees removed).
+        let bare = r#"{"id": "evt-2", "start": {"dateTime": "2100-01-01T10:00:00Z"}, "end": {"dateTime": "2100-01-01T11:00:00Z"}}"#;
+        let out = apply(&store, "a@x.com", &result_json(&[bare.into()], Some("tok-2")), &[], 6).unwrap();
+        assert_eq!(out.marked, 1);
+        assert!(shown(&store).is_empty());
+    }
+
+    #[test]
+    fn baseline_replace_marks_meetings_gone_from_the_calendar() {
+        let store = store_with_rows(&["evt-1", "evt-2"]);
+        let seed = result_json(&[event_json("evt-1", ""), event_json("evt-2", "")], Some("tok-0"));
+        apply(&store, "a@x.com", &seed, &[], 0).unwrap();
+        store.clear_calendar_sync_token("a@x.com").unwrap();
+        // A fresh complete baseline lists only evt-1: evt-2 vanished while we were away.
+        let baseline = result_json(&[event_json("evt-1", "")], Some("tok-1"));
+        let out = apply(&store, "a@x.com", &baseline, &[], 5).unwrap();
+        assert_eq!((out.marked, out.unmarked), (1, 0));
+        assert_eq!(shown(&store), [xid("evt-1")]);
+    }
+
+    #[test]
+    fn request_carries_the_stored_token_and_apply_advances_it_only_after_the_presence_write_succeeds() {
         let store = Store::open_in_memory().unwrap();
         assert_eq!(sync_request(&store, "a@x.com").unwrap(), ToolCall { tool: "sync_events".into(), args_json: "{}".into() });
         let json = r#"{"items": [

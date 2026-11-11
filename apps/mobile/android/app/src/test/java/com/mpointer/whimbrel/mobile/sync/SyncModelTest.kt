@@ -6,6 +6,7 @@ import com.mpointer.whimbrel.mobile.read.PhoneCalendarEvent
 import com.mpointer.whimbrel.mobile.read.PhoneMeeting
 import com.mpointer.whimbrel.mobile.read.PhoneMeetingPrep
 import com.mpointer.whimbrel.mobile.read.PhoneRoutineRun
+import com.mpointer.whimbrel.mobile.read.PhoneTopicSnapshot
 import com.mpointer.whimbrel.mobile.read.PhoneTranscriptPage
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
@@ -75,6 +76,7 @@ private class FakeStore : MeetingSyncStore {
     override fun routineRuns(limit: Int): List<PhoneRoutineRun> = emptyList()
     override fun prep(eventId: String): PhoneMeetingPrep? = null
     override fun upcomingEvents(fromUnixMs: Long, untilUnixMs: Long, limit: Int): List<PhoneCalendarEvent> = emptyList()
+    override fun topicSnapshots() = emptyList<PhoneTopicSnapshot>()
 }
 
 private class FakeCredentials : SyncCredentialSource {

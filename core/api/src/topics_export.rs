@@ -1900,6 +1900,22 @@ mod tests {
     }
 
     #[test]
+    fn topic_export_next_meeting_skips_removed() {
+        let e = env();
+        living(&e);
+        run(&e);
+        assert!(read(&e, "Topics/Pricing.md").contains("Pricing review"));
+        e.c.execute(
+            "UPDATE items SET flags = '{\"removed\":true,\"changed_at\":9}' WHERE external_id = 'ev1'",
+            [],
+        )
+        .unwrap();
+        run(&e);
+        let t = read(&e, "Topics/Pricing.md");
+        assert!(!t.contains("Pricing review"), "{t}");
+    }
+
+    #[test]
     fn meeting_files_are_written_and_linked() {
         let e = env();
         let mid = living(&e);

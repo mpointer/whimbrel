@@ -150,4 +150,23 @@ class SyncWireTest {
         assertEquals(GroupKeyDecision.WAIT_FOR_HANDOFF, GroupKeyDecision.parse("garbage"))
         assertEquals(GroupKeyDecision.WAIT_FOR_HANDOFF, GroupKeyDecision.parse(null))
     }
+
+    @Test
+    fun accountPlanParsesCloudAndFree() {
+        val (fake, c) = client("""{"plan":"cloud","until":1790000000000,"interval":"year","renews":true,"billing":true}""")
+        val cloud = runBlocking { c.accountPlan("t", "pk") }
+        assertEquals(AccountPlan("cloud", 1790000000000L, "year", true), cloud)
+        assertTrue(cloud.isCloud)
+        assertEquals(listOf("https://w.example", "t", "pk"), fake.planAccountArgs)
+        fake.reply = """{"plan":"free","until":null,"interval":null,"billing":false}"""
+        val free = runBlocking { c.accountPlan("t", "pk") }
+        assertEquals(AccountPlan("free"), free)
+        assertFalse(free.isCloud)
+        fake.reply = """{"error":{"kind":"network"}}"""
+        try {
+            runBlocking { c.accountPlan("t", "pk") }
+            fail("expected Network")
+        } catch (_: SyncApiError.Network) {
+        }
+    }
 }

@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
             WhimbrelTheme(app.themes) {
                 val status by enrollment.status.collectAsState()
                 if (status == EnrollmentStatus.Approved) {
-                    RootScreen(app.sync, enrollment, app.themes, app.deviceName(), start)
+                    RootScreen(app.sync, enrollment, app.reminders, app.themes, app.deviceName(), start)
                 } else {
                     EnrollmentScreen(enrollment)
                 }
@@ -75,6 +75,8 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         app.activity = this
         if (app.coreSupported) {
+            // The reminders' permission prompt waits for this; Cloud turning on while away is asked now.
+            app.reminders.isForeground = true
             // Sync runs while the app is open and approved; a revoke or sign-out stops it. While the phone is behind,
             // the catch-up service keeps it running after the app leaves the screen (#572).
             syncGate = lifecycleScope.launch {
@@ -82,7 +84,7 @@ class MainActivity : ComponentActivity() {
                     .collect { (approved, catchingUp) ->
                         if (approved) app.sync.start() else app.sync.stop()
                         if (CatchUp.shouldStart(approved, catchingUp)) {
-                            askForNotificationsOnce()
+                            requestNotificationPermission()
                             app.startCatchUp()
                         }
                     }
@@ -90,17 +92,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** The catch-up notification needs it on Android 13+; denied, the service still runs (the system lists it instead). */
-    private fun askForNotificationsOnce() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || app.askedForNotifications) return
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+    /**
+     * The catch-up notification and the reminders need it on Android 13+; denied, the catch-up service still runs
+     * (the system lists it instead). The prompt shows at most once per process, whichever feature asks first.
+     * True when the question is settled: the prompt was launched now, the permission is already granted, or it is not needed.
+     * False when the prompt was suppressed because one already showed this process; reminders then try again next foreground.
+     */
+    fun requestNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return true
+        // Already prompted this process (by whichever feature asked first): suppressed, so the question is not settled.
+        if (app.askedForNotifications) return false
         app.askedForNotifications = true
         requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+        return true
     }
 
     override fun onStop() {
         syncGate?.cancel()
         syncGate = null
+        if (app.coreSupported) app.reminders.isForeground = false
         if (app.activity === this) app.activity = null
         if (app.coreSupported && !app.catchUpRunning) app.sync.stop()
         super.onStop()

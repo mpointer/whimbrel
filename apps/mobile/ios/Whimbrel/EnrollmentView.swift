@@ -6,6 +6,8 @@ import SwiftUI
 struct EnrollmentView: View {
     @ObservedObject var model: EnrollmentModel
     @ObservedObject var sync: SyncModel
+    let coordinator: ReminderCoordinator
+    let router: ReminderRouter
     @ObservedObject private var themes = ThemeStore.shared
     @Environment(\.scenePhase) private var scenePhase
 
@@ -14,7 +16,7 @@ struct EnrollmentView: View {
             if model.status == .approved {
                 // Not `.id(themes.revision)`: that would reset the tabs, open meeting and models
                 // on a theme change. Each screen re-renders its own content (`themed()`).
-                RootView(sync: sync, enrollment: model)
+                RootView(sync: sync, enrollment: model, router: router)
             } else {
                 VStack(spacing: 20) {
                     Text("Whimbrel").font(.largeTitle.bold()).foregroundStyle(Color.theme(.textPrimary))
@@ -28,6 +30,11 @@ struct EnrollmentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.theme(.backgroundPage))
         .task { await model.resume() }
+        .task(id: sync.readRevision) {
+            // Each sync: the plan check (throttled) and a fresh set of pending reminders.
+            await coordinator.refreshPlanIfDue(force: false)
+            await coordinator.reschedule()
+        }
         .onAppear(perform: updateSync)
         .onChange(of: model.status) { updateSync() }
         .onChange(of: scenePhase) { _, phase in

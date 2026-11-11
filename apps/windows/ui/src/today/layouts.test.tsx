@@ -17,9 +17,11 @@ const event = (id: string, minutes: number, over: Partial<ScheduleEvent> = {}): 
   endUnixMs: NOW + (minutes + 30) * MIN,
   attendees: ["ann@acme.test"],
   recordedMeetingId: null,
+  hasSummary: false,
+  actionItemCount: 0,
   ...over,
 });
-const meeting = (id: number, minutes: number, title: string): MeetingRow => ({ device: dev, hasSummary: true, id, status: "done", title, trigger: "calendar", tsUnixMs: NOW + minutes * MIN });
+const meeting = (id: number, minutes: number, title: string): MeetingRow => ({ device: dev, hasSummary: true, attendeeCount: 0, actionItemCount: 0, id, status: "done", title, trigger: "calendar", tsUnixMs: NOW + minutes * MIN });
 
 const rich: TodayModel = {
   now: NOW,
@@ -43,7 +45,7 @@ function props(model: TodayModel, over: Partial<TodayLayoutProps> = {}): TodayLa
     skinId: "whimbrel",
     caps: "none",
     composer: <div>COMPOSER</div>,
-    actions: { start: () => {}, openMeeting: () => {}, retryRecap: () => {}, toggleBrief: () => {} },
+    actions: { start: () => {}, openMeeting: () => {}, retryRecap: () => {}, toggleBrief: () => {}, showPrepBrief: () => {}, openTopic: () => {} },
     starting: null,
     brief: { open: false, card: <div>BRIEF</div> },
     stripes: false,

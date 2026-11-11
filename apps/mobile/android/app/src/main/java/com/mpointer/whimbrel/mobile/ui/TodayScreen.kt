@@ -153,7 +153,7 @@ fun TodayScreen(
                             Muted(stringResource(R.string.update_available_detail))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 TextButton(onClick = {
-                                    runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(update.pageUrl))) }
+                                    runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(update.apkUrl))) }
                                 }) { Text(stringResource(R.string.update_download)) }
                                 TextButton(onClick = onDismissUpdate) { Text(stringResource(R.string.update_not_now)) }
                             }

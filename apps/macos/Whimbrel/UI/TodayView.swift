@@ -38,6 +38,7 @@ struct TodayView: View {
     @State private var prepByKey: [String: CoreMeetingPrep] = [:]
     @State private var topicsByEvent: [String: TopicRef] = [:]
     @State private var topicsByMeeting: [Int64: TopicRef] = [:]
+    @State private var prepKeyByMeetingId: [Int64: String] = [:]
 
     /// Everything Today shows, read from this view's state and `AppState` at render time.
     private var content: TodayContent {
@@ -53,7 +54,7 @@ struct TodayView: View {
             briefRecap: briefRecap, digest: digest, digestError: digestError, isGeneratingDigest: isGeneratingDigest,
             deviceId: appState.deviceId, deviceRows: rows, deviceLabels: labels, followups: followups,
             topicsByEvent: topicsByEvent, topicsByMeeting: topicsByMeeting, upcomingWeek: appState.upcomingWeekMeetings,
-            prepByKey: prepByKey
+            prepByKey: prepByKey, prepKeyByMeetingId: prepKeyByMeetingId
         )
     }
 
@@ -74,7 +75,9 @@ struct TodayView: View {
                 }
             },
             startNote: { appState.startManualMeeting() },
-            completeFollowup: { id in completeFollowup(id) }
+            completeFollowup: { id in completeFollowup(id) },
+            showPrepBrief: { appState.showPrepBrief(key: $0) },
+            openTopic: { appState.openTopic($0) }
         )
     }
 
@@ -201,6 +204,10 @@ struct TodayView: View {
                 meetings.compactMap { m in store.topicForMeeting(meetingId: m.id).map { (m.id, $0) } },
                 uniquingKeysWith: { first, _ in first }
             )
+            var meetingPreps: [Int64: String] = [:]
+            for m in meetings {
+                if let prep = store.meetingPrep(meetingId: m.id), prep.brief != nil { meetingPreps[m.id] = MeetingsListView.prepKey(for: prep) }
+            }
             let threads = store.threadsNeedingAttention(limit: 5) ?? []
             let pending = store.pendingApprovals() ?? []
             let open = store.openFollowups()
@@ -219,6 +226,7 @@ struct TodayView: View {
                 recentMeetings = meetings
                 topicsByEvent = eventTopics
                 topicsByMeeting = meetingTopics
+                prepKeyByMeetingId = meetingPreps
                 // A Today built mid-meeting is live from its first render, so `liveMeetingId` never changes
                 // and the draft is loaded here. Here, not on appear: the replaced pane's `onDisappear` flush
                 // is already queued on `accessQueue` ahead of this read, so the draft holds its last notes.

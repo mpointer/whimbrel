@@ -373,7 +373,7 @@ struct FieldTodayLayout: TodayArchetypeView {
                 SkinText(event.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
                 if let topic = event.topic { TopicChip(topic: topic) }
                 if !event.attendees.isEmpty { SkinText(event.attendees, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
-                if case let .ready(prep) = event.prep { PrepReadyChip(prepKey: prep.eventId) }
+                if case let .ready(prep) = event.prep { TodayPrepChips(prep: prep, actions: actions) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if event.showsStart {
@@ -390,7 +390,7 @@ struct FieldTodayLayout: TodayArchetypeView {
                 SkinText(meeting.title, lines: 2).foregroundStyle(Color.whimbrelTextPrimary)
                 if let topic = meeting.topic { TopicChip(topic: topic) }
                 if !meeting.invited.isEmpty { SkinText(meeting.invited, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
-                if let prep = meeting.prep { PrepReadyChip(prepKey: prep.eventId) }
+                if let prep = meeting.prep { TodayPrepChips(prep: prep, actions: actions) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

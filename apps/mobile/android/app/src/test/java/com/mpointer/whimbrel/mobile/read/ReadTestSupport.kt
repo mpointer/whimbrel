@@ -28,6 +28,9 @@ class ScriptedStore : MeetingSyncStore {
     override fun upcomingEvents(fromUnixMs: Long, untilUnixMs: Long, limit: Int) =
         events.filter { it.startUnixMs in fromUnixMs until untilUnixMs }.sortedBy { it.startUnixMs }.take(limit)
 
+    var topics: List<PhoneTopicSnapshot> = emptyList()
+    override fun topicSnapshots() = topics
+
     override fun pullOnly(c: SyncCredentials, captureWindowDays: Int) = true
     override fun groupedMeetingCount(): Int? = meetings.size
     override fun lastSyncError(): String? = null

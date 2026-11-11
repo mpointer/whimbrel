@@ -67,6 +67,8 @@ describe("date and time labels", () => {
       status: "summarized",
       trigger: "manual",
       hasSummary: true,
+      attendeeCount: 0,
+      actionItemCount: 0,
       device,
     };
     expect(rowWhen(meeting, now, en)).toBe("Thu, Sep 10 · 2:05–2:50 PM (45 min)");

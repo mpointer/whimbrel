@@ -74,6 +74,7 @@ cd apps/macos
 # or sync silently no-ops at runtime ("Sync isn't configured in this build")
 # despite a totally successful, notarized build. Fail loudly here instead of
 # shipping a broken binary a second time.
+../../scripts/release-secrets.sh macos
 if [ ! -f Secrets.xcconfig ]; then
     echo "error: Secrets.xcconfig not found in $(pwd)." >&2
     echo "  Gitignored -- copy it from another worktree/checkout that has it, or see Secrets.xcconfig.example." >&2

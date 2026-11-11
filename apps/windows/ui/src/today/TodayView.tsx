@@ -9,7 +9,12 @@ import { Workspace } from "../meetings/Workspace";
 import { BriefRecapBody } from "./BriefRecapBody";
 import { RecapBody } from "./DigestView";
 import { NextMeetingCard } from "./NextMeetingCard";
-import { ScheduleCard } from "./ScheduleCard";
+import { PrepBriefPanel } from "./PrepBrief";
+import { TodayTimeline } from "./TodayTimeline";
+import type { MeetingCardTarget } from "../meetings/meetingCardModel";
+import { openTopic, useTopicLookup } from "../topics/TopicChip";
+import { useMeetingChips } from "../meetings/useMeetingChips";
+import type { TopicLookup } from "../generated/types";
 import { UpcomingCard, useUpcoming } from "./UpcomingCard";
 import { TodayComposer } from "./TodayComposer";
 import { SkinImage, type TodayActions } from "./archetypes/parts";
@@ -40,6 +45,8 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
   const voice = localizedVoice(skin.skin, lang);
   // The next meeting's full brief, opened from its schedule row.
   const [briefOpen, setBriefOpen] = useState(false);
+  // Any other brief, opened from a card's Prep chip (or an upcoming card), by its key.
+  const [prepKey, setPrepKey] = useState<string | null>(null);
   /// Which meeting Today shows: the shell picks it (recording, else today's next, else latest).
   const [relevantMeeting, setRelevantMeeting] = useState<number | null>(null);
   // A recap holds the store for a model call, so never two at once, and at most one
@@ -83,6 +90,14 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
 
   const sched = useSchedule(loadOverview);
   const upcoming = useUpcoming();
+  // The cards' chips: a topic per schedule event (a recorded one by its meeting, else by the event), and each
+  // held meeting's Prep key and topic from the lookup the Meetings list uses. Both run only when the rows change.
+  const eventTopics = useTopicLookup(
+    (sched.schedule?.events ?? []).map((e): TopicLookup =>
+      e.recordedMeetingId != null ? { kind: "meeting", id: e.recordedMeetingId } : { kind: "event", id: e.eventId, title: e.title },
+    ),
+  );
+  const heldChips = useMeetingChips([...(sched.schedule?.earlierToday ?? []), ...earlier]);
 
   useEffect(() => {
     loadOverview();
@@ -111,6 +126,12 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
 
   const heading = greetingFor(profileName, new Date(), voice, locale);
   const openMeeting = (id: number) => setSelected({ kind: "meeting", id });
+  const openTarget = (target: MeetingCardTarget) => {
+    if (target.kind === "meeting") openMeeting(target.id);
+    else if (target.kind === "brief") setPrepKey(target.key);
+    else if (target.kind === "topic") openTopic(target.id);
+  };
+  const prepPanel = prepKey ? <PrepBriefPanel prepKey={prepKey} onClose={() => setPrepKey(null)} onOpenMeeting={openMeeting} /> : null;
   const composer = <TodayComposer onAsk={onAsk} onOpenSettings={onOpenSettings} placeholder={voiceText(voice, "askPlaceholder")} />;
   const card = <NextMeetingCard onOpenMeeting={openMeeting} />;
 
@@ -142,12 +163,15 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
       recap: recapModel(overview, recap, writing, recapError),
       devices: overview.devices,
       upcoming,
+      chips: { eventTopics, held: heldChips },
     };
     const actions: TodayActions = {
       start: sched.start,
       openMeeting,
       retryRecap: () => generate(true),
       toggleBrief: () => setBriefOpen((o) => !o),
+      showPrepBrief: setPrepKey,
+      openTopic,
     };
     return (
       <div className="today stack">
@@ -168,6 +192,7 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
           heading={heading}
         />
         {sched.error && <p role="alert">{sched.error}</p>}
+        {prepPanel}
         {workspace}
       </div>
     );
@@ -185,15 +210,19 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
 
       {composer}
 
-      <ScheduleCard
+      <TodayTimeline
         state={sched}
         title={voiceText(voice, "upcomingHeader")}
         briefOpen={briefOpen}
+        brief={card}
         onToggleBrief={() => setBriefOpen((o) => !o)}
         onOpenMeeting={openMeeting}
+        onOpen={openTarget}
+        eventTopics={eventTopics}
+        heldChips={heldChips}
       />
 
-      {briefOpen && card}
+      {prepPanel}
 
       <UpcomingCard view={upcoming} />
 

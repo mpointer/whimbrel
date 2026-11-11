@@ -25,6 +25,7 @@ interface CoreNative {
     fun syncWorkerSetDeviceName(baseUrl: String, idToken: String, devicePublicKey: String, name: String): String?
     fun syncWorkerSwapDevice(baseUrl: String, idToken: String, devicePublicKey: String, platform: String?, replaceDeviceId: String): String?
     fun syncWorkerJoinWaitlist(baseUrl: String, idToken: String, devicePublicKey: String, wantsJson: String, platform: String?): String?
+    fun syncWorkerAccountPlan(baseUrl: String, idToken: String, devicePublicKey: String): String?
     fun syncWorkerErrorIsPermanent(errorJson: String): Boolean
     fun syncWorkerErrorCode(errorJson: String): String?
     fun oauthJwtClaims(jwt: String): String?
@@ -48,4 +49,5 @@ interface CoreNative {
     fun routinesRecentRuns(handle: Long, limit: Long): String?
     fun meetingPrepGet(handle: Long, eventId: String): String?
     fun memoryUpcomingCalendarEvents(handle: Long, fromUnixMs: Long, untilUnixMs: Long, limit: Long): String?
+    fun topicSnapshotsJson(handle: Long): String?
 }

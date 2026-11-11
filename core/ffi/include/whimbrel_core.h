@@ -1516,14 +1516,17 @@ char *whimbrel_routines_settle_write_action(StoreHandle *handle, int64_t run_id,
  * "..."} (args carry the account's stored sync token, or are "{}" for a baseline). */
 char *whimbrel_connector_calendar_request(StoreHandle *handle, const char *account_email);
 
-/* Applies one sync_events result for account_email: cancelled events are deleted
- * from items, the new sync token is saved only if that deletion succeeded, and the
+/* Applies one sync_events result for account_email: the result is recorded in the
+ * device-local calendar presence table and this device's own rows that no account
+ * reports any more are marked removed (nothing is deleted; reappearing meetings are
+ * unmarked). The new sync token is saved only if that write succeeded, and the
  * account's known meetings (existing_meetings_json, an array of QualifyingMeeting) are
  * folded with the incremental result (cancelled removed, active replaced/added, ended
  * pruned against now_unix_ms). A needsFullResync response clears the stored token and
  * returns the existing list unchanged with "needs_full_resync": true, so the shell
  * re-requests once. Returns JSON {"needs_full_resync": bool, "meetings": [...],
- * "cancelled_count": n, "deletion_failed": bool, "token_saved": bool}; NULL on a null
+ * "cancelled_count": n, "deletion_failed": bool (the presence write failed), "token_saved":
+ * bool, "marked": n, "unmarked": n}; NULL on a null
  * handle/pointer, malformed existing_meetings_json, or a DB error. A malformed result
  * decodes as an empty, non-resync result (a background poll never crashes). */
 char *whimbrel_connector_calendar_apply(StoreHandle *handle, const char *account_email, const char *result_json, const char *existing_meetings_json, int64_t now_unix_ms);
@@ -1553,6 +1556,18 @@ char *whimbrel_calendar_event_item(const char *meeting_json, const char *device_
 /* First recognized conferencing link in text: {"provider": "zoom"|"googleMeet"|
  * "teams"|"webex", "url": "..."} or "null". NULL on a null pointer. */
 char *whimbrel_meeting_link_detect(const char *text);
+
+/* EventKit's full list of meetings for (source, account) over [window_start,
+ * window_end) unix ms. present_json is [{"external_id", "start_unix_ms"}]. Entries in
+ * the window that are not listed become absent; this device's own future rows that no
+ * account reports are marked removed, and ones reported again are unmarked. Returns
+ * {"marked": n, "unmarked": n}; NULL on a null handle/pointer, malformed JSON or a DB
+ * error. */
+char *whimbrel_calendar_presence_replace(StoreHandle *handle, const char *source, const char *account, int64_t window_start, int64_t window_end, const char *present_json, int64_t now_unix_ms);
+
+/* The account was disconnected: everything it reported is now absent. Same return as
+ * whimbrel_calendar_presence_replace. */
+char *whimbrel_calendar_forget_account(StoreHandle *handle, const char *source, const char *account, int64_t now_unix_ms);
 /* ---- Connector account registry (core/api::connectors::accounts, M3.0 Task 9) ----
  * Which accounts are connected per connector ("calendar", "gmail", "outlook365") and
  * which is the default, in the connector_account table. Device-local, outside settings
