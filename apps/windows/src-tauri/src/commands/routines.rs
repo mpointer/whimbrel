@@ -161,6 +161,26 @@ pub fn set_model_pref(store: &Store, id: i64, pref: &str) -> Result<(), CommandE
     store.set_routine_model_pref(id, pref).map_err(store_error)
 }
 
+/// A run's summary in the user's language: the Mac's `RoutineRunText.summary`. Core writes summaries
+/// in English. Meeting Prep's two ("Prep ready for <title>", "Prep failed for <title>: <reason>") are
+/// rebuilt from the title in the run's output JSON. The reason stays as core wrote it. Any other
+/// summary is shown as written.
+pub fn display_summary(summary: &str, output_json: &str) -> String {
+    display_summary_with(summary, output_json, crate::l10n::tr)
+}
+
+fn display_summary_with(summary: &str, output_json: &str, tr: impl Fn(&str, &[(&str, &str)]) -> String) -> String {
+    let title = serde_json::from_str::<serde_json::Value>(output_json).ok().and_then(|v| v["title"].as_str().map(str::to_string));
+    let Some(title) = title else { return summary.to_string() };
+    if summary == format!("Prep ready for {title}") {
+        return tr("Prep ready for {title}", &[("title", &title)]);
+    }
+    if let Some(reason) = summary.strip_prefix(&format!("Prep failed for {title}: ")) {
+        return tr("Prep failed for {title}: {reason}", &[("title", &title), ("reason", reason)]);
+    }
+    summary.to_string()
+}
+
 fn run_view(run: &RoutineRun, name: &str) -> RunView {
     RunView {
         id: run.id,
@@ -168,7 +188,7 @@ fn run_view(run: &RoutineRun, name: &str) -> RunView {
         routine_name: name.to_string(),
         ran_at_unix_ms: run.ran_at_unix_ms,
         outcome: (&run.status).into(),
-        summary: run.output_summary.clone(),
+        summary: display_summary(&run.output_summary, &run.output_json),
         origin_device_id: None,
         origin_label: None,
     }
@@ -264,7 +284,7 @@ pub fn runs(store: &Store, limit: usize, labeler: &DeviceLabeler) -> Result<Vec<
                 routine_name: r.routine_name,
                 ran_at_unix_ms: r.ran_at_unix_ms,
                 outcome: (&r.status).into(),
-                summary: r.output_summary,
+                summary: display_summary(&r.output_summary, &r.output_json),
                 origin_label: other.as_deref().map(|id| labeler.label(id)),
                 origin_device_id: other,
             }
@@ -518,6 +538,24 @@ pub async fn routines_set_host(state: State<'_, AppState>, id: String) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn meeting_prep_summaries_are_rebuilt_in_the_users_language() {
+        // A stand-in catalog: marks the key and fills its placeholders.
+        let tr = |key: &str, params: &[(&str, &str)]| {
+            params.iter().fold(format!("[{key}]"), |s, (k, v)| s.replace(&format!("{{{k}}}"), v))
+        };
+        let json = r#"{"event_id":"e1","title":"Board sync","start_unix_ms":1}"#;
+        assert_eq!(display_summary_with("Prep ready for Board sync", json, tr), "[Prep ready for Board sync]");
+        assert_eq!(
+            display_summary_with("Prep failed for Board sync: no model was available", json, tr),
+            "[Prep failed for Board sync: no model was available]"
+        );
+        // Anything else, or no title to rebuild from, is shown as written.
+        assert_eq!(display_summary_with("Focus 9-11", json, tr), "Focus 9-11");
+        assert_eq!(display_summary_with("Prep ready for Board sync", "{}", tr), "Prep ready for Board sync");
+        assert_eq!(display_summary_with("Prep ready for Other", json, tr), "Prep ready for Other");
+    }
     use crate::settings::{ApiKeys, Instructions, RoutingSettings};
     use chrono::{Local, TimeZone};
     use memory::{NewPendingRoutineRun, NewRoutineRun};

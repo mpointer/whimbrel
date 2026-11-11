@@ -150,7 +150,7 @@ struct TodayLeftovers: View {
                 block(String(localized: "Up next")) {
                     HStack {
                         row(next.timeText, next.title)
-                        if case let .ready(prep) = next.prep { PrepReadyChip(prepKey: prep.eventId) }
+                        if case let .ready(prep) = next.prep { TodayPrepChips(prep: prep, actions: actions) }
                         if next.showsStart {
                             Button("Start") { actions.startMeeting(next.event) }.buttonStyle(.whimbrelPrimary)
                         }
@@ -165,7 +165,7 @@ struct TodayLeftovers: View {
                     case let .event(event):
                         HStack {
                             row(event.timeText, event.title)
-                            if case let .ready(prep) = event.prep { PrepReadyChip(prepKey: prep.eventId) }
+                            if case let .ready(prep) = event.prep { TodayPrepChips(prep: prep, actions: actions) }
                             if event.showsStart {
                                 Button("Start") { actions.startMeeting(event.event) }.buttonStyle(.whimbrelPrimary)
                             }
@@ -183,7 +183,7 @@ struct TodayLeftovers: View {
                     VStack(alignment: .leading, spacing: 2) {
                         row(meeting.timeText, meeting.title)
                         if let topic = meeting.topic { TopicChip(topic: topic) }
-                        if let prep = meeting.prep { PrepReadyChip(prepKey: prep.eventId) }
+                        if let prep = meeting.prep { TodayPrepChips(prep: prep, actions: actions) }
                         if !meeting.invited.isEmpty {
                             Text(meeting.invited).font(.whimbrelBody(.subheadline)).foregroundStyle(Color.whimbrelTextSecondary)
                         }

@@ -12,6 +12,7 @@ use super::entities::{
     extract_phrases, org_key_from_domain, parse_addresses, person_key, EntityKind,
 };
 use super::schema::PRUNE_DIRTY_KEY;
+use crate::calendar_flags::{calendar_not_removed, CALENDAR_NOT_REMOVED};
 use crate::{embedding_to_json, Store, EMBEDDING_DIM};
 
 const TEXT_CHARS: usize = 2000;
@@ -442,6 +443,17 @@ fn kv_set(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
 pub fn run_topic_index_job(store: &Store, batch: usize) -> rusqlite::Result<bool> {
     let tx = store.conn.unchecked_transaction()?;
     chrome::rebuild_chrome_if_stale(&tx, now_ms())?;
+    // A meeting marked removed after it was indexed (the mark can arrive from another
+    // device once the meeting has started) stops counting: dropping the source takes its
+    // membership, mentions and series row with it. Marks never touch `topic_dirty`.
+    tx.execute(
+        &format!(
+            "DELETE FROM topic_source WHERE kind = 'calendar_event' AND ref_id IN \
+             (SELECT id FROM items WHERE kind = 'calendar_event' AND flags IS NOT NULL \
+              AND NOT ({CALENDAR_NOT_REMOVED}))"
+        ),
+        [],
+    )?;
     let mut cx = Ctx::new(&tx);
     cx.own = store.own_device_id();
     let mut more = false;
@@ -503,7 +515,7 @@ fn index_items(cx: &mut Ctx, kind: &str, batch: usize) -> rusqlite::Result<bool>
         ext: Option<String>,
     }
     let rows: Vec<Row> = {
-        let mut stmt = cx.conn.prepare(
+        let mut stmt = cx.conn.prepare(&format!(
             "SELECT i.id, i.ts_unix_ms, i.actors, i.title, i.body_text, \
                COALESCE(json_extract(i.refs, '$.list_unsubscribe') = 1, 0) OR EXISTS ( \
                  SELECT 1 FROM threads t JOIN thread_priority p ON p.thread_id = t.id \
@@ -515,8 +527,10 @@ fn index_items(cx: &mut Ctx, kind: &str, batch: usize) -> rusqlite::Result<bool>
                  WHERE t.source = 'gmail' AND t.external_thread_id = json_extract(i.refs, '$.gmail_thread_id') \
                    AND t.account_email = json_extract(i.refs, '$.account_email'))), \
                i.source, i.external_id \
-             FROM items i WHERE i.kind = ?1 AND i.id > ?2 ORDER BY i.id LIMIT ?3",
-        )?;
+             FROM items i WHERE i.kind = ?1 AND i.id > ?2 \
+               AND (i.kind != 'calendar_event' OR {}) ORDER BY i.id LIMIT ?3",
+            calendar_not_removed("i")
+        ))?;
         let rows = stmt
             .query_map(params![kind, hw, batch as i64], |r| {
                 Ok(Row {
@@ -975,6 +989,81 @@ mod tests {
         // Deleting the source drops the series row.
         s.conn.execute("DELETE FROM topic_source", []).unwrap();
         assert_eq!(n(&s, "SELECT COUNT(*) FROM topic_series"), 0);
+    }
+
+    fn mark_removed(s: &Store, id: i64) {
+        s.conn
+            .execute(
+                "UPDATE items SET flags = '{\"removed\":true,\"changed_at\":9}' WHERE id = ?1",
+                [id],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn topic_index_skips_removed_calendar_rows() {
+        let (_d, s) = store();
+        let gone = occurrence(&s, "gone_20261101T150000Z#1", 1000);
+        occurrence(&s, "kept_20261101T150000Z#2", 2000);
+        mark_removed(&s, gone);
+        run_topic_index_job(&s, 200).unwrap();
+        assert_eq!(
+            n(&s, "SELECT COUNT(*) FROM topic_source WHERE kind = 'calendar_event'"),
+            1
+        );
+        assert_eq!(
+            n(&s, "SELECT COUNT(*) FROM topic_source WHERE kind = 'calendar_event' AND ref_id = (SELECT id FROM items WHERE external_id = 'kept_20261101T150000Z#2')"),
+            1
+        );
+    }
+
+    #[test]
+    fn topic_index_drops_a_source_whose_row_was_marked_after_indexing() {
+        let (_d, s) = store();
+        let id = occurrence(&s, "late_20261101T150000Z#1", 1000);
+        run_topic_index_job(&s, 200).unwrap();
+        assert_eq!(n(&s, "SELECT COUNT(*) FROM topic_source WHERE kind = 'calendar_event'"), 1);
+        assert_eq!(n(&s, "SELECT COUNT(*) FROM topic_series"), 1);
+        mark_removed(&s, id);
+        run_topic_index_job(&s, 200).unwrap();
+        assert_eq!(n(&s, "SELECT COUNT(*) FROM topic_source WHERE kind = 'calendar_event'"), 0);
+        assert_eq!(n(&s, "SELECT COUNT(*) FROM topic_series"), 0);
+    }
+
+    #[test]
+    fn unmarked_meeting_returns_to_its_topic() {
+        use crate::calendar_presence::PresentEvent;
+        let (_d, s) = store();
+        s.set_own_device_id("d");
+        let start = 5_000_000;
+        let pe = |e: &str, t: i64| PresentEvent { external_id: e.into(), start_unix_ms: t };
+        let id = occurrence(&s, "back_20261101T150000Z#1", start);
+        s.calendar_presence_replace("google_calendar", "x@g", None, &[pe("back_20261101T150000Z#1", start)], 1)
+            .unwrap();
+        run_topic_index_job(&s, 200).unwrap();
+        let sources = |s: &Store| n(s, "SELECT COUNT(*) FROM topic_source WHERE kind = 'calendar_event'");
+        assert_eq!(sources(&s), 1);
+        // Cancelled: the source goes.
+        s.calendar_presence_update("google_calendar", "x@g", &[], &["back_20261101T150000Z#1".into()], 2)
+            .unwrap();
+        run_topic_index_job(&s, 200).unwrap();
+        assert_eq!(sources(&s), 0);
+        // A later row moves the cursor past the removed one.
+        let later = occurrence(&s, "later_20261102T150000Z#1", start + 1000);
+        run_topic_index_job(&s, 200).unwrap();
+        assert!(hw_get(&s.conn, "calendar_event") >= later);
+        assert_eq!(sources(&s), 1);
+        // Un-cancelled: it is indexed again, once.
+        let out = s
+            .calendar_presence_update("google_calendar", "x@g", &[pe("back_20261101T150000Z#1", start)], &[], 3)
+            .unwrap();
+        assert_eq!(out.unmarked, 1);
+        run_topic_index_job(&s, 200).unwrap();
+        run_topic_index_job(&s, 200).unwrap();
+        assert_eq!(sources(&s), 2);
+        assert_eq!(n(&s, &format!("SELECT COUNT(*) FROM topic_source WHERE ref_id = {id}")), 1);
+        assert_eq!(n(&s, "SELECT COUNT(*) FROM topic_series"), 2);
+        assert_eq!(n(&s, "SELECT COUNT(DISTINCT source_id) FROM entity_mention"), 2);
     }
 
     #[test]

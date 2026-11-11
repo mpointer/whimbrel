@@ -41,6 +41,8 @@ struct TodayContent {
     var upcomingWeek: [QualifyingMeeting] = []
     /// Prep briefs with a readable brief, by `TodayLogic.prepKey`, for today's events and the week's.
     var prepByKey: [String: CoreMeetingPrep] = [:]
+    /// The stored prep key of each held meeting that has a readable brief, for its card's Prep chip.
+    var prepKeyByMeetingId: [Int64: String] = [:]
 
     private var clock: Date { pinnedNow ?? Date() }
 
@@ -121,4 +123,8 @@ struct TodayActions {
     var startMeeting: (TodayUpcoming) -> Void
     var startNote: () -> Void
     var completeFollowup: (Int64) -> Void
+    /// A prep chip or card: the brief for this `TodayLogic.prepKey`.
+    var showPrepBrief: (String) -> Void = { _ in }
+    /// A topic chip or card: the topic's page.
+    var openTopic: (Int64) -> Void = { _ in }
 }

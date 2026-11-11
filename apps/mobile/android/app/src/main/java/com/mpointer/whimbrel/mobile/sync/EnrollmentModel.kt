@@ -3,6 +3,7 @@ package com.mpointer.whimbrel.mobile.sync
 import androidx.annotation.StringRes
 import com.mpointer.whimbrel.mobile.R
 import com.mpointer.whimbrel.mobile.auth.GoogleSignInError
+import com.mpointer.whimbrel.mobile.core.AccountPlan
 import com.mpointer.whimbrel.mobile.core.CoreNative
 import com.mpointer.whimbrel.mobile.core.CoreUserMessage
 import com.mpointer.whimbrel.mobile.core.GoogleAuthResult
@@ -456,6 +457,20 @@ class EnrollmentModel(
         } catch (e: Exception) {
             noteActionError(e, publicKey)
             false
+        }
+    }
+
+    /** The account's plan, or null when this phone is not approved or the lookup fails (offline, token trouble). */
+    suspend fun fetchAccountPlan(): AccountPlan? {
+        if (_status.value != EnrollmentStatus.Approved) return null
+        val backend = backend ?: return null
+        val publicKey = currentPublicKey() ?: return null
+        return try {
+            backend.accountPlan(backend.idToken(), publicKey)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
         }
     }
 

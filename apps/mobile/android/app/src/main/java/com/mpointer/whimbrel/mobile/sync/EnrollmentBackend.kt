@@ -1,5 +1,6 @@
 package com.mpointer.whimbrel.mobile.sync
 
+import com.mpointer.whimbrel.mobile.core.AccountPlan
 import com.mpointer.whimbrel.mobile.core.GoogleAuthResult
 import com.mpointer.whimbrel.mobile.core.SyncDeviceRecord
 
@@ -24,6 +25,8 @@ interface EnrollmentBackend {
     suspend fun swapDevice(idToken: String, devicePublicKey: String, replaceDeviceId: String)
 
     suspend fun joinWaitlist(idToken: String, devicePublicKey: String, wants: List<String>)
+
+    suspend fun accountPlan(idToken: String, devicePublicKey: String): AccountPlan
 
     /** Forgets the Google sign-in. */
     fun signOut()

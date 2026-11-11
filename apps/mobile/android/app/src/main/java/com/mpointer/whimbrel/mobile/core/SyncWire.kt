@@ -85,6 +85,17 @@ fun coreUserMessage(native: CoreNative, e: SyncApiError): CoreUserMessage? {
 }
 
 /** Typed client for the sync auth Worker; the HTTP and its envelope live in the core. The phone sends no platform. */
+/** `POST /v1/account/plan`; `until` is epoch ms, `interval` "month" or "year", both null off Cloud. */
+@Serializable
+data class AccountPlan(
+    val plan: String,
+    val until: Long? = null,
+    val interval: String? = null,
+    val billing: Boolean = false,
+) {
+    val isCloud: Boolean get() = plan == "cloud"
+}
+
 class SyncWorkerClient(private val native: CoreNative, private val baseUrl: String) {
     suspend fun authenticate(idToken: String, devicePublicKey: String): GoogleAuthResult = call {
         val r = reply(native.syncWorkerAuthenticateGoogle(baseUrl, idToken, devicePublicKey, null))
@@ -118,6 +129,10 @@ class SyncWorkerClient(private val native: CoreNative, private val baseUrl: Stri
 
     suspend fun joinWaitlist(idToken: String, devicePublicKey: String, wants: List<String>) = call {
         ok(native.syncWorkerJoinWaitlist(baseUrl, idToken, devicePublicKey, JsonArray(wants.map(::JsonPrimitive)).toString(), null))
+    }
+
+    suspend fun accountPlan(idToken: String, devicePublicKey: String): AccountPlan = call {
+        wireJson.decodeFromJsonElement(AccountPlan.serializer(), reply(native.syncWorkerAccountPlan(baseUrl, idToken, devicePublicKey)))
     }
 
     /** Whether polling should stop (401/403), as the core decides from its own reply. */

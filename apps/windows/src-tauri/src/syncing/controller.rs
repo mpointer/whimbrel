@@ -122,7 +122,10 @@ pub fn oauth_message(e: &OAuthError) -> String {
     match e {
         OAuthError::TimedOut => tr("Google sign-in timed out. Try again.", &[]),
         OAuthError::AuthorizationDenied { reason } => tr("Google sign-in was declined ({reason}).", &[("reason", reason)]),
-        OAuthError::TokenRefreshFailed | OAuthError::RefreshTokenRevoked => tr("Your Google sign-in expired. Sign in again.", &[]),
+        // Google said the grant is gone (`invalid_grant`): only signing in again fixes it.
+        OAuthError::RefreshTokenRevoked => tr("Your Google sign-in expired. Sign in again.", &[]),
+        // Anything else (no network, Google down) clears up on its own; the next round retries.
+        OAuthError::TokenRefreshFailed => tr("Couldn't reach Google to renew the sign-in. Whimbrel will try again.", &[]),
         OAuthError::ListenerFailed => tr("Couldn't start the local sign-in listener.", &[]),
         OAuthError::NoRefreshTokenReturned => {
             tr("Google didn't return a refresh token. Remove Whimbrel at myaccount.google.com/permissions, then sign in again.", &[])

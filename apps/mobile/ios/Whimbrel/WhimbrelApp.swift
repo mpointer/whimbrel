@@ -5,6 +5,11 @@ import SwiftUI
 struct WhimbrelApp: App {
     @StateObject private var enrollment: EnrollmentModel
     @StateObject private var sync: SyncModel
+    /// The coordinator holds the scheduler (the notification delegate); these two are the
+    /// strong references that keep the enrollment and sync models alive for its weak seams.
+    @StateObject private var coordinator: ReminderCoordinator
+    @StateObject private var router: ReminderRouter
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         if let themesDirectory = ThemeStore.bundledThemesDirectory {
@@ -22,12 +27,36 @@ struct WhimbrelApp: App {
             }
             StoreRemoval.finishIfPending(remove: Self.removeStoreDirectory)
         }
+        let router = ReminderRouter()
+        let scheduler = NotificationScheduler(router: router)
+        let coordinator = ReminderCoordinator(sync: sync, enrollment: enrollment, scheduler: scheduler,
+                                              settings: ReminderSettingsStore(defaults: .standard), plan: PlanCache(defaults: .standard))
+        let previousWipe = enrollment.onWipe
+        enrollment.onWipe = {
+            previousWipe?()
+            Task { await scheduler.replaceAll([]) }
+        }
         _enrollment = StateObject(wrappedValue: enrollment)
         _sync = StateObject(wrappedValue: sync)
+        _coordinator = StateObject(wrappedValue: coordinator)
+        _router = StateObject(wrappedValue: router)
+        coordinator.isEnabled = !Self.isDemo
+        if !Self.isDemo {
+            ReminderBackgroundRefresh.register(sync: sync, coordinator: coordinator)
+            ReminderBackgroundRefresh.schedule()
+            Task { await coordinator.refreshPlanIfDue(force: true) }
+        }
     }
 
     var body: some Scene {
-        WindowGroup { EnrollmentView(model: enrollment, sync: sync) }
+        WindowGroup {
+            EnrollmentView(model: enrollment, sync: sync, coordinator: coordinator, router: router)
+                .environmentObject(coordinator)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            coordinator.isForeground = phase == .active
+            if phase == .background { ReminderBackgroundRefresh.schedule() }
+        }
     }
 
     private static func removeStoreDirectory() throws {

@@ -22,6 +22,8 @@ pub use embedding::{
     EMBEDDING_MODEL_REVISION, EMBEDDING_OUTPUT_DIM,
 };
 
+pub mod calendar_flags;
+pub mod calendar_presence;
 pub mod copies;
 pub mod keywords;
 pub mod l10n;
@@ -510,6 +512,8 @@ pub struct NewCalendarEventItem {
 /// One calendar event read back from `items` (the phone's "Up next").
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CalendarEventRow {
+    /// `items.id`: a rescheduled meeting arrives as a new `external_id`, hence a higher id.
+    pub row_id: i64,
     pub external_id: String,
     pub source: String,
     pub title: String,
@@ -1892,6 +1896,15 @@ impl Store {
                 connected_at_unix_ms INTEGER NOT NULL,
                 PRIMARY KEY (connector, email)
             );
+            -- Local only, never synced: which account last reported each meeting.
+            CREATE TABLE IF NOT EXISTS calendar_presence (
+                source TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                account TEXT NOT NULL,
+                start_unix_ms INTEGER NOT NULL,
+                present INTEGER NOT NULL,
+                PRIMARY KEY (source, external_id, account)
+            );
             "
         ))?;
         Self::ensure_meeting_lifecycle_columns(conn)?;
@@ -3009,12 +3022,24 @@ impl Store {
     /// `upsert_calendar_event_items`: `items`' unique index is not scoped by device, so
     /// two devices sourcing the SAME event under one `(source, external_id)` would
     /// otherwise ping-pong ownership forever, each pull reassigning `device_id` and
-    /// `local_seq` with nothing real having changed. `device_id` is therefore excluded
-    /// from the change test — an incoming pull whose content is identical is a no-op and
+    /// `local_seq` with nothing real having changed. `device_id` is therefore not itself
+    /// a change: an incoming pull whose content AND flags are identical is a no-op and
     /// leaves the existing row's owner alone. Only `ts_unix_ms`/`actors`/`title`/`body_text`
-    /// are compared: `refs`/`flags`/`hash`/`app_bundle_id`/`url` are always NULL on a
+    /// and `flags` are compared: `refs`/`hash`/`app_bundle_id`/`url` are always NULL on a
     /// calendar-event row (`upsert_calendar_event_items` never populates them, and
     /// `unpushed_item_rows` just relays whatever is stored), so they can't diverge.
+    /// Because `flags` is compared, identical content with a newer `changed_at` (a
+    /// removed marker set or cleared) IS a change, and it moves ownership: the row takes
+    /// `device_id = excluded.device_id`, so it belongs to the computer that stamped the
+    /// change. That is deliberate. Keeping the local `device_id` would leave the peer's
+    /// `local_seq` stored under our own id, and our pusher would re-send the peer's
+    /// version as ours. It is bounded: the receiver never re-pushes the row (it is no
+    /// longer its own, and `refresh_calendar_marks` only marks its own rows), and the
+    /// receiver's next unchanged `upsert_calendar_event_items` finds nothing changed and
+    /// does nothing.
+    /// `flags` carries the removed marker and `changed_at` (see `calendar_flags`); a
+    /// version applies only if its `changed_at` is >= the stored one (NULL counts as 0),
+    /// so the newest change wins whichever order two devices' versions arrive in.
     /// When that `WHERE` is false, SQLite performs no update and the statement's
     /// `RETURNING` yields NO rows, hence the `.optional()` + fallback `SELECT` for the id.
     pub fn apply_synced_item(
@@ -3035,10 +3060,13 @@ impl Store {
                         actors = excluded.actors, title = excluded.title, body_text = excluded.body_text, \
                         refs = excluded.refs, flags = excluded.flags, hash = excluded.hash, \
                         app_bundle_id = excluded.app_bundle_id, url = excluded.url \
-                     WHERE items.ts_unix_ms IS NOT excluded.ts_unix_ms \
+                     WHERE (items.ts_unix_ms IS NOT excluded.ts_unix_ms \
                         OR items.actors IS NOT excluded.actors \
                         OR items.title IS NOT excluded.title \
                         OR items.body_text IS NOT excluded.body_text \
+                        OR items.flags IS NOT excluded.flags) \
+                       AND COALESCE(CASE WHEN json_valid(excluded.flags) THEN json_extract(excluded.flags, '$.changed_at') END, 0) \
+                        >= COALESCE(CASE WHEN json_valid(items.flags) THEN json_extract(items.flags, '$.changed_at') END, 0) \
                      RETURNING id",
                     params![
                         device_id, local_seq, item.kind, item.source, resolved_thread_id, item.ts_unix_ms,
@@ -3729,12 +3757,14 @@ impl Store {
         until_unix_ms: i64,
         limit: usize,
     ) -> rusqlite::Result<Vec<CalendarEventRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT external_id, source, title, ts_unix_ms, actors FROM items \
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT external_id, source, title, ts_unix_ms, actors, id FROM items \
              WHERE kind = 'calendar_event' AND external_id IS NOT NULL \
                AND ts_unix_ms >= ?1 AND ts_unix_ms < ?2 \
+               AND {} \
              ORDER BY ts_unix_ms ASC, id ASC LIMIT ?3",
-        )?;
+            calendar_flags::CALENDAR_NOT_REMOVED
+        ))?;
         let rows = stmt.query_map(
             params![
                 from_unix_ms,
@@ -3744,6 +3774,7 @@ impl Store {
             |row| {
                 let actors: Option<String> = row.get(4)?;
                 Ok(CalendarEventRow {
+                    row_id: row.get(5)?,
                     external_id: row.get(0)?,
                     // A synced row may carry no source: it must not fail the whole read.
                     source: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
@@ -3774,16 +3805,32 @@ impl Store {
     /// table would otherwise stay NULL forever and be permanently excluded from
     /// `unpushed_item_rows`' `WHERE local_seq IS NOT NULL` filter. `device_id` is set
     /// but deliberately NOT part of the change test — a differing `device_id` alone is
-    /// not a content change (see `apply_synced_item`'s matching guard). Comparisons use
+    /// not a content change. (`apply_synced_item`'s guard also compares `flags`, so a
+    /// flags-only change from a peer does move ownership there; this upsert never
+    /// compares flags, and re-stamping after such a move is a no-op for unchanged
+    /// content.) Comparisons use
     /// `IS NOT`, not `!=`, so NULL-vs-NULL counts as unchanged. `next_local_seq()` is
     /// still drawn unconditionally; the counter is only required to be monotonic, not
     /// gapless, so a value that the `WHERE` discards is harmless.
+    ///
+    /// A change also writes `flags = {"changed_at": now}` (see `calendar_flags`), which
+    /// clears any `removed` marker; an unchanged re-poll writes no flags either.
     ///
     /// Within one batch only the first entry per `(source, external_id)` is applied
     /// (#458: the first account's copy always wins), so two copies can't flip-flop a row.
     pub fn upsert_calendar_event_items(
         &self,
         items: &[NewCalendarEventItem],
+    ) -> rusqlite::Result<()> {
+        self.upsert_calendar_event_items_at(items, now_unix_ms())
+    }
+
+    /// `upsert_calendar_event_items` with the clock passed in, so tests can pin
+    /// `changed_at`.
+    fn upsert_calendar_event_items_at(
+        &self,
+        items: &[NewCalendarEventItem],
+        now_ms: i64,
     ) -> rusqlite::Result<()> {
         let mut seen = std::collections::HashSet::new();
         for it in items {
@@ -3793,19 +3840,25 @@ impl Store {
             let actors_json =
                 serde_json::to_string(&it.actors).unwrap_or_else(|_| "[]".to_string());
             let local_seq = self.next_local_seq()?;
+            // Stamped only when the change test below passes; this clears `removed`.
+            let flags_json = calendar_flags::CalendarFlags {
+                removed: false,
+                changed_at: now_ms,
+            }
+            .to_json();
             self.conn.execute(
-                "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, external_id, local_seq) \
-                 VALUES (?1, 'calendar_event', ?2, ?3, ?4, ?5, ?5, ?6, ?7) \
+                "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, external_id, local_seq, flags) \
+                 VALUES (?1, 'calendar_event', ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8) \
                  ON CONFLICT(kind, source, external_id) WHERE external_id IS NOT NULL DO UPDATE SET \
                     device_id = excluded.device_id, ts_unix_ms = excluded.ts_unix_ms, \
                     actors = excluded.actors, title = excluded.title, body_text = excluded.body_text, \
-                    local_seq = excluded.local_seq \
+                    local_seq = excluded.local_seq, flags = excluded.flags \
                  WHERE items.local_seq IS NULL \
                     OR items.ts_unix_ms IS NOT excluded.ts_unix_ms \
                     OR items.actors IS NOT excluded.actors \
                     OR items.title IS NOT excluded.title \
                     OR items.body_text IS NOT excluded.body_text",
-                params![it.device_id, it.source, it.ts_unix_ms, actors_json, it.title, it.external_id, local_seq],
+                params![it.device_id, it.source, it.ts_unix_ms, actors_json, it.title, it.external_id, local_seq, flags_json],
             )?;
         }
         if !items.is_empty() {
@@ -3869,6 +3922,11 @@ impl Store {
     /// events). Scoped to `source = 'google_calendar'` specifically -- never touches
     /// `apple_calendar`-sourced rows, even one sharing the same `external_id` value
     /// (uniqueness is only enforced within `(kind, source, external_id)`, not globally).
+    /// `external_ids` are raw Google event ids, but rows are stored as
+    /// `"{id}#{start_secs}"` (one per occurrence of a recurring event), so an id matches
+    /// a row when `external_id = id` (old-format rows) or `external_id` starts with
+    /// `id + "#"`. The prefix test uses `substr`, not `LIKE`, so `%` and `_` in an id
+    /// are literal.
     /// No explicit `items_vec` cleanup needed: the existing `items_vec_ad AFTER DELETE
     /// ON items` trigger already handles it for any deleted row regardless of `kind`.
     /// Not scoped per account (the table has no account column): if two connected
@@ -3879,17 +3937,28 @@ impl Store {
         if external_ids.is_empty() {
             return Ok(0);
         }
-        let placeholders: Vec<String> = (1..=external_ids.len()).map(|i| format!("?{i}")).collect();
-        let sql = format!(
-            "DELETE FROM items WHERE kind = 'calendar_event' AND source = 'google_calendar' AND external_id IN ({})",
-            placeholders.join(", ")
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let bound: Vec<&dyn rusqlite::ToSql> = external_ids
-            .iter()
-            .map(|s| s as &dyn rusqlite::ToSql)
-            .collect();
-        stmt.execute(bound.as_slice())
+        // SQLite caps expression depth at 1000, and an OR chain over N ids is N deep,
+        // so a large cancellation batch must be split. All chunks share one transaction.
+        const CHUNK: usize = 200;
+        let tx = self.conn.unchecked_transaction()?;
+        let mut total = 0;
+        for chunk in external_ids.chunks(CHUNK) {
+            let clauses: Vec<String> = (1..=chunk.len())
+                .map(|i| {
+                    format!("(external_id = ?{i} OR substr(external_id, 1, length(?{i}) + 1) = ?{i} || '#')")
+                })
+                .collect();
+            let sql = format!(
+                "DELETE FROM items WHERE kind = 'calendar_event' AND source = 'google_calendar' AND ({})",
+                clauses.join(" OR ")
+            );
+            let mut stmt = tx.prepare(&sql)?;
+            let bound: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            total += stmt.execute(bound.as_slice())?;
+        }
+        tx.commit()?;
+        Ok(total)
     }
 
     /// Reads the persisted Gmail `historyId` for one connected account, or `None` if
@@ -16724,6 +16793,29 @@ mod tests {
     }
 
     #[test]
+    fn upcoming_calendar_events_reports_row_ids_in_insert_order() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_calendar_event_items(&[calendar_item("first", 1000, "First", &[])])
+            .unwrap();
+        store
+            .upsert_calendar_event_items(&[calendar_item("second", 2000, "Second", &[])])
+            .unwrap();
+        let events = store.upcoming_calendar_events(0, 5000, 10).unwrap();
+        let first_id = events[0].row_id;
+        assert_eq!(events[0].external_id, "first");
+        assert_eq!(events[1].external_id, "second");
+        assert!(events[1].row_id > first_id);
+        // A repeat of the same external_id updates in place: the row id is stable.
+        store
+            .upsert_calendar_event_items(&[calendar_item("first", 1000, "First renamed", &[])])
+            .unwrap();
+        let events = store.upcoming_calendar_events(0, 5000, 10).unwrap();
+        assert_eq!(events[0].title, "First renamed");
+        assert_eq!(events[0].row_id, first_id);
+    }
+
+    #[test]
     fn upcoming_calendar_events_respects_limit() {
         let store = Store::open_in_memory().unwrap();
         store
@@ -17014,6 +17106,101 @@ mod tests {
                 "Same external_id, different source".to_string()
             ]
         );
+    }
+
+    fn google_event_item(external_id: &str, ts_unix_ms: i64) -> NewCalendarEventItem {
+        NewCalendarEventItem {
+            device_id: "dev-1".into(),
+            source: "google_calendar".into(),
+            external_id: external_id.into(),
+            ts_unix_ms,
+            title: external_id.into(),
+            actors: vec![],
+        }
+    }
+
+    #[test]
+    fn delete_calendar_event_items_matches_ids_stored_with_start_suffix() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_calendar_event_items(&[
+                google_event_item("evt-1#1700000000", 1_700_000_000_000),
+                google_event_item("evt-1#1700086400", 1_700_086_400_000),
+                google_event_item("evt-10#1700000000", 1_700_000_000_000),
+            ])
+            .unwrap();
+
+        let deleted = store
+            .delete_calendar_event_items(&["evt-1".to_string()])
+            .unwrap();
+        assert_eq!(deleted, 2, "both occurrences of evt-1 go; the '#' keeps evt-10 out");
+
+        let remaining: Vec<String> = store
+            .conn
+            .prepare("SELECT external_id FROM items WHERE kind = 'calendar_event' ORDER BY external_id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(remaining, vec!["evt-10#1700000000".to_string()]);
+    }
+
+    #[test]
+    fn delete_calendar_event_items_handles_thousands_of_ids() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_calendar_event_items(&[
+                google_event_item("evt-a#1700000000", 1_700_000_000_000),
+                google_event_item("evt-a#1700086400", 1_700_086_400_000),
+                google_event_item("evt-b", 1_700_000_000_000),
+                google_event_item("keep-me#1700000000", 1_700_000_000_000),
+            ])
+            .unwrap();
+
+        let mut ids: Vec<String> = vec!["evt-a".to_string(), "evt-b".to_string()];
+        ids.extend((0..2_497).map(|i| format!("other-{i}")));
+        assert_eq!(ids.len(), 2_499);
+
+        let deleted = store.delete_calendar_event_items(&ids).unwrap();
+        assert_eq!(deleted, 3, "both evt-a occurrences and evt-b go");
+
+        let remaining: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM items WHERE kind = 'calendar_event'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 1);
+    }
+
+    #[test]
+    fn delete_calendar_event_items_still_matches_exact_ids() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_calendar_event_items(&[google_event_item("evt-3", 3000)])
+            .unwrap();
+        let deleted = store
+            .delete_calendar_event_items(&["evt-3".to_string()])
+            .unwrap();
+        assert_eq!(deleted, 1);
+    }
+
+    #[test]
+    fn delete_calendar_event_items_treats_like_wildcards_in_ids_literally() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_calendar_event_items(&[
+                google_event_item("a_c#1", 1000),
+                google_event_item("abc#1", 1000),
+            ])
+            .unwrap();
+        let deleted = store
+            .delete_calendar_event_items(&["a_c".to_string()])
+            .unwrap();
+        assert_eq!(deleted, 1, "'_' must not act as a wildcard");
     }
 
     #[test]
@@ -17634,6 +17821,160 @@ mod tests {
             "a real content change must still reassign ownership"
         );
         assert_eq!(local_seq, Some(99));
+    }
+
+    fn calendar_flags_row(store: &Store, external_id: &str) -> (Option<String>, Option<i64>) {
+        store
+            .conn
+            .query_row(
+                "SELECT flags, local_seq FROM items WHERE external_id = ?1",
+                params![external_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+    }
+
+    fn applied_with_flags(flags: Option<&str>) -> AppliedItem {
+        let mut item = shared_calendar_event_for_apply();
+        item.flags = flags.map(str::to_string);
+        item
+    }
+
+    #[test]
+    fn upsert_stamps_changed_at_only_on_change() {
+        let store = Store::open_in_memory().unwrap();
+        let ev = calendar_item("evt-flags", 1000, "Standup", &[]);
+        store.upsert_calendar_event_items_at(&[ev.clone()], 5_000).unwrap();
+        let first = calendar_flags_row(&store, "evt-flags");
+        assert_eq!(first.0.as_deref(), Some("{\"changed_at\":5000}"));
+
+        // Same content, later clock: a true no-op (no flags write, no new local_seq).
+        store.upsert_calendar_event_items_at(&[ev.clone()], 9_000).unwrap();
+        assert_eq!(calendar_flags_row(&store, "evt-flags"), first);
+
+        let mut moved = ev;
+        moved.title = "Standup (moved)".into();
+        store.upsert_calendar_event_items_at(&[moved], 12_000).unwrap();
+        let after = calendar_flags_row(&store, "evt-flags");
+        assert_eq!(after.0.as_deref(), Some("{\"changed_at\":12000}"));
+        assert!(after.1 > first.1, "a change must stamp a new local_seq");
+    }
+
+    #[test]
+    fn upsert_change_clears_a_removed_marker() {
+        let store = Store::open_in_memory().unwrap();
+        let ev = calendar_item("evt-back", 1000, "Standup", &[]);
+        store.upsert_calendar_event_items_at(&[ev.clone()], 5_000).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE items SET flags = '{\"removed\":true,\"changed_at\":6000}' WHERE external_id = 'evt-back'",
+                [],
+            )
+            .unwrap();
+        let mut moved = ev;
+        moved.ts_unix_ms = 2000;
+        store.upsert_calendar_event_items_at(&[moved], 7_000).unwrap();
+        assert_eq!(
+            calendar_flags_row(&store, "evt-back").0.as_deref(),
+            Some("{\"changed_at\":7000}")
+        );
+    }
+
+    #[test]
+    fn apply_takes_a_mark_only_change() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .apply_synced_item("peer-a", 3, None, &applied_with_flags(None))
+            .unwrap();
+        let marked = applied_with_flags(Some("{\"removed\":true,\"changed_at\":100}"));
+        store.apply_synced_item("peer-b", 9, None, &marked).unwrap();
+        let (flags, seq) = calendar_flags_row(&store, "evt-shared-2");
+        assert_eq!(flags.as_deref(), Some("{\"removed\":true,\"changed_at\":100}"));
+        assert_eq!(seq, Some(9));
+    }
+
+    #[test]
+    fn newest_change_wins_in_either_apply_order() {
+        let removed = applied_with_flags(Some("{\"removed\":true,\"changed_at\":100}"));
+        let live = applied_with_flags(Some("{\"changed_at\":200}"));
+        let run = |first: &AppliedItem, second: &AppliedItem| -> bool {
+            let store = Store::open_in_memory().unwrap();
+            store.apply_synced_item("peer-a", 1, None, first).unwrap();
+            store.apply_synced_item("peer-b", 2, None, second).unwrap();
+            let (flags, _) = calendar_flags_row(&store, "evt-shared-2");
+            crate::calendar_flags::CalendarFlags::parse(flags.as_deref()).removed
+        };
+        // Removed at 100, restored at 200: not removed in both orders.
+        assert!(!run(&removed, &live));
+        assert!(!run(&live, &removed));
+
+        // Swap the values: live at 100, removed at 200: removed in both orders.
+        let live_old = applied_with_flags(Some("{\"changed_at\":100}"));
+        let removed_new = applied_with_flags(Some("{\"removed\":true,\"changed_at\":200}"));
+        assert!(run(&live_old, &removed_new));
+        assert!(run(&removed_new, &live_old));
+    }
+
+    #[test]
+    fn legacy_null_flags_apply_like_changed_at_zero() {
+        // A row from before this feature (NULL flags) accepts any peer mark, even one
+        // with no changed_at of its own.
+        let store = Store::open_in_memory().unwrap();
+        store
+            .apply_synced_item("peer-a", 1, None, &applied_with_flags(None))
+            .unwrap();
+        store
+            .apply_synced_item("peer-b", 2, None, &applied_with_flags(Some("{\"removed\":true}")))
+            .unwrap();
+        assert_eq!(
+            calendar_flags_row(&store, "evt-shared-2").0.as_deref(),
+            Some("{\"removed\":true}")
+        );
+
+        // And a legacy peer version (NULL flags) never overwrites a stamped row.
+        let store = Store::open_in_memory().unwrap();
+        store
+            .apply_synced_item("peer-a", 1, None, &applied_with_flags(Some("{\"changed_at\":50}")))
+            .unwrap();
+        store
+            .apply_synced_item("peer-b", 2, None, &applied_with_flags(None))
+            .unwrap();
+        assert_eq!(
+            calendar_flags_row(&store, "evt-shared-2").0.as_deref(),
+            Some("{\"changed_at\":50}")
+        );
+    }
+
+    #[test]
+    fn upcoming_calendar_events_skips_removed_rows() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .upsert_calendar_event_items(&[
+                calendar_item("keep", 2000, "Keep", &[]),
+                calendar_item("gone", 3000, "Gone", &[]),
+                calendar_item("junk", 4000, "Junk flags", &[]),
+            ])
+            .unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE items SET flags = '{\"removed\":true,\"changed_at\":1}' WHERE external_id = 'gone'",
+                [],
+            )
+            .unwrap();
+        // A peer's malformed flags must not fail the whole read.
+        store
+            .conn
+            .execute("UPDATE items SET flags = 'not json' WHERE external_id = 'junk'", [])
+            .unwrap();
+        let ids: Vec<String> = store
+            .upcoming_calendar_events(1000, 5000, 10)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.external_id)
+            .collect();
+        assert_eq!(ids, ["keep", "junk"]);
     }
 
     #[test]

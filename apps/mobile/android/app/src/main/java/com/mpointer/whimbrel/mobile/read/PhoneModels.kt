@@ -92,6 +92,20 @@ data class PhoneCalendarEvent(
     val title: String,
     @SerialName("start_unix_ms") val startUnixMs: Long,
     val attendees: List<String>,
+    /** The local row id; the highest wins when two rows carry the same meeting. Absent from older cores. */
+    @SerialName("row_id") val rowId: Long? = null,
 )
+
+/** A topic page as the computer built it (core's `TopicPageSnapshot`); only what reminders use. */
+@Serializable
+data class PhoneTopicSnapshot(
+    @SerialName("topic_key") val topicKey: String,
+    val name: String,
+    @SerialName("next_meeting") val nextMeeting: NextMeeting? = null,
+    @SerialName("you_owe") val youOwe: List<Step> = emptyList(),
+) {
+    @Serializable data class NextMeeting(val title: String, @SerialName("start_unix_ms") val startUnixMs: Long)
+    @Serializable data class Step(val text: String, @SerialName("due_date") val dueDate: String? = null)
+}
 
 internal val readJson = Json { ignoreUnknownKeys = true }

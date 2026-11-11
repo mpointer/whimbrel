@@ -1,6 +1,7 @@
 package com.mpointer.whimbrel.mobile.sync
 
 import com.mpointer.whimbrel.mobile.auth.GoogleSignInError
+import com.mpointer.whimbrel.mobile.core.AccountPlan
 import com.mpointer.whimbrel.mobile.core.CoreUserMessage
 import com.mpointer.whimbrel.mobile.core.FakeSyncNative
 import com.mpointer.whimbrel.mobile.core.GoogleAuthResult
@@ -160,6 +161,16 @@ class FakeBackend : EnrollmentBackend {
         actionGate?.await()
         waitlistError?.let { throw it }
         waitlistWants += wants
+    }
+
+    var planReply: AccountPlan = AccountPlan("free")
+    var planError: Exception? = null
+    var planCalls = 0
+
+    override suspend fun accountPlan(idToken: String, devicePublicKey: String): AccountPlan {
+        planCalls += 1
+        planError?.let { throw it }
+        return planReply
     }
 
     override fun signOut() {
@@ -406,6 +417,19 @@ class EnrollmentModelTest {
         model.signIn()
         model.pollJob?.join()
         assertNotEquals(oldKey, storedPublicKey())
+    }
+
+    @Test
+    fun `fetchAccountPlanAnswersOnlyWhenApprovedAndNullOnFailure`() = runTest {
+        val signedOut = makeModel()
+        assertNull(signedOut.fetchAccountPlan())
+        assertEquals(0, backend.planCalls)
+        seedApprovedPhone()
+        backend.planReply = AccountPlan("cloud", 5L, "month", true)
+        val model = makeModel()
+        assertEquals(AccountPlan("cloud", 5L, "month", true), model.fetchAccountPlan())
+        backend.planError = offline
+        assertNull(model.fetchAccountPlan())
     }
 
     // A revoked phone wipes itself

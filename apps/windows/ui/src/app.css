@@ -996,7 +996,8 @@ details summary {
   align-items: start;
 }
 
-.meeting-list .rows {
+.meeting-list .rows,
+.meeting-list .meeting-days {
   max-height: 60vh;
   overflow-y: auto;
 }
@@ -1031,7 +1032,26 @@ details summary {
 
 .action-items .toggle {
   flex: 1;
+  min-width: 0;
   gap: var(--space-sm);
+  /* A wrapped item keeps its checkbox beside the first line. */
+  align-items: flex-start;
+}
+
+.action-items .toggle input[type="checkbox"] {
+  margin-top: calc(var(--space-xs) + 3px);
+}
+
+/* The item's text: as wide as the row, and as tall as its wrapped text, so none of it is hidden. */
+.action-item-text {
+  flex: 1;
+  min-width: 0;
+  field-sizing: content;
+  min-height: 0;
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 
 .action-item-buttons {
@@ -1322,6 +1342,11 @@ button.link.transcript-speaker {
 }
 
 .routine-unavailable {
+  color: var(--color-warning);
+}
+
+/* Settings → Connected accounts / Gmail: an account whose Google sign-in expired. */
+.sign-in-expired {
   color: var(--color-warning);
 }
 
@@ -1823,4 +1848,263 @@ button.link:focus-visible {
   flex-direction: column;
   align-items: center;
   gap: var(--space-sm);
+}
+
+/* Meeting cards and rows (spec 2026-11-10, the Mac's MeetingCard): one stretched button under the whole card is
+   the click target; the text is drawn over it and ignores the pointer, and the chips are their own buttons above.
+   Hover is the primary text color at 6%, drawn as a layer so it works in every skin and theme. */
+.meeting-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.meeting-item__hit {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.meeting-item__hit::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--color-text-primary);
+  opacity: 0;
+}
+
+.meeting-item--clickable:hover .meeting-item__hit::before {
+  opacity: 0.06;
+}
+
+.meeting-item__hit:focus-visible {
+  outline: 2px solid var(--color-accent-primary);
+  outline-offset: 1px;
+}
+
+.meeting-item__main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  pointer-events: none;
+}
+
+.meeting-item__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.meeting-item__sub {
+  font-size: var(--text-secondary);
+  color: var(--color-text-secondary);
+}
+
+.meeting-item__chevron {
+  position: relative;
+  flex: none;
+  width: 12px;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.meeting-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.meeting-chip {
+  position: relative;
+  pointer-events: auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meeting-chip:hover:not(:disabled) {
+  border-color: var(--color-accent-primary);
+}
+
+.meeting-card__title,
+.meeting-row__title {
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.meeting-card__title {
+  font-weight: 600;
+}
+
+/* Today's card: the skin's card frame. */
+.meeting-card {
+  background: var(--color-background-card);
+  border: var(--border-width) var(--border-style) var(--color-border);
+  border-radius: var(--radius-card);
+  padding: calc(var(--space-md) * var(--density)) calc(var(--space-lg) * var(--density));
+}
+
+/* Today's timeline (option C): a 2px line in the border color with a dot per meeting. */
+.timeline-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.timeline {
+  --timeline-gutter: 20px;
+  --timeline-dot: 10px;
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.timeline::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--timeline-gutter) / 2 - 1px);
+  width: 2px;
+  background: var(--color-border);
+}
+
+.timeline-item,
+.timeline-now {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+}
+
+.timeline-now {
+  align-items: center;
+}
+
+.timeline-dot {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: var(--timeline-dot);
+  height: var(--timeline-dot);
+  margin: 0 calc((var(--timeline-gutter) - var(--timeline-dot)) / 2);
+  border-radius: 50%;
+}
+
+.timeline-item > .timeline-dot {
+  margin-top: calc(var(--space-md) * var(--density) + 4px);
+}
+
+.timeline-dot--past {
+  background: var(--color-text-secondary);
+}
+
+.timeline-dot--running {
+  background: var(--color-accent-primary);
+}
+
+/* The page fill hides the line behind a ring. */
+.timeline-dot--upcoming {
+  background: var(--color-background-page);
+  border: 2px solid var(--color-accent-primary);
+}
+
+.timeline-now__label {
+  font-size: var(--text-secondary);
+  font-weight: 600;
+  color: var(--color-accent-primary);
+}
+
+.timeline-stack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.timeline-extras {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.timeline-extras__spacer {
+  flex: 1;
+}
+
+/* The Meetings list (option B): day headings over compact rows with a divider between them. */
+.meeting-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.meeting-rows > li {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.meeting-row {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) 18px;
+  align-items: start;
+  gap: var(--space-sm);
+  padding: 10px 6px;
+  border-radius: var(--radius-control);
+}
+
+.meeting-row--active,
+.meeting-item--active {
+  box-shadow: inset 0 0 0 1px var(--color-accent-primary);
+}
+
+.meeting-row__time {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+  gap: 2px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.meeting-row__start {
+  font-size: var(--text-secondary);
+  font-weight: 600;
+}
+
+.meeting-row .meeting-item__chevron {
+  width: 18px;
+  align-self: center;
+  display: flex;
+  justify-content: center;
+}
+
+.meeting-row__people {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-sm);
 }

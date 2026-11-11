@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { meetingRecordStartEvent, nextMeetingPrep, todaySchedule } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { NextMeetingView, ScheduleView } from "../generated/types";
@@ -14,10 +15,13 @@ export interface ScheduleState {
   start: (eventId: string) => void;
 }
 
+/** How often the schedule is re-read on its own, so a meeting that ends or is recorded elsewhere shows up. */
+const RELOAD_MS = 60_000;
+
 /**
- * Today's schedule and the next meeting's prep, read when Today is shown and on window focus, with a 30 s
- * tick that moves the countdowns (not the data). `onChanged` runs after a recording is started here, so Today
- * can re-read what it shows.
+ * Today's schedule and the next meeting's prep, read when Today is shown, on window focus, after each
+ * calendar round (`calendar-synced`) and every minute, with a 30 s tick that moves the countdowns and the
+ * Now marker. `onChanged` runs after a recording is started here, so Today can re-read what it shows.
  */
 export function useSchedule(onChanged: () => void): ScheduleState {
   const [schedule, setSchedule] = useState<ScheduleView | null>(null);
@@ -43,9 +47,13 @@ export function useSchedule(onChanged: () => void): ScheduleState {
     load();
     window.addEventListener("focus", load);
     const tick = setInterval(() => setNow(Date.now()), 30_000);
+    const reload = setInterval(load, RELOAD_MS);
+    const unlisten = listen("calendar-synced", load);
     return () => {
       window.removeEventListener("focus", load);
       clearInterval(tick);
+      clearInterval(reload);
+      void unlisten.then((stop) => stop());
     };
   }, [load]);
 

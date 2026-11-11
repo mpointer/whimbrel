@@ -43,6 +43,8 @@ const event = (id: string, minutesFromNow: number, over: Partial<ScheduleEvent> 
   endUnixMs: NOW + (minutesFromNow + 30) * MIN,
   attendees: ["ann@acme.test"],
   recordedMeetingId: null,
+  hasSummary: false,
+  actionItemCount: 0,
   ...over,
 });
 
@@ -52,6 +54,8 @@ const laptop: DeviceCount = { device: { deviceId: "LT", label: "Laptop", thisDev
 const meeting = (id: number, minutesFromNow: number, title = `Held ${id}`): MeetingRow => ({
   device: pc.device,
   hasSummary: false,
+  attendeeCount: 0,
+  actionItemCount: 0,
   id,
   status: "done",
   title,

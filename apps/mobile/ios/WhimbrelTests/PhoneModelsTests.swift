@@ -66,4 +66,11 @@ final class PhoneModelsTests: XCTestCase {
         XCTAssertEqual(event.externalId, "e1")
         XCTAssertEqual(event.attendees, ["a@x.com"])
     }
+
+    func testCalendarEventDecodesRowIdWhenPresentAndNilWhenAbsent() throws {
+        let with: PhoneCalendarEvent = try decode(#"{"external_id":"e1","source":"s","title":"T","start_unix_ms":1,"attendees":[],"row_id":7}"#)
+        XCTAssertEqual(with.rowId, 7)
+        let without: PhoneCalendarEvent = try decode(#"{"external_id":"e1","source":"s","title":"T","start_unix_ms":1,"attendees":[]}"#)
+        XCTAssertNil(without.rowId)
+    }
 }

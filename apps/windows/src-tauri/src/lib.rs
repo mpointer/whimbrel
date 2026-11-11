@@ -30,6 +30,7 @@ pub mod meetings;
 pub mod budget_alert;
 pub mod ollama_default;
 pub mod paths;
+pub mod perf_log;
 pub mod whimbrel_ai;
 pub mod profile;
 pub mod question_alert;

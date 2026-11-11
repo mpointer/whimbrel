@@ -17,7 +17,9 @@
 # Re-runnable: if the public repository already has the tag, nothing is pushed.
 set -euo pipefail
 
-TAG="${1:?usage: scripts/publish-public.sh vX}"
+TAG="${1:?usage: scripts/publish-public.sh vX [--no-phones]}"
+PHONES=1
+[ "${2:-}" = "--no-phones" ] && PHONES=0
 PUBLIC_REPO="${PUBLIC_REPO:-mpointer/whimbrel}"
 PUBLIC_URL="${PUBLIC_URL:-https://github.com/$PUBLIC_REPO}"
 PRIVATE_REPO="mpointer/kestrel"
@@ -96,3 +98,11 @@ else
     echo "    created (no private release notes to copy)"
 fi
 echo "==> Done: https://github.com/$PUBLIC_REPO/releases/tag/$TAG"
+
+# The phone builds go out with the mirror, so the release page carries its APK.
+if [ "$PHONES" = "1" ]; then
+    cd "$ROOT"
+    scripts/release-phones.sh "$TAG"
+else
+    echo "==> Skipping the phone builds (--no-phones); run scripts/release-phones.sh $TAG later."
+fi

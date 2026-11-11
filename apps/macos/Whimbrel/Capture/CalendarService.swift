@@ -125,6 +125,13 @@ final class CalendarService: ObservableObject {
     /// from `upcomingMeetings` so the meeting trigger and today's schedule don't see it.
     @Published private(set) var upcomingWeek: [QualifyingMeeting] = []
     @Published private(set) var availableCalendars: [CalendarSummary] = []
+    /// Whether the last `refresh` had calendar access and read the store. False when access is
+    /// missing or revoked, in which case the empty lists are "unknown", not "nothing there".
+    /// Set before the lists publish their last change, so a sink that defers reads it fresh.
+    private(set) var lastFetchSucceeded = false
+    /// Bumped once at the end of every `refresh`, succeeded or not, so a consumer can tell one
+    /// refresh from its several publishes.
+    private(set) var fetchGeneration = 0
     /// #64: real diagnostic data (see `qualify`'s `.notice` log below) showed a work
     /// CalDAV/Exchange-bridged event with EVERY optional field EventKit exposes empty --
     /// no location/notes/url, no attendees, no organizer, no availability. There's no
@@ -183,10 +190,18 @@ final class CalendarService: ObservableObject {
         refresh()
     }
 
+    /// A read counts as a success only with access and at least one calendar: a store made
+    /// before a grant, or one still loading sources, returns no calendars and no events.
+    nonisolated static func fetchSucceeded(accessible: Bool, calendarCount: Int) -> Bool {
+        accessible && calendarCount > 0
+    }
+
     func refresh() {
+        defer { fetchGeneration += 1 }
         let authStatus = EKEventStore.authorizationStatus(for: .event)
         guard PermissionsManager.calendarAccessible else {
             log.log("Calendar refresh: skipped, authorizationStatus=\(String(describing: authStatus), privacy: .public) (no calendar access)")
+            lastFetchSucceeded = false
             upcomingMeetings = []
             upcomingWeek = []
             availableCalendars = []
@@ -212,6 +227,7 @@ final class CalendarService: ObservableObject {
         upcomingWeek = weekEvents.filter { !$0.isAllDay && week.contains($0.startDate) }
             .compactMap { Self.qualify($0, alwaysQualifyCalendarIDs: alwaysQualifyIDs, logDrops: false) }
             .sorted { $0.startDate < $1.startDate }
+        lastFetchSucceeded = Self.fetchSucceeded(accessible: true, calendarCount: availableCalendars.count)
         log.log("Calendar refresh: window \(windowStart, privacy: .public)..\(windowEnd, privacy: .public), \(events.count, privacy: .public) events in window, \(self.upcomingMeetings.count, privacy: .public) qualify as meetings, \(self.upcomingWeek.count, privacy: .public) in the next 7 days")
     }
 

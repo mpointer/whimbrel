@@ -44,8 +44,17 @@ protocol EnrollmentBackend: AnyObject {
     /// "Use this phone instead": this phone becomes a pending swap for `replaceDeviceId`.
     func swapDevice(idToken: String, devicePublicKey: String, replaceDeviceId: String) async throws
     func joinWaitlist(idToken: String, devicePublicKey: String, wants: [String]) async throws
+    /// `POST /v1/account/plan`: Cloud or free. Reminders are a Cloud feature.
+    func accountPlan(idToken: String, devicePublicKey: String) async throws -> AccountPlan
     /// Forgets the Google sign-in (deletes its Keychain tokens).
     func signOut()
+}
+
+extension EnrollmentBackend {
+    /// Fakes that don't care about the plan keep compiling; the answer is a failed check.
+    func accountPlan(idToken: String, devicePublicKey: String) async throws -> AccountPlan {
+        throw SyncAPIError.malformedResponse
+    }
 }
 
 /// The phone's enrollment flow. Mirrors the Mac's `SyncState` (enableSync,
@@ -432,6 +441,14 @@ final class EnrollmentModel: ObservableObject, SyncCredentialSource {
         pendingDeviceCount = records.filter { $0.status == "pending" && $0.publicKey != deviceLabels.ownDeviceId }.count
     }
 
+    /// The account's plan, or nil on any failure or when this phone is not approved (nothing
+    /// is asked of the Worker then). Callers keep what they had on nil.
+    func fetchAccountPlan() async -> AccountPlan? {
+        guard let backend, status == .approved, let publicKey = (try? loadDevicePublicKey()) ?? nil,
+              let idToken = try? await backend.idToken() else { return nil }
+        return try? await backend.accountPlan(idToken: idToken, devicePublicKey: publicKey)
+    }
+
     /// Fetches the account's device list for `deviceLabels`. Silent on any failure (offline,
     /// token trouble): labels fall back to "Device xxxxxx".
     /// Throttled (each call is a registry write): runs when names are missing, after the app
@@ -513,17 +530,19 @@ enum EnrollmentConfig {
         }
         let google = GoogleSignIn(clientId: clientId)
         clearStaleSecretsOnFirstLaunch(signOutGoogle: google.signOut)
-        return EnrollmentModel(backend: LiveEnrollmentBackend(googleSignIn: google, client: SyncClient(baseURL: baseURL)))
+        return EnrollmentModel(backend: LiveEnrollmentBackend(googleSignIn: google, client: SyncClient(baseURL: baseURL), billing: SyncBillingClient(baseURL: baseURL)))
     }
 }
 
 final class LiveEnrollmentBackend: EnrollmentBackend {
     private let googleSignIn: GoogleSignIn
     private let client: SyncClient
+    private let billing: SyncBilling
 
-    init(googleSignIn: GoogleSignIn, client: SyncClient) {
+    init(googleSignIn: GoogleSignIn, client: SyncClient, billing: SyncBilling) {
         self.googleSignIn = googleSignIn
         self.client = client
+        self.billing = billing
     }
 
     func signIn() async throws { try await googleSignIn.authorize() }
@@ -548,6 +567,9 @@ final class LiveEnrollmentBackend: EnrollmentBackend {
     }
     func joinWaitlist(idToken: String, devicePublicKey: String, wants: [String]) async throws {
         try await client.joinWaitlist(idToken: idToken, devicePublicKey: devicePublicKey, wants: wants)
+    }
+    func accountPlan(idToken: String, devicePublicKey: String) async throws -> AccountPlan {
+        try await billing.accountPlan(idToken: idToken, devicePublicKey: devicePublicKey)
     }
     func signOut() { googleSignIn.signOut() }
 }

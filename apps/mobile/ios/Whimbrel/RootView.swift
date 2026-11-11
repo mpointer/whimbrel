@@ -5,6 +5,7 @@ import SwiftUI
 struct RootView: View {
     @ObservedObject var sync: SyncModel
     @ObservedObject var enrollment: EnrollmentModel
+    @ObservedObject var router: ReminderRouter
     @ObservedObject private var themes = ThemeStore.shared
     @State private var showSettings: Bool
     @State private var selection: Int
@@ -15,9 +16,10 @@ struct RootView: View {
     @State private var meetingsPath: NavigationPath
     @State private var topicsPath = NavigationPath()
 
-    init(sync: SyncModel, enrollment: EnrollmentModel) {
+    init(sync: SyncModel, enrollment: EnrollmentModel, router: ReminderRouter) {
         self.sync = sync
         self.enrollment = enrollment
+        self.router = router
         _ask = StateObject(wrappedValue: AskModel(backend: PhoneAskBackend(sync: sync)))
         var tab = 0, settings = false, path = NavigationPath()
         #if DEBUG
@@ -40,6 +42,25 @@ struct RootView: View {
     /// citation's detail screen fires `onDisappear` inside the tab, which must not.)
     static func shouldStopAsk(old: Int, new: Int) -> Bool { old == 1 && new != 1 }
 
+    /// The tab (and topic page, if any) a tapped reminder opens.
+    static func destination(for route: ReminderRoute) -> (tab: Int, topicKey: String?) {
+        switch route {
+        case .today: return (0, nil)
+        case .topics: return (4, nil)
+        case let .topic(key): return (4, key)
+        }
+    }
+
+    private func open(_ route: ReminderRoute) {
+        let target = Self.destination(for: route)
+        selection = target.tab
+        if let key = target.topicKey {
+            topicsPath = NavigationPath()
+            topicsPath.append(TopicRoute(key: key))
+        }
+        router.pending = nil
+    }
+
     var body: some View {
         TabView(selection: $selection) {
             NavigationStack(path: $todayPath) {
@@ -59,6 +80,8 @@ struct RootView: View {
         }
         .tint(Color.theme(.accentPrimary))
         .onChange(of: selection) { old, new in if Self.shouldStopAsk(old: old, new: new) { ask.stop() } }
+        // `initial` covers a tap that cold-launched the app, before this view existed.
+        .onChange(of: router.pending, initial: true) { _, route in if let route { open(route) } }
         .sheet(isPresented: $showSettings) { SettingsSheet(sync: sync, enrollment: enrollment) }
         .task(id: sync.readRevision) {
             // Once per sync: also how a new device waiting for approval reaches the Today banner.

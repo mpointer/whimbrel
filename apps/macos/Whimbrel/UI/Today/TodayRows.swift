@@ -87,6 +87,23 @@ enum TodayScheduleItem: Identifiable {
     }
 }
 
+/// One card on the Today timeline: a calendar event still to come (or running) or a meeting already held.
+struct TodayTimelineEntry: Identifiable {
+    enum Kind {
+        case event(TodayUpcoming)
+        case held(id: Int64)
+    }
+
+    let id: String
+    let start: Date
+    /// When it ends; a held meeting with no end time counts as ended at its start.
+    let end: Date
+    let kind: Kind
+    let model: MeetingCardModel
+    /// The first upcoming event: the one with the Open brief toggle.
+    let isNext: Bool
+}
+
 enum TodayRows {
     /// The label between the upcoming and the already-held meetings in a schedule (Standard's wording).
     static var heldSeparator: String { String(localized: "Earlier today") }
@@ -111,6 +128,39 @@ enum TodayRows {
         schedule.upcoming.map(TodayScheduleItem.event)
             + (schedule.upcoming.isEmpty || schedule.held.isEmpty ? [] : [.separator])
             + schedule.held.map(TodayScheduleItem.held)
+    }
+
+    /// Today's schedule as one start-ascending list of card models: events still to come and the
+    /// meetings already held. The Now marker goes at `timelineNowIndex`.
+    static func timeline(_ content: TodayContent, now: Date) -> [TodayTimelineEntry] {
+        let agenda = content.agenda(now: now)
+        let upcoming = content.upcoming(now: now)
+        var entries: [TodayTimelineEntry] = []
+        var hintPlaced = false
+        for (index, id) in agenda.upcomingToday.enumerated() {
+            guard let event = upcoming.first(where: { $0.id == id }), let source = content.events.first(where: { $0.id == id }) else { continue }
+            var prep = content.prep(eventId: event.id, start: event.start)
+            if prep == nil, index == 0, let next = content.nextPrep, TodayLogic.prep(next, isFor: event), next.brief != nil { prep = next }
+            var model = MeetingCardModel.forEvent(source, prepKey: prep?.eventId, topic: content.topicsByEvent[id], now: now)
+            if !hintPlaced, event.start > now { hintPlaced = true; model.hint = TodayLogic.relativeStart(event.start, end: source.endDate, now: now) }
+            entries.append(TodayTimelineEntry(
+                id: "event-\(id)@\(event.start.timeIntervalSince1970)", start: event.start, end: source.endDate, kind: .event(event), model: model, isNext: index == 0
+            ))
+        }
+        for id in agenda.pastToday {
+            guard let meeting = content.recentMeetings.first(where: { $0.id == id }) else { continue }
+            let model = MeetingCardModel.forRecorded(meeting, prepKey: content.prepKeyByMeetingId[id], topic: content.topicsByMeeting[id], now: now)
+            let start = Date(timeIntervalSince1970: Double(meeting.startUnixMs) / 1000)
+            let end = meeting.endUnixMs.map { Date(timeIntervalSince1970: Double($0) / 1000) } ?? start
+            entries.append(TodayTimelineEntry(id: "held-\(id)", start: start, end: end, kind: .held(id: id), model: model, isNext: false))
+        }
+        return entries.sorted { $0.start < $1.start }
+    }
+
+    /// Where the Now marker sits in `timeline`: before the first meeting that hasn't ended (so a running one is after it).
+    /// 0 when everything is ahead, `entries.count` when everything is behind.
+    static func timelineNowIndex(_ entries: [TodayTimelineEntry], now: Date) -> Int {
+        MeetingCardModel.nowMarkerIndex(ends: entries.map(\.end), now: now)
     }
 
     /// The "earlier" meetings, newest first as the agenda lists them.

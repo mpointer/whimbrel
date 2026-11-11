@@ -40,6 +40,11 @@ internal open class FakeSyncNative(var reply: String? = null) : CoreNative {
         lastPlatform = platform
         return reply
     }
+    var planAccountArgs: List<String>? = null
+    override fun syncWorkerAccountPlan(baseUrl: String, idToken: String, devicePublicKey: String): String? {
+        planAccountArgs = listOf(baseUrl, idToken, devicePublicKey)
+        return reply
+    }
     override fun syncWorkerErrorIsPermanent(errorJson: String): Boolean {
         permanentArg = errorJson
         return permanentReply
@@ -89,4 +94,6 @@ internal open class FakeSyncNative(var reply: String? = null) : CoreNative {
     override fun routinesRecentRuns(handle: Long, limit: Long): String? = runsReply
     override fun meetingPrepGet(handle: Long, eventId: String): String? = prepReply
     override fun memoryUpcomingCalendarEvents(handle: Long, fromUnixMs: Long, untilUnixMs: Long, limit: Long): String? = upcomingReply
+    var topicSnapshotsReply: String? = null
+    override fun topicSnapshotsJson(handle: Long): String? = topicSnapshotsReply
 }

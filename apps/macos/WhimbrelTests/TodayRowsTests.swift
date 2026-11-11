@@ -105,4 +105,70 @@ final class TodayRowsTests: XCTestCase {
         content.digestError = nil
         XCTAssertEqual(TodayRows.recap(content), .none)
     }
+
+    /// The Today timeline is one start-ordered list of cards; the Now marker sits where past ends.
+    func testScheduleItemsBuildCardModelsInStartOrder() throws {
+        var content = sample
+        let entries = TodayRows.timeline(content, now: content.now)
+        XCTAssertEqual(entries.map(\.model.title), ["Standup", "Customer call: Acme", "Design review", "Pipeline sync", "1:1 with Sam"])
+        XCTAssertEqual(entries.map(\.start), entries.map(\.start).sorted())
+        XCTAssertEqual(entries.map(\.model.isPast), [true, true, false, false, false])
+        XCTAssertEqual(Set(entries.map(\.id)).count, entries.count)
+        XCTAssertEqual(TodayRows.timelineNowIndex(entries, now: content.now), 2)
+        XCTAssertEqual(entries[0].model.target, .meeting(id: 1))
+        XCTAssertEqual(entries[2].model.target, .none, "no brief and no topic: not clickable")
+        XCTAssertEqual(entries.filter(\.isNext).map(\.model.title), ["Design review"])
+
+        // A topic on an event makes it open the topic; a brief wins over the topic.
+        content.topicsByEvent["e2"] = TopicRef(topicId: 7, key: "pipeline", name: "Pipeline")
+        let withTopic = TodayRows.timeline(content, now: content.now)
+        XCTAssertEqual(withTopic[3].model.target, .topic(id: 7))
+        XCTAssertEqual(withTopic[3].model.chips, [.topic(id: 7, name: "Pipeline")])
+
+        // Edges: every meeting upcoming puts the marker first, every meeting past puts it last.
+        XCTAssertEqual(TodayRows.timelineNowIndex(entries, now: entries[0].start.addingTimeInterval(-60)), 0)
+        XCTAssertEqual(TodayRows.timelineNowIndex(entries, now: entries[4].start.addingTimeInterval(60)), entries.count)
+    }
+
+    /// A meeting that has started but not ended sits after the Now marker, drawn as running; only the next one carries a hint.
+    func testRunningMeetingSitsAfterTheNowMarker() throws {
+        var content = sample
+        content.events.append(TodaySampleContent.event("run", "Running sync", TodaySampleContent.at(hour: 10, minute: 15), minutes: 45))
+        let entries = TodayRows.timeline(content, now: content.now)
+        XCTAssertEqual(entries.map(\.model.title), ["Standup", "Customer call: Acme", "Running sync", "Design review", "Pipeline sync", "1:1 with Sam"])
+        let marker = TodayRows.timelineNowIndex(entries, now: content.now)
+        XCTAssertEqual(marker, 2)
+        XCTAssertEqual(entries[marker].model.title, "Running sync")
+        XCTAssertTrue(entries[marker].model.isRunning)
+        XCTAssertEqual(entries.map(\.model.isRunning), [false, false, true, false, false, false])
+        XCTAssertEqual(entries.map(\.model.isPast), [true, true, false, false, false, false])
+        XCTAssertEqual(entries.filter(\.isNext).map(\.model.title), ["Running sync"])
+        XCTAssertNil(entries[marker].model.hint, "a running meeting needs no 'in 10 min'")
+    }
+
+    func testOnlyTheNextUpcomingCardHasARelativeHint() throws {
+        let entries = TodayRows.timeline(sample, now: sample.now)
+        XCTAssertEqual(entries.map { $0.model.hint != nil }, [false, false, true, false, false])
+        XCTAssertEqual(entries[2].model.hint, String(localized: "In \(30)m"))
+    }
+
+    /// A held meeting gets the same Prep chip on Today that the Meetings list gives it.
+    func testHeldMeetingCardGetsItsPrepChip() throws {
+        var content = sample
+        let before = TodayRows.timeline(content, now: content.now)
+        XCTAssertFalse(before[0].model.chips.contains(.prep(key: "e-standup@1")))
+        content.prepKeyByMeetingId = [1: "e-standup@1"]
+        let entries = TodayRows.timeline(content, now: content.now)
+        XCTAssertEqual(entries[0].model.target, .meeting(id: 1))
+        XCTAssertEqual(entries[0].model.chips.first, .prep(key: "e-standup@1"))
+        XCTAssertFalse(entries[1].model.chips.contains(.prep(key: "e-standup@1")))
+    }
+
+    func testNextMeetingHintShowsWhileAnotherIsRunning() throws {
+        var content = sample
+        content.events.append(TodaySampleContent.event("run", "Running sync", TodaySampleContent.at(hour: 10, minute: 15), minutes: 45))
+        let entries = TodayRows.timeline(content, now: content.now)
+        XCTAssertEqual(entries.map(\.model.title), ["Standup", "Customer call: Acme", "Running sync", "Design review", "Pipeline sync", "1:1 with Sam"])
+        XCTAssertEqual(entries.map { $0.model.hint != nil }, [false, false, false, true, false, false])
+    }
 }

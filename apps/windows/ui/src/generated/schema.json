@@ -421,6 +421,13 @@
             "null"
           ]
         },
+        "signInExpired": {
+          "description": "The accounts whose Google sign-in expired: only \"Sign in again\" fixes them.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "syncError": {
           "type": [
             "string",
@@ -436,7 +443,8 @@
       },
       "required": [
         "emails",
-        "upcoming"
+        "upcoming",
+        "signInExpired"
       ],
       "type": "object"
     },
@@ -1608,11 +1616,16 @@
             "string",
             "null"
           ]
+        },
+        "signInExpired": {
+          "description": "Google's sign-in for this account expired: only \"Sign in again\" fixes it.",
+          "type": "boolean"
         }
       },
       "required": [
         "email",
-        "needsReconnect"
+        "needsReconnect",
+        "signInExpired"
       ],
       "type": "object"
     },
@@ -2262,13 +2275,54 @@
       ],
       "type": "object"
     },
+    "MeetingChipsView": {
+      "description": "One recorded meeting's chips that need the store: its Prep chip key and its topic.",
+      "properties": {
+        "meetingId": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "prepKey": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "topic": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TopicRefView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "meetingId"
+      ],
+      "type": "object"
+    },
     "MeetingDetail": {
       "properties": {
+        "actionItemCount": {
+          "description": "The summary's action items.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "actionItems": {
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "attendeeCount": {
+          "description": "The invitees on the meeting, not counting you.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "attendees": {
           "items": {
@@ -2293,6 +2347,7 @@
           ]
         },
         "hasSummary": {
+          "description": "The summary's TL;DR is there and not empty.",
           "type": "boolean"
         },
         "id": {
@@ -2339,6 +2394,8 @@
         "status",
         "trigger",
         "hasSummary",
+        "attendeeCount",
+        "actionItemCount",
         "device",
         "attendees",
         "decisions",
@@ -2433,6 +2490,18 @@
     },
     "MeetingRow": {
       "properties": {
+        "actionItemCount": {
+          "description": "The summary's action items.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "attendeeCount": {
+          "description": "The invitees on the meeting, not counting you.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "device": {
           "$ref": "#/definitions/DeviceTag"
         },
@@ -2444,6 +2513,7 @@
           ]
         },
         "hasSummary": {
+          "description": "The summary's TL;DR is there and not empty.",
           "type": "boolean"
         },
         "id": {
@@ -2472,6 +2542,8 @@
         "status",
         "trigger",
         "hasSummary",
+        "attendeeCount",
+        "actionItemCount",
         "device"
       ],
       "type": "object"
@@ -3748,6 +3820,12 @@
     },
     "ScheduleEvent": {
       "properties": {
+        "actionItemCount": {
+          "description": "The recorded meeting's summary action items; 0 when there is no recording.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "attendees": {
           "items": {
             "type": "string"
@@ -3760,6 +3838,17 @@
         },
         "eventId": {
           "type": "string"
+        },
+        "hasSummary": {
+          "description": "The recorded meeting has a non-empty summary; false when there is no recording.",
+          "type": "boolean"
+        },
+        "prepKey": {
+          "description": "The Prep chip's key (the stored brief's own id) when a readable brief exists; Today only.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "recordedMeetingId": {
           "description": "The local meeting recorded for this event, when there is one (recording now or done).",
@@ -3782,7 +3871,9 @@
         "title",
         "startUnixMs",
         "endUnixMs",
-        "attendees"
+        "attendees",
+        "hasSummary",
+        "actionItemCount"
       ],
       "type": "object"
     },

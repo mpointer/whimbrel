@@ -12,6 +12,7 @@ use super::aliases::{alias_hits, live_seeds};
 use super::entities::parse_addresses;
 use super::index::calendar_series_key;
 use super::steps::primary_topic_for_source;
+use crate::calendar_flags::calendar_not_removed;
 use crate::{now_unix_ms, Store};
 
 const DAY_MS: i64 = 86_400_000;
@@ -138,15 +139,16 @@ fn summaries(
     since: i64,
     limit: usize,
 ) -> rusqlite::Result<Vec<TopicSummary>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT t.id, t.name, t.status_line, COUNT(s.id), COALESCE(MAX(s.ts_unix_ms), 0) AS last \
          FROM topic t \
            LEFT JOIN topic_member m ON m.topic_id = t.id AND m.origin != 'removed' \
-           LEFT JOIN topic_source s ON s.id = m.source_id \
+           LEFT JOIN topic_source s ON s.id = m.source_id AND {} \
          WHERE t.merged_into IS NULL AND (?1 IS NULL OR t.id = ?1) AND t.id NOT IN (SELECT topic_id FROM topic_seed WHERE deleted = 1) \
          GROUP BY t.id HAVING COUNT(s.id) >= ?2 AND last >= ?3 \
          ORDER BY last DESC, t.id DESC LIMIT ?4",
-    )?;
+        source_not_removed("s")
+    ))?;
     let rows: Vec<TopicSummary> = stmt
         .query_map(params![id, min_members, since, limit as i64], |r| {
             Ok(TopicSummary {
@@ -167,12 +169,24 @@ fn summaries(
         .collect()
 }
 
+/// SQL: a `topic_source` row (aliased `alias`) is not a calendar event whose item has been
+/// marked removed. Such a source is indexed while the meeting is past; a mark can reach it
+/// later, and the index job drops it on its next run, so reads skip it meanwhile.
+pub(crate) fn source_not_removed(alias: &str) -> String {
+    format!(
+        "NOT ({alias}.kind = 'calendar_event' AND EXISTS (SELECT 1 FROM items ci WHERE ci.id = {alias}.ref_id AND NOT ({})))",
+        calendar_not_removed("ci")
+    )
+}
+
 pub(crate) fn members(conn: &Connection, topic_id: i64) -> rusqlite::Result<Vec<TopicMember>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT s.id, s.kind, s.ref_id, s.ts_unix_ms, s.title, m.origin, s.stub \
          FROM topic_member m JOIN topic_source s ON s.id = m.source_id \
-         WHERE m.topic_id = ?1 AND m.origin != 'removed' ORDER BY s.ts_unix_ms DESC, s.id DESC",
-    )?;
+         WHERE m.topic_id = ?1 AND m.origin != 'removed' AND {} \
+         ORDER BY s.ts_unix_ms DESC, s.id DESC",
+        source_not_removed("s")
+    ))?;
     let mut out: Vec<TopicMember> = stmt
         .query_map([topic_id], |r| {
             Ok(TopicMember {
@@ -214,11 +228,13 @@ pub(crate) struct UpcomingEvent {
 pub(crate) fn upcoming_events(conn: &Connection, now: i64) -> rusqlite::Result<Vec<UpcomingEvent>> {
     let seeds = live_seeds(conn)?;
     // ponytail: scans the next 200 events; raise if someone books further ahead than that
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT i.id, i.ts_unix_ms, COALESCE(i.title, ''), i.actors, s.id, i.source, i.external_id \
          FROM items i LEFT JOIN topic_source s ON s.kind = 'calendar_event' AND s.ref_id = i.id \
-         WHERE i.kind = 'calendar_event' AND i.ts_unix_ms > ?1 ORDER BY i.ts_unix_ms, i.id LIMIT 200",
-    )?;
+         WHERE i.kind = 'calendar_event' AND i.ts_unix_ms > ?1 AND {} \
+         ORDER BY i.ts_unix_ms, i.id LIMIT 200",
+        calendar_not_removed("i")
+    ))?;
     let mut rows = stmt.query([now])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {

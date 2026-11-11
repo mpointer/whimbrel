@@ -50,6 +50,7 @@ class CoreMemoryStore(private val store: CoreStore, private val native: CoreNati
     override fun prep(eventId: String): PhoneMeetingPrep? = decode(native.meetingPrepGet(h, eventId))
     override fun upcomingEvents(fromUnixMs: Long, untilUnixMs: Long, limit: Int): List<PhoneCalendarEvent> =
         decode(native.memoryUpcomingCalendarEvents(h, fromUnixMs, untilUnixMs, limit.toLong())) ?: emptyList()
+    override fun topicSnapshots(): List<PhoneTopicSnapshot> = decode(native.topicSnapshotsJson(h)) ?: emptyList()
 
     override fun close() = store.close()
 }

@@ -41,6 +41,7 @@ if [ -z "${WHIMBREL_KEYSTORE_DIR:-}" ] || [ ! -f "$WHIMBREL_KEYSTORE_DIR/keystor
     echo "error: ${WHIMBREL_KEYSTORE_DIR:-<WHIMBREL_KEYSTORE_DIR unset>}/keystore.properties is missing; set WHIMBREL_KEYSTORE_DIR to the release keystore directory (apps/mobile/android/README.md)" >&2
     exit 1
 fi
+scripts/release-secrets.sh android
 if [ ! -f "$ANDROID_DIR/secrets.properties" ]; then
     echo "error: $ANDROID_DIR/secrets.properties is missing; copy secrets.properties.example and fill it in" >&2
     exit 1

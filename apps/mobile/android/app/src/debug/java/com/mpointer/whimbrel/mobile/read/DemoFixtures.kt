@@ -1,5 +1,6 @@
 package com.mpointer.whimbrel.mobile.read
 
+import com.mpointer.whimbrel.mobile.core.AccountPlan
 import com.mpointer.whimbrel.mobile.core.GoogleAuthResult
 import com.mpointer.whimbrel.mobile.core.MeetingSyncStore
 import com.mpointer.whimbrel.mobile.core.SyncDeviceRecord
@@ -92,6 +93,8 @@ class DemoSyncStore(
         return listOf(PhoneCalendarEvent("demo-next", "google_calendar", "Customer call: Acme pricing", start, listOf("Priya Nair", "Sam Rivera", "Ann Lee"))).take(limit)
     }
 
+    override fun topicSnapshots(): List<PhoneTopicSnapshot> = emptyList()
+
     /** The "pull" has nothing to fetch: the fixtures are already here. */
     override fun pullOnly(c: SyncCredentials, captureWindowDays: Int) = true
     override fun groupedMeetingCount(): Int = meetings().size
@@ -114,5 +117,6 @@ class DemoSyncedBackend : EnrollmentBackend {
     override suspend fun setDeviceName(idToken: String, devicePublicKey: String, name: String) {}
     override suspend fun swapDevice(idToken: String, devicePublicKey: String, replaceDeviceId: String) {}
     override suspend fun joinWaitlist(idToken: String, devicePublicKey: String, wants: List<String>) {}
+    override suspend fun accountPlan(idToken: String, devicePublicKey: String) = AccountPlan("free")
     override fun signOut() {}
 }

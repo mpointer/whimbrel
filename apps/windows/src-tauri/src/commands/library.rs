@@ -55,7 +55,12 @@ pub struct MeetingRow {
     pub status: String,
     /// How it started: "calendar", "detected" or "manual".
     pub trigger: String,
+    /// The summary's TL;DR is there and not empty.
     pub has_summary: bool,
+    /// The invitees on the meeting, not counting you.
+    pub attendee_count: u32,
+    /// The summary's action items.
+    pub action_item_count: u32,
     pub device: DeviceTag,
 }
 
@@ -192,9 +197,16 @@ pub(crate) fn meeting_row(m: &memory::Meeting, labeler: &DeviceLabeler) -> Meeti
         title: m.title.clone(),
         status: status_text(&m.status),
         trigger: crate::commands::workspace::trigger_text(m.trigger),
-        has_summary: m.summary_tldr.is_some(),
+        has_summary: has_summary(m),
+        attendee_count: m.attendees.len() as u32,
+        action_item_count: m.summary_action_items.len() as u32,
         device: tag(labeler, &m.device_id),
     }
+}
+
+/// A meeting has a summary when its TL;DR is there and not empty (the Mac's Summary chip rule).
+pub(crate) fn has_summary(m: &memory::Meeting) -> bool {
+    m.summary_tldr.as_deref().is_some_and(|t| !t.is_empty())
 }
 
 fn episode_row(e: &memory::Episode, hidden: bool, hidden_apps: &[String], labeler: &DeviceLabeler) -> EpisodeRow {

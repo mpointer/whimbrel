@@ -43,6 +43,8 @@ targets:
         group: Shared
       - path: ../../macos/Whimbrel/Support/SyncClient.swift
         group: Shared
+      - path: ../../macos/Whimbrel/Support/SyncBilling.swift
+        group: Shared
       - path: ../../macos/Whimbrel/Support/SyncCoreBridge.swift
         group: Shared
       - path: ../../macos/Whimbrel/Support/CoreUserMessage.swift
@@ -88,6 +90,9 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # Reminders: the background refresh (BGAppRefreshTask) keeps pending notifications current.
+        UIBackgroundModes: [fetch]
+        BGTaskSchedulerPermittedIdentifiers: [com.mpointer.whimbrel.mobile.refresh]
         # From Secrets.xcconfig (gitignored). Same key the Mac uses, so the shared
         # SyncConfig.googleOAuthClientId() reads the iOS client id unmodified.
         GoogleOAuthClientID: $(GOOGLE_IOS_CLIENT_ID)
@@ -112,7 +117,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Whimbrel/Bridging-Header.h
         HEADER_SEARCH_PATHS: $(SRCROOT)/../../../core/ffi/include
         # Follows the repo's VERSION (scripts/check-version.sh checks it; docs/RELEASING.md).
-        MARKETING_VERSION: "0.9.67"
+        MARKETING_VERSION: "0.9.68"
         # Local builds only. scripts/testflight-upload.sh sets the uploaded build's number
         # (UTC time, YYYYMMDD.HHMM) at archive time, so every upload is higher than the last.
         CURRENT_PROJECT_VERSION: "1"

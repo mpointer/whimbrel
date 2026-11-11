@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.67"
+version = "0.9.68"
 edition = "2021"
 publish = false
 # Two binaries (the app and the M3.1 capture-spike CLI); the Tauri CLI builds and
@@ -52,6 +52,8 @@ hound = "3"
 rubato = "0.16"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Local Ollama's /api/tags and /api/ps for perf_log; the same ureq core uses.
+ureq = { version = "2", features = ["json"] }
 chrono = "0.4"
 # Meeting snapshot PNGs. Already in the build through Tauri's `image`.
 png = "0.18"

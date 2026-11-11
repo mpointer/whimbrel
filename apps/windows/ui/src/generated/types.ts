@@ -787,6 +787,10 @@ export interface CalendarAccounts {
    */
   nextMeeting?: string | null;
   nextStartUnixMs?: number | null;
+  /**
+   * The accounts whose Google sign-in expired: only "Sign in again" fixes them.
+   */
+  signInExpired: string[];
   syncError?: string | null;
   /**
    * Meetings still to come that a prompt could fire for.
@@ -1133,6 +1137,10 @@ export interface GmailAccount {
    */
   needsReconnect: boolean;
   readError?: string | null;
+  /**
+   * Google's sign-in for this account expired: only "Sign in again" fixes it.
+   */
+  signInExpired: boolean;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1280,8 +1288,19 @@ export interface LanguageSettings {
  * via the `definition` "MeetingRow".
  */
 export interface MeetingRow {
+  /**
+   * The summary's action items.
+   */
+  actionItemCount: number;
+  /**
+   * The invitees on the meeting, not counting you.
+   */
+  attendeeCount: number;
   device: DeviceTag;
   endUnixMs?: number | null;
+  /**
+   * The summary's TL;DR is there and not empty.
+   */
   hasSummary: boolean;
   id: number;
   status: string;
@@ -1462,15 +1481,46 @@ export interface MeetingAskExchange {
   query: string;
 }
 /**
+ * One recorded meeting's chips that need the store: its Prep chip key and its topic.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "MeetingChipsView".
+ */
+export interface MeetingChipsView {
+  meetingId: number;
+  prepKey?: string | null;
+  topic?: TopicRefView | null;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "TopicRefView".
+ */
+export interface TopicRefView {
+  key: string;
+  name: string;
+  topicId: number;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "MeetingDetail".
  */
 export interface MeetingDetail {
+  /**
+   * The summary's action items.
+   */
+  actionItemCount: number;
   actionItems: string[];
+  /**
+   * The invitees on the meeting, not counting you.
+   */
+  attendeeCount: number;
   attendees: string[];
   decisions: string[];
   device: DeviceTag;
   endUnixMs?: number | null;
+  /**
+   * The summary's TL;DR is there and not empty.
+   */
   hasSummary: boolean;
   id: number;
   notes?: string | null;
@@ -1953,9 +2003,21 @@ export interface RunView {
  * via the `definition` "ScheduleEvent".
  */
 export interface ScheduleEvent {
+  /**
+   * The recorded meeting's summary action items; 0 when there is no recording.
+   */
+  actionItemCount: number;
   attendees: string[];
   endUnixMs: number;
   eventId: string;
+  /**
+   * The recorded meeting has a non-empty summary; false when there is no recording.
+   */
+  hasSummary: boolean;
+  /**
+   * The Prep chip's key (the stored brief's own id) when a readable brief exists; Today only.
+   */
+  prepKey?: string | null;
   /**
    * The local meeting recorded for this event, when there is one (recording now or done).
    */
@@ -2307,15 +2369,6 @@ export interface TopicListItemView {
    */
   openMine: number;
   topic: TopicRefView;
-}
-/**
- * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
- * via the `definition` "TopicRefView".
- */
-export interface TopicRefView {
-  key: string;
-  name: string;
-  topicId: number;
 }
 /**
  * "Names I go by", and names from the user's accounts to offer.

@@ -23,7 +23,7 @@ pub fn pipeline_threads() -> i32 {
 
 /// Physical performance cores (efficiency class above the lowest), or `None` if Windows
 /// won't say. A machine with one efficiency class reports all of its cores.
-fn performance_cores() -> Option<usize> {
+pub fn performance_cores() -> Option<usize> {
     use windows::Win32::System::SystemInformation::{
         GetLogicalProcessorInformationEx, RelationProcessorCore, SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
     };

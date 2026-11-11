@@ -60,11 +60,19 @@ export function ActionItems({
                   disabled={readOnly}
                   onChange={() => run(meetingUpdateActionItem(meetingId, item.id, null, !item.completed))}
                 />
-                <input
-                  className="input"
+                {/* A textarea, so a long item wraps and shows in full; Enter saves it as the old one-line field did. */}
+                <textarea
+                  className="input action-item-text"
+                  rows={1}
                   value={item.text}
                   readOnly={readOnly}
-                  onChange={(e) => onItems(items.map((i) => (i.id === item.id ? { ...i, text: e.target.value } : i)))}
+                  onChange={(e) => onItems(items.map((i) => (i.id === item.id ? { ...i, text: e.target.value.replace(/\n/g, " ") } : i)))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      e.currentTarget.blur();
+                    }
+                  }}
                   onBlur={(e) => run(meetingUpdateActionItem(meetingId, item.id, e.target.value, null))}
                 />
               </label>

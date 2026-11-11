@@ -159,6 +159,14 @@ JNIEXPORT jbyteArray JNICALL JNI(nSyncWorkerJoinWaitlist)(JNIEnv *env, jobject s
     return take(env, r);
 }
 
+JNIEXPORT jbyteArray JNICALL JNI(nSyncWorkerAccountPlan)(JNIEnv *env, jobject self, jbyteArray base, jbyteArray token, jbyteArray pub) {
+    (void)self;
+    char *a = cstr(env, base), *b = cstr(env, token), *c = cstr(env, pub);
+    char *r = whimbrel_sync_worker_account_plan(a, b, c);
+    free(a); free(b); free(c);
+    return take(env, r);
+}
+
 JNIEXPORT jboolean JNICALL JNI(nSyncWorkerErrorIsPermanent)(JNIEnv *env, jobject self, jbyteArray json) {
     (void)self;
     char *a = cstr(env, json);
@@ -279,4 +287,9 @@ JNIEXPORT jbyteArray JNICALL JNI(nMeetingPrepGet)(JNIEnv *env, jobject self, jlo
 JNIEXPORT jbyteArray JNICALL JNI(nMemoryUpcomingCalendarEvents)(JNIEnv *env, jobject self, jlong handle, jlong from, jlong until, jlong limit) {
     (void)self;
     return take(env, whimbrel_memory_upcoming_calendar_events(H(handle), (int64_t)from, (int64_t)until, (uint64_t)limit));
+}
+
+JNIEXPORT jbyteArray JNICALL JNI(nTopicSnapshotsJson)(JNIEnv *env, jobject self, jlong handle) {
+    (void)self;
+    return take(env, whimbrel_topic_snapshots_json(H(handle)));
 }

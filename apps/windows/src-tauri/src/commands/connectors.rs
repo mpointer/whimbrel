@@ -28,6 +28,8 @@ pub struct CalendarAccounts {
     /// Why calendar syncing can't run right now (no Node, connector not staged, sync not
     /// configured), or `None` when it can.
     pub blocked: Option<String>,
+    /// The accounts whose Google sign-in expired: only "Sign in again" fixes them.
+    pub sign_in_expired: Vec<String>,
 }
 
 fn blocked_reason(state: &AppState) -> Option<String> {
@@ -48,7 +50,9 @@ pub fn calendar_accounts(state: State<'_, AppState>) -> Result<CalendarAccounts,
     let now = chrono::Utc::now().timestamp_millis();
     let upcoming = state.calendar.as_ref().map(|c| c.upcoming(now)).unwrap_or_default();
     let status = state.calendar.as_ref().map(|c| c.status()).unwrap_or_default();
+    let sign_in_expired = emails.iter().filter(|e| accounts::sign_in_expired(Kind::Calendar, e)).cloned().collect();
     Ok(CalendarAccounts {
+        sign_in_expired,
         emails,
         upcoming: upcoming.len(),
         next_meeting: upcoming.first().map(|m| m.title.clone()),
@@ -98,6 +102,17 @@ pub async fn calendar_disconnect(app: AppHandle, email: String) -> Result<Calend
                 move |s| api::connectors::accounts::remove(s, accounts::CALENDAR, &email).map_err(|e| e.to_string())
             })?
             .map_err(CommandError::store)?;
+        // Its future meetings leave every device, phones included (calendar removals, 2026-11-11).
+        // The same email `calendar::apply` was given. A failure leaves them until they pass: not fatal.
+        let forgotten = state.store()?.call_blocking({
+            let email = email.clone();
+            move |s| s.forget_calendar_account("google_calendar", &email, chrono::Utc::now().timestamp_millis()).map_err(|e| e.to_string())
+        });
+        match forgotten {
+            Ok(Ok(outcome)) => tracing::info!(email, marked = outcome.marked, unmarked = outcome.unmarked, "removed the account's meetings from the calendar"),
+            Ok(Err(e)) => tracing::warn!(email, error = %e, "could not remove the account's meetings from the calendar"),
+            Err(e) => tracing::warn!(email, error = %e, "could not remove the account's meetings from the calendar"),
+        }
         tracing::info!(email, "disconnected a Google Calendar account");
         calendar_accounts(state)
     })
@@ -131,6 +146,8 @@ pub struct GmailAccount {
     /// When Whimbrel last read this account's mail, and why the last round failed if it did.
     pub last_read_unix_ms: Option<i64>,
     pub read_error: Option<String>,
+    /// Google's sign-in for this account expired: only "Sign in again" fixes it.
+    pub sign_in_expired: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -166,7 +183,13 @@ pub fn gmail_view(
             .into_iter()
             .map(|email| {
                 let read = status(&email);
-                GmailAccount { needs_reconnect: needs_reconnect(secrets, &email), last_read_unix_ms: read.last_read_unix_ms, read_error: read.error, email }
+                GmailAccount {
+                    needs_reconnect: needs_reconnect(secrets, &email),
+                    sign_in_expired: accounts::sign_in_expired(Kind::Gmail, &email),
+                    last_read_unix_ms: read.last_read_unix_ms,
+                    read_error: read.error,
+                    email,
+                }
             })
             .collect(),
         blocked,
@@ -195,6 +218,54 @@ pub async fn gmail_accounts(app: AppHandle) -> Result<GmailAccounts, CommandErro
     tauri::async_runtime::spawn_blocking(move || gmail_state(&app.state::<AppState>()))
         .await
         .map_err(|e| CommandError::store(tr("Reading the Gmail accounts failed: {error}", &[("error", &e.to_string())])))?
+}
+
+/// Signs a connected calendar account in again after its sign-in expired, then syncs it.
+#[tauri::command]
+pub async fn calendar_reconnect(app: AppHandle, email: String) -> Result<CalendarAccounts, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let config = crate::syncing::config::SyncConfig::embedded().map_err(CommandError::not_configured)?;
+        let connected = state
+            .store()?
+            .call_blocking(|s| api::connectors::accounts::list(s, accounts::CALENDAR).map_err(|e| e.to_string()))?
+            .map_err(CommandError::store)?
+            .emails;
+        accounts::reconnect_for(Kind::Calendar, &state.secrets, &config, crate::syncing::controller::open_in_browser, &email, |e| {
+            connected.iter().any(|c| c.eq_ignore_ascii_case(e))
+        })?;
+        tracing::info!(email, "signed a Google Calendar account in again");
+        if let Some(calendar) = &state.calendar {
+            calendar.poll_now();
+        }
+        calendar_accounts(state)
+    })
+    .await
+    .map_err(|e| CommandError::network(tr("Signing in again failed: {error}", &[("error", &e.to_string())])))?
+}
+
+/// Signs a connected Gmail account in again after its sign-in expired, then reads it.
+#[tauri::command]
+pub async fn gmail_reconnect(app: AppHandle, email: String) -> Result<GmailAccounts, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let config = crate::syncing::config::SyncConfig::embedded().map_err(CommandError::not_configured)?;
+        let connected = state
+            .store()?
+            .call_blocking(|s| api::connectors::accounts::list(s, accounts::GMAIL).map_err(|e| e.to_string()))?
+            .map_err(CommandError::store)?
+            .emails;
+        accounts::reconnect_for(Kind::Gmail, &state.secrets, &config, crate::syncing::controller::open_in_browser, &email, |e| {
+            connected.iter().any(|c| c.eq_ignore_ascii_case(e))
+        })?;
+        tracing::info!(email, "signed a Gmail account in again");
+        if let Some(gmail) = &state.gmail {
+            gmail.poll_now();
+        }
+        gmail_state(&state)
+    })
+    .await
+    .map_err(|e| CommandError::network(tr("Signing in again failed: {error}", &[("error", &e.to_string())])))?
 }
 
 /// Opens Google's consent page and waits for it. Connecting an address that is already there

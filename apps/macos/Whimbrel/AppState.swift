@@ -286,6 +286,60 @@ final class AppState: ObservableObject {
         return CoreMemoryStore.mergeMeetings(eventKit: eventKit, oauth: oauth.filter { $0.startDate < end })
     }
 
+    /// How far ahead the phones get calendar events: today plus tomorrow, so a reminder
+    /// for an early meeting can fire before the Mac is awake.
+    static let calendarSyncHorizon: TimeInterval = 48 * 3600
+
+    /// What calendar sync sends to the phones. Separate from `todaysMeetings` on purpose: that
+    /// one stays today-only for the Mac's own surfaces. Today's already-started meetings stay
+    /// (EventKit's lookbehind); only the upper bound is cut, at `now + calendarSyncHorizon`.
+    /// The week list can reach 7 days out and the connector's years, so every source is cut.
+    /// Meetings the user declined are left out (phone reminders skip them), the same rule as
+    /// `weekMeetings`; no response, accepted and tentative stay.
+    nonisolated static func syncMeetings(eventKit: [QualifyingMeeting], week: [QualifyingMeeting], oauth: [QualifyingMeeting], now: Date) -> [QualifyingMeeting] {
+        let end = now.addingTimeInterval(calendarSyncHorizon)
+        return CoreMemoryStore.mergeMeetings(eventKit: eventKitSyncSide(eventKit: eventKit, week: week, now: now), oauth: oauth.filter { $0.startDate < end })
+            .filter { $0.selfResponse != .declined }
+    }
+
+    /// The EventKit side of `syncMeetings`, before it is merged with Google: cut at the sync
+    /// horizon and deduped. An EventKit id is shared by every occurrence of a recurring series,
+    /// so dedupe on id and start together, the same identity the items table uses
+    /// ("{id}#{start_secs}").
+    nonisolated private static func eventKitSyncSide(eventKit: [QualifyingMeeting], week: [QualifyingMeeting], now: Date) -> [QualifyingMeeting] {
+        let end = now.addingTimeInterval(calendarSyncHorizon)
+        var seen = Set<String>()
+        return (eventKit + week).filter { $0.startDate < end && seen.insert("\($0.id)#\(Int($0.startDate.timeIntervalSince1970))").inserted }
+    }
+
+    /// Guards against a quiet empty read (a store that has not loaded, a wake-up) hiding
+    /// everything: every empty list, including the first one in a run, is withheld until a
+    /// second distinct refresh agrees. Non-empty lists pass straight through; nil (no
+    /// successful fetch) passes through and resets the streak. `previousCount` no longer
+    /// matters (a launch with nothing known yet needs the same confirmation).
+    nonisolated static func confirmedPresence(
+        current: [PresentEvent]?, previousCount: Int?, emptyStreak: Int, generation: Int, lastGeneration: Int
+    ) -> (present: [PresentEvent]?, emptyStreak: Int, lastGeneration: Int) {
+        guard let current else { return (nil, 0, lastGeneration) }
+        guard current.isEmpty else { return (current, 0, lastGeneration) }
+        // The streak counts EventKit refreshes (`generation`), not persist calls: one refresh
+        // publishes twice and a Google poll persists again.
+        let streak = generation == lastGeneration ? emptyStreak : emptyStreak + 1
+        return (streak >= 2 ? current : nil, streak, generation)
+    }
+
+    /// Every Apple Calendar meeting this fetch shows, for the presence table: the EventKit side
+    /// before merging with Google (a meeting with a Google twin is still present in Apple
+    /// Calendar), declined ones left out. Nil unless the fetch succeeded, so a revoked
+    /// permission or a failed fetch reconciles nothing; an empty list is a valid answer.
+    nonisolated static func eventKitPresence(eventKit: [QualifyingMeeting], week: [QualifyingMeeting], now: Date, fetchSucceeded: Bool) -> [PresentEvent]? {
+        guard fetchSucceeded else { return nil }
+        return eventKitSyncSide(eventKit: eventKit, week: week, now: now)
+            .filter { $0.selfResponse != .declined }
+            .compactMap { CoreMemoryStore.calendarEventItem(for: $0, deviceId: "presence") }
+            .map { PresentEvent(externalId: $0.externalId, startUnixMs: $0.tsUnixMs) }
+    }
+
     /// Today's "Upcoming" section: the 7 days after today from both sources, merged the same way,
     /// declined meetings left out. Recomputed when either source publishes (see `init`), not per
     /// render. Nothing else reads it (not the trigger, not calendar sync).
@@ -862,6 +916,7 @@ final class AppState: ObservableObject {
             .store(in: &cancellables)
 
         calendar.$upcomingMeetings
+            .merge(with: calendar.$upcomingWeek)
             .merge(with: googleCalendarPolling.$oauthMeetings)
             .sink { [weak self] _ in
                 DispatchQueue.main.async { self?.persistCalendarEventItems() }
@@ -1067,18 +1122,45 @@ final class AppState: ObservableObject {
     /// calendar events into `items` whenever the merged calendar/Google Calendar poll
     /// changes — one integration point regardless of which calendar an event came from.
     /// `$upcomingMeetings`/`$oauthMeetings`, like `objectWillChange`, fire on `willSet` —
-    /// *before* the new value lands — so reading `allUpcomingMeetings` synchronously
-    /// inside the sink would see the previous poll's data. The subscription above defers
+    /// *before* the new value lands — so reading the sources synchronously inside the
+    /// sink would see the previous poll's data. The subscription above defers
     /// the call with `DispatchQueue.main.async` so it runs after both `@Published`
-    /// properties have finished mutating, and `allUpcomingMeetings` reflects the fresh
-    /// poll by the time this reads it. The actual FFI call is dispatched onto
+    /// properties have finished mutating, and the sources reflect the fresh
+    /// poll by the time this reads them (what is synced is `syncMeetings`, not
+    /// `allUpcomingMeetings`). The actual FFI call is dispatched onto
     /// `CoreMemoryStore.accessQueue` — the same shared queue every other coreStore
     /// caller in this file uses, per `CoreMemoryStore`'s not-thread-safe contract.
+    private var lastPresenceCount: Int?
+    private var presenceEmptyStreak = 0
+    private var lastPresenceGeneration = 0
+
     private func persistCalendarEventItems() {
-        let inputs = allUpcomingMeetings.compactMap { CoreMemoryStore.calendarEventItem(for: $0, deviceId: deviceId) }
-        guard !inputs.isEmpty, let store = coreStore else { return }
+        let now = Date()
+        let meetings = Self.syncMeetings(
+            eventKit: calendar.upcomingMeetings, week: calendar.upcomingWeek, oauth: googleCalendarPolling.oauthMeetings, now: now
+        )
+        let inputs = meetings.compactMap { CoreMemoryStore.calendarEventItem(for: $0, deviceId: deviceId) }
+        let confirmed = Self.confirmedPresence(
+            current: Self.eventKitPresence(
+                eventKit: calendar.upcomingMeetings, week: calendar.upcomingWeek, now: now, fetchSucceeded: calendar.lastFetchSucceeded
+            ),
+            previousCount: lastPresenceCount, emptyStreak: presenceEmptyStreak,
+            generation: calendar.fetchGeneration, lastGeneration: lastPresenceGeneration
+        )
+        presenceEmptyStreak = confirmed.emptyStreak
+        lastPresenceGeneration = confirmed.lastGeneration
+        let present = confirmed.present
+        if let present { lastPresenceCount = present.count }
+        guard let store = coreStore, !inputs.isEmpty || present != nil else { return }
         CoreMemoryStore.accessQueue.async {
             store.upsertCalendarEventItems(inputs)
+            // After the upsert, so a meeting never flickers absent. An empty list is a real answer.
+            if let present {
+                store.calendarPresenceReplace(
+                    source: "apple_calendar", account: "eventkit",
+                    windowStart: now, windowEnd: now.addingTimeInterval(Self.calendarSyncHorizon), present: present
+                )
+            }
         }
     }
 

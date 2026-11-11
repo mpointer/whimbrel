@@ -14,7 +14,7 @@ import {
 } from "../layoutModel";
 import { t } from "../../l10n";
 import { UpcomingBody } from "../UpcomingCard";
-import { BracketLink, DevicesLine, HeldLine, OpenLoopLines, PrepLine, RecapLines, ScheduleLines, SkinImage, SkinText, useWidth, type TodayLayoutProps } from "./parts";
+import { BracketLink, DevicesLine, HeldLine, OpenLoopLines, PrepLine, RecapLines, RowChips, ScheduleLines, SkinImage, SkinText, useWidth, type TodayLayoutProps } from "./parts";
 
 const anchor = (section: SectionId) => `today-${section}`;
 
@@ -122,7 +122,8 @@ function Infobox({ row, props, title }: { row: EventRow; props: TodayLayoutProps
         <SkinText role="numerals" className="tone-primary">{row.timeText}</SkinText>
         {row.relative && <SkinText role="label" className="tone-secondary">{row.relative}</SkinText>}
         {row.attendees && <SkinText role="label" lines={2} className="tone-secondary">{row.attendees}</SkinText>}
-        <PrepLine prep={row.prep} props={props} bracket />
+        <RowChips chips={row.chips} card={row.card} props={props} />
+        <PrepLine prep={row.prep} props={props} bracket chip={row.chips.some((c) => c.kind === "prep")} />
         {row.action === "start" && <BracketLink label={props.starting === row.id ? t("Starting…") : t("Start")} primary disabled={props.starting !== null} onClick={() => props.actions.start(row.id)} />}
       </div>
     </aside>

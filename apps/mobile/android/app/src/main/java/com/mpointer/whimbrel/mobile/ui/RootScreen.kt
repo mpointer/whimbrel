@@ -58,6 +58,7 @@ data class RootStart(val tab: RootTab = RootTab.Today, val meetingId: Long? = nu
 fun RootScreen(
     sync: SyncModel,
     enrollment: EnrollmentModel,
+    reminders: com.mpointer.whimbrel.mobile.reminders.ReminderCoordinator,
     themes: ThemeStore,
     phoneName: String,
     start: RootStart = RootStart(),
@@ -151,5 +152,5 @@ fun RootScreen(
             }
         }
     }
-    if (settingsOpen) SettingsSheet(sync, themes, phoneName, onDismiss = { settingsOpen = false })
+    if (settingsOpen) SettingsSheet(sync, reminders, themes, phoneName, onDismiss = { settingsOpen = false })
 }

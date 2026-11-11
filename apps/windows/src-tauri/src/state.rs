@@ -368,6 +368,8 @@ impl AppState {
         if let Some(store) = &self.store {
             // The summary loops hold their store across an Ollama call, so they get their own lane.
             crate::jobs::start(self.bg_store.as_ref().unwrap_or(store).clone(), self.settings.clone());
+            // The `this PC` line now, and resource use every 5 minutes (plan 2026-11-11).
+            crate::perf_log::start(self.settings.lock().unwrap().routing().ollama_model);
             // Topic sorting holds its store across a TypeSafe call, so it shares the background lane.
             crate::topics::start(self.bg_store.as_ref().unwrap_or(store).clone(), self.settings.clone(), self.secrets.clone(), self.topic_sort.clone());
             // The suggestion call holds the store across a model call, so it goes on the slow lane.

@@ -2,7 +2,8 @@
 // and `TodayContent`). The layouts style these rows and wire the actions; they do not re-derive them.
 // Pure: nothing here touches the DOM.
 
-import type { DeviceCount, MeetingRow, NextMeetingView, ScheduleEvent, ScheduleView, ThreadRow, TodayOverview, TodayRecap, UpcomingView } from "../generated/types";
+import type { DeviceCount, MeetingRow, NextMeetingView, ScheduleEvent, ScheduleView, ThreadRow, TodayOverview, TodayRecap, TopicRefView, UpcomingView } from "../generated/types";
+import { forEvent, forRecorded, type HeldChips, type MeetingCardTarget, type MeetingChip } from "../meetings/meetingCardModel";
 import { dateTimeLabel, timeLabel } from "../library/rows";
 import { WHIMBREL, type SkinManifest } from "../skin";
 import { attendeesLine, deviceLine, greeting, relativeStart, rowAction } from "./todayModel";
@@ -136,6 +137,9 @@ export interface TodayModel {
   devices: DeviceCount[];
   /** The next 7 days (Upcoming); null until read. */
   upcoming?: UpcomingView | null;
+  /** The chips the background lookups found: each schedule event's topic (by position in `schedule.events`),
+   *  and each held meeting's Prep key and topic. Absent until they answer; the rows show without them. */
+  chips?: { eventTopics: (TopicRefView | null)[]; held: ReadonlyMap<number, HeldChips> };
 }
 
 // --- rows -------------------------------------------------------------------------------------
@@ -152,6 +156,9 @@ export interface EventRow {
   /** Start for an event not yet recorded (off while recording), Open once it has a recording. */
   action: "start" | "open" | null;
   recordedMeetingId: number | null;
+  /** The same chips the Standard timeline shows (meetings/meetingCardModel), and where the card itself goes. */
+  chips: MeetingChip[];
+  card: MeetingCardTarget;
 }
 
 export interface HeldRow {
@@ -161,6 +168,8 @@ export interface HeldRow {
   title: string;
   /** Empty on Windows today; the Mac says "Transcribing…" while a meeting is processed. */
   subtitle: string;
+  chips: MeetingChip[];
+  card: MeetingCardTarget;
 }
 
 export type ScheduleItem = { kind: "event"; row: EventRow } | { kind: "separator" } | { kind: "held"; row: HeldRow };
@@ -172,6 +181,8 @@ export function heldSeparator(): string {
 
 function eventRow(e: ScheduleEvent, model: TodayModel, recording: boolean, isUpNext: boolean): EventRow {
   const prep = isUpNext ? (model.next?.eventId === e.eventId && model.next.brief ? "ready" : "none") : null;
+  const index = model.schedule?.events.indexOf(e) ?? -1;
+  const card = forEvent(e, index >= 0 ? model.chips?.eventTopics[index] : null, model.now, model.locale);
   return {
     id: e.eventId,
     startMs: e.startUnixMs,
@@ -182,10 +193,16 @@ function eventRow(e: ScheduleEvent, model: TodayModel, recording: boolean, isUpN
     prep,
     action: rowAction(e, recording),
     recordedMeetingId: e.recordedMeetingId ?? null,
+    chips: card.chips,
+    card: card.target,
   };
 }
 
-const heldRow = (m: MeetingRow, text: (ms: number) => string): HeldRow => ({ id: m.id, startMs: m.tsUnixMs, timeText: text(m.tsUnixMs), title: m.title, subtitle: "" });
+function heldRow(m: MeetingRow, model: TodayModel, text: (ms: number) => string): HeldRow {
+  const found = model.chips?.held.get(m.id);
+  const card = forRecorded(m, found?.prepKey, found?.topic, model.locale);
+  return { id: m.id, startMs: m.tsUnixMs, timeText: text(m.tsUnixMs), title: m.title, subtitle: "", chips: card.chips, card: card.target };
+}
 
 /** The first of today's events still ahead that has no recording: the one the day is waiting for. */
 export function upNext(model: TodayModel): EventRow | null {
@@ -204,7 +221,7 @@ export function schedule(model: TodayModel, upNextPlaced: boolean): { upcoming: 
     .filter((e) => e.eventId !== skip)
     .map((e) => eventRow(e, model, s.recording, false))
     .sort((a, b) => a.startMs - b.startMs);
-  const held = s.earlierToday.map((m) => heldRow(m, (ms) => timeLabel(ms, model.locale))).sort((a, b) => a.startMs - b.startMs);
+  const held = s.earlierToday.map((m) => heldRow(m, model, (ms) => timeLabel(ms, model.locale))).sort((a, b) => a.startMs - b.startMs);
   return { upcoming, held };
 }
 
@@ -219,7 +236,7 @@ export function scheduleItems(rows: { upcoming: EventRow[]; held: HeldRow[] }): 
 
 /** The meetings from earlier days, as they arrive (newest first), each with its date and time. */
 export function earlierRows(model: TodayModel, now: Date = new Date(model.now)): HeldRow[] {
-  return model.earlier.map((m) => heldRow(m, (ms) => dateTimeLabel(ms, now, model.locale)));
+  return model.earlier.map((m) => heldRow(m, model, (ms) => dateTimeLabel(ms, now, model.locale)));
 }
 
 /** How many meetings from earlier days Today lists. */

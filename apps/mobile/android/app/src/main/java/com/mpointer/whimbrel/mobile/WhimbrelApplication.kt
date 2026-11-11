@@ -18,6 +18,14 @@ import com.mpointer.whimbrel.mobile.core.CpuFeatures
 import com.mpointer.whimbrel.mobile.core.MeetingSyncStore
 import com.mpointer.whimbrel.mobile.core.Native
 import com.mpointer.whimbrel.mobile.core.SyncWorkerClient
+import com.mpointer.whimbrel.mobile.reminders.AlarmReminderScheduler
+import com.mpointer.whimbrel.mobile.reminders.PlanCache
+import com.mpointer.whimbrel.mobile.reminders.ReminderCoordinator
+import com.mpointer.whimbrel.mobile.reminders.ReminderReceiver
+import com.mpointer.whimbrel.mobile.reminders.ReminderRefreshWorker
+import com.mpointer.whimbrel.mobile.reminders.ReminderSettingsStore
+import com.mpointer.whimbrel.mobile.reminders.ResourceReminderText
+import com.mpointer.whimbrel.mobile.reminders.SystemAlarmBackend
 import com.mpointer.whimbrel.mobile.secrets.KeystoreCipher
 import com.mpointer.whimbrel.mobile.secrets.SecretVault
 import com.mpointer.whimbrel.mobile.secrets.SyncSecrets
@@ -37,6 +45,7 @@ import com.mpointer.whimbrel.mobile.theme.ThemeLoader
 import com.mpointer.whimbrel.mobile.theme.ThemeStore
 import java.io.File
 import java.util.concurrent.Executors
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -101,7 +110,13 @@ class WhimbrelApplication : Application() {
             clock = System::currentTimeMillis,
             sleep = { seconds -> delay(seconds * 1000) },
             configError = configError?.let(::getString),
-        ).also { it.onWipe = { wipeHandler(prefs, rawPrefs, keys, liveSync, storeDir)() } }
+        ).also {
+            it.onWipe = {
+                wipeHandler(prefs, rawPrefs, keys, liveSync, storeDir)()
+                // Revoked or signed out: no reminder may outlive the account's data.
+                reminders.clearOnWipe()
+            }
+        }
     }
 
     private val liveSync: SyncModel by lazy {
@@ -121,6 +136,24 @@ class WhimbrelApplication : Application() {
         )
     }
 
+    private val reminderPrefs by lazy { getSharedPreferences("reminders", MODE_PRIVATE) }
+
+    /**
+     * Reminders: planning, the plan check and scheduling. Only ever read when [coreSupported]. Its models are
+     * looked up on use, so a demo started later is the one it sees (and the demo turns it off).
+     */
+    val reminders: ReminderCoordinator by lazy {
+        ReminderCoordinator.create(
+            sync = { sync },
+            enrollment = { enrollment },
+            scheduler = AlarmReminderScheduler(reminderPrefs, SystemAlarmBackend(this)),
+            settings = ReminderSettingsStore(reminderPrefs),
+            plan = PlanCache(reminderPrefs),
+            text = ResourceReminderText(this),
+            requestPermission = { (activity as? MainActivity)?.requestNotificationPermission() ?: false },
+        )
+    }
+
     /** The demo's models when a debug launch asked for one; replaces the live ones for the rest of the process. */
     private var demo: Pair<EnrollmentModel, SyncModel>? = null
 
@@ -136,6 +169,8 @@ class WhimbrelApplication : Application() {
      */
     internal fun startDemo(store: MeetingSyncStore, backend: EnrollmentBackend) {
         if (!coreSupported || demo != null) return
+        // The demo never checks the plan, schedules or asks for permission, whatever the cached plan says.
+        reminders.isEnabled = false
         val secrets = SyncSecrets(SecretVault(File(cacheDir, "demo-secrets").also { it.deleteRecursively() }, KeystoreCipher()))
         // Keys already held: the model starts approved and its silent resume lands the (fake) token.
         secrets.deviceSecretKey = Json.parseToJsonElement(Native.syncGenerateDeviceKeypair()!!).jsonObject.getValue("secret_key_base64").jsonPrimitive.content
@@ -170,6 +205,8 @@ class WhimbrelApplication : Application() {
         )
         coreSupported = CpuFeatures.hasFp16(runCatching { File("/proc/cpuinfo").readText() }.getOrDefault(""))
         if (!coreSupported) return
+        ReminderReceiver.ensureChannel(this)
+        ReminderRefreshWorker.enqueuePeriodic(this)
         // A wipe cut short (killed, delete failed) finishes now, before anything opens the store.
         StoreRemoval.finishIfPending(rawPrefs) { deleteStoreDir(storeDir) }
         // No polling in the background; coming back re-checks a pending approval at once.
@@ -187,6 +224,25 @@ class WhimbrelApplication : Application() {
         if (resumed) return
         resumed = true
         appScope.launch { enrollment.launch() }
+        // The plan check at launch, then after every sync: a throttled check and a fresh set of reminders.
+        appScope.launch { reminderStep { reminders.refreshPlanIfDue(force = true) } }
+        appScope.launch {
+            sync.readRevision.collect {
+                reminderStep { reminders.refreshPlanIfDue(force = false) }
+                reminderStep { reminders.reschedule() }
+            }
+        }
+    }
+
+    /** A reminder step must never take the app down (this scope has no handler); a cancellation still propagates. */
+    private suspend fun reminderStep(step: suspend () -> Unit) {
+        try {
+            step()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w("reminders", "step failed: ${e.javaClass.simpleName}")
+        }
     }
 
     /** What the Mac's Devices list shows for this phone: the name the owner gave it, else the model. */

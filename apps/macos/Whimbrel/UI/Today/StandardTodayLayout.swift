@@ -92,26 +92,16 @@ struct StandardTodayLayout: View {
         }
     }
 
-    /// Today's calendar events (earliest first) and the meetings already held today, in one card.
-    /// Recomputed on every tick, so a finished event leaves the list without another publish.
+    /// Today's calendar events and the meetings already held, as a timeline with a Now marker.
+    /// Recomputed on every tick, so the marker moves and a finished event goes behind it without another publish.
     private var scheduleCard: some View {
         SwiftUI.TimelineView(.periodic(from: .now, by: 30)) { context in
             let now = content.pinnedNow ?? context.date
-            let agenda = content.agenda(now: now)
-            let upcoming = content.upcoming(now: now)
-            let events = agenda.upcomingToday.compactMap { id in upcoming.first { $0.id == id } }
-            if !events.isEmpty || !agenda.pastToday.isEmpty {
+            let items = TodayRows.timeline(content, now: now)
+            if !items.isEmpty {
                 VStack(alignment: .leading, spacing: Spacing.sm) {
                     WhimbrelSectionLabel(text: voice.text(.upcomingHeader, name: ""))
-                    VStack(alignment: .leading, spacing: Spacing.md) {
-                        ForEach(events, id: \.id) { eventRow($0, isNext: $0.id == events.first?.id, now: now) }
-                        if !events.isEmpty, !agenda.pastToday.isEmpty {
-                            WhimbrelSectionLabel(text: String(localized: "Earlier today"))
-                        }
-                        ForEach(agenda.pastToday, id: \.self) { recordedRow($0) }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .whimbrelCard()
+                    TodayTimeline(items: items, now: now, content: content, actions: actions, briefExpanded: $briefExpanded)
                 }
             }
         }
@@ -138,7 +128,7 @@ struct StandardTodayLayout: View {
                                     .foregroundStyle(Color.whimbrelTextPrimary)
                                     .lineLimit(2)
                                 if let topic = meeting.topic { TopicChip(topic: topic) }
-                                if let prep = meeting.prep { PrepReadyChip(prepKey: prep.eventId) }
+                                if let prep = meeting.prep { TodayPrepChips(prep: prep, actions: actions) }
                                 if !meeting.invited.isEmpty {
                                     Text(meeting.invited)
                                         .font(.whimbrelBody(.subheadline))
@@ -154,100 +144,6 @@ struct StandardTodayLayout: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .whimbrelCard()
             }
-        }
-    }
-
-    /// A meeting already held today, laid out like an event row (bar, time, title, attendees, Open).
-    @ViewBuilder
-    private func recordedRow(_ id: Int64) -> some View {
-        if let meeting = content.recentMeetings.first(where: { $0.id == id }) {
-            let transcribing = content.processingMeetingId == id
-            HStack(alignment: .top, spacing: Spacing.md) {
-                AccentBarRow(color: .whimbrelBorder) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(MeetingRowText.time(meeting.startUnixMs))
-                            .font(.whimbrelBody(.subheadline).weight(.semibold))
-                            .foregroundStyle(Color.whimbrelTextSecondary)
-                        Text(meeting.title)
-                            .font(.whimbrelBody(.body))
-                            .foregroundStyle(Color.whimbrelTextPrimary)
-                            .lineLimit(2)
-                        if let topic = content.topicsByMeeting[id] { TopicChip(topic: topic) }
-                        let subtitle = transcribing ? String(localized: "Transcribing…") : MeetingRowText.subtitle(for: meeting)
-                        if !subtitle.isEmpty {
-                            Text(subtitle)
-                                .font(.whimbrelBody(.subheadline))
-                                .foregroundStyle(Color.whimbrelTextSecondary)
-                                .lineLimit(1)
-                        }
-                    }
-                }
-                Spacer(minLength: Spacing.md)
-                Button("Open") { actions.openMeeting(id) }
-                    .buttonStyle(.whimbrelQuiet)
-            }
-        }
-    }
-
-    private func eventRow(_ event: TodayUpcoming, isNext: Bool, now: Date) -> some View {
-        let source = content.events.first { $0.id == event.id }
-        let relative = source.flatMap { TodayLogic.relativeStart(event.start, end: $0.endDate, now: now) }
-        let attendees = MeetingRowText.attendeeSummary(source?.attendees ?? [])
-        return HStack(alignment: .top, spacing: Spacing.md) {
-            AccentBarRow(color: .whimbrelAccentPrimary) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: Spacing.sm) {
-                        Text(MeetingRowText.time(event.start))
-                            .font(.whimbrelBody(.subheadline).weight(.semibold))
-                            .foregroundStyle(Color.whimbrelAccentPrimary)
-                        if let relative {
-                            Text(relative)
-                                .font(.whimbrelBody(.subheadline))
-                                .foregroundStyle(Color.whimbrelTextSecondary)
-                        }
-                    }
-                    Text(event.title)
-                        .font(.whimbrelBody(.body))
-                        .foregroundStyle(Color.whimbrelTextPrimary)
-                        .lineLimit(2)
-                    if let topic = content.topicsByEvent[event.id] { TopicChip(topic: topic) }
-                    if !attendees.isEmpty {
-                        Text(attendees)
-                            .font(.whimbrelBody(.subheadline))
-                            .foregroundStyle(Color.whimbrelTextSecondary)
-                            .lineLimit(1)
-                    }
-                    if isNext {
-                        prepLine(for: event)
-                    } else if let prep = content.prep(eventId: event.id, start: event.start) {
-                        PrepReadyChip(prepKey: prep.eventId)
-                    }
-                }
-            }
-            Spacer(minLength: Spacing.md)
-            if content.activeMeetingId == nil {
-                Button("Start") { actions.startMeeting(event) }
-                    .buttonStyle(.whimbrelPrimary)
-            }
-        }
-    }
-
-    /// The next event's prep: the "Prep ready" chip with Open brief / Hide brief and the brief inline,
-    /// or "No prep yet". The other rows show only the chip.
-    @ViewBuilder
-    private func prepLine(for event: TodayUpcoming) -> some View {
-        if let prep = content.prep(eventId: event.id, start: event.start)
-            ?? content.nextPrep.flatMap({ TodayLogic.prep($0, isFor: event) && $0.brief != nil ? $0 : nil }) {
-            HStack(spacing: Spacing.sm) {
-                PrepReadyChip(prepKey: prep.eventId)
-                Button(briefExpanded ? "Hide brief" : "Open brief") { briefExpanded.toggle() }
-                    .buttonStyle(.whimbrelQuiet)
-            }
-            if briefExpanded { MeetingPrepView(prep: prep) }
-        } else {
-            Text("No prep yet")
-                .font(.whimbrelBody(.subheadline))
-                .foregroundStyle(Color.whimbrelTextSecondary)
         }
     }
 

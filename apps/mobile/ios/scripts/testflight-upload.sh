@@ -50,6 +50,7 @@ cd apps/mobile/ios
 
 # Secrets.xcconfig is gitignored, so a fresh worktree has none, and without it the app
 # builds fine but says Google sign-in is not configured. Same trap as the Mac script.
+../../../scripts/release-secrets.sh ios
 if [ ! -f Secrets.xcconfig ]; then
     echo "error: Secrets.xcconfig not found in $(pwd). Copy it from another checkout or from Secrets.xcconfig.example." >&2
     exit 1

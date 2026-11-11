@@ -102,4 +102,37 @@ class PhoneModelsTest {
         assertEquals("Sam 🎤", page.segments.first().speakerLabel)
         assertEquals("Hi 👋", page.segments.first().text)
     }
+
+    @Test
+    fun decodesCalendarRowId() {
+        val e = json.decodeFromString<PhoneCalendarEvent>(
+            """{"row_id":42,"external_id":"x","source":"google_calendar","title":"Sync","start_unix_ms":9,"attendees":[],"end_unix_ms":10}""",
+        )
+        assertEquals(42L, e.rowId)
+        val old = json.decodeFromString<PhoneCalendarEvent>("""{"external_id":"x","source":"s","title":"T","start_unix_ms":9,"attendees":[]}""")
+        assertNull(old.rowId)
+    }
+
+    @Test
+    fun decodesTopicSnapshotStepsAndNextMeeting() {
+        val s = readJson.decodeFromString<List<PhoneTopicSnapshot>>(
+            """
+            [{"topic_key":"acme","name":"Acme","kind":"customer","lead":{"kind":"step","text":"Send quote","due_date":"2026-11-12"},
+              "role":null,"next_meeting":{"title":"Acme call","start_unix_ms":1000,"attendees_by_org":[["acme.com",3]],"me":1},
+              "you_owe":[{"text":"Send quote","source_kind":"meeting","source_title":null,"asked_at_unix_ms":5,"due_date":"2026-11-12","meeting":null},
+                         {"text":"Call back","source_kind":"email"}],
+              "owed_to_you":[],"done":[],"recent":[],"recent_total":0,"truncated":false,"built_at_unix_ms":7,"built_by":"Mac"}]
+            """,
+        ).single()
+        assertEquals("acme", s.topicKey)
+        assertEquals("Acme", s.name)
+        assertEquals(PhoneTopicSnapshot.NextMeeting("Acme call", 1000L), s.nextMeeting)
+        assertEquals(
+            listOf(PhoneTopicSnapshot.Step("Send quote", "2026-11-12"), PhoneTopicSnapshot.Step("Call back", null)),
+            s.youOwe,
+        )
+        val bare = readJson.decodeFromString<PhoneTopicSnapshot>("""{"topic_key":"k","name":"N"}""")
+        assertNull(bare.nextMeeting)
+        assertEquals(emptyList<PhoneTopicSnapshot.Step>(), bare.youOwe)
+    }
 }

@@ -4,10 +4,14 @@ import { describeError, isCommandError } from "../errors";
 import type { ImportView, MeetingRow } from "../generated/types";
 import { t, useL10n } from "../l10n";
 import { DeviceChip } from "../library/LibraryView";
-import { spanLabel } from "../library/rows";
+import { PrepBriefPanel } from "../today/PrepBrief";
+import { openTopic } from "../topics/TopicChip";
 import { importSummary } from "./importSummary";
+import { MeetingListRow } from "./MeetingCard";
+import { forRecorded, groupByDay, type MeetingCardTarget } from "./meetingCardModel";
 import { RecordingCard } from "./RecordingCard";
 import { meetingTitleLabel } from "./sentinels";
+import { useMeetingChips } from "./useMeetingChips";
 import { Workspace } from "./Workspace";
 
 function message(e: unknown): string {
@@ -35,7 +39,11 @@ export function MeetingsView({ open }: { open?: { seq: number; meetingId: number
   // What the last import did; the list itself refreshes as the summaries land.
   const [imported, setImported] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  // A brief opened from a row's Prep chip, by its key, shown above the workspace.
+  const [prepKey, setPrepKey] = useState<string | null>(null);
   const { locale } = useL10n();
+  // Rows show at once; their Prep and Topic chips arrive from one lookup that reruns only when the meetings change.
+  const chips = useMeetingChips(rows);
 
   const load = useCallback(
     (search: string) =>
@@ -72,6 +80,13 @@ export function MeetingsView({ open }: { open?: { seq: number; meetingId: number
       })
       .catch((e: unknown) => setImported(isCommandError(e) ? describeError(e) : t("Import failed.")))
       .finally(() => setImporting(false));
+  };
+
+  // A row (or its Summary or action-items chip) selects the meeting beside the list; Prep and Topic open their own.
+  const openTarget = (target: MeetingCardTarget) => {
+    if (target.kind === "meeting") setSelected(target.id);
+    else if (target.kind === "brief") setPrepKey(target.key);
+    else if (target.kind === "topic") openTopic(target.id);
   };
 
   return (
@@ -116,28 +131,38 @@ export function MeetingsView({ open }: { open?: { seq: number; meetingId: number
               </div>
             </div>
           ) : (
-            <ul className="rows">
-              {rows.map((row) => (
-                <li key={row.id}>
-                  <button
-                    className={row.id === selected ? "row-card row-card--active" : "row-card"}
-                    onClick={() => setSelected(row.id)}
-                    aria-current={row.id === selected}
-                  >
-                    <span className="row-title">{meetingTitleLabel(row.title)}</span>
-                    <span className="row-meta">
-                      {spanLabel(row.tsUnixMs, row.endUnixMs, { locale })} · {triggerLabel(row.trigger)}
-                      {row.status === "recording" ? ` · ${t("Recording")}` : ""}
-                      {!row.hasSummary && row.status === "completed" ? ` · ${t("No summary yet")}` : ""}
-                    </span>
-                    <DeviceChip device={row.device} />
-                  </button>
-                </li>
+            <div className="meeting-days">
+              {groupByDay(rows, Date.now(), locale).map((day) => (
+                <section key={day.key} aria-label={day.title}>
+                  <h3 className="day">{day.title}</h3>
+                  <ul className="meeting-rows">
+                    {day.rows.map((row) => {
+                      const extra = chips.get(row.id);
+                      const model = { ...forRecorded(row, extra?.prepKey, extra?.topic, locale), title: meetingTitleLabel(row.title) };
+                      return (
+                        <li key={row.id}>
+                          <MeetingListRow
+                            model={model}
+                            active={row.id === selected}
+                            onOpen={openTarget}
+                            meta={
+                              <>
+                                <span>{triggerLabel(row.trigger)}</span>
+                                <DeviceChip device={row.device} />
+                              </>
+                            }
+                          />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
               ))}
-            </ul>
+            </div>
           )}
         </section>
-        <div className="meeting-workspace">
+        <div className="meeting-workspace stack">
+          {prepKey && <PrepBriefPanel prepKey={prepKey} onClose={() => setPrepKey(null)} onOpenMeeting={setSelected} />}
           {selected == null ? (
             <section className="card empty-state">{t("Select a meeting to see its notes, summary and transcript.")}</section>
           ) : (
