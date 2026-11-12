@@ -23,6 +23,9 @@ use crate::syncing::keys;
 use crate::l10n::tr;
 
 pub const INTERVAL: Duration = Duration::from_secs(60);
+/// The gap between rounds while a peer has more rows waiting than one round pulls, so a
+/// backlog drains in about an hour rather than a page a minute. Back to `INTERVAL` once caught up.
+pub const CATCH_UP_INTERVAL: Duration = Duration::from_secs(10);
 const TICK: Duration = Duration::from_secs(5);
 /// A wall-clock gap this much longer than a tick means the PC was asleep.
 const SLEEP_GAP: Duration = Duration::from_secs(30);
@@ -43,6 +46,8 @@ pub enum Trigger {
     BecameReady,
     Interval,
     Resumed,
+    /// The last round left rows to pull.
+    CatchUp,
 }
 
 /// When the next round is due. Pure over its inputs, so the cadence is tested.
@@ -51,9 +56,16 @@ pub struct Schedule {
     last_attempt: Option<Instant>,
     was_ready: bool,
     last_tick_wall: Option<SystemTime>,
+    /// The last round left rows to pull (`sync_engine::more_to_pull`).
+    catching_up: bool,
 }
 
 impl Schedule {
+    /// Whether the last good round left rows to pull; the next comes after `CATCH_UP_INTERVAL`.
+    pub fn set_catching_up(&mut self, on: bool) {
+        self.catching_up = on;
+    }
+
     pub fn decide(&mut self, ready: bool, now: Instant, wall: SystemTime) -> Option<Trigger> {
         // Instant stops while Windows sleeps; the wall clock doesn't. A gap in wall
         // time between ticks is how a resume shows up.
@@ -70,6 +82,8 @@ impl Schedule {
             Some(Trigger::BecameReady)
         } else if resumed {
             Some(Trigger::Resumed)
+        } else if self.catching_up && self.last_attempt.is_none_or(|t| now.saturating_duration_since(t) >= CATCH_UP_INTERVAL) {
+            Some(Trigger::CatchUp)
         } else if self.last_attempt.is_none_or(|t| now.saturating_duration_since(t) >= INTERVAL) {
             Some(Trigger::Interval)
         } else {
@@ -257,6 +271,7 @@ pub fn start(
             controller.record_settings_result(settings_round.map(|_| now_ms()));
             mark("content round");
             let (outbox_before, _) = backlog_for_log(&store);
+            let round_started = Instant::now();
             let result = run_round(&store, secrets.clone(), device_id.clone(), move |key, s, device| {
                 sync_engine::sync_content(&url, &token, key, s, device).map_err(|e| e.to_string())
             });
@@ -266,6 +281,8 @@ pub fn start(
                 Ok(()) => tracing::info!(?trigger, outbox_before, outbox_pending, ?outbox_oldest_min, "content sync round ok"),
                 Err(e) => tracing::warn!(?trigger, outbox_before, outbox_pending, ?outbox_oldest_min, error = %e, "content sync round failed"),
             }
+            // Per peer: rows fetched and applied, the cursor's move and whether the time budget cut the pass.
+            tracing::info!(round_ms = round_started.elapsed().as_millis() as u64, pull = %sync_engine::last_pull_stats_json(), "content pull stats");
             // Meetings another device forgot (deletion sync, #584): their rows went in the round,
             // even one that failed later; their files here go now. The list reloads on its own.
             delete_forgotten_files(&recordings);
@@ -286,6 +303,7 @@ pub fn start(
                     tracing::warn!(error = %e, "skins after the sync round failed");
                 }
             }
+            schedule.set_catching_up(ok && sync_engine::more_to_pull());
             controller.record_content_result(result.map(|()| now_ms()));
             if ok && last_label_refresh.is_none_or(|t| t.elapsed() >= LABEL_REFRESH_MIN) && has_unnamed_peer(&controller, &store) {
                 last_label_refresh = Some(Instant::now());
@@ -364,6 +382,23 @@ mod tests {
         assert_eq!(s.decide(true, t0, w0 + TICK), Some(Trigger::BecameReady));
         assert_eq!(s.decide(true, t0 + Duration::from_secs(30), w0 + Duration::from_secs(35)), None);
         assert_eq!(s.decide(true, t0 + INTERVAL, w0 + INTERVAL + TICK), Some(Trigger::Interval));
+    }
+
+    #[test]
+    fn a_backlog_runs_rounds_every_ten_seconds_until_caught_up() {
+        let t0 = Instant::now();
+        let w0 = SystemTime::now();
+        let mut s = Schedule::default();
+        assert_eq!(s.decide(true, t0, w0), Some(Trigger::BecameReady));
+        s.set_catching_up(true);
+        assert_eq!(s.decide(true, t0 + TICK, w0 + TICK), None);
+        let ten = CATCH_UP_INTERVAL;
+        assert_eq!(s.decide(true, t0 + ten, w0 + ten), Some(Trigger::CatchUp));
+        // Caught up: back to once a minute.
+        s.set_catching_up(false);
+        assert_eq!(s.decide(true, t0 + ten + ten, w0 + ten + ten), None);
+        // (The wall clock moves a tick, not 50 s, which would read as a wake from sleep.)
+        assert_eq!(s.decide(true, t0 + ten + INTERVAL, w0 + ten + ten + TICK), Some(Trigger::Interval));
     }
 
     #[test]

@@ -1050,6 +1050,46 @@
         }
       ]
     },
+    "CompactView": {
+      "description": "What a compaction did, for Settings.",
+      "properties": {
+        "fileBytesAfter": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "fileBytesBefore": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "needBytes": {
+          "description": "For `\"not_enough_disk\"`: the free space the rewrite needs.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "ran": {
+          "type": "boolean"
+        },
+        "reason": {
+          "description": "`\"ran\"`, `\"not_worth_it\"` or `\"not_enough_disk\"`.",
+          "type": "string"
+        },
+        "spacePending": {
+          "description": "It ran, but another reader kept the last checkpoint from finishing, so the freed space\nreaches the disk a little later.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "ran",
+        "reason",
+        "fileBytesBefore",
+        "fileBytesAfter",
+        "spacePending"
+      ],
+      "type": "object"
+    },
     "ContextEntry": {
       "description": "One item the answer may cite. The UI matches a citation to it by `item`. A saved\nexchange stores the entries it cited in this shape.",
       "properties": {
@@ -1680,6 +1720,88 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "Footprint": {
+      "description": "What Whimbrel keeps on this PC, by part, in bytes.",
+      "properties": {
+        "database": {
+          "description": "The database file with its write-ahead log.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "models": {
+          "description": "Speech and embedding models.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "other": {
+          "description": "Everything else in the data folder: logs, skins, snapshots, diagnostics.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "recordings": {
+          "description": "Meeting recordings and transcripts.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "total": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "database",
+        "recordings",
+        "models",
+        "other",
+        "total"
+      ],
+      "type": "object"
+    },
+    "FreeUpOptions": {
+      "description": "What each Free up space row would free at `days`, for the dialog. `None` hides a row.",
+      "properties": {
+        "capturesBytes": {
+          "description": "The captures' text, about what deleting them frees.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "capturesCount": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "compactBytes": {
+          "description": "Free space inside the database file.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "days": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "recordingsBytes": {
+          "description": "Audio of meetings older than `days` that can go (every part transcribed).",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "days"
+      ],
       "type": "object"
     },
     "GeneralSettings": {
@@ -2343,6 +2465,24 @@
       "required": [
         "installed",
         "canOffer"
+      ],
+      "type": "object"
+    },
+    "LowDisk": {
+      "description": "A disk under the warning line.",
+      "properties": {
+        "freeBytes": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "volume": {
+          "description": "The drive, such as `C:\\`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "volume",
+        "freeBytes"
       ],
       "type": "object"
     },
@@ -4590,6 +4730,47 @@
           "type": "object"
         }
       ]
+    },
+    "StorageView": {
+      "properties": {
+        "days": {
+          "description": "The day choices for Free up space, and the default.",
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "dbFreeBytes": {
+          "description": "Free space inside the database file, which compacting gives back.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "defaultDays": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "footprint": {
+          "$ref": "#/definitions/Footprint"
+        },
+        "lowDisks": {
+          "description": "Drives under the warning line (10 GB free).",
+          "items": {
+            "$ref": "#/definitions/LowDisk"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "footprint",
+        "dbFreeBytes",
+        "lowDisks",
+        "days",
+        "defaultDays"
+      ],
+      "type": "object"
     },
     "SuggestionView": {
       "description": "A fact the daily job proposed, waiting for Add or Dismiss.",

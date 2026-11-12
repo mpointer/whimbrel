@@ -4,6 +4,10 @@ import AppKit
 struct RetentionSettingsPane: View {
     @EnvironmentObject var appState: AppState
     @State private var retentionStatus: String?
+    @State private var compactStatus: String?
+    @State private var footprint: StorageFootprint?
+    @State private var lowVolumes: [StorageFootprint.LowVolume] = []
+    @State private var compacting = false
     @State private var mediaFolderRefusal: String?
     @State private var orphanScanResult: CoreOrphanScan?
     @State private var orphanStatus: String?
@@ -16,7 +20,19 @@ struct RetentionSettingsPane: View {
     @State private var showingNoAudioDeleteConfirmation = false
 
     var body: some View {
+        content
+            .onAppear(perform: measureStorage)
+            .sheet(isPresented: $appState.showFreeUpSpace, onDismiss: measureStorage) {
+                FreeUpSpaceSheet().environmentObject(appState)
+            }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
+            storageBlock
+
+            Divider()
+
             Text("Retention").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
             Text("Each data class has its own retention window; hard-deletes rows older than it (propagates to the search indexes too).")
                 .font(.whimbrelBody(.caption))
@@ -60,8 +76,19 @@ struct RetentionSettingsPane: View {
                 foreverLabel: "Keep forever"
             )
 
-            Button("Apply Retention Now") { applyRetentionNow() }
-                .buttonStyle(.whimbrelSecondary)
+            HStack {
+                Button("Apply Retention Now") { applyRetentionNow() }
+                    .buttonStyle(.whimbrelSecondary)
+                Button("Compact Database") { compactNow() }
+                    .buttonStyle(.whimbrelSecondary)
+                    .disabled(compacting || appState.coreStore == nil)
+                if compacting { ProgressView().controlSize(.small) }
+            }
+            if let compactStatus {
+                Text(compactStatus)
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+            }
 
             if let retentionStatus {
                 Text(retentionStatus)
@@ -243,12 +270,64 @@ struct RetentionSettingsPane: View {
     }
 
     private func applyRetentionNow() {
-        appState.retention.applyNow(store: appState.coreStore) { result in
+        appState.retention.applyNow(store: appState.coreStore,
+                                    compactAllowed: !appState.audio.micActive && !appState.audio.systemAudioActive) { result in
             guard let result else {
                 retentionStatus = String(localized: "Retention run failed (store unavailable or DB error).")
                 return
             }
             retentionStatus = String(localized: "Deleted \(result.captureItemsDeleted) capture item(s), \(result.meetingsDeleted) meeting(s), \(result.conversationsDeleted) conversation(s).")
+        }
+    }
+
+    /// "Whimbrel uses X on this Mac", by part, the low-disk line, and Free up space.
+    @ViewBuilder
+    private var storageBlock: some View {
+        Text("Storage").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
+        if let footprint {
+            Text(StorageCopy.total(footprint)).foregroundStyle(Color.whimbrelTextPrimary)
+            Text(StorageCopy.parts(footprint))
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            ProgressView().controlSize(.small)
+        }
+        ForEach(lowVolumes, id: \.url) { low in
+            Text(StorageCopy.lowDisk(low))
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelWarning)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        Button("Free Up Space…") { appState.showFreeUpSpace = true }
+            .buttonStyle(.whimbrelSecondary)
+            .disabled(appState.coreStore == nil)
+    }
+
+    private func measureStorage() {
+        let media = appState.mediaSettings.folderURL
+        DispatchQueue.global(qos: .utility).async {
+            let measured = StorageFootprint.measure(dataRoot: SpikePaths.root, mediaFolder: media)
+            let low = StorageFootprint.lowDiskVolumes(dataRoot: SpikePaths.root, mediaFolder: media)
+            DispatchQueue.main.async {
+                footprint = measured
+                lowVolumes = low
+            }
+        }
+    }
+
+    /// The user's "Compact Database": runs even when core wouldn't bother, never without the disk
+    /// to hold the rewrite. Off the main thread; it holds the store for the whole rewrite.
+    private func compactNow() {
+        guard let store = appState.coreStore else { return }
+        compacting = true
+        compactStatus = String(localized: "Compacting… this can take a minute.")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = StorageCompaction.run(store, forced: true)
+            DispatchQueue.main.async {
+                compacting = false
+                compactStatus = CompactCopy.message(result)
+            }
         }
     }
 

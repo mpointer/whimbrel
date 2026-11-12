@@ -19,12 +19,13 @@ data class AvailableUpdate(val version: String, val apkUrl: String, val pageUrl:
 
 /**
  * A link-installed app never updates itself, so the phone asks the public repository for its latest release
- * at most once a day, only while the app is open. The request carries no personal data.
+ * at most every 6 hours: each time the app comes back to the screen, and from a background check that posts a
+ * notification once per new version (UpdateCheckWorker). The request carries no personal data.
  * Most releases ship no APK, so it reads the recent releases and takes the newest one that has one.
  */
 object UpdateCheck {
     const val RELEASES_URL = "https://api.github.com/repos/mpointer/whimbrel/releases?per_page=20"
-    const val CHECK_EVERY_MS = 24 * 60 * 60 * 1000L
+    const val CHECK_EVERY_MS = 6 * 60 * 60 * 1000L
 
     /** True when [latest] (e.g. "v0.9.60") is a higher dotted version than [installed] ("0.9.59"). */
     fun isNewer(latest: String, installed: String): Boolean = compareVersions(latest, installed) > 0
@@ -99,6 +100,15 @@ class UpdateModel(
         _available.value = shown(latest)
     }
 
+    /** The update to announce in a notification, once per version: null if there is none, it was dismissed
+     * with Not now, or this version was already announced. Marks it announced. */
+    fun takeNotification(): AvailableUpdate? {
+        val u = _available.value ?: return null
+        if (prefs.getString(NOTIFIED, null) == u.version) return null
+        prefs.edit().putString(NOTIFIED, u.version).apply()
+        return u
+    }
+
     fun dismiss() {
         _available.value?.let { prefs.edit().putString(DISMISSED, it.version).apply() }
         _available.value = null
@@ -121,5 +131,6 @@ class UpdateModel(
         private const val LATEST_APK_KEY = "latest_apk_url"
         private const val LATEST_URL_KEY = "latest_url"
         private const val DISMISSED = "dismissed_version"
+        private const val NOTIFIED = "notified_version"
     }
 }

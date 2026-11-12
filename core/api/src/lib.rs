@@ -55,6 +55,7 @@ pub mod routine_runs;
 pub mod routing;
 pub mod speaker_names;
 pub mod spend;
+pub mod storage;
 pub mod store;
 pub mod summary;
 pub mod title_check;

@@ -246,6 +246,14 @@ impl Retention {
         let live = self.live_recording_files();
         let run = sweep(&self.store, self.recordings.clone(), settings, live)?;
         *self.last_run.lock().unwrap() = Some(run);
+        // Deletes leave free pages inside the file; give them back to the disk when there are
+        // enough to be worth holding the store for (`api::storage::decide`).
+        let free = crate::storage::volume_free_bytes(&self.recordings).unwrap_or(0);
+        match self.store.call_blocking(move |s| crate::storage::compact(s, free, false)) {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => tracing::warn!(error = %e, "compacting after retention failed"),
+            Err(e) => tracing::warn!(error = %e, "compacting after retention failed"),
+        }
         Ok(run)
     }
 

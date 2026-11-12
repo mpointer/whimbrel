@@ -70,16 +70,40 @@ class UpdateCheckTest {
         assertNull(model.available.value)
     }
 
-    @Test fun showsANewerReleaseAndChecksAtMostDaily() = runTest {
+    @Test fun showsANewerReleaseAndChecksAtMostEverySixHours() = runTest {
         var now = 1_000_000L
         var fetches = 0
         val prefs = FakePrefs()
         val model = UpdateModel(prefs, "0.9.59", { now }) { fetches++; release }
         model.checkIfDue()
         assertEquals("0.9.60", model.available.value?.version)
-        now += 60 * 60 * 1000L
+        now += 5 * 60 * 60 * 1000L
         UpdateModel(prefs, "0.9.59", { now }) { fetches++; release }.apply { checkIfDue(); assertEquals("0.9.60", available.value?.version) }
-        assertEquals("one network check a day; the next launch reuses it", 1, fetches)
+        assertEquals("within 6 hours a return reuses the last check", 1, fetches)
+        now += 60 * 60 * 1000L
+        UpdateModel(prefs, "0.9.59", { now }) { fetches++; release }.checkIfDue()
+        assertEquals("after 6 hours a return checks again", 2, fetches)
+    }
+
+    @Test fun announcesEachNewVersionOnce() = runTest {
+        var now = 1L
+        var releases = release
+        val prefs = FakePrefs()
+        val first = UpdateModel(prefs, "0.9.59", { now }) { releases }
+        first.checkIfDue()
+        assertEquals("0.9.60", first.takeNotification()?.version)
+        assertNull("the same version is not announced twice", first.takeNotification())
+        now += UpdateCheck.CHECK_EVERY_MS
+        UpdateModel(prefs, "0.9.59", { now }) { releases }.apply { checkIfDue(); assertNull(takeNotification()) }
+        releases = list(rel("v0.9.61", true), rel("v0.9.60", true))
+        now += UpdateCheck.CHECK_EVERY_MS
+        UpdateModel(prefs, "0.9.59", { now }) { releases }.apply { checkIfDue(); assertEquals("0.9.61", takeNotification()?.version) }
+    }
+
+    @Test fun noAnnouncementWhenDismissedOrUpToDate() = runTest {
+        val prefs = FakePrefs()
+        UpdateModel(prefs, "0.9.59", { 1L }) { release }.apply { checkIfDue(); dismiss(); assertNull(takeNotification()) }
+        UpdateModel(FakePrefs(), "0.9.60", { 1L }) { release }.apply { checkIfDue(); assertNull(takeNotification()) }
     }
 
     @Test fun nothingWhenUpToDateOrDismissed() = runTest {

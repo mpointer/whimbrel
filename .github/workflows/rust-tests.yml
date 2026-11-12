@@ -27,7 +27,9 @@ jobs:
   # Android jobs below are redundant with the CI run the fix itself already had.
   changes:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
+    # public mirror and for a pull request from a fork, so outside code never runs on it.
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 5
@@ -126,10 +128,10 @@ jobs:
   # macOS's ld64 tolerates the duplicate symbols; lld and link.exe don't.
   test-linux:
     needs: changes
-    # Not on a push to main (#ci-minutes): the PR ran this on the same code, and
-    # the nightly schedule run covers main. Each skipped run saves about 10 billed
-    # Linux minutes across this job and android.
-    if: needs.changes.outputs.run_core == 'true' && github.event_name != 'push'
+    # Nightly and on demand only (#ci-minutes, 2026-11-12): pull requests already test core/
+    # on the self-hosted Windows runner (and on the Mac after merge), so Linux only adds
+    # lld's stricter linking and the retrieval eval, which a nightly run catches.
+    if: needs.changes.outputs.run_core == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -419,8 +421,11 @@ jobs:
 
   android:
     needs: changes
-    # Not on a push to main; see test-linux.
+    # Not on a push to main (the PR ran it on the same code; the nightly run covers main).
     if: needs.changes.outputs.run_core == 'true' && github.event_name != 'push'
+    # Stays on Linux: whisper-rs-sys 0.15's build script tests cfg!(target_os = "macos") for the
+    # HOST, so on a Mac it links ggml-blas into the Android build and fails ("could not find
+    # native static library ggml-blas"). The app itself (android-app) builds ffi without it.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -430,6 +435,7 @@ jobs:
         with:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Add Android target
         run: rustup target add aarch64-linux-android
       - name: Install cargo-ndk
@@ -461,11 +467,24 @@ jobs:
     needs: changes
     # Not on a push to main; see test-linux. On a PR, only for Android-app files; see run_android_app.
     if: needs.changes.outputs.run_android_app == 'true' && github.event_name != 'push'
-    runs-on: ubuntu-latest
+    # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
+    # public mirror and for a pull request from a fork, so outside code never runs on it.
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
     timeout-minutes: 40
-    env:
-      ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/27.2.12479018
     steps:
+      # The Mac already has the SDK, NDK 27.2.12479018, CMake 3.22.1 and JDK 17; the hosted
+      # image gets the NDK and CMake from sdkmanager below.
+      - name: Android SDK, NDK and JDK paths
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            sdk="$HOME/Library/Android/sdk"
+            { echo "ANDROID_HOME=$sdk"; echo "ANDROID_SDK_ROOT=$sdk"
+              echo "JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"; } >> "$GITHUB_ENV"
+          else
+            sdk="/usr/local/lib/android/sdk"
+          fi
+          echo "ANDROID_NDK_HOME=$sdk/ndk/27.2.12479018" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Add Android target
@@ -473,19 +492,23 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --version "4.1.2"
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # A cached whisper-rs-sys build directory fails CMake's next configure on Android
       # ("add_subdirectory given source tests ... not an existing directory"), so every run after
-      # a cache save broke. Drop it; only whisper rebuilds.
+      # a cache save broke. Drop it; only whisper rebuilds. The Mac runner builds in CARGO_TARGET_DIR.
       - name: Drop cached whisper-rs-sys build output
-        run: rm -rf core/target/aarch64-linux-android/*/build/whisper-rs-sys-*
+        shell: bash
+        run: rm -rf "${CARGO_TARGET_DIR:-core/target}"/aarch64-linux-android/*/build/whisper-rs-sys-*
       - uses: actions/setup-java@v4
+        if: runner.environment == 'github-hosted'
         with:
           distribution: temurin
           java-version: "17"
       - name: Install NDK and CMake
+        if: runner.environment == 'github-hosted'
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" "cmake;3.22.1"
       - name: Unit tests and debug APK
         working-directory: apps/mobile/android

@@ -48,7 +48,7 @@ final class RetentionScheduler: ObservableObject {
     }
 
     private func run(retention: RetentionSettings, media: MediaSettings, store: CoreMemoryStore?, audio: AudioCaptureService) {
-        retention.applyNow(store: store) { [weak self] result in
+        retention.applyNow(store: store, compactAllowed: !audio.micActive && !audio.systemAudioActive) { [weak self] result in
             if result != nil {
                 self?.log.info("Automatic daily retention run completed")
             } else {

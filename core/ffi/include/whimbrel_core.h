@@ -1468,6 +1468,26 @@ bool whimbrel_model_note_answer(StoreHandle *handle, const char *provider, const
  * NULL handle or unknown provider. */
 bool whimbrel_model_unavailable_clear(StoreHandle *handle, const char *provider);
 
+/* ---- Database space (Settings → Storage) ---- */
+
+/* {"file_bytes":int,"free_bytes":int} for the open database. Free with
+ * whimbrel_core_free_string. NULL on a NULL handle or a database error. */
+char *whimbrel_store_space_json(StoreHandle *handle);
+
+/* Compacts the database (VACUUM) when it frees at least a quarter of the file and 256 MB, or
+ * whenever `forced` (the user's "Compact now"), and never when volume_free_bytes (free space on
+ * the database's volume) is under twice the file's size. Holds the store for the whole rewrite: call on
+ * the store queue. Needs twice the file's size free (WAL mode). {"ran":bool,
+ * "reason":"ran"|"not_worth_it"|"not_enough_disk","need_bytes":int|null,"file_bytes_before":int,
+ * "file_bytes_after":int,"space_pending":bool}; space_pending: another connection's read kept the
+ * space in the WAL for now. NULL on a NULL handle or
+ * a database error. */
+char *whimbrel_store_compact(StoreHandle *handle, int64_t volume_free_bytes, bool forced);
+
+/* {"count":int,"text_bytes":int}: screen captures older than cutoff_unix_ms (what retention at
+ * that cutoff deletes). NULL on a NULL handle or a database error. */
+char *whimbrel_captures_older_than_json(StoreHandle *handle, int64_t cutoff_unix_ms);
+
 /* ---- Ask-surface helpers (core/api::prompts, core/api::hosted_models, M3.0 Task 5) ----
  * The built-in Ask starter prompts as a JSON array of {"id", "title", "query"}, in `lang`
  * (BCP 47; NULL or "" is English). */

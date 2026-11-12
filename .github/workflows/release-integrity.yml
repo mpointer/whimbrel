@@ -20,10 +20,31 @@ jobs:
     # Not on a branch push to main (#ci-minutes): the PR already ran this on the
     # same code. Tag pushes (releases), manual runs and ready PRs still run it.
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
+    # public mirror and for a pull request from a fork, so outside code never runs on it.
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
+    outputs:
+      run_connectors: ${{ steps.connectors.outputs.run }}
     steps:
       - uses: actions/checkout@v4
+      # Decides whether connector-dist runs, here rather than in a job of its own:
+      # every job bills at least a minute (#ci-minutes). On a PR it runs only when the
+      # diff touches mcp-servers/ or the workflows; most PRs (website, windows, mac,
+      # android) never do. Tags and manual runs always build the connectors, as does an
+      # empty or failed diff. First step, so the output is set even if check-version.sh
+      # fails below.
+      - id: connectors
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          run=true
+          if [ -n "$base" ] && git fetch -q --depth=1 origin "$base" && changed="$(git diff --name-only "$base" HEAD)"; then
+            if [ -n "$changed" ] && ! grep -qE '^(mcp-servers/|\.github/workflows/)' <<<"$changed"; then
+              run=false
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "connector-dist will run: $run"
       - name: Run check-version.sh against the repo's own state
         run: scripts/check-version.sh
       - name: Run check-version.sh's own test suite
@@ -33,36 +54,52 @@ jobs:
   # never compiles src/, so a src change without a rebuilt dist/ ships nothing (0.9.11's
   # Gmail 404 fix did exactly that).
   connector-dist:
-    # Not on a branch push to main; see check-version. This matrix is three
-    # billed jobs per run.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    strategy:
-      fail-fast: true
-      matrix:
-        connector: [gmail, google-calendar, outlook365]
-    defaults:
-      run:
-        working-directory: mcp-servers/${{ matrix.connector }}
+    # Runs when check-version says so (see its connectors step); skipped with it on a
+    # branch push to main. One job building all three connectors, not a three-job
+    # matrix: each build takes seconds, and every job bills at least a minute.
+    needs: check-version
+    if: ${{ !cancelled() && needs.check-version.outputs.run_connectors == 'true' }}
+    # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
+    # public mirror and for a pull request from a fork, so outside code never runs on it.
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "26"
-          cache: npm
-          cache-dependency-path: mcp-servers/${{ matrix.connector }}/package-lock.json
-      - run: npm ci
-      - run: npm run build
-      - name: dist/ must match src/
-        run: git diff --exit-code -- dist || { echo "::error::dist/ is stale -- run 'npm run build' in mcp-servers/${{ matrix.connector }} and commit it"; exit 1; }
+          # GitHub's npm cache only on hosted runners: on the Mac it can't resolve its paths
+          # ("Some specified paths were not resolved"), and the Mac keeps its own npm cache.
+          cache: ${{ runner.environment == 'github-hosted' && 'npm' || '' }}
+          cache-dependency-path: |
+            mcp-servers/gmail/package-lock.json
+            mcp-servers/google-calendar/package-lock.json
+            mcp-servers/outlook365/package-lock.json
+      # Checks every connector before failing, so one run reports all stale dist/ folders.
+      - name: Build each connector; dist/ must match src/
+        run: |
+          status=0
+          for c in gmail google-calendar outlook365; do
+            echo "::group::$c"
+            if ! (cd "mcp-servers/$c" && npm ci && npm run build); then
+              echo "::error::$c failed to build"; status=1
+            elif ! git diff --exit-code -- "mcp-servers/$c/dist"; then
+              echo "::error::dist/ is stale -- run 'npm run build' in mcp-servers/$c and commit it"; status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
 
   # A pure version-bump commit (apps/macos/scripts/release-prepare.sh) only ever
   # touches these 5 files -- no source changed, so the swift-tests macOS runner
   # below is redundant with the CI run the fix itself already had.
+  # Not on a pull request (#ci-minutes): its outputs feed only swift-tests, which never
+  # runs on one, so on a PR this was a billed minute that decided nothing.
   changes:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
+    # public mirror and for a pull request from a fork, so outside code never runs on it.
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 5
@@ -99,15 +136,9 @@ jobs:
           # swift-tests builds the Mac app, which links core/ and bundles the
           # connectors, so it runs only when one of those (or these workflows)
           # changed. An empty or failed diff runs it.
-          # swift-tests runs on a HOSTED macOS runner (10x a Linux minute). On a pull request
-          # it runs only when a file the Mac app itself owns changed (core/ is left out: it is
-          # built and tested on every core/ PR by rust-tests.yml's test-linux, android and
-          # windows jobs). On a push to main it also runs for core/, so a core/ change that
-          # breaks the Mac app is still caught, one merge later instead of on the PR.
-          macos_paths='^(apps/macos/|mcp-servers/|scripts/l10n/|l10n/|\.github/workflows/)'
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            macos_paths='^(apps/macos/|core/|mcp-servers/|scripts/l10n/|l10n/|\.github/workflows/)'
-          fi
+          # This job no longer runs on pull requests, so the PR-only path list (which left
+          # out core/) is gone; pushes and manual runs always included core/.
+          macos_paths='^(apps/macos/|core/|mcp-servers/|scripts/l10n/|l10n/|\.github/workflows/)'
           if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE "$macos_paths" <<<"$changed"; }; then
             echo "run_macos=true" >> "$GITHUB_OUTPUT"
           else

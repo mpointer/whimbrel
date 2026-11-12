@@ -19,6 +19,7 @@ import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaf
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -76,11 +77,22 @@ fun RootScreen(
         )
     }
     val update by updates.available.collectAsState()
-    // Once per time the app's screen is shown; the model itself limits network checks to one a day.
-    LaunchedEffect(Unit) { updates.checkIfDue() }
+
     val meetings = remember { MeetingsModel() }
     val routines = remember { RoutinesModel() }
     val scope = rememberCoroutineScope() // Main
+    // Each time the app comes back to the screen; the model itself limits network checks to one every 6 hours.
+    val lifecycle = remember { androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle }
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) scope.launch {
+                updates.checkIfDue()
+                updates.takeNotification() // seen in the app: the background check won't announce this version too
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     val info = currentWindowAdaptiveInfo()
     // The open meeting is the navigator's current Detail: saved across process death, kept across fold and unfold.
     val navigator = rememberListDetailPaneScaffoldNavigator<Any>(

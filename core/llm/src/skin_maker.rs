@@ -27,6 +27,13 @@ pub struct SkinTurnInput {
     /// BCP 47 tag the reply and skin wording are written in; "" (or absent) adds no line.
     #[serde(default)]
     pub output_language: String,
+    /// Whether this device can search the web for images. `None` (absent) adds nothing, as before;
+    /// `Some(false)` tells the model not to suggest or promise searches.
+    #[serde(default)]
+    pub can_search_images: Option<bool>,
+    /// Whether this device can make images, likewise.
+    #[serde(default)]
+    pub can_make_images: Option<bool>,
 }
 
 /// One earlier message in this skin's chat. `role` is `"user"` or `"whimbrel"`.
@@ -119,10 +126,26 @@ pub fn build_skin_prompt(input: &SkinTurnInput) -> String {
         .collect();
     let history = if history.is_empty() { "(none)\n".to_string() } else { history };
     format!(
-        "{}{INSTRUCTIONS}\n\nCatalogue of allowed values:\n{catalogue}\n\nCurrent skin manifest:\n{manifest}\n\nEarlier chat for this skin:\n{history}\nUser's latest message:\n{}\n",
+        "{}{INSTRUCTIONS}{}\n\nCatalogue of allowed values:\n{catalogue}\n\nCurrent skin manifest:\n{manifest}\n\nEarlier chat for this skin:\n{history}\nUser's latest message:\n{}\n",
         crate::profile::language_prefix(&input.output_language),
+        image_limits(input),
         input.request
     )
+}
+
+const NO_SEARCH: &str = "\n- This device can't search the web for images: leave imageQueries empty, and never say you searched for or suggested images. If the user wants images, say that adding an image search key in Settings → AI turns searches on, or that they can add their own image file.";
+const NO_MAKING: &str = "\n- This device can't make images: leave imagePrompts empty, and never say you made one.";
+
+/// Extra rules for what this device can't do with images; empty when the caller didn't say.
+fn image_limits(input: &SkinTurnInput) -> String {
+    let mut lines = String::new();
+    if input.can_search_images == Some(false) {
+        lines.push_str(NO_SEARCH);
+    }
+    if input.can_make_images == Some(false) {
+        lines.push_str(NO_MAKING);
+    }
+    lines
 }
 
 /// The first complete top-level JSON object anywhere in `text`, read as a skin reply,

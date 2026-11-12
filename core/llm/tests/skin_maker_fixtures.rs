@@ -59,7 +59,35 @@ fn input(history_len: usize) -> SkinTurnInput {
             "voice": {"greetingMorning": {"limit": 40}}
         }),
         output_language: String::new(),
+        can_search_images: None,
+        can_make_images: None,
     }
+}
+
+#[test]
+fn image_limits_appear_only_when_the_device_lacks_them() {
+    let unsaid = build_skin_prompt(&input(0));
+    assert!(!unsaid.contains("can't search the web"));
+    assert!(!unsaid.contains("can't make images"));
+
+    let able = SkinTurnInput { can_search_images: Some(true), can_make_images: Some(true), ..input(0) };
+    assert_eq!(build_skin_prompt(&able), unsaid);
+
+    let unable = SkinTurnInput { can_search_images: Some(false), can_make_images: Some(false), ..input(0) };
+    let prompt = build_skin_prompt(&unable);
+    assert!(prompt.contains("can't search the web for images: leave imageQueries empty"));
+    assert!(prompt.contains("can't make images: leave imagePrompts empty"));
+    // The rules sit with the others, before the catalogue.
+    assert!(prompt.find("can't search").unwrap() < prompt.find("Catalogue of allowed values").unwrap());
+}
+
+#[test]
+fn image_limits_read_from_json_and_default_to_unsaid() {
+    let old: SkinTurnInput = serde_json::from_value(serde_json::json!({"request": "x", "catalogue": {}})).unwrap();
+    assert_eq!((old.can_search_images, old.can_make_images), (None, None));
+    let new: SkinTurnInput =
+        serde_json::from_value(serde_json::json!({"request": "x", "catalogue": {}, "canSearchImages": false})).unwrap();
+    assert_eq!(new.can_search_images, Some(false));
 }
 
 #[test]

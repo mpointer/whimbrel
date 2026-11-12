@@ -16,7 +16,17 @@ import os
 ///   30), persisted. A change to the ages or the folder mid-run ends the run and plans again.
 @MainActor
 final class MediaRetentionRunner: ObservableObject {
-    enum Mode { case daily, moveOnly }  // daily: ≤10 meetings / ≤10 min; moveOnly: move steps only, no limit
+    /// daily: ≤10 meetings / ≤10 min; moveOnly: move steps only, no limit; oneOff: Free up space,
+    /// the given ages instead of the settings', compress/delete/shrink only (never a move), no limit.
+    enum Mode: Equatable {
+        case daily, moveOnly
+        case oneOff(CoreMediaPolicy)
+
+        var policyOverride: CoreMediaPolicy? {
+            if case .oneOff(let policy) = self { return policy }
+            return nil
+        }
+    }
 
     /// Everything that touches the store or the files. Called on `MediaMover.queue` only.
     struct Ops {
@@ -124,23 +134,33 @@ final class MediaRetentionRunner: ObservableObject {
         }
     }
 
+    /// The meetings recording or transcribing now, which no run touches.
+    func busyMeetingIds() -> Set<Int64> { busyIds() }
+
     /// Stops after the current meeting.
     func cancel() {
         cancelled = true
         rerun = nil
+        pendingOneOff = nil
     }
 
     private var rerun: Mode?
+    /// A Free up space run asked for while another run was in flight. Kept apart from `rerun`, so
+    /// a daily or move-only request never replaces it; it runs first when the current run ends.
+    private var pendingOneOff: Mode?
+    /// Counts finished one-off runs, so Free up space can wait for its own.
+    @Published private(set) var oneOffRunsFinished = 0
 
     private func start(_ mode: Mode, reconnectGate: Int?) {
         guard let ops else { return }
         guard current == nil else {
-            rerun = rerun == .daily ? .daily : mode
+            if mode.policyOverride != nil { pendingOneOff = mode } else { rerun = rerun == .daily ? .daily : mode }
             return
         }
         cancelled = false
         current = Task { [weak self] in
             await self?.execute(mode, ops, reconnectGate: reconnectGate)
+            if mode.policyOverride != nil { self?.oneOffRunsFinished += 1 }
             self?.finished()
         }
     }
@@ -149,19 +169,22 @@ final class MediaRetentionRunner: ObservableObject {
         progress = nil
         step = nil
         current = nil
-        if let mode = rerun {
+        if let mode = pendingOneOff {
+            pendingOneOff = nil
+            run(mode: mode)
+        } else if let mode = rerun {
             rerun = nil
             run(mode: mode)
         }
     }
 
-    private func makePlan(_ ops: Ops) async -> CoreMediaPlan? {
+    private func makePlan(_ ops: Ops, policy override: CoreMediaPolicy? = nil) async -> CoreMediaPlan? {
         // The planner plans no move into a folder that doesn't exist. Only the default is
         // created: a chosen folder may be an unmounted drive.
         if settings.folderPath == nil {
             try? FileManager.default.createDirectory(at: settings.folderURL, withIntermediateDirectories: true)
         }
-        let policy = settings.policy, root = settings.folderURL, busy = busyIds()
+        let policy = override ?? settings.policy, root = settings.folderURL, busy = busyIds()
         let nowMs = Int64(now().timeIntervalSince1970 * 1000)
         let plan = await Self.onMover { ops.plan(policy, nowMs, root, busy) }
         if let plan { lastPlan = plan } else { Self.log.error("media plan failed") }
@@ -170,13 +193,19 @@ final class MediaRetentionRunner: ObservableObject {
 
     private func execute(_ mode: Mode, _ ops: Ops, reconnectGate: Int?) async {
         let started = now()
-        let policy = settings.policy, root = settings.folderURL
-        guard let plan = await makePlan(ops) else { return }
+        let policy = mode.policyOverride ?? settings.policy, root = settings.folderURL
+        guard let plan = await makePlan(ops, policy: mode.policyOverride) else { return }
         pruneBackoff(keeping: Set(plan.work.map(\.meetingId)).union(busyIds()))
         if let gate = reconnectGate, plan.disconnectedMeetings >= gate { return }
         let audioDir = settings.audioURL(deviceId: deviceId), snapshotsRoot = settings.snapshotsURL
         let items: [(id: Int64, steps: [CoreMediaStep], snaps: [Int64])] = plan.work.compactMap { w in
-            let steps = w.steps.filter { mode == .daily || Self.isMove($0) }.filter { !backedOff(w.meetingId, $0, at: started) }
+            let steps = w.steps.filter { step in
+                switch mode {
+                case .daily: true
+                case .moveOnly: Self.isMove(step)
+                case .oneOff: !Self.isMove(step)
+                }
+            }.filter { !backedOff(w.meetingId, $0, at: started) }
             return steps.isEmpty ? nil : (w.meetingId, steps, w.shrinkSnapshotIds)
         }
         let total = mode == .daily ? min(items.count, Self.maxMeetings) : items.count
@@ -187,17 +216,17 @@ final class MediaRetentionRunner: ObservableObject {
             if mode == .daily, done >= Self.maxMeetings || now().timeIntervalSince(started) >= Self.maxSeconds { break }
             // The plan was made for these ages and this folder: if either changed, plan again,
             // in this run's mode (a move-only run leaves the age steps to the next daily one).
-            guard settings.policy == policy, settings.folderURL == root else {
+            guard mode.policyOverride != nil || settings.policy == policy, settings.folderURL == root else {
                 rerun = rerun == .daily ? .daily : mode
                 break
             }
             guard !isBusy(item.id) else { continue }
             workingMeetingId = item.id
-            let settings = settings
+            let settings = settings, oneOff = mode.policyOverride
             let onStep: @Sendable (CoreMediaStep) -> Void = { [weak self] s in Task { @MainActor in self?.step = s } }
             let results = await Self.onMover {
                 Self.perform(item.steps, meetingId: item.id, shrinkIds: item.snaps, ops: ops, audioDir: audioDir, snapshotsRoot: snapshotsRoot,
-                             planned: policy, current: { settings.currentPolicy }, onStep: onStep)
+                             planned: policy, current: { oneOff ?? settings.currentPolicy }, onStep: onStep)
             }
             workingMeetingId = nil
             recordOutcomes(item.id, results)

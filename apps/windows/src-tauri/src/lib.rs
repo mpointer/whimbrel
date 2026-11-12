@@ -38,6 +38,8 @@ pub mod whimbrel_ai;
 pub mod profile;
 pub mod question_alert;
 pub mod restart;
+pub mod storage;
+pub mod disk_alert;
 pub mod retention;
 pub mod routines;
 pub mod secrets;

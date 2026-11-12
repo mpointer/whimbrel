@@ -165,6 +165,9 @@ final class AppState: ObservableObject {
     @Published var pendingLibrarySearch = false
     /// A Settings section to show the next time Settings is shown (or now, if it is open).
     @Published var pendingSettingsSection: SettingsSection?
+    /// Set to show Settings → Storage's Free up space sheet (the low-disk notice and line).
+    @Published var showFreeUpSpace = false
+    private var lowDiskTimer: Timer?
     @Published var pendingNewConversation = false
     /// Text from Today's composer, sent as the first message of the new conversation.
     @Published var pendingAskPrompt: String?
@@ -668,6 +671,7 @@ final class AppState: ObservableObject {
         }
         reconcileOrphanedRecordingMeetings()
         startModelDefaults()
+        startLowDiskChecks()
         // `queue: nil` runs the block synchronously on the posting (main) thread, before
         // `terminate()` exits; see McpServerProcessManager.
         terminationObserver = NotificationCenter.default.addObserver(
@@ -855,6 +859,7 @@ final class AppState: ObservableObject {
                 NSApp.activate(ignoringOtherApps: true)
                 self?.openSettingsWindow?()
             },
+            openStorage: { [weak self] in self?.openFreeUpSpace() },
             stillInMeeting: { [weak self] keep in self?.answerStillInMeeting(keep: keep) })
         notificationClickHandler = clickHandler
         UNUserNotificationCenter.current().delegate = clickHandler
@@ -3121,6 +3126,37 @@ enum StatusMenuCopy {
         case (false, false): String(localized: "Whimbrel stopped recording: less than 2 GB free.")
         }
     }
+}
+
+// MARK: - Storage (Settings → Storage, low-disk notice)
+
+extension AppState {
+    /// Settings → Capture & privacy, where Storage lives, with Free up space showing.
+    func openFreeUpSpace() {
+        pendingSettingsSection = .capture
+        showFreeUpSpace = true
+        NSApp.activate(ignoringOtherApps: true)
+        openSettingsWindow?()
+    }
+
+    /// At launch, then daily: warns (once a day) when the data folder's or the media folder's
+    /// volume has under 10 GB free. Warns only; recording isn't blocked.
+    func startLowDiskChecks() {
+        let check = { [weak self] in
+            guard let self else { return }
+            let media = self.mediaSettings.folderURL
+            DispatchQueue.global(qos: .utility).async {
+                let low = StorageFootprint.lowDiskVolumes(dataRoot: SpikePaths.root, mediaFolder: media)
+                guard !low.isEmpty else { return }
+                Self.lowDiskLog.notice("low disk: \(low.map { "\($0.name) \($0.freeBytes)" }.joined(separator: ", "), privacy: .public)")
+                LowDiskNotice.postIfDue(low)
+            }
+        }
+        check()
+        lowDiskTimer = Timer.scheduledTimer(withTimeInterval: 24 * 60 * 60, repeats: true) { _ in check() }
+    }
+
+    fileprivate static let lowDiskLog = Logger(subsystem: "com.mpointer.kestrel", category: "storage")
 }
 
 // MARK: - Hosted model defaults (core/api::model_defaults)

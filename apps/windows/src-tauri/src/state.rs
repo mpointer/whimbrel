@@ -290,6 +290,7 @@ impl AppState {
         if let Some(store) = &self.store {
             crate::budget_alert::watch(app.clone(), store.clone(), self.settings.clone());
         }
+        crate::disk_alert::watch(app.clone(), self.paths.clone());
         let (Some(store), Ok(config)) = (&self.store, crate::syncing::config::SyncConfig::embedded()) else {
             tracing::info!("calendar syncing is off: no Google client in Secrets.toml");
             return;

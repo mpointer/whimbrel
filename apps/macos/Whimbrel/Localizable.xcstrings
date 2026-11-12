@@ -567,6 +567,40 @@
         }
       }
     },
+    "%@ of recordings are full quality. Compressing keeps them playable at a smaller size." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ an Aufnahmen sind in voller Qualität. Komprimieren hält sie abspielbar, aber kleiner."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ de grabaciones están en calidad completa. Comprimirlas las mantiene reproducibles con menos tamaño."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ d’enregistrements sont en pleine qualité. Les compresser les garde lisibles, en plus petit."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ d’enregistrements sont en pleine qualité. Les compresser les garde lisibles, en plus petit."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ de gravações estão em qualidade total. Comprimir mantém-nas reproduzíveis com tamanho menor."
+          }
+        }
+      }
+    },
     "%@ options" : {
       "localizations" : {
         "de" : {
@@ -2294,6 +2328,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld pt"
+          }
+        }
+      }
+    },
+    "%lld screen captures older than %lld days (about %@ of text)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld Bildschirmaufnahmen älter als %2$lld Tage (etwa %3$@ Text)."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld screen captures older than %2$lld days (about %3$@ of text)."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld capturas de pantalla de hace más de %2$lld días (unos %3$@ de texto)."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld captures d’écran de plus de %2$lld jours (environ %3$@ de texte)."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld captures d’écran de plus de %2$lld jours (environ %3$@ de texte)."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld capturas de tela com mais de %2$lld dias (cerca de %3$@ de texto)."
           }
         }
       }
@@ -7234,6 +7308,216 @@
         }
       }
     },
+    "Compact" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Komprimieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compacter"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compacter"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactar"
+          }
+        }
+      }
+    },
+    "Compact Database" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datenbank komprimieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactar base de datos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compacter la base de données"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compacter la base de données"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactar banco de dados"
+          }
+        }
+      }
+    },
+    "Compact database" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datenbank komprimieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactar base de datos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compacter la base de données"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compacter la base de données"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactar banco de dados"
+          }
+        }
+      }
+    },
+    "Compacted. The freed space returns to the disk shortly." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Komprimiert. Der freigegebene Speicher steht in Kürze wieder zur Verfügung."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactada. El espacio liberado volverá al disco en breve."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactée. L’espace libéré reviendra sur le disque sous peu."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactée. L’espace libéré reviendra sur le disque sous peu."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactado. O espaço liberado voltará ao disco em breve."
+          }
+        }
+      }
+    },
+    "Compacted: %@ → %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Komprimiert: %1$@ → %2$@."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Compacted: %1$@ → %2$@."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactada: %1$@ → %2$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactée : %1$@ → %2$@."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactée : %1$@ → %2$@."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactado: %1$@ → %2$@."
+          }
+        }
+      }
+    },
+    "Compacting… this can take a minute." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird komprimiert … das kann eine Minute dauern."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactando… puede tardar un minuto."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactage… cela peut prendre une minute."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactage… cela peut prendre une minute."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compactando… isso pode levar um minuto."
+          }
+        }
+      }
+    },
     "Compare" : {
       "localizations" : {
         "de" : {
@@ -7302,6 +7586,40 @@
         }
       }
     },
+    "Compress all" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alle komprimieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comprimir todo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tout compresser"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tout compresser"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comprimir tudo"
+          }
+        }
+      }
+    },
     "Compress audio after" : {
       "localizations" : {
         "de" : {
@@ -7332,6 +7650,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Compactar áudio após"
+          }
+        }
+      }
+    },
+    "Compress recordings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aufnahmen komprimieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comprimir grabaciones"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compresser les enregistrements"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compresser les enregistrements"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comprimir gravações"
           }
         }
       }
@@ -8590,6 +8942,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Não foi possível verificar seu plano. Tente novamente em instantes."
+          }
+        }
+      }
+    },
+    "Couldn't compact the database." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Datenbank konnte nicht komprimiert werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo compactar la base de datos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de compacter la base de données."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de compacter la base de données."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível compactar o banco de dados."
           }
         }
       }
@@ -10031,6 +10417,46 @@
         }
       }
     },
+    "Database %@ · Recordings and images %@ · Speech models %@ · Capture queue %@ · Other %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Datenbank %1$@ · Aufnahmen und Bilder %2$@ · Sprachmodelle %3$@ · Erfassungswarteschlange %4$@ · Sonstiges %5$@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Database %1$@ · Recordings and images %2$@ · Speech models %3$@ · Capture queue %4$@ · Other %5$@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Base de datos %1$@ · Grabaciones e imágenes %2$@ · Modelos de voz %3$@ · Cola de capturas %4$@ · Otros %5$@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Base de données %1$@ · Enregistrements et images %2$@ · Modèles vocaux %3$@ · File de captures %4$@ · Autres %5$@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Base de données %1$@ · Enregistrements et images %2$@ · Modèles vocaux %3$@ · File de captures %4$@ · Autres %5$@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Banco de dados %1$@ · Gravações e imagens %2$@ · Modelos de fala %3$@ · Fila de capturas %4$@ · Outros %5$@"
+          }
+        }
+      }
+    },
     "Decisions" : {
       "localizations" : {
         "de" : {
@@ -10673,6 +11099,142 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Excluir conta de sincronização…"
+          }
+        }
+      }
+    },
+    "Delete old recordings" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alte Aufnahmen löschen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eliminar grabaciones antiguas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer les anciens enregistrements"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer les anciens enregistrements"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apagar gravações antigas"
+          }
+        }
+      }
+    },
+    "Delete old screen captures" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alte Bildschirmaufnahmen löschen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eliminar capturas de pantalla antiguas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer les anciennes captures d’écran"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer les anciennes captures d’écran"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apagar capturas de tela antigas"
+          }
+        }
+      }
+    },
+    "Delete screen captures older than %lld days from this Mac and your other devices? This can't be undone." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bildschirmaufnahmen, die älter als %lld Tage sind, von diesem Mac und Ihren anderen Geräten löschen? Das lässt sich nicht rückgängig machen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "¿Eliminar las capturas de pantalla de hace más de %lld días de esta Mac y tus otros dispositivos? No se puede deshacer."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer les captures d’écran de plus de %lld jours de ce Mac et de vos autres appareils ? Cette action est irréversible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer les captures d’écran de plus de %lld jours de ce Mac et de vos autres appareils? Cette action est irréversible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apagar as capturas de tela com mais de %lld dias deste Mac e dos seus outros dispositivos? Isso não pode ser desfeito."
+          }
+        }
+      }
+    },
+    "Delete the audio of meetings older than %lld days? This can't be undone." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Den Ton von Meetings löschen, die älter als %lld Tage sind? Das lässt sich nicht rückgängig machen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "¿Eliminar el audio de las reuniones de hace más de %lld días? No se puede deshacer."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer l’audio des réunions de plus de %lld jours ? Cette action est irréversible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer l’audio des réunions de plus de %lld jours? Cette action est irréversible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apagar o áudio das reuniões com mais de %lld dias? Isso não pode ser desfeito."
           }
         }
       }
@@ -13341,6 +13903,40 @@
         }
       }
     },
+    "Free Up Space…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speicher freigeben …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liberar espacio…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Libérer de l’espace…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Libérer de l’espace…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liberar espaço…"
+          }
+        }
+      }
+    },
     "Free models on OpenRouter may log prompts. Paid models follow each upstream provider's policy. Check OpenRouter's privacy page for the current wording." : {
       "localizations" : {
         "de" : {
@@ -13375,6 +13971,40 @@
         }
       }
     },
+    "Free up space" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Speicher freigeben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liberar espacio"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Libérer de l’espace"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Libérer de l’espace"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liberar espaço"
+          }
+        }
+      }
+    },
     "Free: 1 computer + 1 phone" : {
       "localizations" : {
         "de" : {
@@ -13405,6 +14035,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Grátis: 1 computador + 1 celular"
+          }
+        }
+      }
+    },
+    "Freed %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ freigegeben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se liberaron %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ libérés."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ libérés."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ liberados."
+          }
+        }
+      }
+    },
+    "Frees %@ inside the database file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gibt %@ in der Datenbankdatei frei."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Libera %@ dentro del archivo de la base de datos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Libère %@ dans le fichier de la base de données."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Libère %@ dans le fichier de la base de données."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Libera %@ dentro do arquivo do banco de dados."
           }
         }
       }
@@ -21012,6 +21710,40 @@
         }
       }
     },
+    "Not enough free disk to compact. Free %@ and try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht genug freier Speicher zum Komprimieren. Geben Sie %@ frei und versuchen Sie es erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No hay suficiente espacio libre para compactar. Libera %@ e inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pas assez d’espace disque pour compacter. Libérez %@ et réessayez."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pas assez d’espace disque pour compacter. Libérez %@ et réessayez."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não há espaço livre suficiente para compactar. Libere %@ e tente de novo."
+          }
+        }
+      }
+    },
     "Not enrolled in sync yet." : {
       "localizations" : {
         "de" : {
@@ -21314,6 +22046,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No momento, ninguém deve nada a você."
+          }
+        }
+      }
+    },
+    "Nothing to compact yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Noch nichts zu komprimieren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Todavía no hay nada que compactar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rien à compacter pour l’instant."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rien à compacter pour l’instant."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ainda não há nada para compactar."
+          }
+        }
+      }
+    },
+    "Nothing to free right now." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Im Moment gibt es nichts freizugeben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ahora no hay nada que liberar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rien à libérer pour l’instant."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rien à libérer pour l’instant."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não há nada para liberar agora."
           }
         }
       }
@@ -22044,6 +22844,40 @@
         }
       }
     },
+    "Older than" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Älter als"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "De hace más de"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plus anciens que"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plus anciens que"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Com mais de"
+          }
+        }
+      }
+    },
     "Ollama" : {
       "shouldTranslate" : false
     },
@@ -22389,6 +23223,80 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Uma chave para qualquer modelo do catálogo do OpenRouter, inclusive os gratuitos. Escolha o modelo abaixo; até lá, o OpenRouter fica fora de todas as cadeias, porque o catálogo muda toda semana e não há modelo alternativo para substituir."
+          }
+        }
+      }
+    },
+    "Only %@ free on %@. Whimbrel needs room to record. Free some space or move the media folder." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur noch %1$@ frei auf %2$@. Whimbrel braucht Platz zum Aufnehmen. Geben Sie Speicher frei oder verschieben Sie den Medienordner."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Only %1$@ free on %2$@. Whimbrel needs room to record. Free some space or move the media folder."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo quedan %1$@ libres en %2$@. Whimbrel necesita espacio para grabar. Libera espacio o mueve la carpeta de medios."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plus que %1$@ d’espace libre sur %2$@. Whimbrel a besoin de place pour enregistrer. Libérez de l’espace ou déplacez le dossier multimédia."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plus que %1$@ d’espace libre sur %2$@. Whimbrel a besoin de place pour enregistrer. Libérez de l’espace ou déplacez le dossier multimédia."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Só restam %1$@ livres em %2$@. O Whimbrel precisa de espaço para gravar. Libere espaço ou mova a pasta de mídia."
+          }
+        }
+      }
+    },
+    "Only %@ left. Whimbrel may stop recording." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur noch %@ frei. Whimbrel könnte die Aufnahme beenden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo quedan %@. Whimbrel podría dejar de grabar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plus que %@. Whimbrel pourrait arrêter d’enregistrer."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Plus que %@. Whimbrel pourrait arrêter d’enregistrer."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Só restam %@. O Whimbrel pode parar de gravar."
           }
         }
       }
@@ -25303,6 +26211,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Gravações e imagens de slides: %1$@, %2$@"
+          }
+        }
+      }
+    },
+    "Recordings older than %lld days: %@. Transcripts, notes and summaries stay." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aufnahmen älter als %1$lld Tage: %2$@. Transkripte, Notizen und Zusammenfassungen bleiben erhalten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Recordings older than %1$lld days: %2$@. Transcripts, notes and summaries stay."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Grabaciones de hace más de %1$lld días: %2$@. Las transcripciones, notas y resúmenes se conservan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enregistrements de plus de %1$lld jours : %2$@. Les transcriptions, notes et résumés sont conservés."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enregistrements de plus de %1$lld jours : %2$@. Les transcriptions, notes et résumés sont conservés."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gravações com mais de %1$lld dias: %2$@. Transcrições, notas e resumos são mantidos."
           }
         }
       }
@@ -37979,6 +38927,40 @@
         }
       }
     },
+    "Whimbrel uses %@ on this Mac." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel belegt %@ auf diesem Mac."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel ocupa %@ en esta Mac."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel occupe %@ sur ce Mac."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Whimbrel occupe %@ sur ce Mac."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Whimbrel ocupa %@ neste Mac."
+          }
+        }
+      }
+    },
     "Whimbrel uses these to tell steps you owe from steps owed to you." : {
       "localizations" : {
         "de" : {
@@ -38661,6 +39643,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Seus dados"
+          }
+        }
+      }
+    },
+    "Your disk is almost full" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ihr Speicher ist fast voll"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tu disco está casi lleno"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Votre disque est presque plein"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Votre disque est presque plein"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seu disco está quase cheio"
           }
         }
       }

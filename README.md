@@ -79,6 +79,10 @@ Every component builds without signing credentials or the hosted services; sync 
 - **Connectors:** `npm ci` in each `mcp-servers/*` directory.
 - **Relay and update feed:** [docs/self-hosting.md](docs/self-hosting.md).
 
+## Community
+
+Questions, ideas and bug reports: join the [Whimbrel Discord](https://discord.gg/fetZZA8Ax), or write to hello@whimbrelapp.com.
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).

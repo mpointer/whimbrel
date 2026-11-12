@@ -34,7 +34,9 @@ permissions:
 jobs:
   quick-checks:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    # On the maintainer's Mac in the private repo (no billed minutes); GitHub-hosted in the
+    # public mirror and for a pull request from a fork, so outside code never runs on it.
+    runs-on: ${{ github.repository == 'mpointer/kestrel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4

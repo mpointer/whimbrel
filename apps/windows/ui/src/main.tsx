@@ -8,6 +8,7 @@ import { languageSettings } from "./api";
 import { L10nProvider, setLanguage, useLanguage } from "./l10n";
 import { AlertView } from "./alert/AlertView";
 import { BudgetAlertView } from "./alert/BudgetAlertView";
+import { DiskAlertView } from "./alert/DiskAlertView";
 import { QuestionAlertView } from "./alert/QuestionAlertView";
 import { StillHereView } from "./alert/StillHereView";
 import { HotkeyPanel } from "./hotkeyPanel/HotkeyPanel";
@@ -33,6 +34,8 @@ function Root() {
       <QuestionAlertView />
     ) : label === "budget-alert" ? (
       <BudgetAlertView />
+    ) : label === "disk-alert" ? (
+      <DiskAlertView />
     ) : label === "still-here" ? (
       <StillHereView />
     ) : label === "hotkey-panel" ? (

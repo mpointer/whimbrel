@@ -25,6 +25,7 @@ mod mcp_ffi;
 mod meeting_parts_ffi;
 mod speaker_names_ffi;
 mod model_defaults_ffi;
+mod storage_ffi;
 mod models_ffi;
 mod prompts_ffi;
 mod oauth_ffi;

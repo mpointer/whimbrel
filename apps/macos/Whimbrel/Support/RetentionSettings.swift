@@ -79,7 +79,9 @@ final class RetentionSettings: ObservableObject {
     /// same shared queue background meeting-summarization/digest calls use — and those
     /// can run for many seconds; a synchronous `.sync` here would beachball the app for
     /// an unbounded time if one of those happened to be in flight.
-    func applyNow(store: CoreMemoryStore?, completion: @escaping (CoreRetentionResult?) -> Void) {
+    /// `compactAllowed` false (a meeting is recording) skips the compaction after retention: it
+    /// holds the store for about a minute, which live transcription can't wait for.
+    func applyNow(store: CoreMemoryStore?, compactAllowed: Bool = true, completion: @escaping (CoreRetentionResult?) -> Void) {
         guard let store else {
             completion(nil)
             return
@@ -97,7 +99,13 @@ final class RetentionSettings: ObservableObject {
                 nowUnixMs: nowMs,
                 recordingsDir: SpikePaths.root
             ) }
+            // Deleted rows leave free pages inside the file; give them back to the disk when it
+            // pays off (core decides) and the disk can hold the rewrite.
+            let compacted = result == nil || !compactAllowed ? nil : StorageCompaction.run(store, forced: false)
             DispatchQueue.main.async {
+                if let compacted, compacted.ran {
+                    self?.log.info("Compacted the database: \(compacted.fileBytesBefore, privacy: .public) → \(compacted.fileBytesAfter, privacy: .public) bytes")
+                }
                 if let result {
                     self?.log.info(
                         "Applied retention: \(result.captureItemsDeleted, privacy: .public) capture items, \(result.meetingsDeleted, privacy: .public) meetings deleted (\(result.deletedMeetingFiles.count, privacy: .public) meeting file set(s) cleaned up)"

@@ -349,7 +349,7 @@ pub async fn skin_turn(app: AppHandle, state: State<'_, AppState>, skin_id: Stri
     let origin = skin_maker::origin(&user, &dirs.skins, &skin_id).ok_or_else(|| CommandError::invalid_input(tr("No skin {skin_id}", &[("skin_id", &skin_id.to_string())])))?;
     let (provider, model, client) = skin_client(&routing, &keys)?;
     let caps = caps(&routing, &keys);
-    let input = skin_maker::turn_input(&user, &origin, &request, &routing.output_language);
+    let input = skin_maker::turn_input(&user, &origin, &request, &routing.output_language, sources);
     let slow = state.slow_store()?.clone();
     RUNS.lock().unwrap().insert(run_id.clone(), false);
     // The provider call holds the slow lane, as Ask's blocking answer does, never the main store.
@@ -503,8 +503,25 @@ pub async fn skin_image_thumbnail(state: State<'_, AppState>, url: String) -> Re
     if state.settings.lock().unwrap().routing().local_only {
         return Err(CommandError::invalid_input(tr("Local-only mode is on, so nothing is downloaded.", &[])));
     }
+    // Only the host is logged: the rest of a search thumbnail's address can carry the query.
+    let host = url.split("://").nth(1).and_then(|rest| rest.split(['/', '?']).next()).unwrap_or("").to_string();
     let bytes = tauri::async_runtime::spawn_blocking(move || llm::images::fetch_image(&url)).await.map_err(blocking_failed)?;
-    Ok(Response::new(bytes.map_err(|_| CommandError::provider_failure())?))
+    match bytes {
+        Ok(bytes) => {
+            tracing::info!(%host, bytes = bytes.len(), "skin image thumbnail fetched");
+            Ok(Response::new(bytes))
+        }
+        Err(e) => {
+            tracing::warn!(%host, error = %e, "skin image thumbnail failed, so the image leaves the strip");
+            Err(CommandError::provider_failure())
+        }
+    }
+}
+
+/// The page says why found images left its strip (a thumbnail that wouldn't show, or the strip emptied).
+#[tauri::command]
+pub fn skin_image_unshown(reason: String) {
+    tracing::info!(reason = %reason.chars().take(200).collect::<String>(), "skin images left the strip");
 }
 
 /// Forgets a candidate; nothing was saved, so nothing is on disk.
