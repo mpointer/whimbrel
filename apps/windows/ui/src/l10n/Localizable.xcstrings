@@ -4864,6 +4864,40 @@
         }
       }
     },
+    "Chat about this skin" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chat zu diesem Skin"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chat sobre este skin"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discussion sur ce skin"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Conversation sur ce skin"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chat sobre este skin"
+          }
+        }
+      }
+    },
     "Chats" : {
       "localizations" : {
         "de" : {
@@ -5720,6 +5754,176 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Chegando em {milestone}."
+          }
+        }
+      }
+    },
+    "Compact" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Komprimieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compacter"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compacter"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactar"
+          }
+        }
+      }
+    },
+    "Compact database" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Datenbank komprimieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactar base de datos"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compacter la base de données"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compacter la base de données"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactar banco de dados"
+          }
+        }
+      }
+    },
+    "Compacted. The freed space returns to the disk shortly." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Komprimiert. Der freigegebene Speicher steht in Kürze wieder zur Verfügung."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactada. El espacio liberado volverá al disco en breve."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactée. L’espace libéré reviendra sur le disque sous peu."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactée. L’espace libéré reviendra sur le disque sous peu."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactado. O espaço liberado voltará ao disco em breve."
+          }
+        }
+      }
+    },
+    "Compacted: {before} → {after}." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Komprimiert: {before} → {after}."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactada: {before} → {after}."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactée : {before} → {after}."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactée : {before} → {after}."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactado: {before} → {after}."
+          }
+        }
+      }
+    },
+    "Compacting the database…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Datenbank wird komprimiert …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactando la base de datos…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactage de la base de données…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactage de la base de données…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Compactando o banco de dados…"
           }
         }
       }
@@ -8454,6 +8658,40 @@
         }
       }
     },
+    "Database {database} · Recordings {recordings} · Speech models {models} · Other {other}" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Datenbank {database} · Aufnahmen {recordings} · Sprachmodelle {models} · Sonstiges {other}"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Base de datos {database} · Grabaciones {recordings} · Modelos de voz {models} · Otros {other}"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Base de données {database} · Enregistrements {recordings} · Modèles vocaux {models} · Autres {other}"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Base de données {database} · Enregistrements {recordings} · Modèles vocaux {models} · Autres {other}"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Banco de dados {database} · Gravações {recordings} · Modelos de voz {models} · Outros {other}"
+          }
+        }
+      }
+    },
     "Decisions" : {
       "localizations" : {
         "de" : {
@@ -8692,6 +8930,40 @@
         }
       }
     },
+    "Delete screen captures older than {days} days from this PC and your other devices? This can't be undone." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bildschirmaufnahmen, die älter als {days} Tage sind, von diesem PC und Ihren anderen Geräten löschen? Das lässt sich nicht rückgängig machen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Eliminar las capturas de pantalla de hace más de {days} días de esta PC y tus otros dispositivos? No se puede deshacer."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Supprimer les captures d’écran de plus de {days} jours de ce PC et de vos autres appareils ? Cette action est irréversible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Supprimer les captures d’écran de plus de {days} jours de ce PC et de vos autres appareils? Cette action est irréversible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apagar as capturas de tela com mais de {days} dias deste PC e dos seus outros dispositivos? Isso não pode ser desfeito."
+          }
+        }
+      }
+    },
     "Delete slide {name}" : {
       "localizations" : {
         "de" : {
@@ -8756,6 +9028,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Excluir e-mails armazenados…"
+          }
+        }
+      }
+    },
+    "Delete the audio of meetings older than {days} days? This can't be undone." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Den Ton von Meetings löschen, die älter als {days} Tage sind? Das lässt sich nicht rückgängig machen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "¿Eliminar el audio de las reuniones de hace más de {days} días? No se puede deshacer."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Supprimer l’audio des réunions de plus de {days} jours ? Cette action est irréversible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Supprimer l’audio des réunions de plus de {days} jours? Cette action est irréversible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apagar o áudio das reuniões com mais de {days} dias? Isso não pode ser desfeito."
           }
         }
       }
@@ -8892,6 +9198,74 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Excluir…"
+          }
+        }
+      }
+    },
+    "Deleting old recordings…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alte Aufnahmen werden gelöscht …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eliminando grabaciones antiguas…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Suppression des anciens enregistrements…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Suppression des anciens enregistrements…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apagando gravações antigas…"
+          }
+        }
+      }
+    },
+    "Deleting old screen captures…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Alte Bildschirmaufnahmen werden gelöscht …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eliminando capturas de pantalla antiguas…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Suppression des anciennes captures d’écran…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Suppression des anciennes captures d’écran…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Apagando capturas de tela antigas…"
           }
         }
       }
@@ -10844,6 +11218,40 @@
         }
       }
     },
+    "Free up space…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Speicher freigeben …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Liberar espacio…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Libérer de l’espace…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Libérer de l’espace…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Liberar espaço…"
+          }
+        }
+      }
+    },
     "Free: 1 computer + 1 phone" : {
       "localizations" : {
         "de" : {
@@ -10874,6 +11282,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Grátis: 1 computador + 1 celular"
+          }
+        }
+      }
+    },
+    "Freed {bytes}." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{bytes} freigegeben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se liberaron {bytes}."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{bytes} libérés."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{bytes} libérés."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{bytes} liberados."
+          }
+        }
+      }
+    },
+    "Frees {free} inside the database file." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gibt {free} in der Datenbankdatei frei."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Libera {free} dentro del archivo de la base de datos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Libère {free} dans le fichier de la base de données."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Libère {free} dans le fichier de la base de données."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Libera {free} dentro do arquivo do banco de dados."
           }
         }
       }
@@ -11792,6 +12268,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Ocultar resumo"
+          }
+        }
+      }
+    },
+    "Hide chat" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chat ausblenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ocultar chat"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Masquer la discussion"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Masquer la conversation"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ocultar chat"
           }
         }
       }
@@ -17990,6 +18500,40 @@
         }
       }
     },
+    "Not enough free disk to compact. Free {need} and try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nicht genug freier Speicher zum Komprimieren. Geben Sie {need} frei und versuchen Sie es erneut."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No hay suficiente espacio libre para compactar. Libera {need} e inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pas assez d’espace disque pour compacter. Libérez {need} et réessayez."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pas assez d’espace disque pour compacter. Libérez {need} et réessayez."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não há espaço livre suficiente para compactar. Libere {need} e tente de novo."
+          }
+        }
+      }
+    },
     "Not mine" : {
       "localizations" : {
         "de" : {
@@ -18806,6 +19350,74 @@
         }
       }
     },
+    "Nothing to compact yet." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Noch nichts zu komprimieren."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Todavía no hay nada que compactar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rien à compacter pour l’instant."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rien à compacter pour l’instant."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ainda não há nada para compactar."
+          }
+        }
+      }
+    },
+    "Nothing to free up at {days} days." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bei {days} Tagen gibt es nichts freizugeben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No hay nada que liberar a {days} días."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rien à libérer à {days} jours."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rien à libérer à {days} jours."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não há nada para liberar com {days} dias."
+          }
+        }
+      }
+    },
     "Nothing to import." : {
       "localizations" : {
         "de" : {
@@ -19421,6 +20033,40 @@
         }
       }
     },
+    "Older than" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Älter als"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "De hace más de"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plus anciens que"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plus anciens que"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Com mais de"
+          }
+        }
+      }
+    },
     "Ollama (on this PC)" : {
       "localizations" : {
         "de" : {
@@ -19757,6 +20403,74 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Uma chave para qualquer modelo do catálogo do OpenRouter, inclusive os gratuitos. Até você escolher um, o OpenRouter fica fora de todas as cadeias, porque o catálogo muda toda semana e não há um modelo alternativo para substituir."
+          }
+        }
+      }
+    },
+    "Only {free} free on {volume}. Whimbrel needs room to record. Free some space or move the data folder." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nur noch {free} frei auf {volume}. Whimbrel braucht Platz zum Aufnehmen. Geben Sie Speicher frei oder verschieben Sie den Datenordner."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo quedan {free} libres en {volume}. Whimbrel necesita espacio para grabar. Libera espacio o mueve la carpeta de datos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plus que {free} d’espace libre sur {volume}. Whimbrel a besoin de place pour enregistrer. Libérez de l’espace ou déplacez le dossier de données."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plus que {free} d’espace libre sur {volume}. Whimbrel a besoin de place pour enregistrer. Libérez de l’espace ou déplacez le dossier de données."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Só restam {free} livres em {volume}. O Whimbrel precisa de espaço para gravar. Libere espaço ou mova a pasta de dados."
+          }
+        }
+      }
+    },
+    "Only {free} left. Whimbrel may stop recording." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nur noch {free} frei. Whimbrel könnte die Aufnahme beenden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Solo quedan {free}. Whimbrel podría dejar de grabar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plus que {free}. Whimbrel pourrait arrêter d’enregistrer."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Plus que {free}. Whimbrel pourrait arrêter d’enregistrer."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Só restam {free}. O Whimbrel pode parar de gravar."
           }
         }
       }
@@ -22423,6 +23137,40 @@
         }
       }
     },
+    "Recorded on another device, so it can't be checked off here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf einem anderen Gerät aufgenommen, daher kann es hier nicht abgehakt werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se grabó en otro dispositivo, así que no se puede marcar aquí."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enregistré sur un autre appareil, donc impossible de le cocher ici."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enregistré sur un autre appareil, donc impossible de le cocher ici."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gravado em outro dispositivo, então não pode ser marcado aqui."
+          }
+        }
+      }
+    },
     "Recorded on another device, so its audio and summary live there." : {
       "localizations" : {
         "de" : {
@@ -22769,6 +23517,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Gravações que nenhuma reunião usa mais"
+          }
+        }
+      }
+    },
+    "Recordings older than {days} days: {bytes}. Transcripts, notes and summaries stay." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aufnahmen älter als {days} Tage: {bytes}. Transkripte, Notizen und Zusammenfassungen bleiben erhalten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Grabaciones de hace más de {days} días: {bytes}. Las transcripciones, notas y resúmenes se conservan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enregistrements de plus de {days} jours : {bytes}. Les transcriptions, notes et résumés sont conservés."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Enregistrements de plus de {days} jours : {bytes}. Les transcriptions, notes et résumés sont conservés."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gravações com mais de {days} dias: {bytes}. Transcrições, notas e resumos são mantidos."
           }
         }
       }
@@ -25614,6 +26396,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Mostrar"
+          }
+        }
+      }
+    },
+    "Show chat" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chat einblenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar chat"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Afficher la discussion"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Afficher la conversation"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mostrar chat"
           }
         }
       }
@@ -31462,6 +32278,40 @@
         }
       }
     },
+    "This doesn't change how long Whimbrel keeps data, and never touches a meeting being recorded." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Das ändert nicht, wie lange Whimbrel Daten aufbewahrt, und berührt nie ein Meeting, das gerade aufgenommen wird."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esto no cambia cuánto tiempo guarda Whimbrel los datos y nunca toca una reunión que se está grabando."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cela ne change pas la durée de conservation des données par Whimbrel et ne touche jamais une réunion en cours d’enregistrement."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cela ne change pas la durée de conservation des données par Whimbrel et ne touche jamais une réunion en cours d’enregistrement."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Isso não muda por quanto tempo o Whimbrel guarda os dados e nunca mexe em uma reunião que está sendo gravada."
+          }
+        }
+      }
+    },
     "This draft couldn't be read. You can reject it." : {
       "localizations" : {
         "de" : {
@@ -34491,6 +35341,40 @@
         }
       }
     },
+    "Whimbrel can't search for images on this PC. Image search needs an image search key in Settings → AI, and it's off when Whimbrel uses only local AI. You can still add your own image." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel kann auf diesem PC nicht nach Bildern suchen. Die Bildsuche braucht einen Bildsuche-Schlüssel unter Einstellungen → KI und ist aus, wenn Whimbrel nur lokale KI verwendet. Sie können trotzdem ein eigenes Bild hinzufügen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel no puede buscar imágenes en esta PC. La búsqueda de imágenes necesita una clave de búsqueda de imágenes en Ajustes → IA, y está desactivada cuando Whimbrel usa solo IA local. Aún puedes agregar tu propia imagen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel ne peut pas rechercher d’images sur ce PC. La recherche d’images nécessite une clé de recherche d’images dans Paramètres → IA, et elle est désactivée quand Whimbrel n’utilise que l’IA locale. Vous pouvez quand même ajouter votre propre image."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel ne peut pas rechercher d’images sur ce PC. La recherche d’images nécessite une clé de recherche d’images dans Réglages → IA, et elle est désactivée quand Whimbrel n’utilise que l’IA locale. Vous pouvez quand même ajouter votre propre image."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel não pode buscar imagens neste PC. A busca de imagens precisa de uma chave de busca de imagens em Configurações → IA e fica desativada quando o Whimbrel usa só IA local. Você ainda pode adicionar sua própria imagem."
+          }
+        }
+      }
+    },
     "Whimbrel closed unexpectedly {n} times, so it won't restart on its own. A report with its recent logs was saved (email addresses and meeting titles removed).\n\nEmail the report to Whimbrel now?" : {
       "localizations" : {
         "de" : {
@@ -35099,6 +35983,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "O Whimbrel usa esses nomes para distinguir o que você deve do que devem a você."
+          }
+        }
+      }
+    },
+    "Whimbrel uses {total} on this PC." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel belegt {total} auf diesem PC."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel ocupa {total} en esta PC."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel occupe {total} sur ce PC."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel occupe {total} sur ce PC."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel ocupa {total} neste PC."
           }
         }
       }
@@ -36129,6 +37047,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Seu limite diário ($)"
+          }
+        }
+      }
+    },
+    "Your disk is almost full" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ihr Speicher ist fast voll"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu disco está casi lleno"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Votre disque est presque plein"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Votre disque est presque plein"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seu disco está quase cheio"
           }
         }
       }
@@ -39003,6 +39955,118 @@
         }
       }
     },
+    "{count} screen captures older than {days} days (about {bytes} of text)." : {
+      "localizations" : {
+        "de" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "{count} Bildschirmaufnahme älter als {days} Tage (etwa {bytes} Text)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "{count} Bildschirmaufnahmen älter als {days} Tage (etwa {bytes} Text)."
+                }
+              }
+            }
+          }
+        },
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "{count} screen capture older than {days} days (about {bytes} of text)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "{count} screen captures older than {days} days (about {bytes} of text)."
+                }
+              }
+            }
+          }
+        },
+        "es" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "{count} captura de pantalla de hace más de {days} días (unos {bytes} de texto)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "{count} capturas de pantalla de hace más de {days} días (unos {bytes} de texto)."
+                }
+              }
+            }
+          }
+        },
+        "fr" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "{count} capture d’écran de plus de {days} jours (environ {bytes} de texte)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "{count} captures d’écran de plus de {days} jours (environ {bytes} de texte)."
+                }
+              }
+            }
+          }
+        },
+        "fr-CA" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "{count} capture d’écran de plus de {days} jours (environ {bytes} de texte)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "{count} captures d’écran de plus de {days} jours (environ {bytes} de texte)."
+                }
+              }
+            }
+          }
+        },
+        "pt" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "{count} captura de tela com mais de {days} dias (cerca de {bytes} de texto)."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "needs_review",
+                  "value" : "{count} capturas de tela com mais de {days} dias (cerca de {bytes} de texto)."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "{count} waiting for approval" : {
       "localizations" : {
         "de" : {
@@ -39111,6 +40175,40 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "{days} days" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{days} Tage"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{days} días"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{days} jours"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{days} jours"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "{days} dias"
           }
         }
       }

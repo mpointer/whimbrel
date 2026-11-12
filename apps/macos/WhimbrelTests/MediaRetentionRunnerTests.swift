@@ -194,6 +194,37 @@ final class MediaRetentionRunnerTests: XCTestCase {
         XCTAssertEqual(touched(f), [1, 2, 3], "checked between meetings: 0, 4 and 8 minutes in, then stop at 12")
     }
 
+    func testOneOffUsesItsOwnAgesNeverMovesAndHasNoCap() async {
+        let f = fake((1...12).map { work(Int64($0), [.moveAudio, .moveSnapshots, .compress, .shrinkImages], snaps: [5]) })
+        let policy = CoreMediaPolicy(compressAfterDays: 0, deleteAudioAfterDays: nil, shrinkImagesAfterDays: 0, deleteAudioPreviewAfterDays: nil)
+        await runToEnd(runner(f), .oneOff(policy))
+        XCTAssertEqual(f.planPolicies.first, policy, "plans with the one-off ages, not the settings'")
+        XCTAssertFalse(f.calls.contains { $0.hasPrefix("move") }, "a one-off cleanup never moves files")
+        XCTAssertEqual(touched(f), Array(1...12), "no 10-meeting cap")
+        XCTAssertTrue(f.calls.contains { $0.hasPrefix("compress") })
+    }
+
+    func testOneOffAskedDuringARunIsNotReplacedByALaterDailyOne() async {
+        let f = fake([work(1, [.compress])])
+        let policy = CoreMediaPolicy(compressAfterDays: 0, deleteAudioAfterDays: nil, shrinkImagesAfterDays: nil, deleteAudioPreviewAfterDays: nil)
+        let r = runner(f)
+        r.run(mode: .daily)
+        r.run(mode: .oneOff(policy))
+        r.run(mode: .daily)
+        r.run(mode: .moveOnly)
+        await idle(r)
+        XCTAssertTrue(f.planPolicies.contains(policy), "the queued one-off still ran")
+        XCTAssertEqual(r.oneOffRunsFinished, 1)
+    }
+
+    func testOneOffSkipsBusyMeetings() async {
+        let f = fake([work(1, [.compress]), work(2, [.compress])])
+        let policy = CoreMediaPolicy(compressAfterDays: 0, deleteAudioAfterDays: nil, shrinkImagesAfterDays: nil, deleteAudioPreviewAfterDays: nil)
+        await runToEnd(runner(f, busy: [1]), .oneOff(policy))
+        XCTAssertFalse(f.calls.contains { $0.hasPrefix("compress 1") })
+        XCTAssertTrue(f.calls.contains { $0.hasPrefix("compress 2") })
+    }
+
     func testMoveOnlyIgnoresAgeStepsAndHasNoCap() async {
         let f = fake((1...12).map { work(Int64($0), [.moveAudio, .moveSnapshots, .compress, .shrinkImages], snaps: [5]) })
         f.onMove = { [clock] _ in clock.advance(4 * 60) }

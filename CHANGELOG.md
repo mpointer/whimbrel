@@ -2,6 +2,32 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.71] - 2026-11-12
+
+### All devices
+- A computer that falls far behind another device's sync now catches up quickly: it saves the backlog first and builds search for those items in the background, instead of falling further behind (a Windows PC was two weeks behind a busy Mac).
+
+### Mac
+- Settings → Storage now shows how much space Whimbrel uses on this Mac, split into the database, recordings and images, speech models, the capture queue, and other files.
+- Free up space (Settings → Storage) shows what each cleanup would free and runs it once: compact the database, compress all recordings, delete recordings older than 30, 90 or 180 days (transcripts, notes and summaries stay), or delete old screen captures. Your retention settings don't change.
+- The database is compacted after retention runs when that gives back real space, so deleted captures free disk; "Compact Database" does it on request.
+- The capture queue (screen-text.jsonl) is emptied once its captures are saved, instead of keeping every screen's text forever.
+- When the disk holding Whimbrel's data or recordings has under 10 GB free, Storage says so and a notification (at most once a day) opens Free up space.
+
+### Windows
+- Settings → Capture has a Storage card: how much space Whimbrel uses on this PC, split into the database, recordings, speech models and other files.
+- Free up space (Storage) shows what each cleanup would free and runs it once: compact the database, delete recordings older than 30, 90 or 180 days (transcripts, notes and summaries stay), or delete old screen captures here and on your other devices. Your retention settings don't change, and a meeting being recorded is never touched.
+- The database is compacted after retention runs when that gives back real space; "Compact database" does it on request.
+- When the drive holding Whimbrel's data has under 10 GB free, Storage says so and a notice (at most once a day) offers Free up space. Recording carries on.
+- While another device has more to sync, the next round starts 10 seconds after the last, not a minute; each round's sync numbers go in the log.
+- On a meeting recorded on another device, the action-item boxes look disabled and say why on hover, instead of looking clickable.
+- Hide chat folds a skin's chat away (Show chat brings it back), and a long chat scrolls inside its own box instead of filling the page.
+- Found images in the skin chat stay on screen to approve (they vanished as soon as they loaded), and an approved image shows on Today.
+- Without an image search key the skin chat no longer promises image suggestions; it says an image search key in Settings → AI turns search on, or that you can add your own image.
+
+### Android
+- Whimbrel checks for a new version each time you come back to the app, and in the background every 6 hours. A new version also shows as a notification (once per version, if notifications are allowed); tap it to open Whimbrel and download it.
+
 ## [0.9.70] - 2026-11-12
 
 ### All devices

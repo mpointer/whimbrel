@@ -1066,6 +1066,30 @@ export interface ChatSpend {
   userCents: number;
 }
 /**
+ * What a compaction did, for Settings.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "CompactView".
+ */
+export interface CompactView {
+  fileBytesAfter: number;
+  fileBytesBefore: number;
+  /**
+   * For `"not_enough_disk"`: the free space the rewrite needs.
+   */
+  needBytes?: number | null;
+  ran: boolean;
+  /**
+   * `"ran"`, `"not_worth_it"` or `"not_enough_disk"`.
+   */
+  reason: string;
+  /**
+   * It ran, but another reader kept the last checkpoint from finishing, so the freed space
+   * reaches the disk a little later.
+   */
+  spacePending: boolean;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "ConversationRow".
  */
@@ -1218,6 +1242,53 @@ export interface FeedbackResult {
    * Where the bundle was saved, for the user to attach.
    */
   bundlePath?: string | null;
+}
+/**
+ * What Whimbrel keeps on this PC, by part, in bytes.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "Footprint".
+ */
+export interface Footprint {
+  /**
+   * The database file with its write-ahead log.
+   */
+  database: number;
+  /**
+   * Speech and embedding models.
+   */
+  models: number;
+  /**
+   * Everything else in the data folder: logs, skins, snapshots, diagnostics.
+   */
+  other: number;
+  /**
+   * Meeting recordings and transcripts.
+   */
+  recordings: number;
+  total: number;
+}
+/**
+ * What each Free up space row would free at `days`, for the dialog. `None` hides a row.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "FreeUpOptions".
+ */
+export interface FreeUpOptions {
+  /**
+   * The captures' text, about what deleting them frees.
+   */
+  capturesBytes?: number | null;
+  capturesCount?: number | null;
+  /**
+   * Free space inside the database file.
+   */
+  compactBytes?: number | null;
+  days: number;
+  /**
+   * Audio of meetings older than `days` that can go (every part transcribed).
+   */
+  recordingsBytes?: number | null;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1581,6 +1652,19 @@ export interface LocalModelStatus {
    * The helper and the model are both here, and every chain ends with it.
    */
   installed: boolean;
+}
+/**
+ * A disk under the warning line.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LowDisk".
+ */
+export interface LowDisk {
+  freeBytes: number;
+  /**
+   * The drive, such as `C:\`.
+   */
+  volume: string;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -2368,6 +2452,26 @@ export interface StatusView {
    * Sync operations not yet delivered.
    */
   outboxPending: number;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "StorageView".
+ */
+export interface StorageView {
+  /**
+   * The day choices for Free up space, and the default.
+   */
+  days: number[];
+  /**
+   * Free space inside the database file, which compacting gives back.
+   */
+  dbFreeBytes: number;
+  defaultDays: number;
+  footprint: Footprint;
+  /**
+   * Drives under the warning line (10 GB free).
+   */
+  lowDisks: LowDisk[];
 }
 /**
  * A fact the daily job proposed, waiting for Add or Dismiss.

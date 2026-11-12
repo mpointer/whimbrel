@@ -1042,6 +1042,12 @@ details summary {
   margin-top: calc(var(--space-xs) + 3px);
 }
 
+/* A meeting from another device: its boxes can't be changed here, so they mustn't look clickable. */
+.action-items .toggle input[type="checkbox"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* The item's text: as wide as the row, and as tall as its wrapped text, so none of it is hidden. */
 .action-item-text {
   flex: 1;
@@ -1680,13 +1686,22 @@ button.link:focus-visible {
   gap: var(--space-sm);
   margin-top: var(--space-md);
 }
+.skin-chat__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+/* A long chat scrolls inside its own box instead of pushing the page down. */
 .skin-chat__turns {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 var(--space-sm) 0 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  max-height: 22rem;
+  overflow-y: auto;
 }
 .skin-chat__bubble {
   align-self: flex-start;
@@ -2129,4 +2144,17 @@ button.link:focus-visible {
   overflow-y: auto;
   white-space: pre-wrap;
   user-select: text;
+}
+
+/* Settings → Storage: a drive under 10 GB free, and Free up space's rows. */
+.storage-low {
+  color: var(--color-error);
+}
+.storage-row {
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.storage-row .grow {
+  flex: 1;
+  min-width: 12rem;
 }

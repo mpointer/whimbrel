@@ -1344,6 +1344,37 @@ pub struct Store {
     /// means "enqueue nothing", which keeps tests and tools that never sync outbox-free.
     /// `RefCell`, not a lock: `Store` is already `!Sync` (one connection, one queue).
     own_device_id: std::cell::RefCell<Option<String>>,
+    /// While set, `apply_synced_item` stores rows without embedding them; the reindex sweep
+    /// embeds them later. Sync sets it while catching up on a peer, so a backlog applies at
+    /// row speed instead of embedding speed (~0.5 s a row on a laptop CPU).
+    defer_embedding: std::cell::Cell<bool>,
+}
+
+/// A database file's page counts (`Store::db_space`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DbSpace {
+    pub page_size: i64,
+    pub page_count: i64,
+    pub freelist_count: i64,
+}
+
+/// What `Store::compact` did: the space afterwards, and whether a reader kept it in the WAL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactOutcome {
+    pub space: DbSpace,
+    pub space_pending: bool,
+}
+
+impl DbSpace {
+    /// The file's size in bytes.
+    pub fn file_bytes(&self) -> i64 {
+        self.page_size * self.page_count
+    }
+
+    /// Bytes inside the file that deletes left free.
+    pub fn free_bytes(&self) -> i64 {
+        self.page_size * self.freelist_count
+    }
 }
 
 impl Store {
@@ -1358,6 +1389,7 @@ impl Store {
                 models_dir,
             ))),
             own_device_id: Default::default(),
+            defer_embedding: Default::default(),
         })
     }
 
@@ -1374,6 +1406,7 @@ impl Store {
             // as any other missing-model case — no special-casing needed.
             embedder: std::sync::Arc::new(LazyModelEmbedder::new(std::path::PathBuf::new())),
             own_device_id: Default::default(),
+            defer_embedding: Default::default(),
         })
     }
 
@@ -1521,6 +1554,7 @@ impl Store {
             conn,
             embedder,
             own_device_id: Default::default(),
+            defer_embedding: Default::default(),
         })
     }
 
@@ -1537,6 +1571,19 @@ impl Store {
     /// reason to fail the surrounding operation.
     fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
         self.embedder.embed(text)
+    }
+
+    /// Turns deferred embedding for synced items on or off (see `defer_embedding`); returns
+    /// what it was, so a caller can put it back. Ending a deferral revives the reindex sweep
+    /// job, which may have finished before these items arrived and would otherwise wait for
+    /// the next calendar or email write, or a restart.
+    pub fn set_defer_embedding(&self, on: bool) -> bool {
+        let was = self.defer_embedding.replace(on);
+        if was && !on {
+            // Best effort: on failure the next calendar or email write, or a restart, revives it.
+            let _ = Self::ensure_reindex_sweep_job_seeded(&self.conn);
+        }
+        was
     }
 
     /// Whether the embedding model is loaded and usable right now — attempts the lazy
@@ -3106,6 +3153,13 @@ impl Store {
             self.conn.last_insert_rowid()
         };
 
+        if self.defer_embedding.get() {
+            // Left for the reindex sweep, which embeds items with no vec entry (revived when
+            // deferral ends, `set_defer_embedding`). An edit that changed the text already lost
+            // its old embedding and rewound the sweep (the `items_vec_au` trigger); an unchanged
+            // row keeps its embedding, which is still right.
+            return Ok(id);
+        }
         let embedding = self.embed(&item.body_text).ok();
         if let Some(embedding) = &embedding {
             // vec0 virtual tables don't implement SQLite's "ON CONFLICT" conflict resolution,
@@ -7042,6 +7096,40 @@ impl Store {
         )
     }
 
+    /// How many screen captures retention would delete at `cutoff_unix_ms`, and how many bytes
+    /// of text they hold (Settings → Free up space). Same condition as `apply_retention`.
+    pub fn captures_older_than(&self, cutoff_unix_ms: i64) -> rusqlite::Result<(i64, i64)> {
+        self.conn.query_row(
+            &format!("SELECT COUNT(*), COALESCE(SUM(LENGTH(CAST(text AS BLOB))), 0) FROM capture_item WHERE {EXPIRED_CAPTURE_ITEMS}"),
+            params![cutoff_unix_ms],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+    }
+
+    /// The database file's pages: how big it is and how much of it is free (left by deletes,
+    /// reused before the file grows). `compact` gives the free part back to the disk.
+    pub fn db_space(&self) -> rusqlite::Result<DbSpace> {
+        let pragma = |name: &str| self.conn.query_row(&format!("PRAGMA {name}"), [], |r| r.get::<_, i64>(0));
+        Ok(DbSpace {
+            page_size: pragma("page_size")?,
+            page_count: pragma("page_count")?,
+            freelist_count: pragma("freelist_count")?,
+        })
+    }
+
+    /// Rewrites the database without its free pages (`VACUUM`), checkpointing the WAL before and
+    /// after so the space really leaves the disk. Holds the store for the whole rewrite (about a
+    /// minute for a few GB) and needs up to the file's size again in free disk; callers decide
+    /// when (`api::storage::decide`) and run it on their store queue.
+    /// `space_pending` is true when another connection's read kept the final checkpoint from
+    /// finishing: the main file isn't smaller yet and the WAL holds the compacted copy until a
+    /// later checkpoint (the next write, or the next compact) folds it in.
+    pub fn compact(&self) -> rusqlite::Result<CompactOutcome> {
+        self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;")?;
+        let busy: i64 = self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0))?;
+        Ok(CompactOutcome { space: self.db_space()?, space_pending: busy != 0 })
+    }
+
     /// FR-MEM-4: per-data-class retention — each data class (`capture_item`, `meeting`)
     /// gets its own retention window in days, `None` meaning "keep forever." Meetings
     /// default to a longer window than raw capture items in practice (they're
@@ -10428,6 +10516,75 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM items_vec", [], |r| r.get(0))
             .unwrap();
         assert_eq!(vec_count, 1);
+    }
+
+    #[test]
+    fn captures_older_than_counts_only_older_rows() {
+        let store = Store::open_in_memory().unwrap();
+        for (i, (text, ts)) in [("aaa", 100), ("bbbb", 200), ("cc", 300), ("new1", 5000), ("new2", 6000)].iter().enumerate() {
+            store.insert_capture_item(&item("com.apple.Safari", text, i as i64, *ts)).unwrap();
+        }
+        assert_eq!(store.captures_older_than(1000).unwrap(), (3, 9));
+        assert_eq!(store.captures_older_than(0).unwrap(), (0, 0));
+    }
+
+    #[test]
+    fn compact_says_when_a_reader_keeps_the_space_in_the_wal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("compact-busy.sqlite");
+        let store = Store::open_with_embedder(&path, std::sync::Arc::new(FakeEmbedder)).unwrap();
+        for i in 0..200 {
+            store.insert_capture_item(&item("com.apple.Safari", &format!("{} {i}", "y".repeat(4096)), i, 1000 + i)).unwrap();
+        }
+        store.conn.execute_batch("DELETE FROM items; DELETE FROM capture_item;").unwrap();
+        let reader = rusqlite::Connection::open(&path).unwrap();
+        reader.execute_batch("BEGIN; SELECT COUNT(*) FROM jobs;").unwrap();
+        let outcome = store.compact().unwrap();
+        assert!(outcome.space_pending, "a reader blocks the final checkpoint");
+        reader.execute_batch("COMMIT;").unwrap();
+        drop(reader);
+        let clear = store.compact().unwrap();
+        assert!(!clear.space_pending);
+    }
+
+    #[test]
+    fn semantic_search_still_finds_items_after_a_compact() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("compact-search.sqlite");
+        let store = Store::open_with_embedder(&path, std::sync::Arc::new(FakeEmbedder)).unwrap();
+        let text = |i: i64| format!("capture number {i} {}", "z".repeat(2000));
+        for i in 0..400 {
+            store.insert_capture_item(&item("com.apple.Safari", &text(i), i, 1000 + i)).unwrap();
+        }
+        // Retention's own delete: the older half goes, leaving free pages between kept rows.
+        store.delete_before(1200).unwrap();
+        let before = store.db_space().unwrap();
+        assert!(before.free_bytes() > 0);
+        store.compact().unwrap();
+        for i in [200_i64, 251, 333, 399] {
+            let hits = store.search_semantic(&text(i), 1).unwrap();
+            assert_eq!(hits.first().map(|h| h.text.clone()), Some(text(i)), "row {i} found by its own embedding after VACUUM");
+        }
+        assert!(store.search_semantic(&text(10), 1).unwrap().first().map(|h| h.text != text(10)).unwrap_or(true));
+    }
+
+    #[test]
+    fn compact_returns_free_pages_to_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("compact-test.sqlite");
+        let store = Store::open_with_embedder(&path, std::sync::Arc::new(FakeEmbedder)).unwrap();
+        let text = "x".repeat(4096);
+        for i in 0..2000 {
+            store
+                .insert_capture_item(&item("com.apple.Safari", &format!("{text} {i}"), i, 1000 + i))
+                .unwrap();
+        }
+        store.conn.execute_batch("DELETE FROM items; DELETE FROM capture_item;").unwrap();
+        let before = store.db_space().unwrap();
+        assert!(before.free_bytes() > 4_000_000, "deleted rows leave free pages: {before:?}");
+        let after = store.compact().unwrap().space;
+        assert_eq!(after.free_bytes(), 0);
+        assert!(after.file_bytes() < before.file_bytes());
     }
 
     #[test]
@@ -17660,6 +17817,122 @@ mod tests {
             )
             .unwrap();
         assert_eq!(vec_count, 0, "the existing items_vec_ad trigger must clean this up automatically, no explicit cleanup code needed in delete_email_items");
+    }
+
+    #[test]
+    fn a_deferred_synced_item_has_no_embedding_until_the_reindex_sweep_adds_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_with_embedder(&dir.path().join("t.sqlite"), std::sync::Arc::new(FakeEmbedder)).unwrap();
+        let item = |text: &str| AppliedItem {
+            kind: "capture".to_string(),
+            source: Some("screen".to_string()),
+            ts_unix_ms: 1000,
+            actors: None,
+            title: None,
+            body_text: text.to_string(),
+            refs: None,
+            flags: None,
+            hash: None,
+            external_id: None,
+            app_bundle_id: None,
+            url: None,
+        };
+        let vec_rows = |store: &Store| -> i64 { store.conn.query_row("SELECT COUNT(*) FROM items_vec", [], |r| r.get(0)).unwrap() };
+        // Let the sweep pass everything already there, so it's at the end like a running app's.
+        while store.reindex_batch(100).unwrap() > 0 {}
+
+        assert!(!store.set_defer_embedding(true));
+        store.apply_synced_item("peer", 1, None, &item("deferred row one")).unwrap();
+        store.apply_synced_item("peer", 2, None, &item("deferred row two")).unwrap();
+        assert_eq!(vec_rows(&store), 0, "deferred rows are stored without an embedding");
+        assert!(store.set_defer_embedding(false));
+
+        // Caught up again: a new row embeds as it arrives.
+        store.apply_synced_item("peer", 3, None, &item("live row")).unwrap();
+        assert_eq!(vec_rows(&store), 1);
+
+        // The sweep embeds the two it skipped.
+        while store.reindex_batch(100).unwrap() > 0 {}
+        assert_eq!(vec_rows(&store), 3);
+    }
+
+    #[test]
+    fn ending_a_deferral_revives_a_done_reindex_sweep_so_the_jobs_loop_embeds_the_items() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_with_embedder(&dir.path().join("t.sqlite"), std::sync::Arc::new(FakeEmbedder)).unwrap();
+        let sweep = |store: &Store| -> String {
+            store.conn.query_row("SELECT status FROM jobs WHERE job_type = 'reindex_sweep'", [], |r| r.get(0)).unwrap()
+        };
+        // The sweep has caught up and finished, as in a running app.
+        while store.reindex_batch(100).unwrap() > 0 {}
+        store.conn.execute("UPDATE jobs SET status = 'done' WHERE job_type = 'reindex_sweep'", []).unwrap();
+
+        store.set_defer_embedding(true);
+        let item = AppliedItem {
+            kind: "capture".to_string(),
+            source: Some("screen".to_string()),
+            ts_unix_ms: 1000,
+            actors: None,
+            title: None,
+            body_text: "a deferred capture".to_string(),
+            refs: None,
+            flags: None,
+            hash: None,
+            external_id: None,
+            app_bundle_id: None,
+            url: None,
+        };
+        store.apply_synced_item("peer", 1, None, &item).unwrap();
+        assert_eq!(sweep(&store), "done", "nothing revives it mid-page");
+        store.set_defer_embedding(false);
+        assert_eq!(sweep(&store), "pending", "ending the deferral revives the sweep");
+
+        // The jobs loop then embeds the item.
+        let vec_rows = || -> i64 { store.conn.query_row("SELECT COUNT(*) FROM items_vec", [], |r| r.get(0)).unwrap() };
+        assert_eq!(vec_rows(), 0);
+        for _ in 0..20 {
+            if vec_rows() == 1 {
+                break;
+            }
+            store.run_jobs_batch(1, i64::MAX / 2).unwrap();
+        }
+        assert_eq!(vec_rows(), 1);
+    }
+
+    #[test]
+    fn a_deferred_reapply_of_an_unchanged_row_behind_the_sweep_keeps_its_embedding() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open_with_embedder(&dir.path().join("t.sqlite"), std::sync::Arc::new(FakeEmbedder)).unwrap();
+        let item = |text: &str| AppliedItem {
+            // Only a row with an external id is updated in place (calendar, email); captures insert.
+            kind: "calendar_event".to_string(),
+            source: Some("google_calendar".to_string()),
+            ts_unix_ms: 1000,
+            actors: None,
+            title: None,
+            body_text: text.to_string(),
+            refs: None,
+            flags: None,
+            hash: None,
+            external_id: Some("evt-1".to_string()),
+            app_bundle_id: None,
+            url: None,
+        };
+        let vec_rows = || -> i64 { store.conn.query_row("SELECT COUNT(*) FROM items_vec", [], |r| r.get(0)).unwrap() };
+        let id = store.apply_synced_item("peer", 1, None, &item("same text")).unwrap();
+        while store.reindex_batch(100).unwrap() > 0 {}
+        assert_eq!(vec_rows(), 1);
+
+        store.set_defer_embedding(true);
+        // The same row again, unchanged: its embedding is still right and stays.
+        assert_eq!(store.apply_synced_item("peer", 1, None, &item("same text")).unwrap(), id);
+        assert_eq!(vec_rows(), 1);
+        // Changed text: the trigger drops the old embedding and rewinds the sweep, which re-embeds it.
+        store.apply_synced_item("peer", 1, None, &item("new text")).unwrap();
+        store.set_defer_embedding(false);
+        assert_eq!(vec_rows(), 0);
+        while store.reindex_batch(100).unwrap() > 0 {}
+        assert_eq!(vec_rows(), 1);
     }
 
     #[test]

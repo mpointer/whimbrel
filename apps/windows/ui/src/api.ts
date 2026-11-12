@@ -86,6 +86,10 @@ import type {
   RoutingSettings,
   ScheduleView,
   StatusView,
+  StorageView,
+  LowDisk,
+  CompactView,
+  FreeUpOptions,
   SyncView,
   WhimbrelAiView,
   TrayStatus,
@@ -106,6 +110,12 @@ import type {
   MeetingAskExchange,
 } from "./generated/types";
 import type { SkinDto } from "./skin";
+
+/** A raw-bytes reply as real bytes. The shell's `Response` can arrive as a plain array of numbers rather than an
+ *  ArrayBuffer, and `new Blob([array])` would then hold the numbers' text, which no image decodes. */
+export function asBytes(reply: ArrayBuffer | ArrayLike<number>): Uint8Array {
+  return reply instanceof ArrayBuffer ? new Uint8Array(reply) : Uint8Array.from(reply);
+}
 
 export const appStatus = () => invoke<AppStatus>("app_status");
 export const getRoutingSettings = () => invoke<RoutingSettings>("get_routing_settings");
@@ -252,7 +262,7 @@ export const skinsList = () => invoke<SkinDto[]>("skins_list");
 /** Moves when a sync changed the skins folder (Task 15). */
 export const skinsRevision = () => invoke<number>("skins_revision");
 /** An approved image of one of the user's skins, as raw bytes. */
-export const skinImage = (id: string, name: string) => invoke<ArrayBuffer>("skin_image", { id, name });
+export const skinImage = (id: string, name: string) => invoke<ArrayBuffer | number[]>("skin_image", { id, name }).then(asBytes);
 
 // Making skins by chat (Task 10; the decisions are in src-tauri/src/skin_maker.rs).
 export const skinSources = () => invoke<SkinSources>("skin_sources");
@@ -277,8 +287,10 @@ export const skinImport = () => invoke<string | null>("skin_import");
 export const skinImageSearch = (query: string) => invoke<ImageCandidateView[]>("skin_image_search", { query });
 export const skinImageGenerate = (prompt: string) => invoke<ImageCandidateView>("skin_image_generate", { prompt });
 /** A candidate's thumbnail as raw bytes, fetched by the shell (the page may not load remote images). */
-export const skinImageThumbnail = (url: string) => invoke<ArrayBuffer>("skin_image_thumbnail", { url });
+export const skinImageThumbnail = (url: string) => invoke<ArrayBuffer | number[]>("skin_image_thumbnail", { url }).then(asBytes);
 export const skinImageReject = (url: string) => invoke<void>("skin_image_reject", { url });
+/** Logs why a thumbnail that arrived couldn't be shown (the image then leaves the strip). */
+export const skinImageUnshown = (reason: string) => invoke<void>("skin_image_unshown", { reason });
 export const skinImageApprove = (skinId: string, url: string) => invoke<SkinLine>("skin_image_approve", { skinId, url });
 /** Opens a file picker; null when it is cancelled. */
 export const skinImageAddFile = (skinId: string) => invoke<SkinLine | null>("skin_image_add_file", { skinId });
@@ -418,6 +430,16 @@ export const routineRuns = (limit?: number) => invoke<RunView[]>("routine_runs",
 export const routinesHost = () => invoke<HostView>("routines_host");
 export const routinesSetHost = (id: string) => invoke<HostView>("routines_set_host", { id });
 export const statusOverview = () => invoke<StatusView>("status_overview");
+// Settings → Storage (plan 2026-11-12-storage-visibility).
+export const storageOverview = () => invoke<StorageView>("storage_overview");
+/** Holds the store until the rewrite is done (about a minute for a few GB). */
+export const storageCompact = () => invoke<CompactView>("storage_compact");
+export const storageFreeUpOptions = (days: number) => invoke<FreeUpOptions>("storage_free_up_options", { days });
+export const storageDeleteOldRecordings = (days: number) => invoke<number>("storage_delete_old_recordings", { days });
+export const storageDeleteOldCaptures = (days: number) => invoke<number>("storage_delete_old_captures", { days });
+export const diskAlertStatus = () => invoke<LowDisk[]>("disk_alert_status");
+export const diskAlertOpen = () => invoke<void>("disk_alert_open");
+export const diskAlertDismiss = () => invoke<void>("disk_alert_dismiss");
 export const routineSetAutoApprove = (id: number, enabled: boolean) => invoke<RoutineView[]>("routine_set_auto_approve", { id, enabled });
 export const routineSetModelPref = (id: number, pref: string) => invoke<RoutineView[]>("routine_set_model_pref", { id, pref });
 export const routineModelOptions = () => invoke<ModelOptionView[]>("routine_model_options");

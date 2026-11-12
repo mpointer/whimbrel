@@ -11,7 +11,7 @@ final class ScreenTextCaptureService: NSObject, ObservableObject {
     @Published private(set) var lastCapturedBundleId: String?
     @Published private(set) var lastCaptureSource: String?
 
-    private let logger = JSONLLogger(url: SpikePaths.screenTextLog)
+    private let logger = JSONLLogger.screenText
     private var axObserver: AXObserver?
     private var debounceWorkItem: DispatchWorkItem?
     private var lastTextHash: [String: Int] = [:]

@@ -13,6 +13,7 @@ import { MeetingModelsCard } from "./MeetingModelsCard";
 import { MeetingsCard } from "./MeetingsCard";
 import { ProfileCard } from "./ProfileCard";
 import { RetentionCard } from "./RetentionCard";
+import { StorageCard } from "./StorageCard";
 import { SearchModelCard } from "./SearchModelCard";
 import { SETTINGS_SECTIONS, sectionTitle, type SettingsSectionId } from "./settingsSections";
 import { SkinGallery } from "./SkinGallery";
@@ -91,6 +92,7 @@ function SectionCards({ section, onRetentionSaved }: { section: Exclude<Settings
           <CaptureCard />
           <HotkeyCard />
           <RetentionCard onSaved={onRetentionSaved} />
+          <StorageCard />
           <VaultCard />
         </>
       );

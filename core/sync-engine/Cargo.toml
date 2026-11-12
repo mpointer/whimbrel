@@ -13,6 +13,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+tracing = "0.1"
 
 # Android has no system cert store that rustls-native-certs can read, so libsql's default
 # connector (native roots) fails with "no valid native root CA certificates found". On

@@ -53,11 +53,12 @@ export function ActionItems({
         <ul className="action-items">
           {displayOrder(items).map((item) => (
             <li key={item.id}>
-              <label className="toggle">
+              <label className="toggle" title={readOnly ? t("Recorded on another device, so it can't be checked off here.") : undefined}>
                 <input
                   type="checkbox"
                   checked={item.completed}
                   disabled={readOnly}
+                  title={readOnly ? t("Recorded on another device, so it can't be checked off here.") : undefined}
                   onChange={() => run(meetingUpdateActionItem(meetingId, item.id, null, !item.completed))}
                 />
                 {/* A textarea, so a long item wraps and shows in full; Enter saves it as the old one-line field did. */}

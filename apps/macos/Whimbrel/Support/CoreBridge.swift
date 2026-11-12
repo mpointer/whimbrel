@@ -1550,6 +1550,36 @@ struct CoreMeetingWork: Codable, Equatable {
     }
 }
 
+/// Mirrors `whimbrel_store_space_json`.
+struct CoreDbSpace: Codable, Equatable {
+    let fileBytes: Int64
+    let freeBytes: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case fileBytes = "file_bytes"
+        case freeBytes = "free_bytes"
+    }
+}
+
+/// Mirrors `whimbrel_store_compact`. `reason` is "ran", "not_worth_it" or "not_enough_disk".
+struct CoreCompactResult: Codable, Equatable {
+    let ran: Bool
+    let reason: String
+    let needBytes: Int64?
+    let fileBytesBefore: Int64
+    let fileBytesAfter: Int64
+    /// Another connection's read kept the freed space in the WAL; it returns at a later checkpoint.
+    var spacePending: Bool? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case ran, reason
+        case needBytes = "need_bytes"
+        case spacePending = "space_pending"
+        case fileBytesBefore = "file_bytes_before"
+        case fileBytesAfter = "file_bytes_after"
+    }
+}
+
 /// Mirrors core/api's `media_retention::MediaUsage`.
 struct CoreMediaUsage: Codable, Equatable {
     let audioFullBytes: Int64
@@ -3503,6 +3533,31 @@ final class CoreMemoryStore {
         }
         defer { whimbrel_core_free_string(json) }
         return decode(json)
+    }
+
+    /// Screen captures older than `cutoffUnixMs` (what retention at that cutoff deletes), and
+    /// the bytes of text they hold. Call on `accessQueue`.
+    func capturesOlderThan(cutoffUnixMs: Int64) -> (count: Int64, textBytes: Int64)? {
+        guard let out = whimbrel_captures_older_than_json(handle, cutoffUnixMs) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        struct Reply: Decodable { let count: Int64; let text_bytes: Int64 }
+        guard let r = try? JSONDecoder().decode(Reply.self, from: Data(String(cString: out).utf8)) else { return nil }
+        return (r.count, r.text_bytes)
+    }
+
+    /// The database file's size and the space deletes left free inside it.
+    func dbSpace() -> CoreDbSpace? {
+        guard let out = whimbrel_store_space_json(handle) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return try? JSONDecoder().decode(CoreDbSpace.self, from: Data(String(cString: out).utf8))
+    }
+
+    /// Compacts the database when core says it's worth it (or `forced`) and the volume can hold
+    /// the rewrite. Holds the store for the whole rewrite: call on `accessQueue`, never on main.
+    func compact(volumeFreeBytes: Int64, forced: Bool) -> CoreCompactResult? {
+        guard let out = whimbrel_store_compact(handle, volumeFreeBytes, forced) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return try? JSONDecoder().decode(CoreCompactResult.self, from: Data(String(cString: out).utf8))
     }
 
     /// FR-MEM-4: per-data-class retention sweep plus file cleanup (core/api::retention,

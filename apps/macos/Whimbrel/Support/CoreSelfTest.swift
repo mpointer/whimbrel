@@ -209,7 +209,6 @@ enum CoreSelfTest {
         case .foundLine(let endIndex):
             newData = newData.prefix(endIndex)
             let endOffset = startOffset + UInt64(endIndex)
-            defaults.set(Int(endOffset), forKey: ingestedOffsetKey)
 
             let deltaURL = SpikePaths.root.appendingPathComponent("screen-text-delta.jsonl")
             do {
@@ -218,10 +217,23 @@ enum CoreSelfTest {
                 return ScreenTextIngestOutcome(message: "FAIL: couldn't write screen-text delta scratch file: \(error)", hasMoreWork: false)
             }
 
-            guard let stats = store.ingestJSONL(path: deltaURL, deviceId: deviceId) else {
+            let ingested = store.ingestJSONL(path: deltaURL, deviceId: deviceId)
+            try? FileManager.default.removeItem(at: deltaURL)
+            guard let stats = ingested else {
                 return ScreenTextIngestOutcome(message: "FAIL: incremental screen-text ingest returned nil", hasMoreWork: false)
             }
+            // Only now, once the lines are in the store: a failed write or ingest leaves the offset
+            // where it was, so the lines are read again rather than trimmed away unsaved.
+            defaults.set(Int(endOffset), forKey: ingestedOffsetKey)
             let remaining = currentSize - endOffset
+            // Everything written so far is now in the store: empty the queue so it never keeps
+            // screen text past what retention allows. The logger checks its own write position,
+            // so a capture appended since `currentSize` was read keeps the file as it is.
+            if remaining == 0 {
+                _ = JSONLLogger.screenText.trimIfFullyRead(through: endOffset) {
+                    defaults.set(0, forKey: ingestedOffsetKey)
+                }
+            }
             let remainingNote = remaining > 0 ? " (\(remaining) bytes still queued for a later pass)" : ""
             return ScreenTextIngestOutcome(
                 message: "Ingest new screen-text.jsonl lines (\(newData.count) bytes): read=\(stats.recordsRead) inserted=\(stats.itemsInserted) deduped=\(stats.itemsDeduped) errors=\(stats.parseErrors)\(remainingNote)",

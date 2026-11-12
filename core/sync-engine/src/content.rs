@@ -1367,20 +1367,27 @@ fn apply_parent_row(
         }
         ROW_TYPE_SKIN => {
             // Kept in the store, not the skins folder: `core/skins` writes it once its images are whole.
-            let Ok(payload) =
-                serde_json::from_slice::<memory::skin_sync::SkinSyncPayload>(plaintext)
-            else {
-                return Ok(());
-            };
-            store
+            let payload =
+                match serde_json::from_slice::<memory::skin_sync::SkinSyncPayload>(plaintext) {
+                    Ok(payload) => payload,
+                    Err(e) => {
+                        tracing::warn!(peer = %peer_tag(peer_device_id), local_seq, bytes = plaintext.len(), error = %e, "pulled skin row unreadable");
+                        return Ok(());
+                    }
+                };
+            let stored = store
                 .apply_synced_skin(peer_device_id, &payload)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            tracing::info!(peer = %peer_tag(peer_device_id), local_seq, skin = %payload.skin_id, images = payload.images.len(), deleted = payload.deleted, stored, "pulled skin row");
             return Ok(());
         }
         ROW_TYPE_SKIN_IMAGE_CHUNK => {
-            let Ok(chunk) = serde_json::from_slice::<memory::skin_sync::SkinImageChunk>(plaintext)
-            else {
-                return Ok(());
+            let chunk = match serde_json::from_slice::<memory::skin_sync::SkinImageChunk>(plaintext) {
+                Ok(chunk) => chunk,
+                Err(e) => {
+                    tracing::warn!(peer = %peer_tag(peer_device_id), local_seq, error = %e, "pulled skin image chunk unreadable");
+                    return Ok(());
+                }
             };
             store
                 .apply_synced_skin_chunk(&chunk)
@@ -1887,6 +1894,11 @@ struct PeerPullStats {
     pending_after: usize,
     undecodable: usize,
     budget_stopped: bool,
+    /// Time fetching the forward page from the relay, and applying it.
+    fetch_ms: u64,
+    apply_ms: u64,
+    /// The page was full (this peer is behind), so its items were stored without embeddings.
+    deferred_embedding: bool,
     /// Newest first only (#572): this round recorded the peer's gap and moved the live cursor
     /// to the peer's top (a never-pulled peer's `cursor_before` is then that top).
     gap_opened: bool,
@@ -2095,11 +2107,21 @@ async fn pull_round_mode(
         // not a page it can't apply, which costs rows read and data for nothing.
         let spent = pace.round_budget.is_some() && budget.is_zero();
         let rows = if spent { 1 } else { pace.rows };
+        let fetch_started = std::time::Instant::now();
         let envelopes = fetch_rows_since(conn, peer, cursor, rows, skip_skins).await?;
+        stats.fetch_ms = fetch_started.elapsed().as_millis() as u64;
         let full_page = envelopes.len() as i64 >= rows;
         more |= spent || full_page;
         stats.fetched = envelopes.len();
         stats.fetched_through = envelopes.last().map_or(cursor, |e| e.local_seq);
+        let apply_started = std::time::Instant::now();
+        // A full page means this peer is behind: on a desktop its items are stored without
+        // embeddings, which the reindex sweep adds later, so a backlog applies at row speed
+        // instead of ~0.5 s a row. A caught-up peer still embeds each row as it arrives. A
+        // pull-only phone (`skip_skins`) keeps embedding as before.
+        let defer = full_page && !skip_skins;
+        stats.deferred_embedding = defer;
+        let was_deferring = store.set_defer_embedding(defer);
         let page = apply_page(
             conn,
             group_key,
@@ -2110,7 +2132,10 @@ async fn pull_round_mode(
             capture_cutoff,
             stats,
         )
-        .await?;
+        .await;
+        store.set_defer_embedding(was_deferring);
+        let page = page?;
+        stats.apply_ms = apply_started.elapsed().as_millis() as u64;
         more |= page.stopped;
         // The highest local_seq this pass handled (applied, skipped, or deferred to the
         // dependency pass): where the cursor goes, since the pass can stop early.
@@ -2356,6 +2381,9 @@ async fn apply_page(
             }
             chunk_bytes += env.ciphertext_base64.len();
         }
+        if env.row_type == ROW_TYPE_SKIN {
+            tracing::info!(peer = %peer_tag(peer), local_seq = env.local_seq, bytes = env.ciphertext_base64.len(), "fetched skin row");
+        }
         handled += 1;
         if env.row_type == ROW_TYPE_TRANSCRIPT_SEGMENT {
             if store
@@ -2447,6 +2475,7 @@ async fn apply_page(
         }
         let Some(plaintext) = decrypt_row(group_key, peer, env) else {
             stats.undecodable += 1;
+            tracing::warn!(peer = %peer_tag(peer), local_seq = env.local_seq, row_type = %env.row_type, "pulled row couldn't be decrypted");
             continue;
         };
         if env.row_type == ROW_TYPE_CAPTURE_ITEM

@@ -162,4 +162,6 @@
     <string name="update_available_detail">This phone has an older version. Download the new one from the release page and install it over this one; your meetings and sign-in stay.</string>
     <string name="update_download">Download</string>
     <string name="update_not_now">Not now</string>
+    <string name="update_channel_name">App updates</string>
+    <string name="update_notification_text">Open Whimbrel to download it.</string>
 </resources>

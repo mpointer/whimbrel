@@ -8,6 +8,7 @@ import {
   skinImageReject,
   skinImageSearch,
   skinImageThumbnail,
+  skinImageUnshown,
   skinSources,
   skinTurn,
   skinTurnStop,
@@ -34,6 +35,25 @@ const message = (e: unknown): string => (isCommandError(e) ? describeError(e) : 
 /** While the set-up state shows, how often to look again for a provider (a key may be added below). */
 const SOURCES_POLL_MS = 5000;
 
+/** Whether the chat's messages are hidden; remembered on this PC only. */
+const CHAT_HIDDEN = "whimbrel.skinChatHidden";
+
+function readHidden(): boolean {
+  try {
+    return localStorage.getItem(CHAT_HIDDEN) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveHidden(hidden: boolean) {
+  try {
+    localStorage.setItem(CHAT_HIDDEN, hidden ? "1" : "0");
+  } catch {
+    // The choice just won't be remembered.
+  }
+}
+
 /** Settings → Appearance: make or change a skin by talking to Whimbrel, below the gallery as on the Mac. One
  *  chat per skin; the shell saves each turn's skin and keeps its chat. Replies are plain text. */
 export function SkinChat(props: { onRunning?: (running: boolean) => void } = {}) {
@@ -47,8 +67,26 @@ export function SkinChat(props: { onRunning?: (running: boolean) => void } = {})
   /** `undefined` until the shell answers. */
   const [sources, setSources] = useState<SkinSources | null | undefined>(undefined);
   const [draft, setDraft] = useState("");
+  const [hidden, setHiddenState] = useState(readHidden);
+  const setHidden = (next: boolean) => {
+    setHiddenState(next);
+    saveHidden(next);
+  };
+  const turnsBox = useRef<HTMLOListElement | null>(null);
   const { onRunning } = props;
   useEffect(() => onRunning?.(state.running), [state.running, onRunning]);
+  // The newest message stays in view inside the chat's capped height (only the box scrolls, not the page).
+  useEffect(() => {
+    const box = turnsBox.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [state.turns.length, hidden]);
+  // For the log: found images leaving the strip, however they go (a failed thumbnail, another skin, a new turn).
+  const shown = useRef(0);
+  useEffect(() => {
+    const now = state.candidates.length;
+    if (now < shown.current) void skinImageUnshown(`strip went from ${shown.current} to ${now} images`).catch(() => {});
+    shown.current = now;
+  }, [state.candidates.length]);
 
   const refreshSources = () =>
     skinSources().then(
@@ -106,6 +144,8 @@ export function SkinChat(props: { onRunning?: (running: boolean) => void } = {})
     // A second submit during the wait finds the first one running.
     if (!fresh?.chat || latest.current.running) return;
     setDraft("");
+    // Asking something shows the chat, so the answer is seen.
+    if (hidden) setHidden(false);
     const origin = latest.current.skinId;
     dispatch({ type: "send", text, providerLine: providerLine(fresh) });
     const run = latest.current.run + 1;
@@ -143,9 +183,16 @@ export function SkinChat(props: { onRunning?: (running: boolean) => void } = {})
 
   return (
     <div className="skin-chat">
-      <h3 className="gallery-heading muted small">{t("Make a skin")}</h3>
-      {state.turns.length > 0 && (
-        <ol className="skin-chat__turns">
+      <div className="skin-chat__header">
+        <h3 className="gallery-heading muted small">{t("Make a skin")}</h3>
+        {state.turns.length > 0 && (
+          <button type="button" className="link-button small" aria-expanded={!hidden} aria-controls="skin-chat-turns" onClick={() => setHidden(!hidden)}>
+            {hidden ? `${t("Show chat")} (${state.turns.length})` : t("Hide chat")}
+          </button>
+        )}
+      </div>
+      {state.turns.length > 0 && !hidden && (
+        <ol id="skin-chat-turns" ref={turnsBox} className="skin-chat__turns" tabIndex={0} aria-label={t("Chat about this skin")}>
           {state.turns.map((turn, i) => (
             <li key={i} className={turn.role === "user" ? "skin-chat__bubble skin-chat__bubble--user" : "skin-chat__bubble"}>
               {turn.text}
@@ -214,16 +261,23 @@ function Candidate(props: { candidate: ImageCandidateView; onApprove: () => void
   const { t } = useL10n();
   const { candidate, onBroken } = props;
   const [src, setSrc] = useState<string | null>(null);
+  /** What arrived, for the log line when the image won't show. */
+  const got = useRef("");
   useEffect(() => {
     let url: string | null = null;
     let live = true;
     skinImageThumbnail(candidate.thumbnailUrl).then(
       (bytes) => {
         if (!live) return;
+        got.current = `${bytes.byteLength} bytes`;
         url = URL.createObjectURL(new Blob([bytes]));
         setSrc(url);
       },
-      () => live && onBroken(),
+      (e: unknown) => {
+        // The shell logs its own fetch failures; anything else (the call itself failing) is logged here.
+        if (!isCommandError(e)) void skinImageUnshown(`thumbnail call failed: ${String(e)}`).catch(() => {});
+        if (live) onBroken();
+      },
     );
     return () => {
       live = false;
@@ -232,7 +286,16 @@ function Candidate(props: { candidate: ImageCandidateView; onApprove: () => void
   }, [candidate.thumbnailUrl]);
   return (
     <figure className="skin-candidate">
-      {src ? <img src={src} alt={candidate.title} onError={onBroken} /> : <div className="skin-candidate__blank" aria-label={candidate.title} />}
+      {src ? (
+        <img
+          src={src}
+          alt={candidate.title}
+          onError={() => {
+            void skinImageUnshown(`the image didn't decode (${got.current})`).catch(() => {});
+            onBroken();
+          }}
+        />
+      ) : <div className="skin-candidate__blank" aria-label={candidate.title} />}
       <figcaption className="muted small">{candidate.title}</figcaption>
       <div className="field-row">
         <button type="button" className="mode mode--active" onClick={props.onApprove}>

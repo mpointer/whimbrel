@@ -406,6 +406,8 @@ final class NotificationClickHandler: NSObject, UNUserNotificationCenterDelegate
     private let open: @MainActor (DeepLink.Target) -> Void
     private let openPrep: @MainActor (String) -> Void
     private let openAIProviders: @MainActor () -> Void
+    /// The low-disk notice: Settings → Storage with Free up space showing.
+    private let openStorage: @MainActor () -> Void
     /// "Still in a meeting?"'s buttons: true for "Keep recording", false for "Stop".
     private let stillInMeeting: @MainActor (_ keep: Bool) -> Void
 
@@ -416,10 +418,12 @@ final class NotificationClickHandler: NSObject, UNUserNotificationCenterDelegate
 
     init(open: @escaping @MainActor (DeepLink.Target) -> Void, openPrep: @escaping @MainActor (String) -> Void = { _ in },
          openAIProviders: @escaping @MainActor () -> Void,
+         openStorage: @escaping @MainActor () -> Void = {},
          stillInMeeting: @escaping @MainActor (_ keep: Bool) -> Void = { _ in }) {
         self.open = open
         self.openPrep = openPrep
         self.openAIProviders = openAIProviders
+        self.openStorage = openStorage
         self.stillInMeeting = stillInMeeting
     }
 
@@ -434,10 +438,12 @@ final class NotificationClickHandler: NSObject, UNUserNotificationCenterDelegate
         let open = open
         let openPrep = openPrep
         let openAIProviders = openAIProviders
+        let openStorage = openStorage
         let stillInMeeting = stillInMeeting
         Task { @MainActor in
             switch click {
             case .openAIProviders: openAIProviders()
+            case .openStorage: openStorage()
             case .stillInMeeting(let keep): stillInMeeting(keep)
             case .openLink: if let link { open(link) }
             case .openPrep: if let prepKey { openPrep(prepKey) }
@@ -448,7 +454,7 @@ final class NotificationClickHandler: NSObject, UNUserNotificationCenterDelegate
         }
     }
 
-    enum Click: Equatable { case openAIProviders, stillInMeeting(keep: Bool), openLink, openPrep, activate, ignore }
+    enum Click: Equatable { case openAIProviders, openStorage, stillInMeeting(keep: Bool), openLink, openPrep, activate, ignore }
 
     /// What a click does: a budget notice's body or its "Raise budget" action opens Settings →
     /// AI Providers and dismissing it does nothing; "Still in a meeting?"'s buttons answer it
@@ -456,6 +462,7 @@ final class NotificationClickHandler: NSObject, UNUserNotificationCenterDelegate
     /// brings Whimbrel forward.
     static func click(category: String, action: String, hasLink: Bool) -> Click {
         if category == BudgetNotices.category { return action == UNNotificationDismissActionIdentifier ? .ignore : .openAIProviders }
+        if category == LowDiskNotice.category { return action == UNNotificationDismissActionIdentifier ? .ignore : .openStorage }
         if category == StillInMeeting.notificationCategory, [StillInMeeting.keepAction, StillInMeeting.stopAction].contains(action) {
             return .stillInMeeting(keep: action == StillInMeeting.keepAction)
         }
@@ -472,6 +479,6 @@ final class NotificationClickHandler: NSObject, UNUserNotificationCenterDelegate
     static func presentationOptions(forIdentifier id: String) -> UNNotificationPresentationOptions {
         // Budget notices usually follow the user's own Ask, with Whimbrel in front; a prep brief
         // lands minutes before a meeting, often while Whimbrel is in front.
-        ["live-alert-", "budget-", prepIdentifierPrefix].contains(where: id.hasPrefix) ? [.banner, .list, .sound] : []
+        ["live-alert-", "budget-", "low-disk-", prepIdentifierPrefix].contains(where: id.hasPrefix) ? [.banner, .list, .sound] : []
     }
 }

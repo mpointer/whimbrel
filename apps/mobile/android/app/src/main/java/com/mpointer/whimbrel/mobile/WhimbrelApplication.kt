@@ -24,6 +24,7 @@ import com.mpointer.whimbrel.mobile.reminders.PlanCache
 import com.mpointer.whimbrel.mobile.reminders.ReminderCoordinator
 import com.mpointer.whimbrel.mobile.reminders.ReminderReceiver
 import com.mpointer.whimbrel.mobile.reminders.ReminderRefreshWorker
+import com.mpointer.whimbrel.mobile.update.UpdateCheckWorker
 import com.mpointer.whimbrel.mobile.reminders.ReminderSettingsStore
 import com.mpointer.whimbrel.mobile.reminders.ResourceReminderText
 import com.mpointer.whimbrel.mobile.reminders.SystemAlarmBackend
@@ -205,6 +206,9 @@ class WhimbrelApplication : Application() {
                 assets.list("").orEmpty().filter { it.endsWith(".json") }.map { name -> name to assets.open(name).use { String(it.readBytes()) } },
             ),
         )
+        // Every phone checks for a newer app, with or without the core.
+        UpdateCheckWorker.ensureChannel(this)
+        UpdateCheckWorker.enqueuePeriodic(this)
         coreSupported = CpuFeatures.hasFp16(runCatching { File("/proc/cpuinfo").readText() }.getOrDefault(""))
         if (!coreSupported) return
         ReminderReceiver.ensureChannel(this)

@@ -1,3 +1,4 @@
+import { handleAdminLeads } from "./admin";
 import { leadExists, parseLead, PLATFORMS, recordDownload, upsertLead, type Contact, type LeadInput, type Platform } from "./leads";
 import { handleBeta, handleReview } from "./beta";
 import { resolveRelease } from "./downloads";
@@ -31,6 +32,12 @@ export interface Env {
   EMAIL_TOKEN_SECRET?: string;
   /** The Resend topic ("Product updates") that mirrors each lead's answer for broadcasts. */
   RESEND_PRODUCT_TOPIC_ID?: string;
+  /** /admin/leads: the Cloudflare Access team domain, its application's AUD tag, and who may
+   * see it (src/admin.ts). The page is 404 until the first two are set. */
+  ADMIN_ACCESS_TEAM?: string;
+  ADMIN_ACCESS_AUD?: string;
+  ADMIN_EMAILS?: string;
+  ADMIN_EMAILS_EXTRA?: string;
   /** Signs the Approve and Decline links in the mobile beta alert (secret). Without it,
    * sign-ups are still saved but the alert has no review links. */
   BETA_REVIEW_SECRET?: string;
@@ -255,6 +262,10 @@ export async function handle(request: Request, env: Env, ctx: ExecutionContext, 
   if (pathname === "/beta/review" || pathname === "/beta/review/") {
     if (request.method !== "GET" && request.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET, POST" } });
     return handleReview(request, env, fetcher);
+  }
+
+  if (pathname === "/admin/leads" || pathname === "/admin/leads/" || pathname === "/admin/leads.csv") {
+    return handleAdminLeads(request, env, fetcher);
   }
 
   if (pathname === "/api/register") {

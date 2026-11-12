@@ -34,6 +34,12 @@ fn unusable_line() -> String {
 fn done_line() -> String {
     tr("Here's your skin.", &[])
 }
+fn no_search_line() -> String {
+    tr(
+        "Whimbrel can't search for images on this PC. Image search needs an image search key in Settings → AI, and it's off when Whimbrel uses only local AI. You can still add your own image.",
+        &[],
+    )
+}
 fn kept_colours_line() -> String {
     tr("The new colours didn't pass Whimbrel's checks, so this skin keeps its current colours.", &[])
 }
@@ -170,14 +176,17 @@ pub fn origin(user: &UserSkinStore, bundled_skins: &Path, id: &str) -> Option<Or
 }
 
 /// The model's input for a turn on `origin`: its chat, its manifest and the catalogue of allowed values.
-/// `output_language` is the tag its reply is written in (`RoutingSettings::output_language`).
-pub fn turn_input(user: &UserSkinStore, origin: &Origin, request: &str, output_language: &str) -> SkinTurnInput {
+/// `output_language` is the tag its reply is written in (`RoutingSettings::output_language`); `sources`
+/// tells the model whether it may offer image searches and made images on this PC.
+pub fn turn_input(user: &UserSkinStore, origin: &Origin, request: &str, output_language: &str, sources: SkinSources) -> SkinTurnInput {
     SkinTurnInput {
         request: request.to_string(),
         history: chat(user, &origin.id).into_iter().map(|t| llm::skin_maker::ChatTurn { role: t.role, text: t.text }).collect(),
         current_manifest: origin.manifest.clone(),
         catalogue: skins::catalogue(),
         output_language: output_language.to_string(),
+        can_search_images: Some(sources.search),
+        can_make_images: Some(sources.generate),
     }
 }
 
@@ -287,11 +296,18 @@ pub fn apply_reply(
     result.intent = Some(intent_name(reply.intent).to_string());
     result.notes = reply.notes.iter().map(|n| n.text.clone()).collect();
     let asked = ChatLine::now("user", request);
+    let mentions = mentions_images(request);
+    // Asked for images (or given searches) where none can run: say so, whatever the model wrote.
+    let no_search = !sources.search && (mentions || !reply.image_queries.is_empty());
     if !matches!(reply.intent, SkinIntent::New | SkinIntent::Refine) {
         // A question back or a decline: chat only.
-        let line = if reply.reply.is_empty() { clarify_line() } else { reply.reply.clone() };
-        result.stored = origin.saved && append_chat(user, &origin.id, &[asked, ChatLine::now("whimbrel", &line)]).is_ok();
-        result.lines = vec![line];
+        let mut lines = vec![if reply.reply.is_empty() { clarify_line() } else { reply.reply.clone() }];
+        if no_search && reply.intent == SkinIntent::Clarify {
+            lines.push(no_search_line());
+        }
+        let turns: Vec<ChatLine> = std::iter::once(asked).chain(lines.iter().map(|l| ChatLine::now("whimbrel", l))).collect();
+        result.stored = origin.saved && append_chat(user, &origin.id, &turns).is_ok();
+        result.lines = lines;
         return result;
     }
     let Some((target, extra)) = save_reply(user, pool, origin, reply, sent_assets) else {
@@ -300,11 +316,13 @@ pub fn apply_reply(
     };
     let mut lines = vec![if reply.reply.is_empty() { done_line() } else { reply.reply.clone() }];
     lines.extend(extra);
+    if no_search {
+        lines.push(no_search_line());
+    }
     let turns: Vec<ChatLine> = std::iter::once(asked).chain(lines.iter().map(|l| ChatLine::now("whimbrel", l))).collect();
     result.stored = append_chat(user, &target, &turns).is_ok();
     result.lines = lines;
     // Search for a new skin (or when the request mentions images); make one only when it asks (R4).
-    let mentions = mentions_images(request);
     if sources.search && (reply.intent == SkinIntent::New || mentions) {
         result.image_queries = reply.image_queries.clone();
     }
@@ -944,7 +962,7 @@ mod tests {
             }
         }
         let store = memory::Store::open(&scratch.0.join("db.sqlite"), Path::new("")).unwrap();
-        let input = turn_input(&user, &origin, "a skin", "");
+        let input = turn_input(&user, &origin, "a skin", "", ALL);
         let err = call_model(&store, &llm::SpendCapConfig::default(), llm::Provider::Ollama, "m", &Garbage, &input).unwrap_err();
         assert_eq!(err, CommandError::provider_failure());
         assert!(user.skin_ids().is_empty());
@@ -978,7 +996,7 @@ mod tests {
             }
         }
         let user = scratch.store();
-        let input = turn_input(&user, &built_in(&user, "whimbrel"), "a skin", "");
+        let input = turn_input(&user, &built_in(&user, "whimbrel"), "a skin", "", ALL);
         let err = call_model(&store, &caps, llm::Provider::Anthropic, "m", &Unreachable, &input).unwrap_err();
         assert!(matches!(err, CommandError::SpendCap { .. }), "{err:?}");
         assert!(matches!(charge(&store, &caps, "skin-image-search", 1), Err(CommandError::SpendCap { .. })));
@@ -1009,7 +1027,7 @@ mod tests {
         }
         charge_for(&store, &caps, llm::Provider::Anthropic, "skin-image-generate", 5).unwrap();
         let user = scratch.store();
-        let input = turn_input(&user, &built_in(&user, "whimbrel"), "a skin", "");
+        let input = turn_input(&user, &built_in(&user, "whimbrel"), "a skin", "", ALL);
         let err = call_model(&store, &caps, llm::Provider::Anthropic, "m", &Unreachable, &input).unwrap_err();
         assert!(matches!(err, CommandError::BudgetSpent { .. }), "{err:?}");
     }
@@ -1032,6 +1050,49 @@ mod tests {
         let none = SkinSources { provider: Provider::Anthropic, chat: true, search: false, generate: false };
         let result = apply_reply(&user, &pool(), &built_in(&user, "whimbrel"), &stadium("new"), "a stadium photo skin", &HashSet::new(), none);
         assert!(result.image_queries.is_empty() && result.image_prompts.is_empty());
+        // ...and the chat says why, after the model's reply, and keeps it.
+        assert_eq!(result.lines.last().unwrap(), &no_search_line());
+        let id = result.saved_skin_id.unwrap();
+        assert_eq!(chat(&user, &id).last().unwrap().text, no_search_line());
+    }
+
+    #[test]
+    fn the_model_is_told_what_this_pc_can_do_with_images() {
+        let scratch = Scratch::new("toldsources");
+        let user = scratch.store();
+        let origin = built_in(&user, "whimbrel");
+        let none = SkinSources { provider: Provider::Anthropic, chat: true, search: false, generate: false };
+        let input = turn_input(&user, &origin, "a skin", "", none);
+        assert_eq!((input.can_search_images, input.can_make_images), (Some(false), Some(false)));
+        assert!(llm::skin_maker::build_skin_prompt(&input).contains("can't search the web for images"));
+        let input = turn_input(&user, &origin, "a skin", "", ALL);
+        assert_eq!((input.can_search_images, input.can_make_images), (Some(true), Some(true)));
+    }
+
+    #[test]
+    fn the_no_search_line_appears_only_when_images_were_wanted() {
+        let scratch = Scratch::new("nosearchline");
+        let user = scratch.store();
+        let none = SkinSources { provider: Provider::Anthropic, chat: true, search: false, generate: false };
+        let quiet = reply(serde_json::json!({
+            "intent": "new", "reply": "Here is a stadium skin.",
+            "skin": { "name": "Stadium", "palettes": ["navy"], "today": { "archetype": "field" } },
+            "palettes": [navy()], "imageQueries": []
+        }));
+        // No images asked for and none suggested: no line.
+        let plain = apply_reply(&user, &pool(), &built_in(&user, "whimbrel"), &quiet, "a stadium skin", &HashSet::new(), none);
+        assert!(!plain.lines.contains(&no_search_line()));
+        // With search available, never.
+        let able = apply_reply(&user, &pool(), &built_in(&user, "whimbrel"), &stadium("new"), "a logo skin", &HashSet::new(), ALL);
+        assert!(!able.lines.contains(&no_search_line()));
+        // A question back about images says it too.
+        let question = reply(serde_json::json!({ "intent": "clarify", "reply": "Which logo?" }));
+        let asked = apply_reply(&user, &pool(), &built_in(&user, "whimbrel"), &question, "where are the image searches?", &HashSet::new(), none);
+        assert_eq!(asked.lines, ["Which logo?".to_string(), no_search_line()]);
+        // A decline doesn't.
+        let decline = reply(serde_json::json!({ "intent": "decline", "reply": "That's not about skins." }));
+        let declined = apply_reply(&user, &pool(), &built_in(&user, "whimbrel"), &decline, "find me a photo of a cat", &HashSet::new(), none);
+        assert_eq!(declined.lines, ["That's not about skins.".to_string()]);
     }
 
     fn png(width: u32, height: u32) -> Vec<u8> {
