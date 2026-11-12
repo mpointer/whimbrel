@@ -1,0 +1,108 @@
+<!--
+{
+  "title": "Whimbrel vs Grain: A Grain Alternative",
+  "description": "Grain is built for sales teams' shared libraries and CRM sync. Whimbrel is built for one person's memory, stored on their own computer. Compare them.",
+  "priority": 0.7,
+  "ogType": "article",
+  "crumbs": [
+    {
+      "name": "Compare",
+      "path": "/compare/"
+    },
+    {
+      "name": "Whimbrel vs. Grain",
+      "path": "/compare/grain-alternative/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Is Grain good for solo use?",
+      "a": "Its Free and Pro plans work for one person. Its main value is the team layer: shared libraries, CRM sync and coaching. Whimbrel has none of that and does not plan to."
+    },
+    {
+      "q": "Does Grain store audio in the cloud?",
+      "a": "Yes. Its security page says recordings are stored encrypted in AWS S3, and its subprocessor list names speech-to-text and AI vendors with access to recordings."
+    }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Comparison</p>
+    <h1>Whimbrel vs. Grain</h1>
+    <p class="lede">Grain is built for a team's shared library of calls. Whimbrel is built for one person's whole memory, stored on their own computer.</p>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="table-wrap">
+      <table class="compare">
+        <caption class="sr-only">Feature comparison between Whimbrel and Grain</caption>
+        <thead><tr><th scope="col">Capability</th><th scope="col">Whimbrel</th><th scope="col">Grain</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Meeting notes without a bot</th><td class="yes">Yes</td><td class="yes">Yes with Desktop Capture (audio only); bot capture also available<sup><a href="#src-1">1</a></sup><sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Where recordings are stored</th><td class="yes">On your computer, not on Whimbrel's servers</td><td class="no">AWS, in the USA, encrypted<sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Where transcription runs</th><td class="yes">Yes, on-device</td><td class="no">Cloud: AssemblyAI and Rev AI are listed<sup><a href="#src-4">4</a></sup></td></tr>
+          <tr><th scope="row">Text sent to a hosted model</th><td>Only if you pick a hosted model. Whimbrel AI requests pass through Whimbrel's server</td><td class="no">Yes: Anthropic and OpenAI are listed<sup><a href="#src-4">4</a></sup></td></tr>
+          <tr><th scope="row">Memory of non-meeting work</th><td class="yes">Yes: screen text and email</td><td class="no">Not found<sup><a href="#src-1">1</a></sup></td></tr>
+          <tr><th scope="row">Consent</th><td>Reminder text only</td><td>Bot: host disclaimer and permission. Desktop Capture: "no in-meeting consent mechanism"<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">CRM sync and team libraries</th><td class="no">No</td><td class="yes">HubSpot and Salesforce sync; shared libraries on Business<sup><a href="#src-5">5</a></sup></td></tr>
+          <tr><th scope="row">Works from Claude or ChatGPT on the web</th><td>Local MCP server only</td><td class="yes">Hosted MCP on all plans<sup><a href="#src-6">6</a></sup></td></tr>
+          <tr><th scope="row">Platforms</th><td>Yes (Windows in early access)</td><td>Apple silicon Mac and Windows for Desktop Capture<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">SOC 2</th><td class="no">No</td><td class="yes">SOC 2 Type II<sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Open source</th><td class="yes">Yes, Apache 2.0</td><td class="no">No</td></tr>
+          <tr><th scope="row">Price</th><td>Free. Optional paid plans on the <a href="/pricing/">pricing page</a></td><td>Free (45 minutes a meeting, 30-day history); Pro $15 billed yearly, $19 monthly; Business $29 yearly, $39 monthly, two seats minimum<sup><a href="#src-5">5</a></sup></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine muted table-note">Grain's pricing page rendered garbled when we read it, so prices come from its help-center Plans article. Every Grain claim links to the page it came from, read on November 11, 2026. "Not found" means we did not find it stated on the pages we read. Products change; check Grain's site for current details. About Whimbrel: recordings, transcripts and history are stored on your computer and not on Whimbrel's servers. AI runs on your computer or on a model you choose; with a hosted model, the text of each request goes to that model. Every way data can leave is listed in the app.</p>
+  </div>
+</section>
+
+<section>
+  <div class="container split split-top">
+    <div>
+      <h2>Choose Whimbrel if…</h2>
+      <ul class="checklist">
+        <li>You work alone or in a small practice and want your own memory, not a shared library.</li>
+        <li>Recordings and history should be stored on your computer.</li>
+        <li>You do not need CRM write-back, clips or coaching.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Choose Grain if…</h2>
+      <ul class="checklist">
+        <li>A sales or customer success team wants a shared call library with CRM sync.</li>
+        <li>You need SSO, SCIM, audit logs and a SOC 2 Type II report.</li>
+        <li>You want free viewer seats for colleagues who only watch.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="narrow">
+    <h2 class="center">Common questions</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Sources</h2>
+    <p class="fine muted">All read on November 11, 2026.</p>
+    <ol class="fine muted">
+        <li id="src-1"><a href="https://grain.com/" rel="noopener">https://grain.com/</a></li>
+        <li id="src-2"><a href="https://support.grain.com/en/articles/12022918-desktop-capture-ai-notes-for-every-meeting-without-a-bot" rel="noopener">https://support.grain.com/en/articles/12022918-desktop-capture-ai-notes-for-every-meeting-without-a-bot</a></li>
+        <li id="src-3"><a href="https://grain.com/security" rel="noopener">https://grain.com/security</a></li>
+        <li id="src-4"><a href="https://grain.com/grain-subprocessors" rel="noopener">https://grain.com/grain-subprocessors</a></li>
+        <li id="src-5"><a href="https://support.grain.com/en/articles/9253220-plans" rel="noopener">https://support.grain.com/en/articles/9253220-plans</a></li>
+        <li id="src-6"><a href="https://support.grain.com/en/articles/14811968-how-to-use-the-grain-mcp-server" rel="noopener">https://support.grain.com/en/articles/14811968-how-to-use-the-grain-mcp-server</a></li>
+    </ol>
+  </div>
+</section>
+{{> cta}}

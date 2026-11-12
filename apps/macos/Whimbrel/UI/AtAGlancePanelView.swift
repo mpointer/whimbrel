@@ -42,6 +42,15 @@ struct AtAGlancePanelView: View {
     private var scheduleSection: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             Text("Schedule").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+            // A Google account whose calendar Google refuses (403): say so, since its meetings are missing below.
+            if let issue = appState.calendarConnectorState.accessIssues.sorted(by: { $0.key < $1.key }).first?.value {
+                Label(issue.code == .notGranted
+                        ? String(localized: "Google didn't give Whimbrel access to your calendar.")
+                        : String(localized: "Google is blocking calendar access for this account. Your organization may need to allow Whimbrel."),
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(Color.whimbrelWarning)
+            }
             if !appState.permissions.calendarGranted && appState.calendarConnectorState.accounts.isEmpty {
                 Text("Grant Calendar access in Settings, or connect a Google Calendar account, to see upcoming meetings.")
                     .font(.whimbrelBody(.caption2))

@@ -41,6 +41,13 @@ protocol AskBackend: Sendable {
     func discard(prepareId: String)
     func resolve(refs: [CitationRef]) async -> [CitationCard]
     func stream(prompt: String, model: String, provider: AskProvider, key: String) -> AsyncStream<InferenceEvent>
+    /// A streamed run asked `requested` and `answered` replied; core records a substitution
+    /// (or clears an old one). Fire and forget.
+    func noteAnswer(provider: AskProvider, requested: String, answered: String)
+}
+
+extension AskBackend {
+    func noteAnswer(provider: AskProvider, requested: String, answered: String) {}
 }
 
 /// The store calls behind `PhoneAskBackend`, on the store queue (`CoreMemoryStore` on the
@@ -84,11 +91,6 @@ final class AskModel: ObservableObject {
     /// it is finalized or discarded exactly once, and a stopped run never touches the next turn's.
     private var pendingPrepareIds: [UUID: String] = [:]
 
-    /// The Mac's default model per provider; OpenRouter has none (the synced pick or nothing).
-    private static let macDefaults: [AskProvider: String] = [
-        .anthropic: "claude-haiku-4-5", .openai: "gpt-4o-mini", .google: "gemini-2.5-flash",
-    ]
-
     init(backend: AskBackend, prefs: PhoneRoutingPrefs = PhoneRoutingPrefs(), keys: @escaping (AskProvider) -> String? = { PhoneKeyStore().key(for: $0) }) {
         self.backend = backend
         self.prefs = prefs
@@ -104,8 +106,11 @@ final class AskModel: ObservableObject {
         if prefs.localOnlyMode { return .localOnly }
         let preferred = prefs.preferredProvider.flatMap(AskProvider.init(rawValue:))
         for provider in ([preferred].compactMap { $0 } + AskProvider.allCases) {
-            guard let key = keys(provider), !key.isEmpty,
-                  let model = prefs.defaultModel(for: provider) ?? macDefaults[provider] else { continue }
+            // Core's default unless the synced pick was a real choice (an earlier default
+            // from a computer not yet updated counts as never chosen). OpenRouter has no
+            // default: the synced pick or nothing.
+            let model = HostedModelDefaults.resolve(provider: provider.rawValue, stored: prefs.defaultModel(for: provider))
+            guard let key = keys(provider), !key.isEmpty, !model.isEmpty else { continue }
             return .ready(provider: provider, model: model, key: key)
         }
         return .noHostedKey
@@ -140,14 +145,23 @@ final class AskModel: ObservableObject {
             // Stopped while preparing: nobody will stream or finalize this one.
             if Task.isCancelled { return backend.discard(prepareId: prepareId) }
             pendingPrepareIds[turnId] = prepareId
+            // The "streaming" state names the model that answered: the provider's default
+            // when the requested one doesn't exist there. Usage is logged under it.
+            var answered = model
             for await event in backend.stream(prompt: prompt, model: model, provider: provider, key: key) {
                 guard turn(turnId)?.state == .streaming else { break }
                 switch event {
+                case .state(_, .streaming, _, _, let named?, _) where !named.isEmpty && named != answered:
+                    answered = named
+                    update(turnId) { $0.modelLine = "\(named) · your key" }
                 case .textDelta(_, _, let text): update(turnId) { $0.answer += text }
                 case .terminal(_, .completed, _, let finalText, let usage):
                     guard let id = takePending(turnId) else { return }
                     update(turnId) { $0.answer = finalText }
-                    let citations = await backend.finalize(prepareId: id, text: finalText, model: model,
+                    if HostedModelDefaults.hostedProviders.contains(provider.rawValue) {
+                        backend.noteAnswer(provider: provider, requested: model, answered: answered)
+                    }
+                    let citations = await backend.finalize(prepareId: id, text: finalText, model: answered,
                                                            inputTokens: usage.inputTokens ?? -1, outputTokens: usage.outputTokens ?? -1)
                     update(turnId) {
                         guard $0.state == .streaming else { return }
@@ -237,6 +251,10 @@ final class PhoneAskBackend: AskBackend, @unchecked Sendable {
 
     func discard(prepareId: String) {
         Task { await sync.read { ($0 as? PhoneAskStore)?.discardAsk(prepareId: prepareId) } }
+    }
+
+    func noteAnswer(provider: AskProvider, requested: String, answered: String) {
+        Task { await sync.read { ($0 as? CoreMemoryStore)?.noteModelAnswer(provider: provider.rawValue, requested: requested, answered: answered) } }
     }
 
     func resolve(refs: [CitationRef]) async -> [CitationCard] {

@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.69"
+version = "0.9.70"
 edition = "2021"
 publish = false
 # Two binaries (the app and the M3.1 capture-spike CLI); the Tauri CLI builds and
@@ -73,6 +73,9 @@ tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2.14.1"
 # The skin maker's file pickers (skins Task 10), opened from Rust so no path comes from the page.
 tauri-plugin-dialog = "2"
+# The hotkey panel's global shortcut (Control+Alt+Space by default), registered from Rust at
+# startup; a shortcut another app owns is reported to Settings, never a crash.
+tauri-plugin-global-shortcut = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
@@ -87,7 +90,7 @@ llm = { path = "../../../core/llm" }
 base64 = "0.22"
 keyring = { version = "3", features = ["windows-native"] }
 schemars = "1"
-tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }
 
 [dependencies.windows]
 # Same line core/Cargo.lock already resolves (0.62.2).

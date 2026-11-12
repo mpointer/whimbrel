@@ -29,6 +29,7 @@ pub mod today;
 pub mod topic_page;
 pub mod topics;
 pub mod vault;
+pub mod window_ask;
 pub mod workspace;
 
 use schemars::JsonSchema;

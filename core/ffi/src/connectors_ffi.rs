@@ -7,6 +7,7 @@ use std::ptr;
 
 use api::connectors::calendar::{self, QualifyingMeeting};
 use api::connectors::gmail;
+use api::connectors::google_error;
 use memory::calendar_presence::PresentEvent;
 
 use crate::{cstr_to_string, json_to_c_string, StoreHandle};
@@ -186,6 +187,18 @@ pub extern "C" fn whimbrel_meeting_link_detect(text: *const c_char) -> *mut c_ch
     encode(&calendar::detect_conference_link(&text))
 }
 
+/// Classifies a Calendar connector failure message (`McpHost`'s last error, e.g. `tool
+/// call failed: Google Calendar API returned 403 (insufficientPermissions)`). Returns
+/// JSON `{"code", "status", "reason"}` for an access problem, the JSON `null` for
+/// anything else, or NULL on a null/invalid pointer.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_connector_classify_calendar_error(message: *const c_char) -> *mut c_char {
+    let Some(message) = cstr_to_string(message) else {
+        return ptr::null_mut();
+    };
+    encode(&google_error::classify_calendar_error(&message))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,6 +261,23 @@ mod tests {
         assert_eq!(take(whimbrel_meeting_link_detect(none.as_ptr())), serde_json::Value::Null);
         let bad = CString::new("nope").unwrap();
         assert!(whimbrel_calendar_merge_meetings(bad.as_ptr(), oauth.as_ptr()).is_null());
+    }
+
+    #[test]
+    fn classify_calendar_error_over_ffi() {
+        let scope = CString::new("tool call failed: Google Calendar API returned 403 (insufficientPermissions)").unwrap();
+        assert_eq!(
+            take(whimbrel_connector_classify_calendar_error(scope.as_ptr())),
+            serde_json::json!({"code": "calendar_access_not_granted", "status": 403, "reason": "insufficientPermissions"})
+        );
+        let blocked = CString::new("tool call failed: Google Calendar API returned 403").unwrap();
+        assert_eq!(
+            take(whimbrel_connector_classify_calendar_error(blocked.as_ptr())),
+            serde_json::json!({"code": "calendar_access_blocked", "status": 403, "reason": null})
+        );
+        let other = CString::new("tool call failed: Google Calendar API returned 500").unwrap();
+        assert_eq!(take(whimbrel_connector_classify_calendar_error(other.as_ptr())), serde_json::Value::Null);
+        assert!(whimbrel_connector_classify_calendar_error(ptr::null()).is_null());
     }
 
     /// A store handle whose own device is `mac-1`, holding two future google rows.

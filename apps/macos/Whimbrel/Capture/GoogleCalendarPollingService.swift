@@ -74,6 +74,7 @@ final class GoogleCalendarPollingService: ObservableObject {
                 let accessToken = try await helper.validAccessToken()
                 try await syncAccount(email: account.email, accessToken: accessToken)
                 calendarConnectorState.clearNeedsReconnect(account.email)
+                calendarConnectorState.setAccessIssue(nil, for: account.email)
                 // Publish each account as it lands: a launch-time sync waits on the busy store
                 // queue twice per account, so waiting for every account kept Today empty for minutes.
                 oauthMeetings = lastKnownGoodMeetings.values.flatMap { $0 }
@@ -81,6 +82,11 @@ final class GoogleCalendarPollingService: ObservableObject {
                 switch error {
                 case GoogleOAuthError.notAuthorized, GoogleOAuthError.refreshTokenRevoked:
                     calendarConnectorState.markNeedsReconnect(account.email)
+                // Only a recognized access problem replaces the shown one: a 500 or a
+                // rate limit says nothing about whether access came back.
+                case GoogleCalendarPollingError.callToolFailed(let issue?):
+                    calendarConnectorState.setAccessIssue(issue, for: account.email)
+                    continue // logged by setAccessIssue when it changes
                 default: break
                 }
                 log.error("poll: failed for \(account.email, privacy: .private): \(String(describing: error), privacy: .public) -- keeping last-known-good meetings for this account")
@@ -170,10 +176,15 @@ final class GoogleCalendarPollingService: ObservableObject {
                 throw GoogleCalendarPollingError.listToolsFailed
             }
             guard let resultText = host.callTool(connectorId: connectorId, toolName: tool, argumentsJSON: argsJSON) else {
-                let message = host.lastError?.replacingOccurrences(of: #"[^\s@]+@[^\s@]+"#, with: "<email>", options: .regularExpression)
-                Logger(subsystem: "com.mpointer.kestrel", category: "google-calendar-polling")
-                    .error("callConnector: \(tool, privacy: .public) failed: \(message ?? "no error text", privacy: .public)")
-                throw GoogleCalendarPollingError.callToolFailed
+                let issue = CoreMemoryStore.classifyCalendarError(host.lastError ?? "")
+                // A classified access problem is logged once per change by
+                // `CalendarConnectorState.setAccessIssue`, not on every 5-minute poll.
+                if issue == nil {
+                    let message = host.lastError?.replacingOccurrences(of: #"[^\s@]+@[^\s@]+"#, with: "<email>", options: .regularExpression)
+                    Logger(subsystem: "com.mpointer.kestrel", category: "google-calendar-polling")
+                        .error("callConnector: \(tool, privacy: .public) failed: \(message ?? "no error text", privacy: .public)")
+                }
+                throw GoogleCalendarPollingError.callToolFailed(issue)
             }
             return resultText
         }.value
@@ -186,5 +197,7 @@ private enum GoogleCalendarPollingError: Error {
     case hostUnavailable
     case connectFailed
     case listToolsFailed
-    case callToolFailed
+    /// Carries core's reading of the connector's error (nil when it isn't an access
+    /// problem), never the raw text, since this error is logged publicly.
+    case callToolFailed(CoreCalendarAccessIssue?)
 }

@@ -1,0 +1,111 @@
+<!--
+{
+  "title": "Whimbrel vs Bluedot: A Bluedot Alternative",
+  "description": "Bluedot records without a bot but stores recordings in its AWS cloud. Whimbrel stores them on your computer. Compare privacy, platforms and price.",
+  "priority": 0.7,
+  "ogType": "article",
+  "crumbs": [
+    {
+      "name": "Compare",
+      "path": "/compare/"
+    },
+    {
+      "name": "Whimbrel vs. Bluedot",
+      "path": "/compare/bluedot-alternative/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Is Bluedot private?",
+      "a": "It is bot-free, so other people on the call do not see it. It stores recordings on AWS, uses transcription and AI providers it does not name, and says data stays in the EU by default. Whimbrel keeps recordings on your computer."
+    },
+    {
+      "q": "What happens to my recordings if I stop using each?",
+      "a": "With Bluedot, cancelling removes access to your recordings; its pricing page gives one month to restore and its security page says three. With Whimbrel the recordings are files on your computer."
+    }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Comparison</p>
+    <h1>Whimbrel vs. Bluedot</h1>
+    <p class="lede">Bluedot is invisible to the other people on your call. That is not the same as private from the vendor: its recordings are stored in its cloud, and Whimbrel's are stored on your computer.</p>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="table-wrap">
+      <table class="compare">
+        <caption class="sr-only">Feature comparison between Whimbrel and Bluedot</caption>
+        <thead><tr><th scope="col">Capability</th><th scope="col">Whimbrel</th><th scope="col">Bluedot</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Meeting notes without a bot</th><td class="yes">Yes</td><td class="yes">Yes; an optional bot is available<sup><a href="#src-1">1</a></sup><sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Where recordings are stored</th><td class="yes">On your computer, not on Whimbrel's servers</td><td class="no">AWS, in the EU by default (US by arrangement)<sup><a href="#src-3">3</a></sup><sup><a href="#src-4">4</a></sup></td></tr>
+          <tr><th scope="row">Where transcription runs</th><td class="yes">Yes, on-device</td><td class="no">Cloud providers, not named<sup><a href="#src-4">4</a></sup></td></tr>
+          <tr><th scope="row">Text sent to a hosted model</th><td>Only if you pick a hosted model. Whimbrel AI requests pass through Whimbrel's server</td><td class="no">Yes; says providers keep nothing after generation<sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Memory of non-meeting work</th><td class="yes">Yes: screen text and email</td><td class="no">Not found<sup><a href="#src-1">1</a></sup></td></tr>
+          <tr><th scope="row">A page per client with what is owed</th><td class="yes">Yes (Topics)</td><td class="no">Not found<sup><a href="#src-1">1</a></sup></td></tr>
+          <tr><th scope="row">Phones and watch</th><td>Read and ask only (beta); no phone recording</td><td class="yes">iPhone, Android, Apple Watch; Chrome extension<sup><a href="#src-5">5</a></sup></td></tr>
+          <tr><th scope="row">Works from Claude or ChatGPT on the web</th><td>Local MCP server only</td><td class="yes">Hosted MCP from Basic<sup><a href="#src-6">6</a></sup></td></tr>
+          <tr><th scope="row">Integrations</th><td>Gmail, Google Calendar, Outlook 365</td><td class="yes">HubSpot, Salesforce, Notion, Slack, Zapier, Make<sup><a href="#src-7">7</a></sup></td></tr>
+          <tr><th scope="row">SOC 2</th><td class="no">No</td><td class="yes">SOC 2 Type II; report on request<sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Recordings after you cancel</th><td class="yes">Stay on your computer</td><td class="no">You "lose access"; one month to restore (pricing page), 3 months (security page)<sup><a href="#src-8">8</a></sup><sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Open source</th><td class="yes">Yes, Apache 2.0</td><td class="no">No</td></tr>
+          <tr><th scope="row">Price</th><td>Free. Optional paid plans on the <a href="/pricing/">pricing page</a></td><td>Free: 5 meetings, lifetime. Paid plans $14 to $39 per user per month (the page shows two prices per tier; we could not confirm which is annual)<sup><a href="#src-8">8</a></sup></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine muted table-note"> Every Bluedot claim links to the page it came from, read on November 11, 2026. "Not found" means we did not find it stated on the pages we read. Products change; check Bluedot's site for current details. About Whimbrel: recordings, transcripts and history are stored on your computer and not on Whimbrel's servers. AI runs on your computer or on a model you choose; with a hosted model, the text of each request goes to that model. Every way data can leave is listed in the app.</p>
+  </div>
+</section>
+
+<section>
+  <div class="container split split-top">
+    <div>
+      <h2>Choose Whimbrel if…</h2>
+      <ul class="checklist">
+        <li>You want recordings stored on your computer, with no cloud copy to lose when you stop paying.</li>
+        <li>You want unlimited meetings and history on the free app.</li>
+        <li>You want a local model, your own key, and open source.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Choose Bluedot if…</h2>
+      <ul class="checklist">
+        <li>You record in the browser or on your phone or watch, including in-person meetings.</li>
+        <li>You need CRM sync, SSO and SCIM, or a SOC 2 Type II report.</li>
+        <li>You want a flat company-wide price.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="narrow">
+    <h2 class="center">Common questions</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Sources</h2>
+    <p class="fine muted">All read on November 11, 2026.</p>
+    <ol class="fine muted">
+        <li id="src-1"><a href="https://bluedothq.com/" rel="noopener">https://bluedothq.com/</a></li>
+        <li id="src-2"><a href="https://www.bluedothq.com/chrome-extension" rel="noopener">https://www.bluedothq.com/chrome-extension</a></li>
+        <li id="src-3"><a href="https://bluedothq.com/security" rel="noopener">https://bluedothq.com/security</a></li>
+        <li id="src-4"><a href="https://bluedothq.com/privacy" rel="noopener">https://bluedothq.com/privacy</a></li>
+        <li id="src-5"><a href="https://www.bluedothq.com/ios-app" rel="noopener">https://www.bluedothq.com/ios-app</a></li>
+        <li id="src-6"><a href="https://help.bluedothq.com/en/articles/14708332-bluedot-mcp-overview" rel="noopener">https://help.bluedothq.com/en/articles/14708332-bluedot-mcp-overview</a></li>
+        <li id="src-7"><a href="https://www.bluedothq.com/integrations" rel="noopener">https://www.bluedothq.com/integrations</a></li>
+        <li id="src-8"><a href="https://bluedothq.com/pricing" rel="noopener">https://bluedothq.com/pricing</a></li>
+    </ol>
+  </div>
+</section>
+{{> cta}}

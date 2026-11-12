@@ -141,7 +141,7 @@ fn governed_names(
         let metered = Metered { client: link.client.as_ref(), usage: Cell::default() };
         llm::name_speakers_from_conversation(&metered, transcript, speaker_ids, invitees).map(|n| (n, metered.usage.get()))
     })?;
-    crate::util::log_usage_for(store, link.provider, &link.model, ROUTE, usage);
+    crate::util::log_link_usage(store, link, ROUTE, usage);
     Some(names)
 }
 

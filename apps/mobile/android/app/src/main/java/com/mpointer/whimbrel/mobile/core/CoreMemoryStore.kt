@@ -20,6 +20,9 @@ interface MeetingSyncStore : PhoneReadStore, AutoCloseable {
 
     /** The last pull's per-peer stats JSON (hashed peer tags, cursors, counts), for the log. */
     fun lastPullStats(): String? = null
+
+    /** A new phone pulls newest first (#572): older meetings are still on their way. Persisted, so true after a relaunch too. */
+    fun olderHistoryLoading(): Boolean = false
 }
 
 class CoreMemoryStore(private val store: CoreStore, private val native: CoreNative) : MeetingSyncStore {
@@ -34,6 +37,7 @@ class CoreMemoryStore(private val store: CoreStore, private val native: CoreNati
     override fun lastSyncError(): String? = native.syncContentLastError()
     override fun moreToPull(): Boolean = native.syncContentMoreToPull()
     override fun lastPullStats(): String? = native.syncContentLastPullStats()
+    override fun olderHistoryLoading(): Boolean = native.syncContentOlderHistoryLoading(store.handle)
 
     private val h get() = store.handle
 

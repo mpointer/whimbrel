@@ -181,6 +181,9 @@ pub struct CalendarService {
     known: Mutex<HashMap<String, Vec<QualifyingMeeting>>>,
     /// When each account last synced, and why it didn't, for Settings.
     status: Mutex<SyncStatus>,
+    /// Per account: Google refusing the Calendar API (a 403 that core sorts as access not granted or
+    /// blocked; core::connectors::google_error). Kept until that account syncs, is re-added or removed.
+    access: Mutex<HashMap<String, &'static str>>,
 }
 
 /// What Settings shows about the last round.
@@ -203,6 +206,7 @@ pub fn start(
         app,
         known: Mutex::new(HashMap::new()),
         status: Mutex::new(SyncStatus::default()),
+        access: Mutex::new(HashMap::new()),
     });
     let loops = service.clone();
     let spawned = std::thread::Builder::new().name("whimbrel-calendar".into()).spawn(move || loops.run());
@@ -230,6 +234,29 @@ impl CalendarService {
         self.status.lock().unwrap().clone()
     }
 
+    /// Each account Google keeps from the Calendar API, with core's code for why.
+    pub fn access_issues(&self) -> HashMap<String, &'static str> {
+        self.access.lock().unwrap().clone()
+    }
+
+    /// Records what a round said about `email`'s calendar access, logging only a change.
+    fn note_access(&self, email: &str, error: Option<&str>) {
+        let code = error.and_then(api::connectors::google_error::classify_calendar_error).map(|c| c.code);
+        let mut access = self.access.lock().unwrap();
+        let changed = match (code, error) {
+            (Some(code), _) => access.insert(email.to_string(), code) != Some(code),
+            // A success clears it; another kind of failure leaves what was known.
+            (None, None) => access.remove(email).is_some(),
+            (None, Some(_)) => false,
+        };
+        if changed {
+            match access.get(email) {
+                Some(code) => tracing::warn!(email, code, "Google is keeping Whimbrel from this calendar"),
+                None => tracing::info!(email, "calendar access works again"),
+            }
+        }
+    }
+
     /// Polls now, whatever the timer says (after connecting an account, say).
     pub fn poll_now(&self) {
         self.poll(false)
@@ -255,11 +282,13 @@ impl CalendarService {
             match self.poller.poll_account(&email, existing) {
                 Ok(meetings) => {
                     tracing::info!(email, meetings = meetings.len(), "calendar synced");
+                    self.note_access(&email, None);
                     self.known.lock().unwrap().insert(email, meetings);
                 }
                 // A failed account keeps whatever it had: a flat network is not an empty day.
                 Err(e) => {
                     tracing::warn!(email, error = %e, "calendar sync failed");
+                    self.note_access(&email, Some(&e.to_string()));
                     failure.get_or_insert_with(|| e.to_string());
                 }
             }
@@ -284,6 +313,7 @@ impl CalendarService {
     /// Forgets an account's meetings when it is disconnected.
     pub fn forget(&self, email: &str) {
         self.known.lock().unwrap().remove(email);
+        self.access.lock().unwrap().remove(email);
     }
 
     fn accounts(&self) -> Result<Vec<String>, CommandError> {

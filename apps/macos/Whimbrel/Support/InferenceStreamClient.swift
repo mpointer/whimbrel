@@ -160,3 +160,24 @@ enum InferenceStreamClient {
         runId.withCString { whimbrel_inference_release($0) }
     }
 }
+
+/// Each hosted provider's default model, from core (`api::model_defaults`: the defaults
+/// file on the updates server, cached in the store, with a built-in table as fallback).
+/// Shared by the Mac and iOS apps, so neither keeps a model id of its own.
+enum HostedModelDefaults {
+    /// The providers core keeps a default model for.
+    static let hostedProviders: Set<String> = ["anthropic", "openai", "google"]
+
+    /// The model to use for `provider` ("anthropic", "openai", "google", ...): `stored` when
+    /// the user chose it, else the current default (empty or an earlier default counts as
+    /// never chosen). For a provider without a default, `stored` or "".
+    static func resolve(provider: String, stored: String?) -> String {
+        let out: UnsafeMutablePointer<CChar>? = provider.withCString { p in
+            guard let stored else { return whimbrel_model_resolve(p, nil) }
+            return stored.withCString { whimbrel_model_resolve(p, $0) }
+        }
+        guard let out else { return stored ?? "" }
+        defer { whimbrel_core_free_string(out) }
+        return String(cString: out)
+    }
+}

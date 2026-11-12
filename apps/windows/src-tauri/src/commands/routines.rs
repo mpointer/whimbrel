@@ -358,7 +358,8 @@ mod model_pref_tests {
         let routing = RoutingSettings { preferred_provider: Provider::Anthropic, ..RoutingSettings::default() };
         let keys = ApiKeys { anthropic: Some("a".into()), openrouter: Some("or".into()), ..ApiKeys::default() };
         let values: Vec<String> = model_options(&routing, &keys).into_iter().map(|o| o.value).collect();
-        assert_eq!(values, ["default", "cheapest", "ollama/gemma4:12b", "anthropic/claude-haiku-4-5"], "OpenRouter waits for a pick");
+        let anthropic = format!("anthropic/{}", api::model_defaults::cached().model(llm::Provider::Anthropic));
+        assert_eq!(values, ["default", "cheapest", "ollama/gemma4:12b", anthropic.as_str()], "OpenRouter waits for a pick");
         assert_eq!(model_options(&routing, &keys)[0].label, "Default (Anthropic)");
 
         let routing = RoutingSettings { openrouter_model: "vendor/model:free".into(), ..routing };

@@ -49,12 +49,19 @@ pub enum ProviderFailureReason {
     OllamaNotRunning,
     OllamaModelMissing { model: String },
     NoProviderConfigured,
+    /// Local-only mode, and neither Ollama nor the bundled local model can answer: install a
+    /// local model (the hotkey panel, which never falls back to a hosted provider).
+    // Only when there is no local model at all (no Ollama installed, no bundled model): an
+    // installed Ollama that is stopped is `OllamaNotRunning` (`commands::window_ask::pick_local`).
+    LocalModelMissing,
     Unauthorized { provider: String },
     RateLimited { provider: String },
     Network { provider: String },
     /// Whimbrel's server answered 402: the prepaid Whimbrel AI credit can't cover the request.
     CreditExhausted,
     Other { provider: String, status: Option<u16> },
+    /// The provider answered that the chosen model does not exist, and no default answered for it.
+    ModelUnavailable { provider: String, model: String },
 }
 
 impl From<llm::ProviderFailureKind> for ProviderFailureReason {
@@ -69,6 +76,7 @@ impl From<llm::ProviderFailureKind> for ProviderFailureReason {
             K::Network { provider } => Self::Network { provider: provider.as_str().into() },
             K::CreditExhausted => Self::CreditExhausted,
             K::Other { provider, status } => Self::Other { provider: provider.as_str().into(), status },
+            K::ModelUnavailable { provider, model } => Self::ModelUnavailable { provider: provider.as_str().into(), model },
         }
     }
 }
@@ -96,7 +104,16 @@ impl ProviderFailureReason {
             Self::Unauthorized { provider } => tr("{provider} rejected the API key. Check it in Settings → AI.", &[("provider", &name(provider))]),
             Self::RateLimited { provider } => tr("{provider} is busy or out of credit. Try again shortly.", &[("provider", &name(provider))]),
             Self::CreditExhausted => tr("Whimbrel AI credit is used up. Add credit in Settings.", &[]),
-            Self::Network { .. } | Self::Other { .. } => return None,
+            Self::ModelUnavailable { provider, model } => tr(
+                "{provider} doesn't offer the model {model} to your key. Choose another in Settings → AI.",
+                &[("provider", &name(provider)), ("model", model)],
+            ),
+            // Ollama answered and then didn't finish: stalled, timed out or gave up mid-answer. On a slow
+            // PC with a long meeting that is the model being too much for the machine (a Windows
+            // user, 2026-11-11), so say what to do instead of "every model provider failed".
+            Self::Network { provider } | Self::Other { provider, status: None } if provider == "ollama" => tr("The local model (Ollama) didn't finish. Long meetings can be too much for it on a slower computer: choose Whimbrel AI or a smaller Ollama model in Settings → AI, then use Regenerate summary.", &[]),
+            // The page says it in its own words (the Mac panel's "No local model is installed.").
+            Self::Network { .. } | Self::Other { .. } | Self::LocalModelMissing => return None,
         })
     }
 }
@@ -234,7 +251,20 @@ mod tests {
         assert_eq!(key.message().unwrap(), "OpenAI rejected the API key. Check it in Settings → AI.");
         let net = CommandError::ProviderFailure { reason: Some(ProviderFailureReason::Network { provider: "google".into() }) };
         assert_eq!(net.to_string(), "every model provider failed", "a network blip keeps the general line");
+        let slow = CommandError::ProviderFailure { reason: Some(ProviderFailureReason::Other { provider: "ollama".into(), status: None }) };
+        assert!(slow.to_string().starts_with("The local model (Ollama) didn't finish."), "a local model that gave up says what to do");
+        let timed_out = CommandError::ProviderFailure { reason: Some(ProviderFailureReason::Network { provider: "ollama".into() }) };
+        assert_eq!(timed_out.to_string(), slow.to_string());
+        let http = CommandError::ProviderFailure { reason: Some(ProviderFailureReason::Other { provider: "ollama".into(), status: Some(500) }) };
+        assert_eq!(http.to_string(), "every model provider failed", "an HTTP error from Ollama keeps the general line");
         assert_eq!(serde_json::to_value(CommandError::provider_failure()).unwrap(), serde_json::json!({"kind": "provider_failure"}));
+        let gone: ProviderFailureReason =
+            llm::ProviderFailureKind::ModelUnavailable { provider: llm::Provider::Google, model: "gemini-2.5-pro".into() }.into();
+        assert_eq!(
+            serde_json::to_value(&gone).unwrap(),
+            serde_json::json!({"kind": "model_unavailable", "provider": "google", "model": "gemini-2.5-pro"})
+        );
+        assert_eq!(gone.message().unwrap(), "Google doesn't offer the model gemini-2.5-pro to your key. Choose another in Settings → AI.");
     }
 
     #[test]

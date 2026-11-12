@@ -99,6 +99,8 @@ class EnrollmentModel(
     private val clock: () -> Long,
     private val sleep: suspend (Long) -> Unit,
     configError: String? = null,
+    /** Diagnostics for why sync stopped or sign-in is asked for. Never given a token or an email. */
+    private val log: (String) -> Unit = {},
 ) : SyncCredentialSource {
     private val _status = MutableStateFlow(
         when {
@@ -220,7 +222,10 @@ class EnrollmentModel(
                 // The request's keypair was wiped meanwhile: land nothing.
                 requestKey != null && currentPublicKey() != requestKey -> return
                 isDesktopRequired(e) -> _status.value = EnrollmentStatus.NeedsDesktopFirst
-                else -> _status.value = errorFor(e)
+                else -> {
+                    log("sign-in failed: ${e.javaClass.simpleName}")
+                    _status.value = errorFor(e)
+                }
             }
         }
     }
@@ -252,6 +257,7 @@ class EnrollmentModel(
             throw e
         } catch (e: Exception) {
             // Offline or a passing failure: the user keeps what they see (approved stays approved).
+            log("renewal failed: ${e.javaClass.simpleName}${(e as? GoogleSignInError.Failed)?.let { " (${it.reason})" } ?: ""}")
             when {
                 isRevoked(e) -> wipeRevoked(publicKey)
                 // The keypair was wiped meanwhile: land nothing.
@@ -264,6 +270,7 @@ class EnrollmentModel(
                 }
                 // Refused outright: say so rather than show "approved" while every pull fails.
                 _status.value == EnrollmentStatus.Approved && isPermanent(e) -> {
+                    log("renewal refused permanently (${e.javaClass.simpleName}); sync stops until sign-in")
                     saveTurso(null)
                     _status.value = errorFor(e)
                 }
@@ -543,6 +550,7 @@ class EnrollmentModel(
                         break
                     }
                     if (isPermanent(e)) {
+                        log("approval poll stopped permanently (${e.javaClass.simpleName})")
                         _status.value = errorFor(e)
                         break
                     }

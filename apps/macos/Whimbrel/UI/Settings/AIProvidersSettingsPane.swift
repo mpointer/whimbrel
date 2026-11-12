@@ -438,6 +438,14 @@ struct AIProvidersSettingsPane: View {
                 Text("Default model:").frame(width: 160, alignment: .leading)
                 defaultModelControl
             }
+            ForEach([RoutingSettings.Provider.anthropic, .openai, .google]) { provider in
+                if let note = appState.routing.unavailableNote(for: provider) {
+                    Text("\(note.model) isn't available to your \(provider.displayName) key; using \(note.using) for now.")
+                        .font(.whimbrelBody(.caption))
+                        .foregroundStyle(Color.whimbrelError)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             Divider().overlay(Color.whimbrelBorder)
 
@@ -517,6 +525,7 @@ struct AIProvidersSettingsPane: View {
                 Task { await appState.routing.refreshWhimbrelModels() }
             }
             clampDefaultModelIfNeeded()
+            appState.refreshModelNotes()
             Task { await appState.syncState.refreshAIBalance() }
         }
         .onChange(of: appState.syncState.status) { _, status in

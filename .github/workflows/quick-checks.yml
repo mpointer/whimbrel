@@ -1,0 +1,49 @@
+name: Quick checks
+
+# Fast, dependency-free checks in ONE job (#ci-minutes): GitHub bills every job as at least
+# one minute, and these take seconds each, so separate workflows paid a full minute apiece
+# on every PR push. Merged from name-check.yml and l10n.yml.
+#
+# * Name check: the product is Whimbrel; a fixed set of identifiers keeps the old name
+#   because they key user data or deployed resources (see scripts/rename-whimbrel.py KEEP).
+#   Fails if a kept identifier was renamed or a product-name string crept back into a
+#   user-facing file.
+# * Localization: translate.py's unit tests (a fake model client; no network, no key) and
+#   the offline catalog check: every shipped language has every key (deltas-only variants
+#   exempt), placeholders and plural forms match the English. The Apple source-vs-catalog
+#   check needs xcodebuild, so it runs in release-integrity.yml (macOS) and
+#   rust-tests.yml (iOS).
+#
+# No paths-ignore: the name check covers docs and Markdown too. The l10n steps take
+# seconds, so running them on docs-only changes costs nothing extra.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Only a PR cancels what it supersedes; main and tags always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  quick-checks:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Name check
+        run: python3 scripts/rename-whimbrel.py --check
+      # Run the l10n steps even if the name check failed, so one push reports both.
+      - name: translate.py unit tests
+        if: ${{ !cancelled() }}
+        run: python3 -I -m unittest discover -s scripts/l10n -v
+      - name: Catalog check
+        if: ${{ !cancelled() }}
+        run: python3 -I scripts/l10n/translate.py check

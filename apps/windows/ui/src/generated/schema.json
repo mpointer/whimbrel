@@ -104,6 +104,13 @@
           },
           "type": "array"
         },
+        "modelWarnings": {
+          "description": "Hosted providers whose chosen model they said they don't have, with the default that\nanswers meanwhile (`api::model_defaults`). The choice itself is kept.",
+          "items": {
+            "$ref": "#/definitions/ModelWarning"
+          },
+          "type": "array"
+        },
         "ollamaWarning": {
           "anyOf": [
             {
@@ -161,7 +168,8 @@
         "summaryInstructions",
         "prompts",
         "providers",
-        "budgets"
+        "budgets",
+        "modelWarnings"
       ],
       "type": "object"
     },
@@ -384,8 +392,32 @@
       ],
       "type": "object"
     },
+    "CalendarAccessIssue": {
+      "description": "One account Google keeps from the Calendar API (core::connectors::google_error).",
+      "properties": {
+        "code": {
+          "description": "`calendar_access_not_granted` (the calendar box was left unticked) or `calendar_access_blocked`.",
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "code"
+      ],
+      "type": "object"
+    },
     "CalendarAccounts": {
       "properties": {
+        "accessIssues": {
+          "description": "Accounts Google keeps from the Calendar API: why, per account. An expired sign-in wins, so an\naccount in `sign_in_expired` is never here.",
+          "items": {
+            "$ref": "#/definitions/CalendarAccessIssue"
+          },
+          "type": "array"
+        },
         "blocked": {
           "description": "Why calendar syncing can't run right now (no Node, connector not staged, sync not\nconfigured), or `None` when it can.",
           "type": [
@@ -444,7 +476,8 @@
       "required": [
         "emails",
         "upcoming",
-        "signInExpired"
+        "signInExpired",
+        "accessIssues"
       ],
       "type": "object"
     },
@@ -1234,6 +1267,51 @@
       ],
       "type": "object"
     },
+    "DestinationView": {
+      "description": "Where the question and window text will go (core's `window_ask::Destination`).",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "local_only",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "local",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "hosted",
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "provider"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "DetectedMeeting": {
       "description": "A meeting Whimbrel is offering to record: a call it noticed, or a calendar event whose\nlead window has opened (M3.3 Task 7).",
       "properties": {
@@ -1533,6 +1611,33 @@
       ],
       "type": "object"
     },
+    "ExcludeReasonView": {
+      "description": "Why an app is excluded, so the panel can say so.",
+      "oneOf": [
+        {
+          "enum": [
+            "password_manager",
+            "private_window"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "own_app",
+          "description": "Whimbrel's own window.",
+          "type": "string"
+        },
+        {
+          "const": "system",
+          "description": "The secure desktop, a credential prompt or UAC.",
+          "type": "string"
+        },
+        {
+          "const": "user",
+          "description": "Excluded in Settings → Capture.",
+          "type": "string"
+        }
+      ]
+    },
     "Fact": {
       "description": "One learned fact: a single line, with the meeting it was suggested from when it came from a\nsuggestion.",
       "properties": {
@@ -1695,6 +1800,68 @@
         "primaryDeviceId",
         "selected",
         "options"
+      ],
+      "type": "object"
+    },
+    "HotkeyPanelRead": {
+      "description": "`hotkey_panel_read`'s answer: the context and destination lines' facts.",
+      "properties": {
+        "canAnswer": {
+          "description": "False when the destination's provider can't answer from here (a hosted provider\nwith no key, or local-only with neither Ollama nor the local model), or when that\ncould not be worked out within the read deadline: the panel refuses rather than\nlet another provider answer.",
+          "type": "boolean"
+        },
+        "cannotAnswer": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProviderFailureReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why it can't, when known: the same reason `window_ask` would fail with."
+        },
+        "destination": {
+          "$ref": "#/definitions/DestinationView"
+        },
+        "requestId": {
+          "description": "Echoed back by `window_ask`; a newer press makes it stale.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "$ref": "#/definitions/WindowReadView"
+        }
+      },
+      "required": [
+        "requestId",
+        "window",
+        "destination",
+        "canAnswer"
+      ],
+      "type": "object"
+    },
+    "HotkeyStatus": {
+      "description": "Whether the shortcut is registered, for Settings.",
+      "properties": {
+        "error": {
+          "description": "Why registering failed (Windows' or the parser's text), for Settings to show beside\nits own sentence. `None` when registered.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registered": {
+          "type": "boolean"
+        },
+        "shortcut": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "shortcut",
+        "registered"
       ],
       "type": "object"
     },
@@ -2641,6 +2808,26 @@
       ],
       "type": "object"
     },
+    "ModelWarning": {
+      "description": "\"{model} isn't available to your {provider} key; using {using} for now.\"",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "$ref": "#/definitions/Provider"
+        },
+        "using": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "using"
+      ],
+      "type": "object"
+    },
     "NextMeetingView": {
       "description": "The next meeting Today shows, with its brief when one exists.",
       "properties": {
@@ -3168,6 +3355,19 @@
           "type": "object"
         },
         {
+          "description": "Local-only mode, and neither Ollama nor the bundled local model can answer: install a\nlocal model (the hotkey panel, which never falls back to a hosted provider).",
+          "properties": {
+            "kind": {
+              "const": "local_model_missing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "kind": {
               "const": "unauthorized",
@@ -3250,6 +3450,27 @@
           "required": [
             "kind",
             "provider"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The provider answered that the chosen model does not exist, and no default answered for it.",
+          "properties": {
+            "kind": {
+              "const": "model_unavailable",
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "provider",
+            "model"
           ],
           "type": "object"
         }
@@ -5733,6 +5954,149 @@
         "low"
       ],
       "type": "object"
+    },
+    "WindowAskReply": {
+      "description": "`window_ask`'s answer. The answer itself arrives on the channel as `ChatEvent`s.",
+      "oneOf": [
+        {
+          "description": "Prepared and streaming.",
+          "properties": {
+            "destination": {
+              "$ref": "#/definitions/DestinationView"
+            },
+            "kind": {
+              "const": "started",
+              "type": "string"
+            },
+            "requestId": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "requestId",
+            "destination",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The request is not the panel's current one (a newer press, or the panel closed):\nnothing was sent.",
+          "properties": {
+            "kind": {
+              "const": "stale",
+              "type": "string"
+            },
+            "requestId": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "requestId"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The AI settings changed since the panel showed where the text would go: nothing was\nsent, and the panel shows the new destination before asking again.",
+          "properties": {
+            "destination": {
+              "$ref": "#/definitions/DestinationView"
+            },
+            "kind": {
+              "const": "destination_changed",
+              "type": "string"
+            },
+            "requestId": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "requestId",
+            "destination"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WindowReadView": {
+      "description": "What was read, without the text.",
+      "oneOf": [
+        {
+          "properties": {
+            "appName": {
+              "type": "string"
+            },
+            "isSelection": {
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "read",
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "appName",
+            "title",
+            "isSelection",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "appName": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "excluded",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/definitions/ExcludeReasonView"
+            }
+          },
+          "required": [
+            "kind",
+            "appName",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "appName": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "unreadable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "appName"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "WorkspacePhase": {
       "description": "The workspace's phase, matching core's `WorkspaceState`.",

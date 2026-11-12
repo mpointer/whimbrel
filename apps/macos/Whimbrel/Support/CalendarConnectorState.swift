@@ -22,6 +22,10 @@ final class CalendarConnectorState: ObservableObject {
     /// Emails whose stored grant is gone (no Keychain tokens, or Google revoked the
     /// refresh token), flagged by the polling service. Cleared by reconnecting or removing.
     @Published private(set) var needsReconnect: Set<String> = []
+    /// Emails whose last Calendar sync Google refused with a 403 (calendar not granted,
+    /// or blocked by Google or an admin). Set by the polling service, cleared by a
+    /// successful sync, reconnecting or removing.
+    @Published private(set) var accessIssues: [String: CoreCalendarAccessIssue] = [:]
 
     private var oauthHelpers: [String: GoogleOAuthHelper] = [:]
     private let accountStore: ConnectedAccountStore
@@ -150,6 +154,7 @@ final class CalendarConnectorState: ObservableObject {
             }
             helper.deleteStoredTokens() // removes the throwaway "pending-..." item
             clearNeedsReconnect(email)
+            setAccessIssue(nil, for: email)
             // From here on, `email` is durably persisted (index + a real per-email
             // Keychain item). A failure past this point must roll both back -- otherwise
             // the account would be invisible this session (never added to `accounts`/
@@ -190,6 +195,7 @@ final class CalendarConnectorState: ObservableObject {
         oauthHelpers.removeValue(forKey: email)
         accounts.removeAll { $0.email == email }
         clearNeedsReconnect(email)
+        setAccessIssue(nil, for: email)
         // Its meetings are no longer reported by anyone: hide them here and on the other devices.
         if let store = coreStore {
             CoreMemoryStore.accessQueue.async {
@@ -206,10 +212,25 @@ final class CalendarConnectorState: ObservableObject {
 
     func markNeedsReconnect(_ email: String) {
         if !needsReconnect.contains(email) { needsReconnect.insert(email) }
+        // "Reconnect needed" is then the only message, here and in the Schedule panel.
+        setAccessIssue(nil, for: email)
     }
 
     func clearNeedsReconnect(_ email: String) {
         if needsReconnect.contains(email) { needsReconnect.remove(email) }
+    }
+
+    /// Records (or with nil, clears) `email`'s Calendar access problem. Logs only when it
+    /// changes, so a 5-minute poll hitting the same 403 for days logs it once.
+    func setAccessIssue(_ issue: CoreCalendarAccessIssue?, for email: String) {
+        guard accessIssues[email] != issue else { return }
+        if let issue {
+            log.error("Calendar access for \(email, privacy: .private): \(issue.code.rawValue, privacy: .public) (status \(issue.status, privacy: .public), reason \(issue.reason ?? "none", privacy: .public))")
+            accessIssues[email] = issue
+        } else {
+            log.log("Calendar access for \(email, privacy: .private) is working again")
+            accessIssues.removeValue(forKey: email)
+        }
     }
 
     func makeDefault(email: String) {

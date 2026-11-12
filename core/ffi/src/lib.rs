@@ -24,6 +24,7 @@ mod inference_ffi;
 mod mcp_ffi;
 mod meeting_parts_ffi;
 mod speaker_names_ffi;
+mod model_defaults_ffi;
 mod models_ffi;
 mod prompts_ffi;
 mod oauth_ffi;
@@ -870,7 +871,8 @@ fn skin_turn(
     api::budget::check_provider(store, provider, now_unix_ms())?;
     let (reply, usage) = llm::skin_maker::run_skin_turn(client, input)
         .map_err(|_| api::ApiError::ProviderFailure)?;
-    api::util::log_usage_for(store, provider, model, "skin", usage);
+    // Under the model that answered: a stand-in when the provider had no such model.
+    api::util::log_usage_for(store, provider, &client.substituted_model().unwrap_or_else(|| model.to_string()), "skin", usage);
     Ok(reply)
 }
 
@@ -1060,6 +1062,70 @@ pub extern "C" fn whimbrel_llm_prepare_meeting_ask(
             json_to_c_string(r#"{"ok":false,"error":{"kind":"no_transcript"}}"#.to_string())
         }
         Err(api::ask::MeetingAskError::Api(e)) => match envelope_json::<()>(&Err(e)) {
+            Some(json) => json_to_c_string(json),
+            None => ptr::null_mut(),
+        },
+    }
+}
+
+/// The hotkey panel's "Ask about this window": the prompt is built from the focused
+/// window's text (`window_json`: `{"app_name","title","text","is_selection"}`), redacted and
+/// capped, plus memory background. The returned `prepare_id` goes to
+/// `whimbrel_llm_finalize_ask` / `whimbrel_llm_discard_ask` exactly as for `prepare_ask`.
+/// Success data: `{"prepare_id","prompt","truncated","destination"}`. Blank window text is
+/// `{"ok":false,"error":{"kind":"no_text"}}`; local-only mode with no local model is
+/// `{"ok":false,"error":{"kind":"local_model_missing"}}`; the spend cap and provider
+/// failure use the usual envelopes. NULL on a null handle or malformed arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_llm_prepare_window_ask(
+    handle: *mut StoreHandle,
+    window_json: *const c_char,
+    query: *const c_char,
+    history_json: *const c_char,
+    routing_config_json: *const c_char,
+) -> *mut c_char {
+    #[derive(serde::Deserialize)]
+    struct WindowJson {
+        app_name: String,
+        title: String,
+        text: String,
+        is_selection: bool,
+    }
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(window_str) = cstr_to_string(window_json) else {
+        return ptr::null_mut();
+    };
+    let Ok(window) = serde_json::from_str::<WindowJson>(&window_str) else {
+        return ptr::null_mut();
+    };
+    let Some(query) = cstr_to_string(query) else {
+        return ptr::null_mut();
+    };
+    let Some(history) = parse_history_json(history_json) else {
+        return ptr::null_mut();
+    };
+    let routing = parse_routing_config(routing_config_json);
+    let input = api::window_ask::WindowInput {
+        app_name: window.app_name,
+        title: window.title,
+        text: window.text,
+        is_selection: window.is_selection,
+    };
+    let store = unsafe { &(*handle).0 };
+    match api::window_ask::prepare_window_ask(store, &input, &query, &history, &routing) {
+        Ok(data) => match serde_json::to_string(&data) {
+            Ok(json) => json_to_c_string(ok_envelope(&json)),
+            Err(_) => ptr::null_mut(),
+        },
+        Err(api::window_ask::WindowAskError::NoText) => {
+            json_to_c_string(r#"{"ok":false,"error":{"kind":"no_text"}}"#.to_string())
+        }
+        Err(api::window_ask::WindowAskError::LocalModelMissing) => {
+            json_to_c_string(r#"{"ok":false,"error":{"kind":"local_model_missing"}}"#.to_string())
+        }
+        Err(api::window_ask::WindowAskError::Api(e)) => match envelope_json::<()>(&Err(e)) {
             Some(json) => json_to_c_string(json),
             None => ptr::null_mut(),
         },
@@ -5498,6 +5564,36 @@ mod tests {
         let wav = to_cstring("/nonexistent/a.wav");
         assert!(whimbrel_transcribe_wav_lang(model.as_ptr(), wav.as_ptr(), ptr::null()).is_null());
         assert!(whimbrel_transcribe_wav_lang(ptr::null(), wav.as_ptr(), ptr::null()).is_null());
+    }
+
+    #[test]
+    fn window_ask_prepares_a_prompt_reports_no_text_and_nulls_on_bad_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_c = to_cstring(dir.path().join("t.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_c.as_ptr(), ptr::null());
+        let q = to_cstring("what does this say?");
+        let call = |h: *mut StoreHandle, window: &str, history: *const c_char| {
+            let w = to_cstring(window);
+            let out = whimbrel_llm_prepare_window_ask(h, w.as_ptr(), q.as_ptr(), history, ptr::null());
+            if out.is_null() {
+                return None;
+            }
+            let text = unsafe { std::ffi::CStr::from_ptr(out) }.to_str().unwrap().to_string();
+            whimbrel_core_free_string(out);
+            Some(text)
+        };
+
+        let ok = call(handle, r#"{"app_name":"Notes","title":"Plan","text":"ship the zebra on Friday","is_selection":false}"#, ptr::null()).unwrap();
+        assert!(ok.contains("\"ok\":true") && ok.contains("ship the zebra on Friday") && ok.contains("\"truncated\":false") && ok.contains("\"destination\""), "{ok}");
+
+        let blank = call(handle, r#"{"app_name":"Notes","title":"Plan","text":"   ","is_selection":true}"#, ptr::null()).unwrap();
+        assert!(blank.contains("\"ok\":false") && blank.contains("no_text"), "{blank}");
+
+        assert!(call(ptr::null_mut(), r#"{"app_name":"","title":"","text":"x","is_selection":false}"#, ptr::null()).is_none());
+        assert!(call(handle, "{not json", ptr::null()).is_none());
+        let bad = to_cstring("{not json");
+        assert!(call(handle, r#"{"app_name":"","title":"","text":"x","is_selection":false}"#, bad.as_ptr()).is_none());
+        whimbrel_memory_close(handle);
     }
 
     #[test]

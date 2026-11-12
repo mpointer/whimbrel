@@ -244,7 +244,8 @@ pub fn call_model(
         tracing::warn!(error = %e, "skin turn failed");
         CommandError::provider_failure()
     })?;
-    api::util::log_usage_for(store, provider, model, "skin", usage);
+    // Under the model that answered: a stand-in when the provider had no such model.
+    api::util::log_usage_for(store, provider, &client.substituted_model().unwrap_or_else(|| model.to_string()), "skin", usage);
     Ok(reply)
 }
 

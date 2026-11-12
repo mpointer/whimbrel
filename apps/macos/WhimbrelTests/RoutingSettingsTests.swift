@@ -177,11 +177,10 @@ final class RoutingSettingsTests: XCTestCase {
         let settings = RoutingSettings()
         XCTAssertFalse(settings.anthropicDefaultModel.isEmpty, "must fall back to a real model name, not an empty string")
         XCTAssertFalse(settings.openaiDefaultModel.isEmpty, "must fall back to a real model name, not an empty string")
-        // Matches core/ffi's build_chain() FALLBACK_ANTHROPIC_MODEL/FALLBACK_OPENAI_MODEL
-        // exactly, so a never-configured default behaves identically to what an
-        // explicit-but-wrong-provider pick already falls back to on the Rust side.
-        XCTAssertEqual(settings.anthropicDefaultModel, "claude-haiku-4-5")
-        XCTAssertEqual(settings.openaiDefaultModel, "gpt-4o-mini")
+        // A never-configured default is core's current default for that provider, the same
+        // model core's chain falls back to (#747), so the two never disagree.
+        XCTAssertEqual(settings.anthropicDefaultModel, HostedModelDefaults.resolve(provider: "anthropic", stored: nil))
+        XCTAssertEqual(settings.openaiDefaultModel, HostedModelDefaults.resolve(provider: "openai", stored: nil))
     }
 
     @MainActor
@@ -321,5 +320,42 @@ final class AppLanguageTests: XCTestCase {
         let ui = AppLanguage.uiTag(preferred: "en", region: "IT")
         XCTAssertEqual(ui, "en-US")
         XCTAssertEqual(AppLanguage.outputTag(uiTag: ui, writeIn: "", multilingual: false), "")
+    }
+
+    /// Google retired gemini-2.5-flash (404), so a stored copy reads as core's current default.
+    @MainActor func testRetiredGoogleModelReadsAsTheCurrentDefault() {
+        let key = "com.mpointer.kestrel.routingGoogleDefaultModel"
+        let saved = UserDefaults.standard.object(forKey: key)
+        defer { UserDefaults.standard.set(saved, forKey: key) }
+        UserDefaults.standard.set("gemini-2.5-flash", forKey: key)
+        XCTAssertEqual(RoutingSettings().googleDefaultModel, HostedModelDefaults.resolve(provider: "google", stored: nil))
+        UserDefaults.standard.set("gemini-2.5-pro", forKey: key)
+        XCTAssertEqual(RoutingSettings().googleDefaultModel, "gemini-2.5-pro", "a model the user chose is kept")
+        UserDefaults.standard.removeObject(forKey: key)
+        XCTAssertEqual(RoutingSettings().googleDefaultModel, "gemini-flash-latest")
+    }
+
+    /// An earlier Anthropic or OpenAI default, saved by an old routing save, follows core's
+    /// current default; a model the user chose is kept; re-resolving stores nothing.
+    @MainActor func testOldHostedDefaultsFollowCoresDefault() {
+        let keys = ["com.mpointer.kestrel.routingAnthropicDefaultModel", "com.mpointer.kestrel.routingOpenAIDefaultModel"]
+        let saved = keys.map { UserDefaults.standard.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, saved) { UserDefaults.standard.set(value, forKey: key) } }
+        UserDefaults.standard.set("claude-haiku-4-5", forKey: keys[0])
+        UserDefaults.standard.set("gpt-4o-mini", forKey: keys[1])
+        let routing = RoutingSettings()
+        XCTAssertEqual(routing.anthropicDefaultModel, HostedModelDefaults.resolve(provider: "anthropic", stored: nil))
+        XCTAssertNotEqual(routing.anthropicDefaultModel, "claude-haiku-4-5")
+        XCTAssertEqual(routing.openaiDefaultModel, HostedModelDefaults.resolve(provider: "openai", stored: nil))
+        routing.resolveHostedDefaults()
+        XCTAssertEqual(UserDefaults.standard.string(forKey: keys[0]), "claude-haiku-4-5", "re-resolving never stores a default")
+        UserDefaults.standard.set("claude-opus-5-5", forKey: keys[0])
+        XCTAssertEqual(RoutingSettings().anthropicDefaultModel, "claude-opus-5-5", "a model the user chose is kept")
+    }
+
+    func testIncludingPutsTheCurrentDefaultFirstOnlyWhenMissing() {
+        XCTAssertEqual(RoutingSettings.including("a-latest", in: ["b", "c"]), ["a-latest", "b", "c"])
+        XCTAssertEqual(RoutingSettings.including("b", in: ["b", "c"]), ["b", "c"])
+        XCTAssertEqual(RoutingSettings.including("a", in: []), [])
     }
 }

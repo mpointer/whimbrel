@@ -14,6 +14,17 @@ independently and agrees except where marked. **[unverified]** means the figure 
 third party, a snippet, or conflicting sources. Whimbrel facts are from `CHANGELOG.md` and
 `website/site/pages`, not from the older docs.
 
+**Re-read 2026-11-11 for the compare pages (PR for N2).** Corrections to this document:
+Bluedot stores customer content in the EU by default (AWS Frankfurt), US by arrangement, and
+its pricing and security pages disagree on how long recordings survive cancellation (one
+month against three). Shadow's monthly price is $8 on its pricing page and $12 monthly on its
+Action Skills page. Grain's prices ($15/$19, $29/$39) are confirmed from its help-center Plans
+article; its pricing page still renders garbled. Granola's FAQ says anonymised data may be
+used for its own model improvements by default on Free and Business, while its pricing page
+offers an opt-out. Fellow hosts in AWS Canada Central. Littlebird is SOC 2 Type II (report
+dated September 2026) and lists no subprocessors on a page that renders. Sources are on each
+`/compare/` page.
+
 **Assumption that everything below depends on.** No adoption numbers are in the tree. Doc
 17 said the hosted relay had one account on 2026-10-31. This document assumes active
 installs are still in the tens, not the thousands. If that is wrong, §6's ordering changes:

@@ -45,6 +45,7 @@ internal object Native : CoreNative {
     override fun syncContentLastError(): String? = nSyncContentLastError().fromCOutput()
     override fun syncContentMoreToPull(): Boolean = nSyncContentMoreToPull()
     override fun syncContentLastPullStats(): String? = nSyncContentLastPullStats().fromCOutput()
+    override fun syncContentOlderHistoryLoading(handle: Long): Boolean = nSyncContentOlderHistoryLoading(handle)
     override fun meetingsGroupedCount(handle: Long): Long = nMeetingsGroupedCount(handle)
     override fun meetingsRecentGrouped(handle: Long, limit: Long): String? = nMeetingsRecentGrouped(handle, limit).fromCOutput()
     override fun syncSettingsIteration(tursoUrl: String, tursoToken: String, groupKeyBase64: String, localJson: String): String? =
@@ -88,6 +89,7 @@ internal object Native : CoreNative {
     private external fun nSyncContentLastError(): ByteArray?
     private external fun nSyncContentMoreToPull(): Boolean
     private external fun nSyncContentLastPullStats(): ByteArray?
+    private external fun nSyncContentOlderHistoryLoading(handle: Long): Boolean
     private external fun nMeetingsGroupedCount(handle: Long): Long
     private external fun nMeetingsRecentGrouped(handle: Long, limit: Long): ByteArray?
     private external fun nSyncSettingsIteration(url: ByteArray, token: ByteArray, groupKey: ByteArray, localJson: ByteArray): ByteArray?

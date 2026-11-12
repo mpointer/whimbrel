@@ -167,6 +167,80 @@ pub struct Completion {
 
 pub trait LlmClient {
     fn complete(&self, prompt: &str) -> Result<Completion, LlmError>;
+
+    /// The model that actually answered, when it isn't the one this client was built
+    /// for: the provider had no such model and the client retried with its fallback
+    /// (see [`is_model_not_found`]). `None` means the requested model answered (or
+    /// nothing has answered yet). Usage is logged under this name so spend prices it.
+    fn substituted_model(&self) -> Option<String> {
+        None
+    }
+}
+
+/// Whether `err` is `provider` saying it has no model by the requested name, the one
+/// signal a configured model is gone (never its absence from a model list: Anthropic's
+/// list carries only dated ids, not the aliases it answers to). Any 404 from the three
+/// hosted providers (their request paths are fixed, so only the model can be missing),
+/// plus a 400 whose body names the error: OpenAI's `error.code` `model_not_found`,
+/// Anthropic's `error.type` `not_found_error`. Never true for other providers.
+pub fn is_model_not_found(provider: Provider, err: &LlmError) -> bool {
+    let LlmError::Http { status, body } = err else {
+        return false;
+    };
+    let field = |pointer: &str| {
+        serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v.pointer(pointer).and_then(|f| f.as_str()).map(str::to_string))
+    };
+    match provider {
+        Provider::Google => *status == 404,
+        Provider::OpenAI => *status == 404 || (*status == 400 && field("/error/code").as_deref() == Some("model_not_found")),
+        Provider::Anthropic => *status == 404 || (*status == 400 && field("/error/type").as_deref() == Some("not_found_error")),
+        _ => false,
+    }
+}
+
+/// A hosted client's one retry when its model is gone: the model to try instead (the
+/// provider's current default, handed in by the chain builder) and the model that
+/// answered once it was used. After a substitution the client keeps using the fallback,
+/// so a multi-call job (a long meeting's chunks) pays the 404 once.
+#[derive(Debug, Default)]
+pub(crate) struct ModelFallback {
+    fallback: Option<String>,
+    used: std::sync::Mutex<Option<String>>,
+}
+
+impl ModelFallback {
+    pub(crate) fn new(fallback: Option<String>) -> Self {
+        Self { fallback: fallback.filter(|m| !m.trim().is_empty()), used: Default::default() }
+    }
+
+    /// The model to send: the fallback once it has stood in, else `requested`.
+    pub(crate) fn model_for(&self, requested: &str) -> String {
+        self.used.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_else(|| requested.to_string())
+    }
+
+    /// The model to retry with after `err` for `tried`, or `None`: not a not-found
+    /// answer, no fallback, or the fallback is what failed.
+    pub(crate) fn retry_after(&self, provider: Provider, tried: &str, err: &LlmError) -> Option<String> {
+        let fallback = self.fallback.as_deref()?;
+        if fallback == tried || !is_model_not_found(provider, err) {
+            return None;
+        }
+        tracing::warn!(provider = provider.as_str(), model = tried, fallback, "the provider has no such model; using its current default");
+        Some(fallback.to_string())
+    }
+
+    /// Records that `model` answered in place of `requested`.
+    pub(crate) fn answered(&self, requested: &str, model: &str) {
+        if model != requested {
+            *self.used.lock().unwrap_or_else(|e| e.into_inner()) = Some(model.to_string());
+        }
+    }
+
+    pub(crate) fn substituted(&self) -> Option<String> {
+        self.used.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
 }
 
 /// Ollama's default context window is small enough to silently truncate a meeting prompt
@@ -188,19 +262,68 @@ struct OllamaOptions {
 
 impl<'a> OllamaGenerateRequest<'a> {
     fn new(model: &'a str, prompt: &'a str) -> Self {
-        Self { model, prompt, stream: false, options: OllamaOptions { num_ctx: OLLAMA_NUM_CTX } }
+        Self { model, prompt, stream: true, options: OllamaOptions { num_ctx: OLLAMA_NUM_CTX } }
     }
 }
 
+/// One line of Ollama's streamed `/api/generate` answer (NDJSON): a piece of the text, the
+/// last line with `done`, or an `error` it hit after accepting the request.
 #[derive(Debug, Deserialize)]
-struct OllamaGenerateResponse {
+struct OllamaStreamLine {
+    #[serde(default)]
     response: String,
+    #[serde(default)]
+    done: bool,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 const OLLAMA_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-/// Non-streaming, so nothing arrives until generation finishes: this bounds a whole
-/// generation, generous for a local 12B model on a long meeting transcript.
+/// Streamed, so this is how long Ollama may go quiet: reading a long prompt before the first
+/// word, or a stall. It no longer bounds a whole generation, which on a slow PC with a 12B model
+/// and a long meeting ran past it and failed every summary (a Windows user, 2026-11-11).
 const OLLAMA_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+/// The most one generation may take in all, so a model that keeps trickling words can't hold a
+/// job forever.
+const OLLAMA_TOTAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45 * 60);
+
+/// Reads Ollama's streamed answer until its `done` line. `elapsed` says how long the request has
+/// run, checked after each line against `total`.
+fn read_ollama_stream(
+    reader: impl std::io::BufRead,
+    elapsed: impl Fn() -> std::time::Duration,
+    total: std::time::Duration,
+) -> Result<String, LlmError> {
+    let mut text = String::new();
+    for line in reader.lines() {
+        let line = line.map_err(|e| match e.kind() {
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => LlmError::Provider(format!(
+                "Ollama stopped responding for {} minutes",
+                OLLAMA_READ_TIMEOUT.as_secs() / 60
+            )),
+            _ => LlmError::Provider(format!("Ollama request failed mid-response: {e}")),
+        })?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let part: OllamaStreamLine = serde_json::from_str(&line)
+            .map_err(|e| LlmError::Provider(format!("failed to parse Ollama response: {e}")))?;
+        if let Some(error) = part.error {
+            return Err(LlmError::Provider(format!("Ollama failed: {error}")));
+        }
+        text.push_str(&part.response);
+        if part.done {
+            return Ok(text);
+        }
+        if elapsed() > total {
+            return Err(LlmError::Provider(format!(
+                "Ollama took longer than {} minutes",
+                total.as_secs() / 60
+            )));
+        }
+    }
+    Err(LlmError::Provider("Ollama's answer ended before it was done".into()))
+}
 
 /// Calls a locally-running Ollama server (NFR-PRV-1: local-first). Default endpoint is
 /// Ollama's standard `http://localhost:11434`.
@@ -243,11 +366,14 @@ impl LlmClient for OllamaClient {
                 }
                 e => ureq_error_to_llm(e),
             })?;
-        let parsed: OllamaGenerateResponse = response
-            .into_json()
-            .map_err(|e| LlmError::Provider(format!("failed to parse Ollama response: {e}")))?;
+        let started = std::time::Instant::now();
+        let text = read_ollama_stream(
+            std::io::BufReader::new(response.into_reader()),
+            || started.elapsed(),
+            OLLAMA_TOTAL_TIMEOUT,
+        )?;
         Ok(Completion {
-            text: parsed.response,
+            text,
             token_usage: TokenUsage::default(),
         })
     }
@@ -336,6 +462,7 @@ pub struct AnthropicClient {
     auth: AnthropicAuth,
     model: String,
     max_tokens: u32,
+    fallback: ModelFallback,
 }
 
 impl AnthropicClient {
@@ -351,7 +478,15 @@ impl AnthropicClient {
             auth: AnthropicAuth::ApiKey(api_key.into()),
             model: model.into(),
             max_tokens: 16384,
+            fallback: ModelFallback::default(),
         }
+    }
+
+    /// The model to retry with, once, when Anthropic says this client's model doesn't
+    /// exist. `None` (the default) never retries; set only for the user's own key.
+    pub fn with_fallback_model(mut self, model: Option<String>) -> Self {
+        self.fallback = ModelFallback::new(model);
+        self
     }
 
     /// Anthropic's models through Whimbrel's server: `Authorization: Bearer <id_token>`
@@ -362,6 +497,7 @@ impl AnthropicClient {
             auth: AnthropicAuth::Whimbrel { id_token: id_token.into(), device_key: device_key.into() },
             model: model.into(),
             max_tokens: 16384,
+            fallback: ModelFallback::default(),
         }
     }
 
@@ -376,27 +512,54 @@ impl AnthropicClient {
     }
 }
 
+/// Sends with `fallback`'s current model and, when the provider says that model doesn't
+/// exist, once more with the fallback; records which model answered.
+fn send_with_model_retry(
+    fallback: &ModelFallback,
+    provider: Provider,
+    requested: &str,
+    mut send: impl FnMut(&str) -> Result<ureq::Response, LlmError>,
+) -> Result<ureq::Response, LlmError> {
+    let model = fallback.model_for(requested);
+    let response = match send(&model) {
+        Err(e) => match fallback.retry_after(provider, &model, &e) {
+            Some(next) => {
+                let response = send(&next)?;
+                fallback.answered(requested, &next);
+                return Ok(response);
+            }
+            None => return Err(e),
+        },
+        Ok(response) => response,
+    };
+    fallback.answered(requested, &model);
+    Ok(response)
+}
+
 impl LlmClient for AnthropicClient {
+    fn substituted_model(&self) -> Option<String> {
+        self.fallback.substituted()
+    }
+
     fn complete(&self, prompt: &str) -> Result<Completion, LlmError> {
-        let request = AnthropicRequest {
-            model: &self.model,
-            max_tokens: self.max_tokens,
-            messages: vec![AnthropicMessage {
-                role: "user",
-                content: prompt,
-            }],
-        };
-        let http = ureq::post(&format!("{}/v1/messages", self.base_url));
-        let http = match &self.auth {
-            AnthropicAuth::ApiKey(key) => http.set("x-api-key", key),
-            AnthropicAuth::Whimbrel { id_token, device_key } => http
-                .set("Authorization", &format!("Bearer {id_token}"))
-                .set("X-Whimbrel-Device", device_key),
-        };
-        let response = http
-            .set("anthropic-version", "2023-06-01")
-            .send_json(&request)
-            .map_err(ureq_error_to_llm)?;
+        let response = send_with_model_retry(&self.fallback, Provider::Anthropic, &self.model, |model| {
+            let request = AnthropicRequest {
+                model,
+                max_tokens: self.max_tokens,
+                messages: vec![AnthropicMessage {
+                    role: "user",
+                    content: prompt,
+                }],
+            };
+            let http = ureq::post(&format!("{}/v1/messages", self.base_url));
+            let http = match &self.auth {
+                AnthropicAuth::ApiKey(key) => http.set("x-api-key", key),
+                AnthropicAuth::Whimbrel { id_token, device_key } => http
+                    .set("Authorization", &format!("Bearer {id_token}"))
+                    .set("X-Whimbrel-Device", device_key),
+            };
+            http.set("anthropic-version", "2023-06-01").send_json(&request).map_err(ureq_error_to_llm)
+        })?;
         let parsed: AnthropicResponse = response
             .into_json()
             .map_err(|e| LlmError::Provider(format!("failed to parse Anthropic response: {e}")))?;
@@ -479,6 +642,7 @@ pub struct OpenAIClient {
     api_key: String,
     model: String,
     extra_headers: Vec<(String, String)>,
+    fallback: ModelFallback,
 }
 
 impl OpenAIClient {
@@ -488,7 +652,15 @@ impl OpenAIClient {
             api_key: api_key.into(),
             model: model.into(),
             extra_headers: Vec::new(),
+            fallback: ModelFallback::default(),
         }
+    }
+
+    /// The model to retry with, once, when OpenAI says this client's model doesn't exist.
+    /// `None` (the default) never retries; never set for OpenRouter or the local model.
+    pub fn with_fallback_model(mut self, model: Option<String>) -> Self {
+        self.fallback = ModelFallback::new(model);
+        self
     }
 
     /// The same request against OpenRouter, with the two headers they ask for.
@@ -511,20 +683,26 @@ impl OpenAIClient {
 }
 
 impl LlmClient for OpenAIClient {
+    fn substituted_model(&self) -> Option<String> {
+        self.fallback.substituted()
+    }
+
     fn complete(&self, prompt: &str) -> Result<Completion, LlmError> {
-        let request = OpenAIRequest {
-            model: &self.model,
-            messages: vec![OpenAIMessage {
-                role: "user",
-                content: prompt,
-            }],
-        };
-        let mut call = ureq::post(&format!("{}/v1/chat/completions", self.base_url))
-            .set("Authorization", &format!("Bearer {}", self.api_key));
-        for (name, value) in &self.extra_headers {
-            call = call.set(name, value);
-        }
-        let response = call.send_json(&request).map_err(ureq_error_to_llm)?;
+        let response = send_with_model_retry(&self.fallback, Provider::OpenAI, &self.model, |model| {
+            let request = OpenAIRequest {
+                model,
+                messages: vec![OpenAIMessage {
+                    role: "user",
+                    content: prompt,
+                }],
+            };
+            let mut call = ureq::post(&format!("{}/v1/chat/completions", self.base_url))
+                .set("Authorization", &format!("Bearer {}", self.api_key));
+            for (name, value) in &self.extra_headers {
+                call = call.set(name, value);
+            }
+            call.send_json(&request).map_err(ureq_error_to_llm)
+        })?;
         let mut parsed: OpenAIResponse = response
             .into_json()
             .map_err(|e| LlmError::Provider(format!("failed to parse OpenAI response: {e}")))?;
@@ -594,6 +772,12 @@ struct GoogleResponse {
     usage_metadata: Option<GoogleUsageMetadata>,
 }
 
+/// Google's alias for its current Flash model: a Google client's fallback until the chain
+/// builder hands it the current default (`api::model_defaults`). A chosen model Google
+/// answers with 404 (a retired name, such as the `gemini-2.5-flash` the apps defaulted
+/// to: a Windows user's every request failed, 2026-11-11) is retried once with it.
+pub const GOOGLE_FALLBACK_MODEL: &str = "gemini-flash-latest";
+
 /// Calls the real Google Gemini `generateContent` API (FR-CHAT-2's third hosted
 /// provider). Same key-sourcing rule as `AnthropicClient`/`OpenAIClient`: the caller
 /// passes a key it already has. Unlike those two, Gemini takes its key as a `?key=`
@@ -603,6 +787,7 @@ pub struct GoogleClient {
     base_url: String,
     api_key: String,
     model: String,
+    fallback: ModelFallback,
 }
 
 impl GoogleClient {
@@ -611,7 +796,15 @@ impl GoogleClient {
             base_url: "https://generativelanguage.googleapis.com".to_string(),
             api_key: api_key.into(),
             model: model.into(),
+            fallback: ModelFallback::new(Some(GOOGLE_FALLBACK_MODEL.to_string())),
         }
+    }
+
+    /// The model to retry with, once, on a 404; [`GOOGLE_FALLBACK_MODEL`] unless set.
+    /// `None` never retries.
+    pub fn with_fallback_model(mut self, model: Option<String>) -> Self {
+        self.fallback = ModelFallback::new(model);
+        self
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -620,20 +813,27 @@ impl GoogleClient {
     }
 }
 
+impl GoogleClient {
+    fn post(&self, model: &str, request: &GoogleRequest) -> Result<ureq::Response, LlmError> {
+        ureq::post(&format!("{}/v1beta/models/{}:generateContent", self.base_url, model))
+            .query("key", &self.api_key)
+            .send_json(request)
+            .map_err(ureq_error_to_llm)
+    }
+}
+
 impl LlmClient for GoogleClient {
+    fn substituted_model(&self) -> Option<String> {
+        self.fallback.substituted()
+    }
+
     fn complete(&self, prompt: &str) -> Result<Completion, LlmError> {
         let request = GoogleRequest {
             contents: vec![GoogleContent {
                 parts: vec![GooglePart { text: prompt }],
             }],
         };
-        let response = ureq::post(&format!(
-            "{}/v1beta/models/{}:generateContent",
-            self.base_url, self.model
-        ))
-        .query("key", &self.api_key)
-        .send_json(&request)
-        .map_err(ureq_error_to_llm)?;
+        let response = send_with_model_retry(&self.fallback, Provider::Google, &self.model, |model| self.post(model, &request))?;
         let parsed: GoogleResponse = response
             .into_json()
             .map_err(|e| LlmError::Provider(format!("failed to parse Google response: {e}")))?;
@@ -1344,6 +1544,10 @@ const RECENCY_TAU_ROUTINE_RUN_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 /// 8192-token conservative floor for the system prompt, conversation history, the
 /// query, and the response.
 const CONTEXT_BUDGET_TOKENS: usize = 1500;
+
+/// [`CONTEXT_BUDGET_TOKENS`] in characters: the cap for one pasted block of outside text
+/// (the hotkey panel's window text) so it costs no more than assembled context does.
+pub const CONTEXT_BUDGET_CHARS: usize = CONTEXT_BUDGET_TOKENS * CHARS_PER_TOKEN_ESTIMATE;
 
 pub fn max_transcript_chars_per_chunk() -> usize {
     MAX_CONTEXT_TOKENS_ESTIMATE
@@ -2177,6 +2381,12 @@ fn pricing_for(model: &str) -> ModelPricing {
             in_cents_per_1k: 0.015,
             out_cents_per_1k: 0.06,
         },
+        // The 2026-11-11 default. Not read from OpenAI's price page: mirrors gpt-5-mini's
+        // published $0.25/$2.00 per 1M until someone checks gpt-5.4-mini's own.
+        "gpt-5.4-mini" => ModelPricing {
+            in_cents_per_1k: 0.025,
+            out_cents_per_1k: 0.2,
+        },
         "gpt-4.1" | "gpt-4o" => ModelPricing {
             in_cents_per_1k: 0.25,
             out_cents_per_1k: 1.0,
@@ -2186,7 +2396,10 @@ fn pricing_for(model: &str) -> ModelPricing {
         // <=200k-token tier -- the cheaper of its two, matching this table's existing
         // "approximate, for cap arithmetic" posture elsewhere), gemini-2.0-flash
         // $0.10/$0.40.
-        "gemini-2.5-flash" => ModelPricing {
+        // `gemini-flash-latest` is Google's moving Flash alias (gemini-3.8-flash on
+        // 2026-11-11); priced as gemini-2.5-flash, the newest Flash rate in this table,
+        // until someone checks the current one.
+        "gemini-2.5-flash" | "gemini-flash-latest" => ModelPricing {
             in_cents_per_1k: 0.03,
             out_cents_per_1k: 0.25,
         },
@@ -2307,7 +2520,7 @@ mod tests {
     fn blocking_ollama_requests_ask_for_the_larger_context_window() {
         let body = serde_json::to_value(OllamaGenerateRequest::new("gemma4:12b", "hi")).unwrap();
         assert_eq!(body["options"]["num_ctx"], 16_384);
-        assert_eq!(body["stream"], false);
+        assert_eq!(body["stream"], true, "streamed, so the read timeout bounds a silence, not the whole answer");
     }
     use super::*;
 
@@ -3829,6 +4042,191 @@ mod tests {
         });
         let err = OllamaClient::with_base_url(url, "m").complete("hi").unwrap_err();
         assert!(matches!(err, LlmError::Provider(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn ollama_streamed_answer_is_joined_until_done() {
+        let body = "{\"response\":\"Hel\",\"done\":false}\n\n{\"response\":\"lo\",\"done\":false}\n{\"response\":\"\",\"done\":true,\"eval_count\":3}\n";
+        let text = read_ollama_stream(std::io::Cursor::new(body), || std::time::Duration::ZERO, OLLAMA_TOTAL_TIMEOUT).unwrap();
+        assert_eq!(text, "Hello");
+    }
+
+    #[test]
+    fn ollama_stream_errors_are_provider_errors() {
+        let ended = read_ollama_stream(std::io::Cursor::new("{\"response\":\"Hi\",\"done\":false}\n"), || std::time::Duration::ZERO, OLLAMA_TOTAL_TIMEOUT);
+        assert!(matches!(ended, Err(LlmError::Provider(ref m)) if m.contains("ended before")), "{ended:?}");
+        let failed = read_ollama_stream(std::io::Cursor::new("{\"error\":\"out of memory\"}\n"), || std::time::Duration::ZERO, OLLAMA_TOTAL_TIMEOUT);
+        assert!(matches!(failed, Err(LlmError::Provider(ref m)) if m.contains("out of memory")), "{failed:?}");
+        let slow = read_ollama_stream(
+            std::io::Cursor::new("{\"response\":\"a\",\"done\":false}\n{\"response\":\"b\",\"done\":true}\n"),
+            || OLLAMA_TOTAL_TIMEOUT + std::time::Duration::from_secs(1),
+            OLLAMA_TOTAL_TIMEOUT,
+        );
+        assert!(matches!(slow, Err(LlmError::Provider(ref m)) if m.contains("longer than 45 minutes")), "{slow:?}");
+    }
+
+    /// A long generation that keeps sending words finishes, however long the whole answer takes:
+    /// the read timeout only bounds a silence.
+    #[test]
+    fn ollama_long_streamed_answer_from_a_server_finishes() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = std::io::Read::read(&mut conn, &mut buf);
+            let lines = ["{\"response\":\"one \",\"done\":false}\n", "{\"response\":\"two\",\"done\":false}\n", "{\"done\":true}\n"];
+            let body: String = lines.concat();
+            let head = format!("HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\n\r\n", body.len());
+            std::io::Write::write_all(&mut conn, head.as_bytes()).unwrap();
+            for line in lines {
+                std::io::Write::write_all(&mut conn, line.as_bytes()).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
+        let done = OllamaClient::with_base_url(url, "m").complete("hi").unwrap();
+        assert_eq!(done.text, "one two");
+    }
+
+    /// A tiny HTTP server for the three hosted wire shapes. A request for the model `missing`
+    /// (named in the Gemini path or the JSON body's `model`) gets `missing_status` with
+    /// `missing_body`; any other model gets that provider's answer `from <model>`. It reads
+    /// each whole request (headers, then Content-Length bytes) before answering and serves
+    /// connections until the test ends.
+    pub(crate) fn model_server(missing: &'static str, missing_status: &'static str, missing_body: &'static str) -> String {
+        use std::io::{BufRead, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(conn) = conn else { return };
+                let mut reader = std::io::BufReader::new(conn.try_clone().unwrap());
+                let mut first = String::new();
+                if reader.read_line(&mut first).is_err() {
+                    continue;
+                }
+                let mut length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0u8; length];
+                let _ = reader.read_exact(&mut body);
+                let json: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+                let path = first.split_whitespace().nth(1).unwrap_or("").to_string();
+                let stream = json["stream"].as_bool() == Some(true) || path.contains("streamGenerateContent");
+                let model = match json["model"].as_str() {
+                    Some(m) => m.to_string(),
+                    None => path.split("/models/").nth(1).unwrap_or("").split(':').next().unwrap_or("").to_string(),
+                };
+                let text = format!("from {model}");
+                let (status, kind, reply) = if model == missing {
+                    (missing_status, "application/json", missing_body.to_string())
+                } else if path.contains("/v1/messages") && stream {
+                    ("200 OK", "text/event-stream", format!(
+                        "data: {{\"type\":\"content_block_delta\",\"delta\":{{\"type\":\"text_delta\",\"text\":\"{text}\"}}}}\n\ndata: {{\"type\":\"message_stop\"}}\n\n"
+                    ))
+                } else if path.contains("/v1/messages") {
+                    ("200 OK", "application/json", format!("{{\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}]}}"))
+                } else if path.contains("/v1/chat/completions") && stream {
+                    ("200 OK", "text/event-stream", format!(
+                        "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{text}\"}}}}]}}\n\ndata: [DONE]\n\n"
+                    ))
+                } else if path.contains("/v1/chat/completions") {
+                    ("200 OK", "application/json", format!("{{\"choices\":[{{\"message\":{{\"content\":\"{text}\"}}}}]}}"))
+                } else if stream {
+                    ("200 OK", "text/event-stream", format!(
+                        "data: {{\"candidates\":[{{\"content\":{{\"parts\":[{{\"text\":\"{text}\"}}]}},\"finishReason\":\"STOP\"}}]}}\n\n"
+                    ))
+                } else {
+                    ("200 OK", "application/json", format!("{{\"candidates\":[{{\"content\":{{\"parts\":[{{\"text\":\"{text}\"}}]}}}}]}}"))
+                };
+                let mut conn = conn;
+                let _ = write!(conn, "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len());
+                let _ = conn.flush();
+            }
+        });
+        url
+    }
+
+    /// Google's, OpenAI's and Anthropic's documented model-not-found answers.
+    pub(crate) const GOOGLE_404: &str = r#"{"error":{"code":404,"message":"models/gemini-2.5-flash is not found for API version v1beta","status":"NOT_FOUND"}}"#;
+    pub(crate) const OPENAI_404: &str = r#"{"error":{"message":"The model `gpt-4o-mini` does not exist or you do not have access to it.","type":"invalid_request_error","param":null,"code":"model_not_found"}}"#;
+    pub(crate) const ANTHROPIC_404: &str = r#"{"type":"error","error":{"type":"not_found_error","message":"model: claude-haiku-4-5"}}"#;
+
+    #[test]
+    fn a_retired_google_model_falls_back_to_the_current_flash() {
+        let url = model_server("gemini-2.5-flash", "404 Not Found", GOOGLE_404);
+        let client = GoogleClient::new("k", "gemini-2.5-flash").with_base_url(url);
+        assert_eq!(client.substituted_model(), None);
+        let done = client.complete("hi").unwrap();
+        assert_eq!(done.text, format!("from {GOOGLE_FALLBACK_MODEL}"));
+        assert_eq!(client.substituted_model().as_deref(), Some(GOOGLE_FALLBACK_MODEL), "usage is logged under the model that answered");
+        // The next call goes straight to the fallback.
+        assert_eq!(client.complete("again").unwrap().text, format!("from {GOOGLE_FALLBACK_MODEL}"));
+    }
+
+    #[test]
+    fn the_fallback_itself_missing_is_reported_not_retried() {
+        let url = model_server(GOOGLE_FALLBACK_MODEL, "404 Not Found", GOOGLE_404);
+        let err = GoogleClient::new("k", GOOGLE_FALLBACK_MODEL).with_base_url(url.clone()).complete("hi").unwrap_err();
+        assert!(matches!(err, LlmError::Http { status: 404, .. }), "{err:?}");
+        let off = GoogleClient::new("k", GOOGLE_FALLBACK_MODEL).with_fallback_model(None).with_base_url(url);
+        assert!(off.complete("hi").is_err(), "no fallback, no retry");
+        assert_eq!(off.substituted_model(), None);
+    }
+
+    #[test]
+    fn openai_and_anthropic_retry_a_missing_model_once_with_the_fallback() {
+        let openai = OpenAIClient::new("k", "gpt-4o-mini")
+            .with_base_url(model_server("gpt-4o-mini", "404 Not Found", OPENAI_404))
+            .with_fallback_model(Some("gpt-next-mini".into()));
+        assert_eq!(openai.complete("hi").unwrap().text, "from gpt-next-mini");
+        assert_eq!(openai.substituted_model().as_deref(), Some("gpt-next-mini"));
+
+        // OpenAI also answers 400 with the code for some model errors.
+        let openai_400 = OpenAIClient::new("k", "gpt-4o-mini")
+            .with_base_url(model_server("gpt-4o-mini", "400 Bad Request", OPENAI_404))
+            .with_fallback_model(Some("gpt-next-mini".into()));
+        assert_eq!(openai_400.complete("hi").unwrap().text, "from gpt-next-mini");
+
+        let anthropic = AnthropicClient::new("k", "claude-haiku-4-5")
+            .with_base_url(model_server("claude-haiku-4-5", "404 Not Found", ANTHROPIC_404))
+            .with_fallback_model(Some("claude-next-haiku".into()));
+        assert_eq!(anthropic.complete("hi").unwrap().text, "from claude-next-haiku");
+        assert_eq!(anthropic.substituted_model().as_deref(), Some("claude-next-haiku"));
+
+        // No fallback set (OpenRouter, Whimbrel AI, the default): the 404 stands.
+        let plain = OpenAIClient::new("k", "gpt-4o-mini").with_base_url(model_server("gpt-4o-mini", "404 Not Found", OPENAI_404));
+        assert!(matches!(plain.complete("hi").unwrap_err(), LlmError::Http { status: 404, .. }));
+        // A model that answers is never substituted.
+        let fine = AnthropicClient::new("k", "claude-x")
+            .with_base_url(model_server("claude-haiku-4-5", "404 Not Found", ANTHROPIC_404))
+            .with_fallback_model(Some("claude-next-haiku".into()));
+        assert_eq!(fine.complete("hi").unwrap().text, "from claude-x");
+        assert_eq!(fine.substituted_model(), None);
+    }
+
+    #[test]
+    fn only_a_model_not_found_answer_counts() {
+        let http = |status, body: &str| LlmError::Http { status, body: body.into() };
+        assert!(is_model_not_found(Provider::Google, &http(404, GOOGLE_404)));
+        assert!(is_model_not_found(Provider::OpenAI, &http(404, OPENAI_404)));
+        assert!(is_model_not_found(Provider::OpenAI, &http(400, OPENAI_404)));
+        assert!(is_model_not_found(Provider::Anthropic, &http(404, ANTHROPIC_404)));
+        assert!(is_model_not_found(Provider::Anthropic, &http(400, ANTHROPIC_404)));
+        assert!(!is_model_not_found(Provider::OpenAI, &http(400, r#"{"error":{"code":"context_length_exceeded"}}"#)));
+        assert!(!is_model_not_found(Provider::Anthropic, &http(400, "model_not_found is just text here")));
+        assert!(!is_model_not_found(Provider::Google, &http(400, GOOGLE_404)));
+        assert!(!is_model_not_found(Provider::Google, &http(401, "")));
+        assert!(!is_model_not_found(Provider::OpenRouter, &http(404, OPENAI_404)), "no default to fall back to");
+        assert!(!is_model_not_found(Provider::Ollama, &http(404, "")), "Ollama has its own missing-model kind");
+        assert!(!is_model_not_found(Provider::Google, &LlmError::Network("x".into())));
     }
 
     #[test]

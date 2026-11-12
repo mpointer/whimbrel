@@ -41,6 +41,8 @@ export function providerFailureReason(reason: ProviderFailureReason): string | n
       });
     case "ollama_not_running":
       return t("Ollama isn't running on this computer. Start Ollama, or add an API key in Settings → AI.");
+    case "local_model_missing":
+      return t("No local model is installed.");
     case "no_provider_configured":
       return t("No AI provider is set up. Add one in Settings → AI.");
     case "unauthorized":
@@ -49,10 +51,23 @@ export function providerFailureReason(reason: ProviderFailureReason): string | n
       return t("{provider} is busy or out of credit. Try again shortly.", { provider: name(reason.provider) });
     case "credit_exhausted":
       return t("Whimbrel AI credit is used up. Add credit in Settings.");
+    case "model_unavailable":
+      return t("{provider} doesn't offer the model {model} to your key. Choose another in Settings → AI.", {
+        provider: name(reason.provider),
+        model: reason.model,
+      });
+    // Ollama answered and then didn't finish (stalled or timed out): too much for a slower computer.
+    case "network":
+      return reason.provider === "ollama" ? localModelDidNotFinish() : null;
+    case "other":
+      return reason.provider === "ollama" && reason.status == null ? localModelDidNotFinish() : null;
     default:
       return null;
   }
 }
+
+const localModelDidNotFinish = (): string =>
+  t("The local model (Ollama) didn't finish. Long meetings can be too much for it on a slower computer: choose Whimbrel AI or a smaller Ollama model in Settings → AI, then use Regenerate summary.");
 
 /** Whether a rejected `invoke` carried a `CommandError` (vs. a Tauri-level failure). */
 export function isCommandError(value: unknown): value is CommandError {

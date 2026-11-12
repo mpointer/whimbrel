@@ -73,6 +73,13 @@ describe("a provider failure says why, when core knows", () => {
     );
   });
 
+  it("says a local model that didn't finish was too much for the computer, and what to do", () => {
+    const local = /^The local model \(Ollama\) didn't finish\./;
+    expect(describeError({ kind: "provider_failure", reason: { kind: "other", provider: "ollama", status: null } })).toMatch(local);
+    expect(describeError({ kind: "provider_failure", reason: { kind: "network", provider: "ollama" } })).toMatch(local);
+    expect(describeError({ kind: "provider_failure", reason: { kind: "other", provider: "ollama", status: 500 } })).not.toMatch(local);
+  });
+
   it("keeps the general line for a network blip", () => {
     expect(describeError({ kind: "provider_failure", reason: { kind: "network", provider: "google" } })).toBe(
       "No model provider could answer. Check that Ollama is running or that a hosted provider has a key in Settings.",

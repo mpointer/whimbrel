@@ -64,6 +64,10 @@ class SyncModel(
 
     /** The last round succeeded and left rows on the relay: the phone is behind and pulling at the catch-up pace. */
     val catchingUp: StateFlow<Boolean> = _catchingUp.asStateFlow()
+    private val _olderHistoryLoading = MutableStateFlow(false)
+
+    /** A new phone pulls newest first (#572): older meetings are still on their way. The sync line says so. */
+    val olderHistoryLoading: StateFlow<Boolean> = _olderHistoryLoading.asStateFlow()
 
     /** Bumped when the store opens, after every successful pull and on reset, so screens reload what they read. */
     val readRevision: StateFlow<Int> = _readRevision.asStateFlow()
@@ -141,6 +145,7 @@ class SyncModel(
         consecutiveFailures = 0
         moreToPull = false
         _catchingUp.value = false
+        _olderHistoryLoading.value = false
         _readRevision.value += 1
         scope.launch(storeDispatcher) {
             runCatching { old?.close() }
@@ -182,9 +187,11 @@ class SyncModel(
             return
         }
         if (_meetingCount.value == null) {
-            val count = onStore { store.groupedMeetingCount() }
+            // First round on this store: a relaunch shows a gap left open before the pull ends.
+            val (count, older) = onStore { store.groupedMeetingCount() to store.olderHistoryLoading() }
             if (pendingReset != null) return
             _meetingCount.value = count
+            _olderHistoryLoading.value = older
         }
 
         credentials.renewIfDue(afterFailure = false, force = manual)
@@ -202,6 +209,10 @@ class SyncModel(
         // failed one, so a catch-up (a round a second) doesn't flood logcat.
         if (!ok || roundsLogged++ % STATS_LOG_EVERY == 0) stats?.let { log("pull stats: $it") }
         if (pendingReset != null) return
+        // Read after a failed round too: the open gap is kept in the store, so it is still loading.
+        val older = onStore { store.olderHistoryLoading() }
+        if (pendingReset != null) return
+        _olderHistoryLoading.value = older
         if (ok) {
             consecutiveFailures = 0
             moreToPull = onStore { store.moreToPull() }

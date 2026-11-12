@@ -140,6 +140,29 @@ pub struct AiSettings {
     pub image_search_key: Option<String>,
     /// The Ollama model the user chose isn't installed: what stands in meanwhile (Mac #581).
     pub ollama_warning: Option<OllamaWarning>,
+    /// Hosted providers whose chosen model they said they don't have, with the default that
+    /// answers meanwhile (`api::model_defaults`). The choice itself is kept.
+    pub model_warnings: Vec<ModelWarning>,
+}
+
+/// "{model} isn't available to your {provider} key; using {using} for now."
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelWarning {
+    pub provider: Provider,
+    pub model: String,
+    pub using: String,
+}
+
+/// The recorded unavailable models that still matter: the provider's model is still the one
+/// that went missing. A record for a model the user has since moved off is dropped.
+pub fn model_warnings(routing: &RoutingSettings, seen: Vec<api::model_defaults::ModelUnavailable>) -> Vec<ModelWarning> {
+    seen.into_iter()
+        .filter_map(|u| {
+            let provider = Provider::HOSTED.into_iter().find(|p| p.as_str() == u.provider)?;
+            (routing.model_for(provider) == u.model).then_some(ModelWarning { provider, model: u.model, using: u.using })
+        })
+        .collect()
 }
 
 /// "{model} isn't installed. Whimbrel is using {fallback} until you install it or choose another model."
@@ -331,16 +354,19 @@ pub async fn ai_settings(state: State<'_, AppState>) -> Result<AiSettings, Comma
         }
         (routing, settings.get(keys::SUMMARY_CUSTOM_PROMPT).unwrap_or_default(), prompts, budget_views(&settings), ollama_warning, synced)
     };
-    let (spend, usage) = match &state.store {
+    let (spend, usage, unavailable) = match &state.store {
         Some(store) => {
-            let (today, totals) = store.call(|s| (api::spend::spend_today(s, None, now_ms()), api::usage::totals(s, now_ms()))).await?;
-            (Some(SpendView { user_cents: today.user_cents, global_cents: today.global_cents }), Some(usage_view(totals)))
+            let (today, totals, unavailable) = store
+                .call(|s| (api::spend::spend_today(s, None, now_ms()), api::usage::totals(s, now_ms()), api::model_defaults::unavailable(s)))
+                .await?;
+            (Some(SpendView { user_cents: today.user_cents, global_cents: today.global_cents }), Some(usage_view(totals)), unavailable)
         }
-        None => (None, None),
+        None => (None, None, Vec::new()),
     };
+    let model_warnings = model_warnings(&routing, unavailable);
     let image_search_key = state.secrets.get_string(APP_SERVICE, accounts::IMAGE_SEARCH_API_KEY)?.as_deref().map(mask_key);
     let keys = api_keys(&*state.secrets, &|p| synced.contains(&p))?;
-    Ok(AiSettings { routing, keys, summary_instructions, prompts, spend, providers: provider_infos(), usage, budgets, image_search_key, ollama_warning })
+    Ok(AiSettings { routing, keys, summary_instructions, prompts, spend, providers: provider_infos(), usage, budgets, image_search_key, ollama_warning, model_warnings })
 }
 
 /// Checks the saved key for `provider` against its model list; for OpenRouter a valid
@@ -591,8 +617,24 @@ mod tests {
         let google = infos.iter().find(|p| p.id == Provider::Google).unwrap();
         assert!(google.key_page_url.as_deref().unwrap().starts_with("https://"));
         assert_eq!(google.data_terms.as_ref().unwrap().checked.len(), 10);
-        assert_eq!(google.cheap_model, "gemini-2.0-flash");
+        assert_eq!(google.cheap_model, api::model_defaults::cached().model(llm::Provider::Google), "core's current default");
         assert_eq!(infos.iter().find(|p| p.id == Provider::Ollama).unwrap().key_page_url, None);
+    }
+
+    #[test]
+    fn a_missing_chosen_model_warns_until_the_user_moves_off_it() {
+        let routing = RoutingSettings { google_model: "gemini-2.5-pro".into(), ..RoutingSettings::default() };
+        let seen = |provider: &str, model: &str| api::model_defaults::ModelUnavailable {
+            provider: provider.into(),
+            model: model.into(),
+            using: "stand-in".into(),
+            since_ms: 1,
+        };
+        assert_eq!(
+            model_warnings(&routing, vec![seen("google", "gemini-2.5-pro"), seen("openai", "gpt-gone"), seen("venice", "x")]),
+            [ModelWarning { provider: Provider::Google, model: "gemini-2.5-pro".into(), using: "stand-in".into() }],
+            "OpenAI is set to another model now, and an unknown provider is ignored"
+        );
     }
 
     #[test]

@@ -24,6 +24,8 @@
 //! dispatch queue on macOS, an actor task on Windows).
 
 pub mod ask;
+pub mod window_ask;
+pub mod window_read;
 pub mod budget;
 pub mod local_model;
 pub mod import;
@@ -38,6 +40,7 @@ pub mod jobs;
 pub mod live_question;
 pub use memory::l10n;
 pub mod mcp;
+pub mod model_defaults;
 pub mod models;
 pub mod oauth;
 pub mod retention;

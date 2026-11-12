@@ -63,13 +63,26 @@ struct ConnectorsSettingsPane: View {
                     detail: account.eventCount.map { SettingsCopy.eventsFound($0) } ?? String(localized: "Connected."),
                     // Adding an already-listed email replaces its tokens, so re-adding is the way back.
                     reconnectDetail: appState.calendarConnectorState.needsReconnect.contains(account.email)
-                        ? "Reconnect needed. Click Add Google Account and sign in as this address again." : nil,
+                        ? "Reconnect needed. Click Add Google Account and sign in as this address again."
+                        : appState.calendarConnectorState.accessIssues[account.email].map(Self.accessIssueDetail),
                     isDefault: account.email == appState.calendarConnectorState.defaultEmail,
                     showMakeDefault: accounts.count > 1,
                     onMakeDefault: { appState.calendarConnectorState.makeDefault(email: account.email) },
                     onRemove: { appState.calendarConnectorState.removeAccount(email: account.email) }
                 )
             }
+        }
+    }
+
+    /// What a Calendar account row says when Google refused its last sync with a 403.
+    static func accessIssueDetail(_ issue: CoreCalendarAccessIssue) -> String {
+        switch issue.code {
+        case .notGranted:
+            // Signing in again shows Google's consent screen, where calendar access can be allowed.
+            return String(localized: "Google didn't give Whimbrel access to your calendar.") + " "
+                + String(localized: "Click Add Google Account, sign in as this address again, and allow calendar access.")
+        case .blocked:
+            return String(localized: "Google is blocking calendar access for this account. Your organization may need to allow Whimbrel.")
         }
     }
 

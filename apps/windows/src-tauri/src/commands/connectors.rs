@@ -30,6 +30,27 @@ pub struct CalendarAccounts {
     pub blocked: Option<String>,
     /// The accounts whose Google sign-in expired: only "Sign in again" fixes them.
     pub sign_in_expired: Vec<String>,
+    /// Accounts Google keeps from the Calendar API: why, per account. An expired sign-in wins, so an
+    /// account in `sign_in_expired` is never here.
+    pub access_issues: Vec<CalendarAccessIssue>,
+}
+
+/// One account Google keeps from the Calendar API (core::connectors::google_error).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarAccessIssue {
+    pub email: String,
+    /// `calendar_access_not_granted` (the calendar box was left unticked) or `calendar_access_blocked`.
+    pub code: String,
+}
+
+/// The access issues to show: only connected accounts, and none for one whose sign-in expired.
+pub fn access_issues_for(emails: &[String], expired: &[String], issues: &std::collections::HashMap<String, &'static str>) -> Vec<CalendarAccessIssue> {
+    emails
+        .iter()
+        .filter(|e| !expired.contains(e))
+        .filter_map(|e| issues.get(e).map(|code| CalendarAccessIssue { email: e.clone(), code: code.to_string() }))
+        .collect()
 }
 
 fn blocked_reason(state: &AppState) -> Option<String> {
@@ -50,9 +71,12 @@ pub fn calendar_accounts(state: State<'_, AppState>) -> Result<CalendarAccounts,
     let now = chrono::Utc::now().timestamp_millis();
     let upcoming = state.calendar.as_ref().map(|c| c.upcoming(now)).unwrap_or_default();
     let status = state.calendar.as_ref().map(|c| c.status()).unwrap_or_default();
-    let sign_in_expired = emails.iter().filter(|e| accounts::sign_in_expired(Kind::Calendar, e)).cloned().collect();
+    let sign_in_expired: Vec<String> = emails.iter().filter(|e| accounts::sign_in_expired(Kind::Calendar, e)).cloned().collect();
+    let issues = state.calendar.as_ref().map(|c| c.access_issues()).unwrap_or_default();
+    let access_issues = access_issues_for(&emails, &sign_in_expired, &issues);
     Ok(CalendarAccounts {
         sign_in_expired,
+        access_issues,
         emails,
         upcoming: upcoming.len(),
         next_meeting: upcoming.first().map(|m| m.title.clone()),
@@ -346,6 +370,20 @@ pub async fn gmail_delete_stored_mail(app: AppHandle, email: String) -> Result<G
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calendar_access_issues_show_for_connected_accounts_unless_the_sign_in_expired() {
+        let emails = vec!["a@x.com".to_string(), "b@x.com".to_string(), "c@x.com".to_string()];
+        let issues: std::collections::HashMap<String, &'static str> = [
+            ("a@x.com".to_string(), "calendar_access_not_granted"),
+            ("b@x.com".to_string(), "calendar_access_blocked"),
+            ("gone@x.com".to_string(), "calendar_access_blocked"),
+        ]
+        .into_iter()
+        .collect();
+        let shown = access_issues_for(&emails, &["b@x.com".to_string()], &issues);
+        assert_eq!(shown, vec![CalendarAccessIssue { email: "a@x.com".into(), code: "calendar_access_not_granted".into() }]);
+    }
     use crate::secrets::MemorySecrets;
     use api::oauth::StoredTokens;
     use memory::Store;

@@ -365,7 +365,7 @@ describe("other routes", () => {
     const res = await call(new Request("https://whimbrel.test/"));
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("<h1>The AI assistant that");
+    expect(html).toContain("<h1>Your client calls stay");
     expect(html).toContain('"@type":"FAQPage"');
   });
 

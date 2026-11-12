@@ -25,6 +25,9 @@ protocol MeetingSyncStore: AnyObject {
     func pullOnly(_ credentials: SyncCredentials, captureWindowDays: Int32) -> Bool
     /// The last pull stopped with rows still on the relay (`whimbrel_sync_content_more_to_pull`).
     func moreToPull() -> Bool
+    /// A new phone pulls newest first (#572): older history is still on its way
+    /// (`whimbrel_sync_content_older_history_loading`). Kept in the store, so it holds across relaunches.
+    func olderHistoryLoading() -> Bool
     func groupedMeetingCount() -> Int?
     func lastSyncError() -> String?
 }
@@ -39,6 +42,7 @@ extension CoreMemoryStore: MeetingSyncStore {
 
     func groupedMeetingCount() -> Int? { groupedMeetingCount(limit: 200) }
     func moreToPull() -> Bool { whimbrel_sync_content_more_to_pull() }
+    func olderHistoryLoading() -> Bool { whimbrel_sync_content_older_history_loading(handle) }
     func lastSyncError() -> String? { Self.lastSyncContentError() }
 }
 
@@ -68,6 +72,8 @@ final class SyncModel: ObservableObject {
     /// Bumped after every pull that succeeded and when the store is reset, so screens know to
     /// reload what they read from the replica.
     @Published private(set) var readRevision = 0
+    /// Older history is still being pulled (#572); the sync line says so under it.
+    @Published private(set) var olderHistoryLoading = false
 
     /// Screen captures older than this aren't pulled (the user's M4.0 decision).
     static let captureWindowDays: Int32 = 30
@@ -87,7 +93,10 @@ final class SyncModel: ObservableObject {
     private let log = Logger(subsystem: "com.mpointer.whimbrel.mobile", category: "content-sync")
     private var consecutiveFailures = 0
     /// The last good round left rows behind: the next comes after the catch-up gap, not a minute.
-    private var moreToPull = false
+    /// The background refresh reads it to pull again (#572).
+    private(set) var moreToPull = false
+    /// Run once the round in flight ends (`holdForRoundInFlight`).
+    private var roundEndHandlers: [() -> Void] = []
     /// The running cadence loop, if any. Exposed so tests can await it.
     private(set) var loopTask: Task<Void, Never>?
 
@@ -149,6 +158,8 @@ final class SyncModel: ObservableObject {
         lastSyncedAt = nil
         lastError = nil
         consecutiveFailures = 0
+        moreToPull = false
+        olderHistoryLoading = false
         readRevision += 1
         cleanup()
     }
@@ -164,6 +175,9 @@ final class SyncModel: ObservableObject {
                 pendingReset = nil
                 reset(then: cleanup)
             }
+            let handlers = roundEndHandlers
+            roundEndHandlers = []
+            handlers.forEach { $0() }
         }
         if let open = openStore {
             openStore = nil
@@ -177,7 +191,11 @@ final class SyncModel: ObservableObject {
             lastError = String(localized: "This iPhone's local storage is unavailable.")
             return
         }
-        if meetingCount == nil { meetingCount = await run(store) { $0.groupedMeetingCount() } }
+        if meetingCount == nil {
+            // First round on this store: a relaunch shows a gap left open before the pull ends.
+            meetingCount = await run(store) { $0.groupedMeetingCount() }
+            olderHistoryLoading = await run(store) { $0.olderHistoryLoading() }
+        }
 
         await credentials?.renewIfDue(afterFailure: false, force: manual)
         let wipeEpoch = PhoneSettingsSync.currentWipeEpoch
@@ -188,6 +206,8 @@ final class SyncModel: ObservableObject {
         }
         let ok = await run(store) { $0.pullOnly(current, captureWindowDays: Self.captureWindowDays) }
         moreToPull = ok ? await run(store) { $0.moreToPull() } : false
+        // Read after a failed round too: the open gap is kept in the store, so it is still loading.
+        olderHistoryLoading = await run(store) { $0.olderHistoryLoading() }
         if ok {
             consecutiveFailures = 0
             lastError = nil
@@ -209,6 +229,25 @@ final class SyncModel: ObservableObject {
             lastError = String(localized: "Couldn't sync. Will retry automatically.")
             await credentials?.renewIfDue(afterFailure: true, force: false)
         }
+    }
+
+    /// Keeps the app running while the round in flight finishes after it leaves the foreground
+    /// (#572), so a long catch-up round isn't cut short. `begin` starts the system's background
+    /// task, calling its argument on expiry, and returns nil when refused; `end` ends it. The
+    /// task ends exactly once: when the round ends or when it expires, whichever comes first.
+    /// Does nothing when no round is running.
+    func holdForRoundInFlight<ID>(begin: (@escaping () -> Void) -> ID?, end: @escaping (ID) -> Void) {
+        guard isSyncing else { return }
+        var id: ID?
+        var ended = false
+        let finish = {
+            guard !ended, let held = id else { return }
+            ended = true
+            end(held)
+        }
+        id = begin { finish() }
+        guard id != nil else { return }
+        roundEndHandlers.append(finish)
     }
 
     /// Reads the replica for a screen: runs `body` on the store queue, off the main thread.

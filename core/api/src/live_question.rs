@@ -8,7 +8,7 @@ use llm::live_question::{
 
 use crate::envelope::ApiResult;
 use crate::routing::{build_chain_for, RoutingConfig};
-use crate::util::{log_usage_for, now_unix_ms};
+use crate::util::now_unix_ms;
 
 /// One model call; `None` unless the reply parses and clears `should_alert`.
 fn judge(
@@ -36,7 +36,7 @@ pub fn detect(
     let chain = crate::budget::apply_budgets(store, build_chain_for(llm::TaskKind::Chat, ollama_model, routing), false, now_unix_ms())?;
     let ((verdict, usage), entry) =
         llm::try_chain_with_failures(&chain, |e| judge(e.client.as_ref(), &prompt)).map_err(crate::chain_failed)?;
-    log_usage_for(store, entry.provider, &entry.model, "live_question", usage);
+    crate::util::log_link_usage(store, entry, "live_question", usage);
     Ok(verdict)
 }
 

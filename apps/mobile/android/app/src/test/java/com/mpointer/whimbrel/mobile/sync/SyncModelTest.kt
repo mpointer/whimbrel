@@ -45,6 +45,8 @@ private class FakeStore : MeetingSyncStore {
     val threads: MutableList<String> = Collections.synchronizedList(mutableListOf())
     @Volatile var closed = false
     @Volatile var more = false
+    /** Scripted olderHistoryLoading replies, one per call; the last one repeats. */
+    val older: MutableList<Boolean> = Collections.synchronizedList(mutableListOf(false))
 
     /** Called on the store thread after each pull is recorded. */
     @Volatile var onPull: (() -> Unit)? = null
@@ -65,6 +67,9 @@ private class FakeStore : MeetingSyncStore {
 
     override fun groupedMeetingCount(): Int? = count.also { note() }
     override fun moreToPull(): Boolean = more.also { note() }
+    @Volatile var olderReads = 0
+    override fun olderHistoryLoading(): Boolean =
+        synchronized(older) { olderReads += 1; if (older.size > 1) older.removeAt(0) else older[0] }.also { note() }
     override fun lastSyncError(): String = "connect failed: secret detail"
     override fun lastPullStats(): String = """[{"peer":"abc123","fetched":5}]"""
     override fun close() { note(); closed = true }
@@ -276,6 +281,49 @@ class SyncModelTest {
         assertTrue("behind with no failure: catching up", model.catchingUp.value)
         model.reset {}
         assertFalse("a reset (sign-out, revoke) ends catch-up", model.catchingUp.value)
+    }
+
+    @Test
+    fun olderHistoryLoadingFollowsTheStoreAfterEveryRound() = runTest {
+        // Opening reads it (a relaunch with the gap still open), then each round re-reads it.
+        store.older.clear()
+        store.older += listOf(true, true, false)
+        val model = model()
+        assertFalse(model.olderHistoryLoading.value)
+        model.syncNow()
+        assertTrue("open, and the round left the gap open", model.olderHistoryLoading.value)
+        model.syncNow()
+        assertFalse("the gap closed: the line goes away", model.olderHistoryLoading.value)
+        assertTrue("read on the store thread", store.threads.all { it == STORE_THREAD })
+    }
+
+    @Test
+    fun aRelaunchShowsOlderHistoryLoadingEvenIfTheRoundFails() = runTest {
+        // The gap is kept in the store: a failed round (offline) still says older history is loading.
+        store.older.clear()
+        store.older += true
+        store.pullResults += false
+        val model = model()
+        model.syncNow()
+        assertNotNull(model.lastError.value)
+        assertTrue(model.olderHistoryLoading.value)
+        assertEquals("read once at open and once after the round", 2, store.olderReads)
+    }
+
+    @Test
+    fun aResetHidesOlderHistoryLoading() = runTest {
+        store.older.clear()
+        store.older += true
+        val model = model()
+        model.syncNow()
+        assertTrue(model.olderHistoryLoading.value)
+        model.reset {}
+        assertFalse("a sign-out or revoke clears the line", model.olderHistoryLoading.value)
+    }
+
+    @Test
+    fun theOlderHistoryLineIsInTheCatalog() {
+        assertEquals("Older history is still loading.", StringCatalog.resolve(com.mpointer.whimbrel.mobile.R.string.sync_older_history_loading, emptyArray()))
     }
 
     @Test

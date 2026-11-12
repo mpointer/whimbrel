@@ -24,6 +24,37 @@ use crate::state::AppState;
 use crate::l10n::tr;
 
 const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+/// The most one background check may take, download included. Without it a stalled download held
+/// the checker for good: a Windows user stayed on 0.9.56 for days with no update line in the log
+/// (2026-11-11).
+const CHECK_LIMIT: Duration = Duration::from_secs(30 * 60);
+
+/// The last background check, for Send feedback's report: when (Unix ms) and what it found.
+static LAST_CHECK: std::sync::Mutex<Option<(i64, String)>> = std::sync::Mutex::new(None);
+
+/// What a finished background check found, as one log and report line. `running` is this app's version.
+fn check_line(checked: &Result<Checked, String>, running: &str) -> String {
+    match checked {
+        Ok(Checked::NothingNewer) => format!("{running} is the latest"),
+        Ok(Checked::AlreadyStaged(version)) => format!("{version} is downloaded and waits for Restart now"),
+        Ok(Checked::Staged { version, replaced: None }) => format!("downloaded {version}; it waits for Restart now"),
+        Ok(Checked::Staged { version, replaced: Some(old) }) => {
+            format!("downloaded {version} in place of {old}; it waits for Restart now")
+        }
+        Err(e) => format!("failed: {e}"),
+    }
+}
+
+/// Send feedback's lines about updates: the last background check this session, if one finished.
+pub fn status_lines() -> Vec<String> {
+    match LAST_CHECK.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        Some((at, line)) => {
+            let when = chrono::DateTime::from_timestamp_millis(at).map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string()).unwrap_or_default();
+            vec![format!("Last update check: {when}, {line}")]
+        }
+        None => vec!["Last update check: none finished this session".into()],
+    }
+}
 /// How long the installer waits for the MCP server to stop before going ahead without it.
 const STOP_SERVER_WITHIN: Duration = Duration::from_secs(5);
 
@@ -91,17 +122,18 @@ pub fn start(app: &AppHandle) {
     }
     let app = app.clone();
     let spawned = std::thread::Builder::new().name("whimbrel-update".into()).spawn(move || loop {
-        match tauri::async_runtime::block_on(check_and_stage(&app, |_| {})) {
-            Ok(Checked::NothingNewer) => tracing::debug!("no update available"),
-            Ok(Checked::AlreadyStaged(version)) => tracing::debug!(%version, "the latest update is already downloaded"),
-            Ok(Checked::Staged { version, replaced: None }) => {
-                tracing::info!(%version, "update downloaded; waiting for Restart now");
-            }
-            Ok(Checked::Staged { version, replaced: Some(old) }) => {
-                tracing::info!(%version, replaced = %old, "a newer update was downloaded and replaced the one waiting");
-            }
-            Err(e) => tracing::warn!(error = %e, "update check failed"),
+        // Bounded, so a download that stalls is dropped and tomorrow's check still runs.
+        let checked = tauri::async_runtime::block_on(async { tokio::time::timeout(CHECK_LIMIT, check_and_stage(&app, |_| {})).await })
+            .map(|done| done.map_err(|e| e.to_string()))
+            .unwrap_or_else(|_| Err(format!("timed out after {} minutes", CHECK_LIMIT.as_secs() / 60)));
+        // Every outcome at info, so a diagnostics file shows whether this PC checks, and an update
+        // that waits for Restart now day after day.
+        let line = check_line(&checked, env!("CARGO_PKG_VERSION"));
+        match &checked {
+            Ok(_) => tracing::info!(running = env!("CARGO_PKG_VERSION"), "update check: {line}"),
+            Err(_) => tracing::warn!(running = env!("CARGO_PKG_VERSION"), "update check: {line}"),
         }
+        *LAST_CHECK.lock().unwrap_or_else(|e| e.into_inner()) = Some((chrono::Utc::now().timestamp_millis(), line));
         std::thread::sleep(CHECK_EVERY);
     });
     if let Err(e) = spawned {
@@ -260,6 +292,17 @@ pub fn install_update(staged: State<'_, StagedUpdate>, state: State<'_, AppState
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_check_outcome_has_a_line_for_the_log_and_the_report() {
+        assert_eq!(check_line(&Ok(Checked::NothingNewer), "0.9.69"), "0.9.69 is the latest");
+        assert_eq!(check_line(&Ok(Checked::AlreadyStaged("0.9.70".into())), "0.9.69"), "0.9.70 is downloaded and waits for Restart now");
+        assert_eq!(
+            check_line(&Ok(Checked::Staged { version: "0.9.71".into(), replaced: Some("0.9.70".into()) }), "0.9.69"),
+            "downloaded 0.9.71 in place of 0.9.70; it waits for Restart now"
+        );
+        assert_eq!(check_line(&Err("timed out after 30 minutes".into()), "0.9.69"), "failed: timed out after 30 minutes");
+    }
 
     #[test]
     fn a_check_from_settings_reads_as_the_mac_shows_it() {

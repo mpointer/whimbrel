@@ -11,7 +11,7 @@ final class LiveTranscriptLogicTests: XCTestCase {
         let live = LiveTranscriptionService(store: { nil }, engine: { WhisperEngine(model: URL(fileURLWithPath: "/missing")) }, detectLanguage: { false }, systemURL: { nil }, micURL: { nil })
         let session = live.askSession
         session.exchanges = [MeetingAskExchange(question: "What did we decide?")]
-        session.pending = ("prep-1", 0, "model")
+        session.pending = ("prep-1", 0, "model", .ollama)
         session.streaming.apply(.textDelta(runId: "r1", sequence: 0, text: "Ship"))
 
         // The old bar is gone and no new one is attached yet; the run finishes anyway.
@@ -23,7 +23,7 @@ final class LiveTranscriptLogicTests: XCTestCase {
 
         // A second question still in flight when the meeting ends is dropped with it.
         session.exchanges.append(MeetingAskExchange(question: "Who owns it?"))
-        session.pending = ("prep-2", 1, "model")
+        session.pending = ("prep-2", 1, "model", .ollama)
         live.stop()
         XCTAssertNil(session.pending)
         XCTAssertTrue(session.exchanges.isEmpty)
@@ -92,5 +92,17 @@ final class LiveTranscriptLogicTests: XCTestCase {
         let taken = buffer.take(count: 10, keepOverlap: 0)
         XCTAssertEqual(taken.samples.count, 3)
         XCTAssertTrue(buffer.samples.isEmpty)
+    }
+
+    /// The "streaming" state event names the model that answered (the provider's default
+    /// when the requested model doesn't exist there); usage is logged under it.
+    @MainActor
+    func testStreamingStateRecordsTheAnsweringModel() {
+        let streaming = StreamingAskViewModel()
+        XCTAssertNil(streaming.answeredModel)
+        streaming.apply(.state(runId: "r1", state: .connecting, atUnixMs: 0, provider: "google", model: "gemini-2.5-pro", attempt: 1))
+        XCTAssertNil(streaming.answeredModel, "only the streaming state says who answered")
+        streaming.apply(.state(runId: "r1", state: .streaming, atUnixMs: 0, provider: "google", model: "gemini-flash-latest", attempt: 1))
+        XCTAssertEqual(streaming.answeredModel, "gemini-flash-latest")
     }
 }

@@ -2,6 +2,37 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.70] - 2026-11-12
+
+### All devices
+- With a Google key, a model Google won't serve to that key (such as the old default gemini-2.5-flash, refused for newer keys) is replaced with Google's current Flash model instead of failing every request.
+- Long meetings summarize with a local Ollama model on slower computers. Whimbrel now waits for as long as the model keeps writing, instead of giving up after 10 minutes.
+- When Google refuses to share a calendar, Whimbrel now records why: either the calendar wasn't allowed when you signed in, or Google or your organization blocks it. Gmail errors carry the same detail.
+- Default AI models can no longer go stale. Each day Whimbrel reads the current default for Google, Anthropic and OpenAI from the updates server (today gemini-flash-latest, claude-haiku-5-5 and gpt-5.4-mini), and keeps its own list for when it can't. A model you never picked, including an old default, follows the current one.
+- When Anthropic, OpenAI or Google says it no longer offers the model you chose, Whimbrel answers that request with the provider's current default instead of failing, keeps your choice, and never moves you to a pricier model family. Usage and budgets count the model that actually answered.
+
+### Mac
+- New: Ask about this window. Press Control-Option-Space (change it in Settings → Capture), or choose "Ask about this window…" in the menu bar, to ask a question about the window you're in. The panel says where the question will go before you send it, removes known secrets first, never reads password fields or excluded apps, and doesn't keep the window's text. This first version answers and copies; it doesn't draft or paste.
+- With a Google key, Whimbrel now defaults to Google's current Flash model. The old default (gemini-2.5-flash) was retired by Google and returned errors.
+- Settings → Connectors and the Schedule panel now say when Google didn't give Whimbrel access to your calendar (sign in again and allow calendar access), or when Google is blocking calendar access for the account.
+- Settings → AI Providers says when a provider no longer offers the model you chose, and which model is answering for now. The Anthropic and OpenAI defaults now come from Whimbrel's shared list too (claude-haiku-5-5 and gpt-5.4-mini today).
+
+### Phones
+- A new phone shows your recent meetings first and fills in older history afterward. Until it's done, the sync line says "Older history is still loading."
+- iPhone: Ask uses the current default model for your provider unless you picked one on your computer, and logs usage under the model that actually answered.
+
+### Android
+- With more than one Google account on the phone, Whimbrel renews its sign-in for the account you chose without asking you to pick an account again. A phone signed in before this update asks once more, then remembers.
+
+### Windows
+- New: Ask about this window. Press Ctrl+Alt+Space (change it in Settings → Capture), or use the tray menu, to ask a question about the window you're in. The panel says where the question will go before you send it, removes known secrets first, skips password fields and excluded apps, and doesn't keep the window's text.
+- When Google keeps Whimbrel from a calendar, Settings → Connected accounts says so on that account: either calendar access wasn't allowed when signing in, with how to fix it, or Google or your organization is blocking it.
+- With a Google key, Whimbrel now defaults to Google's current Flash model (gemini-flash-latest).
+- Restart now no longer fails with "Failed to kill Whimbrel" when Whimbrel takes a moment to close: the update waits up to 15 seconds for it.
+- When a meeting summary fails because the local model (Ollama) couldn't finish, the meeting says so and suggests Whimbrel AI or a smaller model, instead of "every model provider failed".
+- Settings → AI says when a provider no longer offers the model you chose, and which model is answering for now. The Anthropic and OpenAI defaults now come from Whimbrel's shared list too.
+- A stalled update download no longer stops Whimbrel from checking for updates. Each check now gives up after 30 minutes, and Send feedback's report says when Whimbrel last checked and what it found.
+
 ## [0.9.69] - 2026-11-11
 
 ### All devices

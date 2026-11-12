@@ -43,13 +43,7 @@ pub fn answer(
         )
     })
     .map_err(crate::chain_failed)?;
-    log_usage_for(
-        store,
-        entry.provider,
-        &entry.model,
-        "ask",
-        answer.token_usage,
-    );
+    crate::util::log_link_usage(store, entry, "ask", answer.token_usage);
     Ok(answer)
 }
 
@@ -87,21 +81,21 @@ fn assemble_ask_context(
 /// the SAME context after the streamed answer completes. Entries are removed by
 /// `finalize_ask`/`discard_ask`; an app relaunch mid-stream drops any never-finalized
 /// entry along with the process, which is fine — there's nothing durable to leak.
-struct PreparedAsk {
-    context: Vec<llm::ContextItem>,
+pub(crate) struct PreparedAsk {
+    pub(crate) context: Vec<llm::ContextItem>,
     /// The provider the streamed answer is attributed to for usage/cost logging (#83):
     /// the routing config's preferred provider, the same one the shell then streams
     /// against — forced to Ollama in local-only mode, mirroring `build_chain`.
-    provider: llm::Provider,
+    pub(crate) provider: llm::Provider,
 }
 
 static PREPARED_ASKS: OnceLock<Mutex<HashMap<String, PreparedAsk>>> = OnceLock::new();
 
-fn prepared_asks() -> &'static Mutex<HashMap<String, PreparedAsk>> {
+pub(crate) fn prepared_asks() -> &'static Mutex<HashMap<String, PreparedAsk>> {
     PREPARED_ASKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn provider_for_streamed_answer(routing: &RoutingConfig) -> llm::Provider {
+pub(crate) fn provider_for_streamed_answer(routing: &RoutingConfig) -> llm::Provider {
     if routing.sensitive {
         return llm::Provider::Ollama;
     }
@@ -245,7 +239,7 @@ fn answer_meeting_with(
     let Some((completion, entry)) = llm::try_chain(&chain, |entry| entry.client.complete(&prompt)) else {
         return Err(ApiError::ProviderFailure.into());
     };
-    log_usage_for(store, entry.provider, &entry.model, "ask", completion.token_usage);
+    crate::util::log_link_usage(store, entry, "ask", completion.token_usage);
     let citations = llm::extract_citations(&completion.text, &context);
     Ok(MeetingAnswer { text: completion.text, citations, narrowed })
 }
@@ -378,13 +372,7 @@ pub fn generate_conversation_title(
         llm::generate_conversation_title(entry.client.as_ref(), query, answer, &routing.output_language)
     })
     .map_err(crate::chain_failed)?;
-    log_usage_for(
-        store,
-        entry.provider,
-        &entry.model,
-        "conversation_title",
-        token_usage,
-    );
+    crate::util::log_link_usage(store, entry, "conversation_title", token_usage);
     Ok(ConversationTitle { title })
 }
 

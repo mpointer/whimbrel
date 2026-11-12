@@ -39,6 +39,10 @@ final class CoreLLMErrorDecodingTests: XCTestCase {
         XCTAssertEqual(unauthorized?.userFacingMessage, "Anthropic rejected the API key. Check it in Settings → AI Providers.")
         let notRunning = decode(#"{"kind":"provider_failure","reason":{"kind":"ollama_not_running"}}"#, as: CoreLLMError.self)
         XCTAssertEqual(notRunning, .providerFailureBecause(.ollamaNotRunning))
+        let gone = decode(#"{"kind":"provider_failure","reason":{"kind":"model_unavailable","provider":"google","model":"gemini-2.5-pro"}}"#, as: CoreLLMError.self)
+        XCTAssertEqual(gone, .providerFailureBecause(.modelUnavailable(provider: "google", model: "gemini-2.5-pro")))
+        XCTAssertEqual(gone?.userFacingMessage, "Google doesn't offer the model gemini-2.5-pro to your key. Choose another in Settings → AI Providers.")
+        XCTAssertEqual(gone?.opensAIProvidersSettings, true)
         // A reason with no message of its own keeps the generic text.
         let other = decode(#"{"kind":"provider_failure","reason":{"kind":"other","provider":"openai","status":500}}"#, as: CoreLLMError.self)
         XCTAssertEqual(other, .providerFailure)

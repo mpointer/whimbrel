@@ -1,0 +1,111 @@
+<!--
+{
+  "title": "Whimbrel vs Littlebird: A Littlebird Alternative",
+  "description": "Whimbrel and Littlebird both remember your work and take notes without a bot. Littlebird keeps it in its AWS cloud; Whimbrel keeps it on your computer.",
+  "priority": 0.7,
+  "ogType": "article",
+  "crumbs": [
+    {
+      "name": "Compare",
+      "path": "/compare/"
+    },
+    {
+      "name": "Whimbrel vs. Littlebird",
+      "path": "/compare/littlebird-alternative/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "What is the main difference between Whimbrel and Littlebird?",
+      "a": "Both remember your work and take bot-free meeting notes. Littlebird stores your data on Amazon Web Services in the US, and its own privacy page says it may not fit people who require local-only systems. Whimbrel stores recordings, transcripts and history on your computer."
+    },
+    {
+      "q": "Does Whimbrel send my data to AI providers?",
+      "a": "Only if you choose a hosted model. With a local model, nothing is sent. With a hosted model, the text of that request goes to the model, and Whimbrel AI requests pass through Whimbrel's server. The app lists every request that leaves your computer."
+    }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Comparison</p>
+    <h1>Whimbrel vs. Littlebird</h1>
+    <p class="lede">Both remember what you work on and take meeting notes without a bot. The difference is where that memory lives: Littlebird's is in its cloud, Whimbrel's is on your computer. See also the <a href="/compare/">three-way comparison with Granola</a>.</p>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="table-wrap">
+      <table class="compare">
+        <caption class="sr-only">Feature comparison between Whimbrel and Littlebird</caption>
+        <thead><tr><th scope="col">Capability</th><th scope="col">Whimbrel</th><th scope="col">Littlebird</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Meeting notes without a bot</th><td class="yes">Yes</td><td class="yes">Yes, from your computer's audio<sup><a href="#src-4">4</a></sup></td></tr>
+          <tr><th scope="row">Memory of non-meeting work</th><td class="yes">Yes: screen text and email</td><td class="yes">Yes: reads the text of your active apps<sup><a href="#src-6">6</a></sup></td></tr>
+          <tr><th scope="row">Where your history is stored</th><td class="yes">On your computer, not on Whimbrel's servers</td><td class="no">Amazon Web Services, US East, encrypted<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Where transcription runs</th><td class="yes">Yes, on-device</td><td>Not found<sup><a href="#src-4">4</a></sup></td></tr>
+          <tr><th scope="row">AI models</th><td class="yes">Yes: local models, or your own key</td><td class="no">Sends "the context it needs" to AI providers; providers not named<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Text sent to a hosted model</th><td>Only if you pick a hosted model. Whimbrel AI requests pass through Whimbrel's server</td><td class="no">Yes, for answers<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Local-only use</th><td class="yes">Yes, in local-only mode</td><td class="no">Not offered: "might not be the right fit" if you require local-only systems<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Integrations</th><td>Gmail, Google Calendar, Outlook 365; local MCP server</td><td class="yes">Gmail, Outlook, Calendar, Drive, Slack, Notion, HubSpot, Linear and more, on every plan<sup><a href="#src-5">5</a></sup></td></tr>
+          <tr><th scope="row">Works from Claude or ChatGPT on the web</th><td>Local MCP server only</td><td class="yes">Remote MCP server on Plus and above<sup><a href="#src-7">7</a></sup></td></tr>
+          <tr><th scope="row">Phones</th><td>Read and ask only (beta); no phone recording</td><td class="yes">iPhone and Android apps; notes on iPhone for in-person meetings<sup><a href="#src-3">3</a></sup><sup><a href="#src-4">4</a></sup></td></tr>
+          <tr><th scope="row">Teams, SSO, SOC 2</th><td class="no">No</td><td class="yes">Team plan; SOC 2 Type II; HIPAA BAA<sup><a href="#src-2">2</a></sup><sup><a href="#src-8">8</a></sup></td></tr>
+          <tr><th scope="row">Open source</th><td class="yes">Yes, Apache 2.0</td><td class="no">No</td></tr>
+          <tr><th scope="row">Price</th><td>Free. Optional paid plans on the <a href="/pricing/">pricing page</a></td><td>Free: 25 meeting notes in total. Plus $17/month billed annually; Power $42.50; Pro $100<sup><a href="#src-1">1</a></sup></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine muted table-note"> Every Littlebird claim links to the page it came from, read on November 11, 2026. "Not found" means we did not find it stated on the pages we read. Products change; check Littlebird's site for current details. About Whimbrel: recordings, transcripts and history are stored on your computer and not on Whimbrel's servers. AI runs on your computer or on a model you choose; with a hosted model, the text of each request goes to that model. Every way data can leave is listed in the app.</p>
+  </div>
+</section>
+
+<section>
+  <div class="container split split-top">
+    <div>
+      <h2>Choose Whimbrel if…</h2>
+      <ul class="checklist">
+        <li>Your client calls and work history should be stored on your own computer, not in a vendor cloud.</li>
+        <li>You want to run a local model, or choose the provider that sees your text.</li>
+        <li>You want a page per client with what is owed, and the source open to read.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Choose Littlebird if…</h2>
+      <ul class="checklist">
+        <li>You want your email, calendar, Slack and Drive connected with no setup, including on the free plan.</li>
+        <li>You need SOC 2 Type II, a HIPAA agreement or SSO from the vendor.</li>
+        <li>You want to ask questions from your phone or by text message.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="narrow">
+    <h2 class="center">Common questions</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Sources</h2>
+    <p class="fine muted">All read on November 11, 2026.</p>
+    <ol class="fine muted">
+        <li id="src-1"><a href="https://littlebird.ai/pricing" rel="noopener">https://littlebird.ai/pricing</a></li>
+        <li id="src-2"><a href="https://littlebird.ai/privacy" rel="noopener">https://littlebird.ai/privacy</a></li>
+        <li id="src-3"><a href="https://littlebird.ai/" rel="noopener">https://littlebird.ai/</a></li>
+        <li id="src-4"><a href="https://littlebird.ai/features/meeting-notes" rel="noopener">https://littlebird.ai/features/meeting-notes</a></li>
+        <li id="src-5"><a href="https://littlebird.ai/integrations" rel="noopener">https://littlebird.ai/integrations</a></li>
+        <li id="src-6"><a href="https://docs.littlebird.ai/docs/context/" rel="noopener">https://docs.littlebird.ai/docs/context/</a></li>
+        <li id="src-7"><a href="https://littlebird.ai/features/mcp" rel="noopener">https://littlebird.ai/features/mcp</a></li>
+        <li id="src-8"><a href="https://littlebird.ai/enterprise" rel="noopener">https://littlebird.ai/enterprise</a></li>
+    </ol>
+  </div>
+</section>
+{{> cta}}

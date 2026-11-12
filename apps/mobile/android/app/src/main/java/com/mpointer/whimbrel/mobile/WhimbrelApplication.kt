@@ -9,6 +9,7 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.mpointer.whimbrel.mobile.auth.EnrollmentConfig
+import com.mpointer.whimbrel.mobile.auth.AccountHintStore
 import com.mpointer.whimbrel.mobile.auth.GoogleSignIn
 import com.mpointer.whimbrel.mobile.auth.LiveEnrollmentBackend
 import com.mpointer.whimbrel.mobile.core.CoreMemoryStore
@@ -98,7 +99,7 @@ class WhimbrelApplication : Application() {
         val worker = SyncWorkerClient(Native, BuildConfig.SYNC_WORKER_BASE_URL)
         val configError = EnrollmentConfig.configErrorRes(BuildConfig.GOOGLE_WEB_CLIENT_ID, BuildConfig.SYNC_WORKER_BASE_URL)
         val backend = if (configError != null) null else {
-            LiveEnrollmentBackend(GoogleSignIn.create(this, BuildConfig.GOOGLE_WEB_CLIENT_ID, Native), worker) { activity }
+            LiveEnrollmentBackend(GoogleSignIn.create(this, BuildConfig.GOOGLE_WEB_CLIENT_ID, Native, AccountHintStore(prefs)), worker) { activity }
         }
         EnrollmentModel(
             backend = backend,
@@ -110,6 +111,7 @@ class WhimbrelApplication : Application() {
             clock = System::currentTimeMillis,
             sleep = { seconds -> delay(seconds * 1000) },
             configError = configError?.let(::getString),
+            log = { android.util.Log.w("google-signin", it) },
         ).also {
             it.onWipe = {
                 wipeHandler(prefs, rawPrefs, keys, liveSync, storeDir)()

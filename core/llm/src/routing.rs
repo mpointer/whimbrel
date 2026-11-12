@@ -172,6 +172,9 @@ pub enum ProviderFailureKind {
     /// Never the provider's error text: some bodies echo a masked key, and a transport
     /// error's URL can carry one (`?key=`). The HTTP status, when there was one.
     Other { #[serde(serialize_with = "provider_id")] provider: Provider, status: Option<u16> },
+    /// The provider answered that `model` does not exist (`crate::is_model_not_found`), and
+    /// no fallback answered for it either.
+    ModelUnavailable { #[serde(serialize_with = "provider_id")] provider: Provider, model: String },
 }
 
 fn provider_id<S: serde::Serializer>(provider: &Provider, s: S) -> Result<S::Ok, S::Error> {
@@ -193,6 +196,7 @@ impl ProviderFailureKind {
                 Self::OllamaModelMissing { model: model.to_string() }
             }
             LlmError::Http { status: 402, .. } if provider == Provider::Whimbrel => Self::CreditExhausted,
+            _ if crate::is_model_not_found(provider, err) => Self::ModelUnavailable { provider, model: model.to_string() },
             LlmError::Http { status: 401 | 403, .. } => Self::Unauthorized { provider },
             LlmError::Http { status: 429, .. } => Self::RateLimited { provider },
             LlmError::Network(_) => Self::Network { provider },
@@ -223,6 +227,10 @@ impl ProviderFailureKind {
             }
             Self::RateLimited { provider } => format!("{} is busy or out of credit. Try again shortly.", name(provider)),
             Self::CreditExhausted => "Whimbrel AI credit is used up. Add credit in Settings.".into(),
+            Self::ModelUnavailable { provider, model } => format!(
+                "{} doesn't offer the model {model} to your key. Pick another in Settings → AI Providers.",
+                name(provider)
+            ),
             Self::Network { .. } | Self::Other { .. } => "Every AI provider failed.".into(),
         }
     }
@@ -267,7 +275,10 @@ pub fn falls_through(err: &LlmError) -> bool {
     match err {
         LlmError::Network(_) | LlmError::Provider(_) | LlmError::NotImplemented(_) => true,
         LlmError::Http { status, .. } => {
-            is_retryable(err) || matches!(status, 401 | 402 | 403 | 404 | 408)
+            is_retryable(err)
+                || matches!(status, 401 | 402 | 403 | 404 | 408)
+                // A model one provider doesn't have says nothing about the next link.
+                || (*status == 400 && [Provider::OpenAI, Provider::Anthropic].iter().any(|p| crate::is_model_not_found(*p, err)))
         }
     }
 }
@@ -483,6 +494,28 @@ mod tests {
             ])
         );
         assert!(take_last_chain_failures().is_empty(), "walking a chain records nothing by itself");
+    }
+
+    #[test]
+    fn a_missing_hosted_model_is_its_own_kind_and_moves_on() {
+        let openai_400 = || LlmError::Http { status: 400, body: r#"{"error":{"code":"model_not_found"}}"#.into() };
+        let kind = ProviderFailureKind::classify(Provider::OpenAI, "gpt-4o-mini", &openai_400());
+        assert_eq!(kind, ProviderFailureKind::ModelUnavailable { provider: Provider::OpenAI, model: "gpt-4o-mini".into() });
+        assert_eq!(
+            serde_json::to_string(&kind).unwrap(),
+            r#"{"kind":"model_unavailable","provider":"openai","model":"gpt-4o-mini"}"#
+        );
+        assert_eq!(kind.user_message(), "OpenAI doesn't offer the model gpt-4o-mini to your key. Pick another in Settings → AI Providers.");
+        assert_eq!(
+            ProviderFailureKind::classify(Provider::Google, "gemini-2.5-flash", &http(404)),
+            ProviderFailureKind::ModelUnavailable { provider: Provider::Google, model: "gemini-2.5-flash".into() }
+        );
+        // Ollama keeps its own kind; OpenRouter's 404 stays Other.
+        assert_eq!(ProviderFailureKind::classify(Provider::Ollama, "m", &http(404)), ProviderFailureKind::OllamaModelMissing { model: "m".into() });
+        assert_eq!(ProviderFailureKind::classify(Provider::OpenRouter, "m", &http(404)), ProviderFailureKind::Other { provider: Provider::OpenRouter, status: Some(404) });
+        // A 400 that only means "no such model" is that link's problem, not the request's.
+        assert!(falls_through(&openai_400()));
+        assert!(!falls_through(&LlmError::Http { status: 400, body: r#"{"error":{"code":"context_length_exceeded"}}"#.into() }));
     }
 
     #[test]

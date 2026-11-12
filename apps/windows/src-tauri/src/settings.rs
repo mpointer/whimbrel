@@ -103,6 +103,9 @@ pub mod keys {
     pub const RETENTION_ACKNOWLEDGED: &str = "retention.noticeAcknowledged";
     /// Device-local: start at login (Task 10). Unset until the first release launch.
     pub const GENERAL_AUTOSTART: &str = "general.autostart";
+    /// Device-local: the hotkey panel's global shortcut, in the plugin's accelerator form
+    /// (`Control+Alt+Space`). Absent is the default.
+    pub const HOTKEY_PANEL_SHORTCUT: &str = "hotkeyPanel.shortcut";
     /// Device-local: calendar events already prompted, id -> event end (unix ms), kept
     /// until each ends so a relaunch mid-meeting doesn't prompt or record it again.
     pub const MEETINGS_PROMPTED: &str = "meetings.promptedEvents";
@@ -212,14 +215,16 @@ pub struct RoutingSettings {
 }
 
 impl Default for RoutingSettings {
-    /// The Mac's defaults (`RoutingSettings.swift`).
+    /// The Mac's defaults (`RoutingSettings.swift`). The hosted models come from core
+    /// (`api::model_defaults`: the updates server's file, else core's table), never a literal here.
     fn default() -> Self {
+        let hosted = api::model_defaults::cached();
         RoutingSettings {
             preferred_provider: Provider::Ollama,
             ollama_model: "gemma4:12b".into(),
-            anthropic_model: "claude-haiku-4-5".into(),
-            openai_model: "gpt-4o-mini".into(),
-            google_model: "gemini-2.5-flash".into(),
+            anthropic_model: hosted.model(llm::Provider::Anthropic).into(),
+            openai_model: hosted.model(llm::Provider::OpenAI).into(),
+            google_model: hosted.model(llm::Provider::Google).into(),
             openrouter_model: String::new(),
             whimbrel_model: crate::whimbrel_ai::DEFAULT_MODEL.into(),
             user_daily_cap_cents: None,
@@ -507,9 +512,11 @@ impl SettingsFile {
                 let (configured, _) = self.ollama_model_choice();
                 crate::ollama_default::pick_for(&configured).unwrap_or(configured)
             },
-            anthropic_model: self.get(keys::ANTHROPIC_MODEL).unwrap_or(d.anthropic_model),
-            openai_model: self.get(keys::OPENAI_MODEL).unwrap_or(d.openai_model),
-            google_model: self.get(keys::GOOGLE_MODEL).unwrap_or(d.google_model),
+            // Every routing save stored the default too, so a stored copy of a default (current or
+            // earlier) reads as never chosen and follows the current one; a real choice is kept.
+            anthropic_model: self.hosted_model(keys::ANTHROPIC_MODEL, llm::Provider::Anthropic),
+            openai_model: self.hosted_model(keys::OPENAI_MODEL, llm::Provider::OpenAI),
+            google_model: self.hosted_model(keys::GOOGLE_MODEL, llm::Provider::Google),
             openrouter_model: self.get(keys::OPENROUTER_MODEL).unwrap_or(d.openrouter_model),
             whimbrel_model: crate::whimbrel_ai::resolve_pick(self.get(keys::WHIMBREL_MODEL), &crate::whimbrel_ai::offered()),
             user_daily_cap_cents: self.get(keys::USER_DAILY_CAP_CENTS),
@@ -520,6 +527,12 @@ impl SettingsFile {
             openrouter_prices: self.openrouter_prices(),
             output_language: crate::l10n::output_language(&self.output_language_override(), self.multilingual()),
         }
+    }
+
+    /// A hosted provider's model: the stored one when the user chose it, else core's current
+    /// default (`api::model_defaults::resolve`).
+    fn hosted_model(&self, key: &str, provider: llm::Provider) -> String {
+        api::model_defaults::resolve(provider, self.get::<String>(key).as_deref(), &api::model_defaults::cached())
     }
 
     /// The stored Ollama model (else the app's default) and whether it is the user's own choice:
@@ -944,6 +957,17 @@ impl SettingsFile {
         self.set(keys::GENERAL_AUTOSTART, Some(enabled));
     }
 
+    /// The hotkey panel's shortcut; the default when unset or blank.
+    pub fn hotkey_panel_shortcut(&self) -> String {
+        self.get::<String>(keys::HOTKEY_PANEL_SHORTCUT)
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| crate::hotkey_panel::DEFAULT_SHORTCUT.to_string())
+    }
+
+    pub fn set_hotkey_panel_shortcut(&mut self, shortcut: &str) {
+        self.set(keys::HOTKEY_PANEL_SHORTCUT, Some(shortcut.to_string()));
+    }
+
     /// The Language picker's choice; `""` is Automatic.
     pub fn app_language(&self) -> String {
         self.get(keys::APP_LANGUAGE).unwrap_or_default()
@@ -1304,6 +1328,20 @@ mod tests {
         let r = SettingsFile::load(&path).routing();
         assert_eq!(r.preferred_provider, Provider::Google);
         assert_eq!(r.google_model, "gemini-2.5-pro");
+        // The old default, saved with an earlier routing change, moves to the current alias.
+        let old_path = temp_path("oldgoogle");
+        std::fs::write(&old_path, r#"{"routing.googleDefaultModel":"gemini-2.5-flash"}"#).unwrap();
+        assert_eq!(SettingsFile::load(&old_path).routing().google_model, llm::GOOGLE_FALLBACK_MODEL);
+        // So do the other old defaults; a chosen model stays.
+        std::fs::write(&old_path, r#"{"routing.anthropicDefaultModel":"claude-haiku-4-5","routing.openaiDefaultModel":"gpt-4o-mini"}"#).unwrap();
+        let old = SettingsFile::load(&old_path).routing();
+        let current = api::model_defaults::cached();
+        assert_eq!(old.anthropic_model, current.model(llm::Provider::Anthropic));
+        assert_eq!(old.openai_model, current.model(llm::Provider::OpenAI));
+        assert_ne!(old.openai_model, "gpt-4o-mini");
+        std::fs::write(&old_path, r#"{"routing.openaiDefaultModel":"gpt-4.1"}"#).unwrap();
+        assert_eq!(SettingsFile::load(&old_path).routing().openai_model, "gpt-4.1");
+        let _ = std::fs::remove_dir_all(old_path.parent().unwrap());
         assert!(!r.local_only);
         assert_eq!(r.user_daily_cap_cents, None);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();

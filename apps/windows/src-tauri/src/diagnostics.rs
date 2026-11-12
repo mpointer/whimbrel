@@ -324,6 +324,8 @@ pub fn report(state: &AppState) -> String {
         format!("Database: {}", if state.store.is_some() { "open" } else { "not open" }),
     ];
     app.extend(state.startup_errors.iter().map(|e| format!("Startup problem: {e}")));
+    // Whether this PC checks for updates, and an update that has waited for Restart now.
+    app.extend(crate::app::update::status_lines());
 
     let (routing, capture_on) = {
         let settings = state.settings.lock().unwrap();

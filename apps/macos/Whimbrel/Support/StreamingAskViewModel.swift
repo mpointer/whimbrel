@@ -26,6 +26,10 @@ final class StreamingAskViewModel: ObservableObject {
     /// Token counts from the run's terminal event (nil fields until it arrives, and for
     /// providers that report none). Read by `TimelineView.finalizeStreamingAnswer`.
     @Published private(set) var usage = InferenceEvent.TokenUsage()
+    /// The model the "streaming" state event named: the provider's default when the
+    /// requested model doesn't exist there. Nil until the stream opens. Usage is logged
+    /// under it, and `CoreMemoryStore.noteModelAnswer` compares it with the request.
+    @Published private(set) var answeredModel: String?
 
     private var activeRunId: String?
     private var pollTask: Task<Void, Never>?
@@ -43,6 +47,7 @@ final class StreamingAskViewModel: ObservableObject {
     func start(prompt: String, model: String, provider: InferenceStreamClient.Provider = .ollama, apiKey: String? = nil, baseURLOverride: String? = nil) {
         releaseCurrentRun()
         streamedText = ""
+        answeredModel = nil
         usage = InferenceEvent.TokenUsage()
         phase = .connecting
         guard provider == .local else {
@@ -97,10 +102,12 @@ final class StreamingAskViewModel: ObservableObject {
     /// Internal so tests can feed events without a provider.
     func apply(_ event: InferenceEvent) {
         switch event {
-        case .state(_, let state, _, _, _, _):
+        case .state(_, let state, _, _, let model, _):
             switch state {
             case .queued, .connecting: phase = .connecting
-            case .streaming: phase = .streaming
+            case .streaming:
+                phase = .streaming
+                if let model, !model.isEmpty { answeredModel = model }
             case .cancelling: phase = .cancelling
             }
         case .textDelta(_, _, let text):

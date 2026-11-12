@@ -347,7 +347,7 @@ struct TimelineView: View {
     @State var showHiddenEpisodes = false
     @State var selectedProvider: RoutingSettings.Provider = .ollama
     @State var ollamaModel: String = "gemma4:12b"
-    @State var selectedHostedModel: String = "claude-haiku-4-5"
+    @State var selectedHostedModel: String = HostedModelDefaults.resolve(provider: "anthropic", stored: nil)
     // Distinguishes "picker still shows the account default because the user never
     // touched it" from "the user explicitly picked the account default's own value" --
     // effectiveAskRoutingProvider's value-equality check alone can't tell those apart,

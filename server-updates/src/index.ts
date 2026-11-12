@@ -13,12 +13,15 @@ export interface Env {
  * this Worker only ever reads. */
 /** Published objects, by request path → R2 key and content-type. The Mac reads
  * `version.json` and `Whimbrel-<v>.zip`; Windows (M3.5) reads `windows/latest.json`
- * (tauri-plugin-updater's signed manifest) and the NSIS installer it points at. */
+ * (tauri-plugin-updater's signed manifest) and the NSIS installer it points at. Every
+ * app reads `models/defaults.json` (server-updates/models/defaults.json in the repo). */
 const ROUTES: { path: RegExp; contentType: string }[] = [
   { path: /^\/version\.json$/, contentType: "application/json" },
   { path: /^\/Whimbrel-[\w.-]+\.zip$/, contentType: "application/zip" },
   { path: /^\/windows\/latest\.json$/, contentType: "application/json" },
   { path: /^\/windows\/Whimbrel_[\w.-]+_x64-setup\.exe$/, contentType: "application/octet-stream" },
+  // Default AI model per provider, read daily by every app (core's built-in table is the fallback).
+  { path: /^\/models\/defaults\.json$/, contentType: "application/json" },
 ];
 
 const MANIFESTS = new Set(["/version.json", "/windows/latest.json"]);

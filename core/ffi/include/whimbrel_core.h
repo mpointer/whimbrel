@@ -326,6 +326,18 @@ char *whimbrel_llm_prepare_meeting_ask(
     StoreHandle *handle, int64_t meeting_id, const char *query, const char *history_json,
     const char *routing_config_json);
 
+/* The hotkey panel's "Ask about this window": builds the prompt from the focused window's
+ * text (window_json: {"app_name","title","text","is_selection"}), redacted and capped, plus
+ * memory background. prepare_id goes to whimbrel_llm_finalize_ask / whimbrel_llm_discard_ask
+ * exactly as for prepare_ask. Success data: {"prepare_id","prompt","truncated",
+ * "destination"}; destination is "local_only", "local" or {"hosted":{"provider":"..."}}.
+ * Blank window text is {"ok":false,"error":{"kind":"no_text"}}; local-only mode with no local
+ * model is {"ok":false,"error":{"kind":"local_model_missing"}}. NULL on a null handle or
+ * malformed arguments. */
+char *whimbrel_llm_prepare_window_ask(
+    StoreHandle *handle, const char *window_json, const char *query, const char *history_json,
+    const char *routing_config_json);
+
 /* Blocking meeting Ask through the governed chain (not pinned: a provider over its monthly
  * budget is skipped for the next). Used when the streamed provider's budget is spent.
  * Success data: {"text","citations","narrowed"}. Errors as whimbrel_llm_prepare_meeting_ask,
@@ -1257,8 +1269,14 @@ char *whimbrel_sync_content_last_error(void);
 /* Whether the last content sync left rows on the relay, so another round should follow soon. */
 bool whimbrel_sync_content_more_to_pull(void);
 /* The last pull round's per-peer stats as a JSON array: hashed peer tags, cursors and
- * row counts only. Caller frees with whimbrel_core_free_string. */
+ * row counts only. Since #572 each entry also has gap_opened, gap_fetched, gap_lo and
+ * gap_hi (null once that peer's older history is in). Caller frees with
+ * whimbrel_core_free_string. */
 char *whimbrel_sync_content_last_pull_stats(void);
+/* Whether older history is still loading (#572): the phone pulls each peer's backlog
+ * newest first, and this stays true until every peer's older rows are in. Read from the
+ * store, so it is right after a relaunch. False on a NULL handle. */
+bool whimbrel_sync_content_older_history_loading(StoreHandle *handle);
 
 /* JSON array of DeletedMeetingFiles: meetings other devices forgot that content sync deleted
  * here since the last call ("[]" if none). Call after every round, failed or not, and delete each
@@ -1408,6 +1426,48 @@ char *whimbrel_update_check_manifest(const char *manifest_json, const char *curr
  * A NULL path or an unreadable file is a mismatch. */
 bool whimbrel_update_verify_sha256(const char *path, const char *expected_sha256);
 
+/* ---- Hosted model defaults (core/api::model_defaults, 2026-11-11) ----
+ * Each hosted provider's default model comes from defaults.json on the updates server,
+ * cached in the store, with core's built-in table as the fallback. Opening the store puts
+ * the cached defaults in force for the chain builders. Strings returned here are freed
+ * with whimbrel_core_free_string.
+ *
+ * The defaults in force, as JSON:
+ * {"providers": {"google": {"default", "family", "previous": [...]}, "anthropic": {...},
+ * "openai": {...}}, "source": "builtin" | "file", "fetched_at_ms": int or null}.
+ * "previous" lists earlier defaults: a stored copy of one counts as never chosen. Also
+ * puts them in force. NULL on a NULL handle. */
+char *whimbrel_model_defaults_json(StoreHandle *handle);
+
+/* Fetches defaults.json now and caches it when usable; call once a day, off the main
+ * thread (one HTTPS request, up to about 20 s). false when the fetch failed or the file
+ * was unusable (the cached file or the built-in table stays in force), or on NULL. */
+bool whimbrel_model_defaults_refresh(StoreHandle *handle);
+
+/* The model to use for provider ("google", "anthropic", "openai", ...) given the stored
+ * value (nullable): stored when the user chose it, else the current default (empty, or
+ * an earlier default, counts as never chosen). For a provider without a default (e.g.
+ * "openrouter"), stored or "". A plain string, not JSON. NULL on a NULL provider. */
+char *whimbrel_model_resolve(const char *provider, const char *stored);
+
+/* Chosen models a provider answered "no such model" for, with the default that answered
+ * instead: JSON [{"provider", "model", "using", "since_ms"}] (empty when none). Settings
+ * shows "<model> isn't available to your <provider> key; using <using> for now." under a
+ * provider whose chosen model matches "model". Blocking calls record and clear these
+ * themselves. NULL on a NULL handle. */
+char *whimbrel_model_unavailable_json(StoreHandle *handle);
+
+/* For a streaming run: requested is the model it was started with, answered the model
+ * its "streaming" state event named (nullable). A different answered records requested
+ * as unavailable; the same (or NULL) clears its record. Log the run's usage under
+ * answered. false on a NULL handle, provider or requested. */
+bool whimbrel_model_note_answer(StoreHandle *handle, const char *provider, const char *requested,
+                                const char *answered, int64_t now_unix_ms);
+
+/* Drops provider's unavailable record, e.g. when the user picks another model. false on a
+ * NULL handle or unknown provider. */
+bool whimbrel_model_unavailable_clear(StoreHandle *handle, const char *provider);
+
 /* ---- Ask-surface helpers (core/api::prompts, core/api::hosted_models, M3.0 Task 5) ----
  * The built-in Ask starter prompts as a JSON array of {"id", "title", "query"}, in `lang`
  * (BCP 47; NULL or "" is English). */
@@ -1536,6 +1596,14 @@ char *whimbrel_connector_calendar_request(StoreHandle *handle, const char *accou
  * handle/pointer, malformed existing_meetings_json, or a DB error. A malformed result
  * decodes as an empty, non-resync result (a background poll never crashes). */
 char *whimbrel_connector_calendar_apply(StoreHandle *handle, const char *account_email, const char *result_json, const char *existing_meetings_json, int64_t now_unix_ms);
+
+/* Classifies a Google Calendar connector failure: message is McpHost's last error text
+ * (e.g. "tool call failed: Google Calendar API returned 403 (insufficientPermissions)").
+ * Returns JSON {"code": "calendar_access_not_granted" | "calendar_access_blocked",
+ * "status": 403, "reason": string-or-null}, or the JSON null when the message isn't one
+ * of these access problems (other statuses, 403 rate limits and quotas). NULL on a null
+ * or non-UTF-8 pointer. Free with whimbrel_core_free_string. */
+char *whimbrel_connector_classify_calendar_error(const char *message);
 
 /* Returns JSON {"tool": "sync_messages", "args_json": "..."} (args carry the stored
  * historyId, or are "{}" for a baseline). */

@@ -112,6 +112,7 @@ fun TodayScreen(
     val deviceLabels by labels.collectAsState()
     val strings = remember(context) { ResourceReadStrings(context) }
     val syncLine = rememberSyncLine(sync)
+    val olderLoading by sync.olderHistoryLoading.collectAsState()
     var refreshing by remember { mutableStateOf(false) }
     var briefExpanded by rememberSaveable { mutableStateOf(false) }
     var showPrep by rememberSaveable { mutableStateOf(false) }
@@ -196,6 +197,9 @@ fun TodayScreen(
                         recent.forEach { MeetingListRow(it, deviceLabels, strings, Modifier.clickable { onOpenMeeting(it.id) }, withDate = true) }
                     }
                     Text(syncLine, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                    if (olderLoading) {
+                        Text(stringResource(R.string.sync_older_history_loading), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                    }
                 }
             }
         }

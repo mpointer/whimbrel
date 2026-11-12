@@ -1,0 +1,108 @@
+<!--
+{
+  "title": "Whimbrel vs Voicenotes: A Voicenotes Alternative",
+  "description": "Voicenotes calls itself the notetaker for confidential meetings; its privacy policy says recordings are stored on AWS. Whimbrel stores them on your computer.",
+  "priority": 0.7,
+  "ogType": "article",
+  "crumbs": [
+    {
+      "name": "Compare",
+      "path": "/compare/"
+    },
+    {
+      "name": "Whimbrel vs. Voicenotes",
+      "path": "/compare/voicenotes-alternative/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Is Voicenotes private?",
+      "a": "It is botless and says it does not train on your data. Its privacy policy also says recordings are stored on AWS in the US, that transcription and AI use named third-party providers, and that end-to-end encryption is not feasible for its AI features. Whether that is private enough depends on your work."
+    },
+    {
+      "q": "Where does Whimbrel store my recordings?",
+      "a": "On your computer, not on Whimbrel's servers. If you choose a hosted AI model, the text of each request goes to that model. With a local model it does not."
+    }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Comparison</p>
+    <h1>Whimbrel vs. Voicenotes</h1>
+    <p class="lede">Voicenotes leads with "confidential meetings". Its privacy policy says recordings are stored on AWS servers in the United States. Whimbrel stores recordings on your computer.</p>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="table-wrap">
+      <table class="compare">
+        <caption class="sr-only">Feature comparison between Whimbrel and Voicenotes</caption>
+        <thead><tr><th scope="col">Capability</th><th scope="col">Whimbrel</th><th scope="col">Voicenotes</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Meeting notes without a bot</th><td class="yes">Yes</td><td class="yes">Yes; a bot is available on Business<sup><a href="#src-1">1</a></sup><sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Where recordings are stored</th><td class="yes">On your computer, not on Whimbrel's servers</td><td class="no">"All recordings and account data are stored on AWS servers in the United States"<sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Where transcription runs</th><td class="yes">Yes, on-device</td><td class="no">Cloud: Soniox, Eleven Labs and OpenAI are named<sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Text sent to a hosted model</th><td>Only if you pick a hosted model. Whimbrel AI requests pass through Whimbrel's server</td><td class="no">Yes: OpenAI or Anthropic through their commercial APIs<sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Encryption</th><td class="no">The local database is not encrypted at rest yet</td><td>Encrypted in transit and at rest; "true end-to-end encryption is not feasible for AI features"<sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Memory of non-meeting work</th><td class="yes">Yes: screen text and email</td><td class="no">Not found<sup><a href="#src-1">1</a></sup></td></tr>
+          <tr><th scope="row">A page per client with what is owed</th><td class="yes">Yes (Topics)</td><td class="no">Not found<sup><a href="#src-1">1</a></sup></td></tr>
+          <tr><th scope="row">Dictation</th><td>iPhone only, into Ask</td><td class="yes">Yes, unlimited on Pro<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Phones and watch</th><td>Read and ask only (beta); no phone recording</td><td class="yes">iPhone, Android, Apple Watch, Wear OS<sup><a href="#src-1">1</a></sup><sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Works from Claude or ChatGPT on the web</th><td>Local MCP server only</td><td class="yes">Hosted MCP; Claude and ChatGPT connectors on Pro<sup><a href="#src-2">2</a></sup><sup><a href="#src-4">4</a></sup></td></tr>
+          <tr><th scope="row">Recording consent management</th><td>Reminder text only</td><td>Enterprise plan<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">SOC 2</th><td class="no">No</td><td class="yes">SOC 2 Type II<sup><a href="#src-1">1</a></sup><sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Open source</th><td class="yes">Yes, Apache 2.0</td><td class="no">No</td></tr>
+          <tr><th scope="row">Price</th><td>Free. Optional paid plans on the <a href="/pricing/">pricing page</a></td><td>Free (30 minutes a meeting, 14-day history); Pro $9; Business $24, per user per month<sup><a href="#src-2">2</a></sup></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine muted table-note">Voicenotes' home page says "Nothing joins your call, nothing trains on your data, every word stays." Its privacy policy (effective October 12, 2026) is the source for where data is stored. Every Voicenotes claim links to the page it came from, read on November 11, 2026. "Not found" means we did not find it stated on the pages we read. Products change; check Voicenotes's site for current details. About Whimbrel: recordings, transcripts and history are stored on your computer and not on Whimbrel's servers. AI runs on your computer or on a model you choose; with a hosted model, the text of each request goes to that model. Every way data can leave is listed in the app.</p>
+  </div>
+</section>
+
+<section>
+  <div class="container split split-top">
+    <div>
+      <h2>Choose Whimbrel if…</h2>
+      <ul class="checklist">
+        <li>Your client's call should not be stored on someone else's servers.</li>
+        <li>You want to choose whether any text goes to a hosted model, and see each request that leaves your computer.</li>
+        <li>You want a page per client and a memory of work between meetings.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Choose Voicenotes if…</h2>
+      <ul class="checklist">
+        <li>You record on your phone or watch every day, and want dictation everywhere.</li>
+        <li>You want ChatGPT and Claude connectors that work from the web and your phone.</li>
+        <li>You need a vendor SOC 2 report or recording-consent controls on an Enterprise plan.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="narrow">
+    <h2 class="center">Common questions</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Sources</h2>
+    <p class="fine muted">All read on November 11, 2026.</p>
+    <ol class="fine muted">
+        <li id="src-1"><a href="https://voicenotes.com/" rel="noopener">https://voicenotes.com/</a></li>
+        <li id="src-2"><a href="https://voicenotes.com/pricing" rel="noopener">https://voicenotes.com/pricing</a></li>
+        <li id="src-3"><a href="https://help.voicenotes.com/en/articles/9196879-voicenotes-privacy-policy" rel="noopener">https://help.voicenotes.com/en/articles/9196879-voicenotes-privacy-policy</a></li>
+        <li id="src-4"><a href="https://help.voicenotes.com/en/articles/14336494-voicenotes-mcp" rel="noopener">https://help.voicenotes.com/en/articles/14336494-voicenotes-mcp</a></li>
+    </ol>
+  </div>
+</section>
+{{> cta}}

@@ -72,6 +72,9 @@ internal open class FakeSyncNative(var reply: String? = null) : CoreNative {
     override fun syncContentLastError(): String? = lastError
     var moreToPullReply = false
     override fun syncContentMoreToPull(): Boolean = moreToPullReply
+    var olderHistoryReply = false
+    var olderHistoryHandles = mutableListOf<Long>()
+    override fun syncContentOlderHistoryLoading(handle: Long): Boolean = olderHistoryReply.also { olderHistoryHandles += handle }
     var groupedCountReply = -1L
     override fun meetingsGroupedCount(handle: Long): Long = groupedCountReply
     override fun meetingsRecentGrouped(handle: Long, limit: Long): String? = groupedReply

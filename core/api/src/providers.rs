@@ -36,7 +36,24 @@ pub struct ProviderInfo {
     pub data_terms: Option<DataTermsNote>,
     /// The light-tier model (`api::routing::cheap_model_for`), empty where the user
     /// picks it (OpenRouter) or there is none (Ollama).
-    pub cheap_model: &'static str,
+    pub cheap_model: CheapModel,
+}
+
+/// A provider's light-tier model, read when it is shown or serialized (a plain string in
+/// JSON), since the hosted defaults change without a release (`crate::model_defaults`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CheapModel(pub llm::Provider);
+
+impl std::fmt::Display for CheapModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&crate::routing::cheap_model_for(self.0))
+    }
+}
+
+impl Serialize for CheapModel {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
 }
 
 pub const PROVIDERS: [ProviderInfo; 6] = [
@@ -47,7 +64,7 @@ pub const PROVIDERS: [ProviderInfo; 6] = [
         policy_url: None,
         key_prefix: None,
         data_terms: None,
-        cheap_model: "",
+        cheap_model: CheapModel(llm::Provider::Ollama),
     },
     ProviderInfo {
         id: "anthropic",
@@ -56,7 +73,7 @@ pub const PROVIDERS: [ProviderInfo; 6] = [
         policy_url: Some("https://www.anthropic.com/legal/commercial-terms"),
         key_prefix: Some("sk-ant-"),
         data_terms: None,
-        cheap_model: "claude-haiku-4-5",
+        cheap_model: CheapModel(llm::Provider::Anthropic),
     },
     ProviderInfo {
         id: "openai",
@@ -65,7 +82,7 @@ pub const PROVIDERS: [ProviderInfo; 6] = [
         policy_url: Some("https://openai.com/policies/business-terms/"),
         key_prefix: Some("sk-"),
         data_terms: None,
-        cheap_model: "gpt-4o-mini",
+        cheap_model: CheapModel(llm::Provider::OpenAI),
     },
     ProviderInfo {
         id: "google",
@@ -78,7 +95,7 @@ pub const PROVIDERS: [ProviderInfo; 6] = [
             text: "On Google's free tier, prompts and responses may be used to improve Google's products. The paid tier does not use them that way. Check Google's terms for the current wording.",
             checked: "2026-10-29",
         }),
-        cheap_model: "gemini-2.0-flash",
+        cheap_model: CheapModel(llm::Provider::Google),
     },
     ProviderInfo {
         id: "openrouter",
@@ -91,7 +108,7 @@ pub const PROVIDERS: [ProviderInfo; 6] = [
             text: "Free models on OpenRouter may log prompts. Paid models follow each upstream provider's policy. Check OpenRouter's privacy page for the current wording.",
             checked: "2026-10-29",
         }),
-        cheap_model: "",
+        cheap_model: CheapModel(llm::Provider::OpenRouter),
     },
     ProviderInfo {
         id: "whimbrel",
@@ -104,7 +121,7 @@ pub const PROVIDERS: [ProviderInfo; 6] = [
             text: "Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked.",
             checked: "2026-11-10",
         }),
-        cheap_model: "claude-haiku-5-5",
+        cheap_model: CheapModel(llm::Provider::Whimbrel),
     },
 ];
 
@@ -150,7 +167,7 @@ mod tests {
             } else if !p.is_local() {
                 assert!(row.key_page_url.is_some() && row.policy_url.is_some() && row.key_prefix.is_some(), "{}", row.id);
             }
-            assert_eq!(row.cheap_model, crate::routing::cheap_model_for(p, None), "{}", row.id);
+            assert_eq!(row.cheap_model.to_string(), crate::routing::cheap_model_for(p), "{}", row.id);
         }
         assert!(info("venice").is_none());
     }
@@ -171,7 +188,7 @@ mod tests {
         let row = info("whimbrel").unwrap();
         assert_eq!(row.name, "Whimbrel AI");
         assert_eq!(row.policy_url, Some("https://whimbrelapp.com/privacy/"));
-        assert_eq!(row.cheap_model, "claude-haiku-5-5");
+        assert_eq!(row.cheap_model.to_string(), "claude-haiku-5-5");
         assert_eq!(
             row.data_terms.as_ref().unwrap().text,
             "Your request goes through Whimbrel's server to Anthropic. Whimbrel keeps a record of tokens used, not what you asked."

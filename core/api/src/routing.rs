@@ -281,21 +281,20 @@ pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Chai
         return chain;
     }
 
-    let anthropic_model = if routing.preferred_provider == "anthropic" {
-        routing.preferred_model.as_str()
-    } else {
-        FALLBACK_ANTHROPIC_MODEL
+    // The preferred provider runs the user's model, or the current default when the stored
+    // one was never chosen (empty, or an old default a routing save stored); every other
+    // keyed provider runs its current default (`crate::model_defaults`).
+    let defaults = crate::model_defaults::cached();
+    let model_for = |provider: llm::Provider| {
+        if routing.preferred_provider == provider.as_str() {
+            crate::model_defaults::resolve(provider, Some(&routing.preferred_model), &defaults)
+        } else {
+            defaults.model(provider).to_string()
+        }
     };
-    let openai_model = if routing.preferred_provider == "openai" {
-        routing.preferred_model.as_str()
-    } else {
-        FALLBACK_OPENAI_MODEL
-    };
-    let google_model = if routing.preferred_provider == "google" {
-        routing.preferred_model.as_str()
-    } else {
-        FALLBACK_GOOGLE_MODEL
-    };
+    let anthropic_model = model_for(llm::Provider::Anthropic);
+    let openai_model = model_for(llm::Provider::OpenAI);
+    let google_model = model_for(llm::Provider::Google);
 
     // OpenRouter has no hardcoded fallback model (their catalogue changes weekly), so
     // its link exists only once the user has picked one; preferred or not, it is that
@@ -307,9 +306,9 @@ pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Chai
     };
 
     let mut ollama_slot = routing.use_local_model.then(ollama_link);
-    let mut anthropic_slot = hosted_link(routing, llm::Provider::Anthropic, anthropic_model);
-    let mut openai_slot = hosted_link(routing, llm::Provider::OpenAI, openai_model);
-    let mut google_slot = hosted_link(routing, llm::Provider::Google, google_model);
+    let mut anthropic_slot = hosted_link(routing, llm::Provider::Anthropic, &anthropic_model);
+    let mut openai_slot = hosted_link(routing, llm::Provider::OpenAI, &openai_model);
+    let mut google_slot = hosted_link(routing, llm::Provider::Google, &google_model);
     let mut openrouter_slot = hosted_link(routing, llm::Provider::OpenRouter, openrouter_model);
 
     // Whimbrel AI is a link only when the user picked it: it spends their prepaid credit,
@@ -374,18 +373,6 @@ pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Chai
     chain
 }
 
-const FALLBACK_ANTHROPIC_MODEL: &str = "claude-haiku-4-5";
-const FALLBACK_OPENAI_MODEL: &str = "gpt-4o-mini";
-const FALLBACK_GOOGLE_MODEL: &str = "gemini-2.5-flash";
-
-/// The model each hosted provider's light link uses: the cheapest chat model in
-/// `llm::price_rank`'s table that the provider serves. If a provider's live model list
-/// no longer carries it, [`cheap_model_for`] falls back to the provider's fallback
-/// model, so a retired id never breaks light tasks.
-const CHEAP_ANTHROPIC_MODEL: &str = "claude-haiku-4-5";
-const CHEAP_OPENAI_MODEL: &str = "gpt-4o-mini";
-const CHEAP_GOOGLE_MODEL: &str = "gemini-2.0-flash";
-
 /// Whimbrel AI's own models, apart from the Anthropic key's: the server prices the newer
 /// ids (server/src/aiProxy.ts `AI_PRICES`), and the Mac picks Sonnet 5.5 by default.
 const CHEAP_WHIMBREL_MODEL: &str = "claude-haiku-5-5";
@@ -396,40 +383,26 @@ const FALLBACK_WHIMBREL_MODEL: &str = "claude-sonnet-5-5";
 const HOSTED_PROVIDERS: [llm::Provider; 4] =
     [llm::Provider::Anthropic, llm::Provider::OpenAI, llm::Provider::Google, llm::Provider::OpenRouter];
 
-fn fallback_model(provider: llm::Provider) -> &'static str {
+/// The light-tier model for `provider`: the hosted providers' current default
+/// (`crate::model_defaults`; each is its provider's cheap family), Whimbrel AI's own cheap
+/// model. OpenRouter has none: its light model is the user's pick
+/// (`RoutingConfig::openrouter_model`), so this answers `""` for it, as for the local ones.
+/// No live-list check: a provider's list can omit an alias it answers to, so a model that
+/// is gone shows up as a not-found answer instead (the link's one retry).
+pub fn cheap_model_for(provider: llm::Provider) -> String {
     match provider {
-        llm::Provider::Anthropic => FALLBACK_ANTHROPIC_MODEL,
-        llm::Provider::OpenAI => FALLBACK_OPENAI_MODEL,
-        llm::Provider::Google => FALLBACK_GOOGLE_MODEL,
-        llm::Provider::Ollama | llm::Provider::OpenRouter | llm::Provider::Local => "",
-        llm::Provider::Whimbrel => FALLBACK_WHIMBREL_MODEL,
+        llm::Provider::Whimbrel => CHEAP_WHIMBREL_MODEL.to_string(),
+        llm::Provider::Ollama | llm::Provider::OpenRouter | llm::Provider::Local => String::new(),
+        p => crate::model_defaults::cached().model(p).to_string(),
     }
 }
 
-/// The light-tier model for `provider`. `available` is the provider's live model list
-/// when the caller has one (the key screen fetches it on save); `None` trusts the
-/// constant. OpenRouter has no constant: its light model is the user's pick
-/// (`RoutingConfig::openrouter_model`), so this answers `""` for it.
-pub fn cheap_model_for(provider: llm::Provider, available: Option<&[String]>) -> &'static str {
-    let cheap = match provider {
-        llm::Provider::Anthropic => CHEAP_ANTHROPIC_MODEL,
-        llm::Provider::OpenAI => CHEAP_OPENAI_MODEL,
-        llm::Provider::Google => CHEAP_GOOGLE_MODEL,
-        llm::Provider::Whimbrel => CHEAP_WHIMBREL_MODEL,
-        llm::Provider::Ollama | llm::Provider::OpenRouter | llm::Provider::Local => return "",
-    };
-    match available {
-        Some(list) if !list.iter().any(|m| m == cheap) => fallback_model(provider),
-        _ => cheap,
-    }
-}
-
-/// The model `provider`'s light link runs: the cheap constant, or for OpenRouter the
-/// user's pick. Empty means no light link for that provider.
-fn light_model(routing: &RoutingConfig, provider: llm::Provider) -> &str {
+/// The model `provider`'s light link runs: the cheap model, or for OpenRouter the user's
+/// pick. Empty means no light link for that provider.
+fn light_model(routing: &RoutingConfig, provider: llm::Provider) -> String {
     match provider {
-        llm::Provider::OpenRouter => routing.openrouter_model.as_str(),
-        p => cheap_model_for(p, None),
+        llm::Provider::OpenRouter => routing.openrouter_model.clone(),
+        p => cheap_model_for(p),
     }
 }
 
@@ -457,15 +430,20 @@ fn push_local_link_if(installed: bool, chain: &mut Vec<llm::ChainLink>) {
 }
 
 /// A hosted link at `model`, or `None` when the user holds no key for `provider` or
-/// `model` is empty (OpenRouter before a pick).
+/// `model` is empty (OpenRouter before a pick). A link on the user's own Anthropic,
+/// OpenAI or Google key retries once with the provider's current default when the
+/// provider says `model` doesn't exist ([`crate::model_defaults::fallback_for`]).
 fn hosted_link(routing: &RoutingConfig, provider: llm::Provider, model: &str) -> Option<llm::ChainLink> {
     if model.is_empty() {
         return None;
     }
+    let fallback = || crate::model_defaults::fallback_for(provider, model, &crate::model_defaults::cached());
     let client: Box<dyn llm::LlmClient> = match provider {
-        llm::Provider::Anthropic => Box::new(llm::AnthropicClient::new(routing.anthropic_key.clone()?, model)),
-        llm::Provider::OpenAI => Box::new(llm::OpenAIClient::new(routing.openai_key.clone()?, model)),
-        llm::Provider::Google => Box::new(llm::GoogleClient::new(routing.google_key.clone()?, model)),
+        llm::Provider::Anthropic => {
+            Box::new(llm::AnthropicClient::new(routing.anthropic_key.clone()?, model).with_fallback_model(fallback()))
+        }
+        llm::Provider::OpenAI => Box::new(llm::OpenAIClient::new(routing.openai_key.clone()?, model).with_fallback_model(fallback())),
+        llm::Provider::Google => Box::new(llm::GoogleClient::new(routing.google_key.clone()?, model).with_fallback_model(fallback())),
         llm::Provider::OpenRouter => Box::new(llm::OpenAIClient::openrouter(routing.openrouter_key.clone()?, model)),
         llm::Provider::Whimbrel => Box::new(llm::AnthropicClient::whimbrel(
             routing.whimbrel_id_token.clone()?,
@@ -485,7 +463,7 @@ fn build_light_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Ch
         .iter()
         .copied()
         .chain(whimbrel)
-        .filter_map(|p| hosted_link(routing, p, light_model(routing, p)))
+        .filter_map(|p| hosted_link(routing, p, &light_model(routing, p)))
         .collect();
     hosted.sort_by(|a, b| llm::price_rank(a.provider, &a.model).total_cmp(&llm::price_rank(b.provider, &b.model)));
     let mut chain = Vec::with_capacity(hosted.len() + 1);
@@ -686,7 +664,7 @@ mod tests {
             vec![Provider::Whimbrel, Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google]
         );
         assert_eq!(chain[0].model, "claude-sonnet-5");
-        assert_eq!(chain[2].model, "claude-haiku-4-5", "Anthropic is only a fallback here");
+        assert_eq!(chain[2].model, "claude-haiku-5-5", "Anthropic is only a fallback here, at its default");
         // A Whimbrel-only user still gets light tasks done, at the cheap model.
         let light = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing);
         assert!(providers(&light).contains(&Provider::Whimbrel));
@@ -728,10 +706,10 @@ mod tests {
     #[test]
     fn light_chain_is_ollama_then_hosted_cheap_models_by_price() {
         let chain = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &all_keys());
-        assert_eq!(providers(&chain), vec![Provider::Ollama, Provider::Google, Provider::OpenAI, Provider::Anthropic]);
-        assert_eq!(chain[1].model, "gemini-2.0-flash");
-        assert_eq!(chain[2].model, "gpt-4o-mini");
-        assert_eq!(chain[3].model, "claude-haiku-4-5");
+        assert_eq!(providers(&chain), vec![Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google]);
+        assert_eq!(chain[1].model, "claude-haiku-5-5");
+        assert_eq!(chain[2].model, "gpt-5.4-mini");
+        assert_eq!(chain[3].model, "gemini-flash-latest");
     }
 
     #[test]
@@ -744,7 +722,7 @@ mod tests {
         };
         let chain = build_chain_for(TaskKind::TopicName, "gemma4:12b", &routing);
         assert_eq!(providers(&chain), vec![Provider::Ollama, Provider::Anthropic]);
-        assert_eq!(chain[1].model, "claude-haiku-4-5", "the cheap model, not the preferred one");
+        assert_eq!(chain[1].model, "claude-haiku-5-5", "the cheap model, not the preferred one");
     }
 
     #[test]
@@ -781,7 +759,7 @@ mod tests {
         );
         assert_eq!(
             providers(&build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing)),
-            vec![Provider::Google, Provider::OpenAI, Provider::Anthropic]
+            vec![Provider::Anthropic, Provider::OpenAI, Provider::Google]
         );
         // No keys and no local model: an empty chain, which try_chain reports as a
         // provider failure, the same as every other "nothing to call" case.
@@ -790,13 +768,28 @@ mod tests {
     }
 
     #[test]
-    fn cheap_model_falls_back_when_the_live_list_lacks_it() {
-        assert_eq!(cheap_model_for(Provider::Google, None), "gemini-2.0-flash");
-        let live = vec!["gemini-2.5-flash".to_string(), "gemini-2.5-pro".to_string()];
-        assert_eq!(cheap_model_for(Provider::Google, Some(&live)), "gemini-2.5-flash");
-        let live = vec!["gemini-2.0-flash".to_string()];
-        assert_eq!(cheap_model_for(Provider::Google, Some(&live)), "gemini-2.0-flash");
-        assert_eq!(cheap_model_for(Provider::Ollama, None), "");
+    fn the_cheap_model_is_the_providers_current_default() {
+        assert_eq!(cheap_model_for(Provider::Google), "gemini-flash-latest");
+        assert_eq!(cheap_model_for(Provider::Anthropic), "claude-haiku-5-5");
+        assert_eq!(cheap_model_for(Provider::OpenAI), "gpt-5.4-mini");
+        assert_eq!(cheap_model_for(Provider::Whimbrel), "claude-haiku-5-5");
+        assert_eq!(cheap_model_for(Provider::Ollama), "");
+        assert_eq!(cheap_model_for(Provider::OpenRouter), "");
+    }
+
+    #[test]
+    fn a_stored_old_default_runs_the_current_default_and_a_choice_runs_as_chosen() {
+        for (provider, stored, runs) in [
+            ("google", "gemini-2.5-flash", "gemini-flash-latest"),
+            ("google", "", "gemini-flash-latest"),
+            ("anthropic", "claude-haiku-4-5", "claude-haiku-5-5"),
+            ("openai", "gpt-4o-mini", "gpt-5.4-mini"),
+            ("openai", "gpt-4.1", "gpt-4.1"),
+        ] {
+            let routing = RoutingConfig { preferred_provider: provider.into(), preferred_model: stored.into(), ..all_keys() };
+            let chain = build_chain("gemma4:12b", &routing);
+            assert_eq!((chain[0].provider.as_str(), chain[0].model.as_str()), (provider, runs), "{stored}");
+        }
     }
 
     #[test]
@@ -832,8 +825,8 @@ mod tests {
             providers(&build_chain("gemma4:12b", &routing))
         );
         let cheapest = build_chain_for_routine(&RoutineModelPref::Cheapest, "gemma4:12b", &routing);
-        assert_eq!(providers(&cheapest), vec![Provider::Ollama, Provider::Google, Provider::OpenAI, Provider::Anthropic]);
-        assert_eq!(cheapest[1].model, "gemini-2.0-flash");
+        assert_eq!(providers(&cheapest), vec![Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google]);
+        assert_eq!(cheapest[1].model, "claude-haiku-5-5");
 
         let pinned = RoutineModelPref::Pinned { provider: Provider::OpenAI, model: "gpt-4.1".into() };
         let chain = build_chain_for_routine(&pinned, "gemma4:12b", &routing);
@@ -969,7 +962,7 @@ mod tests {
             vec![llm::Provider::Ollama, llm::Provider::OpenAI]
         );
         // The non-preferred hosted fallback uses its hardcoded default model.
-        assert_eq!(chain[1].model, "gpt-4o-mini");
+        assert_eq!(chain[1].model, "gpt-5.4-mini");
     }
 
     // Moved verbatim from core/ffi's test module (M3.0, Task 8); the pointer-adapter
@@ -1114,9 +1107,9 @@ mod tests {
         assert_eq!(chain.len(), 3);
         assert_eq!(chain[0].provider, llm::Provider::Ollama);
         assert_eq!(chain[1].provider, llm::Provider::Anthropic);
-        assert_eq!(chain[1].model, "claude-haiku-4-5");
+        assert_eq!(chain[1].model, "claude-haiku-5-5");
         assert_eq!(chain[2].provider, llm::Provider::OpenAI);
-        assert_eq!(chain[2].model, "gpt-4o-mini");
+        assert_eq!(chain[2].model, "gpt-5.4-mini");
 
         // Anthropic preferred with a key: Anthropic becomes link 0, using the user's
         // actual preferred_model (not the hardcoded fallback) — then the rest in fixed
@@ -1134,7 +1127,7 @@ mod tests {
         assert_eq!(chain[0].model, "claude-sonnet-5");
         assert_eq!(chain[1].provider, llm::Provider::Ollama);
         assert_eq!(chain[2].provider, llm::Provider::OpenAI);
-        assert_eq!(chain[2].model, "gpt-4o-mini");
+        assert_eq!(chain[2].model, "gpt-5.4-mini");
 
         // Anthropic preferred but NO Anthropic key saved: preference isn't buildable,
         // so it falls back to the default Ollama-first order rather than silently
@@ -1184,7 +1177,7 @@ mod tests {
         assert_eq!(chain[1].provider, llm::Provider::Anthropic);
         assert_eq!(chain[2].provider, llm::Provider::OpenAI);
         assert_eq!(chain[3].provider, llm::Provider::Google);
-        assert_eq!(chain[3].model, "gemini-2.5-flash");
+        assert_eq!(chain[3].model, "gemini-flash-latest");
 
         // Google preferred with a key: Google becomes link 0 using the user's actual
         // preferred_model, then the rest in the same fixed order.

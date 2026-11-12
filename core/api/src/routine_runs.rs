@@ -7,7 +7,6 @@ use std::collections::HashSet;
 use chrono::TimeZone;
 
 use crate::routing::{build_chain_for_routine, RoutineModelPref, RoutingConfig};
-use crate::util::log_usage_for;
 
 /// The routine's chain without over-budget providers; `None` when a spent budget stops the
 /// run. A pinned model that made it to the front of the chain does not fall through.
@@ -168,13 +167,7 @@ pub fn tick(
                 }) else {
                     continue;
                 };
-                log_usage_for(
-                    store,
-                    entry.provider,
-                    &entry.model,
-                    "routine",
-                    outcome.token_usage,
-                );
+                crate::util::log_link_usage(store, entry, "routine", outcome.token_usage);
                 let mut new_run = outcome.new_run;
                 new_run.routine_id = routine.id;
                 let Ok(run_id) = store.insert_routine_run(&new_run) else {
@@ -250,13 +243,7 @@ pub fn tick(
                 }) else {
                     continue;
                 };
-                log_usage_for(
-                    store,
-                    entry.provider,
-                    &entry.model,
-                    "routine",
-                    outcome.token_usage,
-                );
+                crate::util::log_link_usage(store, entry, "routine", outcome.token_usage);
                 let mut new_run = outcome.new_run;
                 new_run.routine_id = routine.id;
                 let Ok(run_id) = store.insert_routine_run(&new_run) else {
@@ -323,13 +310,7 @@ pub fn tick(
                 }) else {
                     continue;
                 };
-                log_usage_for(
-                    store,
-                    entry.provider,
-                    &entry.model,
-                    "routine",
-                    outcome.token_usage,
-                );
+                crate::util::log_link_usage(store, entry, "routine", outcome.token_usage);
                 let mut new_run = outcome.new_run;
                 new_run.routine_id = routine.id;
                 let Ok(run_id) = store.insert_routine_run(&new_run) else {

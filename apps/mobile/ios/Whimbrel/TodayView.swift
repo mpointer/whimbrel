@@ -144,10 +144,14 @@ struct TodayView: View {
 
     private var syncLine: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            Text(ReadLogic.syncLine(lastSyncedAt: sync.lastSyncedAt, now: context.date, isSyncing: sync.isSyncing, error: sync.lastError))
-                .font(.footnote)
-                .foregroundStyle(Color.theme(.textSecondary))
-                .frame(maxWidth: .infinity)
+            VStack(spacing: 4) {
+                Text(ReadLogic.syncLine(lastSyncedAt: sync.lastSyncedAt, now: context.date, isSyncing: sync.isSyncing, error: sync.lastError))
+                if sync.olderHistoryLoading { Text("Older history is still loading.") }
+            }
+            .font(.footnote)
+            .foregroundStyle(Color.theme(.textSecondary))
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
         }
     }
 

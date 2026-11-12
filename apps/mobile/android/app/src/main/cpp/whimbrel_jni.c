@@ -191,7 +191,7 @@ JNIEXPORT jbyteArray JNICALL JNI(nOauthJwtClaims)(JNIEnv *env, jobject self, jby
     return take(env, r);
 }
 
-// ---- Content and settings sync. Every reply is an owned char* (take() frees it) except the bool one. ----
+// ---- Content and settings sync. Every reply is an owned char* (take() frees it) except the bool ones. ----
 
 #define H(h) ((StoreHandle *)(intptr_t)(h))
 
@@ -208,6 +208,11 @@ JNIEXPORT jboolean JNICALL JNI(nSyncContentPullOnly)(JNIEnv *env, jobject self, 
 JNIEXPORT jboolean JNICALL JNI(nSyncContentMoreToPull)(JNIEnv *env, jobject self) {
     (void)env; (void)self;
     return whimbrel_sync_content_more_to_pull() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL JNI(nSyncContentOlderHistoryLoading)(JNIEnv *env, jobject self, jlong handle) {
+    (void)env; (void)self;
+    return whimbrel_sync_content_older_history_loading(H(handle)) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jbyteArray JNICALL JNI(nSyncContentLastPullStats)(JNIEnv *env, jobject self) {
