@@ -362,6 +362,13 @@ impl AppState {
         }
     }
 
+    /// Starts the daily read of the hosted-model defaults file, on the background lane.
+    pub fn start_model_defaults(&self) {
+        if let Some(store) = &self.store {
+            crate::model_defaults::start(self.bg_store.as_ref().unwrap_or(store).clone());
+        }
+    }
+
     /// Starts the background job loops (episodes, embeddings, summaries). Like
     /// [`start_capture`](Self::start_capture), kept out of `start` for tests.
     pub fn start_jobs(&self) {

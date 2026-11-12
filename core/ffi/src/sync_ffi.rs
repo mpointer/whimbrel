@@ -441,6 +441,19 @@ pub extern "C" fn whimbrel_sync_content_more_to_pull() -> bool {
     sync_engine::more_to_pull()
 }
 
+/// Whether older history is still loading on this device (#572): a pull-only device (the
+/// phone) pulls a peer's backlog newest first, and this stays true until every peer's older
+/// rows are in. Read from the store, so it is right after a relaunch or a failed round.
+/// False on a null handle or a store error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_content_older_history_loading(handle: *mut StoreHandle) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let store = unsafe { &(*handle).0 };
+    store.older_sync_history_loading().unwrap_or(false)
+}
+
 /// The last pull round's per-peer stats as a JSON array (hashed peer tags and counts only;
 /// issue #572). Caller frees with `whimbrel_core_free_string`.
 #[unsafe(no_mangle)]
@@ -887,6 +900,24 @@ mod tests {
             device_id.as_ptr(),
             0,
         ));
+        crate::whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn older_history_loading_follows_the_stores_open_gaps() {
+        assert!(!whimbrel_sync_content_older_history_loading(
+            std::ptr::null_mut()
+        ));
+        let dir = tempfile::tempdir().unwrap();
+        let db_path_c = to_cstring(dir.path().join("test.sqlite").to_str().unwrap());
+        let handle = crate::whimbrel_memory_open(db_path_c.as_ptr(), std::ptr::null());
+        assert!(!handle.is_null());
+        assert!(!whimbrel_sync_content_older_history_loading(handle));
+        let store = unsafe { &(*handle).0 };
+        store.open_sync_gap("mac", 0, 101, 100).unwrap();
+        assert!(whimbrel_sync_content_older_history_loading(handle));
+        store.close_sync_gap("mac").unwrap();
+        assert!(!whimbrel_sync_content_older_history_loading(handle));
         crate::whimbrel_memory_close(handle);
     }
 }

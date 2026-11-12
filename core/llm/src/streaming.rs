@@ -62,6 +62,10 @@ pub enum ProviderEvent {
     Progress { label: String },
     /// Provider terminal metadata. Emitted at most once, never after an Err.
     Finished { usage: TokenUsage },
+    /// The requested model doesn't exist and `model` (the provider's current default) is
+    /// answering instead. Emitted first, before any output; the supervisor reports it in
+    /// its `Streaming` state event so a shell logs usage under the model that answered.
+    ModelSubstituted { model: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,6 +251,7 @@ impl StreamingRunSupervisor {
                 }
             };
             let mut opened = false;
+            let mut answering_model = link.model.clone();
 
             loop {
                 tokio::select! {
@@ -260,6 +265,9 @@ impl StreamingRunSupervisor {
                         return;
                     }
                     item = stream.next() => match item {
+                        Some(Ok(ProviderEvent::ModelSubstituted { model })) => {
+                            answering_model = model;
+                        }
                         Some(Ok(ProviderEvent::StreamOpened)) => {
                             opened = true;
                             let _ = self.sink.try_emit(InferenceEvent::State {
@@ -267,7 +275,7 @@ impl StreamingRunSupervisor {
                                 state: InferenceRunState::Streaming,
                                 at_unix_ms: now_unix_ms(),
                                 provider: Some(link.provider.as_str().to_owned()),
-                                model: Some(link.model.clone()),
+                                model: Some(answering_model.clone()),
                                 attempt,
                             });
                         }
@@ -279,7 +287,7 @@ impl StreamingRunSupervisor {
                                     state: InferenceRunState::Streaming,
                                     at_unix_ms: now_unix_ms(),
                                     provider: Some(link.provider.as_str().to_owned()),
-                                    model: Some(link.model.clone()),
+                                    model: Some(answering_model.clone()),
                                     attempt,
                                 });
                             }
@@ -568,6 +576,58 @@ fn parse_ollama_line(line: &str) -> Option<Result<ProviderEvent, LlmError>> {
     }
 }
 
+// --- Model-not-found retry, shared by the hosted adapters ------------------------
+
+/// Sends with `requested` and, when `provider` says that model doesn't exist
+/// (`crate::is_model_not_found`), once more with `fallback`. Returns the accepted response
+/// and the model it is for. Connect-phase cancellation only, as each adapter had it.
+async fn send_with_model_retry<F, Fut>(
+    provider: Provider,
+    requested: &str,
+    fallback: Option<&str>,
+    cancel: &CancellationToken,
+    mut send: F,
+) -> Result<(reqwest::Response, String), LlmError>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<reqwest::Response, reqwest::Error>>,
+{
+    let mut model = requested.to_string();
+    loop {
+        let response = tokio::select! {
+            _ = cancel.cancelled() => {
+                return Err(LlmError::Network("cancelled before connecting".into()));
+            }
+            result = send(model.clone()) => result.map_err(|e| LlmError::Network(e.to_string()))?,
+        };
+        if response.status().is_success() {
+            return Ok((response, model));
+        }
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        let err = LlmError::Http { status, body };
+        match fallback.filter(|f| !f.is_empty() && *f != model) {
+            Some(next) if crate::is_model_not_found(provider, &err) => {
+                tracing::warn!(provider = provider.as_str(), model = %model, fallback = next, "the provider has no such model; using its current default");
+                model = next.to_string();
+            }
+            _ => return Err(err),
+        }
+    }
+}
+
+/// `events`, led by a `ModelSubstituted` when `answered` isn't `requested`.
+fn with_substitution(
+    requested: &str,
+    answered: String,
+    events: impl Stream<Item = Result<ProviderEvent, LlmError>> + Send + 'static,
+) -> ProviderEventStream {
+    if answered == requested {
+        return Box::pin(events);
+    }
+    Box::pin(futures_util::stream::once(async move { Ok(ProviderEvent::ModelSubstituted { model: answered }) }).chain(events))
+}
+
 // --- Google Gemini SSE adapter --------------------------------------------------
 
 /// Streams `streamGenerateContent?alt=sse` from the Gemini API (issue #83, the ADR 0002
@@ -580,6 +640,7 @@ pub struct GoogleStreamingClient {
     base_url: String,
     api_key: String,
     http: reqwest::Client,
+    fallback: Option<String>,
 }
 
 impl GoogleStreamingClient {
@@ -588,7 +649,14 @@ impl GoogleStreamingClient {
             base_url: "https://generativelanguage.googleapis.com".to_string(),
             api_key: api_key.into(),
             http: reqwest::Client::new(),
+            fallback: Some(crate::GOOGLE_FALLBACK_MODEL.to_string()),
         }
+    }
+
+    /// The model to retry with, once, on a 404; `GOOGLE_FALLBACK_MODEL` unless set.
+    pub fn with_fallback_model(mut self, model: Option<String>) -> Self {
+        self.fallback = model;
+        self
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -617,29 +685,17 @@ impl StreamingLlmClient for GoogleStreamingClient {
         };
         // Connect-phase cancellation only — the read loop is owned by the supervisor
         // (see `ndjson_to_provider_events`' comment on why the adapter must not race
-        // the same token a second time).
-        let response = tokio::select! {
-            _ = cancel.cancelled() => {
-                return Err(LlmError::Network("cancelled before connecting".into()));
-            }
-            result = self
-                .http
-                .post(format!(
-                    "{}/v1beta/models/{}:streamGenerateContent",
-                    self.base_url, request.model
-                ))
+        // the same token a second time). A retired model (404) is retried once with the
+        // fallback, as the blocking client does.
+        let (response, model) = send_with_model_retry(Provider::Google, &request.model, self.fallback.as_deref(), &cancel, |model| {
+            self.http
+                .post(format!("{}/v1beta/models/{}:streamGenerateContent", self.base_url, model))
                 .query(&[("alt", "sse"), ("key", self.api_key.as_str())])
                 .json(&body)
-                .send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
-        };
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
-            return Err(LlmError::Http { status, body });
-        }
-
-        Ok(Box::pin(sse_to_provider_events(response.bytes_stream(), google_chunk_to_events)))
+                .send()
+        })
+        .await?;
+        Ok(with_substitution(&request.model, model, sse_to_provider_events(response.bytes_stream(), google_chunk_to_events)))
     }
 }
 
@@ -771,6 +827,7 @@ pub struct AnthropicStreamingClient {
     base_url: String,
     auth: crate::AnthropicAuth,
     http: reqwest::Client,
+    fallback: Option<String>,
 }
 
 impl AnthropicStreamingClient {
@@ -779,7 +836,15 @@ impl AnthropicStreamingClient {
             base_url: "https://api.anthropic.com".to_string(),
             auth: crate::AnthropicAuth::ApiKey(api_key.into()),
             http: reqwest::Client::new(),
+            fallback: None,
         }
+    }
+
+    /// The model to retry with, once, when Anthropic says the model doesn't exist. `None`
+    /// (the default) never retries; set only for the user's own key.
+    pub fn with_fallback_model(mut self, model: Option<String>) -> Self {
+        self.fallback = model;
+        self
     }
 
     /// Anthropic's models through Whimbrel's server; see `AnthropicClient::whimbrel`.
@@ -788,6 +853,7 @@ impl AnthropicStreamingClient {
             base_url: crate::WHIMBREL_AI_BASE_URL.to_string(),
             auth: crate::AnthropicAuth::Whimbrel { id_token: id_token.into(), device_key: device_key.into() },
             http: reqwest::Client::new(),
+            fallback: None,
         }
     }
 
@@ -811,34 +877,24 @@ impl StreamingLlmClient for AnthropicStreamingClient {
         request: StreamRequest,
         cancel: CancellationToken,
     ) -> Result<ProviderEventStream, LlmError> {
-        let body = serde_json::json!({
-            "model": request.model,
-            "max_tokens": 16384,
-            "stream": true,
-            "messages": [{"role": "user", "content": request.prompt}],
-        });
-        let post = self.http.post(format!("{}/v1/messages", self.base_url));
-        let post = match &self.auth {
-            crate::AnthropicAuth::ApiKey(key) => post.header("x-api-key", key),
-            crate::AnthropicAuth::Whimbrel { id_token, device_key } => post
-                .header("Authorization", format!("Bearer {id_token}"))
-                .header("X-Whimbrel-Device", device_key),
-        };
-        let response = tokio::select! {
-            _ = cancel.cancelled() => {
-                return Err(LlmError::Network("cancelled before connecting".into()));
-            }
-            result = post
-                .header("anthropic-version", "2023-06-01")
-                .json(&body)
-                .send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
-        };
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
-            return Err(LlmError::Http { status, body });
-        }
-        Ok(Box::pin(sse_to_provider_events(response.bytes_stream(), anthropic_event_to_events)))
+        let (response, model) = send_with_model_retry(self.provider(), &request.model, self.fallback.as_deref(), &cancel, |model| {
+            let body = serde_json::json!({
+                "model": model,
+                "max_tokens": 16384,
+                "stream": true,
+                "messages": [{"role": "user", "content": request.prompt}],
+            });
+            let post = self.http.post(format!("{}/v1/messages", self.base_url));
+            let post = match &self.auth {
+                crate::AnthropicAuth::ApiKey(key) => post.header("x-api-key", key),
+                crate::AnthropicAuth::Whimbrel { id_token, device_key } => post
+                    .header("Authorization", format!("Bearer {id_token}"))
+                    .header("X-Whimbrel-Device", device_key),
+            };
+            post.header("anthropic-version", "2023-06-01").json(&body).send()
+        })
+        .await?;
+        Ok(with_substitution(&request.model, model, sse_to_provider_events(response.bytes_stream(), anthropic_event_to_events)))
     }
 }
 
@@ -903,6 +959,7 @@ pub struct OpenAIStreamingClient {
     /// `OpenAI`, or `OpenRouter` for the same wire shape against OpenRouter's host.
     provider: Provider,
     extra_headers: Vec<(String, String)>,
+    fallback: Option<String>,
 }
 
 impl OpenAIStreamingClient {
@@ -913,7 +970,15 @@ impl OpenAIStreamingClient {
             http: reqwest::Client::new(),
             provider: Provider::OpenAI,
             extra_headers: Vec::new(),
+            fallback: None,
         }
+    }
+
+    /// The model to retry with, once, when OpenAI says the model doesn't exist. `None`
+    /// (the default) never retries; never set for OpenRouter or the local model.
+    pub fn with_fallback_model(mut self, model: Option<String>) -> Self {
+        self.fallback = model;
+        self
     }
 
     /// The same stream against OpenRouter, with the two headers they ask for.
@@ -944,31 +1009,24 @@ impl StreamingLlmClient for OpenAIStreamingClient {
         request: StreamRequest,
         cancel: CancellationToken,
     ) -> Result<ProviderEventStream, LlmError> {
-        let body = serde_json::json!({
-            "model": request.model,
-            "stream": true,
-            "stream_options": {"include_usage": true},
-            "messages": [{"role": "user", "content": request.prompt}],
-        });
-        let mut call = self
-            .http
-            .post(format!("{}/v1/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key);
-        for (name, value) in &self.extra_headers {
-            call = call.header(name, value);
-        }
-        let response = tokio::select! {
-            _ = cancel.cancelled() => {
-                return Err(LlmError::Network("cancelled before connecting".into()));
+        let (response, model) = send_with_model_retry(self.provider, &request.model, self.fallback.as_deref(), &cancel, |model| {
+            let body = serde_json::json!({
+                "model": model,
+                "stream": true,
+                "stream_options": {"include_usage": true},
+                "messages": [{"role": "user", "content": request.prompt}],
+            });
+            let mut call = self
+                .http
+                .post(format!("{}/v1/chat/completions", self.base_url))
+                .bearer_auth(&self.api_key);
+            for (name, value) in &self.extra_headers {
+                call = call.header(name, value);
             }
-            result = call.json(&body).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
-        };
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
-            return Err(LlmError::Http { status, body });
-        }
-        Ok(Box::pin(sse_to_provider_events(response.bytes_stream(), openai_chunk_to_events)))
+            call.json(&body).send()
+        })
+        .await?;
+        Ok(with_substitution(&request.model, model, sse_to_provider_events(response.bytes_stream(), openai_chunk_to_events)))
     }
 }
 
@@ -1935,5 +1993,69 @@ mod tests {
             sink.events().last().unwrap(),
             InferenceEvent::Terminal { outcome: TerminalOutcome::Cancelled, .. }
         ));
+    }
+
+    /// Drives one hosted link against `crate::tests::model_server` and returns the events.
+    async fn drive_one(provider: Provider, client: Arc<dyn StreamingLlmClient>, model: &str) -> Vec<InferenceEvent> {
+        let sink = Arc::new(CollectingSink::new());
+        let request = StreamRequest { run_id: new_run_id(), model: model.into(), prompt: "hi".into(), started_at_unix_ms: now() };
+        let chain = vec![StreamingChainLink { provider, model: model.into(), client }];
+        StreamingRunSupervisor::new(sink.clone()).drive(request, &chain, CancellationToken::new(), now).await;
+        sink.events()
+    }
+
+    fn streaming_model(events: &[InferenceEvent]) -> Option<String> {
+        events.iter().find_map(|e| match e {
+            InferenceEvent::State { state: InferenceRunState::Streaming, model, .. } => model.clone(),
+            _ => None,
+        })
+    }
+
+    fn final_text(events: &[InferenceEvent]) -> String {
+        match events.last() {
+            Some(InferenceEvent::Terminal { outcome: TerminalOutcome::Completed, final_text, .. }) => final_text.clone(),
+            other => panic!("expected a completed run, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_missing_streaming_model_retries_with_the_fallback_and_says_which_answered() {
+        use crate::tests::{model_server, ANTHROPIC_404, GOOGLE_404, OPENAI_404};
+        let google = GoogleStreamingClient::new("k").with_base_url(model_server("gemini-2.5-flash", "404 Not Found", GOOGLE_404));
+        let events = drive_one(Provider::Google, Arc::new(google), "gemini-2.5-flash").await;
+        assert_eq!(final_text(&events), format!("from {}", crate::GOOGLE_FALLBACK_MODEL));
+        assert_eq!(streaming_model(&events).as_deref(), Some(crate::GOOGLE_FALLBACK_MODEL));
+
+        let openai = OpenAIStreamingClient::new("k")
+            .with_base_url(model_server("gpt-4o-mini", "404 Not Found", OPENAI_404))
+            .with_fallback_model(Some("gpt-next-mini".into()));
+        let events = drive_one(Provider::OpenAI, Arc::new(openai), "gpt-4o-mini").await;
+        assert_eq!(final_text(&events), "from gpt-next-mini");
+        assert_eq!(streaming_model(&events).as_deref(), Some("gpt-next-mini"));
+
+        let anthropic = AnthropicStreamingClient::new("k")
+            .with_base_url(model_server("claude-haiku-4-5", "404 Not Found", ANTHROPIC_404))
+            .with_fallback_model(Some("claude-next-haiku".into()));
+        let events = drive_one(Provider::Anthropic, Arc::new(anthropic), "claude-haiku-4-5").await;
+        assert_eq!(final_text(&events), "from claude-next-haiku");
+        assert_eq!(streaming_model(&events).as_deref(), Some("claude-next-haiku"));
+
+        // A model that answers streams under its own name.
+        let fine = OpenAIStreamingClient::new("k")
+            .with_base_url(model_server("gpt-4o-mini", "404 Not Found", OPENAI_404))
+            .with_fallback_model(Some("gpt-next-mini".into()));
+        let events = drive_one(Provider::OpenAI, Arc::new(fine), "gpt-x").await;
+        assert_eq!((final_text(&events), streaming_model(&events)), ("from gpt-x".to_string(), Some("gpt-x".to_string())));
+    }
+
+    #[tokio::test]
+    async fn without_a_fallback_a_missing_streaming_model_fails() {
+        use crate::tests::{model_server, OPENAI_404};
+        let openai = OpenAIStreamingClient::new("k").with_base_url(model_server("gpt-4o-mini", "404 Not Found", OPENAI_404));
+        let events = drive_one(Provider::OpenAI, Arc::new(openai), "gpt-4o-mini").await;
+        assert!(
+            matches!(events.last(), Some(InferenceEvent::Terminal { outcome: TerminalOutcome::Failed { .. }, .. })),
+            "{events:?}"
+        );
     }
 }

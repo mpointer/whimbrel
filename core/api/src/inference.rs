@@ -82,6 +82,15 @@ pub fn start(
     api_key: Option<&str>,
     base_url_override: Option<&str>,
 ) -> Option<StartedRun> {
+    // As in the blocking chain: a model the user never chose (empty, or an old default)
+    // runs the current default, and a missing one retries once with the default.
+    let defaults = crate::model_defaults::cached();
+    let model = match Provider::parse(provider) {
+        Some(p @ (Provider::Google | Provider::Anthropic | Provider::OpenAI)) => crate::model_defaults::resolve(p, Some(model), &defaults),
+        _ => model.to_string(),
+    };
+    let model = model.as_str();
+    let fallback = |p: Provider| crate::model_defaults::fallback_for(p, model, &defaults);
     let (provider, client): (Provider, Arc<dyn StreamingLlmClient>) = match provider {
         "ollama" => (
             Provider::Ollama,
@@ -91,15 +100,15 @@ pub fn start(
             },
         ),
         "google" => {
-            let client = GoogleStreamingClient::new(hosted_key(api_key)?);
+            let client = GoogleStreamingClient::new(hosted_key(api_key)?).with_fallback_model(fallback(Provider::Google));
             (Provider::Google, with_base(client, base_url_override, GoogleStreamingClient::with_base_url))
         }
         "anthropic" => {
-            let client = AnthropicStreamingClient::new(hosted_key(api_key)?);
+            let client = AnthropicStreamingClient::new(hosted_key(api_key)?).with_fallback_model(fallback(Provider::Anthropic));
             (Provider::Anthropic, with_base(client, base_url_override, AnthropicStreamingClient::with_base_url))
         }
         "openai" => {
-            let client = OpenAIStreamingClient::new(hosted_key(api_key)?);
+            let client = OpenAIStreamingClient::new(hosted_key(api_key)?).with_fallback_model(fallback(Provider::OpenAI));
             (Provider::OpenAI, with_base(client, base_url_override, OpenAIStreamingClient::with_base_url))
         }
         "local" => {

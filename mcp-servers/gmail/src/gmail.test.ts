@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDraft, getThread, searchThreads, sendEmail, syncMessages } from "./gmail.js";
+import { createDraft, getThread, googleErrorReason, searchThreads, sendEmail, syncMessages } from "./gmail.js";
 
 describe("sendEmail", () => {
   it("POSTs a base64url-encoded RFC 2822 message to Gmail's send endpoint", async () => {
@@ -545,3 +545,30 @@ describe("createDraft", () => {
   });
 });
 
+
+describe("non-OK responses carry Google's reason", () => {
+  const body = (reason: string) =>
+    JSON.stringify({ error: { code: 403, message: "Request had insufficient authentication scopes.", errors: [{ reason }], status: "PERMISSION_DENIED" } });
+  const failing = (status: number, text: string) => async () => ({ ok: false, status, json: async () => ({}), text: async () => text });
+
+  it("appends insufficientPermissions for a 403 scope error", async () => {
+    const error = await searchThreads("q", undefined, "secret-token", failing(403, body("insufficientPermissions"))).catch((e: Error) => e);
+    expect((error as Error).message).toBe("Gmail API returned 403 (insufficientPermissions)");
+  });
+
+  it("appends accessNotConfigured", async () => {
+    await expect(sendEmail("me@example.com", "S", "B", "t", failing(403, body("accessNotConfigured")))).rejects.toThrow(
+      "Gmail API returned 403 (accessNotConfigured)",
+    );
+  });
+
+  it("keeps the bare message for a non-JSON or empty body", async () => {
+    expect(((await syncMessages("80", "t", failing(403, "<html>nope</html>")).catch((e: Error) => e)) as Error).message).toBe("Gmail API returned 403");
+    expect(((await getThread("th", "t", failing(403, "")).catch((e: Error) => e)) as Error).message).toBe("Gmail API returned 403");
+  });
+
+  it("only takes a short plain token as the reason", () => {
+    expect(googleErrorReason(body("has spaces"))).toBe("PERMISSION_DENIED");
+    expect(googleErrorReason("not json")).toBeUndefined();
+  });
+});

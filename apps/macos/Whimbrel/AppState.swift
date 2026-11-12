@@ -171,6 +171,39 @@ final class AppState: ObservableObject {
     /// The Meeting Prep brief the main window shows in a sheet (a notification click, Routines' "Open brief").
     @Published var prepBriefToShow: PrepBriefRequest?
 
+    /// Opens (or, if open, closes) the hotkey panel for `frontmost`.
+    func toggleHotkeyPanel(frontmost: HotkeyPanelModel.Frontmost?) {
+        hotkeyPanel.toggle(frontmost: frontmost)
+    }
+
+    /// The menu-bar entry: the app the user was in before the menu opened (Whimbrel itself
+    /// if that is where they were, which the panel reports as excluded).
+    func openHotkeyPanelFromMenu(menuOpenedAt: Date) {
+        let frontmost = frontmostTracker.appBeforeMenu(openedAt: menuOpenedAt, ownBundleId: Bundle.main.bundleIdentifier)
+        if hotkeyPanel.isVisible { hotkeyPanel.close() }
+        toggleHotkeyPanel(frontmost: frontmost)
+    }
+
+    /// The panel's route, decided without the question (the destination line is shown
+    /// before one is typed): the default provider, never the Ask tab's per-question
+    /// Ollama substitution; Ollama (or the bundled model) in local-only mode.
+    func windowAskRouting() -> WindowAskRouting {
+        let selection = routing.defaultSelection()
+        let localOnly = routing.localOnlyMode
+        let provider: RoutingSettings.Provider = localOnly ? .ollama : selection.provider
+        let model = provider == .ollama ? selection.ollamaModel : selection.hostedModel
+        let config = routing.routingConfig(
+            preferredProvider: provider, preferredModel: model,
+            customInstructions: promptLibrary.instructions[.ask] ?? "")
+        let stream = askStreamRoute(
+            provider: provider, modelLabel: model, localOnlyMode: localOnly,
+            replacesOllama: LocalModel.replacesOllama(routing),
+            whimbrelCredentials: syncState.whimbrelCredentials,
+            loadKey: { KeychainService.load(for: $0) })
+        return WindowAskRouting(config: config, stream: stream,
+                                localModelAvailable: !routing.ollamaModels.isEmpty || LocalModel.isInstalled)
+    }
+
     func showPrepBrief(key: String) {
         NSApp.activate(ignoringOtherApps: true)
         openTimeline?()
@@ -385,6 +418,32 @@ final class AppState: ObservableObject {
     let meetingHeuristicDetector = MeetingHeuristicDetector()
     let meetingEndDetector = MeetingEndDetector()
     let meetingAlertPanel = MeetingAlertPanelController()
+    /// Global hotkey for the ask-window panel (Carbon, no permission). Task 5 sets `onHotkey`.
+    let hotkeyService = HotkeyService(registrar: CarbonHotkeyRegistrar(), defaults: .standard)
+    var onHotkey: (() -> Void)?
+    /// The "Ask about this window" panel, opened by the hotkey or the menu-bar item.
+    private(set) lazy var hotkeyPanel: HotkeyPanelController = {
+        let model = HotkeyPanelModel(
+            reader: FocusedWindowReader(provider: AXFocusedElementProvider()),
+            store: { [weak self] in self?.coreStore },
+            routing: { [unowned self] in self.windowAskRouting() },
+            beforeAsk: { [weak self] route in
+                // As the Ask tab: Whimbrel AI needs a live sync ID token. On Return only.
+                guard let self, route.config.preferredProvider == RoutingSettings.Provider.whimbrel.rawValue,
+                      !route.config.sensitive, self.syncState.whimbrelCredentialsNeedRefresh else { return }
+                await self.syncState.refreshWhimbrelCredentials()
+            })
+        let controller = HotkeyPanelController(model: model)
+        controller.openAIProviders = { [weak self] in
+            // Set first: SettingsView takes it on appear, or on change when already open.
+            self?.pendingSettingsSection = .ai
+            NSApp.activate(ignoringOtherApps: true)
+            self?.openSettingsWindow?()
+        }
+        return controller
+    }()
+    /// The app frontmost before Whimbrel, for the menu-bar entry to the panel.
+    let frontmostTracker = FrontmostAppTracker()
     let retention = RetentionSettings()
     let retentionScheduler = RetentionScheduler()
     let routineScheduler = RoutineScheduler()
@@ -536,6 +595,8 @@ final class AppState: ObservableObject {
     let deviceId: String
 
     private var cancellables = Set<AnyCancellable>()
+    /// Reads defaults.json a minute after launch, then daily (`startModelDefaults`).
+    private var modelDefaultsTask: Task<Void, Never>?
     private var terminationObserver: NSObjectProtocol?
     /// Meetings the quit path completed without transcribing; launch transcribes each once.
     private static let pendingLaunchTranscriptionKey = "com.mpointer.kestrel.pendingLaunchTranscription"
@@ -606,6 +667,7 @@ final class AppState: ObservableObject {
             }
         }
         reconcileOrphanedRecordingMeetings()
+        startModelDefaults()
         // `queue: nil` runs the block synchronously on the posting (main) thread, before
         // `terminate()` exits; see McpServerProcessManager.
         terminationObserver = NotificationCenter.default.addObserver(
@@ -634,6 +696,7 @@ final class AppState: ObservableObject {
             .merge(with: retentionScheduler.objectWillChange)
             .merge(with: routineScheduler.objectWillChange)
             .merge(with: mcpServerProcess.objectWillChange)
+            .merge(with: hotkeyService.objectWillChange)
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
 
@@ -903,6 +966,14 @@ final class AppState: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+
+        frontmostTracker.start()
+        // The frontmost app is read first, before the panel can take focus.
+        onHotkey = { [weak self] in
+            let frontmost = NSWorkspace.shared.frontmostApplication.flatMap(FrontmostAppTracker.frontmost)
+            self?.toggleHotkeyPanel(frontmost: frontmost)
+        }
+        hotkeyService.start { [weak self] in self?.onHotkey?() }
 
         meetingTrigger.$pendingPrompt
             .sink { [weak self] prompt in
@@ -3049,5 +3120,56 @@ enum StatusMenuCopy {
         case (false, true): String(localized: "Whimbrel stopped recording: less than 2 GB free. The recording was saved.")
         case (false, false): String(localized: "Whimbrel stopped recording: less than 2 GB free.")
         }
+    }
+}
+
+// MARK: - Hosted model defaults (core/api::model_defaults)
+
+extension AppState {
+    /// Puts the store's cached defaults in force and re-reads the hosted models against
+    /// them, then fetches defaults.json a minute after launch and once a day. The fetch
+    /// holds a store for up to about 20 s, so it runs on a connection of its own, off both
+    /// store lanes. A user's pick clears core's "isn't available" note for that provider.
+    func startModelDefaults() {
+        guard let store = coreStore else { return }
+        routing.hostedModelChosen = { [weak self] provider in
+            CoreMemoryStore.accessQueue.async {
+                store.clearModelUnavailable(provider: provider)
+                DispatchQueue.main.async { self?.refreshModelNotes() }
+            }
+        }
+        CoreMemoryStore.accessQueue.async { [weak self] in
+            store.loadModelDefaults()
+            let notes = store.modelUnavailableNotes()
+            DispatchQueue.main.async {
+                self?.routing.resolveHostedDefaults()
+                self?.routing.modelUnavailableNotes = notes
+            }
+        }
+        modelDefaultsTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            while !Task.isCancelled {
+                let refreshed = await Self.refreshModelDefaultsOffLanes(primary: store)
+                if refreshed { self?.routing.resolveHostedDefaults() }
+                try? await Task.sleep(for: .seconds(24 * 60 * 60))
+            }
+        }
+    }
+
+    /// Re-reads core's "isn't available" notes for Settings → AI Providers.
+    func refreshModelNotes() {
+        guard let store = coreStore else { return }
+        CoreMemoryStore.accessQueue.async { [weak self] in
+            let notes = store.modelUnavailableNotes()
+            DispatchQueue.main.async { self?.routing.modelUnavailableNotes = notes }
+        }
+    }
+
+    /// One defaults.json fetch on a short-lived connection of its own, so neither store
+    /// lane waits on the network. True when a usable file was cached and put in force.
+    private nonisolated static func refreshModelDefaultsOffLanes(primary: CoreMemoryStore) async -> Bool {
+        let own = CoreMemoryStore.accessQueue.sync { CoreMemoryStore(secondaryTo: primary, path: SpikePaths.database) }
+        guard let own else { return false }
+        return await Task.detached(priority: .utility) { own.refreshModelDefaults() }.value
     }
 }

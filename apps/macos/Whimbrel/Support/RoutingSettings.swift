@@ -111,22 +111,79 @@ final class RoutingSettings: ObservableObject {
     }
     @Published var anthropicDefaultModel: String {
         didSet {
+            guard !isResolvingDefaults else { return }
+            if anthropicDefaultModel != oldValue { hostedModelChosen?("anthropic") }
             UserDefaults.standard.set(anthropicDefaultModel, forKey: Self.anthropicDefaultModelKey)
             SettingsFieldTimestamps.touch("routing.anthropicDefaultModel")
         }
     }
     @Published var openaiDefaultModel: String {
         didSet {
+            guard !isResolvingDefaults else { return }
+            if openaiDefaultModel != oldValue { hostedModelChosen?("openai") }
             UserDefaults.standard.set(openaiDefaultModel, forKey: Self.openaiDefaultModelKey)
             SettingsFieldTimestamps.touch("routing.openaiDefaultModel")
         }
     }
     @Published var googleDefaultModel: String {
         didSet {
+            guard !isResolvingDefaults else { return }
+            if googleDefaultModel != oldValue { hostedModelChosen?("google") }
             UserDefaults.standard.set(googleDefaultModel, forKey: Self.googleDefaultModelKey)
             SettingsFieldTimestamps.touch("routing.googleDefaultModel")
         }
     }
+    /// True while `resolveHostedDefaults()` writes the three hosted models, so their
+    /// didSets neither store nor sync a default the user never chose.
+    private var isResolvingDefaults = false
+    /// Called with a core provider id when the user (or a synced setting) changes that
+    /// provider's model; AppState drops core's "isn't available" note for it.
+    var hostedModelChosen: ((String) -> Void)?
+    /// Chosen hosted models their provider said it doesn't have (core's notes), for the
+    /// "isn't available" line in Settings → AI Providers.
+    @Published var modelUnavailableNotes: [ModelUnavailableNote] = []
+
+    /// Core's note for `provider` while its chosen model is still the missing one.
+    func unavailableNote(for provider: Provider) -> ModelUnavailableNote? {
+        let model: String
+        switch provider {
+        case .anthropic: model = anthropicDefaultModel
+        case .openai: model = openaiDefaultModel
+        case .google: model = googleDefaultModel
+        default: return nil
+        }
+        return modelUnavailableNotes.first { $0.provider == provider.rawValue && $0.model == model }
+    }
+
+    /// The provider's model from the stored value: the stored one when the user chose it,
+    /// else core's current default (`api::model_defaults`; an earlier default counts as
+    /// never chosen).
+    nonisolated static func resolvedModel(_ provider: String, defaultsKey: String) -> String {
+        HostedModelDefaults.resolve(provider: provider, stored: UserDefaults.standard.string(forKey: defaultsKey))
+    }
+
+    /// Re-reads the three hosted models against the defaults now in force, without storing
+    /// or syncing them. AppState calls it once the store has loaded the cached defaults
+    /// file, and after each daily refresh.
+    func resolveHostedDefaults() {
+        isResolvingDefaults = true
+        defer { isResolvingDefaults = false }
+        let anthropic = Self.resolvedModel("anthropic", defaultsKey: Self.anthropicDefaultModelKey)
+        let openai = Self.resolvedModel("openai", defaultsKey: Self.openaiDefaultModelKey)
+        let google = Self.resolvedModel("google", defaultsKey: Self.googleDefaultModelKey)
+        if anthropicDefaultModel != anthropic { anthropicDefaultModel = anthropic }
+        if openaiDefaultModel != openai { openaiDefaultModel = openai }
+        if googleDefaultModel != google { googleDefaultModel = google }
+    }
+
+    /// `models` with `current` first when the provider's list doesn't name it (aliases
+    /// such as `gemini-flash-latest` may be missing), so a picker never swaps the
+    /// default for another model.
+    nonisolated static func including(_ current: String, in models: [String]) -> [String] {
+        guard !models.isEmpty, !current.isEmpty, !models.contains(current) else { return models }
+        return [current] + models
+    }
+
     /// The user's OpenRouter pick, also the model light tasks use there. Empty until
     /// picked: core then leaves OpenRouter out of every chain, because their catalogue
     /// changes weekly and there is no fallback model to substitute.
@@ -377,19 +434,12 @@ final class RoutingSettings: ObservableObject {
         let storedProvider = defaults.string(forKey: Self.preferredProviderKey).flatMap(Provider.init(rawValue:))
         preferredProvider = storedProvider ?? .ollama
         storedOllamaModel = defaults.string(forKey: Self.ollamaDefaultModelKey) ?? Self.builtInOllamaModel
-        // Bug fixed 2026-08-06: these two used to default to "" until the user picked a
-        // model from Settings' fetched-model dropdown. An empty model name reaches
-        // core/ffi's build_chain() unchanged and gets sent as `"model": ""` in the real
-        // API request — both Anthropic and OpenAI correctly reject that with a 400
-        // ("model: String should have at least 1 character"), which the provider chain's
-        // generic failure handling then shows as the misleading "Couldn't reach the AI
-        // provider" even though the API key itself is perfectly valid. Fallback values
-        // match build_chain()'s own FALLBACK_ANTHROPIC_MODEL/FALLBACK_OPENAI_MODEL
-        // constants (core/ffi/src/lib.rs) exactly, so a never-configured default behaves
-        // the same as the Rust-side fallback an explicit-but-wrong-provider pick already uses.
-        anthropicDefaultModel = defaults.string(forKey: Self.anthropicDefaultModelKey) ?? "claude-haiku-4-5"
-        openaiDefaultModel = defaults.string(forKey: Self.openaiDefaultModelKey) ?? "gpt-4o-mini"
-        googleDefaultModel = defaults.string(forKey: Self.googleDefaultModelKey) ?? "gemini-2.5-flash"
+        // Never empty (an empty model is a 400) and never a literal: core resolves the
+        // stored value against its defaults (built-in until the store opens; AppState
+        // then calls resolveHostedDefaults()). A stored old default reads as never chosen.
+        anthropicDefaultModel = Self.resolvedModel("anthropic", defaultsKey: Self.anthropicDefaultModelKey)
+        openaiDefaultModel = Self.resolvedModel("openai", defaultsKey: Self.openaiDefaultModelKey)
+        googleDefaultModel = Self.resolvedModel("google", defaultsKey: Self.googleDefaultModelKey)
         openrouterDefaultModel = defaults.string(forKey: Self.openrouterDefaultModelKey) ?? ""
         whimbrelDefaultModel = defaults.string(forKey: Self.whimbrelDefaultModelKey) ?? Self.whimbrelDefault
         openrouterPrices = defaults.data(forKey: Self.openrouterPricesKey)
@@ -611,7 +661,7 @@ final class RoutingSettings: ObservableObject {
         anthropicModelsError = nil
         defer { isLoadingAnthropicModels = false }
         do {
-            anthropicModels = try await HostedModelsService.fetchAnthropicModels(apiKey: key)
+            anthropicModels = Self.including(anthropicDefaultModel, in: try await HostedModelsService.fetchAnthropicModels(apiKey: key))
         } catch {
             anthropicModelsError = error.localizedDescription
         }
@@ -629,7 +679,7 @@ final class RoutingSettings: ObservableObject {
         openaiModelsError = nil
         defer { isLoadingOpenAIModels = false }
         do {
-            openaiModels = try await HostedModelsService.fetchOpenAIModels(apiKey: key)
+            openaiModels = Self.including(openaiDefaultModel, in: try await HostedModelsService.fetchOpenAIModels(apiKey: key))
         } catch {
             openaiModelsError = error.localizedDescription
         }
@@ -647,7 +697,7 @@ final class RoutingSettings: ObservableObject {
         googleModelsError = nil
         defer { isLoadingGoogleModels = false }
         do {
-            googleModels = try await HostedModelsService.fetchGoogleModels(apiKey: key)
+            googleModels = Self.including(googleDefaultModel, in: try await HostedModelsService.fetchGoogleModels(apiKey: key))
         } catch {
             googleModelsError = error.localizedDescription
         }

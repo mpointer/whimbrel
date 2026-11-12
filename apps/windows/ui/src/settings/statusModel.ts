@@ -1,6 +1,6 @@
 import type { AiSettings, DeviceView, HostView, Provider, RetentionSettings, RunView, StatusView, SyncView, UpdateCheck } from "../generated/types";
 import { t } from "../l10n";
-import { modelField, monthSpent, ollamaWarningLine, providerLabel, thisMonth } from "./aiModel";
+import { modelField, modelWarningLine, monthSpent, ollamaWarningLine, providerLabel, thisMonth } from "./aiModel";
 import { stateLabel } from "./syncModel";
 
 // What the Settings status page (issue 595, the Mac's StatusOverviewView) says, apart from the component.
@@ -89,6 +89,7 @@ export function aiLines(ai: AiSettings | null): string[] {
   const provider = ai.routing.preferredProvider;
   const lines = [t("Summaries use {provider}, {model}.", { provider: providerName(ai, provider), model: ai.routing[modelField(provider)] })];
   if (provider === "ollama" && ai.ollamaWarning) lines.push(ollamaWarningLine(ai.ollamaWarning));
+  for (const w of ai.modelWarnings ?? []) if (w.provider === provider) lines.push(modelWarningLine(w));
   for (const { provider: id, cents } of ai.budgets) {
     const spent = monthSpent(ai.usage, id);
     if (spent <= 0 && !cents) continue;

@@ -10,6 +10,7 @@ import { AlertView } from "./alert/AlertView";
 import { BudgetAlertView } from "./alert/BudgetAlertView";
 import { QuestionAlertView } from "./alert/QuestionAlertView";
 import { StillHereView } from "./alert/StillHereView";
+import { HotkeyPanel } from "./hotkeyPanel/HotkeyPanel";
 import { PopupView } from "./popup/PopupView";
 import { startSkin } from "./skin";
 
@@ -34,6 +35,8 @@ function Root() {
       <BudgetAlertView />
     ) : label === "still-here" ? (
       <StillHereView />
+    ) : label === "hotkey-panel" ? (
+      <HotkeyPanel />
     ) : (
       <App />
     );

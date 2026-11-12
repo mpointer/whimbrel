@@ -64,6 +64,11 @@ struct SettingsSheet: View {
                             .foregroundStyle(Color.theme(.textSecondary))
                     }
                     .listRowBackground(Color.theme(.backgroundCard))
+                    if sync.olderHistoryLoading {
+                        Text("Older history is still loading.")
+                            .foregroundStyle(Color.theme(.textSecondary))
+                            .listRowBackground(Color.theme(.backgroundCard))
+                    }
                     Button("Sync now") { Task { await sync.syncNow(manual: true) } }
                         .disabled(sync.isSyncing)
                         .listRowBackground(Color.theme(.backgroundCard))

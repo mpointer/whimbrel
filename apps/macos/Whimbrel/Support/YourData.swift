@@ -42,18 +42,20 @@ enum YourData {
     }
 
     static func outbound(_ i: Inputs) -> [Outbound] {
+        let hostedOn = !i.localOnly && !i.hostedProviders.isEmpty
         let providers = Outbound(
             channel: .providers,
             title: String(localized: "AI providers"),
             when: String(localized: "When you ask a question, summarize a meeting, or run a routine with a hosted model."),
             sees: [String(localized: "The provider whose key you added receives the text needed for that request, under its own terms. Known secrets are redacted first."),
+                   hostedOn ? String(localized: "The text of the window you ask about is sent to the model you chose, as in Ask.") : nil,
                    i.whimbrelAITerms].compactMap { $0 }.joined(separator: " "),
             state: i.localOnly
                 ? String(localized: "Local-only mode: nothing is sent.")
                 : i.hostedProviders.isEmpty
                     ? String(localized: "No hosted keys. Only local models run.")
                     : Self.providerState(i.hostedProviders),
-            active: !i.localOnly && !i.hostedProviders.isEmpty
+            active: hostedOn
         )
         let relay = Outbound(
             channel: .syncRelay,

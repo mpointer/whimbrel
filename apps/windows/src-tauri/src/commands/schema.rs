@@ -124,6 +124,9 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::approvals::ApproveResult>();
     generator.subschema_for::<super::approvals::ActionView>();
     generator.subschema_for::<super::status::StatusView>();
+    generator.subschema_for::<crate::hotkey_panel::HotkeyStatus>();
+    generator.subschema_for::<crate::hotkey_panel::HotkeyPanelRead>();
+    generator.subschema_for::<super::window_ask::WindowAskReply>();
     let mut definitions: Map<String, Value> = generator.definitions().clone().into_iter().collect();
     for schema in definitions.values_mut() {
         ref_siblings_to_all_of(schema);

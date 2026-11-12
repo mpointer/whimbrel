@@ -12,6 +12,7 @@ import {
   keyLine,
   modelField,
   modelOptions,
+  modelWarningLine,
   monthSpent,
   ollamaWarningLine,
   parseCapDollars,
@@ -25,6 +26,14 @@ import {
   whimbrelSnap,
   WHIMBREL_DEFAULT_MODEL,
 } from "./aiModel";
+
+describe("a chosen hosted model the provider doesn't have", () => {
+  it("names the model, the provider and what answers meanwhile", () => {
+    expect(modelWarningLine({ provider: "openai", model: "gpt-4.1", using: "gpt-5.4-mini" })).toBe(
+      "gpt-4.1 isn't available to your OpenAI key; using gpt-5.4-mini for now.",
+    );
+  });
+});
 
 describe("a chosen Ollama model that isn't installed", () => {
   it("says so and names what stands in", () => {

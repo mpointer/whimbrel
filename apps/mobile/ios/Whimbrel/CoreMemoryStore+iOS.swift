@@ -207,4 +207,39 @@ extension CoreMemoryStore: PhoneCaptureStore {
         return try? JSONDecoder().decode(PhoneCaptureItem.self, from: Data(String(cString: json).utf8))
     }
 }
+/// Hosted model defaults (core/api::model_defaults). Opening the store puts its cached
+/// defaults file in force for `HostedModelDefaults.resolve`; this keeps that file fresh.
+extension CoreMemoryStore {
+    /// A streamed Ask asked `requested` and `answered` replied: a different model records
+    /// `requested` as unavailable, the same clears that note. Store queue only.
+    @discardableResult
+    func noteModelAnswer(provider: String, requested: String, answered: String) -> Bool {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        return provider.withCString { p in
+            requested.withCString { r in answered.withCString { whimbrel_model_note_answer(handle, p, r, $0, nowMs) } }
+        }
+    }
+
+    /// When the defaults file was last fetched (ms), nil when never.
+    func modelDefaultsFetchedAtMs() -> Int64? {
+        guard let out = whimbrel_model_defaults_json(handle) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        let object = try? JSONSerialization.jsonObject(with: Data(String(cString: out).utf8)) as? [String: Any]
+        return (object?["fetched_at_ms"] as? NSNumber)?.int64Value
+    }
+
+    /// Fetches defaults.json at most once a day, on a connection of its own so the sync
+    /// queue never waits on the network (one HTTPS request, up to about 20 s). Called a
+    /// minute after launch, once the sync model has opened (and migrated) the store.
+    static func refreshModelDefaultsIfDue() {
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(for: .seconds(60))
+            guard let path = try? defaultPath(), FileManager.default.fileExists(atPath: path.path),
+                  let own = CoreMemoryStore(path: path) else { return }
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            if let fetched = own.modelDefaultsFetchedAtMs(), nowMs - fetched < 24 * 60 * 60 * 1000 { return }
+            _ = whimbrel_model_defaults_refresh(own.handle)
+        }
+    }
+}
 #endif

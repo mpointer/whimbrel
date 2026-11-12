@@ -15,11 +15,15 @@ final class FakeAskBackend: AskBackend, @unchecked Sendable {
     private let lock = NSLock()
     private var _discards: [String] = []
     private var _finalizes: [String] = []
+    private var _finalizeModels: [String] = []
+    private var _notes: [(provider: AskProvider, requested: String, answered: String)] = []
     private var _streams: [(model: String, provider: AskProvider, key: String)] = []
     private var _routing: [String] = []
     private var _history: [String] = []
     var discards: [String] { lock.lock(); defer { lock.unlock() }; return _discards }
     var finalizes: [String] { lock.lock(); defer { lock.unlock() }; return _finalizes }
+    var finalizeModels: [String] { lock.lock(); defer { lock.unlock() }; return _finalizeModels }
+    var notes: [(provider: AskProvider, requested: String, answered: String)] { lock.lock(); defer { lock.unlock() }; return _notes }
     var streams: [(model: String, provider: AskProvider, key: String)] { lock.lock(); defer { lock.unlock() }; return _streams }
     var routingJSONs: [String] { lock.lock(); defer { lock.unlock() }; return _routing }
     var historyJSONs: [String] { lock.lock(); defer { lock.unlock() }; return _history }
@@ -33,8 +37,12 @@ final class FakeAskBackend: AskBackend, @unchecked Sendable {
     }
 
     func finalize(prepareId: String, text: String, model: String, inputTokens: Int64, outputTokens: Int64) async -> [CitationCard]? {
-        lock.lock(); _finalizes.append(prepareId); lock.unlock()
+        lock.lock(); _finalizes.append(prepareId); _finalizeModels.append(model); lock.unlock()
         return finalizeResult
+    }
+
+    func noteAnswer(provider: AskProvider, requested: String, answered: String) {
+        lock.lock(); _notes.append((provider, requested, answered)); lock.unlock()
     }
 
     func discard(prepareId: String) {
@@ -68,6 +76,8 @@ final class AskModelTests: XCTestCase {
 
     private func prefs() -> PhoneRoutingPrefs { PhoneRoutingPrefs(defaults: defaults) }
     private func set(_ field: String, _ value: String) { defaults.set(value, forKey: p + field) }
+    /// Core's current default for a provider (the built-in table in tests).
+    private func coreDefault(_ provider: String) -> String { HostedModelDefaults.resolve(provider: provider, stored: nil) }
 
     private func terminal(_ outcome: InferenceEvent.TerminalOutcome = .completed, text: String) -> InferenceEvent {
         .terminal(runId: "r", outcome: outcome, atUnixMs: 0, finalText: text, usage: .init(inputTokens: 10, outputTokens: 5))
@@ -87,17 +97,17 @@ final class AskModelTests: XCTestCase {
     func test_route_prefers_synced_provider_with_key() {
         set("routing.preferredProvider", "openai")
         let r = AskModel.route(prefs: prefs(), keys: { [.anthropic: "a", .openai: "o"][$0] })
-        XCTAssertEqual(r, .ready(provider: .openai, model: "gpt-4o-mini", key: "o"))
+        XCTAssertEqual(r, .ready(provider: .openai, model: coreDefault("openai"), key: "o"))
     }
 
     func test_route_falls_back_in_order_when_preferred_has_no_key() {
         set("routing.preferredProvider", "openai")
         XCTAssertEqual(AskModel.route(prefs: prefs(), keys: { [.google: "g", .openrouter: "r"][$0] }),
-                       .ready(provider: .google, model: "gemini-2.5-flash", key: "g"))
+                       .ready(provider: .google, model: coreDefault("google"), key: "g"))
         // "ollama" is not a hosted provider: same fallback order.
         set("routing.preferredProvider", "ollama")
         XCTAssertEqual(AskModel.route(prefs: prefs(), keys: { [.anthropic: "a", .google: "g"][$0] }),
-                       .ready(provider: .anthropic, model: "claude-haiku-4-5", key: "a"))
+                       .ready(provider: .anthropic, model: coreDefault("anthropic"), key: "a"))
     }
 
     func test_route_local_only_wins() {
@@ -111,13 +121,19 @@ final class AskModelTests: XCTestCase {
         XCTAssertEqual(AskModel.route(prefs: prefs(), keys: { [.openrouter: "r"][$0] }), .noHostedKey)
     }
 
-    func test_model_falls_back_to_mac_defaults() {
+    func test_model_falls_back_to_cores_defaults() {
         let keys: [AskProvider: String] = [.anthropic: "a", .openai: "o", .google: "g"]
-        for (preferred, want) in [("anthropic", "claude-haiku-4-5"), ("openai", "gpt-4o-mini"), ("google", "gemini-2.5-flash")] {
+        for preferred in ["anthropic", "openai", "google"] {
             set("routing.preferredProvider", preferred)
             guard case .ready(_, let m, _) = AskModel.route(prefs: prefs(), keys: { keys[$0] }) else { return XCTFail(preferred) }
-            XCTAssertEqual(m, want)
+            XCTAssertEqual(m, coreDefault(preferred))
+            XCTAssertFalse(m.isEmpty)
         }
+        // An earlier default synced from a computer not yet updated counts as never chosen.
+        set("routing.anthropicDefaultModel", "claude-haiku-4-5")
+        set("routing.preferredProvider", "anthropic")
+        guard case .ready(_, let old, _) = AskModel.route(prefs: prefs(), keys: { keys[$0] }) else { return XCTFail() }
+        XCTAssertEqual(old, coreDefault("anthropic"))
         set("routing.anthropicDefaultModel", "claude-opus-x")
         set("routing.preferredProvider", "anthropic")
         guard case .ready(_, let m, _) = AskModel.route(prefs: prefs(), keys: { keys[$0] }) else { return XCTFail() }
@@ -141,7 +157,7 @@ final class AskModelTests: XCTestCase {
         XCTAssertEqual(m.turns[0].citations, [card])
         XCTAssertEqual(backend.finalizes, ["p1"])
         XCTAssertEqual(backend.discards, [])
-        XCTAssertEqual(backend.streams.first?.model, "claude-haiku-4-5")
+        XCTAssertEqual(backend.streams.first?.model, coreDefault("anthropic"))
         XCTAssertEqual(backend.streams.first?.key, "sk-a")
     }
 
@@ -159,7 +175,7 @@ final class AskModelTests: XCTestCase {
         let routing = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(backend.routingJSONs[0].utf8)) as? [String: Any])
         XCTAssertEqual(routing["anthropic_key"] as? String, "sk-a")
         XCTAssertEqual(routing["preferred_provider"] as? String, "anthropic")
-        XCTAssertEqual(routing["preferred_model"] as? String, "claude-haiku-4-5")
+        XCTAssertEqual(routing["preferred_model"] as? String, coreDefault("anthropic"))
         XCTAssertEqual(routing["sensitive"] as? Bool, false)
         XCTAssertEqual(routing["user_daily_cap_cents"] as? Int, 50)
         XCTAssertNil(routing["global_daily_cap_cents"])
@@ -245,7 +261,27 @@ final class AskModelTests: XCTestCase {
         backend.holdOpen = true
         let m = model(backend)
         m.send("q")
-        XCTAssertEqual(m.turns[0].modelLine, "claude-haiku-4-5 · your key")
+        XCTAssertEqual(m.turns[0].modelLine, "\(coreDefault("anthropic")) · your key")
+    }
+
+    /// The "streaming" state names the model that answered (the provider's default when
+    /// the requested one doesn't exist there): the line says it, usage is logged under it,
+    /// and core is told about the substitution.
+    func test_answering_model_from_the_streaming_state() async {
+        set("routing.anthropicDefaultModel", "claude-opus-x")
+        let backend = FakeAskBackend()
+        backend.events = [
+            .state(runId: "r", state: .streaming, atUnixMs: 0, provider: "anthropic", model: "claude-sonnet-y", attempt: 1),
+            .textDelta(runId: "r", sequence: 1, text: "Hi"), terminal(text: "Hi"),
+        ]
+        let m = model(backend)
+        m.send("q")
+        await settle(m) { m.turns.first?.state != .streaming }
+        XCTAssertEqual(m.turns[0].state, .done)
+        XCTAssertEqual(m.turns[0].modelLine, "claude-sonnet-y · your key")
+        XCTAssertEqual(backend.finalizeModels, ["claude-sonnet-y"])
+        XCTAssertEqual(backend.notes.map(\.requested), ["claude-opus-x"])
+        XCTAssertEqual(backend.notes.map(\.answered), ["claude-sonnet-y"])
     }
 
     func test_send_without_a_route_adds_no_turn() {

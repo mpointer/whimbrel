@@ -110,7 +110,7 @@ final class ScreenTextCaptureService: NSObject, ObservableObject {
         var text = extraction.text
         var source = "ax"
 
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).count < 8 {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).count < OCRFallback.minimumAccessibilityTextLength {
             let bounds = AXTextWalker.frame(of: windowElement)
             if let windowID = OCRFallback.windowID(forPID: app.processIdentifier, matchingBounds: bounds),
                let usableBounds = bounds,

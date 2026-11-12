@@ -4,7 +4,7 @@
 
 use crate::envelope::ApiResult;
 use crate::routing::{build_chain_for, RoutingConfig};
-use crate::util::{log_usage_for, now_unix_ms};
+use crate::util::now_unix_ms;
 
 /// Digest over `[start_unix_ms, end_unix_ms)`; the caller computes the bounds (e.g.
 /// local-time day boundaries). Skips the model call *and* the spend-cap check entirely
@@ -49,13 +49,7 @@ pub fn daily_digest(
         )
     })
     .map_err(crate::chain_failed)?;
-    log_usage_for(
-        store,
-        entry.provider,
-        &entry.model,
-        "digest",
-        digest.token_usage,
-    );
+    crate::util::log_link_usage(store, entry, "digest", digest.token_usage);
     Ok(digest)
 }
 

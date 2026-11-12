@@ -102,7 +102,7 @@ pub fn run(
         let chain = build_chain_for(llm::TaskKind::ProfileSuggest, ollama_model, &routing);
         let chain = crate::budget::apply_budgets(store, chain, false, now_unix_ms).ok()?;
         let (completion, link) = llm::try_chain(&chain, |link| link.client.complete(prompt))?;
-        crate::util::log_usage_for(store, link.provider, &link.model, "profile_suggest", completion.token_usage);
+        crate::util::log_link_usage(store, link, "profile_suggest", completion.token_usage);
         Some(completion.text)
     };
     // The composed profile text is not passed: the model is told what is already known through `facts`.

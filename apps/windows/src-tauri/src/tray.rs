@@ -239,9 +239,10 @@ pub fn refresh(app: &AppHandle) -> TrayStatus {
 /// The right-click menu, in the current language.
 fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let open = MenuItem::with_id(app, "open", tr("Open Whimbrel", &[]), true, None::<&str>)?;
+    let ask_window = MenuItem::with_id(app, "ask-window", tr("Ask about this window…", &[]), true, None::<&str>)?;
     let feedback = MenuItem::with_id(app, "feedback", tr("Send Feedback…", &[]), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", tr("Quit Whimbrel", &[]), true, None::<&str>)?;
-    Menu::with_items(app, &[&open, &feedback, &quit])
+    Menu::with_items(app, &[&open, &ask_window, &feedback, &quit])
 }
 
 /// After a language change: a new menu, and the tooltip re-rendered (its cached text differs).
@@ -267,6 +268,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => crate::app::show_main_window(app),
+            // The window the user was in before the tray click (hotkey_panel::foreground_watch).
+            "ask-window" => crate::hotkey_panel::open_from_tray(app),
             "feedback" => {
                 // The bundle reads logs and the store: off the event loop.
                 let app = app.clone();

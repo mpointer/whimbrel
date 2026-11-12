@@ -2,8 +2,8 @@
   "name": "Whimbrel",
   "url": "https://whimbrelapp.com",
   "renameNote": "",
-  "tagline": "The private AI assistant that remembers your work",
-  "description": "Whimbrel is a desktop AI assistant for Mac and Windows that records meetings without a bot, remembers what you worked on, and turns it into briefings, answers, and follow-ups.",
+  "tagline": "Your client calls stay on your computer",
+  "description": "Whimbrel is a private AI memory for Mac and Windows that records meetings without a bot, keeps a page for every client, and stores recordings on your computer, not on our servers.",
   "ogImage": "/assets/og-image.png",
   "sameAs": [],
   "pricingNote": "Free and open source (Apache 2.0).",
@@ -19,7 +19,7 @@
     "webm": "/media/whimbrel-tour.webm",
     "poster": "/media/whimbrel-tour-poster.jpg",
     "uploadDate": "2026-11-11T00:00:00-05:00",
-    "duration": "PT57S"
+    "duration": "PT66S"
   },
   "contactEmail": "hello@whimbrelapp.com",
   "salesEmail": "mike@futuremeanswered.com",

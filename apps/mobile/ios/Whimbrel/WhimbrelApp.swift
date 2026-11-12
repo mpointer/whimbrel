@@ -45,6 +45,7 @@ struct WhimbrelApp: App {
             ReminderBackgroundRefresh.register(sync: sync, coordinator: coordinator)
             ReminderBackgroundRefresh.schedule()
             Task { await coordinator.refreshPlanIfDue(force: true) }
+            CoreMemoryStore.refreshModelDefaultsIfDue()
         }
     }
 

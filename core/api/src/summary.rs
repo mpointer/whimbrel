@@ -20,6 +20,11 @@ pub enum GovernedSummaryError {
     Llm(llm::LlmError),
 }
 
+/// The model that answered on `client`: its stand-in when the provider had no `model`.
+fn answered(client: &dyn llm::LlmClient, model: &str) -> String {
+    client.substituted_model().unwrap_or_else(|| model.to_string())
+}
+
 /// Governed version of `llm::summarize_meeting`: identical map-reduce behavior, but
 /// checks the spend cap and logs usage after EVERY actual LLM call, not once for the
 /// whole operation. A cap hit here aborts immediately with no further spend; whatever
@@ -54,13 +59,8 @@ pub fn summarize_meeting_governed(
         let summary =
             llm::summarize_whole_transcript(client, notes, &chunks[0], slides, custom_instructions)
                 .map_err(GovernedSummaryError::Llm)?;
-        log_usage_for(
-            store,
-            provider,
-            model,
-            "meeting_summary",
-            summary.token_usage,
-        );
+        log_usage_for(store, provider, &answered(client, model), "meeting_summary", summary.token_usage);
+        crate::model_defaults::note_answer(store, provider, model, client.substituted_model().as_deref(), now_unix_ms());
         return Ok(summary);
     }
 
@@ -85,7 +85,7 @@ pub fn summarize_meeting_governed(
             custom_instructions,
         )
         .map_err(GovernedSummaryError::Llm)?;
-        log_usage_for(store, provider, model, "meeting_summary", usage);
+        log_usage_for(store, provider, &answered(client, model), "meeting_summary", usage);
         total_usage = llm::add_token_usage(total_usage, usage);
         partials.push(summary);
     }
@@ -102,7 +102,8 @@ pub fn summarize_meeting_governed(
     let (mut summary, reduce_usage) =
         llm::reduce_chunk_summaries(client, notes, &partials, slides, custom_instructions)
             .map_err(GovernedSummaryError::Llm)?;
-    log_usage_for(store, provider, model, "meeting_summary", reduce_usage);
+    log_usage_for(store, provider, &answered(client, model), "meeting_summary", reduce_usage);
+    crate::model_defaults::note_answer(store, provider, model, client.substituted_model().as_deref(), now_unix_ms());
     total_usage = llm::add_token_usage(total_usage, reduce_usage);
     summary.token_usage = total_usage;
     Ok(summary)

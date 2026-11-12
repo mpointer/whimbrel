@@ -14,10 +14,13 @@ use std::path::Path;
 /// legitimately be in flight yet. Processes that merely open the same database file
 /// (notably the `whimbrel-mcp-server` subprocess, which the user can start at any time)
 /// must use `memory::Store::open` directly and never run it — see that method's doc
-/// comment. A sweep failure is an open failure.
+/// comment. A sweep failure is an open failure. Also puts the cached hosted-model
+/// defaults in force (`crate::model_defaults::load`).
 pub fn open(path: &Path, models_dir: &Path) -> rusqlite::Result<memory::Store> {
     let store = memory::Store::open(path, models_dir)?;
     store.release_stale_executing_routine_runs()?;
+    // The cached hosted-model defaults go in force for this process's chain builders.
+    crate::model_defaults::load(&store);
     Ok(store)
 }
 

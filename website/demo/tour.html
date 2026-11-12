@@ -85,11 +85,16 @@
     <div class="caption"><b>4</b>Ask your own history. A local model answers, and cites its sources.</div>
   </div>
 
-  <div class="scene end" id="s5">
+  <div class="scene" id="s5">
+    <div class="win"><div class="bar">Whimbrel</div><div class="shot"><img class="drift" style="--drift:-64px" src="shots/status.png" alt=""></div></div>
+    <div class="caption"><b>5</b>Settings shows what is stored on your computer, what syncs, and which model runs.</div>
+  </div>
+
+  <div class="scene end" id="s6">
     <div class="card-t">
       <img src="../site/assets/icon-512.png" alt="">
       <h1>Your client calls stay<br><em>on your computer.</em></h1>
-      <ul class="facts" id="s5-facts">
+      <ul class="facts" id="s6-facts">
         <li>Recordings and transcripts are stored on your machine, not on our servers</li>
         <li>AI runs on your computer, or on a model you choose</li>
         <li>Free and open source, for Mac and Windows</li>
@@ -118,8 +123,9 @@
     [17000, function () { on("s2"); }],
     [27000, function () { on("s3"); }],
     [38000, function () { on("s4"); }],
-    [48000, function () { on("s5"); $("net").classList.remove("show"); revealAll("s5-facts", 900, 1100); }],
-    [56500, function () { window.tourDone = true; }],
+    [48000, function () { on("s5"); }],
+    [57000, function () { on("s6"); $("net").classList.remove("show"); revealAll("s6-facts", 900, 1100); }],
+    [65500, function () { window.tourDone = true; }],
   ];
   window.startTour = function () { T.forEach(function (step) { setTimeout(step[1], step[0]); }); };
   if (!/render/.test(location.search)) window.startTour();

@@ -4,6 +4,7 @@ import { describeError, isCommandError } from "../errors";
 import type { CalendarAccounts } from "../generated/types";
 import { t, useL10n } from "../l10n";
 import { dateTimeLabel, timeLabel } from "../library/rows";
+import { calendarAccessNote } from "./accountsModel";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -64,6 +65,7 @@ export function AccountsCard() {
                   </button>
                 </>
               )}
+              {calendarAccessNote(accounts, email) && <span className="small sign-in-expired">{calendarAccessNote(accounts, email)}</span>}
               <button className="mode" disabled={busy} onClick={() => run(() => calendarDisconnect(email))}>
                 {t("Disconnect")}
               </button>

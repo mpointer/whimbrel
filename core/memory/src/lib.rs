@@ -43,6 +43,7 @@ pub mod trim;
 
 mod forget;
 pub mod skin_sync;
+mod sync_backfill;
 mod sync_outbox;
 pub use forget::MeetingForgotten;
 /// Outbox `row_type`/`connector` values. `row_type` must equal the `sync_row.row_type`
@@ -1933,6 +1934,7 @@ impl Store {
         speaker_names::ensure_speaker_names_tables(conn)?;
         skin_sync::ensure_skin_sync_tables(conn)?;
         forget::ensure_forget_tables(conn)?;
+        sync_backfill::ensure_sync_backfill_schema(conn)?;
         provider_budget::ensure_provider_budget_tables(conn)?;
         meeting_parts::ensure_meeting_part_schema(conn)?;
         Self::ensure_items_app_fields_columns(conn)?;
@@ -3039,7 +3041,9 @@ impl Store {
     /// does nothing.
     /// `flags` carries the removed marker and `changed_at` (see `calendar_flags`); a
     /// version applies only if its `changed_at` is >= the stored one (NULL counts as 0),
-    /// so the newest change wins whichever order two devices' versions arrive in.
+    /// so the newest change wins whichever order two devices' versions arrive in. On a tie,
+    /// a lower `local_seq` from the device that stored the row is that device's older
+    /// version (a phone pulls newest first, #572) and does not apply.
     /// When that `WHERE` is false, SQLite performs no update and the statement's
     /// `RETURNING` yields NO rows, hence the `.optional()` + fallback `SELECT` for the id.
     pub fn apply_synced_item(
@@ -3065,8 +3069,11 @@ impl Store {
                         OR items.title IS NOT excluded.title \
                         OR items.body_text IS NOT excluded.body_text \
                         OR items.flags IS NOT excluded.flags) \
-                       AND COALESCE(CASE WHEN json_valid(excluded.flags) THEN json_extract(excluded.flags, '$.changed_at') END, 0) \
-                        >= COALESCE(CASE WHEN json_valid(items.flags) THEN json_extract(items.flags, '$.changed_at') END, 0) \
+                       AND (COALESCE(CASE WHEN json_valid(excluded.flags) THEN json_extract(excluded.flags, '$.changed_at') END, 0) \
+                        > COALESCE(CASE WHEN json_valid(items.flags) THEN json_extract(items.flags, '$.changed_at') END, 0) \
+                        OR (COALESCE(CASE WHEN json_valid(excluded.flags) THEN json_extract(excluded.flags, '$.changed_at') END, 0) \
+                         = COALESCE(CASE WHEN json_valid(items.flags) THEN json_extract(items.flags, '$.changed_at') END, 0) \
+                         AND NOT (items.device_id IS excluded.device_id AND COALESCE(items.local_seq, 0) > excluded.local_seq))) \
                      RETURNING id",
                     params![
                         device_id, local_seq, item.kind, item.source, resolved_thread_id, item.ts_unix_ms,
@@ -3999,6 +4006,34 @@ impl Store {
             params![format!("gmail_history_id:{account_email}")],
         )?;
         Ok(())
+    }
+
+    /// One `kv_meta` value by key, or `None` when unset. For small device-local state
+    /// that needs no table of its own (e.g. `api::model_defaults`' cached file).
+    pub fn get_meta(&self, key: &str) -> rusqlite::Result<Option<String>> {
+        self.conn.query_row("SELECT value FROM kv_meta WHERE key = ?1", params![key], |row| row.get(0)).optional()
+    }
+
+    /// Sets one `kv_meta` value, replacing any earlier one.
+    pub fn set_meta(&self, key: &str, value: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO kv_meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Removes one `kv_meta` value; a no-op when unset.
+    pub fn delete_meta(&self, key: &str) -> rusqlite::Result<()> {
+        self.conn.execute("DELETE FROM kv_meta WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
+    /// Every `(key, value)` whose key starts with `prefix`, by key.
+    pub fn list_meta_with_prefix(&self, prefix: &str) -> rusqlite::Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare("SELECT key, value FROM kv_meta WHERE substr(key, 1, length(?1)) = ?1 ORDER BY key")?;
+        let rows = stmt.query_map(params![prefix], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
     }
 
     /// Upserts email items, keyed on `items`'s `(kind, source, external_id)` unique
@@ -17914,6 +17949,63 @@ mod tests {
         let removed_new = applied_with_flags(Some("{\"removed\":true,\"changed_at\":200}"));
         assert!(run(&live_old, &removed_new));
         assert!(run(&removed_new, &live_old));
+    }
+
+    /// #572: a phone pulls newest first, so one device's older version of an event can
+    /// arrive after its newer one. With equal (or no) `changed_at` the higher local_seq
+    /// from the same device is the newer version and stays; a strictly newer
+    /// `changed_at` still wins in either order (#708), and another device's version is
+    /// judged by `changed_at` alone, as before.
+    #[test]
+    fn an_older_version_from_the_same_device_never_overwrites_a_newer_one() {
+        let titled = |title: &str, flags: Option<&str>| {
+            let mut item = applied_with_flags(flags);
+            item.title = Some(title.to_string());
+            item
+        };
+        let title_of = |store: &Store| -> String {
+            store
+                .conn
+                .query_row(
+                    "SELECT title FROM items WHERE external_id = 'evt-shared-2'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+
+        // Same device, no changed_at (older builds): seq decides.
+        let store = Store::open_in_memory().unwrap();
+        store.apply_synced_item("peer-a", 20, None, &titled("v2", None)).unwrap();
+        store.apply_synced_item("peer-a", 10, None, &titled("v1", None)).unwrap();
+        assert_eq!(title_of(&store), "v2");
+        assert_eq!(calendar_flags_row(&store, "evt-shared-2").1, Some(20));
+
+        // Same device, equal changed_at: seq decides.
+        let store = Store::open_in_memory().unwrap();
+        let at = Some("{\"changed_at\":100}");
+        store.apply_synced_item("peer-a", 20, None, &titled("v2", at)).unwrap();
+        store.apply_synced_item("peer-a", 10, None, &titled("v1", at)).unwrap();
+        assert_eq!(title_of(&store), "v2");
+        // ...and in ascending order the newer one still applies.
+        store.apply_synced_item("peer-a", 30, None, &titled("v3", at)).unwrap();
+        assert_eq!(title_of(&store), "v3");
+
+        // A strictly newer changed_at wins even at a lower seq (newest observation).
+        let store = Store::open_in_memory().unwrap();
+        store
+            .apply_synced_item("peer-a", 20, None, &titled("v2", Some("{\"changed_at\":100}")))
+            .unwrap();
+        store
+            .apply_synced_item("peer-a", 10, None, &titled("v1", Some("{\"changed_at\":200}")))
+            .unwrap();
+        assert_eq!(title_of(&store), "v1");
+
+        // Another device with equal changed_at applies as before, whatever its seq.
+        let store = Store::open_in_memory().unwrap();
+        store.apply_synced_item("peer-a", 20, None, &titled("a", at)).unwrap();
+        store.apply_synced_item("peer-b", 5, None, &titled("b", at)).unwrap();
+        assert_eq!(title_of(&store), "b");
     }
 
     #[test]

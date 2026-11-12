@@ -3,11 +3,10 @@
   "title": "Meeting Notes for Confidential Client Work",
   "description": "Whimbrel records and transcribes client meetings on your own computer. Recordings, transcripts and history are stored with you, not on our servers.",
   "schema": ["software"],
-  "noindex": true,
   "priority": 0.6,
   "faq": [
     { "q": "Where are my recordings and transcripts stored?", "a": "In a database and a folder on your own computer. Whimbrel transcribes on your machine, so the audio is never uploaded to be transcribed. We do not run a server that holds your meetings." },
-    { "q": "Does anything ever leave my computer?", "a": "Only what you switch on. If you choose a hosted AI model, the text needed for that request (part of a transcript, for example) is sent to that model. With Whimbrel AI it passes through our server on the way to Anthropic; we keep a count of tokens used, not what you asked. With a local model, nothing is sent. If you sync between devices, the sync service stores only encrypted data it cannot read. Settings → Your data lists every way data can leave and whether each one is on." },
+    { "q": "Does anything ever leave my computer?", "a": "Only what you switch on. If you choose a hosted AI model, the text needed for that request (part of a transcript, for example) is sent to that model. With Whimbrel AI it passes through our server on the way to Anthropic; we keep a count of tokens used, not what you asked. With a local model, no text goes to a model provider. If you sync between devices, the sync service stores only encrypted data it cannot read. On the Mac, Settings → Your data lists every way data can leave and whether each one is on." },
     { "q": "Can I use it with no hosted AI at all?", "a": "Yes. Whimbrel can download a small model that runs on your computer, or use Ollama. Summaries and answers are slower and plainer than a hosted model's, and nothing is sent anywhere. Recording, transcription and search never need a hosted model." },
     { "q": "Is the data on my computer encrypted?", "a": "Whimbrel stores its database as files in your user account and relies on your computer's disk encryption, FileVault on a Mac or BitLocker on Windows. Turn that on if it is not on already. Sync between your devices is end-to-end encrypted." },
     { "q": "Do I have to tell people I am recording?", "a": "That depends on where you and they are; some places require everyone on the call to agree. Whimbrel shows when it is recording and can remind you to tell people, with wording you can copy. You are responsible for getting consent where the law requires it. This page is not legal advice." },
@@ -43,8 +42,8 @@
       <article class="card feature"><h3>Transcribed on your machine</h3><p>Whimbrel turns speech into text on your own computer, with speaker names. The audio is never uploaded to be transcribed.</p></article>
       <article class="card feature"><h3>Stored with you</h3><p>Meetings, transcripts, notes and your work history live in a database on your computer. We have no copy and no way to read one.</p></article>
       <article class="card feature"><h3>No bot in the call</h3><p>Nothing joins your meeting. Whimbrel listens to your computer's own audio on Zoom, Teams, Meet, Slack huddles and in-person conversations.</p></article>
-      <article class="card feature"><h3>AI where you decide</h3><p>Run a model on your own computer and nothing is sent anywhere. Or choose a hosted model for better answers, knowing the text of each request goes to it.</p></article>
-      <article class="card feature"><h3>Nothing hidden</h3><p>Settings → Your data shows what Whimbrel keeps, every way data can leave your computer, and whether each one is switched on.</p></article>
+      <article class="card feature"><h3>AI where you decide</h3><p>Run a model on your own computer and no text goes to a model provider. Or choose a hosted model for better answers, knowing the text of each request goes to it.</p></article>
+      <article class="card feature"><h3>Nothing hidden</h3><p>On the Mac, Settings → Your data shows what Whimbrel keeps, every way data can leave your computer, and whether each one is switched on.</p></article>
       <article class="card feature"><h3>Yours to take or delete</h3><p>Export everything to a folder you can read without Whimbrel. Forget a meeting and it is removed from every device you own.</p></article>
     </div>
   </div>

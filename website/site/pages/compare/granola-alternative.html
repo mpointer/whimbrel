@@ -4,10 +4,25 @@
   "description": "Comparing Whimbrel and Granola: both take meeting notes without a bot. Whimbrel adds screen memory, on-device transcription, local AI models, and routines.",
   "priority": 0.7,
   "ogType": "article",
-  "crumbs": [{ "name": "Compare", "path": "/compare/" }, { "name": "Whimbrel vs. Granola", "path": "/compare/granola-alternative/" }],
+  "crumbs": [
+    {
+      "name": "Compare",
+      "path": "/compare/"
+    },
+    {
+      "name": "Whimbrel vs. Granola",
+      "path": "/compare/granola-alternative/"
+    }
+  ],
   "faq": [
-    { "q": "Is Whimbrel a good Granola alternative?", "a": "If you want bot-free meeting notes plus a memory of the rest of your work, on-device transcription, or local AI models, yes. If you mainly need shared meeting notes across a team, or a phone app, Granola is the stronger choice today." },
-    { "q": "Can I use Whimbrel and Granola together?", "a": "You can, but both would record the same meetings. Most people pick one for meetings; Whimbrel's screen memory and routines are useful either way." }
+    {
+      "q": "Is Whimbrel a good Granola alternative?",
+      "a": "If you want bot-free meeting notes plus a memory of the rest of your work, on-device transcription, or local AI models, yes. If you mainly need shared notes across a team, or a phone app that records, Granola is the stronger choice today."
+    },
+    {
+      "q": "Can I use Whimbrel and Granola together?",
+      "a": "You can, but both would record the same meetings. Most people pick one for meetings."
+    }
   ]
 }
 -->
@@ -16,7 +31,7 @@
   <div class="narrow center">
     <p class="eyebrow">Comparison</p>
     <h1>Whimbrel vs. Granola</h1>
-    <p class="lede">Both take great meeting notes without a bot in the call. The difference is everything that happens outside your meetings, and where your data goes. Also see the <a href="/compare/">three-way comparison with Littlebird</a>.</p>
+    <p class="lede">Both take meeting notes without a bot in the call. The difference is what happens outside your meetings and where your data goes. Also see the <a href="/compare/">three-way comparison with Littlebird</a>.</p>
   </div>
 </section>
 
@@ -27,21 +42,21 @@
         <caption class="sr-only">Feature comparison between Whimbrel and Granola</caption>
         <thead><tr><th scope="col">Capability</th><th scope="col">Whimbrel</th><th scope="col">Granola</th></tr></thead>
         <tbody>
-          <tr><th scope="row">Meeting notes without a bot</th><td class="yes">Yes</td><td class="yes">Yes</td></tr>
-          <tr><th scope="row">Mac and Windows apps</th><td class="yes">Yes (Windows in early access)</td><td class="yes">Yes</td></tr>
-          <tr><th scope="row">Memory of non-meeting work (screen text)</th><td class="yes">Yes</td><td class="no">No, meetings only</td></tr>
-          <tr><th scope="row">Transcription on your own computer</th><td class="yes">Yes, on-device Whisper</td><td class="no">No, cloud transcription providers</td></tr>
-          <tr><th scope="row">Run AI models locally (Ollama)</th><td class="yes">Yes</td><td class="no">No</td></tr>
-          <tr><th scope="row">Bring your own model API key</th><td class="yes">Anthropic, OpenAI, Gemini</td><td class="no">No</td></tr>
+          <tr><th scope="row">Meeting notes without a bot</th><td class="yes">Yes</td><td class="yes">Yes, from your computer's audio<sup><a href="#src-1">1</a></sup></td></tr>
+          <tr><th scope="row">Where notes are stored</th><td class="yes">On your computer, not on Whimbrel's servers</td><td class="no">Granola's US-hosted AWS cloud, plus a local cache<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Where transcription runs</th><td class="yes">Yes, on-device</td><td class="no">Cloud providers, "like Deepgram and Assembly"; audio deleted after transcription<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Memory of non-meeting work</th><td class="yes">Yes: screen text and email</td><td>Not found<sup><a href="#src-1">1</a></sup></td></tr>
+          <tr><th scope="row">AI models</th><td class="yes">Yes: local models, or your own key</td><td class="no">Cloud providers "like OpenAI and Anthropic"<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Model training</th><td class="yes">Not used</td><td>Opt out; its FAQ says anonymised data may be used for its own model improvements by default on Free and Business<sup><a href="#src-3">3</a></sup></td></tr>
           <tr><th scope="row">Open source</th><td class="yes">Yes, Apache 2.0</td><td class="no">No</td></tr>
-          <tr><th scope="row">Shared team notes and workspaces</th><td class="no">Not yet</td><td class="yes">Yes</td></tr>
-          <tr><th scope="row">Phone app</th><td>Beta (iPhone and Android)</td><td class="yes">Yes (iPhone, Android)</td></tr>
+          <tr><th scope="row">Works from Claude or ChatGPT on the web</th><td>Local MCP server only</td><td class="yes">Hosted MCP; transcripts on paid plans<sup><a href="#src-4">4</a></sup></td></tr>
+          <tr><th scope="row">Phones</th><td>Read and ask only (beta); no phone recording</td><td class="yes">iPhone, Android and Apple Watch apps<sup><a href="#src-5">5</a></sup></td></tr>
+          <tr><th scope="row">Teams, sharing, SSO, SOC 2</th><td class="no">No</td><td class="yes">Shared folders; SSO on Enterprise; SOC 2 Type II<sup><a href="#src-5">5</a></sup><sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Price</th><td>Free. Optional paid plans on the <a href="/pricing/">pricing page</a></td><td>Basic $0 (30-day history), Business $14, Enterprise $35, per user per month<sup><a href="#src-5">5</a></sup></td></tr>
         </tbody>
       </table>
     </div>
-    <p class="mobile-note"><strong>Phone apps, in beta.</strong> Whimbrel has iPhone and Android apps in beta. They show your meetings, notes, decisions, action items and topic pages. They sync end-to-end encrypted from your computer. <a href="https://whimbrelapp.com/mobile-beta/">Join the beta</a>.</p>
-    <p class="mobile-note"><strong>Web app, planned.</strong> A web app is planned, so you can check your meetings, topics and notes from any browser. Your data stays end-to-end encrypted, and the browser decrypts it. It is not available yet.</p>
-    <p class="fine muted table-note">Based on each product's public information, last reviewed October 16, 2026. Products change; check Granola's site for its current features.</p>
+    <p class="fine muted table-note"> Every Granola claim links to the page it came from, read on November 11, 2026. "Not found" means we did not find it stated on the pages we read. Products change; check Granola's site for current details. About Whimbrel: recordings, transcripts and history are stored on your computer and not on Whimbrel's servers. AI runs on your computer or on a model you choose; with a hosted model, the text of each request goes to that model. Every way data can leave is listed in the app.</p>
   </div>
 </section>
 
@@ -50,18 +65,17 @@
     <div>
       <h2>Choose Whimbrel if…</h2>
       <ul class="checklist">
-        <li>You want answers that draw on meetings <em>and</em> the documents, email, and apps around them.</li>
-        <li>Meeting audio shouldn't leave your computer to be transcribed.</li>
+        <li>You want answers that draw on meetings and the documents, email and apps around them.</li>
+        <li>Meeting audio and notes should be stored on your computer, not in a vendor cloud.</li>
         <li>You want to run local models, or choose your own AI provider.</li>
-        <li>You'd like briefings and recaps prepared on a schedule.</li>
       </ul>
     </div>
     <div>
       <h2>Choose Granola if…</h2>
       <ul class="checklist">
-        <li>Your team shares and collaborates on meeting notes every day.</li>
-        <li>You need to capture meetings from your phone.</li>
-        <li>You only want meeting notes, nothing else.</li>
+        <li>Your team shares and works on meeting notes every day.</li>
+        <li>You need to capture meetings from your phone or watch.</li>
+        <li>You need SSO, an audit API, or a vendor SOC 2 Type II report.</li>
       </ul>
     </div>
   </div>
@@ -73,6 +87,20 @@
     <div class="faq">
 {{{faq}}}
     </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Sources</h2>
+    <p class="fine muted">All read on November 11, 2026.</p>
+    <ol class="fine muted">
+        <li id="src-1"><a href="https://www.granola.ai/" rel="noopener">https://www.granola.ai/</a></li>
+        <li id="src-2"><a href="https://www.granola.ai/security" rel="noopener">https://www.granola.ai/security</a></li>
+        <li id="src-3"><a href="https://docs.granola.ai/help-center/consent-security-privacy/security-privacy-data-faqs.md" rel="noopener">https://docs.granola.ai/help-center/consent-security-privacy/security-privacy-data-faqs.md</a></li>
+        <li id="src-4"><a href="https://www.granola.ai/mcp" rel="noopener">https://www.granola.ai/mcp</a></li>
+        <li id="src-5"><a href="https://www.granola.ai/pricing" rel="noopener">https://www.granola.ai/pricing</a></li>
+    </ol>
   </div>
 </section>
 {{> cta}}

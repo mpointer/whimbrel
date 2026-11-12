@@ -8,6 +8,8 @@ struct MenuBarContentView: View {
     @State private var nextTopic: TopicRef?
     /// The next meeting's brief key, when it has a readable brief.
     @State private var nextPrepKey: String?
+    /// When this menu window appeared, to tell which app the user was in before it.
+    @State private var openedAt = Date()
 
     /// The next calendar event that has not ended (the list looks back 15 minutes).
     private var next: QualifyingMeeting? {
@@ -59,6 +61,9 @@ struct MenuBarContentView: View {
                     nextPrepKey = prepKey
                 }
             }
+
+            Button("Ask about this window…") { appState.openHotkeyPanelFromMenu(menuOpenedAt: openedAt) }
+                .buttonStyle(.whimbrelSecondary)
 
             if appState.activeMeetingId != nil {
                 Button("End Meeting") {
@@ -115,5 +120,6 @@ struct MenuBarContentView: View {
         .padding(Spacing.lg)
         .frame(width: 320)
         .background(Color.whimbrelBackgroundPage)
+        .onAppear { openedAt = Date() }
     }
 }

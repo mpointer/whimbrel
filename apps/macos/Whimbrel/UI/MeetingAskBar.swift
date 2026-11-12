@@ -27,7 +27,7 @@ struct MeetingAskExchange: Identifiable {
 final class MeetingAskSession: ObservableObject {
     let streaming = StreamingAskViewModel()
     @Published var exchanges: [MeetingAskExchange] = []
-    @Published var pending: (prepareId: String, index: Int, model: String)?
+    @Published var pending: (prepareId: String, index: Int, model: String, provider: InferenceStreamClient.Provider)?
     @Published var isPreparing = false
     /// The Whimbrel AI token is being refreshed before a send; busy, so a second send is ignored.
     @Published var isRefreshingCredentials = false
@@ -100,7 +100,7 @@ final class MeetingAskSession: ObservableObject {
                     }
                 case .some(.success(let data)):
                     self.exchanges[index].narrowed = data.narrowed
-                    self.pending = (data.prepareId, index, model)
+                    self.pending = (data.prepareId, index, model, route.provider)
                     self.streamProvider = route.provider
                     self.streaming.start(prompt: data.prompt, model: model, provider: route.provider, apiKey: route.apiKey, baseURLOverride: route.baseURLOverride)
                 }
@@ -186,10 +186,17 @@ final class MeetingAskSession: ObservableObject {
             exchanges[pending.index].answer = text
             let usage = streaming.usage
             let index = pending.index
+            // Logged under the model that answered; core notes a substitution for Settings.
+            // Hosted providers only: the local helper's stream names "local", not its model.
+            let hosted = HostedModelDefaults.hostedProviders.contains(pending.provider.rawValue)
+            let answered = hosted ? (streaming.answeredModel ?? pending.model) : pending.model
             self.pending = nil
             CoreMemoryStore.accessQueue.async {
+                if hosted {
+                    store?.noteModelAnswer(provider: pending.provider.rawValue, requested: pending.model, answered: answered)
+                }
                 let refs = store?.finalizeAsk(
-                    prepareId: pending.prepareId, finalText: text, model: pending.model,
+                    prepareId: pending.prepareId, finalText: text, model: answered,
                     inputTokens: Int64(usage.inputTokens ?? -1), outputTokens: Int64(usage.outputTokens ?? -1)) ?? []
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.exchanges.indices.contains(index) else { return }

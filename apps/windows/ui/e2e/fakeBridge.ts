@@ -153,6 +153,17 @@ function fixtures(skins: SkinDto[], now: number, lang: string) {
     meeting_list: [meeting(1, 26, long), meeting(2, 50, LONG_WORD), meeting(3, 75, "Customer call")],
     ai_settings: { routing: { preferredProvider: "ollama", localOnly: false, ollamaModel: "llama3", anthropicModel: "", openaiModel: "", googleModel: "" }, keys: [] },
     approvals_count: 0,
+    // The hotkey panel (never mounted by the matrix, which runs the main window): a read that can answer,
+    // a close that does nothing, and an ask that reports where it went. The answer would arrive on the channel.
+    hotkey_panel_read: {
+      requestId: 1,
+      window: { kind: "read", appName: "Mail", title: "Re: Q3 rollout", isSelection: true, truncated: false },
+      destination: { kind: "local" },
+      canAnswer: true,
+      cannotAnswer: null,
+    },
+    hotkey_panel_close: null,
+    window_ask: { kind: "started", requestId: 1, destination: { kind: "local" }, truncated: false },
     language_settings: languageSettings(lang),
     // A first launch: the meeting models are downloading, so the sidebar footer's status line is drawn
     // (and checked for overruns) in every language.

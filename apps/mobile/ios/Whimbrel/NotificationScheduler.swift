@@ -112,6 +112,15 @@ final class OnceFlag: @unchecked Sendable {
 enum ReminderBackgroundRefresh {
     static let identifier = "com.mpointer.whimbrel.mobile.refresh"
     static let interval: TimeInterval = 30 * 60
+    /// While a new phone is still pulling (#572), one refresh runs up to this many more rounds.
+    /// The expiry stops it sooner: it cancels the work, and no further round starts.
+    static let maxCatchUpRounds = 5
+
+    /// Whether the refresh pulls again: the relay has more, the last round worked (a failure backs
+    /// off, as in the foreground), the task hasn't expired, and the round cap allows it.
+    nonisolated static func shouldPullAgain(moreToPull: Bool, lastRoundFailed: Bool, expired: Bool, extraRounds: Int) -> Bool {
+        moreToPull && !lastRoundFailed && !expired && extraRounds < maxCatchUpRounds
+    }
 
     /// Call from `WhimbrelApp.init`, before launch finishes.
     @MainActor
@@ -124,6 +133,14 @@ enum ReminderBackgroundRefresh {
                 await sync.syncNow()
                 if !Task.isCancelled { await coordinator.refreshPlanIfDue(force: false) }
                 if !Task.isCancelled { await coordinator.reschedule() }
+                // Reminders first; then, while older history is still coming (#572), more rounds.
+                var extraRounds = 0
+                while shouldPullAgain(moreToPull: sync.moreToPull, lastRoundFailed: sync.lastError != nil, expired: Task.isCancelled,
+                                      extraRounds: extraRounds) {
+                    await sync.syncNow()
+                    extraRounds += 1
+                }
+                if extraRounds > 0, !Task.isCancelled { await coordinator.reschedule() }
                 if completion.claim() { task.setTaskCompleted(success: !Task.isCancelled) }
             }
             task.expirationHandler = {

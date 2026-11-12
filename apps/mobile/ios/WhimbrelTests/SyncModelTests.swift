@@ -25,6 +25,13 @@ final class FakeStore: MeetingSyncStore, PhoneReadStore {
     /// Scripted per good pull: true while the phone is catching up.
     var moreAfterPull: [Bool] = []
     func moreToPull() -> Bool { moreAfterPull.isEmpty ? false : moreAfterPull.removeFirst() }
+    /// Scripted olderHistoryLoading replies, one per call; the last one repeats.
+    var older: [Bool] = [false]
+    private(set) var olderReads = 0
+    func olderHistoryLoading() -> Bool {
+        olderReads += 1
+        return older.count > 1 ? older.removeFirst() : older[0]
+    }
     func lastSyncError() -> String? { "connect failed: secret detail" }
 
     // PhoneReadStore: scripted, and records the thread each read ran on.
@@ -282,10 +289,106 @@ final class SyncModelTests: XCTestCase {
         XCTAssertNil(model.lastError)
     }
 
+    func testOlderHistoryLoadingIsReadAtOpenAndAfterEveryRound() async {
+        store.older = [true, true, false]
+        let model = makeModel()
+        XCTAssertFalse(model.olderHistoryLoading)
+        await model.syncNow()
+        XCTAssertTrue(model.olderHistoryLoading, "the gap is still open after the round")
+        XCTAssertEqual(store.olderReads, 2, "once for the first round on this store, once after the pull")
+        await model.syncNow()
+        XCTAssertFalse(model.olderHistoryLoading, "the gap closed: the line goes away")
+    }
+
+    func testOlderHistoryLoadingShowsAfterAFailedRoundAndAResetHidesIt() async {
+        store.older = [true]
+        store.pullResults = [false]
+        let model = makeModel()
+        await model.syncNow()
+        XCTAssertNotNil(model.lastError)
+        XCTAssertTrue(model.olderHistoryLoading, "kept in the store: offline, older history is still loading")
+        model.reset {}
+        XCTAssertFalse(model.olderHistoryLoading, "a sign-out or revoke clears the line")
+    }
+
+    func testMoreToPullIsReadableForTheBackgroundRefresh() async {
+        store.moreAfterPull = [true]
+        let model = makeModel()
+        await model.syncNow()
+        XCTAssertTrue(model.moreToPull)
+        model.reset {}
+        XCTAssertFalse(model.moreToPull, "a reset forgets the backlog")
+    }
+
+    func testHoldForRoundInFlightDoesNothingWithoutARound() {
+        let model = makeModel()
+        var begun = 0
+        model.holdForRoundInFlight(begin: { _ -> Int? in begun += 1; return 1 }, end: { _ in XCTFail("nothing to end") })
+        XCTAssertEqual(begun, 0)
+    }
+
+    func testHoldForRoundInFlightEndsTheTaskOnceWhenTheRoundEnds() async {
+        let model = makeModel()
+        var ended: [Int] = []
+        var renewals = 0
+        credentials.onRenew = {
+            renewals += 1
+            guard renewals == 1 else { return }
+            model.holdForRoundInFlight(begin: { _ -> Int? in 7 }, end: { ended.append($0) })
+            XCTAssertEqual(ended, [], "held while the round runs")
+        }
+        await model.syncNow()
+        XCTAssertEqual(ended, [7])
+        await model.syncNow()
+        XCTAssertEqual(ended, [7], "a later round doesn't end it again")
+    }
+
+    func testHoldForRoundInFlightEndsOnceWhenTheTaskExpiresFirst() async {
+        let model = makeModel()
+        var ended: [Int] = []
+        var renewals = 0
+        credentials.onRenew = {
+            renewals += 1
+            guard renewals == 1 else { return }
+            var expire: (() -> Void)?
+            model.holdForRoundInFlight(begin: { expired -> Int? in expire = expired; return 3 }, end: { ended.append($0) })
+            expire?()
+            XCTAssertEqual(ended, [3], "the expiry ends it at once")
+        }
+        await model.syncNow()
+        XCTAssertEqual(ended, [3], "the round's end doesn't end it twice")
+    }
+
+    func testHoldForRoundInFlightRefusedByTheSystemEndsNothing() async {
+        let model = makeModel()
+        var renewals = 0
+        credentials.onRenew = {
+            renewals += 1
+            guard renewals == 1 else { return }
+            model.holdForRoundInFlight(begin: { _ -> Int? in nil }, end: { _ in XCTFail("no task was started") })
+        }
+        await model.syncNow()
+    }
+
     func testStoreThatFailsToOpenSaysSo() async {
         let model = SyncModel(openStore: { nil }, credentials: credentials, sleep: { _ in })
         await model.syncNow()
         XCTAssertEqual(model.lastError, "This iPhone's local storage is unavailable.")
         XCTAssertFalse(model.isSyncing)
+    }
+}
+
+/// The background refresh's extra rounds while a new phone pulls older history (#572).
+final class BackgroundCatchUpTests: XCTestCase {
+    func testPullsAgainOnlyWhileBehindWorkingUnexpiredAndUnderTheCap() {
+        let go = { (more: Bool, failed: Bool, expired: Bool, rounds: Int) in
+            ReminderBackgroundRefresh.shouldPullAgain(moreToPull: more, lastRoundFailed: failed, expired: expired, extraRounds: rounds)
+        }
+        XCTAssertTrue(go(true, false, false, 0))
+        XCTAssertFalse(go(false, false, false, 0), "caught up")
+        XCTAssertFalse(go(true, true, false, 0), "a failed round backs off")
+        XCTAssertFalse(go(true, false, true, 0), "the task expired: stop at once")
+        XCTAssertTrue(go(true, false, false, ReminderBackgroundRefresh.maxCatchUpRounds - 1))
+        XCTAssertFalse(go(true, false, false, ReminderBackgroundRefresh.maxCatchUpRounds), "bounded rounds")
     }
 }

@@ -199,6 +199,9 @@ export type ProviderFailureReason =
       kind: "no_provider_configured";
     }
   | {
+      kind: "local_model_missing";
+    }
+  | {
       kind: "unauthorized";
       provider: string;
     }
@@ -217,6 +220,59 @@ export type ProviderFailureReason =
       kind: "other";
       provider: string;
       status?: number | null;
+    }
+  | {
+      kind: "model_unavailable";
+      model: string;
+      provider: string;
+    };
+/**
+ * Where the question and window text will go (core's `window_ask::Destination`).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "DestinationView".
+ */
+export type DestinationView =
+  | {
+      kind: "local_only";
+    }
+  | {
+      kind: "local";
+    }
+  | {
+      kind: "hosted";
+      provider: string;
+    };
+/**
+ * Why an app is excluded, so the panel can say so.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ExcludeReasonView".
+ */
+export type ExcludeReasonView =
+  ("password_manager" | "private_window") | "own_app" | "system" | "user";
+/**
+ * What was read, without the text.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "WindowReadView".
+ */
+export type WindowReadView =
+  | {
+      appName: string;
+      isSelection: boolean;
+      kind: "read";
+      title: string;
+      truncated: boolean;
+    }
+  | {
+      appName: string;
+      kind: "excluded";
+      reason: ExcludeReasonView;
+    }
+  | {
+      appName: string;
+      kind: "unreadable";
     };
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -399,6 +455,28 @@ export type UpdateCheck =
       state: "failed";
     };
 /**
+ * `window_ask`'s answer. The answer itself arrives on the channel as `ChatEvent`s.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "WindowAskReply".
+ */
+export type WindowAskReply =
+  | {
+      destination: DestinationView;
+      kind: "started";
+      requestId: number;
+      truncated: boolean;
+    }
+  | {
+      kind: "stale";
+      requestId: number;
+    }
+  | {
+      destination: DestinationView;
+      kind: "destination_changed";
+      requestId: number;
+    };
+/**
  * The workspace's phase, matching core's `WorkspaceState`.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -438,6 +516,11 @@ export interface AiSettings {
   imageSearchKey?: string | null;
   keys: ProviderKey[];
   /**
+   * Hosted providers whose chosen model they said they don't have, with the default that
+   * answers meanwhile (`api::model_defaults`). The choice itself is kept.
+   */
+  modelWarnings: ModelWarning[];
+  /**
    * The Ollama model the user chose isn't installed: what stands in meanwhile (Mac #581).
    */
   ollamaWarning?: OllamaWarning | null;
@@ -475,6 +558,17 @@ export interface ProviderKey {
    * Whether this key syncs to the account's other devices (off unless turned on).
    */
   syncEnabled: boolean;
+}
+/**
+ * "{model} isn't available to your {provider} key; using {using} for now."
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ModelWarning".
+ */
+export interface ModelWarning {
+  model: string;
+  provider: Provider;
+  using: string;
 }
 /**
  * "{model} isn't installed. Whimbrel is using {fallback} until you install it or choose another model."
@@ -768,10 +862,28 @@ export interface BudgetNoticeView {
   threshold: number;
 }
 /**
+ * One account Google keeps from the Calendar API (core::connectors::google_error).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "CalendarAccessIssue".
+ */
+export interface CalendarAccessIssue {
+  /**
+   * `calendar_access_not_granted` (the calendar box was left unticked) or `calendar_access_blocked`.
+   */
+  code: string;
+  email: string;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "CalendarAccounts".
  */
 export interface CalendarAccounts {
+  /**
+   * Accounts Google keeps from the Calendar API: why, per account. An expired sign-in wins, so an
+   * account in `sign_in_expired` is never here.
+   */
+  accessIssues: CalendarAccessIssue[];
   /**
    * Why calendar syncing can't run right now (no Node, connector not staged, sync not
    * configured), or `None` when it can.
@@ -1185,6 +1297,46 @@ export interface HostView {
    * What the picker shows as selected: the stored choice if it is still an option, else empty.
    */
   selected: string;
+}
+/**
+ * `hotkey_panel_read`'s answer: the context and destination lines' facts.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "HotkeyPanelRead".
+ */
+export interface HotkeyPanelRead {
+  /**
+   * False when the destination's provider can't answer from here (a hosted provider
+   * with no key, or local-only with neither Ollama nor the local model), or when that
+   * could not be worked out within the read deadline: the panel refuses rather than
+   * let another provider answer.
+   */
+  canAnswer: boolean;
+  /**
+   * Why it can't, when known: the same reason `window_ask` would fail with.
+   */
+  cannotAnswer?: ProviderFailureReason | null;
+  destination: DestinationView;
+  /**
+   * Echoed back by `window_ask`; a newer press makes it stale.
+   */
+  requestId: number;
+  window: WindowReadView;
+}
+/**
+ * Whether the shortcut is registered, for Settings.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "HotkeyStatus".
+ */
+export interface HotkeyStatus {
+  /**
+   * Why registering failed (Windows' or the parser's text), for Settings to show beside
+   * its own sentence. `None` when registered.
+   */
+  error?: string | null;
+  registered: boolean;
+  shortcut: string;
 }
 /**
  * A found or made image waiting for approval (`llm::images::ImageCandidate`). A made one has a

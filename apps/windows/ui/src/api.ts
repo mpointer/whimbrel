@@ -23,6 +23,9 @@ import type {
   CaptureSettings,
   CaptureStatus,
   ChatEvent,
+  HotkeyPanelRead,
+  HotkeyStatus,
+  WindowAskReply,
   ChatSpend,
   ConversationRow,
   ConversationView,
@@ -430,6 +433,22 @@ export function chatAsk(query: string, conversationId: number | null, onEvent: (
   const channel = new Channel<ChatEvent>();
   channel.onmessage = onEvent;
   return invoke<void>("chat_ask", { query, conversationId, onEvent: channel });
+}
+// The hotkey panel (src-tauri/src/hotkey_panel, commands/window_ask.rs).
+/** Reads the window the panel was opened over; sends nothing. */
+export const hotkeyPanelRead = () => invoke<HotkeyPanelRead>("hotkey_panel_read");
+/** Closes the panel, drops what it read and returns to the window it came from. */
+export const hotkeyPanelClose = () => invoke<void>("hotkey_panel_close");
+/** Settings: the panel's shortcut and whether it is registered. */
+export const hotkeyStatus = () => invoke<HotkeyStatus>("hotkey_status");
+/** Settings: registers `shortcut` (e.g. "Control+Alt+Space") and saves it only once it registers. Resolves with
+ *  the attempt: `registered: false` means the old one is back (re-read `hotkeyStatus` for it). */
+export const setHotkeyShortcut = (shortcut: string) => invoke<HotkeyStatus>("set_hotkey_shortcut", { shortcut });
+/** Asks `query` about the window read for `requestId`. The answer arrives on `onEvent`; the reply says where it went. */
+export function windowAsk(requestId: number, query: string, onEvent: (event: ChatEvent) => void) {
+  const channel = new Channel<ChatEvent>();
+  channel.onmessage = onEvent;
+  return invoke<WindowAskReply>("window_ask", { requestId, query, onEvent: channel });
 }
 export const chatStop = (runId: string) => invoke<boolean>("chat_stop", { runId });
 /** Starts answering `query` about one meeting from its transcript (the meeting Ask bar). Nothing is saved; `history` is the page's answered exchanges. */

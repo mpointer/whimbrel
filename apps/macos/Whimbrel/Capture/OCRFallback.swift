@@ -4,6 +4,10 @@ import CoreGraphics
 /// (canvas-rendered Electron apps, images, remote desktops, video). The rendered
 /// image is held in memory only for recognition and is never written to disk.
 enum OCRFallback {
+    /// Accessibility text shorter than this (trimmed) is treated as "no usable text" and
+    /// OCR is tried instead. Shared by screen capture and the on-demand window reader.
+    static let minimumAccessibilityTextLength = 8
+
     static func recognizeText(windowID: CGWindowID, bounds: CGRect) -> String? {
         guard let image = CGWindowListCreateImage(bounds, .optionIncludingWindow, windowID, [.boundsIgnoreFraming]) else {
             return nil

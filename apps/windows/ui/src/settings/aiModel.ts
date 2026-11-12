@@ -88,6 +88,17 @@ export function hostedNotice(routing: RoutingSettings, keys: ProviderKey[], whim
 
 export const formatDollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
+/**
+ * A hosted provider said it doesn't have the model the user chose: the choice is kept, and the
+ * provider's current default (from core) answers meanwhile.
+ */
+export const modelWarningLine = (w: { provider: Provider; model: string; using: string }): string =>
+  t("{model} isn't available to your {provider} key; using {using} for now.", {
+    model: w.model,
+    provider: providerLabel(w.provider),
+    using: w.using,
+  });
+
 /** A chosen Ollama model that isn't installed, and what Whimbrel uses meanwhile (the Mac's #581). */
 export const ollamaWarningLine = (w: { model: string; fallback: string }): string =>
   t("{model} isn't installed. Whimbrel is using {fallback} until you install it or choose another model.", w);

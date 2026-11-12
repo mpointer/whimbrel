@@ -90,6 +90,16 @@ impl Uia {
     }
 
     fn text_pattern(&self, hwnd: HWND) -> windows::core::Result<Extraction> {
+        self.text_pattern_with(hwnd, false)
+    }
+
+    /// [`Strategy::TextPattern`] that leaves out password fields, for the hotkey panel.
+    /// Continuous capture keeps `text_pattern`.
+    pub fn text_pattern_skipping_passwords(&self, hwnd: HWND) -> windows::core::Result<Extraction> {
+        self.text_pattern_with(hwnd, true)
+    }
+
+    fn text_pattern_with(&self, hwnd: HWND, skip_passwords: bool) -> windows::core::Result<Extraction> {
         let start = Instant::now();
         unsafe {
             let root = self.automation.ElementFromHandle(hwnd)?;
@@ -101,6 +111,12 @@ impl Uia {
             let has_tp = self
                 .automation
                 .CreatePropertyCondition(UIA_IsTextPatternAvailablePropertyId, &VARIANT::from(true))?;
+            let has_tp = if skip_passwords {
+                let not_password = self.automation.CreatePropertyCondition(UIA_IsPasswordPropertyId, &VARIANT::from(false))?;
+                self.automation.CreateAndCondition(&has_tp, &not_password)?
+            } else {
+                has_tp
+            };
             let is_doc = self
                 .automation
                 .CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(UIA_DocumentControlTypeId.0))?;
@@ -115,6 +131,9 @@ impl Uia {
             let mut docs: Vec<(String, String)> = Vec::new();
             for i in 0..n.min(MAX_DOCUMENTS) {
                 let el = found.GetElement(i as i32)?;
+                if skip_passwords && el.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(true) {
+                    continue;
+                }
                 let Ok(tp) = el.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId) else {
                     continue;
                 };
@@ -148,6 +167,16 @@ impl Uia {
     }
 
     fn cached_walk(&self, hwnd: HWND) -> windows::core::Result<Extraction> {
+        self.cached_walk_with(hwnd, false)
+    }
+
+    /// [`Strategy::CachedWalk`] that drops every password field's Name and Value, for the
+    /// hotkey panel, which must never read one. Continuous capture keeps `cached_walk`.
+    pub fn cached_walk_skipping_passwords(&self, hwnd: HWND) -> windows::core::Result<Extraction> {
+        self.cached_walk_with(hwnd, true)
+    }
+
+    fn cached_walk_with(&self, hwnd: HWND, skip_passwords: bool) -> windows::core::Result<Extraction> {
         let start = Instant::now();
         unsafe {
             let root = self.automation.ElementFromHandle(hwnd)?;
@@ -160,6 +189,9 @@ impl Uia {
             ] {
                 cr.AddProperty(prop)?;
             }
+            if skip_passwords {
+                cr.AddProperty(UIA_IsPasswordPropertyId)?;
+            }
             cr.SetTreeFilter(&self.automation.ControlViewCondition()?)?;
             // Cached values only — no live element references to marshal back.
             cr.SetAutomationElementMode(AutomationElementMode_None)?;
@@ -169,6 +201,10 @@ impl Uia {
             let mut nodes = Vec::with_capacity(n.min(MAX_NODES));
             for i in 0..n.min(MAX_NODES) {
                 let el = found.GetElement(i as i32)?;
+                // An unknown answer counts as a password: never read what can't be ruled out.
+                if skip_passwords && el.CachedIsPassword().map(|b| b.as_bool()).unwrap_or(true) {
+                    continue;
+                }
                 let name = el.CachedName().map(|b| b.to_string()).unwrap_or_default();
                 let control_type = el.CachedControlType().map(|c| c.0).unwrap_or(0);
                 // A hyperlink's Value is its URL — navigation data, not visible text.

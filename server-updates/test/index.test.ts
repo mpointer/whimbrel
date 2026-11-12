@@ -141,3 +141,19 @@ it("a failing data point write does not affect the response", async () => {
   const response = await worker.fetch(new Request("https://example.com/version.json", { headers: headers() }), makeEnv());
   expect(response.status).toBe(200);
 });
+
+it("serves the model defaults once published, without counting it as a manifest poll", async () => {
+  const body = { version: 1, providers: { google: { default: "gemini-flash-latest", family: "flash" } } };
+  await env.UPDATES_BUCKET.put("models/defaults.json", JSON.stringify(body));
+  const response = await worker.fetch(new Request("https://example.com/models/defaults.json", { headers: headers() }), makeEnv());
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toBe("application/json");
+  expect(await response.json()).toEqual(body);
+  expect(points).toEqual([]);
+});
+
+it("serves nothing else under models/", async () => {
+  await env.UPDATES_BUCKET.put("models/other.json", "{}");
+  const response = await worker.fetch(new Request("https://example.com/models/other.json"), makeEnv());
+  expect(response.status).toBe(404);
+});

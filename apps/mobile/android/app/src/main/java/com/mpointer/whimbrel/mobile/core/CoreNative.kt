@@ -35,6 +35,8 @@ interface CoreNative {
     fun syncContentLastError(): String?
     fun syncContentMoreToPull(): Boolean
     fun syncContentLastPullStats(): String? = null
+    /** Older history is still being pulled, newest first (#572): read from the store, so it holds across relaunches. */
+    fun syncContentOlderHistoryLoading(handle: Long): Boolean = false
     /** Meetings after grouping copies, over every meeting (no cap); -1 on failure. */
     fun meetingsGroupedCount(handle: Long): Long
     fun meetingsRecentGrouped(handle: Long, limit: Long): String?

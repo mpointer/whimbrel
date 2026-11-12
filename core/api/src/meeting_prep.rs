@@ -191,7 +191,7 @@ pub fn run_with_chain(
         let chain = crate::routing::build_chain_for(llm::TaskKind::MeetingPrep, ollama_model, routing);
         let chain = crate::budget::apply_budgets(store, chain, false, now_unix_ms).ok()?;
         let (completion, link) = llm::try_chain(&chain, |link| link.client.complete(prompt))?;
-        crate::util::log_usage_for(store, link.provider, &link.model, "routine", completion.token_usage);
+        crate::util::log_link_usage(store, link, "routine", completion.token_usage);
         Some(Completed { text: completion.text, provider: link.provider.as_str().to_string(), model: link.model.clone() })
     };
     run_gated(store, meetings, now_unix_ms, lead_minutes, &routing.profile, &routing.output_language, gate, &mut complete)

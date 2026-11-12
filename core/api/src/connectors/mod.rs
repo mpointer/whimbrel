@@ -9,6 +9,7 @@
 pub mod accounts;
 pub mod calendar;
 pub mod gmail;
+pub mod google_error;
 
 /// One connector tool call the shell makes between the two phases.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

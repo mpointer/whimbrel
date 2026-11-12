@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "providers": {
+    "google": { "default": "gemini-flash-latest", "family": "flash", "previous": ["gemini-2.5-flash"] },
+    "anthropic": { "default": "claude-haiku-5-5", "family": "haiku", "previous": ["claude-haiku-4-5"] },
+    "openai": { "default": "gpt-5.4-mini", "family": "mini", "previous": ["gpt-4o-mini"] }
+  }
+}

@@ -2117,3 +2117,16 @@ button.link:focus-visible {
   align-items: center;
   gap: var(--space-xs) var(--space-sm);
 }
+
+/* The hotkey panel: the answer scrolls inside the window, never past it. */
+.hotkey-panel .input {
+  width: 100%;
+}
+
+.hotkey-panel-answer {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  user-select: text;
+}

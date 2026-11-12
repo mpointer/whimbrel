@@ -6,12 +6,12 @@
 #
 #   cd apps/windows/ui && npx npm@11 ci && npx vite build
 #   python3 -m http.server 8792 --directory apps/windows/ui/dist &
-#   python3 website/scripts/capture-app-shots.py                         # today, meeting, topic, ask
+#   python3 website/scripts/capture-app-shots.py                         # today, meeting, topic, ask, status
 #   FX=fixtures-live.json python3 website/scripts/capture-app-shots.py   # live (recording)
 #
 # Needs Python Playwright and Google Chrome. Sidebar icons are hidden because they are
-# drawn with Segoe Fluent Icons, a Windows font; on Windows they show. Settings is not
-# captured: it needs more demo data than demo/capture/ has.
+# drawn with Segoe Fluent Icons, a Windows font; on Windows they show. The last shot is
+# Settings → Status, answered by the settings fixtures in fixtures.json.
 import sys, json, pathlib, time
 from playwright.sync_api import sync_playwright
 S = pathlib.Path(__file__).parent.parent / "demo" / "capture"
@@ -19,7 +19,8 @@ OUT = pathlib.Path(__file__).parent.parent / "demo" / "shots"
 import os
 fx = json.loads((S/os.environ.get("FX","fixtures.json")).read_text())
 ALL = [{"shot":"today"},{"tab":"Meetings"},{"wait":1500},{"shot":"meeting"},{"tab":"Topics"},{"wait":1500},{"shot":"topic"},
-       {"tab":"Library"},{"wait":900},{"click":"Ask"},{"wait":1200},{"click":"Acme pricing and what I owe"},{"wait":1500},{"shot":"ask"}]
+       {"tab":"Library"},{"wait":900},{"click":"Ask"},{"wait":1200},{"click":"Acme pricing and what I owe"},{"wait":1500},{"shot":"ask"},
+       {"tab":"Settings"},{"wait":600},{"css":"#settings-status"},{"wait":1500},{"shot":"status"}]
 LIVE = [{"tab":"Meetings"},{"wait":1500},{"shot":"live"}]
 steps = json.loads(sys.argv[1]) if len(sys.argv)>1 else (LIVE if os.environ.get("FX","").startswith("fixtures-live") else ALL)
 INIT = """
@@ -54,6 +55,9 @@ with sync_playwright() as p:
         if "click" in st:
             try: pg.get_by_text(st["click"], exact=st.get("exact", True)).first.click(timeout=4000)
             except Exception as e: print("CLICKFAIL", st["click"], str(e)[:120])
+        if "css" in st:
+            try: pg.locator(st["css"]).first.click(timeout=4000)
+            except Exception as e: print("CSSFAIL", st["css"], str(e)[:120])
         if "fill" in st:
             pg.locator(st["sel"]).first.fill(st["fill"])
         if "press" in st: pg.keyboard.press(st["press"])

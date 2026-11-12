@@ -36,7 +36,7 @@ jobs:
       run_core: ${{ steps.filter.outputs.run_core }}
       run_windows_app: ${{ steps.filter.outputs.run_windows_app }}
       run_ios: ${{ steps.filter.outputs.run_ios }}
-      run_android: ${{ steps.filter.outputs.run_android }}
+      run_android_app: ${{ steps.filter.outputs.run_android_app }}
     steps:
       # ref pinned to the real commit (not actions/checkout@v4's pull_request default,
       # GitHub's ephemeral refs/pull/N/merge preview ref -- observed transiently
@@ -81,10 +81,23 @@ jobs:
             echo "run_windows_app=false" >> "$GITHUB_OUTPUT"
           fi
           # The Android app (apps/mobile/android) links core/ through JNI and reads themes/.
-          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE '^(apps/mobile/android/|core/|themes/|\.github/workflows/)' <<<"$changed"; }; then
-            echo "run_android=true" >> "$GITHUB_OUTPUT"
+          # android-app (Gradle tests, debug APK, release native build) is the most expensive
+          # hosted job here, about 17 billed Linux minutes a run (#ci-minutes). Like ios, on a
+          # pull request it runs only when a file the Android app itself owns changed, or
+          # core/ffi/: the app's JNI layer (apps/mobile/android/app/src/main/cpp) calls the C
+          # API in core/ffi/include/whimbrel_core.h, which the android job never builds against.
+          # The rest of core/ is left out, since the android job above still cross-compiles
+          # core/ for Android on every core/ PR. The nightly schedule run (an empty diff runs
+          # everything) builds the app against main, so any other core/ change that breaks it
+          # (a JSON shape the app reads, say) is caught overnight.
+          android_app_paths='^(apps/mobile/android/|core/ffi/|themes/|\.github/workflows/)'
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            android_app_paths='^(apps/mobile/android/|core/|themes/|\.github/workflows/)'
+          fi
+          if [ "$version_only" = false ] && { [ -z "$changed" ] || grep -qE "$android_app_paths" <<<"$changed"; }; then
+            echo "run_android_app=true" >> "$GITHUB_OUTPUT"
           else
-            echo "run_android=false" >> "$GITHUB_OUTPUT"
+            echo "run_android_app=false" >> "$GITHUB_OUTPUT"
           fi
           # The iOS app (apps/mobile/ios) builds core/ffi and references the Mac app's shared
           # Support/ sources and themes/, so any of those runs the ios job.
@@ -446,8 +459,8 @@ jobs:
   # the Rust toolchain, cargo-ndk, the NDK and CMake must all exist before any Gradle command.
   android-app:
     needs: changes
-    # Not on a push to main; see test-linux.
-    if: needs.changes.outputs.run_android == 'true' && github.event_name != 'push'
+    # Not on a push to main; see test-linux. On a PR, only for Android-app files; see run_android_app.
+    if: needs.changes.outputs.run_android_app == 'true' && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:

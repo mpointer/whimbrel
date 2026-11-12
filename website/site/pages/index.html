@@ -1,7 +1,7 @@
 <!--
 {
-  "title": "Whimbrel – AI Meeting Notes & Work Memory for Mac and Windows",
-  "description": "Whimbrel records meetings without a bot, remembers what you worked on, and answers questions about it. Private desktop AI for Mac and Windows. Free to try.",
+  "title": "Whimbrel: Private Meeting Notes and Memory for Client Work",
+  "description": "Whimbrel records client meetings without a bot, keeps a page for every client, and stores recordings on your Mac or PC, not our servers. Free and open source.",
   "schema": ["organization", "website", "software", "video"],
   "priority": 1.0,
   "faq": [
@@ -20,18 +20,19 @@
 <section class="hero">
   <div class="container hero-grid">
     <div>
-      <p class="eyebrow">Desktop AI assistant for Mac &amp; Windows</p>
-      <h1>The AI assistant that <em>remembers your work.</em></h1>
-      <p class="lede">Whimbrel records your meetings without a bot, keeps a private, searchable memory of what you worked on, and turns it into briefings, answers, and follow-ups.</p>
+      <p class="eyebrow">Private AI memory for Mac &amp; Windows</p>
+      <h1>Your client calls stay <em>on your computer.</em></h1>
+      <p class="lede">Whimbrel records your meetings without a bot, remembers your work, and keeps a page for every client. Recordings, transcripts and screen history are stored on your Mac or PC, not on our servers. AI runs on your machine, or on a model you choose.</p>
       <div class="hero-actions">
         <a class="btn btn-primary btn-lg" href="/download/?platform=mac#register" data-platform-link="mac">Download for Mac</a>
         <a class="btn btn-ghost btn-lg" href="/download/?platform=windows#register" data-platform-link="windows">Download for Windows</a>
       </div>
       <ul class="hero-meta">
-        <li>Free and open source</li>
-        <li>No meeting bot</li>
-        <li>Runs local models</li>
+        <li>Records, transcribes and searches with Wi-Fi off</li>
+        <li>On the Mac, see every way data can leave</li>
+        <li>Open source: check our work</li>
       </ul>
+      <p class="fine muted" style="margin-top:16px">For confidential client work, <a href="/for/confidential-work/">see how it works</a>. Using Claude or Cursor? <a href="/for/ai-tools/">Give them your work context</a>.</p>
     </div>
     {{> app-mock}}
   </div>
@@ -55,6 +56,18 @@
     </div>
     <div class="feature-grid">
       <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9-9-9Z"/><circle cx="8" cy="8" r="1.5"/></svg></div>
+        <h3>A page for every client</h3>
+        <p>Name the clients, products, and projects you care about. Each gets a page with the next meeting, the steps you owe and are owed, and the latest email and activity.</p>
+        <a class="more" href="/features/topics/">See topics →</a>
+      </article>
+      <article class="card feature">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 4.500 3.400 8 8 9 4.600-1 8-4.500 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg></div>
+        <h3>See what leaves your computer</h3>
+        <p>On the Mac, Settings → Your data shows what Whimbrel keeps and how much space it takes, every way data can leave your computer and whether each one is on, and what hosted models cost you. Windows has a Status page for sync, storage and AI.</p>
+        <a class="more" href="/for/confidential-work/">Why this matters for client work →</a>
+      </article>
+      <article class="card feature">
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
         <h3>Meeting notes without a bot</h3>
         <p>Recording starts from your calendar or when Whimbrel hears a call begin. You get a transcript with speakers, notes blended with your own, and decisions and action items when the meeting ends.</p>
@@ -72,13 +85,6 @@
         <p>"What did we decide about pricing with Acme?" Chat answers from your own meetings, screen history, and email, and cites the moment each answer came from.</p>
       </article>
       <article class="card feature">
-        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9-9-9Z"/><circle cx="8" cy="8" r="1.5"/></svg></div>
-        <p class="badge">New</p>
-        <h3>A page for every customer and project</h3>
-        <p>Name the customers, products, and projects you care about. Each gets a page with the next meeting, the steps you owe and are owed, and the latest email and activity.</p>
-        <a class="more" href="/features/topics/">See topics →</a>
-      </article>
-      <article class="card feature">
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
         <h3>Routines that brief you</h3>
         <p>Scheduled routines prepare you before each meeting, recap your day at the end of it, protect focus time on your calendar, and summarize your week.</p>
@@ -88,6 +94,7 @@
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H6a3 3 0 0 0 0 6h3M15 7h3a3 3 0 0 1 0 6h-3M8 10h8"/><path d="M12 17v4"/></svg></div>
         <h3>Connected to your tools</h3>
         <p>Gmail, Google Calendar, and Outlook 365 connect in a click. Whimbrel is built on the Model Context Protocol (MCP), and other AI tools can query your Whimbrel memory through its local MCP server.</p>
+        <a class="more" href="/for/ai-tools/">Give Claude your work context →</a>
       </article>
       <article class="card feature">
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="13" height="10" rx="1.5"/><rect x="17" y="8" width="5" height="11" rx="1"/><path d="M6 19h6"/></svg></div>
@@ -100,12 +107,6 @@
         <h3>Works in your language</h3>
         <p>Use Whimbrel in Spanish, French, German, Portuguese, or English. Get notes and summaries in the language you choose, and ask in one language to find what was said in another.</p>
         <a class="more" href="/features/languages/">See supported languages →</a>
-      </article>
-      <article class="card feature">
-        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="4"/></svg></div>
-        <p class="badge">Beta coming soon</p>
-        <h3>Away Mode</h3>
-        <p>Can't make a meeting? Whimbrel will join the Zoom call for you, record it, and bring back the notes. Muted, camera off, with a short note in the chat so everyone knows.</p>
       </article>
     </div>
   </div>

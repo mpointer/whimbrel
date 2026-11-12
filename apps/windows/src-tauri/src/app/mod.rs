@@ -67,6 +67,9 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        // No shortcuts at build time: one another app owns would fail plugin setup and end
+        // the launch. `hotkey_panel::setup` registers it and records a failure instead.
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(move |app| {
             // Identity, then the store (which learns its own device id before anything
             // else can touch it), then settings. Failures land in `startup_errors`.
@@ -79,6 +82,7 @@ pub fn run() {
             state.start_sync();
             state.start_detection(app.handle().clone());
             state.start_retention();
+            state.start_model_defaults();
             state.start_routines();
             state.start_mcp_server();
             if let Some(store) = &state.store {
@@ -92,6 +96,7 @@ pub fn run() {
             }
             app.manage(state);
             crate::tray::build(app.handle())?;
+            crate::hotkey_panel::setup(app.handle());
             commands::general::apply_autostart_at_launch(app.handle(), &app.state::<AppState>());
             crate::restart::schedule_crash_test(app.handle());
             update::start(app.handle());
@@ -290,6 +295,11 @@ pub fn run() {
             commands::chat::chat_ask,
             commands::chat::chat_stop,
             commands::meeting_ask::meeting_ask,
+            commands::window_ask::window_ask,
+            crate::hotkey_panel::hotkey_panel_read,
+            crate::hotkey_panel::hotkey_panel_close,
+            crate::hotkey_panel::hotkey_status,
+            crate::hotkey_panel::set_hotkey_shortcut,
             commands::chat::chat_conversations,
             commands::chat::chat_conversation,
             commands::chat::chat_rename_conversation,

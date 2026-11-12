@@ -215,11 +215,20 @@ fn stream(
     api::inference::release(&run.run_id);
     match chat::terminal_action_for(route.provider, &end.outcome, end.produced_output) {
         TerminalAction::Finalize => {
-            let (prepare_id, text, model, usage) = (prepared.prepare_id, end.text.clone(), route.model.clone(), end.usage);
+            // Usage goes under the model that answered; a stand-in for a model the provider
+            // no longer has is recorded for Settings → AI.
+            let answered = end.model.clone().unwrap_or_else(|| route.model.clone());
+            let (prepare_id, text, model, usage) = (prepared.prepare_id, end.text.clone(), answered.clone(), end.usage);
+            let (provider, requested, substitute) = (llm::Provider::parse(route.provider), route.model.clone(), end.model.clone());
             let citations = store
-                .call_blocking(move |s| api::ask::finalize_ask(s, &prepare_id, &text, &model, usage).citations)
+                .call_blocking(move |s| {
+                    if let Some(provider) = provider {
+                        api::model_defaults::note_answer(s, provider, &requested, substitute.as_deref(), api::util::now_unix_ms());
+                    }
+                    api::ask::finalize_ask(s, &prepare_id, &text, &model, usage).citations
+                })
                 .unwrap_or_default();
-            finish(store, ask, end.text, citations, &context, &route.model, send);
+            finish(store, ask, end.text, citations, &context, &answered, send);
         }
         TerminalAction::Restore => {
             api::ask::discard_ask(&prepared.prepare_id);

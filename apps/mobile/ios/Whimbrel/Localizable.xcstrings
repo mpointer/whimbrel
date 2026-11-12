@@ -3397,6 +3397,40 @@
         }
       }
     },
+    "Older history is still loading." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Älterer Verlauf wird noch geladen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El historial más antiguo todavía se está cargando."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’historique plus ancien est encore en cours de chargement."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "L’historique plus ancien est encore en cours de chargement."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O histórico mais antigo ainda está carregando."
+          }
+        }
+      }
+    },
     "On Google's free tier, prompts and responses may be used to improve Google's products. The paid tier does not use them that way. Check Google's terms for the current wording." : {
       "localizations" : {
         "de" : {

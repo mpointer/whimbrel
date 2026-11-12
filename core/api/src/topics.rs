@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::envelope::{ApiError, ApiResult};
 use crate::routing::{build_chain_for, RoutingConfig};
-use crate::util::log_usage_for;
 
 pub use memory::topics::read::{
     LeftOff, OpenTarget, TopicDetail, TopicMember, TopicNameInput, TopicSummary,
@@ -309,13 +308,7 @@ pub fn run_naming_batch(
         }
         let (completion, link) = llm::try_chain(&chain, |l| l.client.complete(prompt))
             .ok_or_else(|| "provider failure".to_string())?;
-        log_usage_for(
-            store,
-            link.provider,
-            &link.model,
-            "topic_name",
-            completion.token_usage,
-        );
+        crate::util::log_link_usage(store, link, "topic_name", completion.token_usage);
         Ok(completion.text)
     })
 }

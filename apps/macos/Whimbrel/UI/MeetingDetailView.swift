@@ -195,7 +195,7 @@ struct MeetingDetailContentView: View {
     @State private var regeneratedSummary: CoreMeetingSummary?
     @State private var selectedProvider: RoutingSettings.Provider = .ollama
     @State private var ollamaModel: String = "gemma4:12b"
-    @State private var selectedHostedModel: String = "claude-haiku-4-5"
+    @State private var selectedHostedModel: String = HostedModelDefaults.resolve(provider: "anthropic", stored: nil)
     @State private var isRegenerating = false
     @State private var regenerateError: String?
 

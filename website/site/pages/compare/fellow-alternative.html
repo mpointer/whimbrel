@@ -1,0 +1,111 @@
+<!--
+{
+  "title": "Whimbrel vs Fellow: A Fellow Alternative",
+  "description": "Fellow sells privacy as governance to organisations; Whimbrel keeps recordings on your own computer. Compare controls, compliance, storage and price.",
+  "priority": 0.7,
+  "ogType": "article",
+  "crumbs": [
+    {
+      "name": "Compare",
+      "path": "/compare/"
+    },
+    {
+      "name": "Whimbrel vs. Fellow",
+      "path": "/compare/fellow-alternative/"
+    }
+  ],
+  "faq": [
+    {
+      "q": "Which is better for a regulated firm?",
+      "a": "If a compliance department will review the tool, Fellow's portal, consent log and retention controls are what that buyer asks for, and Whimbrel has none of them. If you are a professional who decides for yourself and wants client calls kept on your own machine, Whimbrel fits."
+    },
+    {
+      "q": "Does Whimbrel encrypt its database?",
+      "a": "Not yet. Recordings and history are stored on your computer, not on Whimbrel's servers, but the local database is not encrypted at rest."
+    }
+  ]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">Comparison</p>
+    <h1>Whimbrel vs. Fellow</h1>
+    <p class="lede">Fellow sells privacy as controls for an organisation: consent records, retention, redaction and audit. Whimbrel's answer is architecture: recordings kept on your own computer. They suit different buyers.</p>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="table-wrap">
+      <table class="compare">
+        <caption class="sr-only">Feature comparison between Whimbrel and Fellow</caption>
+        <thead><tr><th scope="col">Capability</th><th scope="col">Whimbrel</th><th scope="col">Fellow</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Meeting notes without a bot</th><td class="yes">Yes</td><td class="yes">Both: bot or botless desktop capture<sup><a href="#src-1">1</a></sup></td></tr>
+          <tr><th scope="row">Where recordings are stored</th><td class="yes">On your computer, not on Whimbrel's servers</td><td class="no">AWS, Canada Central region<sup><a href="#src-2">2</a></sup></td></tr>
+          <tr><th scope="row">Where transcription runs</th><td class="yes">Yes, on-device</td><td class="no">Cloud: AssemblyAI is listed<sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Text sent to a hosted model</th><td>Only if you pick a hosted model. Whimbrel AI requests pass through Whimbrel's server</td><td class="no">Yes: sub-processors include Anthropic, OpenAI, Google; admins can toggle AI<sup><a href="#src-3">3</a></sup></td></tr>
+          <tr><th scope="row">Consent record</th><td>Reminder text only</td><td class="yes">Admin-enforced consent; each disclosure logged<sup><a href="#src-4">4</a></sup></td></tr>
+          <tr><th scope="row">Retention, redaction, audit</th><td>Retention settings only</td><td class="yes">Zero-day retention, transcript redaction, audit trail (Enterprise features)<sup><a href="#src-4">4</a></sup></td></tr>
+          <tr><th scope="row">Compliance</th><td class="no">No</td><td class="yes">SOC 2 Type II; HIPAA BAAs available (vendor claims)<sup><a href="#src-5">5</a></sup></td></tr>
+          <tr><th scope="row">SSO and team admin</th><td class="no">No</td><td class="yes">SSO (Okta, OneLogin), roles, team-scoped access<sup><a href="#src-5">5</a></sup></td></tr>
+          <tr><th scope="row">Works from Claude or ChatGPT on the web</th><td>Local MCP server only</td><td class="yes">Hosted MCP server, admin-enabled<sup><a href="#src-6">6</a></sup></td></tr>
+          <tr><th scope="row">Memory of non-meeting work</th><td class="yes">Yes: screen text and email</td><td class="no">Not found<sup><a href="#src-1">1</a></sup></td></tr>
+          <tr><th scope="row">Platforms</th><td>Yes (Windows in early access)</td><td class="yes">Mac, Windows, iOS, Android, Chrome extension<sup><a href="#src-7">7</a></sup></td></tr>
+          <tr><th scope="row">Open source</th><td class="yes">Yes, Apache 2.0</td><td class="no">No</td></tr>
+          <tr><th scope="row">Price</th><td>Free. Optional paid plans on the <a href="/pricing/">pricing page</a></td><td>Free: 5 AI notes, lifetime. Team $7 (annual) or $11; Business $15 or $23; Enterprise $25, per user per month<sup><a href="#src-8">8</a></sup></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="fine muted table-note">Compliance and regulatory claims here are Fellow's own; we have not verified them. Every Fellow claim links to the page it came from, read on November 11, 2026. "Not found" means we did not find it stated on the pages we read. Products change; check Fellow's site for current details. About Whimbrel: recordings, transcripts and history are stored on your computer and not on Whimbrel's servers. AI runs on your computer or on a model you choose; with a hosted model, the text of each request goes to that model. Every way data can leave is listed in the app.</p>
+  </div>
+</section>
+
+<section>
+  <div class="container split split-top">
+    <div>
+      <h2>Choose Whimbrel if…</h2>
+      <ul class="checklist">
+        <li>You are your own buyer, with confidentiality duties and no compliance department.</li>
+        <li>You want recordings kept on your computer rather than controlled in a vendor's cloud.</li>
+        <li>You want to choose the model that sees your text.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Choose Fellow if…</h2>
+      <ul class="checklist">
+        <li>A compliance team needs consent records, retention rules, redaction and an audit trail.</li>
+        <li>You need SSO, a SOC 2 Type II report or a HIPAA agreement.</li>
+        <li>You want agendas and 1:1s as well as notes, across a team.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="narrow">
+    <h2 class="center">Common questions</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Sources</h2>
+    <p class="fine muted">All read on November 11, 2026.</p>
+    <ol class="fine muted">
+        <li id="src-1"><a href="https://fellow.ai/features/botless-recording" rel="noopener">https://fellow.ai/features/botless-recording</a></li>
+        <li id="src-2"><a href="https://help.fellow.ai/en/articles/4302231-security-compliance" rel="noopener">https://help.fellow.ai/en/articles/4302231-security-compliance</a></li>
+        <li id="src-3"><a href="https://fellow.ai/fellow-app-sub-processors" rel="noopener">https://fellow.ai/fellow-app-sub-processors</a></li>
+        <li id="src-4"><a href="https://fellow.ai/features/compliance" rel="noopener">https://fellow.ai/features/compliance</a></li>
+        <li id="src-5"><a href="https://fellow.ai/" rel="noopener">https://fellow.ai/</a></li>
+        <li id="src-6"><a href="https://fellow.ai/features/mcp-server" rel="noopener">https://fellow.ai/features/mcp-server</a></li>
+        <li id="src-7"><a href="https://fellow.ai/download" rel="noopener">https://fellow.ai/download</a></li>
+        <li id="src-8"><a href="https://fellow.ai/pricing" rel="noopener">https://fellow.ai/pricing</a></li>
+    </ol>
+  </div>
+</section>
+{{> cta}}

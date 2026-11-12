@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use llm::streaming::{InferenceEvent, InferenceFailureClass, TerminalOutcome};
+use llm::streaming::{InferenceEvent, InferenceFailureClass, InferenceRunState, TerminalOutcome};
 use llm::{ChatRole, ChatTurn, ContextItemRef};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -67,6 +67,44 @@ pub fn ollama_serves(model: &str) -> bool {
         && api::hosted_models::fetch_models(api::hosted_models::HostedProvider::Ollama, "", None)
             .map(|pulled| pulled.iter().any(|name| same_ollama_model(name, model)))
             .unwrap_or(false)
+}
+
+/// Where Ollama stands for `model`, for a refusal that says what to do (the hotkey panel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OllamaState {
+    /// Running, with the model pulled.
+    Serves,
+    /// Running, without the model.
+    ModelMissing,
+    /// Installed on this PC but not answering: start it.
+    NotRunning,
+    /// Not installed (as far as its usual places show).
+    Absent,
+}
+
+/// [`ollama_serves`], told apart: running without the model, installed but stopped, or absent.
+pub fn ollama_state(model: &str) -> OllamaState {
+    if !ollama_reachable() {
+        return if ollama_installed() { OllamaState::NotRunning } else { OllamaState::Absent };
+    }
+    match api::hosted_models::fetch_models(api::hosted_models::HostedProvider::Ollama, "", None) {
+        Ok(pulled) if pulled.iter().any(|name| same_ollama_model(name, model)) => OllamaState::Serves,
+        Ok(_) => OllamaState::ModelMissing,
+        // Listening but not answering the list: as good as not running.
+        Err(_) => OllamaState::NotRunning,
+    }
+}
+
+/// Whether Ollama is installed: its program in the per-user install folder or on PATH, or a
+/// models folder (`OLLAMA_MODELS`, else `%USERPROFILE%\.ollama\models`) with something in it.
+pub fn ollama_installed() -> bool {
+    let env = |k: &str| std::env::var_os(k).map(std::path::PathBuf::from);
+    let mut programs: Vec<std::path::PathBuf> = env("LOCALAPPDATA").map(|d| d.join("Programs").join("Ollama").join("ollama.exe")).into_iter().collect();
+    if let Some(path) = std::env::var_os("PATH") {
+        programs.extend(std::env::split_paths(&path).map(|d| d.join("ollama.exe")));
+    }
+    let models = env("OLLAMA_MODELS").or_else(|| env("USERPROFILE").map(|h| h.join(".ollama").join("models")));
+    programs.iter().any(|p| p.is_file()) || models.is_some_and(|m| std::fs::read_dir(m).is_ok_and(|mut d| d.next().is_some()))
 }
 
 /// Ollama names a model `name:tag`, and a bare `name` means `name:latest`.
@@ -351,6 +389,9 @@ pub struct StreamEnd {
     pub usage: llm::TokenUsage,
     /// Whether any text streamed before the end (the Mac's `streamedText.isEmpty`).
     pub produced_output: bool,
+    /// The model the run's `Streaming` state named: the provider's default when it had no
+    /// such model as the one asked for (`api::model_defaults`). `None` if it never said.
+    pub model: Option<String>,
 }
 
 /// Drains `run_id` until its terminal event, forwarding text and progress to `send`,
@@ -364,6 +405,7 @@ pub fn forward(
     mut wait: impl FnMut(),
 ) -> StreamEnd {
     let mut streamed = String::new();
+    let mut model = None;
     loop {
         let Some(events) = poll(run_id) else {
             return StreamEnd {
@@ -371,6 +413,7 @@ pub fn forward(
                 produced_output: !streamed.is_empty(),
                 text: streamed,
                 usage: llm::TokenUsage::default(),
+                model,
             };
         };
         for event in events {
@@ -380,10 +423,11 @@ pub fn forward(
                     send(ChatEvent::Delta { text });
                 }
                 InferenceEvent::Progress { label, .. } => send(ChatEvent::Progress { label }),
+                InferenceEvent::State { state: InferenceRunState::Streaming, model: Some(named), .. } => model = Some(named),
                 InferenceEvent::Terminal { outcome, final_text, usage, .. } => {
                     let produced_output = !streamed.is_empty();
                     let text = if final_text.is_empty() { streamed } else { final_text };
-                    return StreamEnd { outcome, text, usage, produced_output };
+                    return StreamEnd { outcome, text, usage, produced_output, model };
                 }
                 _ => {}
             }
@@ -417,7 +461,7 @@ mod tests {
         let ollama = stream_route(&routing(Provider::Ollama), &keys(None)).unwrap();
         assert_eq!((ollama.provider, ollama.model.as_str(), ollama.key.is_none()), ("ollama", "gemma4:12b", true));
         let google = stream_route(&routing(Provider::Google), &keys(Some("g"))).unwrap();
-        assert_eq!((google.provider, google.model.as_str(), google.key.as_deref()), ("google", "gemini-2.5-flash", Some("g")));
+        assert_eq!((google.provider, google.model.as_str(), google.key.as_deref()), ("google", llm::GOOGLE_FALLBACK_MODEL, Some("g")));
         assert_eq!(stream_route(&routing(Provider::Google), &keys(None)), None, "no key: the blocking chain falls back");
         assert_eq!(stream_route(&routing(Provider::Google), &keys(Some(""))), None);
         let anthropic = stream_route(&routing(Provider::Anthropic), &keys(None)).unwrap();
@@ -544,6 +588,21 @@ mod tests {
         assert_eq!((end.outcome, end.text.as_str(), end.produced_output), (TerminalOutcome::Completed, "Hello [1]", true));
         assert_eq!(end.usage.input_tokens, Some(12), "usage feeds finalize_ask's spend ledger");
         assert_eq!(waits, 3, "waits between polls, not after the terminal event");
+        assert_eq!(end.model, None, "the state named no model");
+    }
+
+    #[test]
+    fn forwarder_keeps_the_model_the_streaming_state_named() {
+        let state = |model: &str| InferenceEvent::State {
+            run_id: "r".into(),
+            state: InferenceRunState::Streaming,
+            at_unix_ms: 0,
+            provider: Some("google".into()),
+            model: Some(model.into()),
+            attempt: 1,
+        };
+        let (_, end, _) = run_fake(vec![Some(vec![state("stand-in-model"), delta("hi")]), Some(vec![terminal(TerminalOutcome::Completed, "hi")])]);
+        assert_eq!(end.model.as_deref(), Some("stand-in-model"), "usage is logged under the model that answered");
     }
 
     #[test]

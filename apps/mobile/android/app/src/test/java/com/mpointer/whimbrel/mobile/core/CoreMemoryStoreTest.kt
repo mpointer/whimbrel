@@ -42,6 +42,14 @@ class CoreMemoryStoreTest {
     }
 
     @Test
+    fun olderHistoryLoadingAsksTheCoreForThisStore() {
+        assertEquals(false, store().olderHistoryLoading())
+        native.olderHistoryReply = true
+        assertEquals(true, store().olderHistoryLoading())
+        assertEquals("the store's own handle, not a global", listOf(9L, 9L), native.olderHistoryHandles)
+    }
+
+    @Test
     fun topicSnapshotsDecodeAndFailQuietly() {
         val s = store()
         native.topicSnapshotsReply = """[{"topic_key":"acme","name":"Acme","you_owe":[{"text":"Send","due_date":"2026-11-12"}]}]"""

@@ -33,6 +33,7 @@ import {
   keyLine,
   modelField,
   modelOptions,
+  modelWarningLine,
   ollamaWarningLine,
   monthSpent,
   parseCapDollars,
@@ -116,6 +117,12 @@ export function AiCard() {
           {ollamaWarningLine(settings.ollamaWarning)}
         </p>
       )}
+      {/* Gone once the user picks another model, before the next reload. */}
+      {settings.modelWarnings.filter((w) => settings.routing[modelField(w.provider)] === w.model).map((w) => (
+        <p key={w.provider} className="muted small" role="status">
+          {modelWarningLine(w)}
+        </p>
+      ))}
       <WhimbrelAiCard view={whimbrel} refreshModels={loadWhimbrelModels} />
       <h3 className="section-label">{t("API keys")}</h3>
       <p className="muted small">{t("Stored in Windows Credential Manager under the same names the Mac's Keychain uses.")}</p>

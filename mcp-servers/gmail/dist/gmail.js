@@ -1,3 +1,76 @@
+/** Most of an error body we look at: Google's error JSON is small, anything bigger is not it. */
+const ERROR_BODY_CAP = 16 * 1024;
+/** The machine-readable reason in a Google API error body, or undefined. Order:
+ * `error.errors[0].reason` (e.g. `insufficientPermissions`, `accessNotConfigured`),
+ * then `error.details[].reason` (e.g. `ACCESS_TOKEN_SCOPE_INSUFFICIENT`), then
+ * `error.status` (e.g. `PERMISSION_DENIED`). Only a short `[A-Za-z0-9_.-]` token is
+ * returned, so no message text, email or token can ride along into logs. */
+export function googleErrorReason(body) {
+    let parsed;
+    try {
+        parsed = JSON.parse(body.slice(0, ERROR_BODY_CAP));
+    }
+    catch {
+        return undefined;
+    }
+    const error = parsed?.error;
+    if (!error || typeof error !== "object")
+        return undefined;
+    const e = error;
+    const candidates = [];
+    if (Array.isArray(e.errors))
+        candidates.push(e.errors[0]?.reason);
+    if (Array.isArray(e.details)) {
+        for (const d of e.details)
+            candidates.push(d?.reason);
+    }
+    candidates.push(e.status);
+    for (const c of candidates) {
+        if (typeof c === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(c))
+            return c;
+    }
+    return undefined;
+}
+/** At most `ERROR_BODY_CAP` bytes of a response body, as text; "" when there is none.
+ * A stream is cancelled once the cap is reached, so a huge body is never read whole. */
+async function readCappedBody(response) {
+    const stream = response.body;
+    if (stream && typeof stream.getReader === "function") {
+        const reader = stream.getReader();
+        const chunks = [];
+        let total = 0;
+        try {
+            while (total < ERROR_BODY_CAP) {
+                const { done, value } = await reader.read();
+                if (done || !value)
+                    break;
+                chunks.push(value);
+                total += value.byteLength;
+            }
+        }
+        finally {
+            await reader.cancel().catch(() => { });
+        }
+        return Buffer.concat(chunks).subarray(0, ERROR_BODY_CAP).toString("utf8");
+    }
+    if (typeof response.text === "function") {
+        return (await response.text()).slice(0, ERROR_BODY_CAP);
+    }
+    return "";
+}
+/** The error for a non-OK Gmail response: `Gmail API returned
+ * <status>`, plus ` (<reason>)` when the body names one. The body is read once,
+ * capped, and never put in the message. */
+async function apiError(response) {
+    let reason;
+    try {
+        reason = googleErrorReason(await readCappedBody(response));
+    }
+    catch {
+        reason = undefined;
+    }
+    return new Error(`Gmail API returned ${response.status}${reason ? ` (${reason})` : ""}`);
+}
 /** Validates that a header field value contains no line breaks that could enable header injection.
  * Throws a clear error if \r or \n are found, preventing CRLF injection attacks. */
 function assertNoHeaderInjection(value, fieldName) {
@@ -43,7 +116,7 @@ export async function sendEmail(to, subject, body, accessToken, fetchFn = fetch)
         body: JSON.stringify({ raw }),
     });
     if (!response.ok) {
-        throw new Error(`Gmail API returned ${response.status}`);
+        throw await apiError(response);
     }
     return response.json();
 }
@@ -65,7 +138,7 @@ export async function searchThreads(q, maxResults, accessToken, fetchFn = fetch)
     listUrl.searchParams.set("maxResults", String(cappedMax));
     const listResponse = await fetchFn(listUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!listResponse.ok) {
-        throw new Error(`Gmail API returned ${listResponse.status}`);
+        throw await apiError(listResponse);
     }
     const listBody = (await listResponse.json());
     const rawThreads = listBody.threads ?? [];
@@ -75,7 +148,7 @@ export async function searchThreads(q, maxResults, accessToken, fetchFn = fetch)
         metaUrl.searchParams.set("format", "metadata");
         const metaResponse = await fetchFn(metaUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
         if (!metaResponse.ok) {
-            throw new Error(`Gmail API returned ${metaResponse.status}`);
+            throw await apiError(metaResponse);
         }
         const metaBody = (await metaResponse.json());
         const headers = metaBody.messages?.[0]?.payload?.headers ?? [];
@@ -161,7 +234,7 @@ export async function getThread(threadId, accessToken, fetchFn = fetch) {
     url.searchParams.set("format", "full");
     const response = await fetchFn(url, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!response.ok) {
-        throw new Error(`Gmail API returned ${response.status}`);
+        throw await apiError(response);
     }
     const body = (await response.json());
     const messages = body.messages.map((m) => ({ id: m.id, ...extractMessage(m.payload) }));
@@ -182,7 +255,7 @@ export async function syncMessages(historyId, accessToken, fetchFn = fetch) {
         const profileUrl = new URL("https://gmail.googleapis.com/gmail/v1/users/me/profile");
         const response = await fetchFn(profileUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
         if (!response.ok) {
-            throw new Error(`Gmail API returned ${response.status}`);
+            throw await apiError(response);
         }
         const body = (await response.json());
         return { messages: [], deletedExternalIds: [], nextHistoryId: body.historyId ?? "", needsFullResync: false };
@@ -202,7 +275,7 @@ export async function syncMessages(historyId, accessToken, fetchFn = fetch) {
             return { messages: [], deletedExternalIds: [], nextHistoryId: "", needsFullResync: true };
         }
         if (!response.ok) {
-            throw new Error(`Gmail API returned ${response.status}`);
+            throw await apiError(response);
         }
         const body = (await response.json());
         for (const record of body.history ?? []) {
@@ -233,7 +306,7 @@ export async function syncMessages(historyId, accessToken, fetchFn = fetch) {
             continue;
         }
         if (!msgResponse.ok) {
-            throw new Error(`Gmail API returned ${msgResponse.status}`);
+            throw await apiError(msgResponse);
         }
         const msgBody = (await msgResponse.json());
         const extracted = extractMessage(msgBody.payload);
@@ -268,7 +341,7 @@ export async function createDraft(threadId, to, subject, body, accessToken, fetc
     threadUrl.searchParams.append("metadataHeaders", "References");
     const threadResponse = await fetchFn(threadUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!threadResponse.ok) {
-        throw new Error(`Gmail API returned ${threadResponse.status}`);
+        throw await apiError(threadResponse);
     }
     const threadBody = (await threadResponse.json());
     const lastMessage = threadBody.messages?.[threadBody.messages.length - 1];
@@ -288,7 +361,7 @@ export async function createDraft(threadId, to, subject, body, accessToken, fetc
         body: JSON.stringify({ message: { raw, threadId } }),
     });
     if (!response.ok) {
-        throw new Error(`Gmail API returned ${response.status}`);
+        throw await apiError(response);
     }
     return response.json();
 }

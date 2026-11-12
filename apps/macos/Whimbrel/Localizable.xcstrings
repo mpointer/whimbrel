@@ -4,6 +4,40 @@
     "" : {
       "shouldTranslate" : false
     },
+    " — first part only" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : " — nur der erste Teil"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : " — solo la primera parte"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : " — première partie seulement"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : " — première partie seulement"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : " — só a primeira parte"
+          }
+        }
+      }
+    },
     "%@ %@" : {
       "localizations" : {
         "en" : {
@@ -129,6 +163,46 @@
         }
       }
     },
+    "%@ doesn't offer the model %@ to your key. Choose another in Settings → AI Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ bietet das Modell %2$@ für Ihren Schlüssel nicht an. Wählen Sie unter Einstellungen → KI-Anbieter ein anderes."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ doesn't offer the model %2$@ to your key. Choose another in Settings → AI Providers."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ no ofrece el modelo %2$@ para tu clave. Elige otro en Ajustes → Proveedores de IA."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ne propose pas le modèle %2$@ pour votre clé. Choisissez-en un autre dans Réglages → Fournisseurs d’IA."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ n’offre pas le modèle %2$@ pour votre clé. Choisissez-en un autre dans Réglages → Fournisseurs d'IA."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ não oferece o modelo %2$@ para a sua chave. Escolha outro em Configurações → Provedores de IA."
+          }
+        }
+      }
+    },
     "%@ has been silent for 3 minutes. Check that the meeting has started and your audio devices are right." : {
       "localizations" : {
         "de" : {
@@ -159,6 +233,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ está em silêncio há 3 minutos. Verifique se a reunião já começou e se seus dispositivos de áudio estão corretos."
+          }
+        }
+      }
+    },
+    "%@ has no modifier key, so it would block normal typing. Include Control or Option." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ hat keine Zusatztaste und würde daher die normale Eingabe blockieren. Verwenden Sie Control oder Wahltaste."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ no tiene tecla modificadora, así que bloquearía la escritura normal. Incluye Control u Opción."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ n’a pas de touche de modification et bloquerait donc la saisie normale. Ajoutez Contrôle ou Option."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ n’a pas de touche de modification et bloquerait donc la saisie normale. Ajoutez Contrôle ou Option."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ não tem tecla modificadora, então bloquearia a digitação normal. Inclua Control ou Option."
+          }
+        }
+      }
+    },
+    "%@ is already used by another app." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ wird bereits von einer anderen App verwendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otra app ya usa %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ est déjà utilisé par une autre app."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ est déjà utilisé par une autre application."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ já é usado por outro app."
           }
         }
       }
@@ -233,6 +375,46 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%@ está ocupado ou sem créditos. Tente novamente em instantes."
+          }
+        }
+      }
+    },
+    "%@ isn't available to your %@ key; using %@ for now." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ ist für Ihren %2$@-Schlüssel nicht verfügbar; vorerst wird %3$@ verwendet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ isn't available to your %2$@ key; using %3$@ for now."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ no está disponible para tu clave de %2$@; por ahora se usa %3$@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ n’est pas disponible pour votre clé %2$@ ; %3$@ est utilisé pour l’instant."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ n’est pas disponible pour votre clé %2$@; %3$@ est utilisé pour l’instant."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ não está disponível para a sua chave de %2$@; usando %3$@ por enquanto."
           }
         }
       }
@@ -569,6 +751,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%@ às %@"
+          }
+        }
+      }
+    },
+    "%@ would take a shortcut apps use themselves. Include Control or Option, or use two modifier keys." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ würde ein Tastenkürzel belegen, das Apps selbst verwenden. Verwenden Sie Control oder Wahltaste oder zwei Zusatztasten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ ocuparía un atajo que usan las propias apps. Incluye Control u Opción, o usa dos teclas modificadoras."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ prendrait un raccourci qu’utilisent les apps elles-mêmes. Ajoutez Contrôle ou Option, ou utilisez deux touches de modification."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ prendrait un raccourci qu’utilisent les applications elles-mêmes. Ajoutez Contrôle ou Option, ou utilisez deux touches de modification."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ ocuparia um atalho que os próprios apps usam. Inclua Control ou Option, ou use duas teclas modificadoras."
           }
         }
       }
@@ -4206,6 +4422,40 @@
         }
       }
     },
+    "Another app already uses this shortcut" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Eine andere App verwendet dieses Tastenkürzel bereits"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Otra app ya usa este atajo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une autre app utilise déjà ce raccourci"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une autre application utilise déjà ce raccourci"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Outro app já usa este atalho"
+          }
+        }
+      }
+    },
     "Another pending device shows the same code — don't approve it" : {
       "localizations" : {
         "de" : {
@@ -4749,6 +4999,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Pergunte sobre esta reunião"
+          }
+        }
+      }
+    },
+    "Ask about this window" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zu diesem Fenster fragen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pregunta sobre esta ventana"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Poser une question sur cette fenêtre"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Poser une question sur cette fenêtre"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pergunte sobre esta janela"
+          }
+        }
+      }
+    },
+    "Ask about this window…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zu diesem Fenster fragen …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pregunta sobre esta ventana…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Poser une question sur cette fenêtre…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Poser une question sur cette fenêtre…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pergunte sobre esta janela…"
           }
         }
       }
@@ -6674,6 +6992,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Limpo."
+          }
+        }
+      }
+    },
+    "Click Add Google Account, sign in as this address again, and allow calendar access." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Klicken Sie auf „Google-Konto hinzufügen“, melden Sie sich erneut mit dieser Adresse an und erlauben Sie den Kalenderzugriff."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Haz clic en Agregar cuenta de Google, vuelve a iniciar sesión con esta dirección y permite el acceso al calendario."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur Ajouter un compte Google, reconnectez-vous avec cette adresse et autorisez l’accès au calendrier."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cliquez sur Ajouter un compte Google, reconnectez-vous avec cette adresse et autorisez l’accès au calendrier."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clique em Adicionar conta Google, entre novamente com este endereço e permita o acesso à agenda."
           }
         }
       }
@@ -13984,6 +14336,40 @@
         }
       }
     },
+    "Google didn't give Whimbrel access to your calendar." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google hat Whimbrel keinen Zugriff auf Ihren Kalender gegeben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google no le dio a Whimbrel acceso a tu calendario."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google n’a pas donné à Whimbrel l’accès à votre calendrier."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google n’a pas donné à Whimbrel l’accès à votre calendrier."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Google não deu ao Whimbrel acesso à sua agenda."
+          }
+        }
+      }
+    },
     "Google didn't return the credentials sync needs. Try signing in again." : {
       "localizations" : {
         "de" : {
@@ -14014,6 +14400,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "O Google não retornou as credenciais de que a sincronização precisa. Tente entrar novamente."
+          }
+        }
+      }
+    },
+    "Google is blocking calendar access for this account. Your organization may need to allow Whimbrel." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google blockiert den Kalenderzugriff für dieses Konto. Möglicherweise muss Ihre Organisation Whimbrel zulassen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google está bloqueando el acceso al calendario para esta cuenta. Es posible que tu organización tenga que permitir Whimbrel."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google bloque l’accès au calendrier pour ce compte. Votre organisation devra peut-être autoriser Whimbrel."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google bloque l’accès au calendrier pour ce compte. Votre organisation devra peut-être autoriser Whimbrel."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Google está bloqueando o acesso à agenda para esta conta. Talvez sua organização precise permitir o Whimbrel."
           }
         }
       }
@@ -14354,6 +14774,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ocultar episódio"
+          }
+        }
+      }
+    },
+    "Hotkey panel" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tastenkürzel-Bereich"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Panel de atajo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Panneau du raccourci"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Panneau du raccourci"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Painel do atalho"
+          }
+        }
+      }
+    },
+    "I couldn't read this window." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ich konnte dieses Fenster nicht lesen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No pude leer esta ventana."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Je n’ai pas pu lire cette fenêtre."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Je n’ai pas pu lire cette fenêtre."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Não consegui ler esta janela."
           }
         }
       }
@@ -14868,6 +15356,40 @@
         }
       }
     },
+    "Include at least one modifier key (Control, Option, Shift or Command)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verwenden Sie mindestens eine Zusatztaste (Control, Wahltaste, Umschalttaste oder Befehlstaste)."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Incluye al menos una tecla modificadora (Control, Opción, Mayúsculas o Comando)."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajoutez au moins une touche de modification (Contrôle, Option, Maj ou Commande)."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ajoutez au moins une touche de modification (Contrôle, Option, Maj ou Commande)."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Inclua pelo menos uma tecla modificadora (Control, Option, Shift ou Command)."
+          }
+        }
+      }
+    },
     "Includes your other computers." : {
       "localizations" : {
         "de" : {
@@ -14932,6 +15454,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Instalar o Ollama"
+          }
+        }
+      }
+    },
+    "Install a local model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lokales Modell installieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instala un modelo local"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installer un modèle local"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installer un modèle local"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instale um modelo local"
           }
         }
       }
@@ -16638,6 +17194,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Modo somente local"
+          }
+        }
+      }
+    },
+    "Local-only mode is on, but no local model is installed. Install one in Settings → AI Providers." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Nur-lokal-Modus ist aktiv, aber es ist kein lokales Modell installiert. Installieren Sie eines unter Einstellungen → KI-Anbieter."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El modo solo local está activado, pero no hay ningún modelo local instalado. Instala uno en Ajustes → Proveedores de IA."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le mode local uniquement est activé, mais aucun modèle local n’est installé. Installez-en un dans Réglages → Fournisseurs d’IA."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le mode local uniquement est activé, mais aucun modèle local n’est installé. Installez-en un dans Réglages → Fournisseurs d'IA."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O modo somente local está ativado, mas nenhum modelo local está instalado. Instale um em Configurações → Provedores de IA."
           }
         }
       }
@@ -19296,6 +19886,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sem chaves hospedadas. Apenas modelos locais são usados."
+          }
+        }
+      }
+    },
+    "No local model is installed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Es ist kein lokales Modell installiert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "No hay ningún modelo local instalado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun modèle local n’est installé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aucun modèle local n’est installé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Nenhum modelo local está instalado."
           }
         }
       }
@@ -23351,6 +23975,74 @@
         }
       }
     },
+    "Press a shortcut…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tastenkürzel drücken …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pulsa un atajo…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appuyez sur un raccourci…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appuyez sur un raccourci…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pressione um atalho…"
+          }
+        }
+      }
+    },
+    "Press this shortcut anywhere to ask about the window you are in." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Drücken Sie dieses Tastenkürzel überall, um zum aktuellen Fenster zu fragen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pulsa este atajo en cualquier lugar para preguntar sobre la ventana en la que estás."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appuyez sur ce raccourci n’importe où pour poser une question sur la fenêtre où vous êtes."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Appuyez sur ce raccourci n’importe où pour poser une question sur la fenêtre où vous êtes."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Pressione este atalho em qualquer lugar para perguntar sobre a janela em que você está."
+          }
+        }
+      }
+    },
     "Print Diagnostics to Console" : {
       "localizations" : {
         "de" : {
@@ -24129,6 +24821,108 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Leia as notas das suas reuniões, decisões e itens de ação no iPhone ou no Android. Os apps estão em beta."
+          }
+        }
+      }
+    },
+    "Reading this window…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dieses Fenster wird gelesen …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leyendo esta ventana…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lecture de cette fenêtre…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lecture de cette fenêtre…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lendo esta janela…"
+          }
+        }
+      }
+    },
+    "Reading: %@ (%@)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird gelesen: %@ (%@)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leyendo: %@ (%@)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lecture : %@ (%@)"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lecture : %@ (%@)"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lendo: %@ (%@)"
+          }
+        }
+      }
+    },
+    "Reading: %@, '%@' (%@)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird gelesen: %@, '%@' (%@)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Leyendo: %@, '%@' (%@)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lecture : %@, '%@' (%@)"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lecture : %@, '%@' (%@)"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Lendo: %@, '%@' (%@)"
           }
         }
       }
@@ -25297,6 +26091,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Restaurar padrão"
+          }
+        }
+      }
+    },
+    "Reset to default" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf Standard zurücksetzen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Restablecer valor predeterminado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rétablir la valeur par défaut"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rétablir la valeur par défaut"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Redefinir para o padrão"
           }
         }
       }
@@ -29726,6 +30554,40 @@
         }
       }
     },
+    "Still using %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Weiterhin wird %@ verwendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se sigue usando %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ est toujours utilisé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "%@ est toujours utilisé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ainda usando %@."
+          }
+        }
+      }
+    },
     "Stop" : {
       "localizations" : {
         "de" : {
@@ -29824,6 +30686,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Parar agora"
+          }
+        }
+      }
+    },
+    "Stopped." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Gestoppt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Detenido."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrêté."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Arrêté."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Parado."
           }
         }
       }
@@ -31994,6 +32890,244 @@
         }
       }
     },
+    "The text above will be sent to %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der obige Text wird an %@ gesendet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El texto de arriba se enviará a %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O texto acima será enviado para %@"
+          }
+        }
+      }
+    },
+    "The text above will be sent to Anthropic" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der obige Text wird an Anthropic gesendet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El texto de arriba se enviará a Anthropic"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à Anthropic"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à Anthropic"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O texto acima será enviado para Anthropic"
+          }
+        }
+      }
+    },
+    "The text above will be sent to Anthropic, through Whimbrel's server" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der obige Text wird über den Server von Whimbrel an Anthropic gesendet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El texto de arriba se enviará a Anthropic, a través del servidor de Whimbrel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à Anthropic, via le serveur de Whimbrel"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à Anthropic, par le serveur de Whimbrel"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O texto acima será enviado para Anthropic, pelo servidor do Whimbrel"
+          }
+        }
+      }
+    },
+    "The text above will be sent to Google" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der obige Text wird an Google gesendet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El texto de arriba se enviará a Google"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à Google"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à Google"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O texto acima será enviado para Google"
+          }
+        }
+      }
+    },
+    "The text above will be sent to OpenAI" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der obige Text wird an OpenAI gesendet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El texto de arriba se enviará a OpenAI"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à OpenAI"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à OpenAI"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O texto acima será enviado para OpenAI"
+          }
+        }
+      }
+    },
+    "The text above will be sent to OpenRouter" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der obige Text wird an OpenRouter gesendet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El texto de arriba se enviará a OpenRouter"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à OpenRouter"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte ci-dessus sera envoyé à OpenRouter"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O texto acima será enviado para OpenRouter"
+          }
+        }
+      }
+    },
+    "The text of the window you ask about is sent to the model you chose, as in Ask." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Text des Fensters, zu dem Sie fragen, wird wie bei Ask an das von Ihnen gewählte Modell gesendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "El texto de la ventana sobre la que preguntas se envía al modelo que elegiste, como en Ask."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte de la fenêtre sur laquelle vous posez une question est envoyé au modèle choisi, comme dans Ask."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Le texte de la fenêtre sur laquelle vous posez une question est envoyé au modèle choisi, comme dans Ask."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O texto da janela sobre a qual você pergunta é enviado ao modelo que você escolheu, como no Ask."
+          }
+        }
+      }
+    },
     "The topic sorting budget is used up. Turn the switch off and on again to see a new estimate." : {
       "localizations" : {
         "de" : {
@@ -32024,6 +33158,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "O orçamento para organizar por tópicos acabou. Desligue e ligue a opção de novo para ver uma nova estimativa."
+          }
+        }
+      }
+    },
+    "There is no text in this window to ask about." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In diesem Fenster gibt es keinen Text, zu dem Sie etwas fragen können."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No hay texto en esta ventana sobre el cual preguntar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cette fenêtre ne contient aucun texte sur lequel poser une question."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cette fenêtre ne contient aucun texte sur lequel poser une question."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não há texto nesta janela sobre o qual perguntar."
           }
         }
       }
@@ -32126,6 +33294,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Este Mac"
+          }
+        }
+      }
+    },
+    "This app is excluded from capture." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diese App ist von der Erfassung ausgeschlossen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esta app está excluida de la captura."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette app est exclue de la capture."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Cette application est exclue de la capture."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Este app está excluído da captura."
           }
         }
       }
@@ -33096,6 +34298,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Esta conversa não está mais disponível."
+          }
+        }
+      }
+    },
+    "This will be answered on this computer" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dies wird auf diesem Computer beantwortet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Esto se responderá en esta computadora"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La réponse sera générée sur cet ordinateur"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "La réponse sera générée sur cet ordinateur"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Isto será respondido neste computador"
           }
         }
       }
@@ -36471,6 +37707,40 @@
         }
       }
     },
+    "Whimbrel needs Accessibility permission to read this window." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel benötigt die Berechtigung „Bedienungshilfen“, um dieses Fenster zu lesen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel necesita el permiso de Accesibilidad para leer esta ventana."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel a besoin de l’autorisation Accessibilité pour lire cette fenêtre."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Whimbrel a besoin de l’autorisation Accessibilité pour lire cette fenêtre."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O Whimbrel precisa da permissão de Acessibilidade para ler esta janela."
+          }
+        }
+      }
+    },
     "Whimbrel needs a few model files for transcription and speaker detection." : {
       "localizations" : {
         "de" : {
@@ -38201,6 +39471,40 @@
         }
       }
     },
+    "macOS wouldn't accept %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS hat %@ nicht akzeptiert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS no aceptó %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS n’a pas accepté %@."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "macOS n’a pas accepté %@."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "O macOS não aceitou %@."
+          }
+        }
+      }
+    },
     "next call %@" : {
       "localizations" : {
         "de" : {
@@ -38303,6 +39607,40 @@
         }
       }
     },
+    "selected text" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ausgewählter Text"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "texto seleccionado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "texte sélectionné"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "texte sélectionné"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "texto selecionado"
+          }
+        }
+      }
+    },
     "this Mac" : {
       "localizations" : {
         "de" : {
@@ -38367,6 +39705,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "fornecedor/modelo ou fornecedor/modelo:free"
+          }
+        }
+      }
+    },
+    "visible text" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "sichtbarer Text"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "texto visible"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "texte visible"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "texte visible"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "texto visível"
           }
         }
       }

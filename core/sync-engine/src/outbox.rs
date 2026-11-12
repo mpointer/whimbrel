@@ -1774,6 +1774,73 @@ mod tests {
         store.resolve_sync_meeting_map("device-a", a_meeting).unwrap().is_some() || has_line(store, "pelican") || has_line(store, "heron")
     }
 
+    /// #740 (known gap): a continued meeting (Mac `reopen_meeting`) goes back to recording, and
+    /// a line written then keeps its local_seq and is held in the outbox until the meeting ends
+    /// again, while captures numbered after it reach the relay first. The line then lands below
+    /// a caught-up puller's cursor, which never reads there again. To be fixed push-side.
+    #[tokio::test]
+    #[ignore = "known gap, #740"]
+    async fn a_caught_up_mac_gets_a_continued_meetings_late_line() {
+        let (_dir, conn, group_key) = relay_and_store().await;
+        let (store_a, meeting_id) = own_store("device-a");
+        let mac = peer("device-b");
+        let round = |at: i64| {
+            let (conn, group_key, store_a, mac) = (&conn, &group_key, &store_a, &mac);
+            async move {
+                push_content(conn, group_key, store_a, "device-a")
+                    .await
+                    .unwrap();
+                dispatch_outbox_at(conn, group_key, store_a, "device-a", at)
+                    .await
+                    .unwrap();
+                pull_content(conn, group_key, mac, "device-b")
+                    .await
+                    .unwrap();
+            }
+        };
+        let capture = |text: &str, hash: i64| {
+            store_a
+                .insert_capture_item(&memory::NewCaptureItem {
+                    device_id: "device-a".into(),
+                    ts_unix_ms: crate::now_unix_ms(),
+                    app_bundle_id: "com.a".into(),
+                    window_title: "W".into(),
+                    url: None,
+                    text: text.into(),
+                    hash,
+                    source: "ax".into(),
+                })
+                .unwrap();
+        };
+        store_a.complete_meeting(meeting_id, 2000, None).unwrap();
+        round(t0()).await;
+        assert!(mac
+            .resolve_sync_meeting_map("device-a", meeting_id)
+            .unwrap()
+            .is_some());
+
+        // Continued: recording again, captures, a line, more captures, all synced while recording.
+        store_a.reopen_meeting(meeting_id).unwrap();
+        capture("osprey", 1);
+        store_a
+            .insert_transcript_segments(&[NewTranscriptSegment {
+                meeting_id,
+                start_cs: 0,
+                speaker_label: "Me".into(),
+                text: "pelican".into(),
+            }])
+            .unwrap();
+        capture("heron", 2);
+        round(t0() + DEFERRED_RECHECK_MS).await;
+
+        store_a.complete_meeting(meeting_id, 3000, None).unwrap();
+        round(t0() + 2 * DEFERRED_RECHECK_MS).await;
+        assert!(
+            has_line(&mac, "pelican"),
+            "the caught-up Mac gets the continued meeting's line"
+        );
+    }
+
     /// #600: an outbox-only row that waits while the legacy push sends newer rows still reaches a puller whose
     /// cursor already passed the number it was enqueued with.
     #[tokio::test]

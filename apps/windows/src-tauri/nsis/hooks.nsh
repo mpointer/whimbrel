@@ -18,6 +18,35 @@
 Var RetiredKestrel
 
 !macro NSIS_HOOK_PREINSTALL
+  ; An update starts this installer and then exits the app, and the app's supervisor exits after it.
+  ; The installer's next step shuts down a Whimbrel it finds running (Restart Manager), and that fails
+  ; for one in the middle of exiting: "Failed to kill Whimbrel. Please close it first then try again"
+  ; (a Windows user, 2026-11-10). So first wait up to 15 s for them to finish exiting on their own.
+  ; A Whimbrel that is still running after that is left to the installer's own check (Restart Manager
+  ; shuts it down), as before. Only in an update: run by hand, the installer asks at once.
+  Push $R8
+  Push $R9
+  StrCpy $R8 0
+  ${If} $UpdateMode <> 1
+    Goto whimbrel_wait_done
+  ${EndIf}
+  whimbrel_wait_for_exit:
+    nsis_tauri_utils::FindProcessCurrentUser "${MAINBINARYNAME}.exe"
+    Pop $R9
+    ; 0 means it is still running.
+    ${If} $R9 = 0
+    ${AndIf} $R8 < 30
+      Sleep 500
+      IntOp $R8 $R8 + 1
+      Goto whimbrel_wait_for_exit
+    ${EndIf}
+  ${If} $R8 > 0
+    DetailPrint "Waited $R8 x 0.5 s for Whimbrel to exit"
+  ${EndIf}
+  whimbrel_wait_done:
+  Pop $R9
+  Pop $R8
+
   StrCpy $RetiredKestrel 0
   Push $0
   Push $1

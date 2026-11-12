@@ -347,29 +347,17 @@ extension TimelineView {
         query = ""
         inFlightModelLabel = effective.modelLabel
         isAsking = true
-        // #74/#83: every provider streams (the core has NDJSON and SSE adapters).
-        // Local-only mode never streams to a hosted provider -- the blocking path's
-        // `build_chain` forces Ollama in that mode, and streaming must not leak past it.
-        // A hosted route with no key falls to blocking, whose chain builder already
-        // handles a missing key by falling back rather than failing.
-        let streamRoute: (provider: InferenceStreamClient.Provider, apiKey: String?, baseURLOverride: String?)? = {
-            let hosted = { (provider: InferenceStreamClient.Provider, keychain: KeychainService.Provider) -> (InferenceStreamClient.Provider, String?, String?)? in
-                guard !appState.routing.localOnlyMode, let key = KeychainService.load(for: keychain), !key.isEmpty else { return nil }
-                return (provider, key, nil)
-            }
-            switch effective.provider {
-            case .ollama: return (LocalModel.replacesOllama(appState.routing) ? .local : .ollama, nil, nil)
-            // The ID token rides `apiKey` and the device key `baseURLOverride`.
-            case .whimbrel:
-                guard !appState.routing.localOnlyMode, let credentials = appState.syncState.whimbrelCredentials else { return nil }
-                return (.whimbrel, credentials.idToken, credentials.deviceKey)
-            case .google: return hosted(.google, .google)
-            case .anthropic: return hosted(.anthropic, .anthropic)
-            case .openai: return hosted(.openai, .openai)
-            // No model picked yet: the blocking path's chain leaves OpenRouter out.
-            case .openrouter: return effective.modelLabel.isEmpty ? nil : hosted(.openrouter, .openrouter)
-            }
-        }()
+        // A hosted route with no key (or any route in local-only mode but Ollama's) falls
+        // to blocking, whose chain builder already handles a missing key by falling back
+        // rather than failing.
+        let streamRoute = askStreamRoute(
+            provider: effective.provider,
+            modelLabel: effective.modelLabel,
+            localOnlyMode: appState.routing.localOnlyMode,
+            replacesOllama: LocalModel.replacesOllama(appState.routing),
+            whimbrelCredentials: appState.syncState.whimbrelCredentials,
+            loadKey: { KeychainService.load(for: $0) }
+        )
         if let streamRoute {
             askStreaming(
                 store: store,
@@ -623,17 +611,26 @@ extension TimelineView {
     func finalizeStreamingAnswer(pending: PendingStreamAsk, finalText: String) {
         guard let store = appState.coreStore else { return }
         let usage = streamingAsk.usage
+        // Usage is logged under the model that answered (the provider's default when the
+        // requested one doesn't exist there), and core notes the substitution for Settings.
+        // Hosted providers only: the local helper's stream names "local", not its model.
+        let hosted = HostedModelDefaults.hostedProviders.contains(pending.streamProvider.rawValue)
+        let answered = hosted ? (streamingAsk.answeredModel ?? pending.answerModel) : pending.answerModel
+        let modelLabel = answered == pending.answerModel ? inFlightModelLabel : inFlightModelLabel.replacingOccurrences(of: pending.answerModel, with: answered)
         CoreMemoryStore.accessQueue.async {
+            if hosted {
+                store.noteModelAnswer(provider: pending.streamProvider.rawValue, requested: pending.answerModel, answered: answered)
+            }
             let citations = store.finalizeAsk(
                 prepareId: pending.prepareId,
                 finalText: finalText,
-                model: pending.answerModel,
+                model: answered,
                 inputTokens: usage.inputTokens ?? -1,
                 outputTokens: usage.outputTokens ?? -1
             ) ?? []
             DispatchQueue.main.async {
                 let answer = CoreChatAnswer(text: finalText, citations: citations)
-                let exchange = ChatExchange(query: pending.query, result: .success(answer), contextItems: pending.contextItems, modelLabel: inFlightModelLabel)
+                let exchange = ChatExchange(query: pending.query, result: .success(answer), contextItems: pending.contextItems, modelLabel: modelLabel)
                 if activeConversationId == pending.activeConversationId {
                     exchanges.append(exchange)
                 }

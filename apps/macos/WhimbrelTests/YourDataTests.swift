@@ -29,6 +29,18 @@ final class YourDataTests: XCTestCase {
         exclusions.setExcludedDomains([])
     }
 
+    func test_providers_row_mentions_window_text_only_with_a_hosted_provider() {
+        let sentence = "The text of the window you ask about is sent to the model you chose, as in Ask."
+        func sees(_ hosted: [String], localOnly: Bool) -> String {
+            YourData.outbound(YourData.Inputs(hostedProviders: hosted, localOnly: localOnly, syncOn: false, syncDevices: 0, googleAccounts: [], typesafeOn: false))
+                .first { $0.channel == .providers }!.sees
+        }
+        XCTAssertTrue(sees(["Anthropic"], localOnly: false).contains(sentence))
+        XCTAssertFalse(sees([], localOnly: false).contains(sentence))
+        XCTAssertFalse(sees(["Anthropic"], localOnly: true).contains(sentence))
+        XCTAssertTrue(sees(["Anthropic"], localOnly: false).hasPrefix("The provider whose key you added receives the text needed for that request, under its own terms. Known secrets are redacted first."))
+    }
+
     func test_outbound_rows_report_each_channel_state() {
         let off = YourData.Inputs(hostedProviders: [], localOnly: false, syncOn: false, syncDevices: 0, googleAccounts: [], typesafeOn: false)
         let rows = YourData.outbound(off)

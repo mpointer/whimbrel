@@ -1,3 +1,76 @@
+/** Most of an error body we look at: Google's error JSON is small, anything bigger is not it. */
+const ERROR_BODY_CAP = 16 * 1024;
+/** The machine-readable reason in a Google API error body, or undefined. Order:
+ * `error.errors[0].reason` (e.g. `insufficientPermissions`, `accessNotConfigured`),
+ * then `error.details[].reason` (e.g. `ACCESS_TOKEN_SCOPE_INSUFFICIENT`), then
+ * `error.status` (e.g. `PERMISSION_DENIED`). Only a short `[A-Za-z0-9_.-]` token is
+ * returned, so no message text, email or token can ride along into logs. */
+export function googleErrorReason(body) {
+    let parsed;
+    try {
+        parsed = JSON.parse(body.slice(0, ERROR_BODY_CAP));
+    }
+    catch {
+        return undefined;
+    }
+    const error = parsed?.error;
+    if (!error || typeof error !== "object")
+        return undefined;
+    const e = error;
+    const candidates = [];
+    if (Array.isArray(e.errors))
+        candidates.push(e.errors[0]?.reason);
+    if (Array.isArray(e.details)) {
+        for (const d of e.details)
+            candidates.push(d?.reason);
+    }
+    candidates.push(e.status);
+    for (const c of candidates) {
+        if (typeof c === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(c))
+            return c;
+    }
+    return undefined;
+}
+/** At most `ERROR_BODY_CAP` bytes of a response body, as text; "" when there is none.
+ * A stream is cancelled once the cap is reached, so a huge body is never read whole. */
+async function readCappedBody(response) {
+    const stream = response.body;
+    if (stream && typeof stream.getReader === "function") {
+        const reader = stream.getReader();
+        const chunks = [];
+        let total = 0;
+        try {
+            while (total < ERROR_BODY_CAP) {
+                const { done, value } = await reader.read();
+                if (done || !value)
+                    break;
+                chunks.push(value);
+                total += value.byteLength;
+            }
+        }
+        finally {
+            await reader.cancel().catch(() => { });
+        }
+        return Buffer.concat(chunks).subarray(0, ERROR_BODY_CAP).toString("utf8");
+    }
+    if (typeof response.text === "function") {
+        return (await response.text()).slice(0, ERROR_BODY_CAP);
+    }
+    return "";
+}
+/** The error for a non-OK Google Calendar response: `Google Calendar API returned
+ * <status>`, plus ` (<reason>)` when the body names one. The body is read once,
+ * capped, and never put in the message. */
+async function apiError(response) {
+    let reason;
+    try {
+        reason = googleErrorReason(await readCappedBody(response));
+    }
+    catch {
+        reason = undefined;
+    }
+    return new Error(`Google Calendar API returned ${response.status}${reason ? ` (${reason})` : ""}`);
+}
 /** Fetches events on the primary Google Calendar between `timeMin` and
  * `timeMax` (ISO 8601 timestamps). `fetchFn` defaults to the real global
  * `fetch` (Node's native implementation) and is overridable for tests. */
@@ -12,7 +85,7 @@ export async function listEvents(timeMin, timeMax, accessToken, fetchFn = fetch)
     url.searchParams.set("orderBy", "startTime");
     const response = await fetchFn(url, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!response.ok) {
-        throw new Error(`Google Calendar API returned ${response.status}`);
+        throw await apiError(response);
     }
     return response.json();
 }
@@ -34,7 +107,7 @@ export async function createEvent(title, startIso, endIso, accessToken, fetchFn 
         }),
     });
     if (!response.ok) {
-        throw new Error(`Google Calendar API returned ${response.status}`);
+        throw await apiError(response);
     }
     return response.json();
 }
@@ -56,7 +129,7 @@ export async function syncEvents(syncToken, accessToken, fetchFn = fetch) {
             return { needsFullResync: true };
         }
         if (!response.ok) {
-            throw new Error(`Google Calendar API returned ${response.status}`);
+            throw await apiError(response);
         }
         // ponytail: incremental calls return a single page only -- a busy interval just
         // catches up over the next poll or two, nothing is lost. The baseline branch below
@@ -80,7 +153,7 @@ export async function syncEvents(syncToken, accessToken, fetchFn = fetch) {
         }
         const response = await fetchFn(url, { headers });
         if (!response.ok) {
-            throw new Error(`Google Calendar API returned ${response.status}`);
+            throw await apiError(response);
         }
         const page = (await response.json());
         items.push(...(page.items ?? []));

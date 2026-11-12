@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Sign in with Google, then "Waiting for approval" with the comparison code, then the
 /// synced meeting count. Also drives the models from the scene phase: sync and the
@@ -39,7 +40,13 @@ struct EnrollmentView: View {
         .onChange(of: model.status) { updateSync() }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .background: model.enterBackground()
+            case .background:
+                model.enterBackground()
+                // Before updateSync() stops the loop: let a round in flight finish (#572).
+                sync.holdForRoundInFlight(begin: { expired in
+                    let id = UIApplication.shared.beginBackgroundTask(withName: "Finish sync round", expirationHandler: expired)
+                    return id == .invalid ? nil : id
+                }, end: { UIApplication.shared.endBackgroundTask($0) })
             case .active: Task { await model.enterForeground() }
             default: break
             }
@@ -145,6 +152,7 @@ final class DemoSyncStore: MeetingSyncStore {
     init(store: CoreMemoryStore) { self.store = store }
 
     func moreToPull() -> Bool { false }
+    func olderHistoryLoading() -> Bool { false }
 
     func pullOnly(_ credentials: SyncCredentials, captureWindowDays: Int32) -> Bool {
         guard store.groupedMeetingCount() == 0 else { return true }

@@ -86,6 +86,17 @@ describe("aiLines", () => {
     expect(lines[1]).toContain("gemma4:12b isn't installed");
   });
 
+  it("warns when the chosen hosted model isn't available, for the provider in use only", () => {
+    const routing = { ...ai().routing, preferredProvider: "google" as const, googleModel: "gemini-2.5-pro" };
+    const modelWarnings = [
+      { provider: "google" as const, model: "gemini-2.5-pro", using: "gemini-flash-latest" },
+      { provider: "openai" as const, model: "gpt-4.1", using: "gpt-5.4-mini" },
+    ];
+    const lines = aiLines(ai({ routing, modelWarnings }));
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toBe("gemini-2.5-pro isn't available to your Google key; using gemini-flash-latest for now.");
+  });
+
   it("lists a paid provider only with spend or a budget this month", () => {
     const usage = { byProvider: [], last30DaysCents: 0, monthByProvider: [{ provider: "anthropic", cents: 1240 }], monthToDateCents: 1240, todayCents: 0 };
     const lines = aiLines(

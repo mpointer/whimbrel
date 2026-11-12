@@ -173,6 +173,48 @@ struct CorePrepareMeetingAskData: Decodable {
     }
 }
 
+/// Where a window question and its text will go (core's `window_ask::Destination`, serde
+/// snake_case: `"local_only"`, `"local"`, `{"hosted":{"provider":"..."}}`).
+enum WindowAskDestination: Decodable, Equatable {
+    case localOnly
+    case local
+    case hosted(provider: String)
+
+    private struct Hosted: Decodable { let provider: String }
+    private enum CodingKeys: String, CodingKey { case hosted }
+
+    init(from decoder: Decoder) throws {
+        if let single = try? decoder.singleValueContainer().decode(String.self) {
+            switch single {
+            case "local_only": self = .localOnly
+            case "local": self = .local
+            default:
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "unknown destination \(single)"))
+            }
+            return
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self = .hosted(provider: try container.decode(Hosted.self, forKey: .hosted).provider)
+    }
+}
+
+/// `whimbrel_llm_prepare_window_ask`'s success payload.
+struct WindowAskPrepared: Decodable {
+    let prepareId: String
+    let prompt: String
+    let truncated: Bool
+    let destination: WindowAskDestination
+
+    enum CodingKeys: String, CodingKey {
+        case prepareId = "prepare_id"
+        case prompt, truncated, destination
+    }
+}
+
+/// Why an "Ask about this window" prepare failed: `.noText`, `.localModelMissing`, or the
+/// usual spend-cap/provider cases.
+typealias WindowAskFailure = CoreLLMError
+
 /// `whimbrel_llm_answer_meeting`'s success payload.
 struct CoreMeetingAnswer: Decodable {
     let text: String
@@ -643,6 +685,20 @@ struct CoreWriteActionSettled: Decodable {
     }
 }
 
+/// A Google Calendar access problem core read from the connector's error
+/// (`whimbrel_connector_classify_calendar_error`).
+struct CoreCalendarAccessIssue: Decodable, Equatable {
+    enum Code: String, Decodable {
+        /// Google's grant doesn't include Calendar; signing in again and allowing it fixes it.
+        case notGranted = "calendar_access_not_granted"
+        /// Any other non-rate-limit 403: the API is off or a Workspace admin blocks the app.
+        case blocked = "calendar_access_blocked"
+    }
+    let code: Code
+    let status: Int
+    let reason: String?
+}
+
 /// One connector tool call the shell makes between `*SyncRequest` and `apply*Sync`
 /// (core/api::connectors::ToolCall).
 struct CoreConnectorToolCall: Decodable {
@@ -1028,6 +1084,10 @@ enum CoreLLMError: Error, Equatable, Decodable {
     /// A provider failure core could explain (the envelope's optional `reason`).
     case providerFailureBecause(ProviderFailureReason)
     case noTranscript
+    /// Ask about this window: the window's text is empty or blank.
+    case noText
+    /// Ask about this window: local-only mode, and no local model is installed.
+    case localModelMissing
     /// Every provider left is over its monthly budget (`provider` is a core id such as "openai").
     case budgetSpent(provider: String, spentCents: Int64, budgetCents: Int64)
 
@@ -1046,6 +1106,8 @@ enum CoreLLMError: Error, Equatable, Decodable {
         case rateLimited(provider: String)
         /// The Whimbrel AI prepaid credit is used up.
         case creditExhausted
+        /// The provider has no such model, and no default answered for it either.
+        case modelUnavailable(provider: String, model: String)
 
         private enum CodingKeys: String, CodingKey { case kind, model, provider }
 
@@ -1058,6 +1120,10 @@ enum CoreLLMError: Error, Equatable, Decodable {
             case "unauthorized": self = .unauthorized(provider: try container.decode(String.self, forKey: .provider))
             case "rate_limited": self = .rateLimited(provider: try container.decode(String.self, forKey: .provider))
             case "credit_exhausted": self = .creditExhausted
+            case "model_unavailable":
+                self = .modelUnavailable(
+                    provider: try container.decode(String.self, forKey: .provider),
+                    model: try container.decode(String.self, forKey: .model))
             default: throw DecodingError.dataCorruptedError(forKey: .kind, in: container, debugDescription: "no message of its own")
             }
         }
@@ -1081,6 +1147,10 @@ enum CoreLLMError: Error, Equatable, Decodable {
             self = .spendCap(scope: scope, spentCents: spentCents, capCents: capCents)
         case "no_transcript":
             self = .noTranscript
+        case "no_text":
+            self = .noText
+        case "local_model_missing":
+            self = .localModelMissing
         case "budget_spent":
             self = .budgetSpent(
                 provider: try container.decode(String.self, forKey: .provider),
@@ -1120,8 +1190,15 @@ enum CoreLLMError: Error, Equatable, Decodable {
             return String(localized: "\(name) is busy or out of credit. Try again shortly.")
         case .providerFailureBecause(.creditExhausted):
             return String(localized: "Whimbrel AI credit is used up. Add credit in Settings.")
+        case .providerFailureBecause(.modelUnavailable(let provider, let model)):
+            let name = Self.providerNames[provider] ?? provider
+            return String(localized: "\(name) doesn't offer the model \(model) to your key. Choose another in Settings → AI Providers.")
         case .noTranscript:
             return String(localized: "There is no transcript for this meeting to ask about.")
+        case .noText:
+            return String(localized: "There is no text in this window to ask about.")
+        case .localModelMissing:
+            return String(localized: "Local-only mode is on, but no local model is installed. Install one in Settings → AI Providers.")
         case let .budgetSpent(provider, spentCents, budgetCents):
             let name = Self.providerNames[provider] ?? provider
             return String(localized: "Your \(name) budget for this month is spent (\(AIProvidersSettingsPane.dollars(spentCents)) of \(AIProvidersSettingsPane.dollars(budgetCents))). Raise it in Settings → AI Providers.")
@@ -1139,9 +1216,9 @@ enum CoreLLMError: Error, Equatable, Decodable {
     /// Whether the message's fix is in Settings → AI Providers, so the surface offers a way there.
     var opensAIProvidersSettings: Bool {
         switch self {
-        case .budgetSpent, .providerFailureBecause(.ollamaModelMissing), .providerFailureBecause(.ollamaNotRunning),
+        case .budgetSpent, .localModelMissing, .providerFailureBecause(.ollamaModelMissing), .providerFailureBecause(.ollamaNotRunning),
              .providerFailureBecause(.noProviderConfigured), .providerFailureBecause(.unauthorized),
-             .providerFailureBecause(.creditExhausted):
+             .providerFailureBecause(.creditExhausted), .providerFailureBecause(.modelUnavailable):
             return true
         default:
             return false
@@ -2250,6 +2327,31 @@ final class CoreMemoryStore {
             historyString.withCString { h in
                 routingString.withCString { r in
                     whimbrel_llm_prepare_meeting_ask(handle, meetingId, q, h, r)
+                }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decodeLLMResult(json)
+    }
+
+    /// The hotkey panel's "Ask about this window": the prompt is built from the focused
+    /// window's text. Finish with `finalizeAsk` / `discardAsk` as for `prepareAsk`. Call on
+    /// `accessQueue`; nil only on invalid usage (null handle, malformed args).
+    func prepareWindowAsk(
+        _ window: WindowContext, query: String, history: [CoreChatTurn] = [], routing: CoreRoutingConfig
+    ) -> Result<WindowAskPrepared, WindowAskFailure>? {
+        guard let windowJSON = try? JSONEncoder().encode(window),
+              let windowString = String(data: windowJSON, encoding: .utf8) else { return nil }
+        guard let historyJSON = try? JSONEncoder().encode(history),
+              let historyString = String(data: historyJSON, encoding: .utf8) else { return nil }
+        guard let routingJSON = try? JSONEncoder().encode(routing),
+              let routingString = String(data: routingJSON, encoding: .utf8) else { return nil }
+        guard let json = windowString.withCString({ w in
+            query.withCString { q in
+                historyString.withCString { h in
+                    routingString.withCString { r in
+                        whimbrel_llm_prepare_window_ask(handle, w, q, h, r)
+                    }
                 }
             }
         }) else { return nil }
@@ -4347,6 +4449,14 @@ final class CoreMemoryStore {
         return try? JSONDecoder().decode(DetectedConferenceLink?.self, from: Data(String(cString: json).utf8)) ?? nil
     }
 
+    /// The Calendar access problem in a connector error message (`McpHost.lastError`),
+    /// or nil for any other failure (including a code this build doesn't know).
+    static func classifyCalendarError(_ message: String) -> CoreCalendarAccessIssue? {
+        guard let json = message.withCString({ whimbrel_connector_classify_calendar_error($0) }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return (try? JSONDecoder().decode(CoreCalendarAccessIssue?.self, from: Data(String(cString: json).utf8))) ?? nil
+    }
+
     // MARK: - Connector account registry (core/api::connectors::accounts, M3.0 Task 9)
 
     /// The connected accounts for `connector` ("calendar", "gmail", "outlook365") in
@@ -5237,4 +5347,56 @@ extension CoreRoutineRun {
 
 extension CoreRoutineRunWithName {
     var displaySummary: String { RoutineRunText.summary(outputSummary, outputJson: outputJson) }
+}
+
+// MARK: - Hosted model defaults (core/api::model_defaults)
+
+/// A chosen model its provider said it doesn't have, and the default answering meanwhile.
+struct ModelUnavailableNote: Decodable, Equatable {
+    let provider: String
+    let model: String
+    let using: String
+}
+
+extension CoreMemoryStore {
+    /// Puts the store's cached defaults file (or core's built-in table) in force for
+    /// `HostedModelDefaults.resolve` and the chain builders. Store queue only.
+    @discardableResult
+    func loadModelDefaults() -> Bool {
+        guard let out = whimbrel_model_defaults_json(handle) else { return false }
+        whimbrel_core_free_string(out)
+        return true
+    }
+
+    /// Fetches defaults.json and caches it when usable; one HTTPS request of up to about
+    /// 20 s, so call it on a store of its own, never on `accessQueue`'s.
+    func refreshModelDefaults() -> Bool {
+        whimbrel_model_defaults_refresh(handle)
+    }
+
+    /// Chosen models a provider said it doesn't have; empty when none or on failure.
+    func modelUnavailableNotes() -> [ModelUnavailableNote] {
+        guard let out = whimbrel_model_unavailable_json(handle) else { return [] }
+        defer { whimbrel_core_free_string(out) }
+        return (try? JSONDecoder().decode([ModelUnavailableNote].self, from: Data(String(cString: out).utf8))) ?? []
+    }
+
+    /// A streamed run asked `requested` and `answered` replied (from its "streaming" state
+    /// event): a different model records `requested` as unavailable, the same clears it.
+    @discardableResult
+    func noteModelAnswer(provider: String, requested: String, answered: String?) -> Bool {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        return provider.withCString { p in
+            requested.withCString { r in
+                guard let answered else { return whimbrel_model_note_answer(handle, p, r, nil, nowMs) }
+                return answered.withCString { whimbrel_model_note_answer(handle, p, r, $0, nowMs) }
+            }
+        }
+    }
+
+    /// Drops `provider`'s "isn't available" note, e.g. when the user picks another model.
+    @discardableResult
+    func clearModelUnavailable(provider: String) -> Bool {
+        provider.withCString { whimbrel_model_unavailable_clear(handle, $0) }
+    }
 }
