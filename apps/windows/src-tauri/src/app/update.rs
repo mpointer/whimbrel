@@ -253,14 +253,35 @@ pub fn update_ready(staged: State<'_, StagedUpdate>) -> Option<String> {
     now
 }
 
-/// Installs the downloaded update. On success the process exits inside this call.
+/// Why Restart now has to wait, if it does. A restart mid-meeting cut a tester's recording short
+/// and killed the transcription that had just started (2026-11-13), and a restart while the
+/// pipeline runs throws its work away: it starts again from the beginning at the next launch.
+pub fn install_blocked(recording: bool, processing: bool) -> Option<String> {
+    if recording {
+        Some(tr("A meeting is being recorded. Restart after it ends; the update stays downloaded.", &[]))
+    } else if processing {
+        Some(tr("Whimbrel is still processing a meeting. Restart once it's done; the update stays downloaded.", &[]))
+    } else {
+        None
+    }
+}
+
+/// Installs the downloaded update. On success the process exits inside this call. It waits
+/// (an error saying why) while a meeting records or the pipeline processes one.
 #[tauri::command]
 pub fn install_update(staged: State<'_, StagedUpdate>, state: State<'_, AppState>) -> Result<(), CommandError> {
+    // Before taking the update, so a refusal leaves it downloaded for later.
+    let recording = state.meetings.as_ref().is_some_and(|m| m.is_recording());
+    let processing = state.pipeline.as_ref().is_some_and(|p| p.processing().is_some());
+    if let Some(why) = install_blocked(recording, processing) {
+        tracing::info!(recording, processing, "the update waits for the meeting");
+        return Err(CommandError::invalid_input(why));
+    }
     let Some((update, bytes)) = staged.0.lock().unwrap().take() else {
         return Err(CommandError::invalid_input(tr("No update has been downloaded", &[])));
     };
-    // `install` exits the process directly, skipping `RunEvent::Exit`, so a recording is
-    // stopped here the way Quit stops it.
+    // `install` exits the process directly, skipping `RunEvent::Exit`, so a recording that
+    // started since the check above is stopped here the way Quit stops it.
     if let Some(meetings) = &state.meetings {
         if meetings.is_recording() {
             let _ = meetings.stop();
@@ -292,6 +313,14 @@ pub fn install_update(staged: State<'_, StagedUpdate>, state: State<'_, AppState
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restart_now_waits_for_a_recording_and_for_the_pipeline() {
+        assert!(install_blocked(true, false).is_some_and(|m| m.contains("being recorded")));
+        assert!(install_blocked(true, true).is_some_and(|m| m.contains("being recorded")), "recording says so first");
+        assert!(install_blocked(false, true).is_some_and(|m| m.contains("processing")));
+        assert_eq!(install_blocked(false, false), None);
+    }
 
     #[test]
     fn every_check_outcome_has_a_line_for_the_log_and_the_report() {

@@ -241,8 +241,9 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let open = MenuItem::with_id(app, "open", tr("Open Whimbrel", &[]), true, None::<&str>)?;
     let ask_window = MenuItem::with_id(app, "ask-window", tr("Ask about this window…", &[]), true, None::<&str>)?;
     let feedback = MenuItem::with_id(app, "feedback", tr("Send Feedback…", &[]), true, None::<&str>)?;
+    let discord = MenuItem::with_id(app, "discord", tr("Join the Whimbrel Discord…", &[]), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", tr("Quit Whimbrel", &[]), true, None::<&str>)?;
-    Menu::with_items(app, &[&open, &ask_window, &feedback, &quit])
+    Menu::with_items(app, &[&open, &ask_window, &feedback, &discord, &quit])
 }
 
 /// After a language change: a new menu, and the tooltip re-rendered (its cached text differs).
@@ -278,6 +279,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                         tracing::warn!(error = %e, "send feedback from the tray");
                     }
                 });
+            }
+            "discord" => {
+                if let Err(e) = crate::syncing::controller::open_in_browser(crate::commands::ai::DISCORD_URL) {
+                    tracing::warn!(error = %e, "open the Discord invite from the tray");
+                }
             }
             "quit" => app.exit(0),
             _ => {}

@@ -227,13 +227,19 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
+    /// How long the fake server holds its connection, and the bound for unrelated store
+    /// work. The bound is half the hang: work that waited for the provider would take the
+    /// whole hang, while a loaded CI machine can take several seconds just to open a store.
+    const HANG: Duration = Duration::from_secs(120);
+    const STORE_WORK_BOUND: Duration = Duration::from_secs(60);
+
     /// A minimal fake Ollama server that accepts a connection and then never responds.
     fn spawn_hanging_server() -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
             if let Ok((_stream, _)) = listener.accept() {
-                std::thread::sleep(Duration::from_secs(10));
+                std::thread::sleep(HANG);
             }
         });
         format!("http://127.0.0.1:{port}")
@@ -250,7 +256,7 @@ mod tests {
         let store = memory::Store::open_in_memory().unwrap();
         assert!(store.list_routines().unwrap().is_empty());
         assert!(
-            started.elapsed() < Duration::from_secs(3),
+            started.elapsed() < STORE_WORK_BOUND,
             "unrelated store work must not be delayed by a hanging provider call; took {:?}",
             started.elapsed()
         );

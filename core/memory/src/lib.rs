@@ -22,11 +22,15 @@ pub use embedding::{
     EMBEDDING_MODEL_REVISION, EMBEDDING_OUTPUT_DIM,
 };
 
+pub mod background_gate;
 pub mod calendar_flags;
 pub mod calendar_presence;
+pub mod synced_calendar;
 pub mod copies;
 pub mod keywords;
 pub mod l10n;
+pub mod limited_use;
+pub use limited_use::is_google_user_data;
 pub mod live;
 pub mod live_alert;
 pub mod meeting_parts;
@@ -37,6 +41,8 @@ pub mod provider_budget;
 pub mod redact;
 pub mod speaker_match;
 pub mod speaker_names;
+pub mod summary_fallback;
+pub mod recap_sent;
 pub mod token;
 pub mod topics;
 pub mod trim;
@@ -1975,6 +1981,7 @@ impl Store {
         Self::ensure_failed_summaries_requeued(conn)?;
         Self::ensure_thread_priority_table(conn)?;
         prep::ensure_meeting_prep_table(conn)?;
+        limited_use::ensure_answer_provenance_table(conn)?;
         live::ensure_live_table(conn)?;
         profile::ensure_profile_suggestion_table(conn)?;
         live_alert::ensure_live_alert_table(conn)?;
@@ -1984,6 +1991,8 @@ impl Store {
         sync_backfill::ensure_sync_backfill_schema(conn)?;
         provider_budget::ensure_provider_budget_tables(conn)?;
         meeting_parts::ensure_meeting_part_schema(conn)?;
+        summary_fallback::ensure_summary_fallback_table(conn)?;
+        recap_sent::ensure_recap_sent_table(conn)?;
         Self::ensure_items_app_fields_columns(conn)?;
         Self::ensure_items_app_fields_backfilled(conn)?;
         Self::ensure_items_sync_reconciled(conn)?;
@@ -2356,6 +2365,9 @@ impl Store {
         for (name, decl) in [
             ("snapshots_dir", "TEXT"),
             ("keep_snapshots", "INTEGER NOT NULL DEFAULT 0"),
+            // Limited Use: which calendar a calendar-triggered meeting came from; see
+            // `limited_use::CALENDAR_SOURCE_GOOGLE`. NULL means not recorded (unknown).
+            ("calendar_source", "TEXT"),
         ] {
             if !existing.iter().any(|c| c == name) {
                 conn.execute(&format!("ALTER TABLE meeting ADD COLUMN {name} {decl}"), [])?;
@@ -4998,6 +5010,10 @@ impl Store {
         now_unix_ms: i64,
         only_job_type: Option<&str>,
     ) -> rusqlite::Result<usize> {
+        // Embeddings, thread-state sync and segmentation wait while a meeting records.
+        if background_gate::recording_pauses_background_work() {
+            return Ok(0);
+        }
         let mut processed = 0usize;
         for _ in 0..max_jobs {
             let job: Option<(i64, String, i64)> = match only_job_type {
@@ -6569,6 +6585,14 @@ impl Store {
             params![cutoff_unix_ms],
         )?;
         self.conn.execute(
+            &format!("DELETE FROM meeting_summary_fallback WHERE meeting_id IN {expired_ids}"),
+            params![cutoff_unix_ms],
+        )?;
+        self.conn.execute(
+            &format!("DELETE FROM meeting_recap_sent WHERE meeting_id IN {expired_ids}"),
+            params![cutoff_unix_ms],
+        )?;
+        self.conn.execute(
             &format!("DELETE FROM meeting_action_item WHERE meeting_id IN {expired_ids}"),
             params![cutoff_unix_ms],
         )?;
@@ -6742,6 +6766,8 @@ impl Store {
             "DELETE FROM meeting_note_draft WHERE meeting_id = ?1",
             params![id],
         )?;
+        tx.execute("DELETE FROM meeting_summary_fallback WHERE meeting_id = ?1", params![id])?;
+        tx.execute("DELETE FROM meeting_recap_sent WHERE meeting_id = ?1", params![id])?;
         tx.execute(
             "DELETE FROM meeting_action_item WHERE meeting_id = ?1",
             params![id],
@@ -7410,7 +7436,9 @@ impl Store {
                 local_seq,
             ],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let id = self.conn.last_insert_rowid();
+        self.stamp_meeting_calendar_source(id, m);
+        Ok(id)
     }
 
     /// Marks a meeting `Completed` with its actual end time and (if captured) the audio
@@ -8461,6 +8489,8 @@ impl Store {
             "DELETE FROM meeting_note_draft WHERE meeting_id = ?1",
             params![drop],
         )?;
+        tx.execute("DELETE FROM meeting_summary_fallback WHERE meeting_id = ?1", params![drop])?;
+        tx.execute("DELETE FROM meeting_recap_sent WHERE meeting_id = ?1", params![drop])?;
         tx.execute(
             "DELETE FROM meeting_snapshot WHERE meeting_id = ?1",
             params![drop],

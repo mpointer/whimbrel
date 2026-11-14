@@ -11,8 +11,8 @@ struct ConnectedGmailAccount: Identifiable, Equatable {
 /// Drives the Gmail MCP connector for every connected account. Mirrors
 /// `CalendarConnectorState`'s exact multi-account shape -- see that file's doc comment
 /// for the design this follows. `addAccount` verifies a connection via `listTools`
-/// (a hard gate -- the connector process must report both `send_email` and
-/// `search_threads`) plus a best-effort `search_threads` call that never sends a
+/// (a hard gate -- the connector process must report `send_email`) plus, for an account
+/// whose grant includes reading, a best-effort `search_threads` call that never sends a
 /// real email just to prove connectivity (see `performMcpRoundTrip`).
 @MainActor
 final class GmailConnectorState: ObservableObject {
@@ -22,13 +22,20 @@ final class GmailConnectorState: ObservableObject {
     /// Emails whose stored grant is gone (no Keychain tokens, or Google revoked the
     /// refresh token), flagged by the polling service. Cleared by reconnecting or removing.
     @Published private(set) var needsReconnect: Set<String> = []
+    /// Emails whose granted scopes lack `gmail.readonly`: they can send but not read, so
+    /// polling skips them and their read tools are never offered.
+    @Published private(set) var sendOnly: Set<String> = []
 
     private var oauthHelpers: [String: GoogleOAuthHelper] = [:]
     private let accountStore: ConnectedAccountStore
-    private let configError: String?
-    private let clientId: String?
-    private let clientSecret: String?
+    /// The OAuth client the connector signs in with (`GoogleOAuthClient.active()`): the
+    /// built-in one, or the user's own from Settings → Connectors → Advanced.
+    private var client: GoogleOAuthClient?
+    private var configError: String? {
+        client == nil ? String(localized: "Gmail connector isn't configured in this build. See apps/macos/README.md to set up Secrets.xcconfig.") : nil
+    }
     private let log = Logger(subsystem: "com.mpointer.kestrel", category: "gmail-connector")
+    private weak var coreStore: CoreMemoryStore?
 
     // openid email added so a connected account can be identified/labeled in a
     // multi-account list -- Gmail previously requested gmail.send only. Existing
@@ -49,25 +56,19 @@ final class GmailConnectorState: ObservableObject {
     // verification plus an annual third-party security assessment. Not relevant for
     // personal/internal use; flag it if this project ever moves toward public
     // distribution.
-    private static let scope = "openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose"
+    //
+    // 2026-11-12 (Google verification): the public app requests gmail.send only.
+    // gmail.readonly is requested only with the user's own Google Cloud client
+    // (GoogleConnectorScopes.gmail); gmail.compose is dropped (no shipped feature makes
+    // drafts). Existing tokens keep their old grant until the account reconnects, and
+    // what an account may do is decided from its GRANTED scopes (GmailReadAccess).
+    private var scope: String { GoogleConnectorScopes.gmail(customClient: client?.isCustom ?? false) }
     private static let oldFixedKeychainAccount = "gmail-connector"
 
     init(coreStore: CoreMemoryStore?) {
+        self.coreStore = coreStore
         accountStore = ConnectedAccountStore(connectorId: "gmail", store: coreStore)
-        do {
-            // Resolved into locals first, then assigned once both succeed -- see
-            // CalendarConnectorState's identical init() for why (a real Swift
-            // definite-initialization error, not a style choice).
-            let resolvedClientId = try SyncConfig.googleOAuthClientId()
-            let resolvedClientSecret = try SyncConfig.googleOAuthClientSecret()
-            clientId = resolvedClientId
-            clientSecret = resolvedClientSecret
-            configError = nil
-        } catch {
-            clientId = nil
-            clientSecret = nil
-            configError = String(localized: "Gmail connector isn't configured in this build. See apps/macos/README.md to set up Secrets.xcconfig.")
-        }
+        client = GoogleOAuthClient.active()
 
         migrateOldSingleAccountIfNeeded()
         for email in accountStore.emails {
@@ -75,6 +76,45 @@ final class GmailConnectorState: ObservableObject {
         }
         defaultEmail = accountStore.defaultEmail
         accounts = accountStore.emails.map { ConnectedGmailAccount(email: $0) }
+        refreshAccountFlags()
+    }
+
+    /// Re-reads the active OAuth client after the custom client is saved or cleared.
+    /// Accounts whose tokens another client issued are flagged for reconnect; their
+    /// tokens are never refreshed with the new client.
+    func reloadClient() {
+        client = GoogleOAuthClient.active()
+        for email in accountStore.emails {
+            oauthHelpers[email] = makeHelper(email: email)
+        }
+        // Back to exactly the accounts another client signed in: clearing the custom
+        // client makes built-in accounts usable again, and a send-only account is never
+        // polled, so nothing else would clear its flag. A revoked grant is flagged again
+        // by its next use.
+        needsReconnect = Set(accountStore.emails.filter { oauthHelpers[$0]?.tokensIssuedByThisClient == false })
+        refreshAccountFlags()
+    }
+
+    /// Recomputes the reconnect and send-only flags from the Keychain (no network).
+    func refreshAccountFlags() {
+        for email in accountStore.emails {
+            guard let helper = oauthHelpers[email] else { continue }
+            if !helper.tokensIssuedByThisClient { markNeedsReconnect(email) }
+            let canRead = GmailReadAccess.canRead(grantedScope: helper.storedGrant().grantedScope)
+            if canRead, sendOnly.contains(email) { sendOnly.remove(email) }
+            if !canRead, !sendOnly.contains(email) { sendOnly.insert(email) }
+        }
+    }
+
+    /// Whether `email`'s grant includes reading mail (an unrecorded, legacy grant does).
+    func canRead(email: String) -> Bool {
+        guard let helper = oauthHelpers[email] else { return false }
+        return GmailReadAccess.canRead(grantedScope: helper.storedGrant().grantedScope)
+    }
+
+    /// Whether `email`'s tokens were issued by the current client.
+    func isIssuedByCurrentClient(email: String) -> Bool {
+        oauthHelpers[email]?.tokensIssuedByThisClient ?? false
     }
 
     /// Adopts the pre-multi-account single Keychain item, if one exists and the new
@@ -85,9 +125,9 @@ final class GmailConnectorState: ObservableObject {
     /// for this exact "no email available yet" case) rather than skipping migration
     /// entirely and silently dropping the user's existing connection.
     private func migrateOldSingleAccountIfNeeded() {
-        guard accountStore.emails.isEmpty, let clientId, let clientSecret else { return }
+        guard accountStore.emails.isEmpty, let client else { return }
         let oldHelper = GoogleOAuthHelper(
-            clientId: clientId, clientSecret: clientSecret, scope: Self.scope,
+            clientId: client.clientId, clientSecret: client.clientSecret, scope: scope,
             keychainAccount: Self.oldFixedKeychainAccount
         )
         guard (try? oldHelper.storedIdTokenForMigration()) != nil || Self.oldKeychainItemHasStoredTokens() else {
@@ -125,7 +165,7 @@ final class GmailConnectorState: ObservableObject {
 
     private func makeHelper(email: String) -> GoogleOAuthHelper {
         GoogleOAuthHelper(
-            clientId: clientId ?? "", clientSecret: clientSecret ?? "", scope: Self.scope,
+            clientId: client?.clientId ?? "", clientSecret: client?.clientSecret ?? "", scope: scope,
             keychainAccount: "gmail-connector:\(email)"
         )
     }
@@ -136,12 +176,12 @@ final class GmailConnectorState: ObservableObject {
 
     func addAccount(presentationContextProvider: ASWebAuthenticationPresentationContextProviding) async {
         guard addAccountState != .connecting else { return }
-        guard let clientId, let clientSecret else {
+        guard let client else {
             addAccountState = .error(configError ?? String(localized: "Gmail connector is not configured"))
             return
         }
         addAccountState = .connecting
-        let helper = GoogleOAuthHelper(clientId: clientId, clientSecret: clientSecret, scope: Self.scope, keychainAccount: "gmail-connector:pending-\(UUID().uuidString)")
+        let helper = GoogleOAuthHelper(clientId: client.clientId, clientSecret: client.clientSecret, scope: scope, keychainAccount: "gmail-connector:pending-\(UUID().uuidString)")
         do {
             try await helper.authorize(presentationContextProvider: presentationContextProvider)
             let email = (try? await helper.validIdToken()).flatMap(GoogleOAuthHelper.decodeJwtEmailClaim) ?? "unknown"
@@ -191,8 +231,9 @@ final class GmailConnectorState: ObservableObject {
             let realHelper = makeHelper(email: email)
             do {
                 let accessToken = try await realHelper.validAccessToken()
-                try await performMcpRoundTrip(accessToken: accessToken)
+                try await performMcpRoundTrip(accessToken: accessToken, grantedScope: realHelper.storedGrant().grantedScope)
                 oauthHelpers[email] = realHelper
+                refreshAccountFlags()
                 if !isReAdd {
                     accounts.append(ConnectedGmailAccount(email: email))
                 }
@@ -216,11 +257,43 @@ final class GmailConnectorState: ObservableObject {
         }
     }
 
+    /// Set by `AppState`: whether another Whimbrel connection on this Mac (Calendar, or the sync
+    /// sign-in) uses `email`'s Google grant, so revoking it would cut that connection off.
+    var grantIsSharedElsewhere: @MainActor (String) -> Bool = { _ in false }
+
+    /// Whether removing `email` also revokes Whimbrel's access with Google (what the
+    /// confirmation promises).
+    func removalRevokesAccess(email: String) -> Bool { !grantIsSharedElsewhere(email) }
+
+    /// Removes the account: tokens deleted here first, its stored Gmail data deleted from this
+    /// Mac, then Whimbrel's access revoked with Google in the background (best effort: offline
+    /// or a refusal changes nothing local; only a reason code is logged).
     func removeAccount(email: String) {
-        oauthHelpers[email]?.deleteStoredTokens()
+        let helper = oauthHelpers[email]
+        let revokes = removalRevokesAccess(email: email)
+        let log = self.log
+        let reason = GoogleDisconnect.disconnect(
+            refreshToken: helper?.storedRefreshToken(), revoke: revokes,
+            deleteLocal: { helper?.deleteStoredTokens() },
+            startRevoke: { token in
+                Task.detached(priority: .utility) {
+                    let code = GoogleDisconnect.revokeNow(token)
+                    log.log("Gmail disconnect: Google revoke \(code, privacy: .public)")
+                }
+            }
+        )
+        if let reason { log.log("Gmail disconnect: no revoke sent (\(reason, privacy: .public))") }
         oauthHelpers.removeValue(forKey: email)
         accounts.removeAll { $0.email == email }
         clearNeedsReconnect(email)
+        if sendOnly.contains(email) { sendOnly.remove(email) }
+        // Queued after the account leaves `accounts`, so a poll that already passed its
+        // still-connected check has queued its write first and this delete runs after it.
+        if let store = coreStore {
+            CoreMemoryStore.accessQueue.async { store.gmailDeleteAccountData(account: email) }
+        } else {
+            log.error("removeAccount: no store, so \(email, privacy: .private)'s stored mail was not deleted")
+        }
         Task {
             await accountStore.remove(email)
             defaultEmail = accountStore.defaultEmail
@@ -242,15 +315,13 @@ final class GmailConnectorState: ObservableObject {
         }
     }
 
-    /// Verifies a Gmail connection. `listTools` is a hard gate -- if the connector
-    /// process didn't start or doesn't report its expected tools, something about
-    /// the local setup is broken and the account shouldn't be kept. The deeper
-    /// `search_threads` call is best-effort only: if the user declined the
-    /// read/compose consent checkboxes (Google shows them separately from send),
-    /// or hits a transient API error, that must not destroy an otherwise-valid
-    /// account -- `gmail.compose`'s grant may still make send work fine. Log and
-    /// continue rather than throw.
-    private func performMcpRoundTrip(accessToken: String) async throws {
+    /// Verifies a Gmail connection. `listTools` is a hard gate on `send_email` -- if the
+    /// connector process didn't start or doesn't report it, something about the local
+    /// setup is broken and the account shouldn't be kept. Read tools are offered only
+    /// when the grant includes reading (`GmailReadAccess.offeredTools`); for such an
+    /// account a `search_threads` call is best-effort only: a declined read checkbox or a
+    /// transient API error must not destroy an account that can still send.
+    private func performMcpRoundTrip(accessToken: String, grantedScope: String?) async throws {
         let log = self.log
         try await Task.detached(priority: .userInitiated) {
             guard let nodePath = McpNodeLocator.nodeExecutablePath() else {
@@ -271,12 +342,15 @@ final class GmailConnectorState: ObservableObject {
             }
             defer { host.disconnect(connectorId: connectorId) }
 
-            guard let toolNames = host.listTools(connectorId: connectorId)?.map(\.name),
-                  toolNames.contains("send_email"), toolNames.contains("search_threads") else {
+            guard let allToolNames = host.listTools(connectorId: connectorId)?.map(\.name) else {
+                throw GmailConnectorError.listToolsFailed
+            }
+            let toolNames = GmailReadAccess.offeredTools(allToolNames, grantedScope: grantedScope)
+            guard toolNames.contains("send_email") else {
                 throw GmailConnectorError.listToolsFailed
             }
 
-            if host.callTool(connectorId: connectorId, toolName: "search_threads", argumentsJSON: "{\"q\":\"\",\"max_results\":1}") == nil {
+            if toolNames.contains("search_threads"), host.callTool(connectorId: connectorId, toolName: "search_threads", argumentsJSON: "{\"q\":\"\",\"max_results\":1}") == nil {
                 log.log("performMcpRoundTrip: search_threads verification failed -- account will still be connected")
             }
         }.value

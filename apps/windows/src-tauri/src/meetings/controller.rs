@@ -263,6 +263,12 @@ impl MeetingController {
         self.start(MeetingTrigger::Manual, MANUAL_TITLE.to_string(), Vec::new(), AudioTarget::Endpoint, None)
     }
 
+    /// A manual meeting with a title and invitees: Start on a meeting only another device's calendar
+    /// has (synced, #792), which is never a calendar recording here.
+    pub fn start_manual_titled(&self, title: String, attendees: Vec<String>) -> Result<MeetingRecordingView, CommandError> {
+        self.start(MeetingTrigger::Manual, title, attendees, AudioTarget::Endpoint, None)
+    }
+
     /// A detected call: the meeting app's own audio, and its name as the title
     /// (M3.3 Task 6). `root_pid` is the process tree process loopback records.
     pub fn start_detected(&self, title: String, root_pid: u32) -> Result<MeetingRecordingView, CommandError> {

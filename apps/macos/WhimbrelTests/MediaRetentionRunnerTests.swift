@@ -217,6 +217,33 @@ final class MediaRetentionRunnerTests: XCTestCase {
         XCTAssertEqual(r.oneOffRunsFinished, 1)
     }
 
+    func testOneOffKeepsTheDailyBackoff() async {
+        let f = fake([work(1, [.compress]), work(2, [.compress])])
+        f.failCompress = [1]
+        await runToEnd(runner(f))
+        // A one-off plan that has no work for meeting 1 must not prune its backoff.
+        f.work = [work(2, [.compress])]
+        let policy = CoreMediaPolicy(compressAfterDays: 0, deleteAudioAfterDays: nil, shrinkImagesAfterDays: nil, deleteAudioPreviewAfterDays: nil)
+        await runToEnd(runner(f), .oneOff(policy))
+        f.work = [work(1, [.compress]), work(2, [.compress])]
+        f.calls = []
+        await runToEnd(runner(f))
+        XCTAssertEqual(touched(f), [2], "meeting 1 is still backed off")
+    }
+
+    func testOneOffLeavesTheSettingsPlanForTheUsageLine() async {
+        let f = fake([work(1, [.compress]), work(2, [.compress])])
+        let r = runner(f)
+        r.refreshPlan()
+        await idle(r)
+        f.work = [work(3, [.compress])]
+        let policy = CoreMediaPolicy(compressAfterDays: 0, deleteAudioAfterDays: nil, shrinkImagesAfterDays: nil, deleteAudioPreviewAfterDays: nil)
+        await runToEnd(r, .oneOff(policy))
+        XCTAssertEqual(r.lastPlan?.work.map(\.meetingId), [1, 2], "a one-off plan isn't the settings' plan")
+        await runToEnd(r, .daily)
+        XCTAssertEqual(r.lastPlan?.work.map(\.meetingId), [3], "a daily run still records its plan")
+    }
+
     func testOneOffSkipsBusyMeetings() async {
         let f = fake([work(1, [.compress]), work(2, [.compress])])
         let policy = CoreMediaPolicy(compressAfterDays: 0, deleteAudioAfterDays: nil, shrinkImagesAfterDays: nil, deleteAudioPreviewAfterDays: nil)

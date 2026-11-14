@@ -219,6 +219,29 @@ char *whimbrel_memory_recent(StoreHandle *handle, size_t limit);
  * provider is preferred)} — pass NULL for Ollama-only defaults with no caps beyond the
  * built-in conservative default.
  *
+ * Google "Limited Use" (every call that takes routing_config_json): Gmail and Google
+ * Calendar text goes only to a model on this device or to a provider whose terms say it
+ * does not train on API data. It is left out of what a link receives (the call still
+ * runs; the answer just doesn't use those items) unless the user turns on one of two
+ * optional bool fields, both false when absent, null or not a bool:
+ *   "google_ai_billing_confirmed" — the Google AI Studio key is on a paid,
+ *       billing-enabled project, so the Google (Gemini) link may receive it.
+ *   "remote_ollama_google_data" — an Ollama that is not on loopback (localhost,
+ *       127.0.0.1, ::1), or an Ollama cloud model (name ending ":cloud" or "-cloud"),
+ *       may receive it.
+ * Two more optional keys are read per call by whimbrel_llm_prepare_ask and
+ * whimbrel_llm_prepare_window_ask: "streamed_ollama_model" (string), the Ollama model the
+ * shell will stream THIS prompt against, and "streamed_ollama_base_url" (string, default
+ * http://localhost:11434), its host. Without a model, a streamed Ollama prompt holds no
+ * Gmail or Calendar text unless "remote_ollama_google_data" is true. They are never kept
+ * between calls. The two bool switches are kept process-wide from every routing JSON
+ * (core/api routing::LimitedUseSettings): a JSON without them turns them off.
+ * Anthropic (own key and Whimbrel AI), OpenAI, the bundled local model and a local
+ * Ollama always receive it. OpenRouter never does, and every OpenRouter request carries
+ * "provider": {"data_collection": "deny"}. TypeSafe receives none until it confirms its
+ * terms (Reply Priorities scoring, the calendar title check, topic judging and paid
+ * topic steps hold Gmail and Google Calendar items, which stay queued).
+ *
  * Returns a discriminated JSON envelope (LB0-5): {"ok":true,"data":{"text": ...,
  * "citations": [...]}} on success, {"ok":false,"error":{"kind":"spend_cap",
  * "scope":"user"|"global","spent_cents":N,"cap_cents":N}} if the spend cap rejected the
@@ -647,6 +670,25 @@ char *whimbrel_llm_summarize_meeting(
     const char *slides, const char *model, const char *routing_config_json,
     const char *custom_instructions);
 
+/* "Re-summarize with Whimbrel": whimbrel_llm_summarize_meeting with the chain cut to the one
+ * provider routing_config_json prefers, so no local or other model answers instead. On
+ * success data has no "fallback" and the meeting's stored notice is cleared. A failure is
+ * {"ok":false,"error":{"kind":"provider_failure"|"budget_spent",...,"fallback_reason":R}}
+ * with R one of not_signed_in, no_device_key, local_only, budget, timeout, network,
+ * unauthorized, credit_exhausted, rate_limited, model_unavailable, unavailable,
+ * not_configured (plus "http_status" when the call had one); the meeting row is untouched. */
+char *whimbrel_llm_summarize_meeting_preferred(
+    StoreHandle *handle, int64_t meeting_id, const char *notes, const char *transcript,
+    const char *slides, const char *model, const char *routing_config_json,
+    const char *custom_instructions);
+
+/* The notice for a meeting whose summary was meant for Whimbrel AI but written by another
+ * provider: {"ok":true,"data":null}, or data {"preferred","used","model","reason",
+ * "http_status"?} (reason codes as above). null again once another provider's summary
+ * replaces it. whimbrel_llm_summarize_meeting's data carries the same object as "fallback"
+ * when that call fell back. Returns NULL only on a null handle. */
+char *whimbrel_meeting_summary_fallback(StoreHandle *handle, int64_t meeting_id);
+
 /* FR-CHAT-2 governance: today's spend-so-far, using the same UTC-midnight day boundary
  * as check_spend_cap. Returns a JSON-encoded {"user_cents": <n>, "global_cents": <n>},
  * or NULL on a null handle. user_id may be NULL (Whimbrel's typical single-device case —
@@ -780,6 +822,12 @@ bool whimbrel_memory_update_meeting_status(StoreHandle *handle, int64_t id, cons
 
 /* Sets a meeting's title (synced). Returns whether the meeting existed and was updated. */
 bool whimbrel_memory_set_meeting_title(StoreHandle *handle, int64_t id, const char *title);
+
+/* Limited Use: states which calendar a calendar-triggered meeting came from, "google" or
+ * "other" (device-local). Core records it itself when the meeting is created; call this only
+ * when the shell knows the event's account. A calendar meeting of unknown source is treated
+ * as Google Calendar text. Returns whether the meeting existed and the name was valid. */
+bool whimbrel_memory_set_meeting_calendar_source(StoreHandle *handle, int64_t id, const char *source);
 
 /* Re-roots stored meeting audio/transcript paths that start with old_prefix onto
  * new_prefix, after the shell moved its data folder. Local only (no sync entry).
@@ -1426,6 +1474,24 @@ char *whimbrel_update_check_manifest(const char *manifest_json, const char *curr
  * A NULL path or an unreadable file is a mismatch. */
 bool whimbrel_update_verify_sha256(const char *path, const char *expected_sha256);
 
+/* ---- Recording gate (memory::background_gate) ----
+ * Background work (embeddings, summaries, topics, profile suggestions, routines other
+ * than Meeting Prep) must not start while a meeting records. Process-wide; no handle. */
+
+/* true marks a meeting as recording and holds that for 10 minutes: call it again about
+ * every 2 minutes to renew. false clears it (stop, failure, cancel). A flag nobody renews
+ * lapses by itself and a new process starts clear. Core's batch entry points (jobs,
+ * segmentation, summaries, topics, profile suggestions, routine ticks) do nothing while set. */
+void whimbrel_set_recording_active(bool active);
+
+/* Whether a recording lease is held right now. */
+bool whimbrel_is_recording_active(void);
+
+/* One rule for a shell loop: false while recording, and false unless on_ac and
+ * idle_seconds >= 60. exempt = true (Meeting Prep only) always allows. For work without an
+ * AC/idle gate pass on_ac = true and a large idle_seconds to ask only about recording. */
+bool whimbrel_background_work_allowed(bool on_ac, double idle_seconds, bool exempt);
+
 /* ---- Hosted model defaults (core/api::model_defaults, 2026-11-11) ----
  * Each hosted provider's default model comes from defaults.json on the updates server,
  * cached in the store, with core's built-in table as the fallback. Opening the store puts
@@ -1642,6 +1708,18 @@ char *whimbrel_connector_gmail_apply(StoreHandle *handle, const char *account_em
  * copy wins. Sorted by start time. NULL on malformed JSON. */
 char *whimbrel_calendar_merge_meetings(const char *event_kit_json, const char *oauth_json);
 
+/* Other devices' calendar events (items of kind calendar_event that sync delivered)
+ * starting in [from_unix_ms, until_unix_ms) that local_meetings_json (a JSON array of this
+ * device's own QualifyingMeeting, unfiltered) does not already show. Rows last written by
+ * exclude_device_id (this device) and rows marked removed are left out; the same meeting
+ * from several sources is one row (same start second + normalized title, or the same
+ * external id as a local meeting; the local copy wins, then Google's). Returns a JSON
+ * array of QualifyingMeeting: id is the sending device's event id, end is start + 30 min
+ * (the item has no end), source "calendar" or "googleCalendar", no RSVP/link/organizer.
+ * DISPLAY ONLY: never start a recording prompt from these. NULL on a null handle/pointer,
+ * malformed JSON or a DB error. Caller frees with whimbrel_core_free_string. */
+char *whimbrel_calendar_synced_meetings(StoreHandle *handle, const char *exclude_device_id, int64_t from_unix_ms, int64_t until_unix_ms, const char *local_meetings_json);
+
 /* Maps one QualifyingMeeting to the items table's calendar-event upsert input
  * ({"device_id", "source", "external_id", "ts_unix_ms", "title", "actors"}), or "null"
  * for a detected meeting (no calendar entry). NULL on malformed JSON. */
@@ -1662,6 +1740,19 @@ char *whimbrel_calendar_presence_replace(StoreHandle *handle, const char *source
 /* The account was disconnected: everything it reported is now absent. Same return as
  * whimbrel_calendar_presence_replace. */
 char *whimbrel_calendar_forget_account(StoreHandle *handle, const char *source, const char *account, int64_t now_unix_ms);
+
+/* Deletes what was imported from one calendar account: calendar events only that account
+ * reports, its presence entries and sync token. sole_account = no other account of source
+ * stays connected (rows older than presence then go too). A future event this device owns
+ * is emptied and kept marked removed so other devices still hear of it. Recorded meetings
+ * are never touched. Returns {"deleted": n, "emptied": n}; NULL on a null handle/pointer or
+ * DB error. */
+char *whimbrel_calendar_delete_account_data(StoreHandle *handle, const char *source, const char *account, bool sole_account, int64_t now_unix_ms);
+
+/* Deletes everything stored from one Gmail account: its messages and search entries, threads,
+ * summaries, Reply Priorities scores, pending jobs and history id. Returns {"removed": n};
+ * NULL on a null handle/pointer or DB error. */
+char *whimbrel_gmail_delete_account_data(StoreHandle *handle, const char *account_email);
 /* ---- Connector account registry (core/api::connectors::accounts, M3.0 Task 9) ----
  * Which accounts are connected per connector ("calendar", "gmail", "outlook365") and
  * which is the default, in the connector_account table. Device-local, outside settings
@@ -1719,6 +1810,14 @@ char *whimbrel_oauth_refresh(const char *config_json, const char *stored_json, i
  * whitespace-separated scope in required, honouring Google's hierarchy (calendar ⊇
  * calendar.events/readonly; mail.google.com and gmail.compose ⊇ gmail.send). */
 bool whimbrel_oauth_scope_satisfies(const char *granted_scope, const char *required);
+
+/* BLOCKING (up to 30 s; off the UI thread): revokes a Google token with
+ * https://oauth2.googleapis.com/revoke (the token goes in the POST form body, never the
+ * URL). Pass the refresh token. Returns the outcome as a plain string, not JSON:
+ * "revoked", "already_invalid", "rejected", "unreachable" or "nothing_to_revoke". Best
+ * effort: delete the stored copy whatever it says, and log only this code, never the
+ * token. NULL on a NULL pointer. */
+char *whimbrel_oauth_revoke_google_token(const char *token);
 
 /* The unverified payload claims of a JWT as a JSON object (read for account identity
  * only, never as an authorization decision), or NULL if it is not a three-segment token
@@ -1808,6 +1907,32 @@ char *whimbrel_set_meeting_attendee_details(StoreHandle *handle, int64_t meeting
 /* data: the meeting's invitees [{"name","email"}]; without stored details, its attendee
  * names with a null email. */
 char *whimbrel_meeting_attendee_details(StoreHandle *handle, int64_t meeting_id);
+
+/* --- A meeting's recap (copy formats, email to attendees). Each returns {"ok":true,"data":...},
+ * {"ok":false,"error":{"kind":"store"}} on a database error, or NULL on a null handle or an
+ * unreadable argument. Free with whimbrel_core_free_string. */
+
+/* data: the recap text. summary_json: {"title","tldr","decisions","action_items",
+ * "open_questions"} as the page shows it; labels_json: the app's translated
+ * {"decisions","action_items","open_questions","footer"}; format: "plain", "markdown",
+ * "slack" or "email" (plain text plus the footer and https://whimbrelapp.com). Empty
+ * sections are left out; an empty summary gives "". Never includes notes or transcript. */
+char *whimbrel_recap_render(const char *summary_json, const char *labels_json, const char *format);
+
+/* data: [{"name","email"}], who the meeting's recap can go to: invitees with a usable address,
+ * once each (case-insensitive), minus self_emails_json (["me@x.com"]). */
+char *whimbrel_meeting_recap_recipients(StoreHandle *handle, int64_t meeting_id, const char *self_emails_json);
+
+/* data: {"url","body_in_url"}, the mailto: draft for a mail app when Gmail isn't connected.
+ * When body_in_url is false the body was too long for the URL: copy it to the clipboard; the
+ * draft's body is paste_hint. to_json: ["a@x.com"]; unusable addresses are dropped. */
+char *whimbrel_recap_mailto(const char *to_json, const char *subject, const char *body, const char *paste_hint);
+
+/* Records a recap send (device-local, no addresses). data: false when the meeting doesn't exist. */
+char *whimbrel_meeting_record_recap_sent(StoreHandle *handle, int64_t meeting_id, int64_t recipient_count, int64_t now_unix_ms);
+
+/* data: {"sent_unix_ms","recipient_count"} of the meeting's last recap send, or null. */
+char *whimbrel_meeting_recap_sent(StoreHandle *handle, int64_t meeting_id);
 
 /* data: [MeetingSpeaker]. */
 char *whimbrel_meeting_speakers(StoreHandle *handle, int64_t meeting_id);

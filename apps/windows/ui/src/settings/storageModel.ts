@@ -1,4 +1,4 @@
-import type { CompactView, FreeUpOptions, LowDisk, StorageView } from "../generated/types";
+import type { CompactView, CompressView, FreeUpOptions, LowDisk, StorageView } from "../generated/types";
 import { t } from "../l10n";
 import { diskSize } from "./statusModel";
 
@@ -34,7 +34,7 @@ export function compactLine(result: CompactView): string {
   return t("Nothing to compact yet.");
 }
 
-export type FreeUpKind = "compact" | "recordings" | "captures";
+export type FreeUpKind = "compact" | "compress" | "recordings" | "captures";
 
 export interface FreeUpRow {
   kind: FreeUpKind;
@@ -50,6 +50,16 @@ export function freeUpRows(options: FreeUpOptions): FreeUpRow[] {
   const days = String(options.days);
   if (options.compactBytes) {
     rows.push({ kind: "compact", detail: t("Frees {free} inside the database file.", { free: diskSize(options.compactBytes) }), button: t("Compact"), confirm: null });
+  }
+  if (options.compressBytes) {
+    rows.push({
+      kind: "compress",
+      detail: t("{bytes} of recordings are full quality. Compressing keeps them for transcribing again at about a tenth of the size.", {
+        bytes: diskSize(options.compressBytes),
+      }),
+      button: t("Compress all"),
+      confirm: null,
+    });
   }
   if (options.recordingsBytes) {
     rows.push({
@@ -72,6 +82,20 @@ export function freeUpRows(options: FreeUpOptions): FreeUpRow[] {
     });
   }
   return rows;
+}
+
+/** What "Compress all" did. Any it couldn't compress are left as they were. */
+export function compressLine(result: CompressView): string {
+  const parts: string[] = [];
+  if (result.compressed > 0) parts.push(t("Meetings compressed: {count}.", { count: result.compressed }));
+  if (result.failed > 0) {
+    parts.push(
+      result.error
+        ? t("Meetings left unchanged: {count}. {error}", { count: result.failed, error: result.error })
+        : t("Meetings left unchanged: {count}.", { count: result.failed }),
+    );
+  }
+  return parts.join(" ") || t("Nothing to compress.");
 }
 
 /** "Freed X" from the footprint before and after a cleanup; nothing when it didn't shrink. */

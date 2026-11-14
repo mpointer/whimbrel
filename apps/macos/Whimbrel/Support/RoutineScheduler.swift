@@ -56,7 +56,7 @@ final class RoutineScheduler: ObservableObject {
     static let gmailWriteScope = "https://www.googleapis.com/auth/gmail.send"
 
     func start(
-        store: CoreMemoryStore?, slowStore: CoreMemoryStore?, meetingsProvider: @escaping () -> [QualifyingMeeting], routing: RoutingSettings,
+        store: CoreMemoryStore?, slowStore: CoreMemoryStore?, meetingsProvider: @escaping () -> [QualifyingMeeting], prepMeetingsProvider: (() -> [QualifyingMeeting])? = nil, routing: RoutingSettings,
         promptLibrary: PromptLibrarySettings, meetingPrepLeadMinutes: @escaping () -> Double,
         calendarConnectorState: CalendarConnectorState, gmailConnectorState: GmailConnectorState,
         profile: ProfileSettings, profileSuggestions: ProfileSuggestionsModel,
@@ -66,7 +66,7 @@ final class RoutineScheduler: ObservableObject {
         self.gmailConnectorState = gmailConnectorState
         stop()
         timer = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick(store: store, slowStore: slowStore, meetingsProvider: meetingsProvider, routing: routing, promptLibrary: promptLibrary, leadMinutes: meetingPrepLeadMinutes(), profile: profile, profileSuggestions: profileSuggestions, gate: gate()) }
+            Task { @MainActor in self?.tick(store: store, slowStore: slowStore, meetingsProvider: meetingsProvider, prepMeetingsProvider: prepMeetingsProvider, routing: routing, promptLibrary: promptLibrary, leadMinutes: meetingPrepLeadMinutes(), profile: profile, profileSuggestions: profileSuggestions, gate: gate()) }
         }
     }
 
@@ -75,10 +75,12 @@ final class RoutineScheduler: ObservableObject {
         timer = nil
     }
 
-    private func tick(store: CoreMemoryStore?, slowStore: CoreMemoryStore?, meetingsProvider: () -> [QualifyingMeeting], routing: RoutingSettings, promptLibrary: PromptLibrarySettings, leadMinutes: Double, profile: ProfileSettings, profileSuggestions: ProfileSuggestionsModel, gate: RoutineGate) {
+    private func tick(store: CoreMemoryStore?, slowStore: CoreMemoryStore?, meetingsProvider: () -> [QualifyingMeeting], prepMeetingsProvider: (() -> [QualifyingMeeting])?, routing: RoutingSettings, promptLibrary: PromptLibrarySettings, leadMinutes: Double, profile: ProfileSettings, profileSuggestions: ProfileSuggestionsModel, gate: RoutineGate) {
         guard let store, let slowStore else { return }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         let upcomingMeetings = meetingsProvider()
+        // Meeting Prep also covers meetings that exist only on another device (this Mac's own list is the fallback).
+        let prepMeetings = prepMeetingsProvider?() ?? upcomingMeetings
         let todayEvents = upcomingMeetings.map {
             CoreCalendarEventSummary(title: $0.title, startUnixMs: Int64($0.startDate.timeIntervalSince1970 * 1000))
         }
@@ -111,7 +113,7 @@ final class RoutineScheduler: ObservableObject {
             // has its own core entry point; the runs it created are announced like any others.
             let prepRuns = slowStore.meetingPrepRun(
                 nowUnixMs: nowMs, leadMinutes: leadMinutes, ollamaModel: defaults.ollamaModel,
-                routing: routingConfig, meetings: upcomingMeetings, gate: gate
+                routing: routingConfig, meetings: prepMeetings, gate: gate
             ) ?? []
             // Profile suggestions: core owns the once-a-day gate and the failure backoff, so asking every tick is cheap.
             let suggested = slowStore.profileSuggestRun(

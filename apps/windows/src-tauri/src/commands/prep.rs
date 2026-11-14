@@ -160,13 +160,17 @@ fn next_meeting(s: &memory::Store, upcoming: &[QualifyingMeeting]) -> Result<Opt
     }))
 }
 
-/// The next meeting on the calendar and its brief, or nothing when no calendar is connected or
-/// nothing is coming up.
+/// The next meeting on the calendar (this PC's, or one another device synced, #792) and its brief,
+/// or nothing when nothing is coming up.
 #[tauri::command]
 pub async fn next_meeting_prep(state: State<'_, AppState>) -> Result<Option<NextMeetingView>, CommandError> {
-    let Some(calendar) = state.calendar.clone() else { return Ok(None) };
-    let upcoming = calendar.upcoming(chrono::Utc::now().timestamp_millis());
-    state.store()?.call(move |s| next_meeting(s, &upcoming)).await?.map_err(CommandError::store)
+    let calendar = state.calendar.clone();
+    let now = chrono::Utc::now().timestamp_millis();
+    state
+        .store()?
+        .call(move |s| next_meeting(s, &crate::connectors::calendar::shown_meetings(calendar.as_deref(), s, now)))
+        .await?
+        .map_err(CommandError::store)
 }
 
 /// The brief a Prep chip names, by its key (`ScheduleEvent::prep_key`, `MeetingChipsView::prep_key`).

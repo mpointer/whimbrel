@@ -175,6 +175,12 @@ struct AIProvidersSettingsPane: View {
                 error: appState.routing.googleModelsError,
                 refresh: { Task { await appState.routing.refreshGoogleModels() } }
             )
+            Toggle("My Google AI Studio project has billing on", isOn: $appState.routing.googleAiBillingConfirmed)
+                .tint(Color.whimbrelAccentPrimary)
+            Text("Gmail and Calendar text goes to Gemini only when its project has billing on, because Google may train on the free tier.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             providerLinks(for: "openrouter")
             keyRow(
@@ -281,6 +287,12 @@ struct AIProvidersSettingsPane: View {
                     .foregroundStyle(Color.whimbrelError)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Toggle("Allow Gmail and Calendar text with a cloud or remote Ollama model", isOn: $appState.routing.remoteOllamaGoogleData)
+                .tint(Color.whimbrelAccentPrimary)
+            Text("Off keeps Gmail and Calendar text on this computer when Ollama runs elsewhere.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Divider().overlay(Color.whimbrelBorder)
 
@@ -351,7 +363,7 @@ struct AIProvidersSettingsPane: View {
             ))
             .tint(Color.whimbrelAccentPrimary)
             .disabled(!appState.replyPriority.hasKey)
-            Text("Off by default. When on, Whimbrel sends only these to TypeSafe for each Gmail thread waiting on you: the redacted subject, the sender's name and domain, and the latest message cut to 1,000 characters. The key and this setting stay on this Mac. Local-only mode blocks it.")
+            Text("Off by default. Gmail threads wait until TypeSafe confirms it doesn't train on them. Then, for each thread waiting on you, Whimbrel sends TypeSafe only the redacted subject, the sender's name and domain, and the latest message cut to 1,000 characters. The key and this setting stay on this Mac. Local-only mode blocks it.")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -366,7 +378,7 @@ struct AIProvidersSettingsPane: View {
             ))
             .tint(Color.whimbrelAccentPrimary)
             .disabled(!appState.replyPriority.hasKey)
-            Text("Sends short excerpts of emails, meetings, calendar events and screen activity to TypeSafe to choose a topic.")
+            Text("Sends short excerpts of emails, meetings, calendar events and screen activity to TypeSafe to choose a topic. Gmail and Google Calendar items wait until TypeSafe confirms it doesn't train on them.")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)

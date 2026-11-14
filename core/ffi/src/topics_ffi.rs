@@ -417,7 +417,7 @@ pub extern "C" fn whimbrel_topics_run_steps_batch(
         let routing = api::RoutingConfig::from_json(cstr_to_string(routing_json).as_deref());
         let model = cstr_to_string(ollama_model).unwrap_or_default();
         let chain = api::routing::build_local_chain(&model, &routing);
-        api::topic_steps::run_local_steps_batch(store, &chain, max as usize)
+        api::topic_steps::run_local_steps_batch_with(store, &chain, routing.google_data_policy(), max as usize)
     } else {
         let key = key.unwrap_or_default();
         let client = llm::typesafe::TypeSafeClient::new(key);

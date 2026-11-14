@@ -40,6 +40,31 @@ enum FreeUpSpaceModel {
         }
         return out
     }
+
+    /// What the sheet says when a cleanup ends; nil says nothing. A failed step says so instead
+    /// of "Freed …": deleting old captures (`retentionFailed`), or a compact the user asked for
+    /// (`forced`) that failed or didn't run.
+    static func finishMessage(retentionFailed: Bool, forced: Bool, compacted: CoreCompactResult?, volumeFree: Int64?,
+                              before: Int64?, after: Int64) -> String? {
+        if retentionFailed { return String(localized: "Couldn't delete old screen captures.") }
+        if forced, compacted?.ran != true { return CompactCopy.message(compacted, volumeFree: volumeFree) }
+        guard let before else { return nil }
+        return String(localized: "Freed \(ByteCountFormatter.string(fromByteCount: max(0, before - after), countStyle: .file)).")
+    }
+}
+
+/// Tells the latest of several overlapping refreshes apart, so an older one landing last
+/// doesn't overwrite the newer one's result.
+struct RefreshGeneration {
+    private(set) var current = 0
+
+    /// Starts a refresh and returns its token.
+    mutating func begin() -> Int {
+        current += 1
+        return current
+    }
+
+    func isCurrent(_ token: Int) -> Bool { token == current }
 }
 
 /// Settings → Storage → Free up space: one-off cleanups. Nothing here changes the retention settings.
@@ -53,6 +78,7 @@ struct FreeUpSpaceSheet: View {
     @State private var confirming: FreeUpSpaceOption.Kind?
     @State private var result: String?
     @State private var before: Int64?
+    @State private var generation = RefreshGeneration()
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
@@ -134,6 +160,7 @@ struct FreeUpSpaceSheet: View {
     private func refresh() {
         guard let store = appState.coreStore else { loading = false; return }
         loading = true
+        let token = generation.begin()
         let days = days, media = appState.mediaSettings
         let preview = CoreMediaPolicy(compressAfterDays: nil, deleteAudioAfterDays: nil, shrinkImagesAfterDays: nil,
                                       deleteAudioPreviewAfterDays: days)
@@ -151,6 +178,8 @@ struct FreeUpSpaceSheet: View {
                 deletableAudio: { _ in plan?.usage.audioDeletableBytes ?? 0 },
                 oldCaptures: { _ in captures ?? (0, 0) }, days: days)
             DispatchQueue.main.async {
+                // The days changed while this one ran: the newer refresh's options win.
+                guard generation.isCurrent(token) else { return }
                 options = built
                 loading = false
                 if !working { before = total }
@@ -172,13 +201,13 @@ struct FreeUpSpaceSheet: View {
         case .deleteOldCaptures(let d):
             let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
             MediaMover.queue.async {
-                _ = CoreMemoryStore.accessQueue.sync {
+                let deleted = CoreMemoryStore.accessQueue.sync {
                     store.applyRetention(captureItemDays: d, meetingDays: nil, conversationDays: nil, nowUnixMs: nowMs,
                                          recordingsDir: SpikePaths.root)
                 }
                 // Captures live inside the database: only a compact gives their space back to the
-                // disk, so do it now (the disk rule still applies).
-                DispatchQueue.main.async { compactThenFinish(store, forced: true) }
+                // disk, so do it now (the disk rule still applies). A failed delete has nothing to give back.
+                DispatchQueue.main.async { compactThenFinish(store, forced: true, retentionFailed: deleted == nil) }
             }
         }
     }
@@ -196,18 +225,16 @@ struct FreeUpSpaceSheet: View {
         }
     }
 
-    private func compactThenFinish(_ store: CoreMemoryStore, forced: Bool) {
+    private func compactThenFinish(_ store: CoreMemoryStore, forced: Bool, retentionFailed: Bool = false) {
         let media = appState.mediaSettings.folderURL
         DispatchQueue.global(qos: .userInitiated).async {
-            let compacted = StorageCompaction.run(store, forced: forced)
+            let compacted = retentionFailed ? nil : StorageCompaction.run(store, forced: forced)
+            let free = StorageVolume.writableFreeBytes(at: SpikePaths.root)
             let after = StorageFootprint.measure(dataRoot: SpikePaths.root, mediaFolder: media).total
             DispatchQueue.main.async {
                 working = false
-                if forced, let compacted, !compacted.ran {
-                    result = CompactCopy.message(compacted)
-                } else if let before {
-                    result = String(localized: "Freed \(ByteCountFormatter.string(fromByteCount: max(0, before - after), countStyle: .file)).")
-                }
+                result = FreeUpSpaceModel.finishMessage(retentionFailed: retentionFailed, forced: forced, compacted: compacted,
+                                                        volumeFree: free, before: before, after: after)
                 refresh()
             }
         }

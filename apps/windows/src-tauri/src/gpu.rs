@@ -45,6 +45,24 @@ pub fn native_machine() -> &'static str {
     }
 }
 
+/// This x64 build is running under emulation on an Arm PC. Everything heavy (transcription,
+/// diarization, embeddings) then runs as emulated CPU work: a tester's Arm laptop took 59 minutes to
+/// process a 32-minute meeting, and calls stuttered while it recorded (2026-11-13).
+pub fn emulated_on_arm() -> bool {
+    emulated(std::env::consts::ARCH, native_machine())
+}
+
+/// `build` is `std::env::consts::ARCH`, `machine` a [`machine_name`].
+pub fn emulated(build: &str, machine: &str) -> bool {
+    build == "x86_64" && machine == "arm64"
+}
+
+/// For the notice that says so (`ArmNotice`).
+#[tauri::command]
+pub fn running_emulated() -> bool {
+    emulated_on_arm()
+}
+
 /// `IMAGE_FILE_MACHINE_*` values.
 pub fn machine_name(machine: u16) -> &'static str {
     match machine {
@@ -62,6 +80,8 @@ mod tests {
     #[test]
     fn machines_are_named_and_this_pc_is_one_of_them() {
         assert_eq!((machine_name(0xAA64), machine_name(0x8664), machine_name(0x014C), machine_name(1)), ("arm64", "x64", "x86", "other"));
+        assert!(emulated("x86_64", "arm64"), "the x64 build on an Arm PC");
+        assert!(!emulated("x86_64", "x64") && !emulated("aarch64", "arm64") && !emulated("x86_64", "unknown"));
         assert_ne!(native_machine(), "unknown");
     }
 

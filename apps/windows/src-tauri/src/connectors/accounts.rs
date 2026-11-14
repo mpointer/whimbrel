@@ -13,6 +13,7 @@ use std::time::Duration;
 use api::oauth::{self, StoredTokens};
 
 use crate::error::CommandError;
+use super::google_client;
 use crate::secrets::{SecretStore, GOOGLE_OAUTH_SERVICE};
 use crate::syncing::config::SyncConfig;
 use crate::l10n::tr;
@@ -21,8 +22,10 @@ use crate::l10n::tr;
 pub const CALENDAR: &str = "calendar";
 /// Credential Manager account names, as on the Mac.
 pub const CALENDAR_ACCOUNT_PREFIX: &str = "google-calendar-connector:";
-/// FR-MTG-1 needs to read events; `calendar.events` is there for M3.4's write actions.
-pub const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events openid email";
+/// `calendar.events` both reads the primary calendar's events (FR-MTG-1; the connector only calls
+/// `calendars/primary/events`) and writes them (M3.4). `calendar.readonly` was dropped on 2026-11-12:
+/// nothing needs it, and public builds ask only for what they use.
+pub const CALENDAR_SCOPE: &str = "openid email https://www.googleapis.com/auth/calendar.events";
 /// How long a consent page may sit unanswered.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
@@ -30,12 +33,32 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub const GMAIL: &str = "gmail";
 /// Gmail's Credential Manager account names, as on the Mac (`gmail-connector:<email>`).
 pub const GMAIL_ACCOUNT_PREFIX: &str = "gmail-connector:";
-/// The Mac's Gmail scopes (`GmailConnectorState`): `gmail.compose` is Google's superset of
-/// `gmail.send`, so one grant covers sending the approved recap; `gmail.readonly` is for reading mail.
-/// Both are Google "restricted" scopes, fine for a personal Google Cloud project and a blocker for
-/// public distribution without Google's verification.
-pub const GMAIL_SCOPE: &str =
-    "openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose";
+/// Gmail on the app's own client: sending only. `gmail.send` is a "sensitive" scope, which public
+/// builds can use; `gmail.readonly` and `gmail.compose` are "restricted" and need Google's yearly
+/// CASA assessment, so they were dropped on 2026-11-12 (the Mac does the same).
+pub const GMAIL_SCOPE: &str = "openid email https://www.googleapis.com/auth/gmail.send";
+/// Gmail on the user's own Google Cloud project (`google_client`): reading as well as sending.
+pub const GMAIL_READ_SCOPE: &str =
+    "openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send";
+
+/// What reading mail needs, and the scopes Google says include it.
+const GMAIL_READ_SCOPES: [&str; 3] =
+    ["https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.modify", "https://mail.google.com/"];
+
+/// Whether a Gmail grant can read mail, from the scopes Google actually **granted**. A grant
+/// whose scope was never recorded (older tokens) counts as able to read: those were all signed in
+/// with `gmail.readonly`, and reading stops only on a known lack, so existing accounts keep working.
+pub fn can_read_mail(granted: Option<&str>) -> bool {
+    match granted {
+        None => true,
+        Some(granted) => granted.split_whitespace().any(|s| GMAIL_READ_SCOPES.contains(&s)),
+    }
+}
+
+/// Whether `email`'s stored Gmail grant can read mail (see [`can_read_mail`]). No tokens: no.
+pub fn gmail_can_read(secrets: &dyn SecretStore, email: &str) -> bool {
+    tokens_for(Kind::Gmail, secrets, email).is_ok_and(|t| can_read_mail(t.granted_scope.as_deref()))
+}
 
 /// Which Google connector an account belongs to. Everything below is the same for both except the
 /// names it is stored under and the scopes it asks for.
@@ -61,10 +84,12 @@ impl Kind {
         }
     }
 
-    pub fn scope(self) -> &'static str {
-        match self {
-            Kind::Calendar => CALENDAR_SCOPE,
-            Kind::Gmail => GMAIL_SCOPE,
+    /// The scopes a sign-in asks for: Gmail also asks to read only on the user's own client.
+    pub fn scope(self, own_client: bool) -> &'static str {
+        match (self, own_client) {
+            (Kind::Calendar, _) => CALENDAR_SCOPE,
+            (Kind::Gmail, false) => GMAIL_SCOPE,
+            (Kind::Gmail, true) => GMAIL_READ_SCOPE,
         }
     }
 }
@@ -77,9 +102,21 @@ pub fn account_name(email: &str) -> String {
     account_name_for(Kind::Calendar, email)
 }
 
-/// The provider config for a connector sign-in: the sync client, the connector's scopes.
+/// The provider config for a connector sign-in: the user's own Google client when one is saved,
+/// else the app's (the sync client), with the scopes for that client.
+pub fn connect_provider(kind: Kind, config: &SyncConfig, own: Option<&google_client::CustomClient>) -> oauth::ProviderConfig {
+    oauth::ProviderConfig { scope: kind.scope(own.is_some()).into(), ..google_client::provider(config, own) }
+}
+
+/// [`connect_provider`] on the app's own client.
 pub fn provider_for(kind: Kind, config: &SyncConfig) -> oauth::ProviderConfig {
-    oauth::ProviderConfig { scope: kind.scope().into(), ..config.google_provider() }
+    connect_provider(kind, config, None)
+}
+
+/// Whether `email` needs signing in again: Google revoked or expired its sign-in, or the Google
+/// client it was signed in with is no longer the current one (`google_client::client_changed`).
+pub fn needs_sign_in(kind: Kind, secrets: &dyn SecretStore, email: &str) -> bool {
+    sign_in_expired(kind, email) || google_client::client_changed(secrets, kind, email)
 }
 
 pub fn provider(config: &SyncConfig) -> oauth::ProviderConfig {
@@ -130,7 +167,9 @@ pub fn fresh_access_token_for(kind: Kind, secrets: &dyn SecretStore, config: &Sy
     if stored.is_fresh(now) {
         return Ok(stored.access_token);
     }
-    let refreshed = match oauth::refresh_stored(&provider_for(kind, config), &stored, now) {
+    // Only the client that issued the tokens can refresh them.
+    let provider = google_client::refresh_client(secrets, config, kind, email)?;
+    let refreshed = match oauth::refresh_stored(&provider, &stored, now) {
         Ok(refreshed) => refreshed,
         Err(e) => {
             if e == oauth::OAuthError::RefreshTokenRevoked {
@@ -177,7 +216,8 @@ fn connect_hinted(
     open: impl Fn(&str) -> Result<(), String>,
     login_hint: Option<&str>,
 ) -> Result<String, CommandError> {
-    let provider = provider_for(kind, config);
+    let own = google_client::load(&**secrets);
+    let provider = connect_provider(kind, config, own.as_ref());
     let begun = oauth::begin(&provider).map_err(|e| CommandError::network(crate::syncing::controller::oauth_message(&e)))?;
     let url = login_hint.map_or_else(|| begun.auth_url.clone(), |email| with_login_hint(&begun.auth_url, email));
     open(&url).map_err(CommandError::network)?;
@@ -194,6 +234,9 @@ fn connect_hinted(
         .as_deref()
         .and_then(oauth::jwt_email_claim)
         .ok_or_else(|| CommandError::network(tr("Google didn't say which account signed in.", &[])))?;
+    // These tokens refresh only with the client that issued them: recorded first, so tokens are
+    // never stored under the account's name with the wrong issuer.
+    google_client::record_issuer(&**secrets, kind, &email, own.as_ref().map(|c| c.id.as_str()))?;
     secrets
         .set_string(GOOGLE_OAUTH_SERVICE, &account_name_for(kind, &email), &json)
         .map_err(|e| CommandError::secrets(e.to_string()))?;
@@ -238,6 +281,7 @@ fn check_reconnected(
 
 /// Forgets an account's tokens. Its calendar rows stay: they are already in the store.
 pub fn disconnect_for(kind: Kind, secrets: &dyn SecretStore, email: &str) -> Result<(), CommandError> {
+    google_client::forget_issuer(secrets, kind, email);
     secrets
         .delete(GOOGLE_OAUTH_SERVICE, &account_name_for(kind, email))
         .map(|_| ())
@@ -323,7 +367,7 @@ mod tests {
     #[test]
     fn the_connector_asks_for_calendar_scopes_on_the_sync_client() {
         let provider = provider(&config());
-        assert!(provider.scope.contains("calendar.readonly"));
+        assert_eq!(provider.scope, "openid email https://www.googleapis.com/auth/calendar.events", "no calendar.readonly");
         assert!(provider.scope.contains("openid email"), "the email claim names the account");
         assert_eq!(provider.client_id, "client", "the same desktop client as sync");
     }
@@ -379,15 +423,65 @@ mod tests {
     }
 
     #[test]
-    fn gmail_asks_for_the_macs_scopes_on_the_same_client_and_calendars_scopes_are_unchanged() {
+    fn gmail_asks_only_to_send_on_the_apps_client_and_calendar_asks_only_for_events() {
         let gmail = provider_for(Kind::Gmail, &config());
-        for needed in ["openid email", "gmail.readonly", "gmail.compose"] {
-            assert!(gmail.scope.contains(needed), "{needed}");
+        assert_eq!(gmail.scope, "openid email https://www.googleapis.com/auth/gmail.send");
+        for restricted in ["gmail.readonly", "gmail.compose", "gmail.modify", "mail.google.com"] {
+            assert!(!gmail.scope.contains(restricted), "{restricted} needs Google's CASA assessment");
         }
         assert!(!gmail.scope.contains("calendar"), "Gmail does not ask for Calendar");
         assert_eq!(gmail.client_id, "client", "the same desktop client as sync");
         assert_eq!(provider(&config()).scope, CALENDAR_SCOPE);
         assert!(!provider(&config()).scope.contains("gmail"), "and Calendar does not ask for Gmail");
+    }
+
+    #[test]
+    fn the_users_own_client_signs_gmail_in_to_read_and_send_and_calendar_the_same_as_before() {
+        let own = google_client::CustomClient::new("own-id", "own-secret");
+        let gmail = connect_provider(Kind::Gmail, &config(), Some(&own));
+        assert_eq!(gmail.scope, "openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send");
+        assert_eq!((gmail.client_id.as_str(), gmail.client_secret.as_deref()), ("own-id", Some("own-secret")));
+        let calendar = connect_provider(Kind::Calendar, &config(), Some(&own));
+        assert_eq!((calendar.scope.as_str(), calendar.client_id.as_str()), (CALENDAR_SCOPE, "own-id"));
+    }
+
+    #[test]
+    fn reading_mail_is_decided_from_the_granted_scopes() {
+        assert!(can_read_mail(Some("openid email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose")));
+        assert!(can_read_mail(Some("https://www.googleapis.com/auth/gmail.modify")));
+        assert!(can_read_mail(Some("https://mail.google.com/")));
+        assert!(!can_read_mail(Some("openid email https://www.googleapis.com/auth/gmail.send")), "send-only");
+        assert!(!can_read_mail(Some("openid email https://www.googleapis.com/auth/gmail.compose")), "compose does not read");
+        assert!(!can_read_mail(Some("https://www.googleapis.com/auth/gmail.readonlyx")), "whole scopes only");
+        assert!(can_read_mail(None), "older tokens that never recorded their scope keep reading");
+    }
+
+    #[test]
+    fn a_stored_send_only_grant_cannot_read_and_a_missing_one_cannot_either() {
+        let secrets = MemorySecrets::default();
+        save_tokens_for(Kind::Gmail, &secrets, "send@x.com", &stored(Some(GMAIL_SCOPE))).unwrap();
+        save_tokens_for(Kind::Gmail, &secrets, "read@x.com", &stored(Some(GMAIL_READ_SCOPE))).unwrap();
+        assert!(!gmail_can_read(&secrets, "send@x.com"));
+        assert!(gmail_can_read(&secrets, "read@x.com"));
+        assert!(!gmail_can_read(&secrets, "gone@x.com"));
+    }
+
+    #[test]
+    fn a_changed_google_client_means_signing_in_again() {
+        let secrets = MemorySecrets::default();
+        assert!(!needs_sign_in(Kind::Gmail, &secrets, "changed@x.com"));
+        google_client::save(&secrets, &google_client::CustomClient::new("own", "s")).unwrap();
+        assert!(needs_sign_in(Kind::Gmail, &secrets, "changed@x.com"));
+        assert!(needs_sign_in(Kind::Calendar, &secrets, "changed@x.com"), "Calendar uses the same client");
+    }
+
+    #[test]
+    fn disconnecting_forgets_which_client_signed_the_account_in() {
+        let secrets = MemorySecrets::default();
+        save_tokens_for(Kind::Gmail, &secrets, "a@x.com", &stored(None)).unwrap();
+        google_client::record_issuer(&secrets, Kind::Gmail, "a@x.com", Some("own")).unwrap();
+        disconnect_for(Kind::Gmail, &secrets, "a@x.com").unwrap();
+        assert_eq!(google_client::issuer(&secrets, Kind::Gmail, "a@x.com"), None);
     }
 
     #[test]

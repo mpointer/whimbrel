@@ -67,14 +67,28 @@ pub struct Transcriber {
     ctx: WhisperContext,
 }
 
+fn context_params(use_gpu: bool) -> WhisperContextParameters<'static> {
+    let mut params = WhisperContextParameters::default();
+    params.use_gpu(use_gpu);
+    params
+}
+
 impl Transcriber {
     /// Loads a GGML whisper model from disk (e.g. `ggml-tiny.en.bin` — see
     /// core/transcribe/README.md for how to fetch one; models aren't checked into git).
     pub fn load(model_path: &Path) -> Result<Self, TranscribeError> {
+        Self::load_with_gpu(model_path, true)
+    }
+
+    /// [`Self::load`] with the GPU on or off for this one context. `load` is `true`. A shell
+    /// passes `false` for live transcription on a PC whose integrated GPU also draws the
+    /// call's video, and keeps the post-meeting transcriber on the GPU. Without a GPU
+    /// backend compiled in, `true` behaves as `false`.
+    pub fn load_with_gpu(model_path: &Path, use_gpu: bool) -> Result<Self, TranscribeError> {
         let path_str = model_path
             .to_str()
             .ok_or_else(|| TranscribeError::Model("model path is not valid UTF-8".to_string()))?;
-        let ctx = WhisperContext::new_with_params(path_str, WhisperContextParameters::default())
+        let ctx = WhisperContext::new_with_params(path_str, context_params(use_gpu))
             .map_err(|e| TranscribeError::Model(e.to_string()))?;
         Ok(Self { ctx })
     }
@@ -224,6 +238,12 @@ fn is_non_speech(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_gpu_choice_reaches_the_context_parameters() {
+        assert!(context_params(true).use_gpu);
+        assert!(!context_params(false).use_gpu);
+    }
 
     #[test]
     fn lock_language_ignores_empty_chunk() {

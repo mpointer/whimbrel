@@ -173,6 +173,12 @@ pub struct SearchMemoryHit {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct SearchMemoryOutput {
     pub results: Vec<SearchMemoryHit>,
+    /// How many meetings' calendar-derived text (title, attendees, summary) was left out
+    /// (see [`GOOGLE_DATA_SCOPE`]); 0 when none was or the token carries the scope.
+    pub google_data_withheld: usize,
+    /// Present when `google_data_withheld` is not 0: says what was left out and why.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -204,6 +210,12 @@ pub struct GetTranscriptParams {
 pub struct GetTranscriptOutput {
     pub segments: Vec<memory::MeetingTranscriptSegment>,
     pub total: usize,
+    /// How many meetings' calendar-derived text (title, attendees, summary) was left out
+    /// (see [`GOOGLE_DATA_SCOPE`]); 0 when none was or the token carries the scope.
+    pub google_data_withheld: usize,
+    /// Present when `google_data_withheld` is not 0: says what was left out and why.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -234,11 +246,23 @@ pub struct GetDailyDigestParams {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ListMeetingsOutput {
     pub meetings: Vec<memory::Meeting>,
+    /// How many meetings' calendar-derived text (title, attendees, summary) was left out
+    /// (see [`GOOGLE_DATA_SCOPE`]); 0 when none was or the token carries the scope.
+    pub google_data_withheld: usize,
+    /// Present when `google_data_withheld` is not 0: says what was left out and why.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct GetMeetingOutput {
     pub meeting: Option<memory::Meeting>,
+    /// How many meetings' calendar-derived text (title, attendees, summary) was left out
+    /// (see [`GOOGLE_DATA_SCOPE`]); 0 when none was or the token carries the scope.
+    pub google_data_withheld: usize,
+    /// Present when `google_data_withheld` is not 0: says what was left out and why.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -275,13 +299,51 @@ pub struct AssembleContextItem {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct AssembleContextOutput {
     pub items: Vec<AssembleContextItem>,
+    /// How many items were left out because they hold Gmail or Google Calendar text (see
+    /// [`GOOGLE_DATA_SCOPE`]); 0 when none were or the token carries the scope.
+    pub google_data_withheld: usize,
+    /// Present when `google_data_withheld` is not 0: says what was left out and why.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// The token scope that lets `assemble_context` return items built from Gmail or Google
+/// Calendar. The MCP client is an app outside the AI providers the user chose in Whimbrel,
+/// and Google's Limited Use rules allow that text only to a model that does not train on
+/// it, which Whimbrel cannot check here. So it is off unless the user grants this scope to
+/// that one client; no token carries it by default.
+pub const GOOGLE_DATA_SCOPE: &str = "google_data";
+
+/// The `note` for a tool that left calendar-derived meeting text out.
+fn calendar_text_note(withheld: usize) -> Option<String> {
+    (withheld > 0).then(|| {
+        format!(
+            "Title, attendees and summary of {withheld} meeting(s) that may have come from Google Calendar were left out. \
+             Whimbrel does not send them to MCP clients unless the client's token has the `{GOOGLE_DATA_SCOPE}` scope."
+        )
+    })
+}
+
+/// Limited Use: leaves out the text of `meeting` that came from, or was written with, Google
+/// Calendar: the title, the attendees and the summary. Returns whether it did.
+fn withhold_calendar_text(store: &memory::Store, meeting: &mut memory::Meeting) -> bool {
+    if !store.meeting_may_hold_google_calendar_data(meeting.id) {
+        return false;
+    }
+    meeting.title = llm::limited_use::WITHHELD_TITLE.to_string();
+    meeting.attendees.clear();
+    meeting.summary_tldr = None;
+    meeting.summary_decisions.clear();
+    meeting.summary_action_items.clear();
+    meeting.summary_open_questions.clear();
+    true
 }
 
 #[tool_router]
 impl WhimbrelMcpServer {
     #[tool(
         name = "search_memory",
-        description = "Hybrid semantic+keyword search over everything Whimbrel has captured on this Mac: OCR'd screen text and transcribed meeting speech, ranked together. Each hit carries a `domain` (\"screen_text\" or \"meeting_speech\"), the row `id`, and for speech hits the `meeting_id`/`meeting_title` to pass to get_meeting or get_transcript. Returns raw matching snippets only; use assemble_context instead when you want one ranked, budget-packed context list that also folds in recent episodes, threads, and routine runs. Read-only, no LLM cost."
+        description = "Hybrid semantic+keyword search over everything Whimbrel has captured on this Mac: OCR'd screen text and transcribed meeting speech, ranked together. Each hit carries a `domain` (\"screen_text\" or \"meeting_speech\"), the row `id`, and for speech hits the `meeting_id`/`meeting_title` to pass to get_meeting or get_transcript. Returns raw matching snippets only; use assemble_context instead when you want one ranked, budget-packed context list that also folds in recent episodes, threads, and routine runs. For a meeting that may have come from Google Calendar, the title, attendees and summary are left out unless the client's token has the `google_data` scope; `google_data_withheld` and `note` say so. Read-only, no LLM cost."
     )]
     async fn search_memory(
         &self,
@@ -290,6 +352,7 @@ impl WhimbrelMcpServer {
     ) -> Result<Json<SearchMemoryOutput>, ErrorData> {
         self.check_scope(&parts, "memory")?;
         let include_transcripts = self.has_scope(&parts, "transcripts");
+        let allow_google = self.has_scope(&parts, GOOGLE_DATA_SCOPE);
         let store = self
             .store
             .lock()
@@ -350,12 +413,27 @@ impl WhimbrelMcpServer {
             }
         }
         results.truncate(params.limit.max(1) * 4);
-        Ok(Json(SearchMemoryOutput { results }))
+        // Limited Use: a speech hit keeps its words, but not the title of a meeting that
+        // may have come from Google Calendar.
+        let mut google_data_withheld = 0;
+        if !allow_google {
+            let mut seen = std::collections::HashSet::new();
+            for hit in &mut results {
+                if let Some(meeting_id) = hit.meeting_id {
+                    if store.meeting_may_hold_google_calendar_data(meeting_id) {
+                        hit.meeting_title = Some(llm::limited_use::WITHHELD_TITLE.to_string());
+                        seen.insert(meeting_id);
+                    }
+                }
+            }
+            google_data_withheld = seen.len();
+        }
+        Ok(Json(SearchMemoryOutput { results, google_data_withheld, note: calendar_text_note(google_data_withheld) }))
     }
 
     #[tool(
         name = "list_meetings",
-        description = "List recent meetings, newest first, with id, title, status, timestamps, and the generated summary fields when a summary exists. Includes meetings still recording. Read-only, no LLM cost."
+        description = "List recent meetings, newest first, with id, title, status, timestamps, and the generated summary fields when a summary exists. Includes meetings still recording. For a meeting that may have come from Google Calendar, the title, attendees and summary are left out unless the client's token has the `google_data` scope; `google_data_withheld` and `note` say so. Read-only, no LLM cost."
     )]
     async fn list_meetings(
         &self,
@@ -367,15 +445,20 @@ impl WhimbrelMcpServer {
             .store
             .lock()
             .map_err(|_| ErrorData::internal_error("store lock poisoned".to_string(), None))?;
-        let meetings = store
+        let mut meetings = store
             .recent_meetings(params.limit)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        Ok(Json(ListMeetingsOutput { meetings }))
+        let google_data_withheld = if self.has_scope(&parts, GOOGLE_DATA_SCOPE) {
+            0
+        } else {
+            meetings.iter_mut().map(|m| withhold_calendar_text(&store, m)).filter(|&hit| hit).count()
+        };
+        Ok(Json(ListMeetingsOutput { meetings, google_data_withheld, note: calendar_text_note(google_data_withheld) }))
     }
 
     #[tool(
         name = "get_meeting",
-        description = "Fetch one meeting's metadata and generated summary (tldr, decisions, action items, open questions) by id. Returns `meeting: null` for an unknown id rather than an error. Does not include the transcript; use get_transcript for that. Read-only, no LLM cost."
+        description = "Fetch one meeting's metadata and generated summary (tldr, decisions, action items, open questions) by id. Returns `meeting: null` for an unknown id rather than an error. Does not include the transcript; use get_transcript for that. For a meeting that may have come from Google Calendar, the title, attendees and summary are left out unless the client's token has the `google_data` scope; `google_data_withheld` and `note` say so. Read-only, no LLM cost."
     )]
     async fn get_meeting(
         &self,
@@ -387,15 +470,19 @@ impl WhimbrelMcpServer {
             .store
             .lock()
             .map_err(|_| ErrorData::internal_error("store lock poisoned".to_string(), None))?;
-        let meeting = store
+        let mut meeting = store
             .get_meeting(params.meeting_id)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        Ok(Json(GetMeetingOutput { meeting }))
+        let google_data_withheld = match &mut meeting {
+            Some(m) if !self.has_scope(&parts, GOOGLE_DATA_SCOPE) => usize::from(withhold_calendar_text(&store, m)),
+            _ => 0,
+        };
+        Ok(Json(GetMeetingOutput { meeting, google_data_withheld, note: calendar_text_note(google_data_withheld) }))
     }
 
     #[tool(
         name = "get_transcript",
-        description = "Fetch one page of a meeting's transcript segments in chronological order, with `total` for paging (offset + limit, default limit 20). Segments are raw speech-to-text, unsummarized. Read-only, no LLM cost."
+        description = "Fetch one page of a meeting's transcript segments in chronological order, with `total` for paging (offset + limit, default limit 20). Segments are raw speech-to-text, unsummarized. For a meeting that may have come from Google Calendar, the title, attendees and summary are left out unless the client's token has the `google_data` scope; `google_data_withheld` and `note` say so. Read-only, no LLM cost."
     )]
     async fn get_transcript(
         &self,
@@ -407,10 +494,22 @@ impl WhimbrelMcpServer {
             .store
             .lock()
             .map_err(|_| ErrorData::internal_error("store lock poisoned".to_string(), None))?;
-        let (segments, total) = store
+        let (mut segments, total) = store
             .get_transcript_segments_page(params.meeting_id, params.offset, params.limit)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        Ok(Json(GetTranscriptOutput { segments, total }))
+        // Limited Use: the words stay; the title of a meeting that may have come from
+        // Google Calendar does not.
+        let mut google_data_withheld = 0;
+        if !segments.is_empty()
+            && !self.has_scope(&parts, GOOGLE_DATA_SCOPE)
+            && store.meeting_may_hold_google_calendar_data(params.meeting_id)
+        {
+            for seg in &mut segments {
+                seg.meeting_title = llm::limited_use::WITHHELD_TITLE.to_string();
+            }
+            google_data_withheld = 1;
+        }
+        Ok(Json(GetTranscriptOutput { segments, total, google_data_withheld, note: calendar_text_note(google_data_withheld) }))
     }
 
     #[tool(
@@ -478,7 +577,7 @@ impl WhimbrelMcpServer {
 
     #[tool(
         name = "assemble_context",
-        description = "Unified retrieval for answering a question: hybrid keyword+semantic search over screen text and meeting speech, fused with recent episodes, email threads needing attention, and routine outputs, packed into one ranked context list of at most `context_limit` items (default 20). Each item has a `label` (its kind and source) and `text`. Prefer this over search_memory when the goal is to answer or summarize rather than to locate a specific row. Read-only, no LLM cost."
+        description = "Unified retrieval for answering a question: hybrid keyword+semantic search over screen text and meeting speech, fused with recent episodes, email threads needing attention, and routine outputs, packed into one ranked context list of at most `context_limit` items (default 20). Each item has a `label` (its kind and source) and `text`. Prefer this over search_memory when the goal is to answer or summarize rather than to locate a specific row. Items built from Gmail or Google Calendar (email threads and routine outputs, and the titles of calendar meetings) are left out unless the client's token has the `google_data` scope; `google_data_withheld` and `note` say how many. Read-only, no LLM cost."
     )]
     async fn assemble_context(
         &self,
@@ -502,6 +601,19 @@ impl WhimbrelMcpServer {
             // it yet, so MCP clients keep getting thread summaries only.
             false,
         );
+        // Limited Use: Gmail threads and the routine output written from Gmail and Calendar
+        // are Google user data. Leave them out unless this client's token opts in.
+        let allow_google = self.has_scope(&parts, GOOGLE_DATA_SCOPE);
+        let total = context.len();
+        let context = llm::limited_use::filter_context_in(&store, &context, allow_google);
+        let google_data_withheld = total - context.len();
+        let note = (google_data_withheld > 0).then(|| {
+            format!(
+                "{google_data_withheld} item(s) built from Gmail or Google Calendar were left out. \
+                 Whimbrel does not send them to MCP clients unless the client's token has the \
+                 `{GOOGLE_DATA_SCOPE}` scope."
+            )
+        });
         let items = context
             .into_iter()
             .map(|item| AssembleContextItem {
@@ -510,7 +622,7 @@ impl WhimbrelMcpServer {
                 text: item.text().to_string(),
             })
             .collect();
-        Ok(Json(AssembleContextOutput { items }))
+        Ok(Json(AssembleContextOutput { items, google_data_withheld, note }))
     }
 }
 
@@ -924,6 +1036,191 @@ mod tests {
             .items
             .iter()
             .any(|i| matches!(i.reference, llm::ContextItemRef::Transcript { .. })));
+    }
+
+    /// Limited Use: Gmail threads and routine output built from Gmail or Calendar stay
+    /// out of what an external MCP client receives unless its token carries `google_data`,
+    /// and the output says that something was left out.
+    #[tokio::test]
+    async fn assemble_context_withholds_google_derived_items_without_the_google_data_scope() {
+        let (server, store) = test_server_with_store();
+        {
+            let store = store.lock().unwrap();
+            store
+                .upsert_email_items(&[memory::NewEmailItem {
+                    device_id: "test-device".into(),
+                    external_id: "m-1".into(),
+                    ts_unix_ms: chrono::Utc::now().timestamp_millis() - 1_000,
+                    from: "Priya <priya@x.com>".into(),
+                    to: "me@x.com".into(),
+                    subject: "Falcon budget".into(),
+                    body_text: "GMAILSECRET the Falcon budget is 40k".into(),
+                    gmail_thread_id: "thread-1".into(),
+                    account_email: "me@x.com".into(),
+                    ..Default::default()
+                }])
+                .unwrap();
+            while store.run_thread_state_sync_job(chrono::Utc::now().timestamp_millis()).unwrap() {}
+            store
+                .insert_capture_item(&memory::NewCaptureItem {
+                    device_id: "test-device".to_string(),
+                    ts_unix_ms: chrono::Utc::now().timestamp_millis() - 2_000,
+                    app_bundle_id: "com.apple.Safari".to_string(),
+                    window_title: "Some Window".to_string(),
+                    url: None,
+                    text: "Falcon budget spreadsheet on screen".to_string(),
+                    hash: 1,
+                    source: "ax".to_string(),
+                })
+                .unwrap();
+            let routine = store
+                .insert_routine(&memory::NewRoutine {
+                    name: "Daily Brief".into(),
+                    template: memory::RoutineTemplate::DailyBrief,
+                    schedule_hhmm: "08:00".into(),
+                    enabled: true,
+                })
+                .unwrap();
+            store
+                .insert_routine_run(&memory::NewRoutineRun {
+                    routine_id: routine,
+                    ran_at_unix_ms: chrono::Utc::now().timestamp_millis() - 3_000,
+                    status: memory::RunStatus::Success,
+                    output_summary: "ROUTINEBRIEF Falcon budget thread from Priya".into(),
+                    output_json: "{}".into(),
+                })
+                .unwrap();
+        }
+        let server = &server;
+        let call = |scopes: &'static [&'static str]| {
+            async move {
+                let Json(out) = server
+                    .assemble_context(
+                        Extension(parts_with_scopes(scopes)),
+                        Parameters(AssembleContextParams { query: "Falcon budget".to_string(), context_limit: 20 }),
+                    )
+                    .await
+                    .unwrap();
+                out
+            }
+        };
+        let is_google = |i: &AssembleContextItem| {
+            matches!(i.reference, llm::ContextItemRef::Thread { .. } | llm::ContextItemRef::RoutineRun { .. })
+        };
+
+        let held = call(&["memory"]).await;
+        assert!(held.items.iter().any(|i| i.text.contains("Falcon budget spreadsheet")), "screen text still flows");
+        assert!(held.items.iter().all(|i| !is_google(i)), "{:?}", held.items);
+        assert!(held.google_data_withheld >= 2, "{}", held.google_data_withheld);
+        assert!(held.note.as_deref().is_some_and(|n| n.contains("Gmail") && n.contains("google_data")));
+
+        let allowed = call(&["memory", "google_data"]).await;
+        assert!(allowed.items.iter().any(|i| matches!(i.reference, llm::ContextItemRef::Thread { .. })));
+        assert!(allowed.items.iter().any(|i| matches!(i.reference, llm::ContextItemRef::RoutineRun { .. })));
+        assert_eq!(allowed.google_data_withheld, 0);
+        assert!(allowed.note.is_none());
+    }
+
+    /// A calendar meeting of unknown source (so Google Calendar text): title "Zebra Review",
+    /// attendee "Ana Zebrowski", a summary, one transcript segment saying "fox".
+    fn insert_google_meeting(store: &Arc<Mutex<memory::Store>>) -> i64 {
+        let store = store.lock().unwrap();
+        let id = store
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "test-device".to_string(),
+                start_unix_ms: 1000,
+                end_unix_ms: Some(2000),
+                title: "Zebra Review".to_string(),
+                attendees: vec!["Ana Zebrowski".to_string()],
+                trigger: memory::MeetingTrigger::Calendar,
+                audio_path: None,
+                status: memory::MeetingStatus::Completed,
+            })
+            .unwrap();
+        store.update_meeting_summary(id, "Zebra TLDR", &[], &[], &[], "ollama", "m").unwrap();
+        store
+            .insert_transcript_segments(&[memory::NewTranscriptSegment {
+                meeting_id: id,
+                start_cs: 0,
+                speaker_label: "Me".to_string(),
+                text: "the quick brown fox".to_string(),
+            }])
+            .unwrap();
+        id
+    }
+
+    fn debug_has_no_calendar_text<T: std::fmt::Debug>(out: &T) {
+        let text = format!("{out:?}");
+        for word in ["Zebra Review", "Zebrowski", "Zebra TLDR"] {
+            assert!(!text.contains(word), "{word} reached the client: {text}");
+        }
+    }
+
+    /// Limited Use: the meeting tools hold a calendar meeting's title, attendees and
+    /// summary (Google Calendar text) unless the token has `google_data`.
+    #[tokio::test]
+    async fn meeting_tools_withhold_google_calendar_text_without_the_google_data_scope() {
+        let (server, store) = test_server_with_store();
+        let id = insert_google_meeting(&store);
+        let plain = || parts_with_scopes(&["memory", "meetings", "transcripts"]);
+        let opted = || parts_with_scopes(&["memory", "meetings", "transcripts", "google_data"]);
+
+        let Json(list) = server.list_meetings(Extension(plain()), Parameters(ListMeetingsParams { limit: 10 })).await.unwrap();
+        debug_has_no_calendar_text(&list.meetings);
+        assert_eq!(list.meetings.len(), 1, "the meeting itself is listed");
+        assert_eq!(list.google_data_withheld, 1);
+        assert!(list.note.is_some());
+
+        let Json(one) = server.get_meeting(Extension(plain()), Parameters(GetMeetingParams { meeting_id: id })).await.unwrap();
+        debug_has_no_calendar_text(&one.meeting);
+        assert_eq!((one.meeting.as_ref().map(|m| m.id), one.google_data_withheld), (Some(id), 1));
+
+        let Json(tr) = server
+            .get_transcript(Extension(plain()), Parameters(GetTranscriptParams { meeting_id: id, offset: 0, limit: 10 }))
+            .await
+            .unwrap();
+        debug_has_no_calendar_text(&tr.segments);
+        assert_eq!(tr.segments.len(), 1);
+        assert_eq!(tr.google_data_withheld, 1);
+
+        let Json(found) = server
+            .search_memory(Extension(plain()), Parameters(SearchMemoryParams { query: "fox".into(), limit: 10 }))
+            .await
+            .unwrap();
+        debug_has_no_calendar_text(&found.results);
+        assert!(found.results.iter().any(|h| h.domain == "meeting_speech"));
+        assert!(found.google_data_withheld >= 1 && found.note.is_some());
+
+        let Json(ctx) = server
+            .assemble_context(Extension(plain()), Parameters(AssembleContextParams { query: "fox".into(), context_limit: 10 }))
+            .await
+            .unwrap();
+        debug_has_no_calendar_text(&ctx.items);
+        assert!(ctx.items.iter().any(|i| i.text.contains("fox")));
+
+        // With the scope, everything flows and nothing is reported withheld.
+        let Json(list) = server.list_meetings(Extension(opted()), Parameters(ListMeetingsParams { limit: 10 })).await.unwrap();
+        assert_eq!((list.meetings[0].title.as_str(), list.google_data_withheld, list.note.is_none()), ("Zebra Review", 0, true));
+        let Json(one) = server.get_meeting(Extension(opted()), Parameters(GetMeetingParams { meeting_id: id })).await.unwrap();
+        assert_eq!(one.meeting.unwrap().attendees, vec!["Ana Zebrowski".to_string()]);
+        let Json(tr) = server
+            .get_transcript(Extension(opted()), Parameters(GetTranscriptParams { meeting_id: id, offset: 0, limit: 10 }))
+            .await
+            .unwrap();
+        assert_eq!(tr.segments[0].meeting_title, "Zebra Review");
+    }
+
+    /// A meeting recorded as coming from another calendar is not Google data.
+    #[tokio::test]
+    async fn meeting_tools_pass_a_meeting_from_another_calendar() {
+        let (server, store) = test_server_with_store();
+        let id = insert_google_meeting(&store);
+        store.lock().unwrap().set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_OTHER).unwrap();
+        let Json(one) = server
+            .get_meeting(Extension(parts_with_scopes(&["meetings"])), Parameters(GetMeetingParams { meeting_id: id }))
+            .await
+            .unwrap();
+        assert_eq!((one.meeting.unwrap().title.as_str(), one.google_data_withheld), ("Zebra Review", 0));
     }
 
     #[tokio::test]

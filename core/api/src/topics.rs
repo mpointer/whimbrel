@@ -234,12 +234,28 @@ pub fn run_model_naming_batch_with_complete(
     now_ms: i64,
     complete: impl Fn(&str) -> Result<String, String>,
 ) -> ApiResult<NamingReport> {
+    run_model_naming_batch_with_prompt(store, limit, lang, now_ms, |prompt, _| complete(prompt))
+}
+
+/// [`run_model_naming_batch_with_complete`], also telling `complete` whether the prompt
+/// holds Google user data (a member is a Gmail email or a Google Calendar event), so it
+/// sends it only to a link that may receive it (Limited Use).
+pub fn run_model_naming_batch_with_prompt(
+    store: &memory::Store,
+    limit: usize,
+    lang: &str,
+    now_ms: i64,
+    complete: impl Fn(&str, bool) -> Result<String, String>,
+) -> ApiResult<NamingReport> {
     let mut report = NamingReport::default();
+    if memory::background_gate::recording_pauses_background_work() {
+        return Ok(report);
+    }
     for t in store
         .topics_needing_names_due(limit, now_ms - RETRY_WAIT_MS)
         .map_err(db)?
     {
-        let reply = complete(&build_prompt(&t, lang));
+        let reply = complete(&build_prompt(&t, lang), t.has_google_sources);
         let called = !matches!(&reply, Err(e) if e.starts_with(NO_MODEL));
         if let Some((name, status)) = reply.ok().and_then(|r| parse_reply(&r)) {
             store
@@ -297,7 +313,8 @@ pub fn run_naming_batch(
 ) -> ApiResult<NamingReport> {
     let cap = routing.spend_cap_config();
     let no_model = |e: String| format!("{NO_MODEL}: {e}");
-    run_model_naming_batch_with_complete(store, limit, &routing.output_language, now_ms, |prompt| {
+    let policy = routing.google_data_policy();
+    run_model_naming_batch_with_prompt(store, limit, &routing.output_language, now_ms, |prompt, has_google| {
         llm::check_spend_cap(store, &cap, None, Some("topic_name"), now_ms)
             .map_err(|e| no_model(format!("{e:?}")))?;
         // Built per topic: spend from the previous one can put a provider over budget.
@@ -306,8 +323,15 @@ pub fn run_naming_batch(
         if chain.is_empty() {
             return Err(no_model("no provider".into()));
         }
-        let (completion, link) = llm::try_chain(&chain, |l| l.client.complete(prompt))
-            .ok_or_else(|| "provider failure".to_string())?;
+        // Limited Use: a topic named from Gmail or Google Calendar items goes only to a
+        // link that may receive them; with none, it keeps the entity-list fallback name.
+        let (completion, link) = llm::try_chain(&chain, |l| {
+            if has_google && !llm::limited_use::link_may_receive_google_data(l, policy) {
+                return Err(llm::limited_use::withheld_from_link());
+            }
+            l.client.complete(prompt)
+        })
+        .ok_or_else(|| "provider failure".to_string())?;
         crate::util::log_link_usage(store, link, "topic_name", completion.token_usage);
         Ok(completion.text)
     })
@@ -565,6 +589,7 @@ mod tests {
             ],
             top_entity_kinds: vec!["person".into(), "org".into(), "person".into(), "person".into(), "person".into()],
             sample_titles: vec![],
+            has_google_sources: false,
         };
         assert_eq!(fallback_name(&t), "FMA · Joe · Brad Smith");
         let only_mail = TopicNameInput {
@@ -719,6 +744,7 @@ mod tests {
             ],
             top_entity_kinds: vec![],
             sample_titles: vec![],
+            has_google_sources: false,
         };
         assert_eq!(fallback_name(&t), "Mike · Ann Lee · Bob");
         let only_noreply = TopicNameInput { top_entities: vec!["noreply@x.com".into()], ..t };
@@ -866,7 +892,7 @@ mod tests {
     }
 
     fn name_input() -> TopicNameInput {
-        TopicNameInput { id: 1, current_name: String::new(), top_entities: vec!["Acme".into()], top_entity_kinds: vec!["org".into()], sample_titles: vec!["Re: pricing".into()] }
+        TopicNameInput { id: 1, current_name: String::new(), top_entities: vec!["Acme".into()], top_entity_kinds: vec!["org".into()], sample_titles: vec!["Re: pricing".into()], has_google_sources: false }
     }
 
     #[test]

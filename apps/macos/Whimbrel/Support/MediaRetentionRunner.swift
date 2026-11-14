@@ -187,7 +187,8 @@ final class MediaRetentionRunner: ObservableObject {
         let policy = override ?? settings.policy, root = settings.folderURL, busy = busyIds()
         let nowMs = Int64(now().timeIntervalSince1970 * 1000)
         let plan = await Self.onMover { ops.plan(policy, nowMs, root, busy) }
-        if let plan { lastPlan = plan } else { Self.log.error("media plan failed") }
+        // A one-off plan uses Free up space's ages: Settings' usage line reads `lastPlan` as the settings' plan.
+        if let plan { if override == nil { lastPlan = plan } } else { Self.log.error("media plan failed") }
         return plan
     }
 
@@ -195,7 +196,9 @@ final class MediaRetentionRunner: ObservableObject {
         let started = now()
         let policy = mode.policyOverride ?? settings.policy, root = settings.folderURL
         guard let plan = await makePlan(ops, policy: mode.policyOverride) else { return }
-        pruneBackoff(keeping: Set(plan.work.map(\.meetingId)).union(busyIds()))
+        // Only a plan under the settings' ages says which meetings still have work: a one-off
+        // plan's narrower list would drop the daily run's backoff for the rest.
+        if mode.policyOverride == nil { pruneBackoff(keeping: Set(plan.work.map(\.meetingId)).union(busyIds())) }
         if let gate = reconnectGate, plan.disconnectedMeetings >= gate { return }
         let audioDir = settings.audioURL(deviceId: deviceId), snapshotsRoot = settings.snapshotsURL
         let items: [(id: Int64, steps: [CoreMediaStep], snaps: [Int64])] = plan.work.compactMap { w in

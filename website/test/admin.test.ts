@@ -29,10 +29,19 @@ async function token(privateKey: CryptoKey, claims: Record<string, unknown>, kid
 
 let signer: CryptoKeyPair;
 let certs: Response;
+const SYNC = "https://sync-control.example.turso.io";
+let syncCalls: { auth: string | null; body: string }[] = [];
+let syncReply: () => Response = () => Response.json({ results: [{ type: "ok", response: { result: { rows: [
+  [{ type: "text", value: "ada@example.com" }, { type: "text", value: "free" }, { type: "integer", value: "1794500000000" }, { type: "text", value: "mac,ios" }],
+] } } }, { type: "ok" }] });
 
 function fetcher(): typeof fetch {
-  return (async (input: RequestInfo | URL) => {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === `${SYNC}/v2/pipeline`) {
+      syncCalls.push({ auth: new Headers(init?.headers).get("authorization"), body: String(init?.body) });
+      return syncReply();
+    }
     return url === `https://${TEAM}/cdn-cgi/access/certs` ? certs.clone() : new Response("nope", { status: 404 });
   }) as typeof fetch;
 }
@@ -94,6 +103,36 @@ describe("/admin/leads", () => {
     const jwt = await token(signer.privateKey, { ...good, email: "Second@Example.com" });
     expect((await get("/admin/leads", { env: configured, jwt })).status).toBe(404);
     expect((await get("/admin/leads", { env: { ...configured, ADMIN_EMAILS_EXTRA: "second@example.com" }, jwt })).status).toBe(200);
+  });
+
+  it("says how to turn on app use when the sync secrets aren't set", async () => {
+    const html = await (await get("/admin/leads", { env: configured, jwt: await token(signer.privateKey, good) })).text();
+    expect(html).toContain("App use isn't shown");
+  });
+
+  it("shows which leads use the app, read with the read-only token", async () => {
+    syncCalls = [];
+    const env2 = { ...configured, ADMIN_SYNC_DB_URL: "libsql://sync-control.example.turso.io", ADMIN_SYNC_DB_TOKEN: "ro-token" };
+    const html = await (await get("/admin/leads", { env: env2, jwt: await token(signer.privateKey, good) })).text();
+    expect(html).toContain("1 use the app");
+    expect(html).toContain("free · ios, mac");
+    expect(html).toContain("2026-11-12");
+    expect(syncCalls).toHaveLength(1);
+    expect(syncCalls[0].auth).toBe("Bearer ro-token");
+    expect(syncCalls[0].body).toContain("ada@example.com");
+    expect(syncCalls[0].body).toContain("bob@example.com");
+    const csv = await (await get("/admin/leads.csv", { env: env2, jwt: await token(signer.privateKey, good) })).text();
+    expect(csv.split("\r\n")[0]).toContain("Uses the app");
+  });
+
+  it("still shows the leads when the sync database can't be read", async () => {
+    syncReply = () => new Response("down", { status: 502 });
+    const env2 = { ...configured, ADMIN_SYNC_DB_URL: "libsql://sync-control.example.turso.io", ADMIN_SYNC_DB_TOKEN: "ro-token" };
+    const res = await get("/admin/leads", { env: env2, jwt: await token(signer.privateKey, good) });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("ada@example.com");
+    expect(html).toContain("couldn't be read");
   });
 
   it("widens to all time", async () => {

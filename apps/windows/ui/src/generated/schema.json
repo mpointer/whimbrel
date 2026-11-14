@@ -454,7 +454,7 @@
           ]
         },
         "signInExpired": {
-          "description": "The accounts whose Google sign-in expired: only \"Sign in again\" fixes them.",
+          "description": "The accounts that need signing in again: Google's sign-in expired, or the Google client\nthey were signed in with changed (Advanced → your own Google Cloud project).",
           "items": {
             "type": "string"
           },
@@ -1087,6 +1087,34 @@
         "fileBytesBefore",
         "fileBytesAfter",
         "spacePending"
+      ],
+      "type": "object"
+    },
+    "CompressView": {
+      "description": "What \"Compress all\" did.",
+      "properties": {
+        "compressed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "description": "Why the first of those failed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failed": {
+          "description": "Meetings left as they were, recordings intact.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "compressed",
+        "failed"
       ],
       "type": "object"
     },
@@ -1785,6 +1813,14 @@
             "null"
           ]
         },
+        "compressBytes": {
+          "description": "Full-quality (WAV) recordings that \"Compress all\" would compress, whatever their age.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "days": {
           "format": "uint32",
           "minimum": 0,
@@ -1844,15 +1880,20 @@
             "null"
           ]
         },
+        "sendOnly": {
+          "description": "Google granted sending but not reading (the app's own client since 2026-11-12), so\nWhimbrel does not read this account's mail. Reading needs the user's own Google project.",
+          "type": "boolean"
+        },
         "signInExpired": {
-          "description": "Google's sign-in for this account expired: only \"Sign in again\" fixes it.",
+          "description": "Google's sign-in for this account expired, or the Google client it was signed in with\nchanged: only \"Sign in again\" fixes it.",
           "type": "boolean"
         }
       },
       "required": [
         "email",
         "needsReconnect",
-        "signInExpired"
+        "signInExpired",
+        "sendOnly"
       ],
       "type": "object"
     },
@@ -1875,6 +1916,19 @@
       "required": [
         "accounts"
       ],
+      "type": "object"
+    },
+    "GoogleClientStatus": {
+      "description": "What Settings shows about the custom Google client. The secret never leaves Credential Manager.",
+      "properties": {
+        "clientId": {
+          "description": "The saved client's ID, or `None` when Gmail and Calendar use the app's own client.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "HostOption": {
@@ -3789,6 +3843,121 @@
       ],
       "type": "object"
     },
+    "RecapDraft": {
+      "description": "What the Send recap sheet opens with.",
+      "properties": {
+        "body": {
+          "description": "The email body: the recap with the \"Sent with Whimbrel\" footer.",
+          "type": "string"
+        },
+        "gmailFrom": {
+          "description": "The Gmail account the recap is sent from; `None` opens the mail app instead.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recipients": {
+          "description": "The invitees with a usable address, minus the user's own (all ticked to start).",
+          "items": {
+            "$ref": "#/definitions/RecapRecipient"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "recipients",
+        "body"
+      ],
+      "type": "object"
+    },
+    "RecapMailto": {
+      "description": "The mail-app draft: open `url`. When `body_in_url` is false the body was too long for the\nlink, so the UI put it on the clipboard first and the draft says to paste it.",
+      "properties": {
+        "bodyInUrl": {
+          "type": "boolean"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "bodyInUrl"
+      ],
+      "type": "object"
+    },
+    "RecapRecipient": {
+      "description": "One invitee the recap can go to.",
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "email"
+      ],
+      "type": "object"
+    },
+    "RecapSentView": {
+      "description": "\"Sent the recap to N people\" on the meeting page.",
+      "properties": {
+        "recipientCount": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "sentUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sentUnixMs",
+        "recipientCount"
+      ],
+      "type": "object"
+    },
+    "RecapSummaryInput": {
+      "description": "The summary as the meeting page shows it (unsaved edits included).",
+      "properties": {
+        "actionItems": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "openQuestions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "summary",
+        "decisions",
+        "actionItems",
+        "openQuestions"
+      ],
+      "type": "object"
+    },
     "RecordingNoticeSettings": {
       "description": "Settings → Meetings → \"Remind me to tell people I'm recording\" (W-1.7).",
       "properties": {
@@ -4041,6 +4210,10 @@
             "null"
           ]
         },
+        "googleAiBillingConfirmed": {
+          "description": "The user says their Google AI Studio key's project has billing on, so Gemini may get\nGmail and Calendar text (Google may train on the free tier). Off by default.",
+          "type": "boolean"
+        },
         "googleModel": {
           "type": "string"
         },
@@ -4060,6 +4233,10 @@
         },
         "preferredProvider": {
           "$ref": "#/definitions/Provider"
+        },
+        "remoteOllamaGoogleData": {
+          "description": "Gmail and Calendar text may go to a cloud or remote Ollama model. Off by default. Windows\nonly talks to Ollama on 127.0.0.1, so this matters for Ollama's `-cloud` models.",
+          "type": "boolean"
         },
         "useLocalModel": {
           "description": "Whether Ollama is a link in the chain at all; ignored in local-only mode. On by default.",
@@ -4088,7 +4265,9 @@
         "whimbrelModel",
         "localOnly",
         "cheapFirst",
-        "useLocalModel"
+        "useLocalModel",
+        "googleAiBillingConfirmed",
+        "remoteOllamaGoogleData"
       ],
       "type": "object"
     },
@@ -4805,6 +4984,28 @@
         "id",
         "text",
         "createdAtUnixMs"
+      ],
+      "type": "object"
+    },
+    "SummaryFallbackView": {
+      "description": "Why a summary meant for Whimbrel AI was written by another model (core's\n`SummaryFallback`; content-free).",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "A `fallback_reason` code: \"not_signed_in\", \"budget\", \"timeout\", ...",
+          "type": "string"
+        },
+        "used": {
+          "description": "The provider that wrote it (\"ollama\", \"local\", \"anthropic\", ...).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "used",
+        "model",
+        "reason"
       ],
       "type": "object"
     },
@@ -6383,6 +6584,17 @@
             "string",
             "null"
           ]
+        },
+        "summaryFallback": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SummaryFallbackView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Whimbrel AI was meant to write this summary and another model did (#805): who wrote it\nand why, for the line under the summary."
         },
         "summaryIsEdited": {
           "type": "boolean"

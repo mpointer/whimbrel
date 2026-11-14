@@ -31,7 +31,7 @@ function triggerLabel(trigger: string | null | undefined): string {
 }
 
 /** The Meetings tab: record, the meeting list, and the selected meeting's workspace. */
-export function MeetingsView({ open }: { open?: { seq: number; meetingId: number | null } | null } = {}) {
+export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; meetingId: number | null } | null; onOpenSettings?: () => void } = {}) {
   const [rows, setRows] = useState<MeetingRow[]>([]);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
@@ -166,7 +166,7 @@ export function MeetingsView({ open }: { open?: { seq: number; meetingId: number
           {selected == null ? (
             <section className="card empty-state">{t("Select a meeting to see its notes, summary and transcript.")}</section>
           ) : (
-            <Workspace meetingId={selected} onChanged={() => load(filter)} />
+            <Workspace meetingId={selected} onChanged={() => load(filter)} onOpenSettings={onOpenSettings} />
           )}
         </div>
       </div>

@@ -24,6 +24,7 @@ mod inference_ffi;
 mod mcp_ffi;
 mod meeting_parts_ffi;
 mod speaker_names_ffi;
+mod recap_ffi;
 mod model_defaults_ffi;
 mod storage_ffi;
 mod models_ffi;
@@ -32,6 +33,7 @@ mod oauth_ffi;
 mod sync_ffi;
 mod topics_ffi;
 mod update_ffi;
+mod background_gate_ffi;
 mod workspace_ffi;
 mod write_action_ffi;
 
@@ -1020,8 +1022,11 @@ pub extern "C" fn whimbrel_llm_prepare_ask(
         return ptr::null_mut();
     };
     let routing = parse_routing_config(routing_config_json);
+    // Limited Use: this call's own streamed Ollama model and host decide (see
+    // `api::routing::streamed_may_receive_google_data`).
+    let call = api::routing::LimitedUseSettings::from_routing_json_str(cstr_to_string(routing_config_json).as_deref());
     let store = unsafe { &(*handle).0 };
-    let result = api::ask::prepare_ask(store, &query, context_limit, &history, &routing);
+    let result = api::ask::prepare_ask_for(store, &query, context_limit, &history, &routing, &call);
     match envelope_json(&result) {
         Some(json) => json_to_c_string(json),
         None => ptr::null_mut(),
@@ -1114,8 +1119,9 @@ pub extern "C" fn whimbrel_llm_prepare_window_ask(
         text: window.text,
         is_selection: window.is_selection,
     };
+    let call = api::routing::LimitedUseSettings::from_routing_json_str(cstr_to_string(routing_config_json).as_deref());
     let store = unsafe { &(*handle).0 };
-    match api::window_ask::prepare_window_ask(store, &input, &query, &history, &routing) {
+    match api::window_ask::prepare_window_ask_for(store, &input, &query, &history, &routing, &call) {
         Ok(data) => match serde_json::to_string(&data) {
             Ok(json) => json_to_c_string(ok_envelope(&json)),
             Err(_) => ptr::null_mut(),
@@ -2185,6 +2191,90 @@ pub extern "C" fn whimbrel_llm_summarize_meeting(
     }
 }
 
+/// "Re-summarize with Whimbrel": [`whimbrel_llm_summarize_meeting`] (same arguments, same
+/// governance, same Limited Use rules) with the chain cut to the one provider the routing
+/// config prefers, so nothing falls back to a local or other model. Returns the same envelope;
+/// on success `data` has no `fallback`, and the stored notice for the meeting is cleared. A
+/// refusal or failure is `{"ok":false,"error":{"kind":"provider_failure"|"budget_spent",...,
+/// "fallback_reason":"not_signed_in"|"no_device_key"|"local_only"|"budget"|"timeout"|
+/// "network"|"unauthorized"|"credit_exhausted"|"rate_limited"|"model_unavailable"|
+/// "unavailable"|"not_configured"}}` (with `"http_status"` when the call had one), and the
+/// meeting row is untouched. `fallback_reason` is absent when the failure had no cause to
+/// report (for example nothing to summarize).
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_llm_summarize_meeting_preferred(
+    handle: *mut StoreHandle,
+    meeting_id: i64,
+    notes: *const c_char,
+    transcript: *const c_char,
+    slides: *const c_char,
+    model: *const c_char,
+    routing_config_json: *const c_char,
+    custom_instructions: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(notes) = cstr_to_string(notes) else {
+        return ptr::null_mut();
+    };
+    let Some(transcript) = cstr_to_string(transcript) else {
+        return ptr::null_mut();
+    };
+    let Some(model) = cstr_to_string(model) else {
+        return ptr::null_mut();
+    };
+    let slides = cstr_to_string(slides).unwrap_or_default();
+    let custom_instructions = cstr_to_string(custom_instructions).unwrap_or_default();
+    let routing = parse_routing_config(routing_config_json);
+    let store = unsafe { &(*handle).0 };
+    let result = api::summary::summarize_meeting_preferred(
+        store,
+        meeting_id,
+        &notes,
+        &transcript,
+        &slides,
+        &model,
+        &routing,
+        &custom_instructions,
+    );
+    let reason = if result.is_err() { api::summary::take_last_summary_failure_reason() } else { None };
+    match envelope_json(&result).map(|json| with_fallback_reason(json, reason)) {
+        Some(json) => json_to_c_string(json),
+        None => ptr::null_mut(),
+    }
+}
+
+/// Adds `fallback_reason` (and `http_status`) to an error envelope's `error` object; any
+/// other envelope, or no reason, is returned as it was.
+fn with_fallback_reason(envelope: String, reason: Option<(&'static str, Option<u16>)>) -> String {
+    let Some((code, status)) = reason else { return envelope };
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&envelope) else { return envelope };
+    let Some(error) = value.get_mut("error").and_then(|e| e.as_object_mut()) else { return envelope };
+    error.insert("fallback_reason".into(), serde_json::Value::String(code.into()));
+    if let Some(status) = status {
+        error.insert("http_status".into(), status.into());
+    }
+    serde_json::to_string(&value).unwrap_or(envelope)
+}
+
+/// Why the meeting's stored summary came from another provider than the one picked (the
+/// notice the summary view shows): `{"ok":true,"data":null}` when there is none, or
+/// `{"ok":true,"data":{"preferred":"whimbrel","used":"ollama","model":"gemma4:12b",
+/// "reason":"not_signed_in","http_status":502}}` (`http_status` only when the failing call had
+/// one). It reads `null` again once the summary is replaced by another provider's, so a
+/// shell can call it whenever it shows a summary. Device-local; never synced. Returns a
+/// bare NULL only on a null handle.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meeting_summary_fallback(handle: *mut StoreHandle, meeting_id: i64) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let data = serde_json::to_string(&api::summary::stored_summary_fallback(store, meeting_id)).unwrap_or_else(|_| "null".into());
+    json_to_c_string(api::envelope::ok_envelope(&data))
+}
+
 /// FR-CHAT-2 governance: today's spend-so-far as JSON `{"user_cents": N, "global_cents": N}`,
 /// using the same UTC-midnight day boundary as `check_spend_cap`. `user_id` may be null
 /// (Whimbrel's typical single-device case — the "anonymous" identity). A query for a
@@ -2782,6 +2872,24 @@ pub extern "C" fn whimbrel_memory_set_meeting_title(handle: *mut StoreHandle, id
     };
     let store = unsafe { &(*handle).0 };
     store.set_meeting_title(id, &title).unwrap_or(false)
+}
+
+/// Limited Use: states which calendar a calendar-triggered meeting came from, `"google"` or
+/// `"other"` (device-local, not synced). Core records it itself when the meeting is created,
+/// by matching the title against the synced calendar events; a shell that knows the event's
+/// account can state it exactly. Without it a calendar meeting whose source is unknown is
+/// treated as Google Calendar text. Returns whether the meeting existed and the source name
+/// was valid (false on a null handle, invalid string or DB error).
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_memory_set_meeting_calendar_source(handle: *mut StoreHandle, id: i64, source: *const c_char) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let Some(source) = cstr_to_string(source) else {
+        return false;
+    };
+    let store = unsafe { &(*handle).0 };
+    store.set_meeting_calendar_source(id, &source).unwrap_or(false)
 }
 
 /// Sets one meeting's estimated_speaker_count (the heuristic speaker-count hint).
@@ -4991,11 +5099,12 @@ mod tests {
 
         let line = "[   0.0s] Me: this is one line of transcript text that repeats many times.";
         let transcript = std::iter::repeat(line)
-            .take(2000)
+            // A hosted model takes ~590k characters a call, so this needs ~760k to split into 2 chunks.
+            .take(10000)
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            transcript.len() > llm::max_transcript_chars_per_chunk(),
+            transcript.len() > llm::summary_chunk_chars(llm::Provider::Anthropic),
             "test setup must genuinely exceed the real budget, not assume a chunk count"
         );
 
@@ -5126,6 +5235,44 @@ mod tests {
         assert!(summary_str.contains("\"scope\":\"global\""));
         whimbrel_core_free_string(summary_json);
 
+        whimbrel_memory_close(handle);
+    }
+
+    /// "Re-summarize with Whimbrel" with no sign-in: an offline envelope that names the reason
+    /// (no model is asked), and the stored-notice reader answers `null` for the meeting.
+    #[test]
+    fn forced_resummary_without_sign_in_names_the_reason_and_the_notice_reads_null() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path_c = to_cstring(dir.path().join("forced.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let meeting_c = to_cstring(
+            "{\"device_id\":\"d\",\"start_unix_ms\":1000,\"end_unix_ms\":null,\"title\":\"Standup\",\"attendees\":[],\
+              \"trigger\":\"manual\",\"audio_path\":null,\"status\":\"completed\"}",
+        );
+        let insert_json = whimbrel_memory_insert_meeting(handle, meeting_c.as_ptr());
+        let id = serde_json::from_str::<serde_json::Value>(unsafe { CStr::from_ptr(insert_json) }.to_str().unwrap()).unwrap()["id"]
+            .as_i64()
+            .unwrap();
+        whimbrel_core_free_string(insert_json);
+
+        let (notes, transcript, model) = (to_cstring("notes"), to_cstring("transcript"), to_cstring("gemma4:12b"));
+        // Whimbrel picked, a device key but no ID token.
+        let routing = to_cstring(r#"{"preferred_provider":"whimbrel","whimbrel_device_key":"k"}"#);
+        let out = whimbrel_llm_summarize_meeting_preferred(
+            handle, id, notes.as_ptr(), transcript.as_ptr(), ptr::null(), model.as_ptr(), routing.as_ptr(), ptr::null(),
+        );
+        assert!(!out.is_null());
+        let value: serde_json::Value = serde_json::from_str(unsafe { CStr::from_ptr(out) }.to_str().unwrap()).unwrap();
+        whimbrel_core_free_string(out);
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["error"]["kind"], "provider_failure");
+        assert_eq!(value["error"]["fallback_reason"], "not_signed_in");
+
+        let out = whimbrel_meeting_summary_fallback(handle, id);
+        assert_eq!(unsafe { CStr::from_ptr(out) }.to_str().unwrap(), r#"{"ok":true,"data":null}"#);
+        whimbrel_core_free_string(out);
+        assert!(whimbrel_meeting_summary_fallback(ptr::null_mut(), id).is_null());
         whimbrel_memory_close(handle);
     }
 
@@ -5374,6 +5521,63 @@ mod tests {
         assert!(!stats.is_null());
         whimbrel_core_free_string(stats);
         handle
+    }
+
+    /// Limited Use race: Asks streamed against an Ollama cloud model run while other calls
+    /// (Asks and background work naming the local model) go through on other threads.
+    /// Each prepare reads its own routing JSON, so no cloud prompt ever holds Gmail text,
+    /// while the local ones do.
+    #[test]
+    fn concurrent_prepares_never_give_a_cloud_ollama_model_gmail_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = seeded_handle_with_capture_text(dir.path(), "Falcon budget spreadsheet");
+        let store = unsafe { &(*first).0 };
+        store
+            .upsert_email_items(&[memory::NewEmailItem {
+                device_id: "dev-1".into(),
+                external_id: "m-1".into(),
+                ts_unix_ms: now_unix_ms() - 1_000,
+                from: "Priya <priya@x.com>".into(),
+                to: "me@x.com".into(),
+                subject: "Falcon".into(),
+                body_text: "GMAILSECRET the Falcon budget is 40k".into(),
+                gmail_thread_id: "thread-1".into(),
+                account_email: "me@x.com".into(),
+                ..Default::default()
+            }])
+            .unwrap();
+        while store.run_thread_state_sync_job(now_unix_ms()).unwrap() {}
+        let db = dir.path().join("prepare-ask-test.sqlite").to_str().unwrap().to_string();
+
+        let run = |json: &'static str, rounds: usize| {
+            let db = db.clone();
+            std::thread::spawn(move || {
+                let db_c = to_cstring(&db);
+                let handle = whimbrel_memory_open(db_c.as_ptr(), ptr::null());
+                assert!(!handle.is_null());
+                let (q, r) = (to_cstring("Falcon budget"), to_cstring(json));
+                let mut prompts = Vec::new();
+                for _ in 0..rounds {
+                    // A background call's routing JSON, between prepares.
+                    drop(parse_routing_config(r.as_ptr()));
+                    let out = whimbrel_llm_prepare_ask(handle, q.as_ptr(), 10, ptr::null(), r.as_ptr());
+                    assert!(!out.is_null());
+                    let text = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+                    whimbrel_core_free_string(out);
+                    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    api::ask::discard_ask(v["data"]["prepare_id"].as_str().unwrap());
+                    prompts.push(v["data"]["prompt"].as_str().unwrap().to_string());
+                }
+                whimbrel_memory_close(handle);
+                prompts
+            })
+        };
+        let cloud = run(r#"{"preferred_provider":"ollama","streamed_ollama_model":"gpt-oss:120b-cloud"}"#, 25);
+        let local = run(r#"{"preferred_provider":"ollama","streamed_ollama_model":"gemma4:12b"}"#, 25);
+        let (cloud, local) = (cloud.join().unwrap(), local.join().unwrap());
+        assert!(cloud.iter().all(|p| !p.contains("GMAILSECRET")), "a cloud prompt held Gmail text");
+        assert!(local.iter().all(|p| p.contains("GMAILSECRET")), "the local model keeps getting Gmail threads");
+        whimbrel_memory_close(first);
     }
 
     #[test]
@@ -7275,6 +7479,7 @@ mod tests {
             tldr: "shipped the thing".to_string(),
             decisions: vec!["ship Friday".to_string()],
             action_items: vec!["write the changelog".to_string()],
+            action_items_detail: vec![],
             open_questions: vec![],
             token_usage: llm::TokenUsage::default(),
         };

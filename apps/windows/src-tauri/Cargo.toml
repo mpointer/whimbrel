@@ -1,6 +1,6 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.71"
+version = "0.9.72"
 edition = "2021"
 publish = false
 # Two binaries (the app and the M3.1 capture-spike CLI); the Tauri CLI builds and
@@ -38,16 +38,7 @@ memory = { path = "../../../core/memory" }
 agent = { path = "../../../core/agent" }
 routines = { path = "../../../core/routines" }
 transcribe = { path = "../../../core/transcribe" }
-# Whisper on the GPU through Vulkan (W-1.2): core's whisper-rs, with its `vulkan` feature turned on
-# here so core is unchanged. large-v3-turbo runs at about 0.8x realtime on an i9-13900H's CPU and
-# 5.5x on its integrated Iris Xe. The runtime (vulkan-1.dll) ships with every GPU driver, and a PC
-# without one falls back to the CPU. Building needs the Vulkan SDK (VULKAN_SDK; scripts/dev-env.ps1).
-whisper-rs = { version = "0.16", features = ["vulkan"] }
-diarize = { path = "../../../core/diarize" }
 skins = { path = "../../../core/skins" }
-# Same version core/diarize pins. Only `capture-spike diarize-bench` uses it directly, to
-# time the pipeline at thread counts core/diarize does not expose (M3.1 finding).
-sherpa-onnx = "1.13.4"
 hound = "3"
 rubato = "0.16"
 serde = { version = "1", features = ["derive"] }
@@ -97,6 +88,7 @@ tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"
 version = "0.62"
 features = [
     "Win32_Foundation",
+    "Win32_Media_MediaFoundation",
     "Win32_Devices_FunctionDiscovery",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
@@ -157,6 +149,21 @@ features = [
 
 [dependencies.windows-core]
 version = "0.62"
+
+# The x64 build only. The Arm64 build (2026-11-13, a first cut for Arm laptops that ran the x64 build
+# under emulation) has neither yet: sherpa-onnx ships no Windows Arm64 libraries, and the Vulkan SDK
+# here has no Arm64 ones. So on Arm64 whisper runs on the CPU (core's plain whisper-rs) and the
+# system channel isn't split into speakers (`Pipeline::label_system_channel`).
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+# Whisper on the GPU through Vulkan (W-1.2): core's whisper-rs, with its `vulkan` feature turned on
+# here so core is unchanged. large-v3-turbo runs at about 0.8x realtime on an i9-13900H's CPU and
+# 5.5x on its integrated Iris Xe. The runtime (vulkan-1.dll) ships with every GPU driver, and a PC
+# without one falls back to the CPU. Building needs the Vulkan SDK (VULKAN_SDK; scripts/dev-env.ps1).
+whisper-rs = { version = "0.16", features = ["vulkan"] }
+diarize = { path = "../../../core/diarize" }
+# Same version core/diarize pins. Only `capture-spike diarize-bench` uses it directly, to
+# time the pipeline at thread counts core/diarize does not expose (M3.1 finding).
+sherpa-onnx = "1.13.4"
 
 # IIterable, to pass a language list to WinRT (l10n.rs); already in the lock through windows.
 [dependencies.windows-collections]

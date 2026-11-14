@@ -950,6 +950,22 @@ fn anthropic_event_to_events(
     }
 }
 
+/// The streamed Chat Completions body. OpenRouter's also carries
+/// [`crate::openrouter_provider_preferences`] (Limited Use), OpenAI's and the local
+/// model's do not.
+fn openai_stream_body(provider: Provider, model: &str, prompt: &str) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": model,
+        "stream": true,
+        "stream_options": {"include_usage": true},
+        "messages": [{"role": "user", "content": prompt}],
+    });
+    if provider == Provider::OpenRouter {
+        body["provider"] = crate::openrouter_provider_preferences();
+    }
+    body
+}
+
 /// Streams OpenAI Chat Completions (`stream: true`, with usage on the last chunk). Same
 /// key-sourcing rule as the blocking `OpenAIClient`.
 pub struct OpenAIStreamingClient {
@@ -1010,12 +1026,7 @@ impl StreamingLlmClient for OpenAIStreamingClient {
         cancel: CancellationToken,
     ) -> Result<ProviderEventStream, LlmError> {
         let (response, model) = send_with_model_retry(self.provider, &request.model, self.fallback.as_deref(), &cancel, |model| {
-            let body = serde_json::json!({
-                "model": model,
-                "stream": true,
-                "stream_options": {"include_usage": true},
-                "messages": [{"role": "user", "content": request.prompt}],
-            });
+            let body = openai_stream_body(self.provider, &model, &request.prompt);
             let mut call = self
                 .http
                 .post(format!("{}/v1/chat/completions", self.base_url))
@@ -2046,6 +2057,16 @@ mod tests {
             .with_fallback_model(Some("gpt-next-mini".into()));
         let events = drive_one(Provider::OpenAI, Arc::new(fine), "gpt-x").await;
         assert_eq!((final_text(&events), streaming_model(&events)), ("from gpt-x".to_string(), Some("gpt-x".to_string())));
+    }
+
+    #[test]
+    fn streamed_openrouter_bodies_deny_data_collection_and_openai_bodies_are_unchanged() {
+        let routed = openai_stream_body(Provider::OpenRouter, "vendor/m", "hi");
+        assert_eq!(routed["provider"]["data_collection"], "deny");
+        assert!(routed["provider"].get("zdr").is_none());
+        for p in [Provider::OpenAI, Provider::Local] {
+            assert!(openai_stream_body(p, "m", "hi").get("provider").is_none(), "{p:?}");
+        }
     }
 
     #[tokio::test]

@@ -75,6 +75,19 @@ pub extern "C" fn whimbrel_oauth_refresh(config_json: *const c_char, stored_json
     encode_outcome(api::oauth::refresh_stored(&config, &stored, now_unix_ms))
 }
 
+/// BLOCKING (up to 30 s): revokes a Google token with Google (the token travels in the
+/// POST body). Returns the outcome's reason code (`"revoked"`, `"already_invalid"`,
+/// `"rejected"`, `"unreachable"`, `"nothing_to_revoke"`), or null on a null pointer. Best
+/// effort: the caller deletes its stored copy whatever this returns, and logs only the
+/// code.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_oauth_revoke_google_token(token: *const c_char) -> *mut c_char {
+    let Some(token) = cstr_to_string(token) else {
+        return ptr::null_mut();
+    };
+    json_to_c_string(api::oauth::revoke_google_token(&token).reason_code().to_string())
+}
+
 /// Whether `granted_scope` (nullable: unknown) covers every scope in `required`,
 /// honouring Google's hierarchy. Unknown never satisfies anything.
 #[unsafe(no_mangle)]

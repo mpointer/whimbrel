@@ -16,6 +16,7 @@ pub mod meeting_ask;
 pub mod meetings;
 pub mod models;
 pub mod prep;
+pub mod recap;
 pub mod profile;
 pub mod retention;
 pub mod routines;

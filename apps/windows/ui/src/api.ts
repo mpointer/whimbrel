@@ -2,6 +2,10 @@
 
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
+  RecapDraft,
+  RecapMailto,
+  RecapSentView,
+  RecapSummaryInput,
   AiSettings,
   BudgetNoticeView,
   ProviderBudgetView,
@@ -60,6 +64,7 @@ import type {
   ApprovalView,
   ApproveResult,
   GmailAccounts,
+  GoogleClientStatus,
   McpClientView,
   McpNewClient,
   McpServerView,
@@ -90,6 +95,7 @@ import type {
   LowDisk,
   CompactView,
   FreeUpOptions,
+  CompressView,
   SyncView,
   WhimbrelAiView,
   TrayStatus,
@@ -130,6 +136,8 @@ export const popupQuit = () => invoke<void>("popup_quit");
 
 // Auto-update (M3.5): the version of a downloaded update, and "Restart now".
 export const updateReady = () => invoke<string | null>("update_ready");
+/** This x64 build is running under emulation on an Arm PC (`ArmNotice`). */
+export const runningEmulated = () => invoke<boolean>("running_emulated");
 export const installUpdate = () => invoke<void>("install_update");
 /** Settings → General's "Check for Updates": starts a check and returns at once. */
 export const checkForUpdates = () => invoke<UpdateCheck>("check_for_updates");
@@ -177,6 +185,7 @@ export const setProviderBudget = (provider: Provider, dollars: number | null) =>
 export const openAiSettings = () => invoke<void>("open_ai_settings");
 /** Opens a new email to Whimbrel with the version and Windows build filled in. */
 export const sendFeedback = () => invoke<FeedbackResult>("send_feedback");
+export const perfReportText = () => invoke<string>("perf_report_text");
 export const setApiKey = (provider: Provider, key: string | null) => invoke<ProviderKey[]>("set_api_key", { provider, key });
 /** Turns a provider's key sync on or off on this PC; resolves to the keys. */
 export const setApiKeySync = (provider: Provider, enabled: boolean) => invoke<ProviderKey[]>("set_api_key_sync", { provider, enabled });
@@ -307,6 +316,17 @@ export const meetingList = (filter: string) => invoke<MeetingRow[]>("meeting_lis
 export const importTranscripts = () => invoke<ImportView | null>("import_transcripts");
 export const importMarkdownFolder = () => invoke<ImportView | null>("import_markdown_folder");
 export const meetingWorkspace = (id: number) => invoke<WorkspaceView | null>("meeting_workspace", { id });
+/** "Re-summarize with Whimbrel" (#805): Whimbrel AI only, no fallback; fails with why. */
+export const meetingResummarizeWhimbrel = (id: number, keepEdits: boolean) => invoke<void>("meeting_resummarize_whimbrel", { id, keepEdits });
+// Meeting recap (core #815): Copy as text, Markdown or Slack, and Send recap.
+export type RecapFormat = "plain" | "markdown" | "slack" | "email";
+export const recapText = (summary: RecapSummaryInput, format: RecapFormat) => invoke<string>("recap_text", { summary, format });
+export const recapDraft = (meetingId: number, summary: RecapSummaryInput) => invoke<RecapDraft>("recap_draft", { meetingId, summary });
+export const recapSend = (meetingId: number, to: string[], subject: string, body: string) =>
+  invoke<RecapSentView>("recap_send", { meetingId, to, subject, body });
+export const recapMailto = (to: string[], subject: string, body: string) => invoke<RecapMailto>("recap_mailto", { to, subject, body });
+export const recapOpenMail = (url: string) => invoke<void>("recap_open_mail", { url });
+export const recapSent = (meetingId: number) => invoke<RecapSentView | null>("recap_sent", { meetingId });
 export const meetingTranscript = (id: number) => invoke<TranscriptView>("meeting_transcript", { id });
 /** Speaker names: an invitee or a typed name for one of the meeting's speakers, confirmed. */
 export const setMeetingSpeaker = (id: number, speakerId: number, name: string, email: string | null) =>
@@ -398,7 +418,14 @@ export const gmailAccounts = () => invoke<GmailAccounts>("gmail_accounts");
 export const gmailConnect = () => invoke<GmailAccounts>("gmail_connect");
 export const gmailReconnect = (email: string) => invoke<GmailAccounts>("gmail_reconnect", { email });
 export const gmailDisconnect = (email: string) => invoke<GmailAccounts>("gmail_disconnect", { email });
+/** Whether removing this Google account also revokes Whimbrel's access with Google (PR 798). */
+export const googleRemovalRevokes = (service: "gmail" | "calendar", email: string) => invoke<boolean>("google_removal_revokes", { service, email });
 export const gmailDeleteStoredMail = (email: string) => invoke<GmailAccounts>("gmail_delete_stored_mail", { email });
+/** Your own Google Cloud project (Settings → Connectors → Advanced). The secret is write-only. */
+export const googleClientStatus = () => invoke<GoogleClientStatus>("google_client_status");
+export const googleClientSave = (clientId: string, clientSecret: string) =>
+  invoke<GoogleClientStatus>("google_client_save", { clientId, clientSecret });
+export const googleClientClear = () => invoke<GoogleClientStatus>("google_client_clear");
 export const mcpServerState = () => invoke<McpServerView>("mcp_server_state");
 export const mcpSetEnabled = (enabled: boolean) => invoke<McpServerView>("mcp_set_enabled", { enabled });
 export const mcpClients = () => invoke<McpClientView[]>("mcp_clients");
@@ -437,6 +464,7 @@ export const storageCompact = () => invoke<CompactView>("storage_compact");
 export const storageFreeUpOptions = (days: number) => invoke<FreeUpOptions>("storage_free_up_options", { days });
 export const storageDeleteOldRecordings = (days: number) => invoke<number>("storage_delete_old_recordings", { days });
 export const storageDeleteOldCaptures = (days: number) => invoke<number>("storage_delete_old_captures", { days });
+export const storageCompressRecordings = () => invoke<CompressView>("storage_compress_recordings");
 export const diskAlertStatus = () => invoke<LowDisk[]>("disk_alert_status");
 export const diskAlertOpen = () => invoke<void>("disk_alert_open");
 export const diskAlertDismiss = () => invoke<void>("disk_alert_dismiss");

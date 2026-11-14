@@ -120,6 +120,51 @@ pub extern "C" fn whimbrel_calendar_forget_account(
     }
 }
 
+/// Deletes what was imported from one calendar account (see
+/// `Store::delete_calendar_data_for_account`): rows only that account reports, its presence
+/// entries and sync token. `sole_account` is true when no other account of `source` stays
+/// connected (older rows no presence entry covers then go too). Returns
+/// `{"deleted","emptied"}` or NULL on a null pointer, bad string or DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_calendar_delete_account_data(
+    handle: *mut StoreHandle,
+    source: *const c_char,
+    account: *const c_char,
+    sole_account: bool,
+    now_unix_ms: i64,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let (Some(source), Some(account)) = (cstr_to_string(source), cstr_to_string(account)) else {
+        return ptr::null_mut();
+    };
+    let store = unsafe { &(*handle).0 };
+    match store.delete_calendar_data_for_account(&source, &account, sole_account, now_unix_ms) {
+        Ok(outcome) => encode(&outcome),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Deletes everything stored from one Gmail account's mail (see
+/// `Store::delete_email_data_for_account`): its email items and search entries, threads,
+/// summaries, Reply Priorities scores, pending jobs and history id. Returns
+/// `{"removed": n}` (messages removed) or NULL on a null pointer, bad string or DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_gmail_delete_account_data(handle: *mut StoreHandle, account_email: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(email) = cstr_to_string(account_email) else {
+        return ptr::null_mut();
+    };
+    let store = unsafe { &(*handle).0 };
+    match store.delete_email_data_for_account(&email) {
+        Ok(removed) => encode(&serde_json::json!({ "removed": removed })),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_connector_gmail_request(handle: *mut StoreHandle, account_email: *const c_char) -> *mut c_char {
     if handle.is_null() {
@@ -177,6 +222,33 @@ pub extern "C" fn whimbrel_calendar_event_item(meeting_json: *const c_char, devi
         return ptr::null_mut();
     };
     encode(&calendar::calendar_event_item(&meeting, &device_id))
+}
+
+/// Other devices' calendar events starting in `[from_unix_ms, until_unix_ms)` that
+/// `local_meetings_json` (this device's own `QualifyingMeeting` array, unfiltered) does
+/// not already show, as a JSON array of `QualifyingMeeting`. Rows last written by
+/// `exclude_device_id` and rows marked removed are left out. NULL on a null handle or
+/// pointer, malformed JSON or a DB error. Display only: a caller must not start a
+/// recording prompt from these.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_calendar_synced_meetings(
+    handle: *mut StoreHandle,
+    exclude_device_id: *const c_char,
+    from_unix_ms: i64,
+    until_unix_ms: i64,
+    local_meetings_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let (Some(device), Some(local)) = (cstr_to_string(exclude_device_id), cstr_to_string(local_meetings_json)) else {
+        return ptr::null_mut();
+    };
+    let store = unsafe { &(*handle).0 };
+    match calendar::synced_meetings_json(store, &device, from_unix_ms, until_unix_ms, &local) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -326,5 +398,41 @@ mod tests {
         assert!(shown_ids(handle).is_empty());
         assert!(whimbrel_calendar_forget_account(ptr::null_mut(), src.as_ptr(), acct.as_ptr(), 1002).is_null());
         crate::whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn delete_account_data_ffis_round_trip() {
+        let handle = handle_with_rows();
+        let (src, acct) = (CString::new("google_calendar").unwrap(), CString::new("x@g").unwrap());
+        let both = CString::new(r#"[{"external_id":"a#5","start_unix_ms":5000},{"external_id":"b#6","start_unix_ms":6000}]"#).unwrap();
+        take(whimbrel_calendar_presence_replace(handle, src.as_ptr(), acct.as_ptr(), 0, 10_000, both.as_ptr(), 1000));
+        // Both rows are in the past at 20_000, so they are deleted, not emptied.
+        let out = take(whimbrel_calendar_delete_account_data(handle, src.as_ptr(), acct.as_ptr(), false, 20_000));
+        assert_eq!(out, serde_json::json!({"deleted": 2, "emptied": 0}));
+        assert!(shown_ids(handle).is_empty());
+        assert!(whimbrel_calendar_delete_account_data(ptr::null_mut(), src.as_ptr(), acct.as_ptr(), false, 1).is_null());
+
+        let mail = CString::new("a@x.com").unwrap();
+        assert_eq!(take(whimbrel_gmail_delete_account_data(handle, mail.as_ptr())), serde_json::json!({"removed": 0}));
+        assert!(whimbrel_gmail_delete_account_data(ptr::null_mut(), mail.as_ptr()).is_null());
+        crate::whimbrel_memory_close(handle);
+    }
+
+    #[test]
+    fn synced_meetings_ffi_returns_other_devices_rows_not_shown_locally() {
+        let handle = handle_with_rows(); // two rows owned by mac-1
+        let items = CString::new(r#"[
+            {"device_id":"mac-2","source":"apple_calendar","external_id":"g#7","ts_unix_ms":7000,"title":"Genesys Architecture Follow Up","actors":["Ana"]},
+            {"device_id":"mac-2","source":"apple_calendar","external_id":"s#8","ts_unix_ms":8000,"title":"Shown here","actors":[]}]"#).unwrap();
+        assert!(crate::whimbrel_memory_upsert_calendar_event_items(handle, items.as_ptr()));
+        let (me, local) = (CString::new("mac-1").unwrap(), CString::new(r#"[{"id":"L","title":"shown here","start_unix_ms":8000,"end_unix_ms":9000,"attendees":[],"conference_link":null,"source":"calendar","app_bundle_id":null}]"#).unwrap());
+        let out = take(whimbrel_calendar_synced_meetings(handle, me.as_ptr(), 0, 100_000, local.as_ptr()));
+        let titles: Vec<&str> = out.as_array().unwrap().iter().map(|m| m["title"].as_str().unwrap()).collect();
+        assert_eq!(titles, ["Genesys Architecture Follow Up"]);
+        assert_eq!(out[0]["id"], "g");
+        assert_eq!(out[0]["end_unix_ms"].as_i64().unwrap() - out[0]["start_unix_ms"].as_i64().unwrap(), 1_800_000);
+        let bad = CString::new("nope").unwrap();
+        assert!(whimbrel_calendar_synced_meetings(handle, me.as_ptr(), 0, 1, bad.as_ptr()).is_null());
+        assert!(whimbrel_calendar_synced_meetings(ptr::null_mut(), me.as_ptr(), 0, 1, local.as_ptr()).is_null());
     }
 }

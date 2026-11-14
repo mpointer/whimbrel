@@ -66,7 +66,8 @@ impl StoreHandle {
         Self::open_lane(db_path, primary, "whimbrel-store-bg")
     }
 
-    fn open_lane(db_path: PathBuf, primary: &StoreHandle, thread_name: &str) -> Result<Self, CommandError> {
+    /// One more connection, opened the same way, on a thread called `thread_name`.
+    pub fn open_lane(db_path: PathBuf, primary: &StoreHandle, thread_name: &str) -> Result<Self, CommandError> {
         let embedder = primary.call_blocking(|s| s.embedder())?;
         Self::spawn_named(thread_name, move || {
             Store::open_with_embedder(&db_path, embedder).map_err(|e| e.to_string())

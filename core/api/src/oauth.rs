@@ -412,6 +412,68 @@ pub fn refresh_stored(provider: &ProviderConfig, stored: &StoredTokens, now_unix
     Ok(stored.applying_refresh(response, now_unix_ms))
 }
 
+// ---- Revoking a Google grant on disconnect ----
+
+/// Google's token revocation endpoint. The token goes in the POST form body, never the URL.
+pub const GOOGLE_REVOKE_ENDPOINT: &str = "https://oauth2.googleapis.com/revoke";
+
+/// How a revoke attempt ended. Deliberately not part of `OAuthError`: a revoke is best
+/// effort and the caller deletes its local copy whatever this says. `reason_code` is the
+/// only text meant for logs; it never contains the token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevokeOutcome {
+    /// Google accepted the revoke (HTTP 200).
+    Revoked,
+    /// Google said the token was already invalid or revoked (HTTP 400 `invalid_token`).
+    AlreadyInvalid,
+    /// Google answered with another error status.
+    Rejected,
+    /// No answer: offline, DNS, timeout or a reset.
+    Unreachable,
+    /// There was no token to send.
+    NothingToRevoke,
+}
+
+impl RevokeOutcome {
+    pub fn reason_code(self) -> &'static str {
+        match self {
+            RevokeOutcome::Revoked => "revoked",
+            RevokeOutcome::AlreadyInvalid => "already_invalid",
+            RevokeOutcome::Rejected => "rejected",
+            RevokeOutcome::Unreachable => "unreachable",
+            RevokeOutcome::NothingToRevoke => "nothing_to_revoke",
+        }
+    }
+
+    /// Whether Google no longer honors the token (it was revoked now or already was).
+    pub fn is_gone(self) -> bool {
+        matches!(self, RevokeOutcome::Revoked | RevokeOutcome::AlreadyInvalid)
+    }
+}
+
+fn revoke_at(endpoint: &str, token: &str) -> RevokeOutcome {
+    if token.is_empty() {
+        return RevokeOutcome::NothingToRevoke;
+    }
+    match agent().post(endpoint).send_form(&[("token", token)]) {
+        Ok(_) => RevokeOutcome::Revoked,
+        Err(ureq::Error::Status(400, resp)) => match resp.into_json::<serde_json::Value>() {
+            Ok(body) if body["error"] == "invalid_token" => RevokeOutcome::AlreadyInvalid,
+            _ => RevokeOutcome::Rejected,
+        },
+        Err(ureq::Error::Status(..)) => RevokeOutcome::Rejected,
+        Err(_) => RevokeOutcome::Unreachable,
+    }
+}
+
+/// BLOCKING (up to 30 s): revokes a Google token. Pass the refresh token: Google then also
+/// ends the access tokens made from it. Best effort; the shell deletes its stored copy
+/// regardless of the outcome and logs only `reason_code()`.
+pub fn revoke_google_token(token: &str) -> RevokeOutcome {
+    revoke_at(GOOGLE_REVOKE_ENDPOINT, token)
+}
+
 // ---- Pure helpers ----
 
 /// Whether a granted scope string covers everything `required` asks for, comparing
@@ -549,6 +611,38 @@ mod tests {
 
     fn state_of(auth_url: &str) -> String {
         url::Url::parse(auth_url).unwrap().query_pairs().find(|(k, _)| k == "state").unwrap().1.into_owned()
+    }
+
+    #[test]
+    fn revoke_posts_the_token_as_a_form_body_never_in_the_url() {
+        let (url, rx) = token_server(200, "");
+        assert_eq!(revoke_at(&url, "r/1+x=token"), RevokeOutcome::Revoked);
+        let req = rx.recv().unwrap();
+        let first = req.lines().next().unwrap();
+        assert!(first.starts_with("POST /token HTTP/1.1"), "{first}");
+        assert!(!first.contains('?') && !first.contains("token="), "token must not be in the URL: {first}");
+        assert!(req.to_ascii_lowercase().contains("content-type: application/x-www-form-urlencoded"));
+        assert_eq!(req.split("\r\n\r\n").nth(1).unwrap(), "token=r%2F1%2Bx%3Dtoken");
+        assert_eq!(GOOGLE_REVOKE_ENDPOINT, "https://oauth2.googleapis.com/revoke");
+    }
+
+    #[test]
+    fn revoke_outcomes_have_reason_codes_without_the_token() {
+        let (url, _rx) = token_server(400, r#"{"error":"invalid_token"}"#);
+        let gone = revoke_at(&url, "secret-token");
+        assert_eq!(gone, RevokeOutcome::AlreadyInvalid);
+        assert!(gone.is_gone());
+        let (url, _rx) = token_server(400, r#"{"error":"invalid_request"}"#);
+        assert_eq!(revoke_at(&url, "secret-token"), RevokeOutcome::Rejected);
+        let (url, _rx) = token_server(503, "");
+        assert_eq!(revoke_at(&url, "secret-token"), RevokeOutcome::Rejected);
+        let down = revoke_at("http://127.0.0.1:1/revoke", "secret-token");
+        assert_eq!(down, RevokeOutcome::Unreachable);
+        assert!(!down.is_gone());
+        assert_eq!(revoke_at("http://127.0.0.1:1/revoke", ""), RevokeOutcome::NothingToRevoke);
+        for o in [RevokeOutcome::Revoked, down, gone] {
+            assert!(!o.reason_code().contains("secret"));
+        }
     }
 
     #[test]

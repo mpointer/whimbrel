@@ -139,7 +139,7 @@ export function TopicStepsCard() {
           </label>
           <p className="muted small">
             {t(
-              "Sends short excerpts of topic emails, meeting action items and Teams screens to TypeSafe to find steps you owe and are owed. Off: your local model does this.",
+              "Sends short excerpts of meeting action items and Teams screens to TypeSafe to find steps you owe and are owed. Gmail and Google Calendar items wait until TypeSafe confirms it doesn't train on them. Off: your local model does this.",
             )}
           </p>
           {view.enabled && view.localOnly && <p className="muted small">{t("Local-only mode is on, so nothing is sent to TypeSafe.")}</p>}

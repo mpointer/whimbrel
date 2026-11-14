@@ -2,6 +2,7 @@
 //! and calendar triggers. Plan: `docs/superpowers/plans/2026-09-17-m3.3-meetings.md`.
 
 pub mod benchmark;
+pub mod compress;
 pub mod controller;
 pub mod detect;
 pub mod live;

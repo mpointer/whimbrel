@@ -633,6 +633,11 @@ export interface RoutingSettings {
    */
   cheapFirst: boolean;
   globalDailyCapCents?: number | null;
+  /**
+   * The user says their Google AI Studio key's project has billing on, so Gemini may get
+   * Gmail and Calendar text (Google may train on the free tier). Off by default.
+   */
+  googleAiBillingConfirmed: boolean;
   googleModel: string;
   /**
    * FR-CHAT-5 local-only mode: Ollama only, whatever else is configured.
@@ -647,6 +652,11 @@ export interface RoutingSettings {
    */
   openrouterModel: string;
   preferredProvider: Provider;
+  /**
+   * Gmail and Calendar text may go to a cloud or remote Ollama model. Off by default. Windows
+   * only talks to Ollama on 127.0.0.1, so this matters for Ollama's `-cloud` models.
+   */
+  remoteOllamaGoogleData: boolean;
   /**
    * Whether Ollama is a link in the chain at all; ignored in local-only mode. On by default.
    */
@@ -900,7 +910,8 @@ export interface CalendarAccounts {
   nextMeeting?: string | null;
   nextStartUnixMs?: number | null;
   /**
-   * The accounts whose Google sign-in expired: only "Sign in again" fixes them.
+   * The accounts that need signing in again: Google's sign-in expired, or the Google client
+   * they were signed in with changed (Advanced → your own Google Cloud project).
    */
   signInExpired: string[];
   syncError?: string | null;
@@ -1088,6 +1099,23 @@ export interface CompactView {
    * reaches the disk a little later.
    */
   spacePending: boolean;
+}
+/**
+ * What "Compress all" did.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "CompressView".
+ */
+export interface CompressView {
+  compressed: number;
+  /**
+   * Why the first of those failed.
+   */
+  error?: string | null;
+  /**
+   * Meetings left as they were, recordings intact.
+   */
+  failed: number;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1284,6 +1312,10 @@ export interface FreeUpOptions {
    * Free space inside the database file.
    */
   compactBytes?: number | null;
+  /**
+   * Full-quality (WAV) recordings that "Compress all" would compress, whatever their age.
+   */
+  compressBytes?: number | null;
   days: number;
   /**
    * Audio of meetings older than `days` that can go (every part transcribed).
@@ -1321,7 +1353,13 @@ export interface GmailAccount {
   needsReconnect: boolean;
   readError?: string | null;
   /**
-   * Google's sign-in for this account expired: only "Sign in again" fixes it.
+   * Google granted sending but not reading (the app's own client since 2026-11-12), so
+   * Whimbrel does not read this account's mail. Reading needs the user's own Google project.
+   */
+  sendOnly: boolean;
+  /**
+   * Google's sign-in for this account expired, or the Google client it was signed in with
+   * changed: only "Sign in again" fixes it.
    */
   signInExpired: boolean;
 }
@@ -1335,6 +1373,18 @@ export interface GmailAccounts {
    * Why Gmail can't be connected right now (no Google client, no Node, connector not staged), or `None`.
    */
   blocked?: string | null;
+}
+/**
+ * What Settings shows about the custom Google client. The secret never leaves Credential Manager.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "GoogleClientStatus".
+ */
+export interface GoogleClientStatus {
+  /**
+   * The saved client's ID, or `None` when Gmail and Calendar use the app's own client.
+   */
+  clientId?: string | null;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -2101,6 +2151,70 @@ export interface QuestionNotice {
   title: string;
 }
 /**
+ * What the Send recap sheet opens with.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "RecapDraft".
+ */
+export interface RecapDraft {
+  /**
+   * The email body: the recap with the "Sent with Whimbrel" footer.
+   */
+  body: string;
+  /**
+   * The Gmail account the recap is sent from; `None` opens the mail app instead.
+   */
+  gmailFrom?: string | null;
+  /**
+   * The invitees with a usable address, minus the user's own (all ticked to start).
+   */
+  recipients: RecapRecipient[];
+}
+/**
+ * One invitee the recap can go to.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "RecapRecipient".
+ */
+export interface RecapRecipient {
+  email: string;
+  name: string;
+}
+/**
+ * The mail-app draft: open `url`. When `body_in_url` is false the body was too long for the
+ * link, so the UI put it on the clipboard first and the draft says to paste it.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "RecapMailto".
+ */
+export interface RecapMailto {
+  bodyInUrl: boolean;
+  url: string;
+}
+/**
+ * "Sent the recap to N people" on the meeting page.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "RecapSentView".
+ */
+export interface RecapSentView {
+  recipientCount: number;
+  sentUnixMs: number;
+}
+/**
+ * The summary as the meeting page shows it (unsaved edits included).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "RecapSummaryInput".
+ */
+export interface RecapSummaryInput {
+  actionItems: string[];
+  decisions: string[];
+  openQuestions: string[];
+  summary: string;
+  title: string;
+}
+/**
  * Settings → Meetings → "Remind me to tell people I'm recording" (W-1.7).
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -2488,6 +2602,24 @@ export interface SuggestionView {
    */
   sourceMeetingTitle?: string | null;
   text: string;
+}
+/**
+ * Why a summary meant for Whimbrel AI was written by another model (core's
+ * `SummaryFallback`; content-free).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SummaryFallbackView".
+ */
+export interface SummaryFallbackView {
+  model: string;
+  /**
+   * A `fallback_reason` code: "not_signed_in", "budget", "timeout", ...
+   */
+  reason: string;
+  /**
+   * The provider that wrote it ("ollama", "local", "anthropic", ...).
+   */
+  used: string;
 }
 /**
  * What Settings → Sync shows. Never carries the Turso token or database URL.
@@ -3057,6 +3189,11 @@ export interface WorkspaceView {
    * Regenerate. `None` once a summary succeeds.
    */
   summaryFailure?: string | null;
+  /**
+   * Whimbrel AI was meant to write this summary and another model did (#805): who wrote it
+   * and why, for the line under the summary.
+   */
+  summaryFallback?: SummaryFallbackView | null;
   summaryIsEdited: boolean;
   /**
    * Why this finished meeting has no transcript, when its last run said so: it failed, or

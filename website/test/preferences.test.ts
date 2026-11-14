@@ -263,3 +263,107 @@ describe("the Resend contact", () => {
     expect(calls[1]).toEqual({ url: "https://api.resend.com/contacts", method: "POST", body: { email: "ada@example.com", first_name: "Ada", topics: [{ id: "topic-1", subscription: "opt_in" }] } });
   });
 });
+
+// The thank-you page's one-click ask: the same double opt-in confirmation as the form's box,
+// for a lead who didn't tick it. It changes no stored answer; only the confirm link does.
+describe("POST /api/email/request-updates and GET /api/email/updates-status", () => {
+  const cookieOf = (res: Response) => res.headers.get("set-cookie")!.split(";")[0];
+  const askUpdates = (cookie: string | null, init: { method?: string; origin?: string | null } = {}, fetcher = recorder().fn) => {
+    const headers: Record<string, string> = {};
+    if (cookie) headers.cookie = cookie;
+    const origin = init.origin === undefined ? ORIGIN : init.origin;
+    if (origin) headers.origin = origin;
+    return call(new Request(`${ORIGIN}/api/email/request-updates`, { method: init.method ?? "POST", headers }), mailEnv, fetcher);
+  };
+  const status = (cookie: string | null) =>
+    call(new Request(`${ORIGIN}/api/email/updates-status`, { headers: cookie ? { cookie } : {} }), mailEnv);
+  const confirms = (sent: Record<string, unknown>[]) => sent.filter((e) => String(e.subject).startsWith("Confirm"));
+
+  it("mails the confirmation to an opted-out lead and changes nothing else", async () => {
+    const cookie = cookieOf(await register({ ...ada, signup_language: "es" }, mailEnv)); // box not ticked
+    const before = await lead("ada@example.com");
+    const r = recorder();
+    const res = await askUpdates(cookie, {}, r.fn);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.json()).toEqual({ status: "sent" });
+    expect(confirms(r.sent)).toHaveLength(1);
+    expect(confirms(r.sent)[0]).toMatchObject({ to: ["ada@example.com"], subject: "Confirma las novedades de Whimbrel" });
+    expect(String(confirms(r.sent)[0].text)).toMatch(/\/email\/preferences\/\?t=[^\s]+&confirm=1/);
+    const after = await lead("ada@example.com");
+    expect(after.product_emails).toBe("opted_out");
+    expect(after.product_emails_set_at).toBe(before.product_emails_set_at);
+    expect(after.product_emails_confirm_sent_at).not.toBeNull();
+    expect(await events(after.id)).toEqual([{ value: "opted_out", source: "signup_form" }]);
+  });
+
+  it("sends at most one confirmation a day: a second ask is too_soon", async () => {
+    const cookie = cookieOf(await register(ada, mailEnv));
+    expect(await (await askUpdates(cookie)).json()).toEqual({ status: "sent" });
+    const r = recorder();
+    expect(await (await askUpdates(cookie, {}, r.fn)).json()).toEqual({ status: "too_soon" });
+    expect(r.sent).toHaveLength(0);
+  });
+
+  it("a ticked box at signup already sent today's confirmation: too_soon, no second mail", async () => {
+    const cookie = cookieOf(await register({ ...ada, marketingOptIn: true }, mailEnv));
+    const r = recorder();
+    expect(await (await askUpdates(cookie, {}, r.fn)).json()).toEqual({ status: "too_soon" });
+    expect(r.sent).toHaveLength(0);
+  });
+
+  it("two concurrent asks for the same lead send exactly one email", async () => {
+    const cookie = cookieOf(await register(ada, mailEnv));
+    const r = recorder();
+    const answers = await Promise.all([askUpdates(cookie, {}, r.fn), askUpdates(cookie, {}, r.fn)]);
+    const statuses = (await Promise.all(answers.map((a) => a.json() as Promise<{ status: string }>))).map((a) => a.status).sort();
+    expect(statuses).toEqual(["sent", "too_soon"]);
+    expect(confirms(r.sent)).toHaveLength(1);
+  });
+
+  it("answers already for an opted-in lead and mails nothing", async () => {
+    const cookie = cookieOf(await register(ada, mailEnv));
+    await optInViaLink("ada@example.com");
+    const r = recorder();
+    expect(await (await askUpdates(cookie, {}, r.fn)).json()).toEqual({ status: "already" });
+    expect(r.sent).toHaveLength(0);
+  });
+
+  it("answers no_lead without a cookie, or with one for no lead", async () => {
+    expect(await (await askUpdates(null)).json()).toEqual({ status: "no_lead" });
+    expect(await (await askUpdates("whimbrel_lead=00000000-0000-4000-8000-000000000000")).json()).toEqual({ status: "no_lead" });
+  });
+
+  it("refuses another origin, a missing Origin, and GET", async () => {
+    const cookie = cookieOf(await register(ada, mailEnv));
+    const r = recorder();
+    const evil = await askUpdates(cookie, { origin: "https://evil.example" }, r.fn);
+    expect(evil.status).toBe(403);
+    const none = await askUpdates(cookie, { origin: null }, r.fn);
+    expect(none.status).toBe(403);
+    const get = await askUpdates(cookie, { method: "GET" }, r.fn);
+    expect(get.status).toBe(405);
+    expect(get.headers.get("allow")).toBe("POST");
+    expect(r.sent).toHaveLength(0);
+    expect((await lead("ada@example.com")).product_emails_confirm_sent_at).toBeNull();
+  });
+
+  it("says so when the mail can't be sent, instead of claiming it was", async () => {
+    const cookie = cookieOf(await register(ada, mailEnv));
+    const res = await askUpdates(cookie, {}, recorder(false).fn);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ status: "error" });
+    expect((await lead("ada@example.com")).product_emails_confirm_sent_at).toBeNull();
+  });
+
+  it("updates-status reports the lead's answer, and 404 without a lead", async () => {
+    const cookie = cookieOf(await register(ada, mailEnv));
+    const out = await status(cookie);
+    expect(out.headers.get("cache-control")).toBe("no-store");
+    expect(await out.json()).toEqual({ opted_in: false });
+    await optInViaLink("ada@example.com");
+    expect(await (await status(cookie)).json()).toEqual({ opted_in: true });
+    expect((await status(null)).status).toBe(404);
+    expect((await call(new Request(`${ORIGIN}/api/email/updates-status`, { method: "POST", headers: { cookie, origin: ORIGIN } }), mailEnv)).status).toBe(405);
+  });
+});

@@ -139,7 +139,7 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
   // TodayView choice) — its workspace, not a link to it.
   const workspace =
     relevantMeeting != null ? (
-      <Workspace meetingId={relevantMeeting} onChanged={loadOverview} />
+      <Workspace meetingId={relevantMeeting} onChanged={loadOverview} onOpenSettings={onOpenSettings} />
     ) : (
       <section className="card" aria-labelledby="meeting-heading">
         <h2 id="meeting-heading" className="section-label">

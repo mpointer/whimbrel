@@ -13,12 +13,21 @@ struct HotkeyPanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-            TextField("Ask about this window", text: $question)
-                .textFieldStyle(.plain)
-                .font(.whimbrelBody(.title3))
-                .foregroundStyle(Color.whimbrelTextPrimary)
-                .focused($fieldFocused)
-                .onSubmit { submit() }
+            HStack(spacing: Spacing.sm) {
+                TextField("Ask about this window", text: $question)
+                    .textFieldStyle(.plain)
+                    .font(.whimbrelBody(.title3))
+                    .foregroundStyle(Color.whimbrelTextPrimary)
+                    .focused($fieldFocused)
+                    .onSubmit { submit() }
+                Button(action: close) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Close")
+                .accessibilityLabel("Close")
+            }
 
             Divider().overlay(Color.whimbrelBorder)
 

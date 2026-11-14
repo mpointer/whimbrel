@@ -336,10 +336,35 @@ impl AppState {
     /// out of `start` so tests never tick against a real model.
     pub fn start_routines(&self) {
         if let Some(store) = &self.store {
-            let slow = self.slow_store.as_ref().unwrap_or(store).clone();
+            // Meeting Prep and the Daily Brief hold their store across a model call: a lane of their own.
+            let lane = self.own_lane("whimbrel-store-routines", self.slow_store.as_ref().unwrap_or(store));
             let connectors = Arc::new(crate::connectors::write::Real::new(self.secrets.clone(), self.paths.root.clone()));
             let own_device_id = self.identity.as_ref().map(|i| i.device_id.clone());
-            crate::routines::start(slow, self.settings.clone(), self.secrets.clone(), self.calendar.clone(), connectors, own_device_id, self.approved_devices());
+            crate::routines::start(lane, self.settings.clone(), self.secrets.clone(), self.calendar.clone(), connectors, own_device_id, self.approved_devices());
+        }
+    }
+
+    /// A connection of its own for one background loop that holds its store across a model call. A
+    /// hung call then stalls only that loop: on 2026-11-13 an Ollama stall held the shared lane for
+    /// 10 minutes a request, and everything else on it (Free up space, say) waited behind it. Shares
+    /// `fallback` when the connection can't open.
+    fn own_lane(&self, thread_name: &str, fallback: &StoreHandle) -> StoreHandle {
+        let Some(primary) = &self.store else { return fallback.clone() };
+        match StoreHandle::open_lane(self.paths.db.clone(), primary, thread_name) {
+            Ok(lane) => {
+                // Its summary and title writes enqueue sync rows only once it knows this device.
+                if let Some(identity) = &self.identity {
+                    let device_id = identity.device_id.clone();
+                    if let Err(e) = lane.call_blocking(move |s| s.set_own_device_id(&device_id)) {
+                        tracing::warn!(lane = thread_name, error = %e, "could not set the device id on a store lane");
+                    }
+                }
+                lane
+            }
+            Err(e) => {
+                tracing::warn!(lane = thread_name, error = %e, "a store lane did not open; the loop shares another");
+                fallback.clone()
+            }
         }
     }
 
@@ -374,18 +399,22 @@ impl AppState {
     /// [`start_capture`](Self::start_capture), kept out of `start` for tests.
     pub fn start_jobs(&self) {
         if let Some(store) = &self.store {
-            // The summary loops hold their store across an Ollama call, so they get their own lane.
-            crate::jobs::start(self.bg_store.as_ref().unwrap_or(store).clone(), self.settings.clone());
+            // The summary loops hold their store across an Ollama call, so each gets a lane of its own.
+            let bg = self.bg_store.as_ref().unwrap_or(store);
+            crate::jobs::start(self.own_lane("whimbrel-store-summaries", bg), self.own_lane("whimbrel-store-episodes", bg), self.settings.clone());
+            // Background work waits and the live transcript backs off while a meeting records (perf item B).
+            crate::meeting_load::start();
             // The `this PC` line now, and resource use every 5 minutes (plan 2026-11-11).
             crate::perf_log::start(self.settings.lock().unwrap().routing().ollama_model);
             // Topic sorting holds its store across a TypeSafe call, so it shares the background lane.
             crate::topics::start(self.bg_store.as_ref().unwrap_or(store).clone(), self.settings.clone(), self.secrets.clone(), self.topic_sort.clone());
             // The suggestion call holds the store across a model call, so it goes on the slow lane.
             let slow = self.slow_store.as_ref().unwrap_or(store).clone();
-            // AI names for suggested topics (PR 720): a model call holds the store, so the slow lane too.
-            crate::topics::start_naming(slow.clone(), self.settings.clone(), self.secrets.clone());
+            // AI names for suggested topics (PR 720) and profile suggestions: each holds its store across
+            // a model call, so each gets a lane of its own rather than the slow lane meetings use.
+            crate::topics::start_naming(self.own_lane("whimbrel-store-topic-names", &slow), self.settings.clone(), self.secrets.clone());
             let own_device_id = self.identity.as_ref().map(|i| i.device_id.clone());
-            crate::jobs::start_profile_suggestions(slow.clone(), self.settings.clone(), self.secrets.clone(), own_device_id, self.approved_devices());
+            crate::jobs::start_profile_suggestions(self.own_lane("whimbrel-store-profile", &slow), self.settings.clone(), self.secrets.clone(), own_device_id, self.approved_devices());
             // Topic pages for the phone and the Obsidian vault: the slow lane, as on the Mac.
             crate::topic_vault::start(slow, self.settings.clone(), self.sync.clone());
         }

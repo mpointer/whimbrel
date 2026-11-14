@@ -461,6 +461,26 @@ function Routing(props: {
           "Conversation titles, topic names and profile suggestions go to the local model first, then to the cheapest model you have a key for. Chat, summaries and digests keep using your preferred provider. Each routine picks its own model in Automations.",
         )}
       </p>
+      <label className="toggle">
+        <input
+          type="checkbox"
+          checked={routing.googleAiBillingConfirmed}
+          onChange={(e) => onChange({ ...routing, googleAiBillingConfirmed: e.target.checked })}
+        />
+        {t("My Google AI Studio project has billing on")}
+      </label>
+      <p className="muted small">
+        {t("Gmail and Calendar text goes to Gemini only when its project has billing on, because Google may train on the free tier.")}
+      </p>
+      <label className="toggle">
+        <input
+          type="checkbox"
+          checked={routing.remoteOllamaGoogleData}
+          onChange={(e) => onChange({ ...routing, remoteOllamaGoogleData: e.target.checked })}
+        />
+        {t("Allow Gmail and Calendar text with a cloud or remote Ollama model")}
+      </label>
+      <p className="muted small">{t("Off keeps Gmail and Calendar text on this computer when Ollama runs elsewhere.")}</p>
       {notice && <p className="muted small">{notice}</p>}
       <div className="field-row">
         {(["user", "global"] as const).map((which) => (

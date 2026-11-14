@@ -11,15 +11,26 @@ enum StorageVolume {
         return values?.volumeAvailableCapacity.map(Int64.init)
     }
 
+    /// The important-usage figure, or the plain available capacity when that reads nil or 0
+    /// (exFAT and SMB volumes may not report it). nil when the plain one is missing too:
+    /// unknown, which warns of nothing.
     static func freeBytes(at url: URL) -> Int64? {
-        let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-        return values?.volumeAvailableCapacityForImportantUsage
+        let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
+        return freeBytes(important: values?.volumeAvailableCapacityForImportantUsage,
+                         available: values?.volumeAvailableCapacity.map(Int64.init))
+    }
+
+    static func freeBytes(important: Int64?, available: Int64?) -> Int64? {
+        if let important, important > 0 { return important }
+        // An important-usage 0 alone isn't trusted; the plain figure decides (0 there is a full disk).
+        return available
     }
 }
 
 /// The Storage pane's lines about compacting.
 enum CompactCopy {
-    static func message(_ result: CoreCompactResult?) -> String {
+    /// `volumeFree`: the free space now, so "not enough disk" asks only for what's missing.
+    static func message(_ result: CoreCompactResult?, volumeFree: Int64?) -> String {
         func size(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
         guard let result else { return String(localized: "Couldn't compact the database.") }
         switch result.reason {
@@ -28,7 +39,8 @@ enum CompactCopy {
         case "ran":
             return String(localized: "Compacted: \(size(result.fileBytesBefore)) → \(size(result.fileBytesAfter)).")
         case "not_enough_disk":
-            return String(localized: "Not enough free disk to compact. Free \(size(result.needBytes ?? 0)) and try again.")
+            let need = result.needBytes ?? 0, short = need - (volumeFree ?? 0)
+            return String(localized: "Not enough free disk to compact. Free \(size(short > 0 ? short : need)) and try again.")
         default:
             return String(localized: "Nothing to compact yet.")
         }

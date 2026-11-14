@@ -216,14 +216,21 @@ pub fn start(
             let ollama_model = routing.ollama_model.clone();
             let now = Local::now();
             let events = calendar.as_ref().map(|c| todays_events(&c.meetings(), now)).unwrap_or_default();
-            let upcoming = calendar.as_ref().map(|c| c.upcoming(now.timestamp_millis())).unwrap_or_default();
+            // Meeting Prep also covers meetings only another device has (#792); read on the store below.
+            let prep_calendar = calendar.clone();
             // The gate: which routines this device may run (the user's choice of device). Core seeds the
             // built-in routines whatever it is.
             let outcome = store.call_blocking(move |s| {
                 let (gmail_connected, recipient) = tick_inputs(s);
                 let now_ms = now.timestamp_millis();
-                let ran = api::routine_runs::tick(s, now_ms, &ollama_model, &config, &events, gmail_connected, recipient.as_deref(), run_gate).map_err(|e| e.to_string())?;
+                // The routines wait while a meeting records; Meeting Prep below does not (it's for the next one).
+                let ran = if crate::meeting_load::background_paused() {
+                    Vec::new()
+                } else {
+                    api::routine_runs::tick(s, now_ms, &ollama_model, &config, &events, gmail_connected, recipient.as_deref(), run_gate).map_err(|e| e.to_string())?
+                };
                 // Meeting Prep is event-driven, so it is asked every tick, after the routines have seeded.
+                let upcoming = crate::connectors::calendar::shown_meetings(prep_calendar.as_deref(), s, now_ms);
                 let prepared = prep_tick(s, now_ms, prep_lead, &ollama_model, &config, &upcoming, run_gate).unwrap_or_else(|e| {
                     tracing::warn!(error = %e, "meeting prep: could not run");
                     Vec::new()

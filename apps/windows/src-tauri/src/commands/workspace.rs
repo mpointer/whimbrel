@@ -75,6 +75,9 @@ pub struct WorkspaceView {
     /// Why the last summary of this device's transcribed meeting failed, shown beside
     /// Regenerate. `None` once a summary succeeds.
     pub summary_failure: Option<String>,
+    /// Whimbrel AI was meant to write this summary and another model did (#805): who wrote it
+    /// and why, for the line under the summary.
+    pub summary_fallback: Option<SummaryFallbackView>,
 }
 
 /// A meeting's transcript for display: turns from the file when it's on this device,
@@ -267,6 +270,13 @@ pub async fn meeting_workspace(state: State<'_, AppState>, id: i64) -> Result<Op
     view.transcription = notice_for(shows_notice, audio.as_deref().map(Path::new));
     let shows_summary_failure = !view.read_only && view.has_transcript && view.processing_stage.is_none();
     view.summary_failure = summary_failure_for(shows_summary_failure, audio.as_deref().map(Path::new));
+    if view.summary.is_some() {
+        view.summary_fallback = state
+            .store()?
+            .call(move |s| api::summary::stored_summary_fallback(s, id))
+            .await?
+            .map(|f| SummaryFallbackView { used: f.used, model: f.model, reason: f.reason });
+    }
     Ok(Some(view))
 }
 
@@ -292,7 +302,7 @@ fn notice_for(applies: bool, audio: Option<&Path>) -> Option<TranscriptionNotice
 fn has_audio(recordings: &Path, audio_path: Option<&str>) -> bool {
     audio_path
         .and_then(|audio| crate::meetings::pipeline::stamp_of(Path::new(audio)))
-        .is_some_and(|stamp| crate::meetings::recorder::RecordingFiles::unfinished(recordings, &stamp, None).audio_path().is_some())
+        .is_some_and(|stamp| crate::meetings::recorder::RecordingFiles::stored(recordings, &stamp).audio_path().is_some())
 }
 
 /// The Mac shows "Transcript language" only in multilingual mode, for a completed meeting
@@ -353,7 +363,20 @@ fn view_of(
         can_choose_language: false,
         transcription: None,
         summary_failure: None,
+        summary_fallback: None,
     }
+}
+
+/// Why a summary meant for Whimbrel AI was written by another model (core's
+/// `SummaryFallback`; content-free).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryFallbackView {
+    /// The provider that wrote it ("ollama", "local", "anthropic", ...).
+    pub used: String,
+    pub model: String,
+    /// A `fallback_reason` code: "not_signed_in", "budget", "timeout", ...
+    pub reason: String,
 }
 
 /// The meeting's transcript: its file if this device has it, else the stored segments
@@ -633,6 +656,16 @@ pub async fn meeting_reorder_action_items(
 /// Regenerates the summary from the transcript. `keep_edits` decides what happens to the
 /// user's overrides: keep them and mark the new generation seen, or drop them and take
 /// the new summary and its action items (the Mac's conflict sheet).
+/// "Re-summarize with Whimbrel" (#805): summarizes again through Whimbrel AI alone, with the
+/// user's Whimbrel model and no fallback. `keep_edits` as for Regenerate. A failure says why.
+#[tauri::command]
+pub async fn meeting_resummarize_whimbrel(state: State<'_, AppState>, id: i64, keep_edits: bool) -> Result<(), CommandError> {
+    let pipeline = state.pipeline.as_ref().ok_or_else(|| CommandError::store(tr("The pipeline isn't running", &[])))?.clone();
+    tauri::async_runtime::spawn_blocking(move || pipeline.resummarize_with_whimbrel(id, keep_edits))
+        .await
+        .map_err(|e| CommandError::store(tr("Regenerating failed: {error}", &[("error", &e.to_string())])))?
+}
+
 #[tauri::command]
 pub async fn meeting_regenerate(state: State<'_, AppState>, id: i64, keep_edits: bool) -> Result<(), CommandError> {
     let pipeline = state.pipeline.as_ref().ok_or_else(|| CommandError::store(tr("The pipeline isn't running", &[])))?.clone();

@@ -15,6 +15,18 @@ pub(crate) fn prepared_routing(routing: &RoutingConfig) -> RoutingConfig {
     r
 }
 
+/// The suggestion prompt in its two Limited Use forms: `full`, and `without_google` for a
+/// link that may not receive Gmail or Google Calendar text, which leaves out every meeting
+/// that may have come from Google Calendar (its title and invitees were in view when the
+/// summary was written). `None` when no meeting is left.
+pub struct SuggestPrompts {
+    pub full: String,
+    pub without_google: Option<String>,
+}
+
+/// [`run_with_prompts`] for a model call that takes one prompt: it is always the form
+/// without Google Calendar meetings, and is not called when no meeting is left.
+#[allow(clippy::too_many_arguments)]
 pub fn run_with_complete(
     store: &memory::Store,
     now_unix_ms: i64,
@@ -27,8 +39,27 @@ pub fn run_with_complete(
     gate: impl Into<RunGate>,
     complete: &mut dyn FnMut(&str) -> Option<String>,
 ) -> rusqlite::Result<usize> {
+    run_with_prompts(store, now_unix_ms, local_day, day_start_ms, day_end_ms, facts, profile, lang, gate, &mut |p: &SuggestPrompts| {
+        complete(p.without_google.as_deref()?)
+    })
+}
+
+/// The suggestion job with the model call choosing between [`SuggestPrompts`] per link.
+#[allow(clippy::too_many_arguments)]
+pub fn run_with_prompts(
+    store: &memory::Store,
+    now_unix_ms: i64,
+    local_day: &str,
+    day_start_ms: i64,
+    day_end_ms: i64,
+    facts: &[String],
+    profile: &str,
+    lang: &str,
+    gate: impl Into<RunGate>,
+    complete: &mut dyn FnMut(&SuggestPrompts) -> Option<String>,
+) -> rusqlite::Result<usize> {
     let gate = gate.into();
-    if gate == RunGate::Off || store.profile_suggest_last_day()?.as_deref() == Some(local_day) {
+    if gate == RunGate::Off || memory::background_gate::recording_pauses_background_work() || store.profile_suggest_last_day()?.as_deref() == Some(local_day) {
         return Ok(0);
     }
     // One suggestion run per day across devices: another device's suggestion from today counts.
@@ -51,19 +82,28 @@ pub fn run_with_complete(
             return Ok(0);
         }
     }
-    let summarized: Vec<llm::profile::SuggestMeeting> = meetings
-        .iter()
-        .map(|m| llm::profile::SuggestMeeting {
-            id: m.id,
-            title: m.title.clone(),
-            tldr: m.summary_tldr.clone().unwrap_or_default(),
-            decisions: m.summary_decisions.clone(),
-            action_items: m.summary_action_items.clone(),
-        })
-        .collect();
-    let prompt = llm::profile::build_suggest_prompt(&summarized, profile, facts, lang);
+    let calendar: Vec<bool> = meetings.iter().map(|m| store.meeting_may_hold_google_calendar_data(m.id)).collect();
+    let summarized = |keep_calendar: bool| -> Vec<llm::profile::SuggestMeeting> {
+        meetings
+            .iter()
+            .zip(&calendar)
+            .filter(|(_, &cal)| keep_calendar || !cal)
+            .map(|(m, _)| llm::profile::SuggestMeeting {
+                id: m.id,
+                title: m.title.clone(),
+                tldr: m.summary_tldr.clone().unwrap_or_default(),
+                decisions: m.summary_decisions.clone(),
+                action_items: m.summary_action_items.clone(),
+            })
+            .collect()
+    };
+    let without = summarized(false);
+    let prompts = SuggestPrompts {
+        full: llm::profile::build_suggest_prompt(&summarized(true), profile, facts, lang),
+        without_google: (!without.is_empty()).then(|| llm::profile::build_suggest_prompt(&without, profile, facts, lang)),
+    };
     store.set_profile_suggest_last_attempt(now_unix_ms)?;
-    let Some(reply) = complete(&prompt) else { return Ok(0) };
+    let Some(reply) = complete(&prompts) else { return Ok(0) };
 
     let mut known: Vec<String> = facts.to_vec();
     for status in ["pending", "dismissed"] {
@@ -94,19 +134,30 @@ pub fn run(
     let day_end = day_start + 24 * 60 * 60 * 1000;
     let routing = prepared_routing(routing);
     let cap_config = routing.spend_cap_config();
-    let mut complete = |prompt: &str| -> Option<String> {
+    let policy = routing.google_data_policy();
+    let mut complete = |prompts: &SuggestPrompts| -> Option<String> {
         if llm::check_spend_cap(store, &cap_config, None, Some("profile_suggest"), now_unix_ms).is_err() {
             return None;
         }
         // Built per prompt: spend from the previous prompt can put a provider over budget.
         let chain = build_chain_for(llm::TaskKind::ProfileSuggest, ollama_model, &routing);
         let chain = crate::budget::apply_budgets(store, chain, false, now_unix_ms).ok()?;
-        let (completion, link) = llm::try_chain(&chain, |link| link.client.complete(prompt))?;
+        // Limited Use: each link gets the prompt it may receive.
+        let (completion, link) = llm::try_chain(&chain, |link| {
+            if llm::limited_use::link_may_receive_google_data(link, policy) {
+                link.client.complete(&prompts.full)
+            } else {
+                match &prompts.without_google {
+                    Some(prompt) => link.client.complete(prompt),
+                    None => Err(llm::limited_use::withheld_from_link()),
+                }
+            }
+        })?;
         crate::util::log_link_usage(store, link, "profile_suggest", completion.token_usage);
         Some(completion.text)
     };
     // The composed profile text is not passed: the model is told what is already known through `facts`.
-    run_with_complete(store, now_unix_ms, &local_day, day_start, day_end, facts, "", &routing.output_language, gate, &mut complete)
+    run_with_prompts(store, now_unix_ms, &local_day, day_start, day_end, facts, "", &routing.output_language, gate, &mut complete)
 }
 
 #[cfg(test)]
@@ -218,5 +269,50 @@ mod tests {
             for gate in [RunGate::Full, RunGate::Failover, RunGate::Off] {
                 assert_eq!(run_with_complete(&s, late, DAY, 0, 86_400_000, &[], "", "", gate, &mut complete).unwrap(), 0);
             }
+        }
+
+        fn calendar_meeting(s: &memory::Store, title: &str, tldr: &str, start: i64, trigger: memory::MeetingTrigger) -> i64 {
+            let id = s
+                .insert_meeting(&memory::NewMeeting {
+                    device_id: "d".into(),
+                    start_unix_ms: start,
+                    end_unix_ms: Some(start + 1_000),
+                    title: title.into(),
+                    attendees: vec![],
+                    trigger,
+                    audio_path: None,
+                    status: memory::MeetingStatus::Completed,
+                })
+                .unwrap();
+            s.update_meeting_summary(id, tldr, &["DECISION".into()], &["ACTION".into()], &[], "p", "m").unwrap();
+            id
+        }
+
+        /// Limited Use: a meeting that may have come from Google Calendar (its title, invitees
+        /// and so its summary) reaches only a link that may receive Google data.
+        #[test]
+        fn a_google_calendar_meeting_is_left_out_of_the_prompt_for_a_restricted_link() {
+            let s = memory::Store::open_in_memory().unwrap();
+            calendar_meeting(&s, "Zebra Review", "ZEBRATLDR", 5_000, memory::MeetingTrigger::Calendar);
+            calendar_meeting(&s, "Pricing", "PRICINGTLDR", 6_000, memory::MeetingTrigger::Manual);
+            let seen = std::cell::RefCell::new(None);
+            let mut complete = |p: &SuggestPrompts| -> Option<String> {
+                *seen.borrow_mut() = Some((p.full.clone(), p.without_google.clone()));
+                None
+            };
+            run_with_prompts(&s, 10_000, DAY, 0, 86_400_000, &[], "", "", true, &mut complete).unwrap();
+            let (full, without) = seen.into_inner().expect("asked");
+            assert!(full.contains("Zebra Review") && full.contains("ZEBRATLDR") && full.contains("PRICINGTLDR"));
+            let without = without.expect("the Manual meeting is left");
+            for word in ["Zebra Review", "ZEBRATLDR"] {
+                assert!(!without.contains(word), "{word}");
+            }
+            assert!(without.contains("PRICINGTLDR") && without.contains("DECISION"));
+
+            // Only calendar meetings: no prompt for a restricted link, and the one-prompt form never asks.
+            let s = memory::Store::open_in_memory().unwrap();
+            calendar_meeting(&s, "Zebra Review", "ZEBRATLDR", 5_000, memory::MeetingTrigger::Calendar);
+            let mut one = |_: &str| -> Option<String> { panic!("must not call the model") };
+            assert_eq!(run_with_complete(&s, 10_000, DAY, 0, 86_400_000, &[], "", "", true, &mut one).unwrap(), 0);
         }
 }

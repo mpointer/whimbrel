@@ -69,7 +69,7 @@ function UpdateRow() {
           </button>
         )}
       </div>
-      {check.state === "ready" && <p className="muted small">{t("A meeting being recorded is stopped and saved first.")}</p>}
+      {check.state === "ready" && <p className="muted small">{t("Restarting waits while a meeting is being recorded or processed.")}</p>}
       {error && <p role="alert">{error}</p>}
     </div>
   );

@@ -54,6 +54,8 @@ const routing: RoutingSettings = {
   localOnly: false,
   cheapFirst: true,
   useLocalModel: true,
+  googleAiBillingConfirmed: false,
+  remoteOllamaGoogleData: false,
 };
 
 const google: ProviderInfoView = {

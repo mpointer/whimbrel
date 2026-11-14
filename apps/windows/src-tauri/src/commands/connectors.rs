@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::connectors::accounts::Kind;
 use crate::connectors::write::GMAIL_SEND_SCOPE;
-use crate::connectors::{accounts, node};
+use crate::connectors::{accounts, google_client, google_disconnect, node};
 use crate::error::CommandError;
 use crate::secrets::SecretStore;
 use crate::state::AppState;
@@ -28,7 +28,8 @@ pub struct CalendarAccounts {
     /// Why calendar syncing can't run right now (no Node, connector not staged, sync not
     /// configured), or `None` when it can.
     pub blocked: Option<String>,
-    /// The accounts whose Google sign-in expired: only "Sign in again" fixes them.
+    /// The accounts that need signing in again: Google's sign-in expired, or the Google client
+    /// they were signed in with changed (Advanced → your own Google Cloud project).
     pub sign_in_expired: Vec<String>,
     /// Accounts Google keeps from the Calendar API: why, per account. An expired sign-in wins, so an
     /// account in `sign_in_expired` is never here.
@@ -71,7 +72,7 @@ pub fn calendar_accounts(state: State<'_, AppState>) -> Result<CalendarAccounts,
     let now = chrono::Utc::now().timestamp_millis();
     let upcoming = state.calendar.as_ref().map(|c| c.upcoming(now)).unwrap_or_default();
     let status = state.calendar.as_ref().map(|c| c.status()).unwrap_or_default();
-    let sign_in_expired: Vec<String> = emails.iter().filter(|e| accounts::sign_in_expired(Kind::Calendar, e)).cloned().collect();
+    let sign_in_expired: Vec<String> = emails.iter().filter(|e| accounts::needs_sign_in(Kind::Calendar, &*state.secrets, e)).cloned().collect();
     let issues = state.calendar.as_ref().map(|c| c.access_issues()).unwrap_or_default();
     let access_issues = access_issues_for(&emails, &sign_in_expired, &issues);
     Ok(CalendarAccounts {
@@ -111,10 +112,40 @@ pub async fn calendar_connect(app: AppHandle) -> Result<CalendarAccounts, Comman
     .map_err(|e| CommandError::network(tr("Connecting the account failed: {error}", &[("error", &e.to_string())])))?
 }
 
+/// The connected Gmail and Calendar addresses and the sync sign-in's: who else shares a grant.
+fn google_grant_is_shared(state: &AppState, removing: Kind, email: &str) -> bool {
+    let listed = |kind: &'static str| {
+        state
+            .store()
+            .ok()
+            .and_then(|s| s.call_blocking(move |s| api::connectors::accounts::list(s, kind).ok()).ok().flatten())
+            .map(|a| a.emails)
+            .unwrap_or_default()
+    };
+    let sync = google_disconnect::sync_sign_in_email(&*state.secrets);
+    google_disconnect::grant_is_shared(removing, email, &listed(accounts::GMAIL), &listed(accounts::CALENDAR), sync.as_deref())
+}
+
+/// Whether removing this Google account also revokes Whimbrel's access with Google (what the
+/// confirmation says). `service` is "gmail" or "calendar".
+#[tauri::command]
+pub async fn google_removal_revokes(app: AppHandle, service: String, email: String) -> Result<bool, CommandError> {
+    let kind = if service == "gmail" { Kind::Gmail } else { Kind::Calendar };
+    tauri::async_runtime::spawn_blocking(move || !google_grant_is_shared(&app.state::<AppState>(), kind, &email))
+        .await
+        .map_err(|e| CommandError::store(e.to_string()))
+}
+
+/// Removes a Calendar account (#798): its tokens are deleted, its events leave this PC (future
+/// ones it owned are marked removed so other devices drop them too; recorded meetings stay),
+/// then Whimbrel's access is revoked with Google in the background unless another connection
+/// on this PC shares the address.
 #[tauri::command]
 pub async fn calendar_disconnect(app: AppHandle, email: String) -> Result<CalendarAccounts, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
+        let revoke = !google_grant_is_shared(&state, Kind::Calendar, &email);
+        let refresh = accounts::tokens_for(Kind::Calendar, &*state.secrets, &email).ok().map(|t| t.refresh_token);
         accounts::disconnect(&*state.secrets, &email)?;
         if let Some(calendar) = &state.calendar {
             calendar.forget(&email);
@@ -126,16 +157,24 @@ pub async fn calendar_disconnect(app: AppHandle, email: String) -> Result<Calend
                 move |s| api::connectors::accounts::remove(s, accounts::CALENDAR, &email).map_err(|e| e.to_string())
             })?
             .map_err(CommandError::store)?;
-        // Its future meetings leave every device, phones included (calendar removals, 2026-11-11).
-        // The same email `calendar::apply` was given. A failure leaves them until they pass: not fatal.
-        let forgotten = state.store()?.call_blocking({
+        // Its events leave this PC (#798); its future meetings leave every device, phones
+        // included (calendar removals, 2026-11-11). The same email `calendar::apply` was given.
+        // A failure leaves them until they pass: not fatal.
+        let deleted = state.store()?.call_blocking({
             let email = email.clone();
-            move |s| s.forget_calendar_account("google_calendar", &email, chrono::Utc::now().timestamp_millis()).map_err(|e| e.to_string())
+            move |s| {
+                let sole = api::connectors::accounts::list(s, accounts::CALENDAR).map(|a| a.emails.is_empty()).unwrap_or(false);
+                s.delete_calendar_data_for_account("google_calendar", &email, sole, chrono::Utc::now().timestamp_millis()).map_err(|e| e.to_string())
+            }
         });
-        match forgotten {
-            Ok(Ok(outcome)) => tracing::info!(email, marked = outcome.marked, unmarked = outcome.unmarked, "removed the account's meetings from the calendar"),
-            Ok(Err(e)) => tracing::warn!(email, error = %e, "could not remove the account's meetings from the calendar"),
-            Err(e) => tracing::warn!(email, error = %e, "could not remove the account's meetings from the calendar"),
+        match deleted {
+            Ok(Ok(outcome)) => tracing::info!(email, ?outcome, "deleted the account's calendar events"),
+            Ok(Err(e)) => tracing::warn!(email, error = %e, "could not delete the account's calendar events"),
+            Err(e) => tracing::warn!(email, error = %e, "could not delete the account's calendar events"),
+        }
+        match google_disconnect::skip_reason(revoke, refresh.as_deref()) {
+            None => google_disconnect::revoke_in_background("Calendar", refresh.unwrap_or_default()),
+            Some(reason) => tracing::info!(reason, "Calendar disconnect: no Google revoke sent"),
         }
         tracing::info!(email, "disconnected a Google Calendar account");
         calendar_accounts(state)
@@ -170,8 +209,12 @@ pub struct GmailAccount {
     /// When Whimbrel last read this account's mail, and why the last round failed if it did.
     pub last_read_unix_ms: Option<i64>,
     pub read_error: Option<String>,
-    /// Google's sign-in for this account expired: only "Sign in again" fixes it.
+    /// Google's sign-in for this account expired, or the Google client it was signed in with
+    /// changed: only "Sign in again" fixes it.
     pub sign_in_expired: bool,
+    /// Google granted sending but not reading (the app's own client since 2026-11-12), so
+    /// Whimbrel does not read this account's mail. Reading needs the user's own Google project.
+    pub send_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -209,7 +252,12 @@ pub fn gmail_view(
                 let read = status(&email);
                 GmailAccount {
                     needs_reconnect: needs_reconnect(secrets, &email),
-                    sign_in_expired: accounts::sign_in_expired(Kind::Gmail, &email),
+                    sign_in_expired: accounts::needs_sign_in(Kind::Gmail, secrets, &email),
+                    send_only: accounts::tokens_for(Kind::Gmail, secrets, &email).is_ok_and(|t| {
+                        let granted = t.granted_scope.as_deref();
+                        // A grant that can't send either needs reconnecting, which its row already says.
+                        !accounts::can_read_mail(granted) && api::oauth::granted_scope_satisfies(granted, GMAIL_SEND_SCOPE)
+                    }),
                     last_read_unix_ms: read.last_read_unix_ms,
                     read_error: read.error,
                     email,
@@ -218,6 +266,11 @@ pub fn gmail_view(
             .collect(),
         blocked,
     })
+}
+
+/// Gmail can send from this build: the Google client is embedded and the connector is staged.
+pub(crate) fn gmail_ready(state: &AppState) -> bool {
+    gmail_blocked(state).is_none()
 }
 
 fn gmail_blocked(state: &AppState) -> Option<String> {
@@ -318,12 +371,16 @@ pub async fn gmail_connect(app: AppHandle) -> Result<GmailAccounts, CommandError
     .map_err(|e| CommandError::network(tr("Connecting Gmail failed: {error}", &[("error", &e.to_string())])))?
 }
 
-/// Forgets the account's tokens and removes it. Routines are left as they are: with no Gmail
-/// connected the recap still runs, it just drafts no email.
+/// Removes a Gmail account (#798): its tokens are deleted, the mail Whimbrel stored from it (and
+/// what was built from that mail) leaves this PC, then Whimbrel's access is revoked with Google
+/// in the background unless another connection on this PC shares the address. Routines are left
+/// as they are: with no Gmail connected the recap still runs, it just drafts no email.
 #[tauri::command]
 pub async fn gmail_disconnect(app: AppHandle, email: String) -> Result<GmailAccounts, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
+        let revoke = !google_grant_is_shared(&state, Kind::Gmail, &email);
+        let refresh = accounts::tokens_for(Kind::Gmail, &*state.secrets, &email).ok().map(|t| t.refresh_token);
         accounts::disconnect_for(Kind::Gmail, &*state.secrets, &email)?;
         state
             .store()?
@@ -334,6 +391,21 @@ pub async fn gmail_disconnect(app: AppHandle, email: String) -> Result<GmailAcco
             .map_err(CommandError::store)?;
         if let Some(gmail) = &state.gmail {
             gmail.forget(&email);
+        }
+        // After the account left the list, so a poll that passed its still-connected check has
+        // queued its write first and this delete runs after it.
+        let deleted = state.store()?.call_blocking({
+            let email = email.clone();
+            move |s| s.delete_email_data_for_account(&email).map_err(|e| e.to_string())
+        });
+        match deleted {
+            Ok(Ok(removed)) => tracing::info!(email, removed, "deleted the account's stored mail"),
+            Ok(Err(e)) => tracing::warn!(email, error = %e, "could not delete the account's stored mail"),
+            Err(e) => tracing::warn!(email, error = %e, "could not delete the account's stored mail"),
+        }
+        match google_disconnect::skip_reason(revoke, refresh.as_deref()) {
+            None => google_disconnect::revoke_in_background("Gmail", refresh.unwrap_or_default()),
+            Some(reason) => tracing::info!(reason, "Gmail disconnect: no Google revoke sent"),
         }
         tracing::info!(email, "disconnected a Gmail account");
         gmail_state(&state)
@@ -365,6 +437,42 @@ pub async fn gmail_delete_stored_mail(app: AppHandle, email: String) -> Result<G
     })
     .await
     .map_err(|e| CommandError::store(tr("Deleting the stored mail failed: {error}", &[("error", &e.to_string())])))?
+}
+
+// --- Your own Google Cloud project (2026-11-12) -------------------------------------------------------
+
+/// What Settings shows about the custom Google client. The secret never leaves Credential Manager.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleClientStatus {
+    /// The saved client's ID, or `None` when Gmail and Calendar use the app's own client.
+    pub client_id: Option<String>,
+}
+
+pub fn google_client_view(secrets: &dyn SecretStore) -> GoogleClientStatus {
+    GoogleClientStatus { client_id: google_client::load(secrets).map(|c| c.id) }
+}
+
+#[tauri::command]
+pub fn google_client_status(state: State<'_, AppState>) -> GoogleClientStatus {
+    google_client_view(&*state.secrets)
+}
+
+/// Saves the user's own Desktop OAuth client. Connected Google accounts then show "Sign in again".
+#[tauri::command]
+pub fn google_client_save(state: State<'_, AppState>, client_id: String, client_secret: String) -> Result<GoogleClientStatus, CommandError> {
+    let client = google_client::CustomClient::new(&client_id, &client_secret);
+    google_client::save(&*state.secrets, &client)?;
+    tracing::info!("saved a custom Google client; connected Google accounts need signing in again");
+    Ok(google_client_view(&*state.secrets))
+}
+
+/// Forgets the user's own client: Gmail and Calendar go back to the app's, sending only for Gmail.
+#[tauri::command]
+pub fn google_client_clear(state: State<'_, AppState>) -> Result<GoogleClientStatus, CommandError> {
+    google_client::clear(&*state.secrets)?;
+    tracing::info!("cleared the custom Google client; connected Google accounts need signing in again");
+    Ok(google_client_view(&*state.secrets))
 }
 
 #[cfg(test)]
@@ -448,6 +556,48 @@ mod tests {
         let (store, secrets) = (Store::open_in_memory().unwrap(), MemorySecrets::default());
         api::connectors::accounts::add(&store, accounts::GMAIL, "a@example.com", 1).unwrap();
         assert!(gmail_view(&store, &secrets, None, &none).unwrap().accounts[0].needs_reconnect, "listed but nothing to send with");
+    }
+
+    #[test]
+    fn a_send_only_grant_is_marked_and_a_reading_or_older_grant_is_not() {
+        let (store, secrets) = (Store::open_in_memory().unwrap(), MemorySecrets::default());
+        connected(&secrets, &store, "send@example.com", Some(accounts::GMAIL_SCOPE));
+        connected(&secrets, &store, "read@example.com", Some(accounts::GMAIL_READ_SCOPE));
+        connected(&secrets, &store, "old@example.com", None);
+        let view = gmail_view(&store, &secrets, None, &none).unwrap();
+        let shown: Vec<_> = view.accounts.iter().map(|a| (a.email.as_str(), a.send_only, a.needs_reconnect)).collect();
+        assert_eq!(shown, [("send@example.com", true, false), ("read@example.com", false, false), ("old@example.com", false, false)]);
+    }
+
+    #[test]
+    fn a_grant_that_can_neither_read_nor_send_needs_reconnecting_and_is_not_called_send_only() {
+        let (store, secrets) = (Store::open_in_memory().unwrap(), MemorySecrets::default());
+        connected(&secrets, &store, "a@example.com", Some("openid email"));
+        let account = &gmail_view(&store, &secrets, None, &none).unwrap().accounts[0];
+        assert_eq!((account.send_only, account.needs_reconnect), (false, true));
+    }
+
+    #[test]
+    fn saving_or_clearing_the_own_client_asks_connected_accounts_to_sign_in_again() {
+        let (store, secrets) = (Store::open_in_memory().unwrap(), MemorySecrets::default());
+        connected(&secrets, &store, "a@example.com", Some(accounts::GMAIL_SCOPE));
+        assert!(!gmail_view(&store, &secrets, None, &none).unwrap().accounts[0].sign_in_expired);
+        google_client::save(&secrets, &google_client::CustomClient::new("own", "s")).unwrap();
+        assert!(gmail_view(&store, &secrets, None, &none).unwrap().accounts[0].sign_in_expired);
+        google_client::record_issuer(&secrets, Kind::Gmail, "a@example.com", Some("own")).unwrap();
+        assert!(!gmail_view(&store, &secrets, None, &none).unwrap().accounts[0].sign_in_expired, "signed in again with it");
+        google_client::clear(&secrets).unwrap();
+        assert!(gmail_view(&store, &secrets, None, &none).unwrap().accounts[0].sign_in_expired);
+    }
+
+    #[test]
+    fn the_client_status_shows_the_id_and_never_the_secret() {
+        let secrets = MemorySecrets::default();
+        assert_eq!(google_client_view(&secrets), GoogleClientStatus { client_id: None });
+        google_client::save(&secrets, &google_client::CustomClient::new("own-id", "hidden-secret")).unwrap();
+        let view = google_client_view(&secrets);
+        assert_eq!(view.client_id.as_deref(), Some("own-id"));
+        assert!(!serde_json::to_string(&view).unwrap().contains("hidden-secret"));
     }
 
     #[test]

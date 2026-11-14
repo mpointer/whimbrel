@@ -296,6 +296,13 @@ pub struct StepJudgment {
 
 pub trait StepJudge {
     fn judge_steps(&self, input: &StepJudgeInput) -> Result<StepJudgment, LlmError>;
+
+    /// Whether this judge may read Gmail and Google Calendar sources (Limited Use,
+    /// `crate::limited_use`). Off unless a judge says otherwise: those sources then stay
+    /// queued, unread.
+    fn may_read_google_data(&self) -> bool {
+        false
+    }
 }
 
 const STEP_LABELS: [&str; 4] = ["mine", "owed", "date", "none"];
@@ -382,6 +389,11 @@ impl StepJudge for TypeSafeClient {
         let body =
             self.post_with_read_timeout(build_step_request(input), TITLE_MATCH_READ_TIMEOUT)?;
         parse_step_response(&body, input.lines.len(), input.open_steps.len())
+    }
+
+    /// Not until TypeSafe confirms in writing that it does not train on API data.
+    fn may_read_google_data(&self) -> bool {
+        memory::limited_use::TYPESAFE_GOOGLE_DATA_CONFIRMED
     }
 }
 

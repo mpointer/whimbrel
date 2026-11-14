@@ -27,6 +27,11 @@ pub struct TopicNameInput {
     /// `entity.kind` for each of `top_entities` ("person", "org", ...).
     pub top_entity_kinds: Vec<String>,
     pub sample_titles: Vec<String>,
+    /// Some member is a Gmail email or a Google Calendar event, so the titles and names
+    /// above may be Google user data: only a link that may receive it names this topic
+    /// (Limited Use, `crate::limited_use`). Defaults to false for older JSON.
+    #[serde(default)]
+    pub has_google_sources: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -441,6 +446,11 @@ impl Store {
              WHERE m.topic_id = ?1 AND m.origin != 'removed' AND s.title != '' \
              ORDER BY s.ts_unix_ms DESC, s.id DESC LIMIT 8",
         )?;
+        let mut google = self.conn.prepare(&format!(
+            "SELECT EXISTS (SELECT 1 FROM topic_member m JOIN topic_source s ON s.id = m.source_id \
+             WHERE m.topic_id = ?1 AND m.origin != 'removed' AND {})",
+            crate::limited_use::TOPIC_SOURCE_IS_GOOGLE_SQL
+        ))?;
         rows.into_iter()
             .map(|(id, current_name)| {
                 let ents: Vec<(String, String)> = ents
@@ -458,6 +468,7 @@ impl Store {
                     sample_titles: titles
                         .query_map([id], |r| r.get(0))?
                         .collect::<rusqlite::Result<_>>()?,
+                    has_google_sources: google.query_row([id], |r| r.get(0))?,
                 })
             })
             .collect()

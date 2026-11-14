@@ -1160,6 +1160,12 @@ button.link.transcript-speaker {
   width: 5rem;
 }
 
+/* A "90 days" picker: as wide as its longest option in any language. */
+.input.days {
+  width: auto;
+  min-width: 7rem;
+}
+
 /* The first-run retention notice, above whichever tab is open. */
 .notice {
   border-color: var(--color-accent-highlight);
@@ -2135,7 +2141,29 @@ button.link:focus-visible {
 
 /* The hotkey panel: the answer scrolls inside the window, never past it. */
 .hotkey-panel .input {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+}
+
+.hotkey-panel-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.hotkey-panel-close {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.hotkey-panel-close:hover {
+  opacity: 1;
 }
 
 .hotkey-panel-answer {

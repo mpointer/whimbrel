@@ -32,15 +32,71 @@ pub fn answer(
     llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms())?;
 
     let chain = apply_budgets(store, build_chain_for(llm::TaskKind::Chat, ollama_model, routing), false, now_unix_ms())?;
-    let (answer, entry) = llm::try_chain_with_failures(&chain, |entry| {
-        llm::answer_with_citations(
+    answer_over_chain(store, &chain, query, &context, date_scope_label.as_deref(), history, routing)
+}
+
+/// Limited Use: `history` as one link may receive it, and whether the turns kept hold
+/// Google data. An answer written from Gmail or Calendar text (or whose provenance is not
+/// recorded) is dropped with the question that prompted it for a link that may not
+/// receive Google data; the turn stays for one that may. See
+/// `memory::Store::answer_may_hold_google_data`.
+pub(crate) fn history_for_link(
+    store: &memory::Store,
+    history: &[llm::ChatTurn],
+    may_receive_google: bool,
+) -> (Vec<llm::ChatTurn>, bool) {
+    let mut kept: Vec<llm::ChatTurn> = Vec::with_capacity(history.len());
+    let mut holds_google = false;
+    for turn in history {
+        if turn.role == llm::ChatRole::Assistant && store.answer_may_hold_google_data(&turn.text) {
+            if !may_receive_google {
+                if kept.last().is_some_and(|t| t.role == llm::ChatRole::User) {
+                    kept.pop();
+                }
+                continue;
+            }
+            holds_google = true;
+        }
+        kept.push(turn.clone());
+    }
+    (kept, holds_google)
+}
+
+/// Records what an answer was built from, so it is found again as a turn of the history or
+/// as the answer a title is made from. Best effort: an answer that cannot be recorded
+/// counts as Google when it comes back.
+pub(crate) fn record_answer_provenance(store: &memory::Store, answer: &str, google: bool) {
+    let _ = store.record_answer_provenance(answer, google, now_unix_ms());
+}
+
+/// The chain walk of [`answer`]. Each link gets the context it may receive (Limited Use:
+/// Gmail threads are left out of a link that may not receive Google user data), and its
+/// citations point into that same context.
+fn answer_over_chain(
+    store: &memory::Store,
+    chain: &[llm::ChainLink],
+    query: &str,
+    context: &[llm::ContextItem],
+    date_scope_label: Option<&str>,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+) -> ApiResult<llm::ChatAnswer> {
+    let policy = routing.google_data_policy();
+    let (answer, entry) = llm::try_chain_with_failures(chain, |entry| {
+        let may_receive = llm::limited_use::link_may_receive_google_data(entry, policy);
+        let context = llm::limited_use::filter_context_in(store, context, may_receive);
+        let (history, history_google) = history_for_link(store, history, may_receive);
+        let answer = llm::answer_with_citations(
             entry.client.as_ref(),
-            history,
+            &history,
             query,
             &context,
             &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language),
-            date_scope_label.as_deref(),
-        )
+            date_scope_label,
+        )?;
+        // The answer inherits the taint of the context and the turns this link received.
+        record_answer_provenance(store, &answer.text, history_google || context.iter().any(|c| c.is_google_user_data()));
+        Ok(answer)
     })
     .map_err(crate::chain_failed)?;
     crate::util::log_link_usage(store, entry, "ask", answer.token_usage);
@@ -87,6 +143,10 @@ pub(crate) struct PreparedAsk {
     /// the routing config's preferred provider, the same one the shell then streams
     /// against — forced to Ollama in local-only mode, mirroring `build_chain`.
     pub(crate) provider: llm::Provider,
+    /// Limited Use: `Some(history_google)` when the answer's provenance is recorded at
+    /// `finalize_ask` (an Ask over memory or a window), where `history_google` is whether
+    /// the earlier turns sent with it held Google data. `None` for a meeting Ask.
+    pub(crate) history_google: Option<bool>,
 }
 
 static PREPARED_ASKS: OnceLock<Mutex<HashMap<String, PreparedAsk>>> = OnceLock::new();
@@ -129,6 +189,31 @@ pub fn prepare_ask(
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
 ) -> ApiResult<PreparedAskData> {
+    prepare_ask_with(store, query, context_limit, history, routing, None)
+}
+
+/// [`prepare_ask`] with this call's own Limited Use settings (`call`, read from this
+/// call's routing JSON): its streamed Ollama model and host decide whether the prompt may
+/// hold Gmail threads, never a value another call may have changed meanwhile.
+pub fn prepare_ask_for(
+    store: &memory::Store,
+    query: &str,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    call: &crate::routing::LimitedUseSettings,
+) -> ApiResult<PreparedAskData> {
+    prepare_ask_with(store, query, context_limit, history, routing, Some(call))
+}
+
+fn prepare_ask_with(
+    store: &memory::Store,
+    query: &str,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    call: Option<&crate::routing::LimitedUseSettings>,
+) -> ApiResult<PreparedAskData> {
     let (context, date_scope_label) = assemble_ask_context(store, query, context_limit);
 
     let cap_config = routing.spend_cap_config();
@@ -136,9 +221,15 @@ pub fn prepare_ask(
     // The shell streams against this one provider: pinned, no fallthrough.
     let provider = provider_for_streamed_answer(routing);
     check_provider(store, provider, now_unix_ms())?;
+    // Limited Use: the prompt (and the citable context) holds Gmail threads only when the
+    // provider streamed against may receive Google user data.
+    let may_receive_google = crate::routing::streamed_may_receive_google_data(provider, call);
+    let context = llm::limited_use::filter_context_in(store, &context, may_receive_google);
+    // Earlier answers built from Google data follow the same rule.
+    let (history, history_google) = history_for_link(store, history, may_receive_google);
 
     let prompt = llm::build_ask_prompt(
-        history,
+        &history,
         query,
         &context,
         &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language),
@@ -147,7 +238,7 @@ pub fn prepare_ask(
     let prepare_id = llm::streaming::new_run_id();
     prepared_asks().lock().unwrap().insert(
         prepare_id.clone(),
-        PreparedAsk { context, provider },
+        PreparedAsk { context, provider, history_google: Some(history_google) },
     );
     Ok(PreparedAskData { prepare_id, prompt })
 }
@@ -185,18 +276,62 @@ pub fn prepare_meeting_ask(
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
 ) -> Result<PreparedMeetingAskData, MeetingAskError> {
-    let (context, prompt, narrowed) = meeting_ask_prompt(store, meeting_id, query, history, routing)?;
+    let provider = provider_for_streamed_answer(routing);
+    let may_receive_google = crate::routing::streamed_may_receive_google_data(provider, None);
+    let mut built = meeting_ask_prompt(store, meeting_id, query, history, routing, may_receive_google, provider, None)?;
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms()).map_err(ApiError::from)?;
-    let provider = provider_for_streamed_answer(routing);
     check_provider(store, provider, now_unix_ms()).map_err(ApiError::from)?;
+    // A whole-meeting question on a transcript the streamed model cannot take whole: read it
+    // part by part first (blocking), then stream the final answer. When no link can be built
+    // for the streamed provider the keyword-narrowed prompt stands.
+    if let Some(parts) = built.map_parts.take() {
+        if let Some(link) = streamed_link(routing, provider) {
+            if let Ok(findings) = gather_findings(store, &cap_config, &link, query, &parts) {
+                built = meeting_ask_prompt(store, meeting_id, query, history, routing, may_receive_google, provider, Some(&findings))?;
+            }
+        }
+    }
 
     let prepare_id = llm::streaming::new_run_id();
     prepared_asks().lock().unwrap().insert(
         prepare_id.clone(),
-        PreparedAsk { context, provider },
+        PreparedAsk { context: built.context, provider, history_google: Some(built.google) },
     );
-    Ok(PreparedMeetingAskData { prepare_id, prompt, narrowed })
+    Ok(PreparedMeetingAskData { prepare_id, prompt: built.prompt, narrowed: built.narrowed })
+}
+
+/// The link a streamed answer runs against, built the way the blocking chain builds it, for
+/// the calls that read a long transcript part by part before the stream starts. `None` when
+/// the provider has no link (no key, or an Ollama model the shell has not sent).
+fn streamed_link(routing: &RoutingConfig, provider: llm::Provider) -> Option<llm::ChainLink> {
+    let ollama_model = crate::routing::limited_use_settings().streamed_ollama_model.unwrap_or_default();
+    if provider == llm::Provider::Ollama && ollama_model.is_empty() {
+        return None;
+    }
+    build_chain_for(llm::TaskKind::Chat, &ollama_model, routing).into_iter().find(|l| l.provider == provider)
+}
+
+/// Reads a transcript that does not fit one prompt part by part, one call per part, on
+/// `link`: what each part holds that bears on `query`. Every call is spend-cap checked and
+/// its usage logged, so a cap trip stops the reading with nothing further spent.
+fn gather_findings(
+    store: &memory::Store,
+    cap_config: &llm::SpendCapConfig,
+    link: &llm::ChainLink,
+    query: &str,
+    parts: &MapParts,
+) -> Result<Vec<String>, llm::LlmError> {
+    let mut findings = Vec::with_capacity(parts.parts.len());
+    for (i, part) in parts.parts.iter().enumerate() {
+        llm::check_spend_cap(store, cap_config, None, Some("ask"), now_unix_ms())
+            .map_err(|_| llm::LlmError::NotImplemented("meeting ask spend cap"))?;
+        let prompt = llm::meeting_ask::build_map_prompt(query, &parts.title, i + 1, parts.parts.len(), part, &parts.instructions);
+        let completion = link.client.complete(&prompt)?;
+        crate::util::log_link_usage(store, link, "ask", completion.token_usage);
+        findings.push(completion.text);
+    }
+    Ok(findings)
 }
 
 /// [`answer_meeting`]'s result: the answer, its transcript citations, and whether the
@@ -232,26 +367,75 @@ fn answer_meeting_with(
     routing: &RoutingConfig,
     chain: impl FnOnce() -> Vec<llm::ChainLink>,
 ) -> Result<MeetingAnswer, MeetingAskError> {
-    let (context, prompt, narrowed) = meeting_ask_prompt(store, meeting_id, query, history, routing)?;
+    // Fails early (no transcript) before anything is spent.
+    meeting_ask_prompt(store, meeting_id, query, history, routing, true, llm::Provider::Ollama, None)?;
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms()).map_err(ApiError::from)?;
     let chain = apply_budgets(store, chain(), false, now_unix_ms()).map_err(ApiError::from)?;
-    let Some((completion, entry)) = llm::try_chain(&chain, |entry| entry.client.complete(&prompt)) else {
+    let policy = routing.google_data_policy();
+    // Limited Use: each link gets the prompt it may receive.
+    let Some(((completion, built), entry)) = llm::try_chain(&chain, |entry| {
+        let may_receive = llm::limited_use::link_may_receive_google_data(entry, policy);
+        let prompt_for = |findings: Option<&[String]>| {
+            meeting_ask_prompt(store, meeting_id, query, history, routing, may_receive, entry.provider, findings)
+                .map_err(|_| llm::LlmError::NotImplemented("meeting ask prompt"))
+        };
+        let mut built = prompt_for(None)?;
+        // Too long for this link's window and the question is about the whole meeting: read
+        // every part first, then answer from what each held.
+        if let Some(parts) = built.map_parts.take() {
+            let findings = gather_findings(store, &cap_config, entry, query, &parts)?;
+            built = prompt_for(Some(&findings))?;
+        }
+        let completion = entry.client.complete(&built.prompt)?;
+        Ok((completion, built))
+    }) else {
         return Err(ApiError::ProviderFailure.into());
     };
     crate::util::log_link_usage(store, entry, "ask", completion.token_usage);
-    let citations = llm::extract_citations(&completion.text, &context);
-    Ok(MeetingAnswer { text: completion.text, citations, narrowed })
+    record_answer_provenance(store, &completion.text, built.google);
+    let citations = llm::extract_citations(&completion.text, &built.context);
+    Ok(MeetingAnswer { text: completion.text, citations, narrowed: built.narrowed })
 }
 
-/// The meeting Ask prompt and its citable context, shared by the streaming and blocking paths.
+/// A meeting Ask prompt, its citable context, and whether it holds Google data.
+struct MeetingAskPrompt {
+    context: Vec<llm::ContextItem>,
+    prompt: String,
+    narrowed: bool,
+    /// Whether the answer to this prompt inherits Google data: the meeting's title and
+    /// attendee names (Google Calendar text), or earlier answers, were in it.
+    google: bool,
+    /// Set when the question is about the whole meeting and the transcript does not fit the
+    /// target's window: the parts to read one by one (see [`gather_findings`]) before the
+    /// prompt is built again with their findings.
+    map_parts: Option<MapParts>,
+}
+
+/// A transcript split into parts that each fit one prompt, as the segments the prompt would
+/// show (labels and title already as Limited Use allows), for reading part by part.
+struct MapParts {
+    parts: Vec<Vec<memory::MeetingTranscriptSegment>>,
+    title: String,
+    instructions: String,
+}
+
+/// The meeting Ask prompt and its citable context, shared by the streaming and blocking
+/// paths. Limited Use: when `may_receive_google` is false and the meeting may hold Google
+/// Calendar text, its title is left out and speakers keep their plain labels (their names
+/// may come from the calendar's attendees); earlier answers built from Google data are
+/// dropped from the history either way the link cannot receive them.
+#[allow(clippy::too_many_arguments)]
 fn meeting_ask_prompt(
     store: &memory::Store,
     meeting_id: i64,
     query: &str,
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
-) -> Result<(Vec<llm::ContextItem>, String, bool), MeetingAskError> {
+    may_receive_google: bool,
+    target: llm::Provider,
+    findings: Option<&[String]>,
+) -> Result<MeetingAskPrompt, MeetingAskError> {
     let meeting = store
         .get_meeting(meeting_id)
         .ok()
@@ -265,7 +449,9 @@ fn meeting_ask_prompt(
         return Err(MeetingAskError::NoTranscript);
     }
     // "Speaker N" becomes its name, a guess marked, as in the summary's transcript.
-    let speakers = store.meeting_speakers(meeting_id).unwrap_or_default();
+    let calendar_text = store.meeting_may_hold_google_calendar_data(meeting_id);
+    let withhold_calendar_text = calendar_text && !may_receive_google;
+    let speakers = if withhold_calendar_text { Vec::new() } else { store.meeting_speakers(meeting_id).unwrap_or_default() };
     let segments: Vec<_> = segments
         .into_iter()
         .map(|mut s| {
@@ -274,32 +460,69 @@ fn meeting_ask_prompt(
         })
         .collect();
 
-    let context = llm::meeting_ask::assemble_meeting_context(segments, query, llm::meeting_ask::CONTEXT_BUDGET_CHARS);
+    // The budget follows the target's window. A question about the whole meeting that does not
+    // fit it is read part by part (`map_parts`); with the findings in hand, the numbered
+    // items take what room the findings leave.
+    let budget = llm::meeting_ask::context_budget_chars(target);
+    let segments = llm::meeting_ask::redact_segments(segments);
+    let whole_intent = llm::meeting_ask::is_whole_meeting_intent(query);
+    let over_budget = !llm::meeting_ask::fits_budget(&segments, budget);
+    let findings_len = findings.map_or(0, llm::meeting_ask::findings_chars);
+    let item_budget = if findings_len > 0 { budget.saturating_sub(findings_len).max(budget / 4) } else { budget };
+    let parts = (whole_intent && over_budget && findings.is_none())
+        .then(|| llm::meeting_ask::chunk_segments(segments.clone(), budget))
+        .filter(|p| p.len() > 1);
+    let mut context = llm::meeting_ask::assemble_meeting_context(segments, query, item_budget);
+    if findings_len > 0 {
+        // Every part was read, so what the numbered items leave out is still in the answer.
+        context.narrowed = false;
+    }
+    if withhold_calendar_text {
+        for item in &mut context.items {
+            if let llm::ContextItem::Transcript(t) = item {
+                t.meeting_title = llm::limited_use::WITHHELD_TITLE.to_string();
+            }
+        }
+    }
     // Every segment larger than the budget: nothing citable fits, same as no transcript.
     if context.items.is_empty() {
         return Err(MeetingAskError::NoTranscript);
     }
     let draft = store.get_meeting_note_draft(meeting_id).ok().flatten();
-    let summary = draft
-        .as_ref()
-        .and_then(|d| d.summary_edited.clone())
-        .or_else(|| meeting.summary_tldr.clone())
-        .unwrap_or_default();
+    // The summary was written with the title and invitees in view, so it is withheld with them.
+    let summary = if withhold_calendar_text {
+        String::new()
+    } else {
+        draft.as_ref().and_then(|d| d.summary_edited.clone()).or_else(|| meeting.summary_tldr.clone()).unwrap_or_default()
+    };
     let notes = draft
         .as_ref()
         .and_then(|d| d.personal_notes.clone())
         .or_else(|| meeting.notes.clone())
         .unwrap_or_default();
-    let prompt = llm::meeting_ask::build_meeting_ask_prompt(
-        history,
-        query,
-        &context.items,
-        &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language),
-        &meeting.title,
-        &summary,
-        &notes,
-    );
-    Ok((context.items, prompt, context.narrowed))
+    let (history, history_google) = history_for_link(store, history, may_receive_google);
+    let title = if withhold_calendar_text { llm::limited_use::WITHHELD_TITLE } else { meeting.title.as_str() };
+    let instructions = llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language);
+    let map_parts = parts.map(|mut parts| {
+        if withhold_calendar_text {
+            for s in parts.iter_mut().flatten() {
+                s.meeting_title = llm::limited_use::WITHHELD_TITLE.to_string();
+            }
+        }
+        MapParts { parts, title: title.to_string(), instructions: instructions.clone() }
+    });
+    let instructions = match findings {
+        Some(findings) => llm::meeting_ask::instructions_with_findings(&instructions, findings),
+        None => instructions,
+    };
+    let prompt = llm::meeting_ask::build_meeting_ask_prompt(&history, query, &context.items, &instructions, title, &summary, &notes);
+    Ok(MeetingAskPrompt {
+        context: context.items,
+        prompt,
+        narrowed: context.narrowed,
+        google: history_google || (calendar_text && may_receive_google),
+        map_parts,
+    })
 }
 
 /// [`finalize_ask`]'s result: a plain object, not the `{"ok":…}` envelope — there is no
@@ -331,6 +554,9 @@ pub fn finalize_ask(
         None => Vec::new(),
     };
     if let Some(prepared) = prepared {
+        if let Some(history_google) = prepared.history_google {
+            record_answer_provenance(store, final_text, history_google || prepared.context.iter().any(|c| c.is_google_user_data()));
+        }
         log_usage_for(store, prepared.provider, model, "ask", usage);
     }
     FinalizedAsk { citations }
@@ -368,7 +594,22 @@ pub fn generate_conversation_title(
     )?;
 
     let chain = apply_budgets(store, build_chain_for(llm::TaskKind::ConversationTitle, ollama_model, routing), false, now_unix_ms())?;
-    let ((title, token_usage), entry) = llm::try_chain_with_failures(&chain, |entry| {
+    title_over_chain(store, &chain, query, answer, routing)
+}
+
+/// The chain walk of [`generate_conversation_title`].
+fn title_over_chain(
+    store: &memory::Store,
+    chain: &[llm::ChainLink],
+    query: &str,
+    answer: &str,
+    routing: &RoutingConfig,
+) -> ApiResult<ConversationTitle> {
+    let policy = routing.google_data_policy();
+    let answer_holds_google = store.answer_may_hold_google_data(answer);
+    let ((title, token_usage), entry) = llm::try_chain_with_failures(chain, |entry| {
+        // Limited Use: a link that may not receive Google data titles from the question alone.
+        let answer = if answer_holds_google && !llm::limited_use::link_may_receive_google_data(entry, policy) { "" } else { answer };
         llm::generate_conversation_title(entry.client.as_ref(), query, answer, &routing.output_language)
     })
     .map_err(crate::chain_failed)?;
@@ -421,6 +662,7 @@ mod tests {
             })
             .collect();
         store.insert_transcript_segments(&segments).unwrap();
+        store.set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_OTHER).unwrap();
         id
     }
 
@@ -559,7 +801,7 @@ mod tests {
     fn a_transcript_whose_every_segment_exceeds_the_budget_is_treated_as_no_transcript() {
         let _serial = serialize_prepared_asks();
         let store = memory::Store::open_in_memory().unwrap();
-        let huge = "x".repeat(llm::meeting_ask::CONTEXT_BUDGET_CHARS + 1);
+        let huge = "x".repeat(llm::meeting_ask::context_budget_chars(llm::Provider::Ollama) + 1);
         let id = meeting_with_transcript(&store, &[huge.as_str()]);
         let before = prepared_asks().lock().unwrap().len();
         assert!(matches!(prepare_meeting_ask(&store, id, "q", &[], &RoutingConfig::default()), Err(MeetingAskError::NoTranscript)));
@@ -767,6 +1009,150 @@ mod tests {
         discard_ask(&prepared.prepare_id);
     }
 
+    /// A Gmail thread about the Falcon budget, and a screen capture about it.
+    fn store_with_gmail_and_capture() -> memory::Store {
+        let store = store_with_capture_text("Falcon budget spreadsheet on screen");
+        store
+            .upsert_email_items(&[memory::NewEmailItem {
+                device_id: "dev-1".into(),
+                external_id: "m-1".into(),
+                ts_unix_ms: now_unix_ms() - 1_000,
+                from: "Priya <priya@x.com>".into(),
+                to: "me@x.com".into(),
+                subject: "Falcon".into(),
+                body_text: "GMAILSECRET the Falcon budget is 40k".into(),
+                gmail_thread_id: "thread-1".into(),
+                account_email: "me@x.com".into(),
+                ..Default::default()
+            }])
+            .unwrap();
+        while store.run_thread_state_sync_job(now_unix_ms()).unwrap() {}
+        store
+    }
+
+    /// Records every prompt it is sent, then fails so the walk visits every link.
+    struct Recorder(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+    impl llm::LlmClient for Recorder {
+        fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            self.0.lock().unwrap().push(prompt.to_string());
+            Err(llm::LlmError::Network("next".into()))
+        }
+    }
+
+    /// The prompt each of `links` receives for one Ask over the Gmail store.
+    fn prompts_per_link(links: Vec<llm::ChainLink>, routing: &RoutingConfig) -> Vec<String> {
+        let store = store_with_gmail_and_capture();
+        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10);
+        assert!(context.iter().any(|c| c.is_google_user_data()), "the fixture reaches Ask through its Gmail thread");
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let chain: Vec<llm::ChainLink> = links
+            .into_iter()
+            .map(|l| llm::ChainLink { client: Box::new(Recorder(seen.clone())), ..l })
+            .collect();
+        let _ = answer_over_chain(&store, &chain, "Falcon budget", &context, label.as_deref(), &[], routing);
+        let out = seen.lock().unwrap().clone();
+        out
+    }
+
+    fn link(provider: llm::Provider, model: &str) -> llm::ChainLink {
+        llm::ChainLink { provider, model: model.into(), client: Box::new(Fake) }
+    }
+
+    /// Limited Use, per link: the chain falls back between providers, so each link's prompt
+    /// holds Gmail text only when that link may receive it; screen text reaches every link.
+    #[test]
+    fn each_link_gets_gmail_text_only_when_it_may_receive_it() {
+        let links = || {
+            vec![
+                link(llm::Provider::Google, "gemini-2.5-flash"),
+                link(llm::Provider::Anthropic, "claude"),
+                link(llm::Provider::Ollama, "gpt-oss:120b-cloud"),
+                link(llm::Provider::Ollama, "gemma4:12b"),
+                link(llm::Provider::OpenRouter, "vendor/m"),
+                link(llm::Provider::OpenAI, "gpt"),
+                link(llm::Provider::Whimbrel, "claude-sonnet-5-5"),
+            ]
+        };
+        let prompts = prompts_per_link(links(), &RoutingConfig::default());
+        assert_eq!(prompts.len(), 7);
+        let has_gmail: Vec<bool> = prompts.iter().map(|p| p.contains("GMAILSECRET")).collect();
+        assert_eq!(has_gmail, [false, true, false, true, false, true, true]);
+        assert!(prompts.iter().all(|p| p.contains("Falcon budget spreadsheet")), "other sources keep flowing");
+
+        crate::routing::set_limited_use_settings(crate::routing::LimitedUseSettings {
+            policy: llm::limited_use::GoogleDataPolicy { google_ai_billing_confirmed: true, remote_ollama_google_data: true },
+            streamed_ollama_model: None,
+            streamed_ollama_base_url: None,
+        });
+        let has_gmail: Vec<bool> = prompts_per_link(links(), &RoutingConfig::default()).iter().map(|p| p.contains("GMAILSECRET")).collect();
+        assert_eq!(has_gmail, [true, true, true, true, false, true, true], "OpenRouter never gets it");
+    }
+
+    /// A streamed Ask is built for the one provider the shell streams against.
+    #[test]
+    fn a_streamed_ask_holds_gmail_text_only_for_a_provider_that_may_receive_it() {
+        let _serial = serialize_prepared_asks();
+        let store = store_with_gmail_and_capture();
+        let prompt_for = |routing: &RoutingConfig| {
+            let data = prepare_ask(&store, "Falcon budget", 10, &[], routing).unwrap();
+            discard_ask(&data.prepare_id);
+            data.prompt
+        };
+        let google = RoutingConfig { google_key: Some("k".into()), preferred_provider: "google".into(), ..RoutingConfig::default() };
+        let p = prompt_for(&google);
+        assert!(!p.contains("GMAILSECRET") && p.contains("Falcon budget spreadsheet"), "{p}");
+        let settings = |billing: bool, model: Option<&str>| {
+            crate::routing::set_limited_use_settings(crate::routing::LimitedUseSettings {
+                policy: llm::limited_use::GoogleDataPolicy { google_ai_billing_confirmed: billing, remote_ollama_google_data: false },
+                streamed_ollama_model: model.map(String::from),
+                streamed_ollama_base_url: None,
+            })
+        };
+        settings(true, None);
+        assert!(prompt_for(&google).contains("GMAILSECRET"));
+        settings(false, None);
+        let anthropic = RoutingConfig { anthropic_key: Some("k".into()), preferred_provider: "anthropic".into(), ..RoutingConfig::default() };
+        assert!(prompt_for(&anthropic).contains("GMAILSECRET"));
+        let openrouter = RoutingConfig { openrouter_key: Some("k".into()), preferred_provider: "openrouter".into(), ..RoutingConfig::default() };
+        assert!(!prompt_for(&openrouter).contains("GMAILSECRET"));
+        // Ollama: the model the shell streams decides, not `preferred_model`; unknown is closed.
+        let ollama = RoutingConfig { preferred_provider: "ollama".into(), preferred_model: "gemma4:12b".into(), ..RoutingConfig::default() };
+        assert!(!prompt_for(&ollama).contains("GMAILSECRET"), "streamed model unknown");
+        settings(false, Some("gpt-oss:120b-cloud"));
+        assert!(!prompt_for(&ollama).contains("GMAILSECRET"));
+        settings(false, Some("gemma4:12b"));
+        assert!(prompt_for(&ollama).contains("GMAILSECRET"));
+    }
+
+    /// The race the per-call model closes: a background call's routing JSON (naming the
+    /// local model) lands between two Asks streamed against a cloud model. Each Ask is
+    /// decided by its own JSON, so the cloud ones never hold Gmail text.
+    #[test]
+    fn interleaved_calls_with_different_streamed_models_never_give_the_cloud_one_gmail() {
+        let _serial = serialize_prepared_asks();
+        let store = store_with_gmail_and_capture();
+        let ollama = RoutingConfig { preferred_provider: "ollama".into(), ..RoutingConfig::default() };
+        let cloud_json = r#"{"preferred_provider":"ollama","streamed_ollama_model":"gpt-oss:120b-cloud"}"#;
+        let local_json = r#"{"preferred_provider":"ollama","streamed_ollama_model":"gemma4:12b"}"#;
+        let prompt_for = |json: &str| {
+            let routing = RoutingConfig::from_json(Some(json));
+            let call = crate::routing::LimitedUseSettings::from_routing_json_str(Some(json));
+            let data = prepare_ask_for(&store, "Falcon budget", 10, &[], &routing, &call).unwrap();
+            discard_ask(&data.prepare_id);
+            data.prompt
+        };
+        for _ in 0..3 {
+            assert!(!prompt_for(cloud_json).contains("GMAILSECRET"));
+            assert!(prompt_for(local_json).contains("GMAILSECRET"));
+            RoutingConfig::from_json(Some(local_json)); // a background call
+            assert!(!prompt_for(cloud_json).contains("GMAILSECRET"));
+        }
+        // A caller without per-call settings still fails closed: nothing names the model.
+        let data = prepare_ask(&store, "Falcon budget", 10, &[], &ollama).unwrap();
+        discard_ask(&data.prepare_id);
+        assert!(!data.prompt.contains("GMAILSECRET"));
+    }
+
     struct Fake;
     impl llm::LlmClient for Fake {
         fn complete(&self, _prompt: &str) -> Result<llm::Completion, llm::LlmError> {
@@ -816,5 +1202,316 @@ mod tests {
         let result = answer_meeting_with(&store, id, "when?", &[], &routing, || fake_chain(&[llm::Provider::Anthropic]));
         let Err(MeetingAskError::Api(ApiError::BudgetSpent(spent))) = result else { panic!("{result:?}") };
         assert_eq!(spent.provider, llm::Provider::Anthropic);
+    }
+
+    // --- Limited Use: answers built from Google data in later turns and titles ---
+
+    const GMAIL_ANSWER: &str = "ANSWERFROMGMAIL the budget is 40k";
+    const CLEAN_ANSWER: &str = "ANSWERFROMSCREEN the demo is on Friday";
+    const UNKNOWN_ANSWER: &str = "ANSWERUNKNOWN written elsewhere";
+
+    fn turn(role: llm::ChatRole, text: &str) -> llm::ChatTurn {
+        llm::ChatTurn { role, text: text.into() }
+    }
+
+    /// Three earlier exchanges: one answered from Gmail, one from screen text, one whose
+    /// provenance was never recorded.
+    fn history_of_three(store: &memory::Store) -> Vec<llm::ChatTurn> {
+        store.record_answer_provenance(GMAIL_ANSWER, true, 1).unwrap();
+        store.record_answer_provenance(CLEAN_ANSWER, false, 1).unwrap();
+        use llm::ChatRole::{Assistant, User};
+        vec![
+            turn(User, "QGMAIL"),
+            turn(Assistant, GMAIL_ANSWER),
+            turn(User, "QCLEAN"),
+            turn(Assistant, CLEAN_ANSWER),
+            turn(User, "QUNKNOWN"),
+            turn(Assistant, UNKNOWN_ANSWER),
+        ]
+    }
+
+    #[test]
+    fn earlier_answers_built_from_google_data_reach_only_links_that_may_receive_it() {
+        let store = store_with_gmail_and_capture();
+        let history = history_of_three(&store);
+        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10);
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let chain: Vec<llm::ChainLink> = [(llm::Provider::OpenRouter, "vendor/m"), (llm::Provider::Anthropic, "claude")]
+            .into_iter()
+            .map(|(provider, model)| llm::ChainLink { provider, model: model.into(), client: Box::new(Recorder(seen.clone())) })
+            .collect();
+        let _ = answer_over_chain(&store, &chain, "Falcon budget", &context, label.as_deref(), &history, &RoutingConfig::default());
+        let prompts = seen.lock().unwrap().clone();
+        let (restricted, allowed) = (&prompts[0], &prompts[1]);
+        for text in [GMAIL_ANSWER, UNKNOWN_ANSWER, "QGMAIL", "QUNKNOWN"] {
+            assert!(!restricted.contains(text), "{text} reached OpenRouter");
+            assert!(allowed.contains(text), "{text} is held back from a link that may receive it");
+        }
+        assert!(restricted.contains(CLEAN_ANSWER) && restricted.contains("QCLEAN"), "a clean exchange stays");
+    }
+
+    #[test]
+    fn a_streamed_ask_holds_earlier_google_answers_for_a_provider_that_may_not_receive_them() {
+        let _serial = serialize_prepared_asks();
+        let store = store_with_gmail_and_capture();
+        let history = history_of_three(&store);
+        let prompt_for = |routing: &RoutingConfig| {
+            let data = prepare_ask(&store, "Falcon budget", 10, &history, routing).unwrap();
+            discard_ask(&data.prepare_id);
+            data.prompt
+        };
+        let openrouter = RoutingConfig { openrouter_key: Some("k".into()), preferred_provider: "openrouter".into(), ..RoutingConfig::default() };
+        let p = prompt_for(&openrouter);
+        assert!(!p.contains(GMAIL_ANSWER) && !p.contains(UNKNOWN_ANSWER), "{p}");
+        assert!(p.contains(CLEAN_ANSWER));
+        let anthropic = RoutingConfig { anthropic_key: Some("k".into()), preferred_provider: "anthropic".into(), ..RoutingConfig::default() };
+        let p = prompt_for(&anthropic);
+        assert!(p.contains(GMAIL_ANSWER) && p.contains(UNKNOWN_ANSWER) && p.contains(CLEAN_ANSWER));
+    }
+
+    #[test]
+    fn an_answer_is_recorded_as_google_when_the_context_it_was_built_from_was() {
+        // Blocking: Gmail in the context the answering link received.
+        let store = store_with_gmail_and_capture();
+        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10);
+        let chain = fake_chain(&[llm::Provider::Anthropic]);
+        answer_over_chain(&store, &chain, "Falcon budget", &context, label.as_deref(), &[], &RoutingConfig::default()).unwrap();
+        assert!(store.answer_may_hold_google_data("Friday [1]."));
+
+        // Only screen text: recorded clean, so it keeps flowing into later turns.
+        let store = store_with_capture_text("Falcon budget spreadsheet on screen");
+        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10);
+        assert!(context.iter().all(|c| !c.is_google_user_data()));
+        answer_over_chain(&store, &chain, "Falcon budget", &context, label.as_deref(), &[], &RoutingConfig::default()).unwrap();
+        assert!(!store.answer_may_hold_google_data("Friday [1]."));
+
+        // A clean question that carries a Google answer in its history is Google too.
+        store.record_answer_provenance(GMAIL_ANSWER, true, 1).unwrap();
+        let history = [turn(llm::ChatRole::User, "q"), turn(llm::ChatRole::Assistant, GMAIL_ANSWER)];
+        answer_over_chain(&store, &fake_chain(&[llm::Provider::Anthropic]), "Falcon budget", &context, label.as_deref(), &history, &RoutingConfig::default()).unwrap();
+        assert!(store.answer_may_hold_google_data("Friday [1]."));
+    }
+
+    #[test]
+    fn a_streamed_answer_is_recorded_when_it_is_finalized() {
+        let _serial = serialize_prepared_asks();
+        let store = store_with_gmail_and_capture();
+        let anthropic = RoutingConfig { anthropic_key: Some("k".into()), preferred_provider: "anthropic".into(), ..RoutingConfig::default() };
+        let data = prepare_ask(&store, "Falcon budget", 10, &[], &anthropic).unwrap();
+        assert!(data.prompt.contains("GMAILSECRET"));
+        finalize_ask(&store, &data.prepare_id, "STREAMEDGMAIL answer", "claude", llm::TokenUsage::default());
+        assert!(store.answer_may_hold_google_data("STREAMEDGMAIL answer"));
+
+        // A prompt the provider could not hold Gmail text in produces a clean answer.
+        let openrouter = RoutingConfig { openrouter_key: Some("k".into()), preferred_provider: "openrouter".into(), ..RoutingConfig::default() };
+        let data = prepare_ask(&store, "Falcon budget", 10, &[], &openrouter).unwrap();
+        finalize_ask(&store, &data.prepare_id, "STREAMEDCLEAN answer", "m", llm::TokenUsage::default());
+        assert!(!store.answer_may_hold_google_data("STREAMEDCLEAN answer"));
+    }
+
+    #[test]
+    fn a_title_link_that_may_not_receive_google_data_gets_the_question_only() {
+        let store = memory::Store::open_in_memory().unwrap();
+        store.record_answer_provenance(GMAIL_ANSWER, true, 1).unwrap();
+        store.record_answer_provenance(CLEAN_ANSWER, false, 1).unwrap();
+        let titles = |answer: &str| {
+            let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let chain: Vec<llm::ChainLink> = [(llm::Provider::OpenRouter, "vendor/m"), (llm::Provider::Anthropic, "claude")]
+                .into_iter()
+                .map(|(provider, model)| llm::ChainLink { provider, model: model.into(), client: Box::new(Recorder(seen.clone())) })
+                .collect();
+            let _ = title_over_chain(&store, &chain, "QTITLE", answer, &RoutingConfig::default());
+            let prompts = seen.lock().unwrap().clone();
+            prompts
+        };
+        for answer in [GMAIL_ANSWER, UNKNOWN_ANSWER] {
+            let p = titles(answer);
+            assert!(!p[0].contains(answer) && p[0].contains("QTITLE"), "{answer} reached OpenRouter");
+            assert!(p[1].contains(answer));
+        }
+        let p = titles(CLEAN_ANSWER);
+        assert!(p[0].contains(CLEAN_ANSWER) && p[1].contains(CLEAN_ANSWER));
+    }
+
+    // --- Limited Use: meeting Ask ---
+
+    /// A calendar meeting whose source is unknown (Google Calendar text), titled
+    /// "Zebra Review", with a speaker named from its attendees.
+    fn google_meeting(store: &memory::Store) -> i64 {
+        let id = meeting_with_transcript(store, &["we agreed on Friday"]);
+        store.set_meeting_title(id, "Zebra Review").unwrap();
+        store.set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_GOOGLE).unwrap();
+        store.update_meeting_summary(id, "ZSUMMARY about the Zebra", &[], &[], &[], "p", "m").unwrap();
+        store
+            .insert_transcript_segments(&[memory::NewTranscriptSegment {
+                meeting_id: id,
+                start_cs: 500,
+                speaker_label: "Speaker 1".into(),
+                text: "I send the deck".into(),
+            }])
+            .unwrap();
+        store.upsert_person("ana@x.com", "Ana Zebrowski", Some("ana@x.com")).unwrap();
+        store.set_meeting_speaker(id, 0, Some("ana@x.com"), Some(memory::speaker_names::NameStatus::Confirmed)).unwrap();
+        id
+    }
+
+    #[test]
+    fn a_streamed_meeting_ask_leaves_out_google_calendar_text_for_a_restricted_provider() {
+        let _serial = serialize_prepared_asks();
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = google_meeting(&store);
+        let history = history_of_three(&store);
+        let prompt_for = |routing: &RoutingConfig| {
+            let data = prepare_meeting_ask(&store, id, "who sends it?", &history, routing).unwrap();
+            discard_ask(&data.prepare_id);
+            data.prompt
+        };
+        let openrouter = RoutingConfig { openrouter_key: Some("k".into()), preferred_provider: "openrouter".into(), ..RoutingConfig::default() };
+        let p = prompt_for(&openrouter);
+        for text in ["Zebra Review", "Zebrowski", "ZSUMMARY", GMAIL_ANSWER, UNKNOWN_ANSWER] {
+            assert!(!p.contains(text), "{text} reached OpenRouter: {p}");
+        }
+        assert!(p.contains("I send the deck") && p.contains(CLEAN_ANSWER), "{p}");
+        let anthropic = RoutingConfig { anthropic_key: Some("k".into()), preferred_provider: "anthropic".into(), ..RoutingConfig::default() };
+        let p = prompt_for(&anthropic);
+        for text in ["Zebra Review", "Ana Zebrowski", "ZSUMMARY", GMAIL_ANSWER] {
+            assert!(p.contains(text), "{text} missing: {p}");
+        }
+    }
+
+    #[test]
+    fn a_blocking_meeting_ask_builds_each_links_prompt_for_that_link() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = google_meeting(&store);
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let chain: Vec<llm::ChainLink> = [(llm::Provider::OpenRouter, "vendor/m"), (llm::Provider::Anthropic, "claude")]
+            .into_iter()
+            .map(|(provider, model)| llm::ChainLink { provider, model: model.into(), client: Box::new(Recorder(seen.clone())) })
+            .collect();
+        let _ = answer_meeting_with(&store, id, "who sends it?", &[], &RoutingConfig::default(), || chain);
+        let prompts = seen.lock().unwrap().clone();
+        assert_eq!(prompts.len(), 2);
+        assert!(!prompts[0].contains("Zebra Review") && !prompts[0].contains("Zebrowski"));
+        assert!(prompts[1].contains("Zebra Review") && prompts[1].contains("Ana Zebrowski"));
+    }
+
+    #[test]
+    fn meeting_ask_answers_are_recorded() {
+        let _serial = serialize_prepared_asks();
+        let anthropic = RoutingConfig { anthropic_key: Some("k".into()), preferred_provider: "anthropic".into(), ..RoutingConfig::default() };
+        // Google Calendar text in the prompt: the answer is Google.
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = google_meeting(&store);
+        let data = prepare_meeting_ask(&store, id, "q", &[], &anthropic).unwrap();
+        finalize_ask(&store, &data.prepare_id, "MEETINGANSWER one", "claude", llm::TokenUsage::default());
+        assert!(store.answer_may_hold_google_data("MEETINGANSWER one"));
+        // A meeting known to come from another calendar: recorded clean.
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = meeting_with_transcript(&store, &["we agreed on Friday"]);
+        let data = prepare_meeting_ask(&store, id, "q", &[], &anthropic).unwrap();
+        finalize_ask(&store, &data.prepare_id, "MEETINGANSWER two", "claude", llm::TokenUsage::default());
+        assert!(!store.answer_may_hold_google_data("MEETINGANSWER two"));
+        // Blocking.
+        let a = answer_meeting_with(&store, id, "q", &[], &anthropic, || fake_chain(&[llm::Provider::Anthropic])).unwrap();
+        assert!(!store.answer_may_hold_google_data(&a.text));
+    }
+
+    // --- Meeting Ask: budget follows the model, whole-meeting questions read it all ---
+
+    struct Seen(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+    impl llm::LlmClient for Seen {
+        fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            self.0.lock().unwrap().push(prompt.to_string());
+            Ok(llm::Completion { text: "Friday [1].".into(), token_usage: llm::TokenUsage::default() })
+        }
+    }
+
+    fn seen_chain(provider: llm::Provider) -> (Vec<llm::ChainLink>, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let link = llm::ChainLink { provider, model: "m".into(), client: Box::new(Seen(seen.clone())) };
+        (vec![link], seen)
+    }
+
+    /// `n` lines of 1,000 characters each, line `i` carrying the marker `LINE{i}`.
+    fn long_lines(n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("LINE{i} {}", "x".repeat(990))).collect()
+    }
+
+    fn long_meeting(store: &memory::Store, n: usize) -> i64 {
+        let lines = long_lines(n);
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        meeting_with_transcript(store, &refs)
+    }
+
+    #[test]
+    fn a_hosted_model_gets_the_whole_transcript_for_a_whole_meeting_question_in_one_call() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = long_meeting(&store, 40); // 40k characters: over a local model's budget
+        let (chain, seen) = seen_chain(llm::Provider::Anthropic);
+        let answer =
+            answer_meeting_with(&store, id, "list the action items", &[], &RoutingConfig::default(), || chain).unwrap();
+        assert!(!answer.narrowed);
+        let prompts = seen.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("LINE0 ") && prompts[0].contains("LINE39 "), "every segment is sent");
+    }
+
+    #[test]
+    fn a_local_model_reads_a_long_transcript_part_by_part_for_a_whole_meeting_question() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = long_meeting(&store, 40);
+        let (chain, seen) = seen_chain(llm::Provider::Ollama);
+        let answer =
+            answer_meeting_with(&store, id, "list the action items", &[], &RoutingConfig::default(), || chain).unwrap();
+        let prompts = seen.lock().unwrap();
+        // Two parts read, then the answer.
+        assert_eq!(prompts.len(), 3, "{}", prompts.len());
+        assert!(prompts[0].contains("part 1 of 2") && prompts[1].contains("part 2 of 2"));
+        assert!(prompts[0].contains("LINE0 ") && !prompts[0].contains("LINE39 "));
+        assert!(prompts[1].contains("LINE39 ") && !prompts[1].contains("LINE0 "));
+        // Together the parts hold every segment.
+        for i in 0..40 {
+            let marker = format!("LINE{i} ");
+            assert!(prompts[..2].iter().any(|p| p.contains(&marker)), "{marker} dropped");
+        }
+        assert!(prompts[2].contains("Part 1:\nFriday [1].") && prompts[2].contains("Question: list the action items"));
+        assert!(!answer.narrowed, "every part was read");
+    }
+
+    #[test]
+    fn a_narrow_question_on_a_long_transcript_keeps_the_keyword_selection_in_one_call() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = long_meeting(&store, 40);
+        let (chain, seen) = seen_chain(llm::Provider::Ollama);
+        let answer = answer_meeting_with(&store, id, "what about LINE7", &[], &RoutingConfig::default(), || chain).unwrap();
+        assert!(answer.narrowed);
+        let prompts = seen.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("LINE7 "));
+    }
+
+    #[test]
+    fn a_long_transcript_that_fits_is_one_call_whatever_the_question() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = long_meeting(&store, 30); // 30k: within a local model's budget
+        let (chain, seen) = seen_chain(llm::Provider::Ollama);
+        answer_meeting_with(&store, id, "summarize", &[], &RoutingConfig::default(), || chain).unwrap();
+        let prompts = seen.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("LINE0 ") && prompts[0].contains("LINE29 "));
+    }
+
+    #[test]
+    fn the_parts_a_link_may_not_receive_google_text_in_carry_no_title() {
+        let store = memory::Store::open_in_memory().unwrap();
+        // 100k characters: over OpenRouter's budget, so a whole-meeting question reads it in parts.
+        let id = long_meeting(&store, 100);
+        store.set_meeting_title(id, "Zebra Review").unwrap();
+        store.set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_GOOGLE).unwrap();
+        let (chain, seen) = seen_chain(llm::Provider::OpenRouter);
+        let _ = answer_meeting_with(&store, id, "list the action items", &[], &RoutingConfig::default(), || chain).unwrap();
+        let prompts = seen.lock().unwrap();
+        assert!(prompts.len() >= 3, "{}", prompts.len());
+        assert!(prompts.iter().all(|p| !p.contains("Zebra")), "the title reached a link that may not receive it");
     }
 }

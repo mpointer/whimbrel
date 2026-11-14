@@ -5,6 +5,7 @@ import {
   meetingRecordStop,
   meetingRegenerate,
   meetingRegenerationConflict,
+  meetingResummarizeWhimbrel,
   meetingResetOverrides,
   meetingSaveNotes,
   meetingSaveOverrides,
@@ -13,10 +14,13 @@ import {
   meetingTranscribeAgain,
   meetingTrimInfo,
   meetingWorkspace,
+  whimbrelAiStatus,
 } from "../api";
+import { fallbackAction, fallbackLine } from "./summaryFallback";
 import { describeError, isCommandError } from "../errors";
 import type { ActionItemView, LiveTranscriptView, TrimInfo, WorkspaceView } from "../generated/types";
 import { TrimSheet } from "./TrimSheet";
+import { RecapActions } from "./RecapActions";
 import { useL10n } from "../l10n";
 import { DeviceChip } from "../library/LibraryView";
 import { spanLabel } from "../library/rows";
@@ -65,12 +69,17 @@ function useAutosave(
   }, [value, onError, stored]);
 }
 
-export function Workspace({ meetingId, onChanged }: { meetingId: number; onChanged: () => void }) {
+export function Workspace({ meetingId, onChanged, onOpenSettings }: { meetingId: number; onChanged: () => void; onOpenSettings?: () => void }) {
   const [view, setView] = useState<WorkspaceView | null>(null);
   const [notes, setNotes] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [items, setItems] = useState<ActionItemView[]>([]);
   const [conflict, setConflict] = useState(false);
+  // The edits prompt is for "Re-summarize with Whimbrel" rather than Regenerate.
+  const [viaWhimbrel, setViaWhimbrel] = useState(false);
+  // Whether this PC is signed in to Whimbrel, read while a fallback notice shows.
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  const [resummarizeError, setResummarizeError] = useState<string | null>(null);
   // A speaker's name changed: the summary may still use the old one.
   const [namesChanged, setNamesChanged] = useState(false);
   const [forgetting, setForgetting] = useState(false);
@@ -187,15 +196,30 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
       .finally(() => setBusy(false));
   };
 
-  const regenerate = (keepEdits: boolean) => {
+  const regenerate = (keepEdits: boolean, whimbrel = viaWhimbrel) => {
     setConflict(false);
-    act(() => meetingRegenerate(meetingId, keepEdits));
+    setViaWhimbrel(false);
+    if (!whimbrel) {
+      act(() => meetingRegenerate(meetingId, keepEdits));
+      return;
+    }
+    // A failed re-summary keeps the summary and says why under the notice.
+    setBusy(true);
+    setResummarizeError(null);
+    meetingResummarizeWhimbrel(meetingId, keepEdits)
+      .then(() => load(true))
+      .then(onChanged)
+      .catch((e: unknown) => setResummarizeError(message(e)))
+      .finally(() => setBusy(false));
   };
 
-  const askThenRegenerate = () => {
+  const askThenRegenerate = (whimbrel = false) => {
     setBusy(true);
     meetingRegenerationConflict(meetingId)
-      .then((needsPrompt) => (needsPrompt ? setConflict(true) : regenerate(false)))
+      .then((needsPrompt) => {
+        setViaWhimbrel(whimbrel);
+        return needsPrompt ? setConflict(true) : regenerate(false, whimbrel);
+      })
       .catch((e: unknown) => setError(message(e)))
       .finally(() => setBusy(false));
   };
@@ -279,6 +303,18 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
               onChange={(e) => setSummary(e.target.value)}
             />
           </label>
+          {view.summaryFallback && (
+            <FallbackNotice
+              line={fallbackLine(view.summaryFallback)}
+              signedIn={signedIn}
+              onSignedIn={setSignedIn}
+              busy={busy}
+              canResummarize={view.hasTranscript && !view.readOnly}
+              error={resummarizeError}
+              onResummarize={() => askThenRegenerate(true)}
+              onOpenSettings={onOpenSettings}
+            />
+          )}
 
           {view.decisions.length > 0 && (
             <div className="field">
@@ -300,6 +336,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
               </ul>
             </div>
           )}
+          {(view.summary || summary || view.decisions.length > 0 || view.actionItems.length > 0) && <RecapActions view={view} summary={summary} />}
 
           <ActionItems meetingId={meetingId} items={items} onItems={setItems} readOnly={view.readOnly} />
 
@@ -401,7 +438,7 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
           )}
           <div className="toolbar">
             {!view.readOnly && (
-              <button className="mode" disabled={busy || !view.hasTranscript} onClick={askThenRegenerate}>
+              <button className="mode" disabled={busy || !view.hasTranscript} onClick={() => askThenRegenerate()}>
                 {t("Regenerate summary")}
               </button>
             )}
@@ -469,5 +506,56 @@ export function Workspace({ meetingId, onChanged }: { meetingId: number; onChang
 
       {error && <p role="alert">{error}</p>}
     </section>
+  );
+}
+
+/** The line under a summary Whimbrel AI was meant to write but another model did (PR 805), with the
+ *  way back: "Re-summarize with Whimbrel", or "Sign in to Whimbrel" while this PC is signed out. */
+function FallbackNotice({
+  line,
+  signedIn,
+  onSignedIn,
+  busy,
+  canResummarize,
+  error,
+  onResummarize,
+  onOpenSettings,
+}: {
+  line: string;
+  signedIn: boolean | null;
+  onSignedIn: (v: boolean) => void;
+  busy: boolean;
+  canResummarize: boolean;
+  error: string | null;
+  onResummarize: () => void;
+  onOpenSettings?: () => void;
+}) {
+  const { t } = useL10n();
+  useEffect(() => {
+    const read = () => whimbrelAiStatus().then((s) => onSignedIn(s.signedIn), () => {});
+    read();
+    // Signing in happens in Settings; read again when the window comes back.
+    window.addEventListener("focus", read);
+    return () => window.removeEventListener("focus", read);
+  }, [onSignedIn]);
+  return (
+    <div className="field">
+      <p className="muted small">{line}</p>
+      <div className="toolbar">
+        {signedIn != null &&
+          (fallbackAction(signedIn) === "signIn" ? (
+            onOpenSettings && (
+              <button className="mode" onClick={onOpenSettings}>
+                {t("Sign in to Whimbrel")}
+              </button>
+            )
+          ) : (
+            <button className="mode" disabled={busy || !canResummarize} onClick={onResummarize}>
+              {busy ? t("Re-summarizing…") : t("Re-summarize with Whimbrel")}
+            </button>
+          ))}
+      </div>
+      {error && <p role="alert">{error}</p>}
+    </div>
   );
 }
