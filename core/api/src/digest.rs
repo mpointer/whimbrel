@@ -40,10 +40,12 @@ pub fn daily_digest(
     llm::check_spend_cap(store, &cap_config, None, Some("digest"), now_unix_ms())?;
 
     let chain = crate::budget::apply_budgets(store, build_chain_for(llm::TaskKind::Digest, ollama_model, routing), false, now_unix_ms())?;
+    let policy = routing.google_data_policy();
     let (digest, entry) = llm::try_chain_with_failures(&chain, |entry| {
+        // Limited Use: Gmail threads only for a link that may receive them.
         llm::generate_daily_digest_from_context(
             entry.client.as_ref(),
-            &items,
+            &llm::limited_use::context_for_link_in(store, &items, entry, policy),
             &llm::profile::compose_instructions(&routing.daily_digest_instructions, &routing.profile, &routing.output_language),
             start_unix_ms,
         )

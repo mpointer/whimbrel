@@ -74,6 +74,7 @@ struct WhimbrelApp: App {
             }
             CommandGroup(after: .help) {
                 Button("Send Feedback…") { NSWorkspace.shared.open(Self.feedbackMailURL()) }
+                Button("Join the Whimbrel Discord…") { NSWorkspace.shared.open(Self.discordURL) }
             }
             CommandMenu("Go") {
                 ForEach(WhimbrelTab.allCases) { tab in
@@ -170,6 +171,10 @@ struct WhimbrelApp: App {
                 .environmentObject(appState)
         }
     }
+
+    /// Help > Join the Whimbrel Discord…: the community server's invite (#762). Also on the
+    /// website footer and the README.
+    static let discordURL = URL(string: "https://discord.gg/fetZZA8Ax")!
 
     /// Help > Send Feedback…: a new email to hello@whimbrelapp.com with the version, macOS
     /// and Mac model filled in, so every report says what it ran on.

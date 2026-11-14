@@ -73,6 +73,7 @@ impl From<llm::ProviderFailureKind> for ProviderFailureReason {
             K::NoProviderConfigured => Self::NoProviderConfigured,
             K::Unauthorized { provider } => Self::Unauthorized { provider: provider.as_str().into() },
             K::RateLimited { provider } => Self::RateLimited { provider: provider.as_str().into() },
+            K::Network { provider: llm::Provider::Ollama } => Self::ollama_network(crate::chat::ollama_reachable()),
             K::Network { provider } => Self::Network { provider: provider.as_str().into() },
             K::CreditExhausted => Self::CreditExhausted,
             K::Other { provider, status } => Self::Other { provider: provider.as_str().into(), status },
@@ -82,6 +83,19 @@ impl From<llm::ProviderFailureKind> for ProviderFailureReason {
 }
 
 impl ProviderFailureReason {
+    /// Core reads an Ollama connection that timed out as a running Ollama that was slow
+    /// (`Network`), not a stopped one. On Windows a connect to a closed port retries for seconds,
+    /// so a stopped or uninstalled Ollama can time out too: a tester with no Ollama installed was
+    /// told the local model "didn't finish" (2026-11-13). Whether it is `listening` (the 300 ms
+    /// probe) settles which it was.
+    fn ollama_network(listening: bool) -> Self {
+        if listening {
+            Self::Network { provider: "ollama".into() }
+        } else {
+            Self::OllamaNotRunning
+        }
+    }
+
     /// The sentence a log line, a summary-failure marker or another non-UI surface shows, in the UI
     /// language. Network and other failures keep the general line.
     pub fn message(&self) -> Option<String> {
@@ -99,7 +113,7 @@ impl ProviderFailureReason {
                 "Ollama doesn't have the model {model}. Pick one you have in Settings → AI, or run: ollama pull {model}",
                 &[("model", model)],
             ),
-            Self::OllamaNotRunning => tr("Ollama isn't running on this computer. Start Ollama, or add an API key in Settings → AI.", &[]),
+            Self::OllamaNotRunning => tr("Ollama isn't running on this computer. Start Ollama, or choose Whimbrel AI or add an API key in Settings → AI.", &[]),
             Self::NoProviderConfigured => tr("No AI provider is set up. Add one in Settings → AI.", &[]),
             Self::Unauthorized { provider } => tr("{provider} rejected the API key. Check it in Settings → AI.", &[("provider", &name(provider))]),
             Self::RateLimited { provider } => tr("{provider} is busy or out of credit. Try again shortly.", &[("provider", &name(provider))]),
@@ -255,6 +269,13 @@ mod tests {
         assert!(slow.to_string().starts_with("The local model (Ollama) didn't finish."), "a local model that gave up says what to do");
         let timed_out = CommandError::ProviderFailure { reason: Some(ProviderFailureReason::Network { provider: "ollama".into() }) };
         assert_eq!(timed_out.to_string(), slow.to_string());
+        let not_listening = CommandError::ProviderFailure { reason: Some(ProviderFailureReason::ollama_network(false)) };
+        assert_eq!(
+            not_listening.to_string(),
+            "Ollama isn't running on this computer. Start Ollama, or choose Whimbrel AI or add an API key in Settings → AI.",
+            "a timeout with nothing listening is a stopped Ollama, not a slow one"
+        );
+        assert_eq!(ProviderFailureReason::ollama_network(true), ProviderFailureReason::Network { provider: "ollama".into() });
         let http = CommandError::ProviderFailure { reason: Some(ProviderFailureReason::Other { provider: "ollama".into(), status: Some(500) }) };
         assert_eq!(http.to_string(), "every model provider failed", "an HTTP error from Ollama keeps the general line");
         assert_eq!(serde_json::to_value(CommandError::provider_failure()).unwrap(), serde_json::json!({"kind": "provider_failure"}));

@@ -2,6 +2,11 @@
 # with no Node.js (M3.4 Task 6):
 #
 #   . .\apps\windows\scripts\prepare-bundle-resources.ps1
+#   . .\apps\windows\scripts\prepare-bundle-resources.ps1 -Arch arm64   # the Arm64 installer
+#
+# Arm64 (2026-11-13, a first cut): Node's win-arm64 build and llama.cpp's win-cpu-arm64 build, and no
+# Vulkan loader: that build's whisper doesn't use Vulkan (src-tauri/Cargo.toml). Its installer uses
+# src-tauri/tauri.bundle.arm64.conf.json, which leaves the loader out.
 #
 # Produces apps\windows\src-tauri\bundle-resources\ (gitignored):
 #   connectors\<name>\{dist, package.json, package-lock.json, node_modules}   the two Google connectors
@@ -35,10 +40,13 @@
 # release's SHASUMS256.txt under win-x64/node.exe; the LICENSE is the file of that name at the tag
 # https://github.com/nodejs/node/blob/<version>/LICENSE. Re-run the connectors against the new Node.
 
+param([ValidateSet('x64', 'arm64')][string]$Arch = 'x64')
+
 $ErrorActionPreference = 'Stop'
 
 $NodeVersion = 'v22.23.3'
 $NodeExeSha256 = '9c9245166b4a8e182e0b797da9c20136117ff24368eaff1fec8343a123c8db0e'
+$NodeExeArm64Sha256 = 'b5a3165ec6f24c0b1fe2a10fed58e03f6c1d7d141beb3b225ff030ceac6c5eb5'
 $NodeLicenseSha256 = 'c738ae413cf561f174e34f6961f8ca458aae2369a73640dda6234c629b98bcc4'
 $VulkanRtVersion = '1.4.363.0'
 $VulkanRtZipSha256 = 'A25A927AA8B9F0371048F1861CF88AC3B9BC9B1FB332C42D897C8AB32695769A'
@@ -46,9 +54,14 @@ $VulkanDllSha256 = 'E1FCFC9489BEEFA6A6D9D11D6C7517F6A2B7F16E0D3FB8F4103BEE0210F3
 $VulkanLicenseSha256 = '404DEB98DABF3E54BF9070D59676B31D69A3DA2F9F6E56BDF09AD315C04C718C'
 $LlamaTag = 'b11877'
 $LlamaZipSha256 = '05EF0107993C7FCA52975B8692449B419EF041A7C72D0B6A1E98326436EFC4EB'
+$LlamaZipArm64Sha256 = '6FF05723F31E528623392EFF09CEC97CCAC06B3706C5F7BD66F5712F10A38745'
 $LlamaLicenseSha256 = '94F29BBED6A22C35B992C5C6EBF0E7C92F13B836B90F36F461C9CF2F0F1D010D'
 # What llama-server loads, found by running it from a folder holding only these (plus ggml-cpu-*.dll).
 $LlamaFiles = @('llama-server-impl.dll', 'llama-common.dll', 'llama.dll', 'mtmd.dll', 'ggml.dll', 'ggml-base.dll', 'ggml-vulkan.dll', 'libomp.dll', 'LICENSE-LLVM-OpenMP')
+# The Arm64 CPU build has one ggml-cpu.dll and no Vulkan backend.
+if ($Arch -eq 'arm64') {
+    $LlamaFiles = @('llama-server-impl.dll', 'llama-common.dll', 'llama.dll', 'mtmd.dll', 'ggml.dll', 'ggml-base.dll', 'ggml-cpu.dll', 'libomp.dll', 'LICENSE-LLVM-OpenMP')
+}
 
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..\..')
 $out = Join-Path $repo 'apps\windows\src-tauri\bundle-resources'
@@ -78,7 +91,11 @@ function Get-Verified([string]$url, [string]$name, [string]$sha256, [string]$ver
 }
 
 # Verify before touching the output, so a bad download never leaves a half-staged folder.
-$nodeExe = Get-Verified "https://nodejs.org/dist/$NodeVersion/win-x64/node.exe" 'node.exe' $NodeExeSha256
+$nodeExe = if ($Arch -eq 'arm64') {
+    Get-Verified "https://nodejs.org/dist/$NodeVersion/win-arm64/node.exe" 'node-arm64.exe' $NodeExeArm64Sha256
+} else {
+    Get-Verified "https://nodejs.org/dist/$NodeVersion/win-x64/node.exe" 'node.exe' $NodeExeSha256
+}
 $nodeLicense = Get-Verified "https://raw.githubusercontent.com/nodejs/node/$NodeVersion/LICENSE" 'LICENSE' $NodeLicenseSha256
 $vulkanZip = Get-Verified "https://sdk.lunarg.com/sdk/download/$VulkanRtVersion/windows/VulkanRT-X64-$VulkanRtVersion-Components.zip" 'VulkanRT-Components.zip' $VulkanRtZipSha256 "vulkan-$VulkanRtVersion"
 # The two files out of the verified zip, each checked again before it is staged.
@@ -92,9 +109,13 @@ foreach ($f in @(@($vulkanDll, $VulkanDllSha256), @($vulkanLicense, $VulkanLicen
     $actual = (Get-FileHash $f[0] -Algorithm SHA256).Hash
     if ($actual -ne $f[1]) { throw "$($f[0]) has SHA-256 $actual, not the pinned $($f[1]). Nothing was staged." }
 }
-$llamaZip = Get-Verified "https://github.com/ggml-org/llama.cpp/releases/download/$LlamaTag/llama-$LlamaTag-bin-win-vulkan-x64.zip" 'llama-win-vulkan-x64.zip' $LlamaZipSha256 "llama-$LlamaTag"
+$llamaZip = if ($Arch -eq 'arm64') {
+    Get-Verified "https://github.com/ggml-org/llama.cpp/releases/download/$LlamaTag/llama-$LlamaTag-bin-win-cpu-arm64.zip" 'llama-win-cpu-arm64.zip' $LlamaZipArm64Sha256 "llama-$LlamaTag"
+} else {
+    Get-Verified "https://github.com/ggml-org/llama.cpp/releases/download/$LlamaTag/llama-$LlamaTag-bin-win-vulkan-x64.zip" 'llama-win-vulkan-x64.zip' $LlamaZipSha256 "llama-$LlamaTag"
+}
 $llamaLicense = Get-Verified "https://raw.githubusercontent.com/ggml-org/llama.cpp/$LlamaTag/LICENSE" 'LICENSE' $LlamaLicenseSha256 "llama-$LlamaTag"
-$llamaExtract = Join-Path $cache "llama-$LlamaTag-extract"
+$llamaExtract = Join-Path $cache "llama-$LlamaTag-$Arch-extract"
 Remove-Item $llamaExtract -Recurse -Force -ErrorAction SilentlyContinue
 Expand-Archive -Path $llamaZip -DestinationPath $llamaExtract
 
@@ -105,14 +126,16 @@ $nodeDir = Join-Path $out 'node'
 New-Item -ItemType Directory -Force $nodeDir | Out-Null
 Copy-Item $nodeExe (Join-Path $nodeDir 'node.exe') -Force
 Copy-Item $nodeLicense (Join-Path $nodeDir 'LICENSE') -Force
-$vulkanDir = Join-Path $out 'vulkan'
-New-Item -ItemType Directory -Force $vulkanDir | Out-Null
-Copy-Item $vulkanDll (Join-Path $vulkanDir 'vulkan-1.dll') -Force
-Copy-Item $vulkanLicense (Join-Path $vulkanDir 'LICENSE.txt') -Force
+if ($Arch -eq 'x64') {
+    $vulkanDir = Join-Path $out 'vulkan'
+    New-Item -ItemType Directory -Force $vulkanDir | Out-Null
+    Copy-Item $vulkanDll (Join-Path $vulkanDir 'vulkan-1.dll') -Force
+    Copy-Item $vulkanLicense (Join-Path $vulkanDir 'LICENSE.txt') -Force
+}
 $llamaDir = Join-Path $out 'llama'
 New-Item -ItemType Directory -Force $llamaDir | Out-Null
 Copy-Item (Join-Path $llamaExtract 'llama-server.exe') (Join-Path $llamaDir 'whimbrel-llama-server.exe') -Force
 foreach ($f in $LlamaFiles) { Copy-Item (Join-Path $llamaExtract $f) $llamaDir -Force }
-Copy-Item (Join-Path $llamaExtract 'ggml-cpu-*.dll') $llamaDir -Force
+if ($Arch -eq 'x64') { Copy-Item (Join-Path $llamaExtract 'ggml-cpu-*.dll') $llamaDir -Force }
 Copy-Item $llamaLicense (Join-Path $llamaDir 'LICENSE') -Force
-Write-Host "staged Node $NodeVersion, the Vulkan loader $VulkanRtVersion, llama.cpp $LlamaTag and the connectors in $out"
+Write-Host "staged ($Arch) Node $NodeVersion, the Vulkan loader $VulkanRtVersion (x64 only), llama.cpp $LlamaTag and the connectors in $out"

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { approvalsCount, takePendingOpenMeeting, takePendingOpenTopic } from "./api";
 import { RetentionNotice } from "./settings/RetentionNotice";
 import { UpdateBanner } from "./settings/UpdateBanner";
+import { ArmNotice } from "./settings/ArmNotice";
 import { SignInBanner } from "./settings/SignInBanner";
 import { SyncStoppedLine } from "./settings/SyncStoppedLine";
 import { bootstrapModels } from "./settings/modelBootstrap";
@@ -130,6 +131,7 @@ export function App() {
       <SkinHeader />
       <main id="panel" role="tabpanel" aria-labelledby={`tab-${tab.id}`} className="content">
         <UpdateBanner />
+        <ArmNotice />
         <SignInBanner />
         <RetentionNotice key={retentionSaved} onChangeSettings={() => openSettings("capture")} />
         {/* Today writes its own heading: the greeting. */}
@@ -150,7 +152,7 @@ export function App() {
             onOpenSettings={() => openSettings("ai")}
           />
         ) : tab.id === "meetings" ? (
-          <MeetingsView open={openMeeting} />
+          <MeetingsView open={openMeeting} onOpenSettings={() => openSettings("ai")} />
         ) : tab.id === "library" ? (
           <LibraryView askRequest={askRequest} onAskHandled={() => setAskRequest(null)} onOpenSettings={() => openSettings("ai")} />
         ) : tab.id === "topics" ? (

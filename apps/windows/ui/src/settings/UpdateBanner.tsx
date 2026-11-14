@@ -24,7 +24,7 @@ export function UpdateBanner() {
     <section className="card notice" role="region" aria-label={t("Update ready")}>
       <p>
         {t(
-          "Whimbrel {version} is ready. Restarting installs it and reopens Whimbrel; a meeting being recorded is stopped and saved first.",
+          "Whimbrel {version} is ready. Restarting installs it and reopens Whimbrel. It waits while a meeting is being recorded or processed.",
           { version },
         )}
       </p>

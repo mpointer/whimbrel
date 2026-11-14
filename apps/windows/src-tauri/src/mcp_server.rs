@@ -422,7 +422,9 @@ mod tests {
         let server = McpServer::new(Box::new(RealSpawner::new().unwrap()));
         let spec = SpawnSpec { exe: cmd, db, models: dir.join("models"), ollama_model: "gemma4:latest".into() };
         server.start(&spec);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        // 60 s, not 10: a loaded CI runner (FEYNMAN, 2026-11-14) took longer than 10 s to start cmd.exe,
+        // assign it to the job and see it exit. The loop ends at the exit, so a passing run stays fast.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         let mut status = server.status();
         while status == Status::Running && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(50));

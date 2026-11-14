@@ -401,7 +401,7 @@ impl Pipeline {
                 tracing::info!(meeting_id, audio_path, "launch repair: the recording's file name has no timestamp; not transcribing");
                 continue;
             };
-            let files = RecordingFiles::unfinished(&self.paths.recordings, &stamp, None);
+            let files = RecordingFiles::stored(&self.paths.recordings, &stamp);
             tracing::info!(meeting_id, stamp, "re-running the pipeline for a meeting left without a transcript");
             // Nothing was transcribed during that meeting -- whatever the worker had died
             // with the process -- so this transcribes the recordings whole.
@@ -428,7 +428,7 @@ impl Pipeline {
             .audio_path
             .as_deref()
             .and_then(|audio| stamp_of(Path::new(audio)))
-            .map(|stamp| RecordingFiles::unfinished(&self.paths.recordings, &stamp, None))
+            .map(|stamp| RecordingFiles::stored(&self.paths.recordings, &stamp))
             .filter(|files| files.audio_path().is_some())
             .ok_or_else(|| CommandError::invalid_input(crate::l10n::tr("This meeting's audio is no longer on this PC.", &[])))?;
         tracing::info!(meeting_id, "transcribing the meeting again");
@@ -443,6 +443,16 @@ impl Pipeline {
     /// decides what happens to the user's overrides: keep them and mark this generation
     /// seen, or drop them and take the new summary's text and action items.
     pub fn regenerate(&self, meeting_id: i64, keep_edits: bool) -> Result<(), CommandError> {
+        self.regenerate_with(meeting_id, keep_edits, false)
+    }
+
+    /// [`regenerate`](Self::regenerate) through Whimbrel AI alone (#805's "Re-summarize with
+    /// Whimbrel"): no fallback, and a failure says why in one sentence.
+    pub fn resummarize_with_whimbrel(&self, meeting_id: i64, keep_edits: bool) -> Result<(), CommandError> {
+        self.regenerate_with(meeting_id, keep_edits, true)
+    }
+
+    fn regenerate_with(&self, meeting_id: i64, keep_edits: bool, whimbrel_only: bool) -> Result<(), CommandError> {
         let Ok(_work) = self.work.try_lock() else {
             return Err(CommandError::invalid_input(tr("Whimbrel is still working on a meeting. Try again when it's done.", &[])));
         };
@@ -454,7 +464,12 @@ impl Pipeline {
         let transcript = self.stored_transcript(&meeting)?;
 
         self.set_stage(meeting_id, Stage::Summarizing);
-        let outcome = self.summarize(meeting_id, &transcript, meeting.notes.as_deref().unwrap_or_default());
+        let outcome = self.summarize_with(meeting_id, &transcript, meeting.notes.as_deref().unwrap_or_default(), whimbrel_only);
+        if whimbrel_only && outcome.is_err() {
+            // The summary on screen stays as it was; only say why.
+            self.finished(meeting_id, None);
+            return outcome.map_err(CommandError::invalid_input);
+        }
         record_summary(meeting_id, meeting.audio_path.as_deref().map(Path::new), &outcome);
         let now = now_ms();
         let applied = self.store.call_blocking(move |s| -> Result<(), String> {
@@ -524,9 +539,18 @@ impl Pipeline {
 
     /// One summarization on the slow lane. `Err` carries what to show the user.
     fn summarize(&self, meeting_id: i64, transcript: &str, notes: &str) -> Result<(), String> {
+        self.summarize_with(meeting_id, transcript, notes, false)
+    }
+
+    /// `whimbrel_only`: Whimbrel AI with the user's Whimbrel model and no fallback
+    /// (`api::summary::summarize_meeting_preferred`); a failure is one sentence from its reason.
+    fn summarize_with(&self, meeting_id: i64, transcript: &str, notes: &str, whimbrel_only: bool) -> Result<(), String> {
         let (routing, ollama_model, instructions) = {
             let settings = self.settings.lock().unwrap();
-            let routing = settings.routing();
+            let mut routing = settings.routing();
+            if whimbrel_only {
+                routing.preferred_provider = crate::settings::Provider::Whimbrel;
+            }
             let instructions = settings.instructions(PromptSurface::MeetingSummary);
             (routing.clone(), routing.ollama_model.clone(), instructions)
         };
@@ -537,11 +561,29 @@ impl Pipeline {
         self.slow_store
             .call_blocking(move |s| {
                 let transcript = with_names(s, meeting_id, &transcript);
+                if whimbrel_only {
+                    return api::summary::summarize_meeting_preferred(s, meeting_id, &notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom)
+                        .map(|_| ())
+                        .map_err(|e| {
+                            // Thread-local: read on the store thread that just failed.
+                            match api::summary::take_last_summary_failure_reason() {
+                                Some((reason, _status)) => resummarize_failure(reason),
+                                None => crate::error::CommandError::from(e).to_string(),
+                            }
+                        });
+                }
                 api::summary::summarize_meeting(s, meeting_id, &notes, &transcript, &slides_text(s, meeting_id), &ollama_model, &config, &custom)
                     .map(|_| ())
                     .map_err(|e| crate::error::CommandError::from(e).to_string())
             })
             .map_err(|e| e.to_string())?
+    }
+
+    /// Runs `f` while no meeting is being transcribed, and keeps one from starting until it
+    /// returns (Free up space compresses one meeting at a time this way).
+    pub fn while_idle<T>(&self, f: impl FnOnce() -> T) -> T {
+        let _work = self.work.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        f()
     }
 
     fn run(&self, meeting_id: i64, files: RecordingFiles, transcribed: super::live::Accumulated) {
@@ -629,11 +671,15 @@ impl Pipeline {
         let transcriber = transcribe::Transcriber::load(&whisper_model).map_err(|e| tr("The transcription model didn't load: {error}", &[("error", &e.to_string())]))?;
         // Not the live worker's folder: it may still be deleting it (`Paths::pipeline_slices`).
         let slices = self.paths.pipeline_slices();
+        // A compressed recording (Free up space) is read through temporary WAVs; the markers
+        // and transcript still go beside the recording itself.
+        let readable = super::compress::readable(&super::compress::MediaFoundation, files)
+            .map_err(|e| tr("The compressed recording didn't open: {error}", &[("error", &e)]))?;
         // System first: when it has speech it locks the language, and the mic is forced to it
         // (the Mac's `transcribeSession`).
         let system_segments = finish_channel(
             &transcriber,
-            files.system.as_deref(),
+            readable.files.system.as_deref(),
             transcribed.system,
             transcribed.system_cursor,
             &slices,
@@ -642,7 +688,7 @@ impl Pipeline {
         )?;
         let mic_segments = finish_channel(
             &transcriber,
-            files.mic.as_deref(),
+            readable.files.mic.as_deref(),
             transcribed.mic,
             transcribed.mic_cursor,
             &slices,
@@ -736,7 +782,7 @@ impl Pipeline {
         // Speaker labels last: they cost more than everything above put together.
         self.set_stage(meeting_id, Stage::IdentifyingSpeakers);
         let diarizing = Instant::now();
-        let (labelled, voices) = self.label_system_channel(&system_segments, files.system.as_deref(), speakers);
+        let (labelled, voices) = self.label_system_channel(&system_segments, readable.files.system.as_deref(), speakers);
         let (final_lines, _) = transcribe::postprocess::postprocess(&mic_lines, &labelled);
         std::fs::write(&path, transcript_text(&final_lines, started)).map_err(|e| tr("The transcript didn't save: {error}", &[("error", &e.to_string())]))?;
         let segments: Vec<NewTranscriptSegment> = final_lines
@@ -914,6 +960,25 @@ impl Pipeline {
     ) -> (Vec<Line>, Vec<(i32, Vec<f32>)>) {
         let keep_others = || (lines_from(segments, |_| OTHERS.to_string()), Vec::new());
         let (Some(wav), false) = (wav, segments.is_empty()) else { return keep_others() };
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            // The Arm64 build has no diarization yet (Cargo.toml).
+            let _ = (wav, speakers);
+            tracing::info!("this build doesn't split speakers; the system channel stays \"Others\"");
+            keep_others()
+        }
+        #[cfg(target_arch = "x86_64")]
+        self.diarize_system_channel(segments, wav, speakers, keep_others)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn diarize_system_channel(
+        &self,
+        segments: &[transcribe::TranscriptSegment],
+        wav: &Path,
+        speakers: Option<i32>,
+        keep_others: impl Fn() -> (Vec<Line>, Vec<(i32, Vec<f32>)>),
+    ) -> (Vec<Line>, Vec<(i32, Vec<f32>)>) {
         let models = diarize::DiarizationModelPaths {
             segmentation_model_path: self.paths.segmentation_model(),
             embedding_model_path: self.paths.speaker_embedding_model(),
@@ -944,6 +1009,18 @@ impl Pipeline {
                 keep_others()
             }
         }
+    }
+}
+
+/// What a failed "Re-summarize with Whimbrel" says, from core's `fallback_reason` code (the
+/// Mac's `SummaryFallbackNotice.failureMessage`; one whole sentence per cause).
+pub fn resummarize_failure(reason: &str) -> String {
+    match reason {
+        "not_signed_in" | "no_device_key" | "unauthorized" => tr("Couldn't re-summarize because you are not signed in to Whimbrel.", &[]),
+        "budget" | "credit_exhausted" => tr("Couldn't re-summarize because your Whimbrel AI credit or budget ran out.", &[]),
+        "model_unavailable" => tr("Couldn't re-summarize because Whimbrel does not offer the chosen model.", &[]),
+        "local_only" => tr("Couldn't re-summarize because local-only mode is on.", &[]),
+        _ => tr("Couldn't re-summarize because Whimbrel was not available.", &[]),
     }
 }
 
@@ -1148,6 +1225,20 @@ mod tests {
         assert_eq!(expected_speakers(&meeting(&["a@x", "b@x"], Some(9))), Some(2));
         assert_eq!(expected_speakers(&meeting(&[], Some(3))), Some(3));
         assert_eq!(expected_speakers(&meeting(&[], None)), None);
+    }
+
+    #[test]
+    fn a_failed_resummary_says_why_in_one_sentence_per_cause() {
+        for r in ["not_signed_in", "no_device_key", "unauthorized"] {
+            assert!(resummarize_failure(r).contains("not signed in"), "{r}");
+        }
+        assert!(resummarize_failure("budget").contains("credit or budget"));
+        assert!(resummarize_failure("credit_exhausted").contains("credit or budget"));
+        assert!(resummarize_failure("model_unavailable").contains("chosen model"));
+        assert!(resummarize_failure("local_only").contains("local-only mode"));
+        for r in ["timeout", "network", "rate_limited", "unavailable", "something_new"] {
+            assert_eq!(resummarize_failure(r), "Couldn't re-summarize because Whimbrel was not available.");
+        }
     }
 
     #[test]

@@ -6,10 +6,43 @@ use std::collections::HashSet;
 use memory::redact::redact_secrets;
 use memory::MeetingTranscriptSegment;
 
-use crate::{build_ask_prompt, ChatTurn, ContextItem};
+use crate::{build_ask_prompt, context_window_tokens, ChatTurn, ContextItem, Provider, CONTEXT_CHARS_PER_TOKEN_ESTIMATE};
 
 /// Characters of redacted transcript sent for one question (about 6k tokens).
 pub const CONTEXT_BUDGET_CHARS: usize = 24_000;
+
+/// Tokens kept back from the window for the prompt around the transcript (instructions,
+/// background, history, the question) and the answer.
+const ASK_RESERVE_TOKENS: usize = 5_000;
+
+/// The characters of transcript one Ask prompt to `provider` may carry: its window less
+/// [`ASK_RESERVE_TOKENS`]. Never below [`CONTEXT_BUDGET_CHARS`], the figure every provider
+/// had before the budget followed the window.
+pub fn context_budget_chars(provider: Provider) -> usize {
+    context_window_tokens(provider)
+        .saturating_sub(ASK_RESERVE_TOKENS)
+        .saturating_mul(CONTEXT_CHARS_PER_TOKEN_ESTIMATE)
+        .max(CONTEXT_BUDGET_CHARS)
+}
+
+/// Phrases that mark a question about the meeting as a whole, not one point in it: the
+/// answer needs every part of the transcript, so a keyword match would miss most of it.
+const WHOLE_MEETING_PHRASES: &[&str] = &[
+    "action item", "action-item", "actionable", "to-do", "todo", "to do list", "follow-up", "follow up", "followup",
+    "next step", "next-step", "summar", "recap", "decision", "decided", "agree", "takeaway", "take-away",
+    "tl;dr", "tldr", "overview", "key point", "main point", "highlights", "what happened", "wrap up", "wrap-up",
+    "commitment", "who is responsible", "who's responsible", "open question",
+    // Spanish and French, the languages the keyword stopwords cover.
+    "resumen", "resumir", "acuerdo", "acciones", "próximos pasos", "résumé", "décision", "décisions",
+    "prochaines étapes",
+];
+
+/// Whether `query` asks about the whole meeting (its action items, follow-ups, next steps,
+/// a summary or recap, its decisions, "what did we agree"), as opposed to one narrow point.
+pub fn is_whole_meeting_intent(query: &str) -> bool {
+    let q = query.to_lowercase();
+    WHOLE_MEETING_PHRASES.iter().any(|p| q.contains(p))
+}
 
 /// Longest summary or notes block put in the prompt as background.
 const BACKGROUND_CHARS: usize = 2_000;
@@ -90,6 +123,113 @@ fn scores(segments: &[MeetingTranscriptSegment], terms: &[String]) -> Vec<f64> {
         .collect()
 }
 
+/// `segments` with every secret redacted, so none is cut in half by a later split.
+pub fn redact_segments(segments: Vec<MeetingTranscriptSegment>) -> Vec<MeetingTranscriptSegment> {
+    segments
+        .into_iter()
+        .map(|mut s| {
+            s.text = redact_secrets(&s.text).into_owned();
+            s
+        })
+        .collect()
+}
+
+/// Whether the redacted `segments` fit `budget_chars` whole.
+pub fn fits_budget(segments: &[MeetingTranscriptSegment], budget_chars: usize) -> bool {
+    segments.iter().map(|s| s.text.chars().count()).sum::<usize>() <= budget_chars
+}
+
+/// Splits `segments` (in time order) into runs of consecutive segments, each within
+/// `budget_chars`, so a long transcript can be read part by part with nothing dropped. A
+/// single segment larger than the budget has no part to sit in and is left out, as in
+/// [`assemble_meeting_context`].
+pub fn chunk_segments(segments: Vec<MeetingTranscriptSegment>, budget_chars: usize) -> Vec<Vec<MeetingTranscriptSegment>> {
+    let mut chunks: Vec<Vec<MeetingTranscriptSegment>> = Vec::new();
+    let mut current: Vec<MeetingTranscriptSegment> = Vec::new();
+    let mut used = 0usize;
+    for segment in redact_segments(segments) {
+        let len = segment.text.chars().count();
+        if len > budget_chars {
+            continue;
+        }
+        if used + len > budget_chars && !current.is_empty() {
+            chunks.push(std::mem::take(&mut current));
+            used = 0;
+        }
+        used += len;
+        current.push(segment);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+/// The prompt that reads one part of a transcript for a question: it asks for everything in
+/// the part that bears on the question, so a later call can answer from all parts. The part
+/// is not numbered or citable; that call cites its own numbered items.
+pub fn build_map_prompt(
+    query: &str,
+    title: &str,
+    part: usize,
+    parts: usize,
+    segments: &[MeetingTranscriptSegment],
+    custom_instructions: &str,
+) -> String {
+    let mut prompt = format!(
+        "Below is part {part} of {parts} of the transcript of the meeting \"{title}\". Read only \
+         this part and list, as short bullet points, everything in it that bears on the question: \
+         who said it, and what was said or committed to. Include every relevant item, even a \
+         small one, and add nothing that is not in the part. If nothing in the part is relevant, \
+         answer exactly: {NOTHING_RELEVANT}\n\n",
+        title = background(title),
+    );
+    if !custom_instructions.trim().is_empty() {
+        prompt.push_str(&format!("Additional instructions: {custom_instructions}\n\n"));
+    }
+    for s in segments {
+        prompt.push_str(&format!("({}) {}\n", ContextItem::Transcript(s.clone()).display_label(), s.text));
+    }
+    prompt.push_str(&format!("\nQuestion: {query}\nRelevant points:"));
+    prompt
+}
+
+/// What a part's reading answers when it holds nothing for the question.
+pub const NOTHING_RELEVANT: &str = "Nothing relevant.";
+
+/// Longest a single part's findings may run before they are cut, so many parts together
+/// still leave room for the numbered items in the final prompt.
+const FINDING_MAX_CHARS: usize = 4_000;
+
+/// The Ask instructions with the findings of reading every part, in order, appended. Parts
+/// that found nothing are left out. The final prompt answers from these and cites the
+/// numbered items it also carries.
+pub fn instructions_with_findings(instructions: &str, findings: &[String]) -> String {
+    let kept: Vec<String> = findings
+        .iter()
+        .map(|f| f.trim())
+        .filter(|f| !f.is_empty() && !f.eq_ignore_ascii_case(NOTHING_RELEVANT))
+        .enumerate()
+        .map(|(i, f)| format!("Part {}:\n{}", i + 1, f.chars().take(FINDING_MAX_CHARS).collect::<String>()))
+        .collect();
+    if kept.is_empty() {
+        return instructions.to_string();
+    }
+    let block = format!(
+        "The transcript is too long to show whole. These findings come from reading all of it, \
+         part by part, for this question; answer from them, completely, and cite the numbered \
+         items below where one supports a point (background, not citable):\n{}",
+        kept.join("\n\n")
+    );
+    if instructions.trim().is_empty() { block } else { format!("{instructions}\n\n{block}") }
+}
+
+/// Characters of findings that [`instructions_with_findings`] would add, to take from the
+/// numbered items' budget.
+pub fn findings_chars(findings: &[String]) -> usize {
+    findings.iter().map(|f| f.trim().chars().count().min(FINDING_MAX_CHARS)).sum()
+}
+
 /// Redacts every segment, then keeps all of them when they fit `budget_chars`, otherwise
 /// the segments that best match the question (highest idf-weighted whole-word term match first,
 /// earlier first on a tie), re-sorted into time order. Redaction happens first, so a secret is
@@ -99,13 +239,7 @@ pub fn assemble_meeting_context(
     query: &str,
     budget_chars: usize,
 ) -> MeetingAskContext {
-    let segments: Vec<MeetingTranscriptSegment> = segments
-        .into_iter()
-        .map(|mut s| {
-            s.text = redact_secrets(&s.text).into_owned();
-            s
-        })
-        .collect();
+    let segments = redact_segments(segments);
     let total: usize = segments.iter().map(|s| s.text.chars().count()).sum();
     if total <= budget_chars {
         return MeetingAskContext { items: segments.into_iter().map(ContextItem::Transcript).collect(), narrowed: false };
@@ -294,5 +428,74 @@ mod tests {
         assert_eq!(ids(&ctx), [1]);
         let segments = vec![seg(1, &"aaaa ".repeat(6)), seg(2, "category category category")];
         assert_eq!(ids(&assemble_meeting_context(segments, "cat", 30)), [1]);
+    }
+
+    #[test]
+    fn whole_meeting_questions_are_told_from_narrow_ones() {
+        for q in [
+            "list the action items",
+            "What are the next steps?",
+            "Summarize this meeting",
+            "give me a recap",
+            "what decisions were made",
+            "What did we agree on?",
+            "any follow-ups for me?",
+            "Resumen de la reunión",
+        ] {
+            assert!(is_whole_meeting_intent(q), "{q}");
+        }
+        for q in ["what did Ben say about pricing", "when is the renewal", "who mentioned the Acme contract", "resume the demo timing"] {
+            assert!(!is_whole_meeting_intent(q), "{q}");
+        }
+    }
+
+    #[test]
+    fn the_budget_follows_the_window_and_never_drops_below_the_old_one() {
+        assert_eq!(context_budget_chars(Provider::Ollama), (16_384 - 5_000) * 3);
+        assert!(context_budget_chars(Provider::Ollama) > CONTEXT_BUDGET_CHARS);
+        // The bundled model's small window would give less than the old budget; it keeps the old one.
+        assert_eq!(context_budget_chars(Provider::Local), CONTEXT_BUDGET_CHARS);
+        // A 62.5k-character meeting does not fit a local model's budget, and fits a hosted model's whole.
+        assert!(62_500 > context_budget_chars(Provider::Ollama));
+        assert!(62_500 < context_budget_chars(Provider::Anthropic));
+        assert!(62_500 < context_budget_chars(Provider::Whimbrel));
+    }
+
+    #[test]
+    fn chunking_keeps_every_segment_in_order_and_each_chunk_within_budget() {
+        let segments: Vec<_> = (1..=10).map(|i| seg(i, &"word ".repeat(10))).collect(); // 50 chars each
+        let chunks = chunk_segments(segments, 120);
+        assert!(chunks.iter().all(|c| c.iter().map(|s| s.text.len()).sum::<usize>() <= 120));
+        let flat: Vec<i64> = chunks.iter().flatten().map(|s| s.id).collect();
+        assert_eq!(flat, (1..=10).collect::<Vec<_>>(), "nothing dropped or reordered");
+        assert_eq!(chunks.len(), 5);
+        assert_eq!(chunk_segments(vec![seg(1, "short")], 120).len(), 1);
+    }
+
+    #[test]
+    fn chunking_redacts_before_it_splits() {
+        let key = "sk-ant-api03-abcdefghijklmnopqrstuv1234";
+        let chunks = chunk_segments(vec![seg(1, &format!("token {key} here"))], 1_000);
+        assert!(!chunks[0][0].text.contains("sk-ant-api03"), "{}", chunks[0][0].text);
+    }
+
+    #[test]
+    fn the_map_prompt_reads_one_part_for_the_question() {
+        let prompt = build_map_prompt("list the action items", "Acme sync", 2, 4, &[seg(5, "I will send the deck")], "be terse");
+        assert!(prompt.contains("part 2 of 4"), "{prompt}");
+        assert!(prompt.contains("(meeting \"Acme sync\", Ben) I will send the deck"), "{prompt}");
+        assert!(prompt.contains("be terse"), "{prompt}");
+        assert!(prompt.ends_with("Question: list the action items\nRelevant points:"), "{prompt}");
+    }
+
+    #[test]
+    fn findings_join_the_instructions_and_empty_parts_drop_out() {
+        let findings = vec!["- Ben will send the deck".to_string(), NOTHING_RELEVANT.to_string(), "  ".to_string(), "- Ana books a room".to_string()];
+        let out = instructions_with_findings("be terse", &findings);
+        assert!(out.starts_with("be terse\n\n"), "{out}");
+        assert!(out.contains("Part 1:\n- Ben will send the deck") && out.contains("Part 2:\n- Ana books a room"), "{out}");
+        assert!(!out.contains("Nothing relevant"), "{out}");
+        assert_eq!(instructions_with_findings("be terse", &[NOTHING_RELEVANT.to_string()]), "be terse");
+        assert_eq!(findings_chars(&findings), "- Ben will send the deck".len() + NOTHING_RELEVANT.len() + "- Ana books a room".len());
     }
 }

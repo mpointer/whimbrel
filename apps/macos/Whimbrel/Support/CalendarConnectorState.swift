@@ -29,12 +29,17 @@ final class CalendarConnectorState: ObservableObject {
 
     private var oauthHelpers: [String: GoogleOAuthHelper] = [:]
     private let accountStore: ConnectedAccountStore
-    private let configError: String?
-    private let clientId: String?
-    private let clientSecret: String?
+    /// The OAuth client the connector signs in with (`GoogleOAuthClient.active()`): the
+    /// built-in one, or the user's own from Settings → Connectors → Advanced.
+    private var client: GoogleOAuthClient?
+    private var configError: String? {
+        client == nil ? String(localized: "Calendar connector isn't configured in this build. See apps/macos/README.md to set up Secrets.xcconfig.") : nil
+    }
     private let log = Logger(subsystem: "com.mpointer.kestrel", category: "calendar-connector")
 
-    private static let scope = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events openid email"
+    /// `calendar.events` alone: it covers reading and writing events (2026-11-12, Google
+    /// verification). Existing grants that also hold `calendar.readonly` keep working.
+    private var scope: String { GoogleConnectorScopes.calendar(customClient: client?.isCustom ?? false) }
     private static let oldFixedKeychainAccount = "google-calendar-connector"
 
     private weak var coreStore: CoreMemoryStore?
@@ -42,22 +47,7 @@ final class CalendarConnectorState: ObservableObject {
     init(coreStore: CoreMemoryStore?) {
         self.coreStore = coreStore
         accountStore = ConnectedAccountStore(connectorId: "calendar", store: coreStore)
-        do {
-            // Both `try` calls are resolved into locals before either stored property is
-            // touched -- assigning `clientId` directly here, then having the second `try`
-            // throw and fall into `catch` (which assigns `clientId` again), would be a
-            // double-initialization of a `let` property, which Swift's definite
-            // initialization checker rejects at compile time.
-            let resolvedClientId = try SyncConfig.googleOAuthClientId()
-            let resolvedClientSecret = try SyncConfig.googleOAuthClientSecret()
-            clientId = resolvedClientId
-            clientSecret = resolvedClientSecret
-            configError = nil
-        } catch {
-            clientId = nil
-            clientSecret = nil
-            configError = String(localized: "Calendar connector isn't configured in this build. See apps/macos/README.md to set up Secrets.xcconfig.")
-        }
+        client = GoogleOAuthClient.active()
 
         migrateOldSingleAccountIfNeeded()
         for email in accountStore.emails {
@@ -69,6 +59,27 @@ final class CalendarConnectorState: ObservableObject {
         // as "confirmed zero events") rather than blocking init on N network calls; the
         // UI shows a neutral "Connected." for nil until a fresh count arrives.
         accounts = accountStore.emails.map { ConnectedCalendarAccount(email: $0, eventCount: nil) }
+        flagAccountsFromOtherClients()
+    }
+
+    /// Re-reads the active OAuth client after the custom client is saved or cleared.
+    /// Accounts whose tokens another client issued are flagged for reconnect; their
+    /// tokens are never refreshed with the new client.
+    func reloadClient() {
+        client = GoogleOAuthClient.active()
+        for email in accountStore.emails {
+            oauthHelpers[email] = makeHelper(email: email)
+        }
+        // Back to exactly the accounts another client signed in (clearing the custom client
+        // makes built-in accounts usable again); a revoked grant is flagged by the next poll.
+        needsReconnect = []
+        flagAccountsFromOtherClients()
+    }
+
+    private func flagAccountsFromOtherClients() {
+        for email in accountStore.emails where oauthHelpers[email]?.tokensIssuedByThisClient == false {
+            markNeedsReconnect(email)
+        }
     }
 
     /// Adopts the pre-multi-account single Keychain item (fixed key, no email suffix)
@@ -78,9 +89,9 @@ final class CalendarConnectorState: ObservableObject {
     /// state, never persisted, so the email has to be re-derived from the token itself.
     /// Safe to run on every launch: a non-empty index short-circuits immediately.
     private func migrateOldSingleAccountIfNeeded() {
-        guard accountStore.emails.isEmpty, let clientId, let clientSecret else { return }
+        guard accountStore.emails.isEmpty, let client else { return }
         let oldHelper = GoogleOAuthHelper(
-            clientId: clientId, clientSecret: clientSecret, scope: Self.scope,
+            clientId: client.clientId, clientSecret: client.clientSecret, scope: scope,
             keychainAccount: Self.oldFixedKeychainAccount
         )
         guard let idToken = try? oldHelper.storedIdTokenForMigration(),
@@ -102,7 +113,7 @@ final class CalendarConnectorState: ObservableObject {
 
     private func makeHelper(email: String) -> GoogleOAuthHelper {
         GoogleOAuthHelper(
-            clientId: clientId ?? "", clientSecret: clientSecret ?? "", scope: Self.scope,
+            clientId: client?.clientId ?? "", clientSecret: client?.clientSecret ?? "", scope: scope,
             keychainAccount: "google-calendar-connector:\(email)"
         )
     }
@@ -119,14 +130,14 @@ final class CalendarConnectorState: ObservableObject {
     /// (if that email is already connected) replaces its stored tokens in place.
     func addAccount(presentationContextProvider: ASWebAuthenticationPresentationContextProviding) async {
         guard addAccountState != .connecting else { return }
-        guard let clientId, let clientSecret else {
+        guard let client else {
             addAccountState = .error(configError ?? String(localized: "Calendar connector is not configured"))
             return
         }
         addAccountState = .connecting
         // A fresh, not-yet-keyed helper: the real Keychain account it's stored under
         // isn't known until after consent completes and the email is decoded.
-        let helper = GoogleOAuthHelper(clientId: clientId, clientSecret: clientSecret, scope: Self.scope, keychainAccount: "google-calendar-connector:pending-\(UUID().uuidString)")
+        let helper = GoogleOAuthHelper(clientId: client.clientId, clientSecret: client.clientSecret, scope: scope, keychainAccount: "google-calendar-connector:pending-\(UUID().uuidString)")
         do {
             try await helper.authorize(presentationContextProvider: presentationContextProvider)
             guard let idToken = try? await helper.validIdToken(), let email = GoogleOAuthHelper.decodeJwtEmailClaim(idToken) else {
@@ -190,19 +201,46 @@ final class CalendarConnectorState: ObservableObject {
         }
     }
 
+    /// Set by `AppState`: whether another Whimbrel connection on this Mac (Gmail, or the sync
+    /// sign-in) uses `email`'s Google grant, so revoking it would cut that connection off.
+    var grantIsSharedElsewhere: @MainActor (String) -> Bool = { _ in false }
+
+    /// Whether removing `email` also revokes Whimbrel's access with Google (what the
+    /// confirmation promises).
+    func removalRevokesAccess(email: String) -> Bool { !grantIsSharedElsewhere(email) }
+
+    /// Removes the account: tokens deleted here first, its Calendar events deleted from this
+    /// Mac, then Whimbrel's access revoked with Google in the background (best effort: offline
+    /// or a refusal changes nothing local; only a reason code is logged).
     func removeAccount(email: String) {
-        oauthHelpers[email]?.deleteStoredTokens()
+        let helper = oauthHelpers[email]
+        let revokes = removalRevokesAccess(email: email)
+        let soleAccount = accounts.allSatisfy { $0.email == email }
+        let log = self.log
+        let reason = GoogleDisconnect.disconnect(
+            refreshToken: helper?.storedRefreshToken(), revoke: revokes,
+            deleteLocal: { helper?.deleteStoredTokens() },
+            startRevoke: { token in
+                Task.detached(priority: .utility) {
+                    let code = GoogleDisconnect.revokeNow(token)
+                    log.log("Calendar disconnect: Google revoke \(code, privacy: .public)")
+                }
+            }
+        )
+        if let reason { log.log("Calendar disconnect: no revoke sent (\(reason, privacy: .public))") }
         oauthHelpers.removeValue(forKey: email)
         accounts.removeAll { $0.email == email }
         clearNeedsReconnect(email)
         setAccessIssue(nil, for: email)
-        // Its meetings are no longer reported by anyone: hide them here and on the other devices.
+        // Its meetings are no longer reported by anyone: hide them on the other devices, then
+        // delete what was imported from it here. Recorded meetings are not touched.
         if let store = coreStore {
             CoreMemoryStore.accessQueue.async {
                 store.calendarForgetAccount(source: "google_calendar", account: email)
+                store.calendarDeleteAccountData(source: "google_calendar", account: email, soleAccount: soleAccount)
             }
         } else {
-            log.error("removeAccount: no store, so \(email, privacy: .private)'s meetings were not hidden")
+            log.error("removeAccount: no store, so \(email, privacy: .private)'s meetings were not removed")
         }
         Task {
             await accountStore.remove(email)

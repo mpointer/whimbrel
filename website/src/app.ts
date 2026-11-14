@@ -38,6 +38,8 @@ export interface Env {
   ADMIN_ACCESS_AUD?: string;
   ADMIN_EMAILS?: string;
   ADMIN_EMAILS_EXTRA?: string;
+  ADMIN_SYNC_DB_URL?: string;
+  ADMIN_SYNC_DB_TOKEN?: string;
   /** Signs the Approve and Decline links in the mobile beta alert (secret). Without it,
    * sign-ups are still saved but the alert has no review links. */
   BETA_REVIEW_SECRET?: string;
@@ -287,6 +289,16 @@ export async function handle(request: Request, env: Env, ctx: ExecutionContext, 
     return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET, POST" } });
   }
 
+  if (pathname === "/api/email/request-updates") {
+    if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers: { allow: "POST" } });
+    return handleRequestUpdates(request, env, fetcher);
+  }
+
+  if (pathname === "/api/email/updates-status") {
+    if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET" } });
+    return handleUpdatesStatus(request, env);
+  }
+
   if (pathname === "/api/email/unsubscribe") {
     // RFC 8058 one-click: mail clients POST. A person who opens the link gets the page.
     if (request.method === "POST") return handleOneClickUnsubscribe(request, env, ctx, fetcher);
@@ -302,18 +314,63 @@ export async function handle(request: Request, env: Env, ctx: ExecutionContext, 
 
 const CONFIRM_EVERY_MS = 24 * 3600_000;
 
+type ConfirmationOutcome = "sent" | "too_soon" | "already" | "no_lead" | "not_sent";
+
 /** Double opt-in: mails the lead a link to confirm product emails, at most once a day, so
- * the form can't be used to flood an address. Nothing changes until they confirm. */
-async function requestConfirmation(env: Env, leadId: string, origin: string, nowMs: number, fetcher: typeof fetch): Promise<void> {
-  if (!env.EMAIL_FROM || !env.EMAIL_TOKEN_SECRET) return;
+ * the form can't be used to flood an address. Nothing changes until they confirm.
+ * "not_sent": email is off or Resend refused it. */
+async function requestConfirmation(env: Env, leadId: string, origin: string, nowMs: number, fetcher: typeof fetch): Promise<ConfirmationOutcome> {
+  if (!env.EMAIL_FROM || !env.EMAIL_TOKEN_SECRET) return "not_sent";
   const lead = await leadById(env.DB, leadId);
-  if (!lead || lead.product_emails === "opted_in") return;
-  const last = lead.product_emails_confirm_sent_at ? Date.parse(lead.product_emails_confirm_sent_at) : 0;
-  if (nowMs - last < CONFIRM_EVERY_MS) return;
+  if (!lead) return "no_lead";
+  if (lead.product_emails === "opted_in") return "already";
+  // Claim today's slot atomically before sending, so parallel requests can't each pass a
+  // read-then-check and send several mails. No row changed: a mail went out within the day.
+  const claimed = new Date(nowMs).toISOString();
+  const claim = await env.DB
+    .prepare("UPDATE leads SET product_emails_confirm_sent_at = ?2 WHERE id = ?1 AND (product_emails_confirm_sent_at IS NULL OR product_emails_confirm_sent_at < ?3)")
+    .bind(lead.id, claimed, new Date(nowMs - CONFIRM_EVERY_MS).toISOString())
+    .run();
+  if (claim.meta.changes !== 1) return "too_soon";
   const token = await signToken(env.EMAIL_TOKEN_SECRET, lead.id, nowMs);
   const link = `${origin}/email/preferences/?t=${encodeURIComponent(token)}&confirm=1`;
   const result = await send(env, "transactional", confirmEmail(lead.email, language(lead.signup_language), link, env.EMAIL_FROM, env.EMAIL_REPLY_TO), { leadId: lead.id, origin, nowMs }, fetcher);
-  if (result.sent) await env.DB.prepare("UPDATE leads SET product_emails_confirm_sent_at = ?2 WHERE id = ?1").bind(lead.id, new Date(nowMs).toISOString()).run();
+  if (!result.sent) {
+    // Give the slot back so a retry can send; only if it is still the one we claimed.
+    await env.DB
+      .prepare("UPDATE leads SET product_emails_confirm_sent_at = ?3 WHERE id = ?1 AND product_emails_confirm_sent_at = ?2")
+      .bind(lead.id, claimed, lead.product_emails_confirm_sent_at)
+      .run();
+    return "not_sent";
+  }
+  return "sent";
+}
+
+const noStore = { "cache-control": "no-store" };
+
+/** POST /api/email/request-updates — the thank-you page's "Yes, email me updates" button.
+ * Mails the cookie's lead the same double opt-in confirmation the form's box does; it
+ * changes no stored answer. Same-origin only, so another site can't trigger the mail. */
+async function handleRequestUpdates(request: Request, env: Env, fetcher: typeof fetch): Promise<Response> {
+  const origin = new URL(request.url).origin;
+  if (request.headers.get("origin") !== origin) return Response.json({ error: "forbidden" }, { status: 403, headers: noStore });
+  const leadId = readLeadCookie(request);
+  const lead = leadId ? await leadById(env.DB, leadId) : null;
+  if (!lead) return Response.json({ status: "no_lead" }, { headers: noStore });
+  if (lead.product_emails === "opted_in") return Response.json({ status: "already" }, { headers: noStore });
+  const outcome = await requestConfirmation(env, lead.id, origin, Date.now(), fetcher);
+  // Email off or refused: say so rather than claim a mail went out.
+  if (outcome === "not_sent") return Response.json({ status: "error" }, { status: 503, headers: noStore });
+  return Response.json({ status: outcome }, { headers: noStore });
+}
+
+/** GET /api/email/updates-status — whether the thank-you page should offer the button.
+ * No cookie or an unknown lead: 404, and the page keeps the box hidden. */
+async function handleUpdatesStatus(request: Request, env: Env): Promise<Response> {
+  const leadId = readLeadCookie(request);
+  const lead = leadId ? await leadById(env.DB, leadId) : null;
+  if (!lead) return Response.json({ error: "no lead" }, { status: 404, headers: noStore });
+  return Response.json({ opted_in: lead.product_emails === "opted_in" }, { headers: noStore });
 }
 
 function confirmEmail(to: string, lang: "en" | "es" | "fr", link: string, from: string, replyTo: string | undefined): Email {

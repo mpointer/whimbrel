@@ -7,6 +7,7 @@ import { AiCard } from "./AiCard";
 import { CaptureCard } from "./CaptureCard";
 import { GeneralCard } from "./GeneralCard";
 import { GmailCard } from "./GmailCard";
+import { GoogleClientCard } from "./GoogleClientCard";
 import { HotkeyCard } from "./HotkeyCard";
 import { McpCard } from "./McpCard";
 import { MeetingModelsCard } from "./MeetingModelsCard";
@@ -125,6 +126,7 @@ function SectionCards({ section, onRetentionSaved }: { section: Exclude<Settings
         <>
           <AccountsCard />
           <GmailCard />
+          <GoogleClientCard />
           <McpCard />
         </>
       );

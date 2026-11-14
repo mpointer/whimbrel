@@ -244,6 +244,13 @@ pub fn note_link_failure(provider: Provider, model: &str, err: &LlmError) -> Pro
     kind
 }
 
+/// Logs that a call meant for `preferred` was answered by `used`, and why (a reason code and
+/// the HTTP status: never a prompt, an error text or a key), where the shells' diagnostics
+/// already read link failures.
+pub fn note_fallback(preferred: &str, used: Provider, reason: &str, http_status: Option<u16>) {
+    tracing::warn!(preferred, used = used.as_str(), reason, http_status, "preferred provider did not answer; another did");
+}
+
 thread_local! {
     static LAST_CHAIN_FAILURES: std::cell::RefCell<Vec<ProviderFailureKind>> =
         const { std::cell::RefCell::new(Vec::new()) };

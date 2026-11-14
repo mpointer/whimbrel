@@ -61,10 +61,38 @@ pub fn spend_cap_error_envelope(err: &llm::SpendCapError) -> String {
 /// said why, e.g. `"reason":{"kind":"ollama_model_missing","model":"gemma4:12b"}`;
 /// a shell that predates it ignores the extra key.
 pub fn provider_failure_envelope() -> String {
+    // Limited Use: when the chain failed because every link allowed to run was refused
+    // Google Calendar text, the error says so (extra keys; a shell that predates them
+    // shows the generic failure).
+    let withheld = if take_google_data_withheld() {
+        format!(r#","google_data_withheld":true,"message":"{GOOGLE_DATA_WITHHELD_MESSAGE}""#)
+    } else {
+        String::new()
+    };
     match last_provider_failure().and_then(|reason| serde_json::to_string(&reason).ok()) {
-        Some(reason) => format!(r#"{{"ok":false,"error":{{"kind":"provider_failure","reason":{reason}}}}}"#),
-        None => r#"{"ok":false,"error":{"kind":"provider_failure"}}"#.to_string(),
+        Some(reason) => format!(r#"{{"ok":false,"error":{{"kind":"provider_failure","reason":{reason}{withheld}}}}}"#),
+        None => format!(r#"{{"ok":false,"error":{{"kind":"provider_failure"{withheld}}}}}"#),
     }
+}
+
+/// What a shell shows when [`take_google_data_withheld`] is true.
+pub const GOOGLE_DATA_WITHHELD_MESSAGE: &str = "No AI model allowed to receive Gmail or Google Calendar text is available for this meeting. Use a model on this device, or turn on a setting in Settings → AI.";
+
+thread_local! {
+    static GOOGLE_DATA_WITHHELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Records that this thread's latest [`ApiError::ProviderFailure`] happened because the
+/// links that were skipped may not receive Google data (Limited Use).
+pub fn note_google_data_withheld() {
+    GOOGLE_DATA_WITHHELD.with(|f| f.set(true));
+}
+
+/// Whether this thread's latest [`ApiError::ProviderFailure`] was that, and forgets it. A
+/// Rust shell calls this right after the error, with [`last_provider_failure`], and shows
+/// [`GOOGLE_DATA_WITHHELD_MESSAGE`]; [`provider_failure_envelope`] does it for the C layer.
+pub fn take_google_data_withheld() -> bool {
+    GOOGLE_DATA_WITHHELD.with(|f| f.replace(false))
 }
 
 /// Why the provider chain behind this thread's latest [`ApiError::ProviderFailure`]

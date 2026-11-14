@@ -26,6 +26,7 @@ final class GoogleCalendarPollingService: ObservableObject {
     private var accountsCancellable: AnyCancellable?
     private static let pollInterval: TimeInterval = 5 * 60
     private weak var coreStore: CoreMemoryStore?
+    private weak var connectorState: CalendarConnectorState?
 
     /// Retained per account so a transient failure for one account doesn't blank its
     /// contribution to `oauthMeetings` -- only replaced when that account's fetch
@@ -35,6 +36,7 @@ final class GoogleCalendarPollingService: ObservableObject {
 
     func start(calendarConnectorState: CalendarConnectorState, coreStore: CoreMemoryStore?) {
         self.coreStore = coreStore
+        self.connectorState = calendarConnectorState
         pollTimer?.invalidate()
         Task { await poll(calendarConnectorState: calendarConnectorState) }
         pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self, weak calendarConnectorState] _ in
@@ -122,6 +124,12 @@ final class GoogleCalendarPollingService: ObservableObject {
         let resultJSON = try await Self.callConnector(tool: request.tool, argsJSON: request.argsJson, accessToken: accessToken)
         let existing = lastKnownGoodMeetings[email] ?? []
         let nowUnixMs = Int64(Date().timeIntervalSince1970 * 1000)
+        // Removed while the connector call ran: its events were deleted with it, so nothing
+        // may be written back.
+        guard connectorState?.accounts.contains(where: { $0.email == email }) == true else {
+            log.log("syncAccount: the account was removed during the sync, so its result was dropped")
+            return
+        }
         guard let outcome = await Self.withStoreAccess({
             coreStore.applyCalendarSync(accountEmail: email, resultJSON: resultJSON, existing: existing, nowUnixMs: nowUnixMs)
         }) else {

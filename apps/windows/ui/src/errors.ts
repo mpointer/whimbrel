@@ -40,7 +40,7 @@ export function providerFailureReason(reason: ProviderFailureReason): string | n
         model: reason.model,
       });
     case "ollama_not_running":
-      return t("Ollama isn't running on this computer. Start Ollama, or add an API key in Settings → AI.");
+      return t("Ollama isn't running on this computer. Start Ollama, or choose Whimbrel AI or add an API key in Settings → AI.");
     case "local_model_missing":
       return t("No local model is installed.");
     case "no_provider_configured":

@@ -149,6 +149,13 @@ impl RoutingConfig {
             })
             .unwrap_or_default();
         llm::set_price_overrides(openrouter_prices.clone());
+        // Only the switches are kept process-wide from a routing JSON: they are the user's
+        // settings, the same in every call. The streamed Ollama model is per call (see
+        // `streamed_may_receive_google_data`); a background call must not change it.
+        set_limited_use_settings(LimitedUseSettings {
+            policy: LimitedUseSettings::from_routing_json(&v).policy,
+            ..limited_use_settings()
+        });
         RoutingConfig {
             anthropic_key: v
                 .get("anthropic_key")
@@ -252,12 +259,135 @@ impl RoutingConfig {
         }
     }
 
+    /// The user's Limited Use switches (see [`set_limited_use_settings`]), for
+    /// `llm::limited_use`. Both off until a shell turns them on.
+    pub fn google_data_policy(&self) -> llm::limited_use::GoogleDataPolicy {
+        limited_use_settings().policy
+    }
+
+    /// [`streamed_may_receive_google_data`] with no settings of this call: the
+    /// process-wide ones decide (Windows, through [`set_limited_use_settings`]).
+    pub fn streamed_provider_may_receive_google_data(&self, provider: llm::Provider) -> bool {
+        streamed_may_receive_google_data(provider, None)
+    }
+
     pub fn spend_cap_config(&self) -> llm::SpendCapConfig {
         llm::SpendCapConfig {
             user_daily_cents: self.user_daily_cap_cents,
             global_daily_cents: self.global_daily_cap_cents,
         }
     }
+}
+
+/// Google "Limited Use" settings (`llm::limited_use`). Not fields of [`RoutingConfig`]:
+/// Windows builds that struct with an exhaustive literal, so a new field would break its
+/// build. The Mac sends them in every routing JSON: the switches are kept process-wide
+/// from it ([`RoutingConfig::from_json`]), and a streamed prepare reads that call's own
+/// streamed Ollama model and host (`ask::prepare_ask_for`). Windows calls
+/// [`set_limited_use_settings`]. Until either does, everything is off (the safe side).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LimitedUseSettings {
+    /// JSON `google_ai_billing_confirmed` and `remote_ollama_google_data`, bools that are
+    /// false when absent, null or not a bool.
+    pub policy: llm::limited_use::GoogleDataPolicy,
+    /// JSON `streamed_ollama_model`: the Ollama model the shell streams prepared prompts
+    /// (Ask, meeting Ask, window Ask) against. `None` (absent or empty) means unknown,
+    /// and a streamed Ollama prompt then holds no Google user data unless
+    /// `remote_ollama_google_data` is on.
+    pub streamed_ollama_model: Option<String>,
+    /// JSON `streamed_ollama_base_url`: the Ollama host that stream goes to. `None` is
+    /// core's default, `http://localhost:11434`.
+    pub streamed_ollama_base_url: Option<String>,
+}
+
+impl LimitedUseSettings {
+    /// The settings in one routing JSON object; a missing or wrong-typed key is off.
+    pub fn from_routing_json(v: &serde_json::Value) -> Self {
+        let flag = |key: &str| v.get(key).and_then(|x| x.as_bool()).unwrap_or(false);
+        let text = |key: &str| {
+            v.get(key)
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .map(String::from)
+        };
+        LimitedUseSettings {
+            policy: llm::limited_use::GoogleDataPolicy {
+                google_ai_billing_confirmed: flag("google_ai_billing_confirmed"),
+                remote_ollama_google_data: flag("remote_ollama_google_data"),
+            },
+            streamed_ollama_model: text("streamed_ollama_model"),
+            streamed_ollama_base_url: text("streamed_ollama_base_url"),
+        }
+    }
+
+    /// The settings in one routing JSON string; malformed or `None` is all off.
+    pub fn from_routing_json_str(raw: Option<&str>) -> Self {
+        raw.and_then(|r| serde_json::from_str::<serde_json::Value>(r).ok())
+            .map(|v| Self::from_routing_json(&v))
+            .unwrap_or_default()
+    }
+}
+
+/// Whether the one provider the shell streams a prepared prompt against may receive Gmail
+/// and Google Calendar text. `call` is the settings sent with THIS call (the Mac's routing
+/// JSON for it): its switches decide, and its Ollama model and host are what streams.
+/// Without them (`None`, or no model in them) the process-wide settings stand in.
+///
+/// For Ollama, fails closed (unless `remote_ollama_google_data` is on) when the model is
+/// unknown, or when this call's model and the process-wide one are both known and differ:
+/// the process-wide value is shared by every call, so another call could have changed it
+/// between prepare and stream.
+pub fn streamed_may_receive_google_data(provider: llm::Provider, call: Option<&LimitedUseSettings>) -> bool {
+    let global = limited_use_settings();
+    let policy = call.map_or(global.policy, |c| c.policy);
+    if provider != llm::Provider::Ollama {
+        return llm::limited_use::provider_may_receive_google_data(provider, "", None, policy);
+    }
+    if policy.remote_ollama_google_data {
+        return true;
+    }
+    let call_model = call.and_then(|c| c.streamed_ollama_model.as_deref());
+    let model = match (call_model, global.streamed_ollama_model.as_deref()) {
+        (Some(mine), Some(shared)) if mine != shared => return false,
+        (Some(mine), _) => mine,
+        (None, Some(shared)) => shared,
+        (None, None) => return false,
+    };
+    let host = call
+        .and_then(|c| c.streamed_ollama_base_url.as_deref())
+        .or(global.streamed_ollama_base_url.as_deref());
+    llm::limited_use::provider_may_receive_google_data(provider, model, host, policy)
+}
+
+#[cfg(not(test))]
+static LIMITED_USE: std::sync::Mutex<Option<LimitedUseSettings>> = std::sync::Mutex::new(None);
+
+// This crate's own tests run in parallel threads and set these, so each test thread
+// keeps its own copy.
+#[cfg(test)]
+thread_local! {
+    static LIMITED_USE: std::cell::RefCell<Option<LimitedUseSettings>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Replaces the process-wide Limited Use settings (see [`LimitedUseSettings`]).
+pub fn set_limited_use_settings(settings: LimitedUseSettings) {
+    #[cfg(not(test))]
+    {
+        *LIMITED_USE.lock().unwrap_or_else(|e| e.into_inner()) = Some(settings);
+    }
+    #[cfg(test)]
+    LIMITED_USE.with(|s| *s.borrow_mut() = Some(settings));
+}
+
+/// The current Limited Use settings; all off before any are set.
+pub fn limited_use_settings() -> LimitedUseSettings {
+    #[cfg(not(test))]
+    {
+        LIMITED_USE.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
+    }
+    #[cfg(test)]
+    LIMITED_USE.with(|s| s.borrow().clone().unwrap_or_default())
 }
 
 /// Assembles today's provider chain from `routing`. `ollama_model` is always used for
@@ -691,6 +821,90 @@ mod tests {
         assert_eq!((r.whimbrel_id_token, r.whimbrel_device_key), (None, None));
         let r = RoutingConfig::from_json(Some("{}"));
         assert_eq!((r.whimbrel_id_token, r.whimbrel_device_key), (None, None));
+    }
+
+    #[test]
+    fn the_limited_use_settings_default_off_and_degrade_to_off() {
+        for raw in [
+            "{}",
+            r#"{"google_ai_billing_confirmed":"yes","remote_ollama_google_data":1,"streamed_ollama_model":""}"#,
+            r#"{"google_ai_billing_confirmed":null,"streamed_ollama_model":7}"#,
+        ] {
+            RoutingConfig::from_json(Some(raw));
+            assert_eq!(limited_use_settings(), LimitedUseSettings::default(), "{raw}");
+            assert_eq!(LimitedUseSettings::from_routing_json_str(Some(raw)), LimitedUseSettings::default(), "{raw}");
+        }
+        assert_eq!(LimitedUseSettings::from_routing_json_str(None), LimitedUseSettings::default());
+        assert_eq!(LimitedUseSettings::from_routing_json_str(Some("not json")), LimitedUseSettings::default());
+        let raw = r#"{"google_ai_billing_confirmed":true,"remote_ollama_google_data":true,"streamed_ollama_model":" gemma4:12b ","streamed_ollama_base_url":"http://127.0.0.1:11434"}"#;
+        let r = RoutingConfig::from_json(Some(raw));
+        let on = llm::limited_use::GoogleDataPolicy { google_ai_billing_confirmed: true, remote_ollama_google_data: true };
+        assert_eq!(r.google_data_policy(), on);
+        assert_eq!(limited_use_settings().streamed_ollama_model, None, "the streamed model is per call, never kept");
+        let call = LimitedUseSettings::from_routing_json_str(Some(raw));
+        assert_eq!(call.policy, on);
+        assert_eq!(call.streamed_ollama_model.as_deref(), Some("gemma4:12b"));
+        assert_eq!(call.streamed_ollama_base_url.as_deref(), Some("http://127.0.0.1:11434"));
+        // A later JSON without them turns the switches off again.
+        RoutingConfig::from_json(Some("{}"));
+        assert_eq!(limited_use_settings(), LimitedUseSettings::default());
+    }
+
+    fn settings(model: Option<&str>, remote: bool) -> LimitedUseSettings {
+        LimitedUseSettings {
+            policy: llm::limited_use::GoogleDataPolicy { remote_ollama_google_data: remote, ..Default::default() },
+            streamed_ollama_model: model.map(String::from),
+            streamed_ollama_base_url: None,
+        }
+    }
+
+    /// A streamed Ollama prompt is checked against the model the shell actually streams,
+    /// never `preferred_model`; unknown fails closed.
+    #[test]
+    fn a_streamed_ollama_prompt_needs_its_real_model_and_fails_closed() {
+        let r = RoutingConfig { preferred_provider: "ollama".into(), preferred_model: "gemma4:12b".into(), ..RoutingConfig::default() };
+        set_limited_use_settings(settings(None, false));
+        assert!(!r.streamed_provider_may_receive_google_data(llm::Provider::Ollama), "unknown model: closed");
+        set_limited_use_settings(settings(Some("gpt-oss:120b-cloud"), false));
+        assert!(!r.streamed_provider_may_receive_google_data(llm::Provider::Ollama), "preferred_model is not what streams");
+        set_limited_use_settings(settings(Some("gemma4:12b"), false));
+        assert!(r.streamed_provider_may_receive_google_data(llm::Provider::Ollama));
+        set_limited_use_settings(settings(None, true));
+        assert!(r.streamed_provider_may_receive_google_data(llm::Provider::Ollama));
+        set_limited_use_settings(LimitedUseSettings::default());
+        assert!(r.streamed_provider_may_receive_google_data(llm::Provider::Anthropic));
+        assert!(!r.streamed_provider_may_receive_google_data(llm::Provider::Google));
+        assert!(!r.streamed_provider_may_receive_google_data(llm::Provider::OpenRouter));
+    }
+
+    /// This call's model decides; the shared value only stands in when the call names
+    /// none, and a disagreement between the two fails closed. A remote host is checked too.
+    #[test]
+    fn a_calls_own_streamed_model_decides_and_a_disagreement_fails_closed() {
+        let ollama = llm::Provider::Ollama;
+        set_limited_use_settings(LimitedUseSettings::default());
+        assert!(!streamed_may_receive_google_data(ollama, Some(&settings(Some("gpt-oss:120b-cloud"), false))));
+        assert!(streamed_may_receive_google_data(ollama, Some(&settings(Some("gemma4:12b"), false))));
+        assert!(!streamed_may_receive_google_data(ollama, Some(&settings(None, false))), "no model anywhere");
+        assert!(streamed_may_receive_google_data(ollama, Some(&settings(Some("gpt-oss:120b-cloud"), true))), "the switch allows it");
+
+        // Windows set a local model process-wide: a call naming a cloud one is closed,
+        // and so is a call naming a different local model (they disagree).
+        set_limited_use_settings(settings(Some("gemma4:12b"), false));
+        assert!(!streamed_may_receive_google_data(ollama, Some(&settings(Some("gpt-oss:120b-cloud"), false))));
+        assert!(!streamed_may_receive_google_data(ollama, Some(&settings(Some("llama3:8b"), false))));
+        assert!(streamed_may_receive_google_data(ollama, Some(&settings(Some("gemma4:12b"), false))));
+        assert!(streamed_may_receive_google_data(ollama, Some(&settings(None, false))), "the shared value stands in");
+
+        // A shared cloud model never turns a call's local one into a pass, nor the reverse.
+        set_limited_use_settings(settings(Some("gpt-oss:120b-cloud"), false));
+        assert!(!streamed_may_receive_google_data(ollama, Some(&settings(Some("gemma4:12b"), false))));
+        assert!(!streamed_may_receive_google_data(ollama, None));
+
+        // The call's host: a remote Ollama is closed without the switch.
+        set_limited_use_settings(LimitedUseSettings::default());
+        let remote = LimitedUseSettings { streamed_ollama_base_url: Some("http://192.168.1.9:11434".into()), ..settings(Some("gemma4:12b"), false) };
+        assert!(!streamed_may_receive_google_data(ollama, Some(&remote)));
     }
 
     #[test]

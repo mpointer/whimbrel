@@ -23,6 +23,15 @@ rustflags = [
     "-C", "link-arg=delayimp.lib",
 ]
 
+# The Arm64 build (Cargo.toml): the same, plus FP16 arithmetic, which candle's gemm-f16 needs
+# ("instruction requires: fullfp16"). Every Windows on Arm processor has it (ARMv8.2 and later).
+[target.aarch64-pc-windows-msvc]
+rustflags = [
+    "-C", "target-feature=+crt-static,+fp16",
+    "-C", "link-arg=/DELAYLOAD:comctl32.dll",
+    "-C", "link-arg=delayimp.lib",
+]
+
 # whisper.cpp optimization (M3.1 finding). Under the Visual Studio generator, cmake-rs
 # replaces CMake's CMAKE_<LANG>_FLAGS_RELEASE with the `cc` crate's flags
 # ("-nologo -MT -Brepro -W0"), which carry no /O level — so MSVC compiled whisper.cpp

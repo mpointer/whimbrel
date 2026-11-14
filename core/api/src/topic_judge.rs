@@ -72,6 +72,9 @@ pub fn run_topic_judge_batch(
 ) -> rusqlite::Result<TopicJudgeOutcome> {
     use memory::topics::judge::{judge_request_tokens, JudgeGate};
     let mut out = TopicJudgeOutcome::default();
+    if memory::background_gate::recording_pauses_background_work() {
+        return Ok(out);
+    }
     if store.topic_judge_gate()? == JudgeGate::NotStarted {
         out.not_started = true;
         return Ok(out);
@@ -237,8 +240,23 @@ mod tests {
     }
 
     /// A file-backed store with one seed per name and one email per subject, indexed and
-    /// filed, plus a second connection for assertions.
+    /// filed, plus a second connection for assertions. The emails are not from Gmail (an
+    /// IMAP source), so TypeSafe may read them; Gmail is held (Limited Use, see
+    /// `gmail_sources_are_held_from_typesafe`).
     fn setup(
+        seeds: &[&str],
+        subjects: &[&str],
+    ) -> (
+        tempfile::TempDir,
+        memory::Store,
+        rusqlite::Connection,
+        Vec<i64>,
+    ) {
+        setup_from("imap", seeds, subjects)
+    }
+
+    fn setup_from(
+        source: &str,
         seeds: &[&str],
         subjects: &[&str],
     ) -> (
@@ -258,8 +276,8 @@ mod tests {
         for (i, subject) in subjects.iter().enumerate() {
             c.execute(
                 "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id) \
-                 VALUES ('d','email','gmail',?1,json_array('a@x.com'),?2,?3,'{}',?4)",
-                rusqlite::params![1000 + i as i64, subject, format!("{subject} body"), format!("gm-{i}")],
+                 VALUES ('d','email',?5,?1,json_array('a@x.com'),?2,?3,'{}',?4)",
+                rusqlite::params![1000 + i as i64, subject, format!("{subject} body"), format!("gm-{i}"), source],
             )
             .unwrap();
         }
@@ -270,6 +288,22 @@ mod tests {
 
     fn n(c: &rusqlite::Connection, sql: &str) -> i64 {
         c.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    /// Limited Use: Gmail is not sent to TypeSafe until it confirms its terms. A Gmail
+    /// source stays queued, uncounted in the estimate, and the first pass still ends.
+    #[test]
+    fn gmail_sources_are_held_from_typesafe() {
+        assert!(!memory::limited_use::TYPESAFE_GOOGLE_DATA_CONFIRMED);
+        let (_d, s, c, _) = setup_from("gmail", &["Maximus"], &["Lunch plans"]);
+        assert_eq!(s.topic_judge_estimate(1.0).unwrap().sources, 0);
+        s.start_topic_judging(10_000).unwrap();
+        let j = fake(&[("t1", 0.9), ("none", 0.1)], None, 100);
+        let out = run_topic_judge_batch(&s, &j, 10, 1.0).unwrap();
+        assert_eq!(out.processed, 0);
+        assert!(j.seen.borrow().is_empty(), "nothing from Gmail reached TypeSafe");
+        assert_eq!(n(&c, "SELECT COUNT(*) FROM topic_judge_todo"), 1, "held, not dropped");
+        assert_eq!(s.topic_judge_gate().unwrap(), memory::topics::budget::JudgeGate::Open);
     }
 
     #[test]
@@ -470,7 +504,7 @@ mod tests {
         for i in 0..4 {
             c.execute(
                 "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id) \
-                 VALUES ('d','email','gmail',?1,json_array('a@x.com'),?2,'later','{}',?3)",
+                 VALUES ('d','email','imap',?1,json_array('a@x.com'),?2,'later','{}',?3)",
                 rusqlite::params![5000 + i, format!("Later {i}"), format!("later-{i}")],
             )
             .unwrap();

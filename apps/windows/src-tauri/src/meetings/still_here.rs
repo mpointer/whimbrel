@@ -122,7 +122,8 @@ fn timer() -> &'static Mutex<Option<Timer>> {
 }
 
 /// One poll of a recording started by hand, or of a browser call (`meetings::service`).
-/// `audio_active` is the recorder's level check, used only when live transcription isn't running.
+/// `audio_active` is the recorder's level check, used only when live transcription isn't running
+/// (no model, or paused by the load guard).
 /// `present` is a sign the call is still on whatever was said: a browser's meeting tab in front
 /// (Mike's choice, 2026-11-05: a browser call is asked about, never stopped silently, since Windows
 /// sees only each window's front tab). Returns what to do.
@@ -134,7 +135,7 @@ pub fn poll(meeting_id: i64, started_ms: i64, now_ms: i64, audio_active: bool, p
     };
     let spoke = if present {
         Some(now_ms)
-    } else if LIVE_TRACKING.load(Ordering::Relaxed) {
+    } else if LIVE_TRACKING.load(Ordering::Relaxed) && !crate::meeting_load::live_paused() {
         Some(LAST_SPEECH_MS.load(Ordering::Relaxed)).filter(|ms| *ms > 0)
     } else {
         audio_active.then_some(now_ms)

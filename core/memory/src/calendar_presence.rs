@@ -11,6 +11,16 @@ use serde::Serialize;
 use crate::calendar_flags::CalendarFlags;
 use crate::Store;
 
+/// What `Store::delete_calendar_data_for_account` removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct CalendarDeleteOutcome {
+    /// Event rows deleted outright.
+    pub deleted: usize,
+    /// Future rows this device owns that were emptied and kept marked removed, so the
+    /// removal still reaches other devices on the next push.
+    pub emptied: usize,
+}
+
 /// Entries older than this (relative to `now`) are dropped: the meeting is long over.
 const PRUNE_AFTER_MS: i64 = 86_400_000;
 
@@ -126,6 +136,78 @@ impl Store {
             self.clear_calendar_sync_token(account)?;
         }
         let outcome = self.refresh_calendar_marks(&tx, now_unix_ms)?;
+        tx.commit()?;
+        Ok(outcome)
+    }
+
+    /// Deletes what Whimbrel imported from one calendar account (`source`, normally
+    /// `google_calendar`): the account's presence entries and, for Google, its sync token,
+    /// and the `calendar_event` rows only this account reports (a row another account
+    /// still reports stays). Search and embedding entries go with deleted rows through the
+    /// `items` triggers. Meetings the user recorded live in `meeting` and are never touched.
+    ///
+    /// Event rows carry no account, so the account is known only from presence, which is
+    /// pruned a day after an event starts. With `sole_account` true (no other account of
+    /// this source is connected) every row of `source` goes too, covering rows older than
+    /// presence. A future row this device owns is not deleted: it is emptied (title,
+    /// people) and marked removed with a fresh `local_seq`, so the removal is still pushed
+    /// to other devices; it holds nothing from the account. Reconnecting restores it with
+    /// the next baseline.
+    pub fn delete_calendar_data_for_account(
+        &self,
+        source: &str,
+        account: &str,
+        sole_account: bool,
+        now_unix_ms: i64,
+    ) -> rusqlite::Result<CalendarDeleteOutcome> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut ids: Vec<String> = tx
+            .prepare(
+                "SELECT DISTINCT p.external_id FROM calendar_presence p \
+                 WHERE p.source = ?1 AND p.account = ?2 \
+                   AND NOT EXISTS (SELECT 1 FROM calendar_presence q \
+                                   WHERE q.source = p.source AND q.external_id = p.external_id \
+                                     AND q.account != p.account AND q.present = 1)",
+            )?
+            .query_map(params![source, account], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        if sole_account {
+            let all: Vec<String> = tx
+                .prepare("SELECT external_id FROM items WHERE kind = 'calendar_event' AND source = ?1 AND external_id IS NOT NULL")?
+                .query_map(params![source], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            ids.extend(all);
+            ids.sort();
+            ids.dedup();
+        }
+        let own = self.own_device_id();
+        let mut outcome = CalendarDeleteOutcome::default();
+        for id in &ids {
+            let rows: Vec<(i64, String, i64)> = tx
+                .prepare("SELECT id, device_id, ts_unix_ms FROM items WHERE kind = 'calendar_event' AND source = ?1 AND external_id = ?2")?
+                .query_map(params![source, id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (row_id, device_id, ts) in rows {
+                if own.as_deref() == Some(device_id.as_str()) && ts > now_unix_ms {
+                    let flags = CalendarFlags { removed: true, changed_at: now_unix_ms }.to_json();
+                    let seq = Store::next_local_seq_tx(&tx)?;
+                    tx.execute(
+                        "UPDATE items SET title = '', actors = '[]', flags = ?1, local_seq = ?2 WHERE id = ?3",
+                        params![flags, seq, row_id],
+                    )?;
+                    outcome.emptied += 1;
+                } else {
+                    outcome.deleted += tx.execute("DELETE FROM items WHERE id = ?1", params![row_id])?;
+                }
+            }
+        }
+        tx.execute(
+            "DELETE FROM calendar_presence WHERE source = ?1 AND account = ?2",
+            params![source, account],
+        )?;
+        if source == "google_calendar" {
+            self.clear_calendar_sync_token(account)?;
+        }
         tx.commit()?;
         Ok(outcome)
     }
@@ -430,5 +512,80 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM calendar_presence", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0);
+    }
+
+    fn titles(s: &Store) -> Vec<(String, String)> {
+        s.conn
+            .prepare("SELECT external_id, title FROM items WHERE kind = 'calendar_event' ORDER BY external_id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn deleting_an_account_removes_its_events_and_keeps_another_accounts() {
+        let s = store(None);
+        insert(&s, "me", "only-a", FUTURE);
+        insert(&s, "me", "only-b", FUTURE);
+        insert(&s, "me", "shared", FUTURE);
+        s.calendar_presence_replace(SRC, "a@g", None, &[pe("only-a", FUTURE), pe("shared", FUTURE)], NOW).unwrap();
+        s.calendar_presence_replace(SRC, "b@g", None, &[pe("only-b", FUTURE), pe("shared", FUTURE)], NOW).unwrap();
+        s.set_calendar_sync_token("a@g", "tok-a").unwrap();
+        s.set_calendar_sync_token("b@g", "tok-b").unwrap();
+
+        let out = s.delete_calendar_data_for_account(SRC, "a@g", false, NOW + 1).unwrap();
+        assert_eq!(out, CalendarDeleteOutcome { deleted: 1, emptied: 0 });
+        let left: Vec<String> = titles(&s).into_iter().map(|t| t.0).collect();
+        assert_eq!(left, vec!["only-b".to_string(), "shared".to_string()]);
+        assert_eq!(s.get_calendar_sync_token("a@g").unwrap(), None);
+        assert_eq!(s.get_calendar_sync_token("b@g").unwrap(), Some("tok-b".to_string()));
+        let a_rows: i64 = s
+            .conn
+            .query_row("SELECT COUNT(*) FROM calendar_presence WHERE account = 'a@g'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(a_rows, 0);
+    }
+
+    #[test]
+    fn deleting_the_only_account_also_sweeps_rows_older_than_presence() {
+        let s = store(None);
+        insert(&s, "me", "old", 5);
+        insert(&s, "me", "recent", FUTURE);
+        s.calendar_presence_replace(SRC, "a@g", None, &[pe("recent", FUTURE)], NOW).unwrap();
+        // Another source is never touched.
+        s.upsert_calendar_event_items_at(
+            &[NewCalendarEventItem {
+                device_id: "me".into(),
+                source: "apple_calendar".into(),
+                ts_unix_ms: 5,
+                actors: vec![],
+                title: "apple".into(),
+                external_id: "apple-1".into(),
+            }],
+            10,
+        )
+        .unwrap();
+
+        s.delete_calendar_data_for_account(SRC, "a@g", false, NOW + 1).unwrap();
+        assert!(titles(&s).iter().any(|t| t.0 == "old"), "unattributable with another account possible");
+        s.delete_calendar_data_for_account(SRC, "a@g", true, NOW + 1).unwrap();
+        assert_eq!(titles(&s), vec![("apple-1".to_string(), "apple".to_string())]);
+    }
+
+    #[test]
+    fn a_future_row_this_device_owns_is_emptied_and_marked_for_other_devices() {
+        let s = store(Some("me"));
+        insert(&s, "me", "soon", FUTURE);
+        insert(&s, "me", "past", NOW - 5);
+        s.calendar_presence_replace(SRC, "a@g", None, &[pe("soon", FUTURE), pe("past", NOW - 5)], NOW - 10).unwrap();
+        let seq0 = seq(&s, "soon");
+
+        let out = s.delete_calendar_data_for_account(SRC, "a@g", false, NOW).unwrap();
+        assert_eq!(out, CalendarDeleteOutcome { deleted: 1, emptied: 1 });
+        assert_eq!(titles(&s), vec![("soon".to_string(), String::new())]);
+        assert_eq!(flags(&s, "soon"), CalendarFlags { removed: true, changed_at: NOW });
+        assert!(seq(&s, "soon") > seq0, "re-pushed");
     }
 }

@@ -3,6 +3,17 @@ import SwiftUI
 struct ConnectorsSettingsPane: View {
     @EnvironmentObject var appState: AppState
     private let presentationContextProvider = WindowPresentationContextProvider()
+    @State private var advancedExpanded = false
+    @State private var customClientId = ""
+    @State private var customClientSecret = ""
+    @State private var savedCustomClient: GoogleOAuthClient?
+    /// The Google account whose removal is waiting on the confirmation alert.
+    @State private var pendingGoogleRemoval: PendingGoogleRemoval?
+
+    struct PendingGoogleRemoval: Equatable {
+        let service: GoogleDisconnect.Service
+        let email: String
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -48,7 +59,101 @@ struct ConnectorsSettingsPane: View {
                     action: { Task { await appState.outlook365ConnectorState.addAccount(presentationContextProvider: presentationContextProvider) } }
                 )
             }
+
+            Divider().overlay(Color.whimbrelBorder)
+
+            DisclosureGroup(isExpanded: $advancedExpanded) {
+                customGoogleClientSection.padding(.top, Spacing.sm)
+            } label: {
+                Text("Advanced").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+            }
         }
+        .onAppear(perform: loadCustomClient)
+        .alert(GoogleDisconnect.confirmationTitle, isPresented: Binding(
+            get: { pendingGoogleRemoval != nil },
+            set: { if !$0 { pendingGoogleRemoval = nil } }
+        )) {
+            Button("Remove", role: .destructive) {
+                if let pending = pendingGoogleRemoval { removeGoogleAccount(pending) }
+                pendingGoogleRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { pendingGoogleRemoval = nil }
+        } message: {
+            if let pending = pendingGoogleRemoval {
+                Text(verbatim: GoogleDisconnect.confirmationMessage(for: pending.service, revokes: removalRevokes(pending)))
+            }
+        }
+    }
+
+    private func removalRevokes(_ pending: PendingGoogleRemoval) -> Bool {
+        switch pending.service {
+        case .gmail: appState.gmailConnectorState.removalRevokesAccess(email: pending.email)
+        case .calendar: appState.calendarConnectorState.removalRevokesAccess(email: pending.email)
+        }
+    }
+
+    private func removeGoogleAccount(_ pending: PendingGoogleRemoval) {
+        switch pending.service {
+        case .gmail: appState.gmailConnectorState.removeAccount(email: pending.email)
+        case .calendar: appState.calendarConnectorState.removeAccount(email: pending.email)
+        }
+    }
+
+    /// "Use your own Google Cloud project": the user's own Desktop OAuth client, kept in the
+    /// Keychain. With it, Gmail also requests reading; changing or clearing it signs the
+    /// connected Google accounts out of the other client (they show Reconnect needed).
+    @ViewBuilder
+    private var customGoogleClientSection: some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            Text("Use your own Google Cloud project").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
+            Text("For Gmail reading. Create a Desktop OAuth client in your own Google Cloud project, add yourself as its user, and publish it (an unverified app is fine for yourself).")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("Client ID", text: $customClientId)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            SecureField("Client secret", text: $customClientSecret)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Button("Save", action: saveCustomClient)
+                    .buttonStyle(.whimbrelSecondary)
+                    .disabled(!Self.canSaveCustomClient(id: customClientId, secret: customClientSecret, saved: savedCustomClient))
+                Button("Clear", action: clearCustomClient)
+                    .buttonStyle(.whimbrelSecondary)
+                    .disabled(savedCustomClient == nil && customClientId.isEmpty && customClientSecret.isEmpty)
+            }
+        }
+    }
+
+    /// Both fields are needed, and saving what's already saved is a no-op (it would
+    /// otherwise sign every Google account out for nothing).
+    static func canSaveCustomClient(id: String, secret: String, saved: GoogleOAuthClient?) -> Bool {
+        let id = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secret = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, !secret.isEmpty else { return false }
+        return saved?.clientId != id || saved?.clientSecret != secret
+    }
+
+    private func loadCustomClient() {
+        savedCustomClient = CustomGoogleClientStore.shared.load()
+        customClientId = savedCustomClient?.clientId ?? ""
+        customClientSecret = savedCustomClient?.clientSecret ?? ""
+        if savedCustomClient != nil { advancedExpanded = true }
+    }
+
+    private func saveCustomClient() {
+        guard Self.canSaveCustomClient(id: customClientId, secret: customClientSecret, saved: savedCustomClient),
+              CustomGoogleClientStore.shared.save(clientId: customClientId, clientSecret: customClientSecret) else { return }
+        loadCustomClient()
+        appState.googleConnectorClientChanged()
+    }
+
+    private func clearCustomClient() {
+        let hadClient = savedCustomClient != nil
+        CustomGoogleClientStore.shared.clear()
+        loadCustomClient()
+        if hadClient { appState.googleConnectorClientChanged() }
     }
 
     @ViewBuilder
@@ -68,7 +173,7 @@ struct ConnectorsSettingsPane: View {
                     isDefault: account.email == appState.calendarConnectorState.defaultEmail,
                     showMakeDefault: accounts.count > 1,
                     onMakeDefault: { appState.calendarConnectorState.makeDefault(email: account.email) },
-                    onRemove: { appState.calendarConnectorState.removeAccount(email: account.email) }
+                    onRemove: { pendingGoogleRemoval = PendingGoogleRemoval(service: .calendar, email: account.email) }
                 )
             }
         }
@@ -95,13 +200,15 @@ struct ConnectorsSettingsPane: View {
             ForEach(accounts) { account in
                 accountRow(
                     email: account.email,
-                    detail: "Whimbrel can send email on your behalf for auto-approved routines.",
+                    detail: appState.gmailConnectorState.sendOnly.contains(account.email)
+                        ? String(localized: "Sending only. Reading email needs your own Google project (Advanced).")
+                        : "Whimbrel can send email on your behalf for auto-approved routines.",
                     reconnectDetail: appState.gmailConnectorState.needsReconnect.contains(account.email)
                         ? "Reconnect needed. Click Add Google Account and sign in as this address again." : nil,
                     isDefault: account.email == appState.gmailConnectorState.defaultEmail,
                     showMakeDefault: accounts.count > 1,
                     onMakeDefault: { appState.gmailConnectorState.makeDefault(email: account.email) },
-                    onRemove: { appState.gmailConnectorState.removeAccount(email: account.email) }
+                    onRemove: { pendingGoogleRemoval = PendingGoogleRemoval(service: .gmail, email: account.email) }
                 )
             }
         }

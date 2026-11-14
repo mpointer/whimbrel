@@ -324,9 +324,10 @@ struct RetentionSettingsPane: View {
         compactStatus = String(localized: "Compacting… this can take a minute.")
         DispatchQueue.global(qos: .userInitiated).async {
             let result = StorageCompaction.run(store, forced: true)
+            let free = StorageVolume.writableFreeBytes(at: SpikePaths.root)
             DispatchQueue.main.async {
                 compacting = false
-                compactStatus = CompactCopy.message(result)
+                compactStatus = CompactCopy.message(result, volumeFree: free)
             }
         }
     }

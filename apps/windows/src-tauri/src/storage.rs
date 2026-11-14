@@ -183,6 +183,8 @@ pub struct FreeUpOptions {
     pub captures_count: Option<i64>,
     /// The captures' text, about what deleting them frees.
     pub captures_bytes: Option<i64>,
+    /// Full-quality (WAV) recordings that "Compress all" would compress, whatever their age.
+    pub compress_bytes: Option<i64>,
 }
 
 fn now_ms() -> i64 {
@@ -199,21 +201,54 @@ fn delete_audio_policy(days: u32) -> api::media_retention::MediaPolicy {
     }
 }
 
-/// The meetings a delete would touch: planned for `DeleteAudio`, not `busy`, every part transcribed.
+/// The meetings whose audio is all transcribed, as core decides it: every part, or for a
+/// meeting without parts (every Windows meeting) its transcript.
+fn transcribed_meetings(s: &memory::Store) -> Result<std::collections::HashSet<i64>, String> {
+    Ok(s.media_meetings().map_err(|e| e.to_string())?.into_iter().filter(|m| m.all_transcribed).map(|m| m.id).collect())
+}
+
+/// The meetings a delete would touch: planned for `DeleteAudio` (which core plans only for a
+/// meeting whose audio is all transcribed), not `busy`.
 fn deletable_recordings(s: &memory::Store, days: u32, recordings: &Path, busy: &[i64]) -> Result<(Vec<api::media_retention::MeetingWork>, i64), String> {
     let plan = api::media_retention::plan(s, &delete_audio_policy(days), now_ms(), recordings, busy).map_err(|e| e.to_string())?;
+    let work = plan.work.into_iter().filter(|w| w.steps.contains(&api::media_retention::MediaStep::DeleteAudio)).collect();
+    Ok((work, plan.usage.audio_deletable_bytes))
+}
+
+/// The media plan that compresses every recording now, and nothing else.
+fn compress_policy() -> api::media_retention::MediaPolicy {
+    api::media_retention::MediaPolicy {
+        compress_after_days: Some(0),
+        delete_audio_after_days: None,
+        shrink_images_after_days: None,
+        delete_audio_preview_after_days: None,
+    }
+}
+
+/// The meetings "Compress all" would compress: planned for `Compress`, not `busy`, every part
+/// transcribed (an untranscribed part still needs its WAV as recorded). With the WAV bytes.
+pub fn compressible_recordings(s: &memory::Store, recordings: &Path, busy: &[i64]) -> Result<(Vec<api::media_retention::MeetingWork>, i64), String> {
+    let plan = api::media_retention::plan(s, &compress_policy(), now_ms(), recordings, busy).map_err(|e| e.to_string())?;
+    let transcribed = transcribed_meetings(s)?;
     let mut work = Vec::new();
+    let mut bytes = 0;
+    let mut counted = std::collections::BTreeSet::new();
     for w in plan.work {
-        if !w.steps.contains(&api::media_retention::MediaStep::DeleteAudio) {
+        if !w.steps.contains(&api::media_retention::MediaStep::Compress) || !transcribed.contains(&w.meeting_id) {
             continue;
         }
-        let parts = s.meeting_parts(w.meeting_id).map_err(|e| e.to_string())?;
-        // A part still waiting for its transcript keeps its audio: deleting it would lose the meeting.
-        if !parts.is_empty() && parts.iter().all(|p| p.transcribed) {
-            work.push(w);
+        for stored in &w.audio_paths {
+            let tracks = api::retention::sibling_audio_paths(stored).map(|(a, b)| vec![a, b]).unwrap_or_else(|| vec![PathBuf::from(stored)]);
+            for track in tracks {
+                let is_wav = track.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+                if is_wav && counted.insert(track.clone()) {
+                    bytes += file_size(&track);
+                }
+            }
         }
+        work.push(w);
     }
-    Ok((work, plan.usage.audio_deletable_bytes))
+    Ok((work, bytes))
 }
 
 /// The dialog's numbers at `days`.
@@ -221,12 +256,14 @@ pub fn options(s: &memory::Store, days: u32, recordings: &Path, busy: &[i64]) ->
     let space = s.db_space().map_err(|e| e.to_string())?;
     let (work, deletable) = deletable_recordings(s, days, recordings, busy)?;
     let (count, text) = s.captures_older_than(now_ms() - i64::from(days) * DAY_MS).map_err(|e| e.to_string())?;
+    let (compressible, full) = compressible_recordings(s, recordings, busy)?;
     Ok(FreeUpOptions {
         days,
         compact_bytes: Some(space.free_bytes()).filter(|b| *b > 0),
         recordings_bytes: Some(deletable).filter(|b| *b > 0 && !work.is_empty()),
         captures_count: Some(count).filter(|c| *c > 0),
         captures_bytes: Some(text).filter(|_| count > 0),
+        compress_bytes: Some(full).filter(|b| *b > 0 && !compressible.is_empty()),
     })
 }
 
@@ -317,6 +354,53 @@ mod tests {
         assert_eq!((small.ran, small.reason), (false, "not_worth_it"));
         let forced = compact(&s, i64::MAX, true).unwrap();
         assert_eq!((forced.ran, forced.reason), (true, "ran"));
+    }
+
+    /// A finished meeting recorded on this PC, as Windows makes them: no parts, so whether it is
+    /// transcribed is whether it has a transcript.
+    fn recorded(s: &memory::Store, root: &Path, stamp: &str, start: i64, transcribed: bool) -> i64 {
+        write(&root.join(format!("system-audio-{stamp}.wav")), 3_000);
+        write(&root.join(format!("mic-audio-{stamp}.wav")), 1_000);
+        let audio = root.join(format!("system-audio-{stamp}.wav")).to_string_lossy().into_owned();
+        let id = s
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "this-pc".into(),
+                start_unix_ms: start,
+                end_unix_ms: None,
+                title: "Standup".into(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Manual,
+                audio_path: Some(audio.clone()),
+                status: memory::MeetingStatus::Recording,
+            })
+            .unwrap();
+        s.complete_meeting(id, start + 1_000, Some(&audio)).unwrap();
+        if transcribed {
+            s.update_meeting_transcript_and_notes(id, &root.join(format!("transcript-{stamp}.txt")).to_string_lossy(), None).unwrap();
+        }
+        id
+    }
+
+    #[test]
+    fn meetings_without_parts_count_as_transcribed_by_their_transcript() {
+        let s = memory::Store::open_in_memory().unwrap();
+        let root = scratch("partless");
+        let old = now_ms() - 200 * DAY_MS;
+        let done = recorded(&s, &root, "A", old, true);
+        let pending = recorded(&s, &root, "B", old, false);
+        let busy = recorded(&s, &root, "C", old, true);
+
+        let (work, bytes) = compressible_recordings(&s, &root, &[busy]).unwrap();
+        assert_eq!(work.iter().map(|w| w.meeting_id).collect::<Vec<_>>(), [done], "not the untranscribed one, not the busy one");
+        assert_eq!(bytes, 4_000, "both of its WAVs");
+
+        let (work, _) = deletable_recordings(&s, 90, &root, &[busy]).unwrap();
+        assert_eq!(work.iter().map(|w| w.meeting_id).collect::<Vec<_>>(), [done], "delete finds Windows meetings too");
+        let o = options(&s, 90, &root, &[busy]).unwrap();
+        assert_eq!(o.compress_bytes, Some(4_000));
+        assert!(o.recordings_bytes.is_some());
+        let _ = pending;
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

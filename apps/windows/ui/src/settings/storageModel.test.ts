@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FreeUpOptions, StorageView } from "../generated/types";
-import { compactLine, footprintLines, freedLine, freeUpRows, lowDiskLines } from "./storageModel";
+import { compactLine, compressLine, footprintLines, freedLine, freeUpRows, lowDiskLines } from "./storageModel";
 
 const GB = 1_000_000_000;
 
@@ -33,16 +33,25 @@ describe("storage model", () => {
   });
 
   it("hides what frees nothing and asks before deleting", () => {
-    const none: FreeUpOptions = { days: 90, compactBytes: null, recordingsBytes: null, capturesCount: null, capturesBytes: null };
+    const none: FreeUpOptions = { days: 90, compactBytes: null, recordingsBytes: null, capturesCount: null, capturesBytes: null, compressBytes: null };
     expect(freeUpRows(none)).toEqual([]);
-    const all: FreeUpOptions = { days: 30, compactBytes: 300_000_000, recordingsBytes: GB, capturesCount: 1200, capturesBytes: 50_000_000 };
+    const all: FreeUpOptions = { days: 30, compactBytes: 300_000_000, recordingsBytes: GB, capturesCount: 1200, capturesBytes: 50_000_000, compressBytes: 2 * GB };
     const rows = freeUpRows(all);
-    expect(rows.map((r) => r.kind)).toEqual(["compact", "recordings", "captures"]);
+    expect(rows.map((r) => r.kind)).toEqual(["compact", "compress", "recordings", "captures"]);
     expect(rows[0].confirm).toBeNull();
-    expect(rows[1].detail).toContain("30 days");
-    expect(rows[1].confirm).toContain("30 days");
-    expect(rows[2].detail).toMatch(/1,?200 screen captures/);
-    expect(rows[2].confirm).toContain("other devices");
+    expect(rows[1].confirm).toBeNull();
+    expect(rows[1].button).toBe("Compress all");
+    expect(rows[1].detail).toContain("full quality");
+    expect(rows[2].detail).toContain("30 days");
+    expect(rows[2].confirm).toContain("30 days");
+    expect(rows[3].detail).toMatch(/1,?200 screen captures/);
+    expect(rows[3].confirm).toContain("other devices");
+  });
+
+  it("says what Compress all did, and why any were left alone", () => {
+    expect(compressLine({ compressed: 4, failed: 0, error: null })).toBe("Meetings compressed: 4.");
+    expect(compressLine({ compressed: 0, failed: 2, error: "no AAC encoder" })).toBe("Meetings left unchanged: 2. no AAC encoder");
+    expect(compressLine({ compressed: 0, failed: 0, error: null })).toBe("Nothing to compress.");
   });
 
   it("says what was freed only when something was", () => {

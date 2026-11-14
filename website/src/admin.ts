@@ -18,6 +18,11 @@ export interface AdminEnv {
   ADMIN_EMAILS?: string;
   /** More allowed emails, as a Worker secret, so personal addresses stay out of the repo. */
   ADMIN_EMAILS_EXTRA?: string;
+  /** The sync control database (libsql://… URL) and a READ-ONLY Turso token for it, both Worker
+   * secrets. With them the page shows whether each lead uses the app; without them it says how to
+   * turn that on. */
+  ADMIN_SYNC_DB_URL?: string;
+  ADMIN_SYNC_DB_TOKEN?: string;
 }
 
 // ---- Access JWT ------------------------------------------------------------------------------
@@ -103,6 +108,68 @@ export interface LeadRow {
   last_download_at: string | null;
   last_download: string | null;
   beta: string | null;
+  /** From the sync database (`addAppUse`): "free · mac, ios", or "no" when the email has no account. */
+  app?: string;
+  /** Latest time any of their devices, or the account, reached the sync server (UTC). */
+  app_last_active?: string;
+}
+
+// ---- app use (sync database) -----------------------------------------------------------------
+
+export interface AppUse {
+  plan: string;
+  platforms: string;
+  lastActiveMs: number;
+}
+
+/** Per lowercase email, the sync account behind it: "off" when the secrets aren't set, "error" when
+ * the database can't be read (logged, no secrets in the log). */
+export async function appUse(env: AdminEnv, emails: string[], fetcher: typeof fetch): Promise<Map<string, AppUse> | "off" | "error"> {
+  const raw = env.ADMIN_SYNC_DB_URL?.trim(), token = env.ADMIN_SYNC_DB_TOKEN?.trim();
+  if (!raw || !token) return "off";
+  const base = raw.replace(/^libsql:\/\//, "https://").replace(/\/$/, "");
+  const out = new Map<string, AppUse>();
+  const unique = [...new Set(emails.map((e) => e.toLowerCase()))];
+  for (let i = 0; i < unique.length; i += 100) {
+    const chunk = unique.slice(i, i + 100);
+    const sql = `SELECT lower(a.email), a.plan,
+        MAX(COALESCE(MAX(d.last_seen_unix_ms), 0), COALESCE(a.last_seen_unix_ms, 0)),
+        COALESCE(group_concat(DISTINCT d.platform), '')
+      FROM account a LEFT JOIN device d ON d.account_id = a.id AND d.revoked_at_unix_ms IS NULL
+      WHERE lower(a.email) IN (${chunk.map(() => "?").join(",")}) GROUP BY a.id`;
+    const res = await fetcher(`${base}/v2/pipeline`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        requests: [{ type: "execute", stmt: { sql, args: chunk.map((value) => ({ type: "text", value })) } }, { type: "close" }],
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`admin/leads: sync database http ${res.status}`);
+      return "error";
+    }
+    type Cell = { type: string; value?: string };
+    const body = (await res.json()) as { results?: { type: string; response?: { result?: { rows?: Cell[][] } } }[] };
+    const first = body.results?.[0];
+    if (first?.type !== "ok") {
+      console.warn("admin/leads: sync database query failed");
+      return "error";
+    }
+    for (const row of first.response?.result?.rows ?? []) {
+      const [email, plan, last, platforms] = row.map((c) => c.value ?? "");
+      out.set(email, { plan, platforms: platforms.split(",").filter(Boolean).sort().join(", "), lastActiveMs: Number(last) || 0 });
+    }
+  }
+  return out;
+}
+
+/** Fills each row's app columns from `use`. */
+export function addAppUse(rows: LeadRow[], use: Map<string, AppUse>): void {
+  for (const row of rows) {
+    const u = use.get(row.email.toLowerCase());
+    row.app = u ? [u.plan, u.platforms].filter(Boolean).join(" · ") : "no";
+    row.app_last_active = u?.lastActiveMs ? new Date(u.lastActiveMs).toISOString() : "";
+  }
 }
 
 /** Leads signed up since `since` (ISO, or null for all), newest first. */
@@ -138,7 +205,7 @@ export function windowFrom(url: URL, now: Date): { days: number | null; since: s
 const COLUMNS: [keyof LeadRow, string][] = [
   ["created_at", "Signed up"], ["name", "Name"], ["email", "Email"], ["company", "Company"], ["role", "Role"],
   ["team_size", "Team"], ["platform", "Platform"], ["downloads", "Downloads"], ["last_download", "Last download"],
-  ["last_download_at", "Downloaded at"], ["beta", "Mobile beta"], ["source", "Source"], ["country", "Country"],
+  ["last_download_at", "Downloaded at"], ["app", "Uses the app"], ["app_last_active", "Last active"], ["beta", "Mobile beta"], ["source", "Source"], ["country", "Country"],
   ["marketing_opt_in", "Product emails"], ["registrations", "Sign-ups"],
 ];
 
@@ -149,7 +216,7 @@ function esc(v: unknown): string {
 function cell(key: keyof LeadRow, row: LeadRow): string {
   const v = row[key];
   if (key === "marketing_opt_in") return v ? "yes" : "no";
-  if ((key === "created_at" || key === "last_download_at") && typeof v === "string") return v.slice(0, 16).replace("T", " ");
+  if ((key === "created_at" || key === "last_download_at" || key === "app_last_active") && typeof v === "string") return v.slice(0, 16).replace("T", " ");
   return v === null || v === undefined ? "" : String(v);
 }
 
@@ -165,8 +232,14 @@ export function leadsCsv(rows: LeadRow[]): string {
   return lines.join("\r\n") + "\r\n";
 }
 
-export function leadsHtml(rows: LeadRow[], days: number | null, viewer: string): string {
+export function leadsHtml(rows: LeadRow[], days: number | null, viewer: string, app: "ok" | "off" | "error" = "off"): string {
   const downloaded = rows.filter((r) => r.downloads > 0).length;
+  const using = rows.filter((r) => r.app && r.app !== "no").length;
+  const appLine = app === "ok"
+    ? ` ${using} use the app (have a sync account).`
+    : app === "error"
+      ? ` <span class="muted">App use couldn't be read from the sync database just now.</span>`
+      : ` <span class="muted">App use isn't shown: add the ADMIN_SYNC_DB_URL and ADMIN_SYNC_DB_TOKEN secrets.</span>`;
   const link = (d: string, label: string) =>
     `<a href="/admin/leads?days=${d}"${String(days ?? "all") === d ? ' aria-current="page"' : ""}>${label}</a>`;
   const head = COLUMNS.map(([, h]) => `<th>${esc(h)}</th>`).join("");
@@ -180,7 +253,7 @@ export function leadsHtml(rows: LeadRow[], days: number | null, viewer: string):
 .wrap{overflow-x:auto}table{border-collapse:collapse;margin-top:16px;white-space:nowrap}th,td{border-bottom:1px solid #e3e6ec;padding:6px 10px;text-align:left}
 th{position:sticky;top:0;background:#f6f7f9}tr.nodl td{color:#7a8294}.muted{color:#7a8294}</style></head><body>
 <h1>Leads</h1>
-<p>${rows.length} signed up in ${span}; ${downloaded} downloaded.</p>
+<p>${rows.length} signed up in ${span}; ${downloaded} downloaded.${appLine}</p>
 <nav>${link("7", "Last 7 days")}${link("30", "Last 30 days")}${link("all", "All")} · <a href="/admin/leads.csv?days=${days ?? "all"}">Download CSV</a></nav>
 <div class="wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
 <p class="muted">Grey rows haven't downloaded. Signed in as ${esc(viewer)}. Times are UTC.</p>
@@ -199,10 +272,13 @@ export async function handleAdminLeads(request: Request, env: AdminEnv, fetcher:
   const url = new URL(request.url);
   const { days, since } = windowFrom(url, now);
   const rows = await listLeads(env.DB, since);
+  const use = await appUse(env, rows.map((r) => r.email), fetcher);
+  if (use instanceof Map) addAppUse(rows, use);
+  const appState = use instanceof Map ? "ok" : use;
   if (url.pathname.endsWith(".csv")) {
     return new Response(leadsCsv(rows), {
       headers: { ...PRIVATE, "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename="whimbrel-leads-${days ?? "all"}.csv"` },
     });
   }
-  return new Response(leadsHtml(rows, days, viewer), { headers: { ...PRIVATE, "content-type": "text/html; charset=utf-8" } });
+  return new Response(leadsHtml(rows, days, viewer, appState), { headers: { ...PRIVATE, "content-type": "text/html; charset=utf-8" } });
 }

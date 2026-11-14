@@ -183,7 +183,20 @@ pub fn prepare_window_ask(
     // Production passes true: in sensitive mode `build_chain` always builds the Ollama
     // link (ignoring `use_local_model`), and `RoutingConfig` has no Ollama model name to
     // probe. `LocalModelMissing` and the injected bool stay for a future Ollama probe.
-    prepare_with(store, input, query, history, routing, true)
+    prepare_with(store, input, query, history, routing, true, None)
+}
+
+/// [`prepare_window_ask`] with this call's own Limited Use settings (`call`, from this
+/// call's routing JSON); see `ask::prepare_ask_for`.
+pub fn prepare_window_ask_for(
+    store: &memory::Store,
+    input: &WindowInput,
+    query: &str,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    call: &crate::routing::LimitedUseSettings,
+) -> Result<PreparedWindowAsk, WindowAskError> {
+    prepare_with(store, input, query, history, routing, true, Some(call))
 }
 
 fn prepare_with(
@@ -193,6 +206,7 @@ fn prepare_with(
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
     local_model_available: bool,
+    call: Option<&crate::routing::LimitedUseSettings>,
 ) -> Result<PreparedWindowAsk, WindowAskError> {
     if input.text.trim().is_empty() {
         return Err(WindowAskError::NoText);
@@ -206,15 +220,20 @@ fn prepare_with(
     check_provider(store, provider, now_unix_ms()).map_err(ApiError::from)?;
 
     let context = llm::gather_and_assemble_context(store, query, now_unix_ms(), 5, true, true);
+    // Limited Use: Gmail threads only for a streamed provider that may receive them.
+    let may_receive_google = crate::routing::streamed_may_receive_google_data(provider, call);
+    let context = llm::limited_use::filter_context_in(store, &context, may_receive_google);
+    // Earlier answers built from Google data follow the same rule.
+    let (history, history_google) = crate::ask::history_for_link(store, history, may_receive_google);
     let instructions =
         llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language);
-    let (prompt, truncated) = window_prompt_with_history(input, query, &context, &instructions, history);
+    let (prompt, truncated) = window_prompt_with_history(input, query, &context, &instructions, &history);
 
     let prepare_id = llm::streaming::new_run_id();
     prepared_asks()
         .lock()
         .unwrap()
-        .insert(prepare_id.clone(), PreparedAsk { context, provider });
+        .insert(prepare_id.clone(), PreparedAsk { context, provider, history_google: Some(history_google) });
     Ok(PreparedWindowAsk { prepare_id, prompt, truncated, destination: destination(routing) })
 }
 
@@ -317,7 +336,7 @@ mod tests {
     #[test]
     fn empty_text_is_no_text() {
         let store = memory::Store::open_in_memory().unwrap();
-        let r = prepare_with(&store, &input("  \n\t ", false), "q?", &[], &routing(false, "ollama"), true);
+        let r = prepare_with(&store, &input("  \n\t ", false), "q?", &[], &routing(false, "ollama"), true, None);
         assert!(matches!(r, Err(WindowAskError::NoText)));
     }
 
@@ -348,7 +367,7 @@ mod tests {
     #[test]
     fn sensitive_without_local_model_is_missing() {
         let store = memory::Store::open_in_memory().unwrap();
-        let r = prepare_with(&store, &input("text", false), "q?", &[], &routing(true, "anthropic"), false);
+        let r = prepare_with(&store, &input("text", false), "q?", &[], &routing(true, "anthropic"), false, None);
         assert!(matches!(r, Err(WindowAskError::LocalModelMissing)));
     }
 
@@ -363,8 +382,30 @@ mod tests {
     #[test]
     fn prepare_stashes_and_returns_destination() {
         let store = memory::Store::open_in_memory().unwrap();
-        let r = prepare_with(&store, &input("text", true), "q?", &[], &routing(true, "anthropic"), true).unwrap();
+        let r = prepare_with(&store, &input("text", true), "q?", &[], &routing(true, "anthropic"), true, None).unwrap();
         assert_eq!(r.destination, Destination::LocalOnly);
         assert!(prepared_asks().lock().unwrap().remove(&r.prepare_id).is_some());
+    }
+
+    /// Limited Use: an earlier answer built from Google data is not sent to a streamed
+    /// provider that may not receive it (OpenRouter never does), nor is one of unknown origin.
+    #[test]
+    fn earlier_google_answers_are_left_out_for_a_provider_that_may_not_receive_them() {
+        let store = memory::Store::open_in_memory().unwrap();
+        store.record_answer_provenance("GMAILANSWER", true, 1).unwrap();
+        store.record_answer_provenance("CLEANANSWER", false, 1).unwrap();
+        let history = [
+            llm::ChatTurn { role: llm::ChatRole::User, text: "q1".into() },
+            llm::ChatTurn { role: llm::ChatRole::Assistant, text: "GMAILANSWER".into() },
+            llm::ChatTurn { role: llm::ChatRole::User, text: "q2".into() },
+            llm::ChatTurn { role: llm::ChatRole::Assistant, text: "CLEANANSWER".into() },
+            llm::ChatTurn { role: llm::ChatRole::User, text: "q3".into() },
+            llm::ChatTurn { role: llm::ChatRole::Assistant, text: "UNKNOWNANSWER".into() },
+        ];
+        let r = RoutingConfig { openrouter_key: Some("k".into()), ..routing(false, "openrouter") };
+        let out = prepare_with(&store, &input("text", false), "q?", &history, &r, true, None).unwrap();
+        assert!(prepared_asks().lock().unwrap().remove(&out.prepare_id).is_some());
+        assert!(!out.prompt.contains("GMAILANSWER") && !out.prompt.contains("UNKNOWNANSWER"), "{}", out.prompt);
+        assert!(out.prompt.contains("CLEANANSWER"));
     }
 }

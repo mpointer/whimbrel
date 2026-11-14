@@ -1,9 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
-import { gmailAccounts, gmailConnect, gmailReconnect, gmailDeleteStoredMail, gmailDisconnect } from "../api";
+import { GOOGLE_CLIENT_CHANGED } from "./googleClientModel";
+import { gmailAccounts, gmailConnect, gmailReconnect, gmailDeleteStoredMail, gmailDisconnect, googleClientStatus } from "../api";
+import { RemoveGoogleAccount } from "./RemoveGoogleAccount";
 import { describeError, isCommandError } from "../errors";
 import type { GmailAccounts } from "../generated/types";
 import { useL10n } from "../l10n";
-import { accountNote, canConnect, connectLabel, deleteMailQuestion, gmailIntro, gmailMailNote, gmailPermissions, readStatus } from "./gmailModel";
+import {
+  accountNote,
+  canConnect,
+  connectLabel,
+  deleteMailQuestion,
+  gmailIntro,
+  gmailMailNote,
+  gmailPermissions,
+  gmailReadingIntro,
+  readStatus,
+  readsMail,
+  sendOnlyNote,
+} from "./gmailModel";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -16,17 +30,26 @@ export function GmailCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [ownClient, setOwnClient] = useState(false);
 
   const load = useCallback(
     () =>
-      gmailAccounts()
-        .then(setState)
+      Promise.all([gmailAccounts(), googleClientStatus()])
+        .then(([accounts, client]) => {
+          setState(accounts);
+          setOwnClient(client.clientId != null);
+        })
         .catch((e: unknown) => setError(message(e))),
     [],
   );
 
   useEffect(() => {
     void load();
+    // Saving or clearing your own Google client means signing in again: show it at once.
+    const reload = () => void load();
+    window.addEventListener(GOOGLE_CLIENT_CHANGED, reload);
+    return () => window.removeEventListener(GOOGLE_CLIENT_CHANGED, reload);
   }, [load]);
 
   const run = (call: () => Promise<GmailAccounts>) => {
@@ -48,6 +71,7 @@ export function GmailCard() {
       </h2>
       {state.blocked && <p role="alert">{state.blocked}</p>}
       <p className="muted">{gmailIntro()}</p>
+      {ownClient && <p className="muted">{gmailReadingIntro()}</p>}
       {state.accounts.length > 0 && (
         <ul className="rows">
           {state.accounts.map((account) => (
@@ -65,9 +89,21 @@ export function GmailCard() {
                   {t("Reconnect")}
                 </button>
               ) : null}
-              <button className="mode" disabled={busy} onClick={() => run(() => gmailDisconnect(account.email))}>
+              <button className="mode" disabled={busy} onClick={() => setConfirmRemove(account.email)}>
                 {t("Disconnect")}
               </button>
+              {confirmRemove === account.email && (
+                <RemoveGoogleAccount
+                  service="gmail"
+                  email={account.email}
+                  busy={busy}
+                  onRemove={() => {
+                    setConfirmRemove(null);
+                    run(() => gmailDisconnect(account.email));
+                  }}
+                  onCancel={() => setConfirmRemove(null)}
+                />
+              )}
               <button className="mode" disabled={busy} onClick={() => setConfirmDelete(account.email)}>
                 {t("Delete stored mail…")}
               </button>
@@ -90,7 +126,11 @@ export function GmailCard() {
                 </span>
               )}
               {accountNote(account) && <span className="muted small">{accountNote(account)}</span>}
-              <span className="muted small">{readStatus(account, locale)}</span>
+              {account.sendOnly ? (
+                <span className="muted small">{sendOnlyNote()}</span>
+              ) : (
+                <span className="muted small">{readStatus(account, locale)}</span>
+              )}
             </li>
           ))}
         </ul>
@@ -100,8 +140,8 @@ export function GmailCard() {
           {connectLabel(state.accounts.length)}
         </button>
       </div>
-      <p className="muted small">{gmailMailNote()}</p>
-      <p className="muted small">{gmailPermissions()}</p>
+      {readsMail(state, ownClient) && <p className="muted small">{gmailMailNote()}</p>}
+      <p className="muted small">{gmailPermissions(ownClient)}</p>
       {error && <p role="alert">{error}</p>}
     </section>
   );

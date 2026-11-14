@@ -9,7 +9,7 @@ const calendar = (signInExpired: string[]): CalendarAccounts => ({
   accessIssues: [],
 });
 const gmail = (expired: Record<string, boolean>): GmailAccounts => ({
-  accounts: Object.entries(expired).map(([email, signInExpired]) => ({ email, signInExpired, needsReconnect: false })),
+  accounts: Object.entries(expired).map(([email, signInExpired]) => ({ email, signInExpired, needsReconnect: false, sendOnly: false })),
 });
 
 describe("expiredSignIns", () => {

@@ -135,9 +135,16 @@ fn governed_names(
     transcript: &str,
     speaker_ids: &[i32],
     invitees: &[String],
+    calendar_text_policy: Option<llm::limited_use::GoogleDataPolicy>,
 ) -> Option<Vec<(i32, String)>> {
     llm::check_spend_cap(store, cap, None, Some(ROUTE), crate::util::now_unix_ms()).ok()?;
     let ((names, usage), link) = llm::try_chain(chain, |link| {
+        // Limited Use: the invitees' names (and the transcript, named from them) are Google
+        // Calendar text when the meeting may have come from there; a link that may not
+        // receive it is skipped.
+        if calendar_text_policy.is_some_and(|policy| !llm::limited_use::link_may_receive_google_data(link, policy)) {
+            return Err(llm::limited_use::withheld_from_link());
+        }
         let metered = Metered { client: link.client.as_ref(), usage: Cell::default() };
         llm::name_speakers_from_conversation(&metered, transcript, speaker_ids, invitees).map(|n| (n, metered.usage.get()))
     })?;
@@ -159,7 +166,8 @@ pub fn assign_meeting_speakers(
     assign_speakers(store, meeting_id, voices, remember, |transcript, ids, invitees| {
         let chain = crate::routing::build_chain_for(llm::TaskKind::MeetingSummary, model, routing);
         let chain = crate::budget::apply_budgets(store, chain, false, crate::util::now_unix_ms()).ok()?;
-        governed_names(store, &routing.spend_cap_config(), &chain, transcript, ids, invitees)
+        let calendar_text = store.meeting_may_hold_google_calendar_data(meeting_id).then(|| routing.google_data_policy());
+        governed_names(store, &routing.spend_cap_config(), &chain, transcript, ids, invitees, calendar_text)
     })
 }
 
@@ -297,7 +305,7 @@ mod tests {
         let invitees = ["Ana".to_string(), "Bo".to_string()];
         let s = Store::open_in_memory().unwrap();
         let open = llm::SpendCapConfig { user_daily_cents: Some(0), global_daily_cents: Some(0) };
-        assert_eq!(governed_names(&s, &open, &chain, "x", &[0, 1], &invitees), Some(vec![(0, "Bo".to_string())]));
+        assert_eq!(governed_names(&s, &open, &chain, "x", &[0, 1], &invitees, None), Some(vec![(0, "Bo".to_string())]));
         let rows = crate::usage::list(&s, 0, i64::MAX, 10);
         assert_eq!((rows.len(), rows[0].task.as_str()), (1, ROUTE));
 
@@ -315,7 +323,30 @@ mod tests {
         })
         .unwrap();
         let capped = llm::SpendCapConfig { user_daily_cents: Some(0), global_daily_cents: Some(1) };
-        assert_eq!(governed_names(&s, &capped, &chain, "x", &[0, 1], &invitees), None);
+        assert_eq!(governed_names(&s, &capped, &chain, "x", &[0, 1], &invitees, None), None);
         assert_eq!(crate::usage::list(&s, 0, i64::MAX, 10).len(), 2);
+    }
+
+    struct Recorder(std::sync::Arc<std::sync::Mutex<usize>>);
+    impl llm::LlmClient for Recorder {
+        fn complete(&self, _: &str) -> Result<llm::Completion, llm::LlmError> {
+            *self.0.lock().unwrap() += 1;
+            Ok(llm::Completion { text: r#"{"speakers":[]}"#.into(), token_usage: Default::default() })
+        }
+    }
+
+    /// Limited Use: the invitees of a meeting that may be from Google Calendar are named to
+    /// the model only by a link that may receive Google data.
+    #[test]
+    fn invitee_names_of_a_google_calendar_meeting_skip_a_restricted_link() {
+        let s = Store::open_in_memory().unwrap();
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(0));
+        let chain = vec![llm::ChainLink { provider: llm::Provider::OpenRouter, model: "m".into(), client: Box::new(Recorder(calls.clone())) }];
+        let cap = RoutingConfig::default().spend_cap_config();
+        let policy = Some(llm::limited_use::GoogleDataPolicy::default());
+        assert!(governed_names(&s, &cap, &chain, "Speaker 1: hi", &[0], &["Ana".to_string()], policy).is_none());
+        assert_eq!(*calls.lock().unwrap(), 0, "OpenRouter was asked");
+        let _ = governed_names(&s, &cap, &chain, "Speaker 1: hi", &[0], &["Ana".to_string()], None);
+        assert_eq!(*calls.lock().unwrap(), 1, "a meeting not from Google Calendar is unchanged");
     }
 }

@@ -26,6 +26,7 @@
 pub mod ask;
 pub mod window_ask;
 pub mod window_read;
+pub mod recap;
 pub mod budget;
 pub mod local_model;
 pub mod import;
@@ -39,6 +40,7 @@ pub mod inference;
 pub mod jobs;
 pub mod live_question;
 pub use memory::l10n;
+pub use memory::background_gate;
 pub mod mcp;
 pub mod model_defaults;
 pub mod models;

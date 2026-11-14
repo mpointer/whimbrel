@@ -268,6 +268,18 @@ pub(crate) fn sources_for_key(
     Ok(out)
 }
 
+/// SQL true for a `topic_source s` row TypeSafe may read: anything but Google user data
+/// until TypeSafe confirms it does not train on API data (Limited Use). A held Gmail or
+/// Google Calendar source stays queued, uncounted and unjudged, and judging the rest of
+/// the queue still finishes its first pass.
+pub(crate) fn typesafe_may_read_sql() -> String {
+    if crate::limited_use::TYPESAFE_GOOGLE_DATA_CONFIRMED {
+        "1".to_string()
+    } else {
+        format!("NOT {}", crate::limited_use::TOPIC_SOURCE_IS_GOOGLE_SQL)
+    }
+}
+
 fn kv_i64(conn: &Connection, key: &str) -> rusqlite::Result<Option<i64>> {
     Ok(conn
         .query_row("SELECT value FROM kv_meta WHERE key = ?1", [key], |r| {
@@ -325,10 +337,14 @@ impl Store {
         )?;
         let todo: Vec<(i64, String, String, Option<i64>)> = {
             let mut stmt = self.conn.prepare(
-                "SELECT s.id, s.kind, COALESCE(x.text, s.title), s.ref_id FROM topic_judge_todo j \
-                 JOIN topic_source s ON s.id = j.source_id \
-                 LEFT JOIN topic_source_text x ON x.source_id = s.id \
-                 ORDER BY s.ts_unix_ms DESC, s.id DESC LIMIT ?1",
+                &format!(
+                    "SELECT s.id, s.kind, COALESCE(x.text, s.title), s.ref_id FROM topic_judge_todo j \
+                     JOIN topic_source s ON s.id = j.source_id \
+                     LEFT JOIN topic_source_text x ON x.source_id = s.id \
+                     WHERE {} \
+                     ORDER BY s.ts_unix_ms DESC, s.id DESC LIMIT ?1",
+                    typesafe_may_read_sql()
+                ),
             )?;
             let rows = stmt
                 .query_map([limit as i64], |r| {
@@ -504,10 +520,13 @@ impl Store {
     /// live seed exists or the last `run_topic_batch` had more work (or none has run).
     pub fn topic_judge_estimate(&self, usd_per_million: f64) -> rusqlite::Result<JudgeEstimate> {
         let (sources, tokens): (i64, i64) = self.conn.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(MIN(LENGTH(COALESCE(x.text, s.title)), \
-                    CASE WHEN s.kind = 'episode' THEN 1500 ELSE 2000 END) / 4 + ?1), 0) \
-             FROM topic_judge_todo j JOIN topic_source s ON s.id = j.source_id \
-             LEFT JOIN topic_source_text x ON x.source_id = s.id WHERE s.noise = 0",
+            &format!(
+                "SELECT COUNT(*), COALESCE(SUM(MIN(LENGTH(COALESCE(x.text, s.title)), \
+                        CASE WHEN s.kind = 'episode' THEN 1500 ELSE 2000 END) / 4 + ?1), 0) \
+                 FROM topic_judge_todo j JOIN topic_source s ON s.id = j.source_id \
+                 LEFT JOIN topic_source_text x ON x.source_id = s.id WHERE s.noise = 0 AND {}",
+                typesafe_may_read_sql()
+            ),
             [REQUEST_TOKENS],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
@@ -542,7 +561,10 @@ impl Store {
             return Ok(());
         }
         let left: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM topic_judge_todo j JOIN topic_source s ON s.id = j.source_id WHERE s.noise = 0",
+            &format!(
+                "SELECT COUNT(*) FROM topic_judge_todo j JOIN topic_source s ON s.id = j.source_id WHERE s.noise = 0 AND {}",
+                typesafe_may_read_sql()
+            ),
             [],
             |r| r.get(0),
         )?;
@@ -628,15 +650,37 @@ mod tests {
     use crate::topics::index::run_topic_index_job;
     use crate::Store;
 
+    /// An email from a non-Google source (IMAP), which TypeSafe may read. Gmail is held
+    /// from TypeSafe (Limited Use): see `gmail_is_held_from_the_typesafe_queue`.
     fn mail(s: &Store, ext: &str, subject: &str) -> i64 {
+        mail_from(s, "imap", ext, subject)
+    }
+
+    fn mail_from(s: &Store, source: &str, ext: &str, subject: &str) -> i64 {
         s.conn
             .execute(
                 "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id) \
-                 VALUES ('d','email','gmail',1000,json_array('a@x.com','b@y.com'),?1,'Budget review','{}',?2)",
-                params![subject, ext],
+                 VALUES ('d','email',?3,1000,json_array('a@x.com','b@y.com'),?1,'Budget review','{}',?2)",
+                params![subject, ext, source],
             )
             .unwrap();
         s.conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn gmail_is_held_from_the_typesafe_queue() {
+        assert!(!crate::limited_use::TYPESAFE_GOOGLE_DATA_CONFIRMED);
+        let s = Store::open_in_memory().unwrap();
+        s.create_seed_topic("Maximus", &[], None).unwrap();
+        mail_from(&s, "gmail", "g1", "Lunch plans");
+        mail(&s, "i1", "Dinner plans");
+        while crate::topics::run_topic_batch(&s, 200).unwrap() {}
+        let queued: i64 = s.conn.query_row("SELECT COUNT(*) FROM topic_judge_todo", [], |r| r.get(0)).unwrap();
+        assert_eq!(queued, 2, "both are queued");
+        let got = s.next_judge_candidates(10).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].source_key, "email:i1");
+        assert_eq!(s.topic_judge_estimate(1.0).unwrap().sources, 1);
     }
 
     fn index(s: &Store) {
@@ -847,7 +891,7 @@ mod tests {
         s.conn
             .execute(
                 "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id) \
-                 VALUES ('d','email','gmail',1000,json_array('a@x.com','b@y.com'),'Weekly notes',?1,'{}','e1')",
+                 VALUES ('d','email','imap',1000,json_array('a@x.com','b@y.com'),'Weekly notes',?1,'{}','e1')",
                 [&body],
             )
             .unwrap();
@@ -871,7 +915,7 @@ mod tests {
         s.conn
             .execute(
                 "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id) \
-                 VALUES ('d','email','gmail',1000,json_array('a@x.com','b@y.com'),'Weekly notes','Zurich renewal is due','{}','e1')",
+                 VALUES ('d','email','imap',1000,json_array('a@x.com','b@y.com'),'Weekly notes','Zurich renewal is due','{}','e1')",
                 [],
             )
             .unwrap();

@@ -26,6 +26,9 @@ pub struct StepBatchOutcome {
 /// The on-device judge: asks the local chain for labels as JSON.
 pub struct LocalStepJudge<'a> {
     pub chain: &'a [llm::ChainLink],
+    /// Every link of `chain` may receive Gmail and Google Calendar text (Limited Use: an
+    /// Ollama cloud model or a remote Ollama may not, without the user's switch).
+    pub google_data_ok: bool,
 }
 
 /// More closes than this from one source looks like an injected instruction: close none.
@@ -144,6 +147,10 @@ pub fn parse_step_reply(
 }
 
 impl StepJudge for LocalStepJudge<'_> {
+    fn may_read_google_data(&self) -> bool {
+        self.google_data_ok
+    }
+
     /// Walks the chain; an unusable reply moves on to the next link. When no link could run
     /// at all (Ollama down or its model not pulled), the error is `Network` so the batch
     /// stops and leaves the source queued instead of counting a failure against it.
@@ -263,13 +270,18 @@ pub fn run_topic_steps_batch(
 ) -> rusqlite::Result<StepBatchOutcome> {
     use memory::topics::budget::JudgeGate;
     let mut out = StepBatchOutcome::default();
+    if memory::background_gate::recording_pauses_background_work() {
+        return Ok(out);
+    }
     if paid && store.topic_steps_gate()? == JudgeGate::NotStarted {
         out.not_started = true;
         return Ok(out);
     }
     let me = store.self_identity()?;
     let mut failures = 0;
-    for src in store.next_step_sources(max)? {
+    // Limited Use: Gmail and Google Calendar sources only for a judge that may read them;
+    // the others stay queued.
+    for src in store.next_step_sources_for(max, judge.may_read_google_data())? {
         if paid {
             match store.topic_steps_gate()? {
                 JudgeGate::Open => {}
@@ -374,13 +386,25 @@ pub fn run_local_steps_batch(
     chain: &[llm::ChainLink],
     max: usize,
 ) -> rusqlite::Result<StepBatchOutcome> {
+    run_local_steps_batch_with(store, chain, llm::limited_use::GoogleDataPolicy::default(), max)
+}
+
+/// [`run_local_steps_batch`] under the user's Limited Use switches (`policy`): Gmail and
+/// Google Calendar sources are read only when every link of `chain` may receive them.
+pub fn run_local_steps_batch_with(
+    store: &memory::Store,
+    chain: &[llm::ChainLink],
+    policy: llm::limited_use::GoogleDataPolicy,
+    max: usize,
+) -> rusqlite::Result<StepBatchOutcome> {
     if chain.is_empty() {
         return Ok(StepBatchOutcome {
             no_model: true,
             ..Default::default()
         });
     }
-    run_topic_steps_batch(store, &LocalStepJudge { chain }, false, max, 0.0)
+    let google_data_ok = llm::limited_use::chain_may_receive_google_data(chain, policy);
+    run_topic_steps_batch(store, &LocalStepJudge { chain, google_data_ok }, false, max, 0.0)
 }
 
 #[cfg(test)]
@@ -478,13 +502,22 @@ mod tests {
         (dir, store, c, t)
     }
 
-    /// An email filed on `topic`, `days_ago` old, whose body is `body`.
+    /// An email filed on `topic`, `days_ago` old, whose body is `body`. Not from Gmail (an
+    /// IMAP source), so every judge may read it; [`gmail`] files a Gmail one.
     fn mail(c: &rusqlite::Connection, topic: i64, ext: &str, days_ago: i64, body: &str) {
+        mail_from(c, "imap", topic, ext, days_ago, body)
+    }
+
+    fn gmail(c: &rusqlite::Connection, topic: i64, ext: &str, days_ago: i64, body: &str) {
+        mail_from(c, "gmail", topic, ext, days_ago, body)
+    }
+
+    fn mail_from(c: &rusqlite::Connection, source: &str, topic: i64, ext: &str, days_ago: i64, body: &str) {
         let ts = crate::util::now_unix_ms() - days_ago * DAY_MS;
         c.execute(
             "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id) \
-             VALUES ('d','email','gmail',?1,json_array('Pat <pat@x.com>'),'SOW',?2,'{}',?3)",
-            rusqlite::params![ts, body, ext],
+             VALUES ('d','email',?4,?1,json_array('Pat <pat@x.com>'),'SOW',?2,'{}',?3)",
+            rusqlite::params![ts, body, ext, source],
         )
         .unwrap();
         let item = c.last_insert_rowid();
@@ -509,6 +542,57 @@ mod tests {
 
     fn s(c: &rusqlite::Connection, sql: &str) -> String {
         c.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    /// Limited Use: a Gmail source is read by a local model on this device, but not by an
+    /// Ollama cloud model without the switch, and not by TypeSafe until it confirms its
+    /// terms. Held sources stay queued.
+    #[test]
+    fn gmail_sources_go_only_to_a_judge_that_may_read_them() {
+        let (_d, st, c, t) = setup();
+        gmail(&c, t, "g", 1, BODY);
+        let reply = "{\"lines\":{\"1\":\"mine\"},\"done\":[]}";
+
+        // TypeSafe (paid), started: nothing read, nothing sent, the pass can still end.
+        st.start_topic_steps_judging(10_000).unwrap();
+        assert_eq!(st.topic_steps_estimate(1.0).unwrap().sources, 0);
+        assert!(!llm::typesafe::TypeSafeClient::new("k").may_read_google_data());
+        let typesafe = failing(|| LlmError::Provider("must not be called".into()));
+        let out = run_topic_steps_batch(&st, &typesafe, true, 10, 1.0).unwrap();
+        assert_eq!(out.processed, 0);
+        assert!(typesafe.seen.borrow().is_empty(), "nothing from Gmail reached TypeSafe");
+
+        // An Ollama cloud model: held without the switch.
+        let (mut chain, prompts) = local_chain(reply);
+        chain[0].model = "gpt-oss:120b-cloud".into();
+        let off = llm::limited_use::GoogleDataPolicy::default();
+        assert_eq!(run_local_steps_batch_with(&st, &chain, off, 10).unwrap().processed, 0);
+        assert!(prompts.lock().unwrap().is_empty());
+        assert_eq!(st.next_step_sources(10).unwrap().len(), 1, "still queued");
+
+        // The local model reads it.
+        let (chain, prompts) = local_chain(reply);
+        assert_eq!(run_local_steps_batch(&st, &chain, 10).unwrap().processed, 1);
+        assert!(prompts.lock().unwrap()[0].contains("Please send the SOW"));
+    }
+
+    /// Limited Use: a step lifted from a Gmail email is not shown to a judge that may not
+    /// read Gmail, as an open step or as an example, when it reads another source.
+    #[test]
+    fn steps_lifted_from_gmail_stay_out_of_another_sources_prompt() {
+        let (_d, st, c, t) = setup();
+        gmail(&c, t, "g", 3, BODY);
+        let (chain, _) = local_chain("{\"lines\":{\"1\":\"mine\"},\"done\":[]}");
+        assert_eq!(run_local_steps_batch(&st, &chain, 10).unwrap().processed, 1);
+        assert_eq!(s(&c, "SELECT status FROM topic_step WHERE key = 'email:g#0'"), "open");
+
+        mail(&c, t, "b", 1, "Pat will send the signed SOW Monday.");
+        let j = fake([0.1, 0.1, 0.1, 0.7], 0.0, 100);
+        assert_eq!(run_topic_steps_batch(&st, &j, false, 10, 1.0).unwrap().processed, 1);
+        let seen = j.seen.borrow();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].open_steps.is_empty(), "{:?}", seen[0].open_steps);
+        assert!(seen[0].examples.iter().all(|(t, _)| !t.contains("SOW by Friday")));
     }
 
     #[test]

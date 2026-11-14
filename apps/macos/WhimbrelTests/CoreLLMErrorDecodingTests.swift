@@ -116,4 +116,45 @@ final class CoreLLMErrorDecodingTests: XCTestCase {
         XCTAssertTrue(missing.opensAIProvidersSettings)
         XCTAssertFalse(CoreLLMError.providerFailureBecause(.rateLimited(provider: "openai")).opensAIProvidersSettings)
     }
+
+    // MARK: - The Whimbrel fallback notice
+
+    func testSummaryResultDecodesTheFallbackAndAnOlderPayloadWithoutOne() throws {
+        let with = #"{"tldr":"t","decisions":[],"action_items":[],"open_questions":[],"provider":"ollama","model":"gemma4:12b","fallback":{"preferred":"whimbrel","used":"ollama","model":"gemma4:12b","reason":"unavailable","http_status":502}}"#
+        let summary = try JSONDecoder().decode(CoreMeetingSummary.self, from: Data(with.utf8))
+        XCTAssertEqual(summary.fallback, CoreSummaryFallback(preferred: "whimbrel", used: "ollama", model: "gemma4:12b", reason: "unavailable", httpStatus: 502))
+        let without = #"{"tldr":"t","decisions":[],"action_items":[],"open_questions":[],"provider":"ollama","model":"m"}"#
+        XCTAssertNil(try JSONDecoder().decode(CoreMeetingSummary.self, from: Data(without.utf8)).fallback)
+    }
+
+    func testStoredNoticeEnvelopeDecodesDataOrNull() {
+        let present = #"{"ok":true,"data":{"preferred":"whimbrel","used":"ollama","model":"gemma4:12b","reason":"not_signed_in"}}"#
+        XCTAssertEqual(CoreMemoryStore.summaryFallback(inEnvelope: Data(present.utf8))?.reason, "not_signed_in")
+        XCTAssertNil(CoreMemoryStore.summaryFallback(inEnvelope: Data(#"{"ok":true,"data":null}"#.utf8)))
+    }
+
+    func testAForcedFailureEnvelopeCarriesItsReason() {
+        let failed = #"{"ok":false,"error":{"kind":"provider_failure","fallback_reason":"not_signed_in"}}"#
+        XCTAssertEqual(CoreMemoryStore.fallbackReason(inEnvelope: Data(failed.utf8)), "not_signed_in")
+        XCTAssertNil(CoreMemoryStore.fallbackReason(inEnvelope: Data(#"{"ok":false,"error":{"kind":"provider_failure"}}"#.utf8)))
+    }
+
+    func testNoticeWordingNamesTheModelAndTheReason() {
+        let local = CoreSummaryFallback(preferred: "whimbrel", used: "ollama", model: "gemma4:12b", reason: "not_signed_in")
+        XCTAssertEqual(SummaryFallbackNotice.line(for: local), "Summarized on this Mac with gemma4:12b because you were not signed in to Whimbrel.")
+        let hosted = CoreSummaryFallback(preferred: "whimbrel", used: "anthropic", model: "claude-haiku-5-5", reason: "timeout")
+        XCTAssertEqual(SummaryFallbackNotice.line(for: hosted), "Summarized with claude-haiku-5-5 because Whimbrel was not available.")
+        for reason in ["not_signed_in", "no_device_key", "unauthorized", "budget", "credit_exhausted", "timeout", "network", "rate_limited", "model_unavailable", "unavailable", "something_new"] {
+            let line = SummaryFallbackNotice.line(for: CoreSummaryFallback(preferred: "whimbrel", used: "ollama", model: "m", reason: reason))
+            XCTAssertFalse(line.contains("\u{2014}"), "no em dash in \(reason)")
+            XCTAssertTrue(line.hasSuffix("."), reason)
+        }
+        XCTAssertEqual(SummaryFallbackNotice.failureMessage(reason: "rate_limited"), "Couldn't re-summarize because Whimbrel was not available.")
+    }
+
+    func testNoticeLeadsToSignInUntilSignedInThenOffersTheResummary() {
+        XCTAssertEqual(SummaryFallbackNotice.action(signedIn: false), .signIn)
+        XCTAssertEqual(SummaryFallbackNotice.action(signedIn: true), .resummarize,
+                       "after signing in, a stored \"not signed in\" notice must offer Re-summarize")
+    }
 }

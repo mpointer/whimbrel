@@ -369,6 +369,23 @@ describe("other routes", () => {
     expect(html).toContain('"@type":"FAQPage"');
   });
 
+  // Consent: the product-email box is never ticked for the visitor, in any language, and it
+  // sits right above the submit button. The thank-you page's ask stays hidden until the
+  // script learns the visitor is a lead who isn't opted in.
+  it("keeps the product-email box unticked, above the submit button, and the thank-you ask hidden", async () => {
+    for (const prefix of ["", "/es", "/fr"]) {
+      const html = await (await call(new Request(`https://whimbrel.test${prefix}/download/`))).text();
+      const box = html.match(/<label class="checkbox checkbox-optin"><input type="checkbox" name="marketingOptIn"[^>]*>/);
+      expect(box, prefix).not.toBeNull();
+      expect(box![0], prefix).not.toMatch(/\bchecked\b/);
+      expect(html, prefix).toMatch(/<\/label>\s*<button class="btn btn-primary btn-lg btn-block" type="submit">/);
+      const thanks = await (await call(new Request(`https://whimbrel.test${prefix}/download/thanks/`))).text();
+      expect(thanks, prefix).toContain('<div class="updates-ask" data-updates-ask hidden>');
+    }
+    const en = await (await call(new Request("https://whimbrel.test/download/"))).text();
+    expect(en).toContain("Email me a short note when there's something new (no more than twice a month). Unsubscribe anytime.");
+  });
+
   it("pricing_states_cloud_price_and_tax", async () => {
     const html = await (await call(new Request("https://whimbrel.test/pricing/"))).text();
     expect(html).toContain("$5");

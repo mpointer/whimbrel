@@ -176,6 +176,8 @@ describe("greeting", () => {
 
 describe("the Ask composer", () => {
   const routing = (over: Partial<RoutingSettings> = {}): RoutingSettings => ({
+    googleAiBillingConfirmed: false,
+    remoteOllamaGoogleData: false,
     anthropicModel: "claude-haiku",
     googleModel: "gemini-flash",
     localOnly: false,

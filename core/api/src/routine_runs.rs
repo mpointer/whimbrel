@@ -99,6 +99,10 @@ pub fn tick(
     if gate == RunGate::Off {
         return Ok(Vec::new());
     }
+    // No routine starts while a meeting records (Meeting Prep is a separate entry point and is exempt).
+    if memory::background_gate::recording_pauses_background_work() {
+        return Ok(Vec::new());
+    }
     let all_routines = store.list_routines()?;
 
     let now_local: chrono::DateTime<chrono::Local> = chrono::Local
@@ -154,7 +158,7 @@ pub fn tick(
                     continue;
                 };
                 let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
-                    routines::run_daily_brief(
+                    routines::run_daily_brief_with(
                         store,
                         entry.client.as_ref(),
                         yesterday_start,
@@ -163,6 +167,7 @@ pub fn tick(
                         now_unix_ms,
                         &llm::profile::compose_instructions(&routing.daily_digest_instructions, &routing.profile, &routing.output_language),
                         &routing.output_language,
+                        llm::limited_use::link_may_receive_google_data(entry, routing.google_data_policy()),
                     )
                 }) else {
                     continue;
@@ -229,7 +234,7 @@ pub fn tick(
                     continue;
                 };
                 let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
-                    routines::run_eod_recap(
+                    routines::run_eod_recap_with(
                         store,
                         entry.client.as_ref(),
                         today_start,
@@ -239,6 +244,7 @@ pub fn tick(
                         recipient_email,
                         &llm::profile::compose_instructions(&routing.daily_digest_instructions, &routing.profile, &routing.output_language),
                         &routing.output_language,
+                        llm::limited_use::link_may_receive_google_data(entry, routing.google_data_policy()),
                     )
                 }) else {
                     continue;
@@ -297,7 +303,7 @@ pub fn tick(
                     continue;
                 };
                 let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
-                    routines::run_weekly_digest(
+                    routines::run_weekly_digest_with(
                         store,
                         entry.client.as_ref(),
                         week_start,
@@ -306,6 +312,7 @@ pub fn tick(
                         gmail_connected,
                         recipient_email,
                         &llm::profile::compose_instructions(&routing.weekly_digest_instructions, &routing.profile, &routing.output_language),
+                        llm::limited_use::link_may_receive_google_data(entry, routing.google_data_policy()),
                     )
                 }) else {
                     continue;

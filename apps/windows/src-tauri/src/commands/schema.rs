@@ -73,6 +73,11 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::ai::ProviderBudgetView>();
     generator.subschema_for::<super::workspace::TrimInfo>();
     generator.subschema_for::<super::workspace::ActionItemView>();
+    generator.subschema_for::<super::recap::RecapSummaryInput>();
+    generator.subschema_for::<super::recap::RecapRecipient>();
+    generator.subschema_for::<super::recap::RecapDraft>();
+    generator.subschema_for::<super::recap::RecapSentView>();
+    generator.subschema_for::<super::recap::RecapMailto>();
     generator.subschema_for::<super::meetings::MeetingSettings>();
     generator.subschema_for::<crate::meetings::service::AlertView>();
     generator.subschema_for::<crate::live_alerts::QuestionNotice>();
@@ -99,6 +104,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::mcp::McpClientView>();
     generator.subschema_for::<super::mcp::McpNewClient>();
     generator.subschema_for::<super::connectors::GmailAccounts>();
+    generator.subschema_for::<super::connectors::GoogleClientStatus>();
     generator.subschema_for::<super::connectors::GmailAccount>();
     generator.subschema_for::<crate::retention::RetentionSettings>();
     generator.subschema_for::<super::retention::RetentionView>();
@@ -127,6 +133,7 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::storage::StorageView>();
     generator.subschema_for::<crate::storage::CompactView>();
     generator.subschema_for::<crate::storage::FreeUpOptions>();
+    generator.subschema_for::<super::storage::CompressView>();
     generator.subschema_for::<crate::hotkey_panel::HotkeyStatus>();
     generator.subschema_for::<crate::hotkey_panel::HotkeyPanelRead>();
     generator.subschema_for::<super::window_ask::WindowAskReply>();

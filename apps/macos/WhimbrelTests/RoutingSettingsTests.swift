@@ -10,6 +10,8 @@ final class RoutingSettingsTests: XCTestCase {
         "com.mpointer.kestrel.routingUseLocalModel",
         "com.mpointer.kestrel.routingOllamaDefaultModel",
         "com.mpointer.kestrel.routingPreferredProvider",
+        "com.mpointer.kestrel.routingGoogleAiBillingConfirmed",
+        "com.mpointer.kestrel.routingRemoteOllamaGoogleData",
     ]
 
     override func setUp() {
@@ -69,6 +71,52 @@ final class RoutingSettingsTests: XCTestCase {
         let pricedJSON = try XCTUnwrap(String(data: encoder.encode(priced), encoding: .utf8))
         XCTAssertTrue(pricedJSON.contains(#""openrouter_prices":{"v/m":{"#), "core reads {model: {in, out}}: \(pricedJSON)")
         XCTAssertTrue(pricedJSON.contains(#""in":0.1"#) && pricedJSON.contains(#""out":0.5"#), pricedJSON)
+    }
+
+    /// Core keeps the Limited Use settings process-wide and turns them off for a routing
+    /// JSON without them, so every routing JSON must carry all three keys.
+    @MainActor
+    func testEveryRoutingJSONCarriesTheLimitedUseKeys() throws {
+        func json(_ config: CoreRoutingConfig) throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) as? [String: Any])
+        }
+        let settings = RoutingSettings()
+        XCTAssertFalse(settings.googleAiBillingConfirmed, "off by default")
+        XCTAssertFalse(settings.remoteOllamaGoogleData, "off by default")
+        settings.ollamaDefaultModel = "gemma4:12b"
+
+        let off = try json(settings.routingConfig(preferredProvider: .anthropic, preferredModel: "claude-x"))
+        XCTAssertEqual(off["google_ai_billing_confirmed"] as? Bool, false)
+        XCTAssertEqual(off["remote_ollama_google_data"] as? Bool, false)
+        XCTAssertEqual(off["streamed_ollama_model"] as? String, "gemma4:12b", "not on Ollama: the default Ollama model")
+        XCTAssertEqual(off["streamed_ollama_base_url"] as? String, "", "the Mac streams to core's default localhost Ollama")
+
+        settings.googleAiBillingConfirmed = true
+        settings.remoteOllamaGoogleData = true
+        XCTAssertTrue(RoutingSettings().googleAiBillingConfirmed, "must persist across a fresh instance")
+        XCTAssertTrue(RoutingSettings().remoteOllamaGoogleData)
+        let ollama = try json(settings.routingConfig(preferredProvider: .ollama, preferredModel: "gpt-oss:120b-cloud"))
+        XCTAssertEqual(ollama["google_ai_billing_confirmed"] as? Bool, true)
+        XCTAssertEqual(ollama["remote_ollama_google_data"] as? Bool, true)
+        XCTAssertEqual(ollama["streamed_ollama_model"] as? String, "gpt-oss:120b-cloud", "on Ollama: the model the call streams against")
+        XCTAssertEqual(ollama["streamed_ollama_base_url"] as? String, "")
+
+        XCTAssertEqual(RoutingSettings.streamedOllamaModel(preferredProvider: .ollama, preferredModel: " ", ollamaDefaultModel: "m"), "m")
+
+        // The memberwise default (tests, window Ask) still encodes all three, off.
+        let bare = try json(CoreRoutingConfig(
+            anthropicKey: nil, openaiKey: nil, googleKey: nil, typesafeKey: nil,
+            userDailyCapCents: nil, globalDailyCapCents: nil, sensitive: false,
+            preferredProvider: "ollama", preferredModel: "gemma4:12b",
+            customInstructions: "", dailyDigestInstructions: "", weeklyDigestInstructions: ""
+        ).withTypesafeKey("k"))
+        XCTAssertEqual(bare["google_ai_billing_confirmed"] as? Bool, false)
+        XCTAssertEqual(bare["remote_ollama_google_data"] as? Bool, false)
+        XCTAssertEqual(bare["streamed_ollama_model"] as? String, "")
+        XCTAssertEqual(bare["streamed_ollama_base_url"] as? String, "")
+        var hosted = settings.routingConfig(preferredProvider: .ollama, preferredModel: "llama3")
+        hosted.streamedOllamaBaseUrl = "http://10.0.0.5:11434"
+        XCTAssertEqual(try json(hosted.withTypesafeKey(nil))["streamed_ollama_base_url"] as? String, "http://10.0.0.5:11434", "the copy keeps it")
     }
 
     @MainActor

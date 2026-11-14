@@ -198,6 +198,11 @@ struct MeetingDetailContentView: View {
     @State private var selectedHostedModel: String = HostedModelDefaults.resolve(provider: "anthropic", stored: nil)
     @State private var isRegenerating = false
     @State private var regenerateError: String?
+    /// The stored notice that Whimbrel AI was meant to write this summary (loaded from core).
+    @State private var storedSummaryFallback: CoreSummaryFallback?
+    @State private var showRecapSheet = false
+    @State private var recapSent: CoreRecapSent?
+    @State private var resummarizeError: String?
 
     // Task 2's editable-overlay draft + action items (FR-MTG editable-note work), loaded
     // by `MeetingDetailView` alongside the meeting fetch and handed in here as the
@@ -329,6 +334,48 @@ struct MeetingDetailContentView: View {
     private var currentProvider: String? { regeneratedSummary?.provider ?? meeting.summaryProvider }
     private var currentModel: String? { regeneratedSummary?.model ?? meeting.summaryModel }
 
+    /// The notice for the summary on screen: a fresh result's own, else the stored one, and only
+    /// while a summary exists and a local or other model wrote it (not Whimbrel itself).
+    private var shownSummaryFallback: CoreSummaryFallback? {
+        guard meeting.summaryTldr != nil || regeneratedSummary != nil else { return nil }
+        let fallback = regeneratedSummary != nil ? regeneratedSummary?.fallback : storedSummaryFallback
+        return fallback?.used == currentProvider ? fallback : nil
+    }
+
+    private func loadStoredSummaryFallback() {
+        guard let store = appState.coreStore else { return }
+        let meetingId = meeting.id
+        CoreMemoryStore.accessQueue.async {
+            let fallback = store.summaryFallback(meetingId: meetingId)
+            DispatchQueue.main.async { if storedSummaryFallback != fallback { storedSummaryFallback = fallback } }
+        }
+    }
+
+    /// The notice's button: "Re-summarize with Whimbrel" through Whimbrel alone (no fallback), with the
+    /// user's own Whimbrel model pick. Success replaces the summary like Regenerate does; a failure says why.
+    private func resummarizeWithWhimbrel() {
+        guard let transcriptText, !isRegenerating else { return }
+        isRegenerating = true
+        regenerateError = nil
+        resummarizeError = nil
+        let routingConfig = appState.routing.routingConfig(preferredProvider: .whimbrel, preferredModel: appState.routing.whimbrelDefaultModel)
+        appState.resummarizeMeetingWithWhimbrel(
+            meetingId: meeting.id,
+            notes: meeting.notes ?? "",
+            transcript: transcriptText,
+            ollamaModel: ollamaModel,
+            routing: routingConfig,
+            customInstructions: appState.promptLibrary.instructions[.meetingSummary] ?? ""
+        ) { outcome, reason in
+            isRegenerating = false
+            if case .some(.failure(let error)) = outcome {
+                resummarizeError = reason.map(SummaryFallbackNotice.failureMessage(reason:)) ?? error.userFacingMessage
+                return
+            }
+            finishRegeneration(outcome)
+        }
+    }
+
     /// Plain-text rendering of the summary for the "Copy" button — mirrors the editable
     /// section's own structure (TL;DR, then each non-empty bullet list with its heading)
     /// so what gets copied matches what's on screen, including any user edits.
@@ -345,6 +392,64 @@ struct MeetingDetailContentView: View {
         if let block = bulletBlock(title: String(localized: "Action items"), items: actionItems.map(\.text)) { parts.append(block) }
         if let block = bulletBlock(title: String(localized: "Open questions"), items: noteModel.displayOpenQuestions) { parts.append(block) }
         return parts.joined(separator: "\n\n")
+    }
+
+    /// The summary as shown, for the recap and the Copy as formats.
+    private var recapSummary: CoreRecapSummary {
+        CoreRecapSummary(
+            title: meeting.title,
+            tldr: noteModel.displaySummary ?? "",
+            decisions: noteModel.displayDecisions,
+            actionItems: actionItems.map(\.text),
+            openQuestions: noteModel.displayOpenQuestions
+        )
+    }
+
+    /// Copy (plain text, as before) with Markdown and Slack in its menu, and Send recap.
+    @ViewBuilder
+    private var summaryShareButtons: some View {
+        HStack(spacing: Spacing.sm) {
+            if let recapSent {
+                Text(recapSentText(recapSent)).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+            }
+            Menu {
+                Button("Copy as Markdown") { copyRecap(format: "markdown") }
+                Button("Copy as Slack") { copyRecap(format: "slack") }
+            } label: {
+                Text("Copy")
+            } primaryAction: {
+                copyToClipboard(summaryPlainText)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .controlSize(.small)
+            if meeting.status == .completed {
+                Button("Send recap") { showRecapSheet = true }
+                    .buttonStyle(.whimbrelSecondary)
+                    .controlSize(.small)
+            }
+        }
+    }
+
+    private func copyRecap(format: String) {
+        if let text = CoreMemoryStore.recapRender(recapSummary, labels: .localized, format: format), !text.isEmpty {
+            copyToClipboard(text)
+        }
+    }
+
+    private func recapSentText(_ sent: CoreRecapSent) -> String {
+        sent.recipientCount == 1
+            ? String(localized: "Sent the recap to 1 person")
+            : String(localized: "Sent the recap to \(sent.recipientCount) people")
+    }
+
+    private func loadRecapSent() {
+        guard let store = appState.coreStore else { return }
+        let meetingId = meeting.id
+        CoreMemoryStore.accessQueue.async {
+            let sent = store.recapSent(meetingId: meetingId)
+            DispatchQueue.main.async { if recapSent != sent { recapSent = sent } }
+        }
     }
 
     /// Replaces the clipboard's entire contents with `text` — matches the existing
@@ -430,6 +535,8 @@ struct MeetingDetailContentView: View {
             loadParts()
             loadSegments()
             loadLiveAlerts()
+            loadStoredSummaryFallback()
+            loadRecapSent()
             let defaults = appState.routing.defaultSelection()
             selectedProvider = defaults.provider
             ollamaModel = defaults.ollamaModel
@@ -462,13 +569,21 @@ struct MeetingDetailContentView: View {
             guard old == meeting.id, new != meeting.id else { return }
             loadSegments()
             loadParts(reloadTranscript: true)
+            loadStoredSummaryFallback()
         }
         // A split (or a summary after it) changed this meeting's parts, segments or snapshots.
         .onReceive(NotificationCenter.default.publisher(for: MeetingLifecycle.meetingsDidChange)) { note in
             guard (note.userInfo?["meetingIds"] as? [Int64])?.contains(meeting.id) == true else { return }
             loadSegments()
             loadParts(reloadTranscript: true)
+            loadStoredSummaryFallback()
             Task { await snapshotsModel.reload() }
+        }
+        .sheet(isPresented: $showRecapSheet) {
+            RecapSheet(meetingId: meeting.id, title: meeting.title, startUnixMs: meeting.startUnixMs, summary: recapSummary) { count in
+                recapSent = CoreRecapSent(sentUnixMs: Int64(Date().timeIntervalSince1970 * 1000), recipientCount: count)
+            }
+            .environmentObject(appState)
         }
         .sheet(item: $pendingConflict) { conflict in
             RegenerationConflictSheet(
@@ -577,6 +692,12 @@ struct MeetingDetailContentView: View {
                 .controlSize(.small)
                 .disabled(meeting.status != .completed)
         }
+        if let fallback = shownSummaryFallback {
+            SummaryFallbackNoticeView(
+                fallback: fallback, isWorking: isRegenerating, errorMessage: resummarizeError,
+                canResummarize: transcriptText != nil, onResummarize: resummarizeWithWhimbrel
+            )
+        }
         if isEditing {
             summarySection
             regenerateSection
@@ -636,7 +757,7 @@ struct MeetingDetailContentView: View {
                     HStack(alignment: .firstTextBaseline) {
                         Text("Summary").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
                         Spacer()
-                        Button("Copy") { copyToClipboard(summaryPlainText) }.buttonStyle(.whimbrelSecondary).controlSize(.small)
+                        summaryShareButtons
                     }
                     Text(summaryDraftText)
                         .font(.system(size: appState.readingFontSize + 1, design: .default))
@@ -743,9 +864,7 @@ struct MeetingDetailContentView: View {
             Text("Summary").font(.whimbrelBody(.callout).bold()).foregroundStyle(Color.whimbrelTextPrimary)
             if !summaryPlainText.isEmpty {
                 Spacer()
-                Button("Copy") { copyToClipboard(summaryPlainText) }
-                    .buttonStyle(.whimbrelSecondary)
-                    .controlSize(.small)
+                summaryShareButtons
             }
         }
         // Gated on the meeting having *reached* the After state, never on the summary
@@ -1136,9 +1255,17 @@ struct MeetingDetailContentView: View {
             customInstructions: appState.promptLibrary.instructions[.meetingSummary] ?? ""
         ) { outcome in
             isRegenerating = false
+            finishRegeneration(outcome)
+        }
+    }
+
+    /// What a finished Regenerate or Re-summarize does with its result (`isRegenerating` is already cleared).
+    private func finishRegeneration(_ outcome: Result<CoreMeetingSummary, CoreLLMError>?) {
             switch outcome {
             case .some(.success(let summary)):
                 namesChanged = false
+                resummarizeError = nil
+                loadStoredSummaryFallback()
                 // The FFI call above (`Store::update_meeting_summary`, unmodified) has
                 // already persisted the new summary_* columns -- this only decides what
                 // the editable-overlay layer does with the draft/action items sitting on
@@ -1171,7 +1298,6 @@ struct MeetingDetailContentView: View {
                 // visible error slot in the UI.
                 regenerateError = String(localized: "Couldn't generate a summary. Try again.")
             }
-        }
     }
 
     // MARK: - Note-overrides autosave
@@ -1536,5 +1662,55 @@ enum MeetingDetailLogic {
             }
         }
         return out.filter { $0.label != nil || !$0.body.isEmpty }
+    }
+}
+
+/// The line under a summary that Whimbrel AI was meant to write but another model did, with the
+/// way back: "Re-summarize with Whimbrel", or "Sign in to Whimbrel" when signing in is the fix.
+struct SummaryFallbackNoticeView: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.openSettings) private var openSettings
+    let fallback: CoreSummaryFallback
+    let isWorking: Bool
+    let errorMessage: String?
+    let canResummarize: Bool
+    let onResummarize: () -> Void
+    /// Whether this Mac has Whimbrel credentials now; re-read when the app returns from Settings.
+    @State private var signedIn = false
+
+    private func refreshSignedIn() { signedIn = appState.routing.whimbrelCredentialsProvider() != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            Text(SummaryFallbackNotice.line(for: fallback))
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("summary-fallback-notice")
+            HStack(spacing: Spacing.sm) {
+                switch SummaryFallbackNotice.action(signedIn: signedIn) {
+                case .signIn:
+                    Button("Sign in to Whimbrel") {
+                        appState.pendingSettingsSection = .devices
+                        openSettings()
+                    }
+                    .buttonStyle(.whimbrelSecondary)
+                    .controlSize(.small)
+                case .resummarize:
+                    Button(isWorking ? "Re-summarizing…" : "Re-summarize with Whimbrel", action: onResummarize)
+                        .buttonStyle(.whimbrelSecondary)
+                        .controlSize(.small)
+                        .disabled(isWorking || !canResummarize)
+                }
+                if isWorking { ProgressView().controlSize(.small) }
+            }
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.whimbrelBody(.caption2))
+                    .foregroundStyle(Color.whimbrelError)
+            }
+        }
+        .onAppear { refreshSignedIn() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refreshSignedIn() }
     }
 }

@@ -22,6 +22,8 @@ use crate::capture::proc_stats::{self, CpuSnapshot, ProcInfo};
 
 /// How often the `resource use` line is written.
 pub const EVERY: Duration = Duration::from_secs(5 * 60);
+/// How often it is written while a meeting records.
+pub const MEETING_EVERY: Duration = Duration::from_secs(60);
 const OLLAMA: &str = "127.0.0.1:11434";
 const OLLAMA_CONNECT: Duration = Duration::from_millis(300);
 const OLLAMA_READ: Duration = Duration::from_secs(2);
@@ -163,6 +165,117 @@ fn memory_of(pids: &[u32]) -> (proc_stats::Memory, usize) {
     (total, read.len())
 }
 
+/// Which part of Whimbrel a process in its tree is, for the per-part CPU and memory: the app itself,
+/// its WebView2 windows, the local model's helper, or anything else it started (connectors, the MCP
+/// server). Only Whimbrel's own tree is ever sorted, so no other program is named.
+pub fn part_of(exe: &str) -> &'static str {
+    let exe = exe.to_ascii_lowercase();
+    if exe == "msedgewebview2.exe" {
+        "webview"
+    } else if exe.contains("llama-server") {
+        "local_model"
+    } else if exe.starts_with("whimbrel") && !exe.contains("mcp") {
+        "app"
+    } else {
+        "helpers"
+    }
+}
+
+pub const PARTS: [&str; 4] = ["app", "webview", "local_model", "helpers"];
+
+fn pids_by_part(whimbrel: &[u32], all: &[ProcInfo]) -> Vec<(&'static str, Vec<u32>)> {
+    PARTS
+        .iter()
+        .map(|part| {
+            let pids = whimbrel.iter().copied().filter(|pid| all.iter().any(|p| p.pid == *pid && part_of(&p.exe) == *part)).collect();
+            (*part, pids)
+        })
+        .collect()
+}
+
+/// The whole machine's busy and total CPU time (`GetSystemTimes`), in 100 ns units.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemTimes {
+    busy: u64,
+    total: u64,
+}
+
+pub fn system_times() -> Option<SystemTimes> {
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::System::Threading::GetSystemTimes;
+    let (mut idle, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default());
+    unsafe { GetSystemTimes(Some(&mut idle), Some(&mut kernel), Some(&mut user)) }.ok()?;
+    let v = |f: FILETIME| ((f.dwHighDateTime as u64) << 32) | f.dwLowDateTime as u64;
+    // Kernel time includes idle time.
+    let total = v(kernel) + v(user);
+    Some(SystemTimes { busy: total.saturating_sub(v(idle)), total })
+}
+
+/// The machine's CPU use between two readings, in percent.
+pub fn system_cpu_pct(earlier: SystemTimes, now: SystemTimes) -> f64 {
+    let total = now.total.saturating_sub(earlier.total);
+    if total == 0 {
+        return 0.0;
+    }
+    100.0 * now.busy.saturating_sub(earlier.busy) as f64 / total as f64
+}
+
+/// Windows' memory load: the percent of physical memory in use.
+pub fn memory_load_pct() -> Option<u32> {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut status = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
+    unsafe { GlobalMemoryStatusEx(&mut status) }.ok()?;
+    Some(status.dwMemoryLoad)
+}
+
+/// One graphics adapter: its name, its own memory, and whether it shares system memory instead
+/// (an integrated GPU, whose work competes with a call's video for the same chip and RAM).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Adapter {
+    pub name: String,
+    pub dedicated_mb: u64,
+    pub shared_mb: u64,
+}
+
+impl Adapter {
+    /// Under 512 MB of its own memory: an integrated GPU.
+    pub fn integrated(&self) -> bool {
+        self.dedicated_mb < 512
+    }
+}
+
+/// The hardware graphics adapters (DXGI), software ones left out.
+pub fn adapters() -> Vec<Adapter> {
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE};
+    let Ok(factory) = (unsafe { CreateDXGIFactory1::<IDXGIFactory1>() }) else { return Vec::new() };
+    let mut out = Vec::new();
+    for i in 0.. {
+        let Ok(adapter) = (unsafe { factory.EnumAdapters1(i) }) else { break };
+        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else { continue };
+        if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
+            continue;
+        }
+        let end = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
+        out.push(Adapter {
+            name: String::from_utf16_lossy(&desc.Description[..end]).trim().to_string(),
+            dedicated_mb: desc.DedicatedVideoMemory as u64 >> 20,
+            shared_mb: desc.SharedSystemMemory as u64 >> 20,
+        });
+    }
+    out
+}
+
+pub fn adapters_summary(adapters: &[Adapter]) -> String {
+    if adapters.is_empty() {
+        return "none found".into();
+    }
+    adapters
+        .iter()
+        .map(|a| format!("{} ({}, {} MB own)", a.name, if a.integrated() { "integrated" } else { "dedicated" }, a.dedicated_mb))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// The launch line.
 pub fn log_this_pc(ollama_model: &str) {
     let memory = memory_status();
@@ -179,20 +292,25 @@ pub fn log_this_pc(ollama_model: &str) {
         ollama_model_installed = ollama.as_ref().is_some_and(|o| is_installed(ollama_model, &o.installed)),
         installed = %ollama.as_ref().map_or("none".into(), |o| installed_summary(&o.installed)),
         loaded = %ollama.as_ref().map_or("none".into(), |o| loaded_summary(&o.loaded)),
+        gpus = %adapters_summary(&adapters()),
         "this PC"
     );
 }
 
-/// The two trees' CPU snapshots, kept between ticks.
+/// The two trees' CPU snapshots, Whimbrel's parts' and the machine's, kept between ticks.
 pub struct Sampler {
     whimbrel: CpuSnapshot,
     ollama: CpuSnapshot,
+    parts: Vec<(&'static str, CpuSnapshot)>,
+    system: Option<SystemTimes>,
 }
 
 impl Sampler {
     pub fn start() -> Self {
         let all = proc_stats::list_processes();
-        Self { whimbrel: CpuSnapshot::take(&whimbrel_pids(&all)), ollama: CpuSnapshot::take(&ollama_pids(&all)) }
+        let whimbrel = whimbrel_pids(&all);
+        let parts = pids_by_part(&whimbrel, &all).into_iter().map(|(part, pids)| (part, CpuSnapshot::take(&pids))).collect();
+        Self { whimbrel: CpuSnapshot::take(&whimbrel), ollama: CpuSnapshot::take(&ollama_pids(&all)), parts, system: system_times() }
     }
 
     /// Writes the `resource use` line for the time since the last tick, and starts the next window.
@@ -220,8 +338,42 @@ impl Sampler {
             idle_s = crate::capture::session_gate::idle_duration().as_secs(),
             "resource use"
         );
+        // The same window for the performance report, per part and with the whole machine.
+        let system = system_times();
+        let system_cpu = self.system.zip(system).map(|(a, b)| system_cpu_pct(a, b));
+        let mut line = format!(
+            "resource system_cpu_pct={} memory_load_pct={} free_ram_gb={} ollama_cpu_pct={:.1} ollama_working_set_mb={}",
+            system_cpu.map_or("?".into(), |c| format!("{c:.0}")),
+            memory_load_pct().map_or("?".into(), |m| m.to_string()),
+            memory.map_or("?".into(), |m| gb(m.available)),
+            ollama_cpu.pct_of_machine,
+            mb(ollama_mem.working_set_bytes),
+        );
+        let mut parts = Vec::new();
+        for (part, pids) in pids_by_part(&whimbrel_pids, &all) {
+            let now = CpuSnapshot::take(&pids);
+            let cpu = self.parts.iter().find(|(p, _)| *p == part).map_or(0.0, |(_, before)| now.since(before).pct_of_machine);
+            let (mem, _) = memory_of(&pids);
+            if !pids.is_empty() {
+                line.push_str(&format!(
+                    " {part}_cpu_pct={cpu:.1} {part}_private_mb={} {part}_working_set_mb={}",
+                    mb(mem.private_bytes),
+                    mb(mem.working_set_bytes)
+                ));
+            }
+            parts.push((part, now));
+        }
+        line.push_str(&format!(
+            " on_ac={} idle_s={} recording={}",
+            crate::jobs::on_ac_power(),
+            crate::capture::session_gate::idle_duration().as_secs(),
+            crate::perf_report::recording()
+        ));
+        crate::perf_report::note(line);
         self.whimbrel = whimbrel;
         self.ollama = ollama;
+        self.parts = parts;
+        self.system = system;
     }
 }
 
@@ -241,6 +393,13 @@ pub fn report_lines() -> Vec<String> {
             crate::meetings::perf::performance_cores().map_or("?".into(), |n| n.to_string())
         ),
         format!("Battery: {}; on AC power: {}", has_battery(), crate::jobs::on_ac_power()),
+        format!(
+            "Processor: {}; this build: {}{}",
+            crate::gpu::native_machine(),
+            std::env::consts::ARCH,
+            if crate::gpu::emulated_on_arm() { " (runs under emulation)" } else { "" }
+        ),
+        format!("Graphics: {}", adapters_summary(&adapters())),
         match &ollama {
             Some(o) => format!("Ollama: running; installed {}; loaded {}", installed_summary(&o.installed), loaded_summary(&o.loaded)),
             None => "Ollama: not running".into(),
@@ -253,9 +412,14 @@ pub fn start(ollama_model: String) {
     let _ = std::thread::Builder::new().name("whimbrel-perf".into()).spawn(move || {
         log_this_pc(&ollama_model);
         let mut sampler = Sampler::start();
+        let mut last = std::time::Instant::now();
         loop {
-            std::thread::sleep(EVERY);
-            sampler.tick();
+            std::thread::sleep(MEETING_EVERY);
+            // Every minute while a meeting records, so a choppy call shows in the numbers.
+            if crate::perf_report::recording() || last.elapsed() >= EVERY {
+                last = std::time::Instant::now();
+                sampler.tick();
+            }
         }
     });
 }
@@ -269,7 +433,32 @@ mod tests {
     }
 
     #[test]
-    fn only_ollamas_processes_are_picked_out() {
+    fn whimbrels_processes_sort_into_parts() {
+    assert_eq!(part_of("whimbrel-windows.exe"), "app");
+    assert_eq!(part_of("Whimbrel.exe"), "app");
+    assert_eq!(part_of("msedgewebview2.exe"), "webview");
+    assert_eq!(part_of("whimbrel-llama-server.exe"), "local_model");
+    assert_eq!(part_of("whimbrel-mcp-server.exe"), "helpers");
+    assert_eq!(part_of("node.exe"), "helpers");
+}
+
+#[test]
+fn the_machines_cpu_is_busy_over_total() {
+    let a = SystemTimes { busy: 100, total: 1_000 };
+    let b = SystemTimes { busy: 400, total: 2_000 };
+    assert_eq!(system_cpu_pct(a, b), 30.0);
+    assert_eq!(system_cpu_pct(b, b), 0.0, "no time passed");
+}
+
+#[test]
+fn an_adapter_with_little_memory_of_its_own_is_integrated() {
+    let a = |mb| Adapter { name: "x".into(), dedicated_mb: mb, shared_mb: 8_000 };
+    assert!(a(128).integrated());
+    assert!(!a(4_096).integrated());
+}
+
+#[test]
+fn only_ollamas_processes_are_picked_out() {
         let all = vec![
             p(1, 0, "explorer.exe"),
             p(10, 1, "ollama app.exe"),

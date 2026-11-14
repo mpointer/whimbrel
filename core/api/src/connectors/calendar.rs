@@ -429,6 +429,100 @@ pub fn calendar_event_item(meeting: &QualifyingMeeting, device_id: &str) -> Opti
     })
 }
 
+/// How long a synced meeting is taken to run: the item carries a start and no end.
+pub const SYNCED_MEETING_DEFAULT_LEN_MS: i64 = 30 * 60 * 1000;
+
+/// Case-folded, trimmed, whitespace-collapsed title, the half of the dedupe key a
+/// meeting's source can change (case, padding) without it being another meeting.
+fn normalized_title(title: &str) -> String {
+    title.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// `external_id` back to the event id the sending device used (`"{id}#{secs}"` minus
+/// the suffix), so a brief or prep key built there matches here. A row with no numeric
+/// suffix keeps its whole id.
+fn event_id_of(external_id: &str) -> &str {
+    match external_id.rsplit_once('#') {
+        Some((id, secs)) if !id.is_empty() && !secs.is_empty() && secs.bytes().all(|b| b.is_ascii_digit()) => id,
+        _ => external_id,
+    }
+}
+
+/// One synced `calendar_event` row as a meeting. The item holds no end, RSVP, organizer,
+/// link or all-day marker: the end is the start plus `SYNCED_MEETING_DEFAULT_LEN_MS` and
+/// the rest stay empty. (Declined meetings are never sent; see the sending side's
+/// `syncMeetings`.) `None` for a row with no title or an unknown source.
+pub fn synced_event_meeting(event: &memory::synced_calendar::SyncedCalendarEvent) -> Option<QualifyingMeeting> {
+    let source = match event.source.as_str() {
+        "apple_calendar" => MeetingSource::Calendar,
+        "google_calendar" => MeetingSource::GoogleCalendar,
+        _ => return None,
+    };
+    if event.title.trim().is_empty() {
+        return None;
+    }
+    Some(QualifyingMeeting {
+        id: event_id_of(&event.external_id).to_string(),
+        title: event.title.clone(),
+        start_unix_ms: event.start_unix_ms,
+        end_unix_ms: event.start_unix_ms + SYNCED_MEETING_DEFAULT_LEN_MS,
+        attendees: event.attendees.clone(),
+        source,
+        ..QualifyingMeeting::default()
+    })
+}
+
+/// The meetings in `synced` that `local` (this device's own, unfiltered: all-day and
+/// declined ones too) does not already show, one row per meeting, soonest first. Two
+/// meetings are the same when they start in the same second and their normalized titles
+/// match, or when the synced item's `external_id` is the local meeting's
+/// (`calendar_external_id`). The local copy always wins; among synced copies the Google
+/// one (richer), then the one with more attendees, then the lower row id.
+pub fn synced_additions(
+    local: &[QualifyingMeeting],
+    synced: &[memory::synced_calendar::SyncedCalendarEvent],
+) -> Vec<QualifyingMeeting> {
+    use std::collections::{HashMap, HashSet};
+    let local_keys: HashSet<(i64, String)> = local.iter().map(|m| (m.start_unix_ms.div_euclid(1000), normalized_title(&m.title))).collect();
+    let local_external: HashSet<String> = local.iter().map(|m| calendar_external_id(&m.id, m.start_unix_ms)).collect();
+    let mut best: HashMap<(i64, String), (&memory::synced_calendar::SyncedCalendarEvent, QualifyingMeeting)> = HashMap::new();
+    for event in synced {
+        let Some(meeting) = synced_event_meeting(event) else { continue };
+        let key = (event.start_unix_ms.div_euclid(1000), normalized_title(&event.title));
+        if local_keys.contains(&key) || local_external.contains(&event.external_id) {
+            continue;
+        }
+        let rank = |e: &memory::synced_calendar::SyncedCalendarEvent| (e.source == "google_calendar", e.attendees.len(), std::cmp::Reverse(e.row_id));
+        match best.get(&key) {
+            Some((held, _)) if rank(held) >= rank(event) => {}
+            _ => {
+                best.insert(key, (event, meeting));
+            }
+        }
+    }
+    let mut out: Vec<QualifyingMeeting> = best.into_values().map(|(_, m)| m).collect();
+    out.sort_by(|a, b| a.start_unix_ms.cmp(&b.start_unix_ms).then_with(|| a.id.cmp(&b.id)));
+    out
+}
+
+/// What the shells call: other devices' calendar events starting in
+/// `[from_unix_ms, until_unix_ms)` that are not `exclude_device_id`'s own and that
+/// `local_meetings_json` (a JSON array of this device's `QualifyingMeeting`s) does not
+/// already show, as a JSON array of `QualifyingMeeting` (source `calendar` or
+/// `googleCalendar`, ids as the sending device made them). Display only: these must
+/// never start a recording prompt on their own.
+pub fn synced_meetings_json(
+    store: &Store,
+    exclude_device_id: &str,
+    from_unix_ms: i64,
+    until_unix_ms: i64,
+    local_meetings_json: &str,
+) -> Result<String, String> {
+    let local: Vec<QualifyingMeeting> = serde_json::from_str(local_meetings_json).map_err(|e| e.to_string())?;
+    let rows = store.synced_calendar_events(exclude_device_id, from_unix_ms, until_unix_ms).map_err(|e| e.to_string())?;
+    serde_json::to_string(&synced_additions(&local, &rows)).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -900,5 +994,132 @@ mod tests {
         let out = apply(&store, "a@x.com", "not json", &out.meetings, 0).unwrap();
         assert!(!out.needs_full_resync && !out.token_saved);
         assert_eq!(out.meetings.len(), 1);
+    }
+
+    // ---- synced meetings (other devices' calendar events) ----
+
+    fn row(id: i64, ext: &str, source: &str, title: &str, start: i64) -> memory::synced_calendar::SyncedCalendarEvent {
+        memory::synced_calendar::SyncedCalendarEvent {
+            row_id: id,
+            external_id: ext.into(),
+            source: source.into(),
+            title: title.into(),
+            start_unix_ms: start,
+            attendees: vec![],
+            device_id: Some("other".into()),
+        }
+    }
+
+    #[test]
+    fn a_synced_row_becomes_a_meeting_with_the_default_length() {
+        let mut r = row(1, "evt1#1785949200", "apple_calendar", "Genesys Architecture Follow Up", 1_785_949_200_000);
+        r.attendees = vec!["Ana".into()];
+        let m = synced_event_meeting(&r).unwrap();
+        assert_eq!((m.id.as_str(), m.source), ("evt1", MeetingSource::Calendar));
+        assert_eq!(m.end_unix_ms - m.start_unix_ms, SYNCED_MEETING_DEFAULT_LEN_MS);
+        assert_eq!(m.attendees, ["Ana"]);
+        assert_eq!((m.self_response, m.conference_link.is_none(), m.self_is_organizer), (None, true, false));
+    }
+
+    #[test]
+    fn a_synced_id_without_a_numeric_suffix_keeps_the_whole_id() {
+        let m = synced_event_meeting(&row(1, "old-format", "google_calendar", "X", 1000)).unwrap();
+        assert_eq!((m.id.as_str(), m.source), ("old-format", MeetingSource::GoogleCalendar));
+        assert_eq!(synced_event_meeting(&row(1, "a#b", "google_calendar", "X", 1000)).unwrap().id, "a#b");
+    }
+
+    #[test]
+    fn a_blank_title_or_unknown_source_is_not_a_meeting() {
+        assert!(synced_event_meeting(&row(1, "a#1", "google_calendar", "  ", 1000)).is_none());
+        assert!(synced_event_meeting(&row(1, "a#1", "", "X", 1000)).is_none());
+    }
+
+    #[test]
+    fn the_local_copy_wins_on_start_and_normalized_title() {
+        let local = vec![meeting("L1", "Standup", 5_000, MeetingSource::Calendar)];
+        let synced = vec![row(1, "other#5", "google_calendar", "  STANDUP ", 5_000), row(2, "x#6", "google_calendar", "Standup", 6_000)];
+        let out = synced_additions(&local, &synced);
+        assert_eq!(out.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["x"], "same start+title is dropped; another start stays");
+    }
+
+    #[test]
+    fn the_local_copy_wins_on_external_id_even_when_the_title_differs() {
+        let local = vec![meeting("abc", "Renamed here", 5_000, MeetingSource::GoogleCalendar)];
+        let synced = vec![row(1, "abc#5", "google_calendar", "Old name", 5_000)];
+        assert!(synced_additions(&local, &synced).is_empty());
+    }
+
+    #[test]
+    fn a_local_meeting_the_panel_hides_still_blocks_its_synced_twin() {
+        // `local` is the unfiltered list, so a declined or all-day local meeting is in it.
+        let mut declined = meeting("L1", "Hidden here", 5_000, MeetingSource::Calendar);
+        declined.self_response = Some(SelfResponse::Declined);
+        assert!(synced_additions(&[declined], &[row(1, "z#5", "apple_calendar", "Hidden here", 5_000)]).is_empty());
+    }
+
+    #[test]
+    fn one_meeting_from_two_synced_sources_is_one_row_preferring_google() {
+        let mut apple = row(1, "A#10", "apple_calendar", "FMA Partner Connect", 10_000);
+        apple.attendees = vec!["Ana".into()];
+        let google = row(2, "G#10", "google_calendar", "FMA Partner Connect", 10_000);
+        for order in [vec![apple.clone(), google.clone()], vec![google.clone(), apple.clone()]] {
+            let out = synced_additions(&[], &order);
+            assert_eq!(out.len(), 1);
+            assert_eq!((out[0].id.as_str(), out[0].source), ("G", MeetingSource::GoogleCalendar));
+        }
+    }
+
+    #[test]
+    fn two_apple_copies_prefer_more_attendees_then_the_lower_row() {
+        let mut a = row(1, "A#10", "apple_calendar", "Sync", 10_000);
+        let mut b = row(2, "B#10", "apple_calendar", "Sync", 10_000);
+        assert_eq!(synced_additions(&[], &[b.clone(), a.clone()])[0].id, "A");
+        b.attendees = vec!["Ana".into()];
+        assert_eq!(synced_additions(&[], &[a.clone(), b.clone()])[0].id, "B");
+        a.attendees = vec!["Ana".into()];
+        assert_eq!(synced_additions(&[], &[b, a])[0].id, "A");
+    }
+
+    #[test]
+    fn additions_are_sorted_by_start() {
+        let out = synced_additions(&[], &[row(1, "b#2", "apple_calendar", "B", 2_000), row(2, "a#1", "apple_calendar", "A", 1_000)]);
+        assert_eq!(out.iter().map(|m| m.title.as_str()).collect::<Vec<_>>(), ["A", "B"]);
+    }
+
+    #[test]
+    fn synced_meetings_json_reads_the_store_and_leaves_out_own_and_removed_rows() {
+        let store = Store::open_in_memory().unwrap();
+        let item = |dev: &str, src: &str, id: &str, ts: i64, title: &str| NewCalendarEventItem {
+            device_id: dev.into(),
+            source: src.into(),
+            external_id: id.into(),
+            ts_unix_ms: ts,
+            title: title.into(),
+            actors: vec![],
+        };
+        store
+            .upsert_calendar_event_items(&[
+                item("other", "apple_calendar", "g1#9", 9_000, "Genesys Architecture Follow Up"),
+                item("other", "apple_calendar", "dup#10", 10_000, "FMA Partner Connect"),
+                item("other", "google_calendar", "dup2#10", 10_000, "FMA Partner Connect"),
+                item("me", "apple_calendar", "mine#11", 11_000, "Mine"),
+                item("other", "apple_calendar", "gone#12", 12_000, "Cancelled"),
+            ])
+            .unwrap();
+        // The sending device (the rows' owner) stops reporting the meeting: it marks its row removed.
+        store.set_own_device_id("other");
+        let pe = |id: &str, ts: i64| PresentEvent { external_id: id.into(), start_unix_ms: ts };
+        let all = [pe("g1#9", 9_000), pe("dup#10", 10_000), pe("gone#12", 12_000)];
+        store.calendar_presence_replace("apple_calendar", "eventkit", None, &all, 1).unwrap();
+        store.calendar_presence_replace("apple_calendar", "eventkit", None, &all[..2], 2).unwrap();
+        store.set_own_device_id("");
+        let json = synced_meetings_json(&store, "me", 0, 100_000, "[]").unwrap();
+        let out: Vec<QualifyingMeeting> = serde_json::from_str(&json).unwrap();
+        assert_eq!(out.iter().map(|m| m.title.as_str()).collect::<Vec<_>>(), ["Genesys Architecture Follow Up", "FMA Partner Connect"]);
+        assert_eq!(out[1].source, MeetingSource::GoogleCalendar);
+        let local = serde_json::to_string(&[meeting("L", "fma partner connect", 10_000, MeetingSource::Calendar)]).unwrap();
+        let out: Vec<QualifyingMeeting> = serde_json::from_str(&synced_meetings_json(&store, "me", 0, 100_000, &local).unwrap()).unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(synced_meetings_json(&store, "me", 0, 1, "not json").is_err());
     }
 }

@@ -2,6 +2,7 @@
 #
 #   . .\apps\windows\scripts\prepare-sidecar.ps1              # development: %LOCALAPPDATA%\Whimbrel\data\bin\
 #   . .\apps\windows\scripts\prepare-sidecar.ps1 -ForBundle   # release: apps\windows\src-tauri\binaries\
+#   . .\apps\windows\scripts\prepare-sidecar.ps1 -ForBundle -Arch arm64   # the Arm64 installer (after arm64-env.ps1)
 #
 # The installer carries it next to Whimbrel's own exe (Tauri "externalBin", named with the target
 # triple at build time and without it once installed). A development build has no installer, so
@@ -12,13 +13,13 @@
 # WHIMBREL_TARGET_DIR (see dev-env.ps1) with a -core suffix, else core\target. It never sets
 # CARGO_TARGET_DIR for the machine.
 
-param([switch]$ForBundle)
+param([switch]$ForBundle, [ValidateSet('x64', 'arm64')][string]$Arch = 'x64')
 
 $ErrorActionPreference = 'Stop'
 
 $repo = Resolve-Path (Join-Path $PSScriptRoot '..\..\..')
 $core = Join-Path $repo 'core'
-$triple = 'x86_64-pc-windows-msvc'
+$triple = if ($Arch -eq 'arm64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
 
 $targetDir = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR }
              elseif ($env:WHIMBREL_TARGET_DIR) { "$env:WHIMBREL_TARGET_DIR-core" }
@@ -29,16 +30,21 @@ try {
     # Static C runtime, as the app itself is built (apps/windows/src-tauri/.cargo/config.toml): a
     # sidecar linked to the dynamic one needs vcruntime140.dll, which a clean PC may not have.
     $savedFlags = $env:RUSTFLAGS
-    $env:RUSTFLAGS = '-C target-feature=+crt-static'
+    # Arm64 also needs FP16 for candle's gemm-f16, as the app does.
+    $env:RUSTFLAGS = if ($Arch -eq 'arm64') { '-C target-feature=+crt-static,+fp16' } else { '-C target-feature=+crt-static' }
     # --target-dir wins over the environment, and says which directory is meant.
-    cargo build --release -p mcp-server --bin whimbrel-mcp-server --target-dir $targetDir
+    if ($Arch -eq 'arm64') {
+        cargo build --release -p mcp-server --bin whimbrel-mcp-server --target-dir $targetDir --target $triple
+    } else {
+        cargo build --release -p mcp-server --bin whimbrel-mcp-server --target-dir $targetDir
+    }
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 } finally {
     $env:RUSTFLAGS = $savedFlags
     Pop-Location
 }
 
-$built = Join-Path $targetDir 'release\whimbrel-mcp-server.exe'
+$built = if ($Arch -eq 'arm64') { Join-Path $targetDir "$triple\release\whimbrel-mcp-server.exe" } else { Join-Path $targetDir 'release\whimbrel-mcp-server.exe' }
 if (-not (Test-Path $built)) { throw "the build did not produce $built" }
 
 # Fail here, not on a customer's PC: the program must not need the Visual C++ runtime installed.

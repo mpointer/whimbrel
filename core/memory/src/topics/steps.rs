@@ -552,6 +552,13 @@ impl Store {
     /// last 30 days (floor fixed at the first call) that were never read (emails, Teams
     /// screens) or have action items without a step (meetings).
     pub fn next_step_sources(&self, limit: usize) -> rusqlite::Result<Vec<StepSource>> {
+        self.next_step_sources_for(limit, true)
+    }
+
+    /// [`next_step_sources`](Self::next_step_sources), leaving Gmail and Google Calendar
+    /// sources out (they stay queued) when `include_google` is false: the judge reading
+    /// them may not receive Google user data (Limited Use, `crate::limited_use`).
+    pub fn next_step_sources_for(&self, limit: usize, include_google: bool) -> rusqlite::Result<Vec<StepSource>> {
         let conn = &self.conn;
         let floor = match kv_get(conn, FLOOR_KEY)?.and_then(|v| v.parse::<i64>().ok()) {
             Some(f) => f,
@@ -562,13 +569,18 @@ impl Store {
             }
         };
         let ids: Vec<i64> = {
-            let mut stmt = conn.prepare(
+            let google_filter = if include_google {
+                String::new()
+            } else {
+                format!("AND NOT {} ", crate::limited_use::TOPIC_SOURCE_IS_GOOGLE_SQL)
+            };
+            let mut stmt = conn.prepare(&format!(
                 "SELECT s.id FROM topic_source s WHERE s.kind IN ('email', 'meeting', 'episode') \
-                 AND s.ts_unix_ms >= ?1 AND s.ref_id IS NOT NULL \
+                 AND s.ts_unix_ms >= ?1 AND s.ref_id IS NOT NULL {google_filter}\
                  AND EXISTS (SELECT 1 FROM topic_member m JOIN topic_seed sd ON sd.topic_id = m.topic_id \
                              WHERE m.source_id = s.id AND m.origin != 'removed' AND sd.deleted = 0) \
                  ORDER BY s.ts_unix_ms DESC, s.id DESC",
-            )?;
+            ))?;
             let rows = stmt
                 .query_map([floor], |r| r.get(0))?
                 .collect::<rusqlite::Result<_>>()?;
@@ -581,7 +593,7 @@ impl Store {
             if out.len() >= limit {
                 break;
             }
-            if let Some(src) = self.build_step_source(sid, &me, &chrome)? {
+            if let Some(src) = self.build_step_source(sid, &me, &chrome, include_google)? {
                 out.push(src);
             }
         }
@@ -589,11 +601,14 @@ impl Store {
     }
 
     /// The source as the model should read it, or `None` when it is not (or no longer) queued.
+    /// `include_google` false also leaves out open and dismissed steps lifted from Gmail,
+    /// which would otherwise reach the judge as the topic's open steps or as examples.
     fn build_step_source(
         &self,
         sid: i64,
         me: &[String],
         chrome: &Chrome,
+        include_google: bool,
     ) -> rusqlite::Result<Option<StepSource>> {
         let conn = &self.conn;
         let Some((kind, ref_id, ts, title)): Option<(String, i64, i64, String)> = conn
@@ -735,13 +750,19 @@ impl Store {
             title,
             asked_at_unix_ms: ts,
             open_steps: self.query_pairs(
-                "SELECT key, text FROM topic_step WHERE topic_key = ?1 AND status = 'open' \
-                 AND direction IN ('mine', 'owed') ORDER BY asked_at_unix_ms DESC LIMIT 10",
+                &format!(
+                    "SELECT key, text FROM topic_step st WHERE topic_key = ?1 AND status = 'open' \
+                     AND direction IN ('mine', 'owed') AND {} ORDER BY asked_at_unix_ms DESC LIMIT 10",
+                    step_filter(include_google)
+                ),
                 Some(&topic_key),
             )?,
             examples: self.query_pairs(
-                "SELECT text, COALESCE(dismiss_reason, '') FROM topic_step WHERE status = 'dismissed' \
-                 ORDER BY updated_at_unix_ms DESC LIMIT 5",
+                &format!(
+                    "SELECT text, COALESCE(dismiss_reason, '') FROM topic_step st WHERE status = 'dismissed' \
+                     AND {} ORDER BY updated_at_unix_ms DESC LIMIT 5",
+                    step_filter(include_google)
+                ),
                 None,
             )?,
             topic_key,
@@ -967,7 +988,7 @@ impl Store {
             return Ok(false);
         }
         let chrome = chrome::load_chrome(&self.conn)?;
-        if let Some(src) = self.build_step_source(source_id, &self.self_identity()?, &chrome)? {
+        if let Some(src) = self.build_step_source(source_id, &self.self_identity()?, &chrome, true)? {
             let none: Vec<LineLabel> = src
                 .candidates
                 .iter()
@@ -985,7 +1006,7 @@ impl Store {
     /// context at 4 characters a token plus `STEP_REQUEST_TOKENS`. Walks the queue itself,
     /// so it sets the 30-day floor and marks candidate-less sources read as the queue does.
     pub fn topic_steps_estimate(&self, usd_per_million: f64) -> rusqlite::Result<JudgeEstimate> {
-        let srcs = self.next_step_sources(usize::MAX)?;
+        let srcs = self.next_step_sources_for(usize::MAX, crate::limited_use::TYPESAFE_GOOGLE_DATA_CONFIRMED)?;
         let tokens: i64 = srcs.iter().map(|s| step_request_tokens(&s.context)).sum();
         Ok(JudgeEstimate {
             sources: srcs.len() as i64,
@@ -1027,7 +1048,7 @@ impl Store {
     pub fn end_topic_steps_first_pass_if_drained(&self) -> rusqlite::Result<()> {
         if TOPIC_STEPS.budget(&self.conn)?.is_some()
             && !TOPIC_STEPS.first_pass_done(&self.conn)?
-            && self.next_step_sources(1)?.is_empty()
+            && self.next_step_sources_for(1, crate::limited_use::TYPESAFE_GOOGLE_DATA_CONFIRMED)?.is_empty()
         {
             TOPIC_STEPS.mark_first_pass_done(&self.conn)?;
         }
@@ -1226,6 +1247,19 @@ impl Store {
             }
         }
         Ok(out)
+    }
+}
+
+/// SQL true for a `topic_step st` row the judge may see: any step when `include_google`,
+/// else none lifted from Gmail or Google Calendar. An email step counts as Gmail unless
+/// its email is known to come from elsewhere (Limited Use: unknown is held).
+fn step_filter(include_google: bool) -> &'static str {
+    if include_google {
+        "1"
+    } else {
+        "NOT (st.source_kind = 'calendar_event' OR (st.source_kind = 'email' AND NOT EXISTS ( \
+           SELECT 1 FROM items si WHERE si.kind = 'email' AND COALESCE(si.source, 'gmail') != 'gmail' \
+           AND 'email:' || si.external_id = st.source_key)))"
     }
 }
 

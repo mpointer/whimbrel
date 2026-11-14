@@ -28,9 +28,22 @@ fn free_here(state: &AppState) -> i64 {
     storage::volume_free_bytes(&state.paths.root).unwrap_or(0)
 }
 
-/// The meeting being recorded now, which no cleanup may touch.
+/// The meeting being recorded now, which no cleanup may touch, and the one being transcribed.
 fn busy(state: &AppState) -> Vec<i64> {
-    state.meetings.as_ref().and_then(|m| m.status().meeting_id).into_iter().collect()
+    let recording = state.meetings.as_ref().and_then(|m| m.status().meeting_id);
+    let transcribing = state.pipeline.as_ref().and_then(|p| p.processing()).map(|p| p.meeting_id);
+    recording.into_iter().chain(transcribing).collect()
+}
+
+/// What "Compress all" did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CompressView {
+    pub compressed: usize,
+    /// Meetings left as they were, recordings intact.
+    pub failed: usize,
+    /// Why the first of those failed.
+    pub error: Option<String>,
 }
 
 #[tauri::command]
@@ -43,8 +56,10 @@ pub async fn storage_overview(state: State<'_, AppState>) -> Result<StorageView,
     })
     .await
     .map_err(|e| CommandError::store(e.to_string()))?;
+    // The main lane, not the background one: an episode summary waiting on the local model
+    // holds that lane for minutes (up to its 10-minute timeout), and Settings must not wait.
     let db_free_bytes = state
-        .slow_store()?
+        .store()?
         .call(|s| s.db_space().map(|d| d.free_bytes()).map_err(|e| e.to_string()))
         .await?
         .map_err(CommandError::store)?;
@@ -62,7 +77,7 @@ pub async fn storage_compact(state: State<'_, AppState>) -> Result<CompactView, 
 #[tauri::command]
 pub async fn storage_free_up_options(state: State<'_, AppState>, days: u32) -> Result<FreeUpOptions, CommandError> {
     let (recordings, busy) = (state.paths.recordings.clone(), busy(&state));
-    state.slow_store()?.call(move |s| storage::options(s, days, &recordings, &busy)).await?.map_err(CommandError::store)
+    state.store()?.call(move |s| storage::options(s, days, &recordings, &busy)).await?.map_err(CommandError::store)
 }
 
 /// After a delete: compact when it now pays off. A refusal is fine; the delete stands.
@@ -78,6 +93,50 @@ pub async fn storage_delete_old_recordings(state: State<'_, AppState>, days: u32
     let deleted = state.store()?.call(move |s| storage::delete_old_recordings(s, days, &recordings, &busy)).await?.map_err(CommandError::store)?;
     compact_after(&state).await?;
     Ok(deleted)
+}
+
+/// "Compress all": every full-quality recording becomes AAC, one meeting at a time, while no
+/// meeting is being transcribed. Takes a while; the store is held only to plan and to rewrite
+/// each meeting's paths, never while encoding.
+#[tauri::command]
+pub async fn storage_compress_recordings(state: State<'_, AppState>) -> Result<CompressView, CommandError> {
+    let (recordings, busy) = (state.paths.recordings.clone(), busy(&state));
+    let pipeline = state.pipeline.clone().ok_or_else(|| CommandError::store(crate::l10n::tr("Meetings aren't available.", &[])))?;
+    let store = state.store()?.clone();
+    let scan = recordings.clone();
+    let (work, _) = state.store()?.call(move |s| storage::compressible_recordings(s, &scan, &busy)).await?.map_err(CommandError::store)?;
+    let view = tauri::async_runtime::spawn_blocking(move || {
+        crate::meetings::compress::sweep_temps(&recordings);
+        let mut view = CompressView { compressed: 0, failed: 0, error: None };
+        for w in work {
+            let meeting_id = w.meeting_id;
+            let done = pipeline.while_idle(|| {
+                crate::meetings::compress::compress_meeting(&crate::meetings::compress::MediaFoundation, &w.audio_paths, |moves| {
+                    let moves = moves.to_vec();
+                    store
+                        .call_blocking(move |s| {
+                            s.set_meeting_audio_paths(meeting_id, &moves).map_err(|e| e.to_string())?;
+                            s.checkpoint_durable().map_err(|e| e.to_string())
+                        })
+                        .map_err(|e| e.to_string())?
+                })
+            });
+            match done {
+                Ok(crate::meetings::compress::Outcome::Nothing) => {}
+                Ok(_) => view.compressed += 1,
+                Err(e) => {
+                    tracing::warn!(meeting_id, error = %e, "free up space: could not compress a recording");
+                    view.failed += 1;
+                    view.error.get_or_insert(e);
+                }
+            }
+        }
+        tracing::info!(compressed = view.compressed, failed = view.failed, "free up space: compressed recordings");
+        view
+    })
+    .await
+    .map_err(|e| CommandError::store(e.to_string()))?;
+    Ok(view)
 }
 
 /// Deletes screen captures older than `days` here and on the other devices.

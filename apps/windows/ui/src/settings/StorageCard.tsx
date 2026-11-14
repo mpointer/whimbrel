@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { storageCompact, storageDeleteOldCaptures, storageDeleteOldRecordings, storageFreeUpOptions, storageOverview } from "../api";
+import { storageCompact, storageCompressRecordings, storageDeleteOldCaptures, storageDeleteOldRecordings, storageFreeUpOptions, storageOverview } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { FreeUpOptions, StorageView } from "../generated/types";
 import { useL10n } from "../l10n";
-import { compactLine, footprintLines, freedLine, freeUpRows, lowDiskLines, type FreeUpKind } from "./storageModel";
+import { compactLine, compressLine, footprintLines, freedLine, freeUpRows, lowDiskLines, type FreeUpKind } from "./storageModel";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -74,6 +74,7 @@ export function StorageCard() {
   const compact = () => run(t("Compacting the database…"), () => storageCompact().then(compactLine));
   const act = (kind: FreeUpKind) => {
     if (kind === "compact") return compact();
+    if (kind === "compress") return run(t("Compressing recordings… This can take a few minutes."), () => storageCompressRecordings().then(compressLine));
     if (kind === "recordings") return run(t("Deleting old recordings…"), () => storageDeleteOldRecordings(chosen).then(() => null));
     return run(t("Deleting old screen captures…"), () => storageDeleteOldCaptures(chosen).then(() => null));
   };
@@ -105,7 +106,7 @@ export function StorageCard() {
         <div id="free-up-space" className="field">
           <div className="field-row">
             <label htmlFor="free-up-days">{t("Older than")}</label>
-            <select id="free-up-days" className="input short" value={chosen} onChange={(e) => setDays(Number(e.target.value))}>
+            <select id="free-up-days" className="input days" value={chosen} onChange={(e) => setDays(Number(e.target.value))}>
               {view.days.map((d) => (
                 <option key={d} value={d}>
                   {t("{days} days", { days: String(d) })}

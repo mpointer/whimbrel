@@ -82,6 +82,11 @@ struct CalendarMarkOutcome: Codable, Equatable {
     let unmarked: Int
 }
 
+struct CalendarDeleteOutcome: Codable, Equatable {
+    let deleted: Int
+    let emptied: Int
+}
+
 struct NewCalendarEventItemInput: Codable, Equatable {
     let deviceId: String
     let source: String
@@ -803,6 +808,16 @@ struct CoreRoutingConfig: Encodable {
     /// Whimbrel AI (`SyncState.whimbrelCredentials`); nil when sync isn't signed in.
     var whimbrelIdToken: String? = nil
     var whimbrelDeviceKey: String? = nil
+    /// Google "Limited Use" (core/api routing::LimitedUseSettings). Always encoded:
+    /// core keeps them process-wide, and a routing JSON without them turns them off.
+    var googleAiBillingConfirmed: Bool = false
+    var remoteOllamaGoogleData: Bool = false
+    /// The Ollama model THIS call's prompt is streamed against (read per call by
+    /// `whimbrel_llm_prepare_ask` / `whimbrel_llm_prepare_window_ask`); "" is unknown, and
+    /// core then fails closed.
+    var streamedOllamaModel: String = ""
+    /// That Ollama's base URL; "" is core's default, http://localhost:11434.
+    var streamedOllamaBaseUrl: String = ""
 
     /// Cents per 1K tokens, in and out, as core's price table counts.
     struct Price: Codable, Equatable {
@@ -821,7 +836,9 @@ struct CoreRoutingConfig: Encodable {
             cheapFirst: cheapFirst, useLocalModel: useLocalModel,
             openrouterKey: openrouterKey, openrouterModel: openrouterModel, openrouterPrices: openrouterPrices,
             outputLanguage: outputLanguage,
-            whimbrelIdToken: whimbrelIdToken, whimbrelDeviceKey: whimbrelDeviceKey
+            whimbrelIdToken: whimbrelIdToken, whimbrelDeviceKey: whimbrelDeviceKey,
+            googleAiBillingConfirmed: googleAiBillingConfirmed, remoteOllamaGoogleData: remoteOllamaGoogleData,
+            streamedOllamaModel: streamedOllamaModel, streamedOllamaBaseUrl: streamedOllamaBaseUrl
         )
     }
 
@@ -847,6 +864,10 @@ struct CoreRoutingConfig: Encodable {
         case openrouterPrices = "openrouter_prices"
         case whimbrelIdToken = "whimbrel_id_token"
         case whimbrelDeviceKey = "whimbrel_device_key"
+        case googleAiBillingConfirmed = "google_ai_billing_confirmed"
+        case remoteOllamaGoogleData = "remote_ollama_google_data"
+        case streamedOllamaModel = "streamed_ollama_model"
+        case streamedOllamaBaseUrl = "streamed_ollama_base_url"
     }
 }
 
@@ -1375,6 +1396,66 @@ struct CoreAttendee: Codable, Equatable {
     let email: String?
 }
 
+/// The summary as the meeting page shows it, for `whimbrel_recap_render`.
+struct CoreRecapSummary: Encodable, Equatable {
+    var title: String
+    var tldr: String
+    var decisions: [String]
+    var actionItems: [String]
+    var openQuestions: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case title, tldr, decisions
+        case actionItems = "action_items"
+        case openQuestions = "open_questions"
+    }
+}
+
+/// The app's translated headings and footer for `whimbrel_recap_render`.
+struct CoreRecapLabels: Encodable, Equatable {
+    let decisions: String
+    let actionItems: String
+    let openQuestions: String
+    let footer: String
+
+    enum CodingKeys: String, CodingKey {
+        case decisions, footer
+        case actionItems = "action_items"
+        case openQuestions = "open_questions"
+    }
+
+    static var localized: CoreRecapLabels {
+        CoreRecapLabels(
+            decisions: String(localized: "Decisions"),
+            actionItems: String(localized: "Action items"),
+            openQuestions: String(localized: "Open questions"),
+            footer: String(localized: "Sent with Whimbrel")
+        )
+    }
+}
+
+/// `whimbrel_recap_mailto`'s draft. When `bodyInUrl` is false the body goes on the clipboard.
+struct CoreMailtoDraft: Decodable, Equatable {
+    let url: String
+    let bodyInUrl: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case url
+        case bodyInUrl = "body_in_url"
+    }
+}
+
+/// The meeting's last recap send.
+struct CoreRecapSent: Decodable, Equatable {
+    let sentUnixMs: Int64
+    let recipientCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case sentUnixMs = "sent_unix_ms"
+        case recipientCount = "recipient_count"
+    }
+}
+
 /// A meeting's speaker and who it was assigned to; `status` is "confirmed", "guess" or nil.
 struct CoreMeetingSpeaker: Decodable, Equatable {
     let speakerId: Int
@@ -1893,6 +1974,8 @@ struct CoreMeetingSummary: Codable {
     let openQuestions: [String]
     let provider: String?
     let model: String?
+    /// Set when the summary was meant for Whimbrel AI and another model wrote it.
+    var fallback: CoreSummaryFallback? = nil
 
     enum CodingKeys: String, CodingKey {
         case tldr
@@ -1901,6 +1984,86 @@ struct CoreMeetingSummary: Codable {
         case openQuestions = "open_questions"
         case provider
         case model
+        case fallback
+    }
+}
+
+/// core's `api::summary::SummaryFallback`: a summary meant for `preferred` ("whimbrel") that
+/// `used` wrote with `model`, and a content-free `reason` code (`not_signed_in`,
+/// `no_device_key`, `unauthorized`, `budget`, `credit_exhausted`, `timeout`, `network`,
+/// `rate_limited`, `model_unavailable`, `unavailable`, ...).
+struct CoreSummaryFallback: Codable, Equatable {
+    let preferred: String
+    let used: String
+    let model: String
+    let reason: String
+    var httpStatus: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case preferred, used, model, reason
+        case httpStatus = "http_status"
+    }
+}
+
+/// The words and the one action of the line under a summary that Whimbrel AI was meant to
+/// write. Pure, so the wording is testable.
+enum SummaryFallbackNotice {
+    enum Action: Equatable {
+        case resummarize
+        /// The reason is fixed by signing in, so the button leads to sign-in.
+        case signIn
+    }
+
+    /// What a core reason code means to the user: reasons that read the same share one sentence.
+    private enum Cause {
+        case signedOut, credit, model, localOnly, unavailable
+
+        init(reason: String) {
+            switch reason {
+            case "not_signed_in", "no_device_key", "unauthorized": self = .signedOut
+            case "budget", "credit_exhausted": self = .credit
+            case "model_unavailable": self = .model
+            case "local_only": self = .localOnly
+            default: self = .unavailable
+            }
+        }
+    }
+
+    /// "Summarized on this Mac with gemma4:12b because you were not signed in to Whimbrel."
+    /// One whole sentence per cause (never composed from pieces), so each translates as a unit.
+    static func line(for fallback: CoreSummaryFallback) -> String {
+        let model = fallback.model
+        if fallback.used == "ollama" || fallback.used == "local" {
+            switch Cause(reason: fallback.reason) {
+            case .signedOut: return String(localized: "Summarized on this Mac with \(model) because you were not signed in to Whimbrel.")
+            case .credit: return String(localized: "Summarized on this Mac with \(model) because your Whimbrel AI credit or budget ran out.")
+            case .model: return String(localized: "Summarized on this Mac with \(model) because Whimbrel does not offer the chosen model.")
+            case .localOnly, .unavailable: return String(localized: "Summarized on this Mac with \(model) because Whimbrel was not available.")
+            }
+        }
+        switch Cause(reason: fallback.reason) {
+        case .signedOut: return String(localized: "Summarized with \(model) because you were not signed in to Whimbrel.")
+        case .credit: return String(localized: "Summarized with \(model) because your Whimbrel AI credit or budget ran out.")
+        case .model: return String(localized: "Summarized with \(model) because Whimbrel does not offer the chosen model.")
+        case .localOnly, .unavailable: return String(localized: "Summarized with \(model) because Whimbrel was not available.")
+        }
+    }
+
+    /// Decided by whether this Mac is signed in now, not by the stored reason: after signing in
+    /// (the usual fix for "not signed in") the button must offer the re-summary.
+    static func action(signedIn: Bool) -> Action {
+        signedIn ? .resummarize : .signIn
+    }
+
+    /// What a failed "Re-summarize with Whimbrel" says.
+    static func failureMessage(reason: String) -> String {
+        switch Cause(reason: reason) {
+        case .signedOut: return String(localized: "Couldn't re-summarize because you are not signed in to Whimbrel.")
+        case .credit: return String(localized: "Couldn't re-summarize because your Whimbrel AI credit or budget ran out.")
+        case .model: return String(localized: "Couldn't re-summarize because Whimbrel does not offer the chosen model.")
+        case .localOnly: return String(localized: "Couldn't re-summarize because local-only mode is on.")
+        case .unavailable: return String(localized: "Couldn't re-summarize because Whimbrel was not available.")
+        }
     }
 }
 
@@ -3359,6 +3522,30 @@ final class CoreMemoryStore {
         return try? JSONDecoder().decode(CalendarMarkOutcome.self, from: Data(String(cString: out).utf8))
     }
 
+    /// Deletes what was imported from one Google Calendar account: events only it reports, its
+    /// presence entries and sync token. `soleAccount`: no other Google Calendar account stays
+    /// connected. Recorded meetings are never touched. Call on `accessQueue`.
+    @discardableResult
+    func calendarDeleteAccountData(source: String, account: String, soleAccount: Bool) -> CalendarDeleteOutcome? {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        guard let out = source.withCString({ s in account.withCString { a in
+            whimbrel_calendar_delete_account_data(handle, s, a, soleAccount, nowMs)
+        } }) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return try? JSONDecoder().decode(CalendarDeleteOutcome.self, from: Data(String(cString: out).utf8))
+    }
+
+    /// Deletes everything stored from one Gmail account (messages, threads, summaries,
+    /// Reply Priorities, history id). Returns the number of messages removed; nil on error.
+    /// Call on `accessQueue`.
+    @discardableResult
+    func gmailDeleteAccountData(account: String) -> Int? {
+        guard let out = account.withCString({ whimbrel_gmail_delete_account_data(handle, $0) }) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        struct Removed: Decodable { let removed: Int }
+        return (try? JSONDecoder().decode(Removed.self, from: Data(String(cString: out).utf8)))?.removed
+    }
+
     /// FR-MTG-5: generates a meeting summary by blending `notes` with `transcript`,
     /// through the same governance pipeline as `askQuestion`/`dailyDigest`. On success
     /// this also updates the meeting row's summary fields on the Rust side — this
@@ -3387,6 +3574,55 @@ final class CoreMemoryStore {
         return decodeLLMResult(json)
     }
 
+    /// "Re-summarize with Whimbrel": `summarizeMeeting` with no fallback to another model. `routing`
+    /// must name Whimbrel as the preferred provider. A failure also carries core's `fallback_reason`
+    /// code (see `CoreSummaryFallback`) when it had one. `nil` only on invalid usage.
+    func summarizeMeetingPreferred(meetingId: Int64, notes: String, transcript: String, slides: String, model: String, routing: CoreRoutingConfig, customInstructions: String) -> (result: Result<CoreMeetingSummary, CoreLLMError>, reason: String?)? {
+        guard let routingJSON = try? JSONEncoder().encode(routing),
+              let routingString = String(data: routingJSON, encoding: .utf8) else { return nil }
+        guard let json = notes.withCString({ n in
+            transcript.withCString { t in
+                slides.withCString { sl in
+                    model.withCString { m in
+                        routingString.withCString { r in
+                            customInstructions.withCString { ci in
+                                whimbrel_llm_summarize_meeting_preferred(handle, meetingId, n, t, sl, m, r, ci)
+                            }
+                        }
+                    }
+                }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        let reason = Self.fallbackReason(inEnvelope: Data(String(cString: json).utf8))
+        return (decodeLLMResult(json), reason)
+    }
+
+    /// The `error.fallback_reason` of a failed forced summary's envelope; nil on success or without one.
+    static func fallbackReason(inEnvelope data: Data) -> String? {
+        struct Envelope: Decodable {
+            struct Failure: Decodable {
+                let reason: String?
+                enum CodingKeys: String, CodingKey { case reason = "fallback_reason" }
+            }
+            let error: Failure?
+        }
+        return (try? JSONDecoder().decode(Envelope.self, from: data))?.error?.reason
+    }
+
+    /// The notice behind the meeting's stored summary (see `CoreSummaryFallback`), or nil when
+    /// there is none, the summary has since been replaced by another provider's, or on a failed read.
+    func summaryFallback(meetingId: Int64) -> CoreSummaryFallback? {
+        guard let json = whimbrel_meeting_summary_fallback(handle, meetingId) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return Self.summaryFallback(inEnvelope: Data(String(cString: json).utf8))
+    }
+
+    static func summaryFallback(inEnvelope data: Data) -> CoreSummaryFallback? {
+        struct Envelope: Decodable { let data: CoreSummaryFallback? }
+        return (try? JSONDecoder().decode(Envelope.self, from: data))?.data
+    }
+
     /// Speaker names: the `{"ok","data"}` envelope's data, nil (logged) on a store error or NULL.
     private func speakerNamesResult<T: Decodable>(_ json: UnsafeMutablePointer<CChar>?) -> T? {
         guard let json else { return nil }
@@ -3408,6 +3644,14 @@ final class CoreMemoryStore {
         let ok = String(cString: out).hasPrefix(#"{"ok":true"#)
         if !ok { Self.log.error("meeting \(meetingId): attendee details not stored") }
         return ok
+    }
+
+    /// Limited Use: states which calendar a calendar-started meeting came from, "google" or
+    /// "other". Without it core infers the source from the synced events (an unknown one
+    /// counts as Google), so a failure here only costs exactness, never leaks.
+    @discardableResult
+    func setMeetingCalendarSource(meetingId: Int64, source: String) -> Bool {
+        source.withCString { whimbrel_memory_set_meeting_calendar_source(handle, meetingId, $0) }
     }
 
     /// Names the meeting's unnamed speakers from `voices`; nil on failure (the summary goes on).
@@ -3444,6 +3688,52 @@ final class CoreMemoryStore {
     /// The meeting's invitees with their emails (names only when none were stored).
     func meetingAttendeeDetails(meetingId: Int64) -> [CoreAttendee]? {
         speakerNamesResult(whimbrel_meeting_attendee_details(handle, meetingId))
+    }
+
+    // MARK: - Meeting recap (core renders; the page only shows and sends)
+
+    /// Who the meeting's recap can go to: invitees with a usable address, minus `selfEmails`.
+    func recapRecipients(meetingId: Int64, selfEmails: [String]) -> [CoreAttendee]? {
+        guard let data = try? JSONEncoder().encode(selfEmails), let json = String(data: data, encoding: .utf8) else { return nil }
+        return json.withCString { speakerNamesResult(whimbrel_meeting_recap_recipients(handle, meetingId, $0)) }
+    }
+
+    /// Records a recap send (device-local, no addresses).
+    @discardableResult
+    func recordRecapSent(meetingId: Int64, recipientCount: Int, nowUnixMs: Int64) -> Bool {
+        let ok: Bool? = speakerNamesResult(whimbrel_meeting_record_recap_sent(handle, meetingId, Int64(recipientCount), nowUnixMs))
+        return ok ?? false
+    }
+
+    /// The meeting's last recap send, or nil.
+    func recapSent(meetingId: Int64) -> CoreRecapSent? {
+        guard let json = whimbrel_meeting_recap_sent(handle, meetingId) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        if case .success(let value) = CoreLLMEnvelope<CoreRecapSent>.result(json) { return value }
+        return nil
+    }
+
+    /// The recap text in `format` ("plain", "markdown", "slack" or "email"); nil on a bad argument.
+    static func recapRender(_ summary: CoreRecapSummary, labels: CoreRecapLabels, format: String) -> String? {
+        guard let s = try? JSONEncoder().encode(summary), let sJSON = String(data: s, encoding: .utf8),
+              let l = try? JSONEncoder().encode(labels), let lJSON = String(data: l, encoding: .utf8) else { return nil }
+        let out = sJSON.withCString { sc in lJSON.withCString { lc in format.withCString { fc in whimbrel_recap_render(sc, lc, fc) } } }
+        guard let out else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        if case .success(let text) = CoreLLMEnvelope<String>.result(out) { return text }
+        return nil
+    }
+
+    /// The mail-app draft for `to`; nil on a bad argument.
+    static func recapMailto(to: [String], subject: String, body: String, pasteHint: String) -> CoreMailtoDraft? {
+        guard let t = try? JSONEncoder().encode(to), let tJSON = String(data: t, encoding: .utf8) else { return nil }
+        let out = tJSON.withCString { tc in
+            subject.withCString { sc in body.withCString { bc in pasteHint.withCString { hc in whimbrel_recap_mailto(tc, sc, bc, hc) } } }
+        }
+        guard let out else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        if case .success(let draft) = CoreLLMEnvelope<CoreMailtoDraft>.result(out) { return draft }
+        return nil
     }
 
     /// Raw transcript labels as shown, in the same order.
@@ -4485,6 +4775,23 @@ final class CoreMemoryStore {
         return (try? JSONDecoder().decode([QualifyingMeeting].self, from: Data(String(cString: json).utf8))) ?? (oauth + eventKit)
     }
 
+    /// Calendar events other devices sent through sync that `local` (this Mac's own meetings,
+    /// unfiltered) does not already show, from `from` up to `until`: one row per meeting, this
+    /// device's own rows (`excludeDeviceId`) and removed ones left out. The item carries no end
+    /// time, RSVP or link (the end is start + 30 min). Display and prep only, never the trigger.
+    /// Nil on a DB error.
+    func syncedMeetings(excludeDeviceId: String, from: Date, until: Date, local: [QualifyingMeeting]) -> [QualifyingMeeting]? {
+        guard let localData = try? JSONEncoder().encode(local) else { return nil }
+        let fromMs = Int64(from.timeIntervalSince1970 * 1000), untilMs = Int64(until.timeIntervalSince1970 * 1000)
+        guard let json = excludeDeviceId.withCString({ d in
+            String(decoding: localData, as: UTF8.self).withCString { l in
+                whimbrel_calendar_synced_meetings(handle, d, fromMs, untilMs, l)
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
     /// The items-table calendar-event upsert input for a calendar-sourced meeting; nil
     /// for a detected meeting (no calendar entry).
     static func calendarEventItem(for meeting: QualifyingMeeting, deviceId: String) -> NewCalendarEventItemInput? {
@@ -4586,6 +4893,15 @@ final class CoreMemoryStore {
                   String(decoding: storedData, as: UTF8.self).withCString { s in whimbrel_oauth_refresh(c, s, nowUnixMs) }
               }) else { return .failure(.tokenRefreshFailed) }
         return decodeOAuthOutcome(json)
+    }
+
+    /// BLOCKING (up to 30 s): revokes a Google token with Google, the token in the POST body.
+    /// Returns only the outcome's reason code ("revoked", "already_invalid", "rejected",
+    /// "unreachable", "nothing_to_revoke"), safe to log; nil on an unusable argument.
+    static func oauthRevokeGoogleToken(_ token: String) -> String? {
+        guard let out = token.withCString({ whimbrel_oauth_revoke_google_token($0) }) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return String(cString: out)
     }
 
     /// Whether `granted` (nil: unknown, never sufficient) covers every scope in `required`.

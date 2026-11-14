@@ -18,6 +18,9 @@ pub fn run_episode_summarize_batch(
     custom_instructions: &str,
     output_language: &str,
 ) -> rusqlite::Result<usize> {
+    if memory::background_gate::recording_pauses_background_work() {
+        return Ok(0);
+    }
     let custom_instructions = custom_instructions.trim();
     let jobs = store.claim_episode_summarize_jobs(max_jobs, now_unix_ms())?;
     let client = llm::OllamaClient::new(ollama_model);
@@ -108,7 +111,8 @@ fn skip_reason(items: &[memory::CaptureItem], lang: &str) -> Option<Skip> {
 }
 
 /// Runs up to `max_jobs` pending `thread_summarize` jobs, mirroring
-/// [`run_episode_summarize_batch`] exactly.
+/// [`run_episode_summarize_batch`] exactly. Gmail text goes to an Ollama cloud model only
+/// with [`run_thread_summarize_batch_with`]'s switch on; here it never does.
 pub fn run_thread_summarize_batch(
     store: &memory::Store,
     ollama_model: &str,
@@ -116,6 +120,28 @@ pub fn run_thread_summarize_batch(
     custom_instructions: &str,
     output_language: &str,
 ) -> rusqlite::Result<usize> {
+    run_thread_summarize_batch_with(store, ollama_model, max_jobs, custom_instructions, output_language, false)
+}
+
+/// [`run_thread_summarize_batch`] with the Limited Use switch `remote_ollama_google_data`
+/// (`RoutingConfig::remote_ollama_google_data`). Thread summaries read Gmail messages, so
+/// with an Ollama cloud model (`:cloud` / `-cloud`, run on Ollama's servers) and the
+/// switch off, no job is claimed: they stay pending, unspent, for a local model.
+pub fn run_thread_summarize_batch_with(
+    store: &memory::Store,
+    ollama_model: &str,
+    max_jobs: usize,
+    custom_instructions: &str,
+    output_language: &str,
+    remote_ollama_google_data: bool,
+) -> rusqlite::Result<usize> {
+    if memory::background_gate::recording_pauses_background_work() {
+        return Ok(0);
+    }
+    let policy = llm::limited_use::GoogleDataPolicy { remote_ollama_google_data, ..Default::default() };
+    if !llm::limited_use::provider_may_receive_google_data(llm::Provider::Ollama, ollama_model, None, policy) {
+        return Ok(0);
+    }
     let custom_instructions = custom_instructions.trim();
     let jobs = store.claim_thread_summarize_jobs(max_jobs, now_unix_ms())?;
     let client = llm::OllamaClient::new(ollama_model);
@@ -231,12 +257,29 @@ fn score_catching_panics(
 
 /// Runs up to `max_jobs` pending `thread_priority` jobs through `scorer`. After a
 /// rejected key the remaining claimed jobs are released and the batch stops.
+///
+/// Limited Use: every thread is a Gmail thread and the scorer is TypeSafe, so until
+/// TypeSafe confirms in writing that it does not train on API data
+/// (`memory::limited_use::TYPESAFE_GOOGLE_DATA_CONFIRMED`) nothing is claimed or sent:
+/// the jobs stay pending (no attempt counted) and the batch reports 0 processed.
 pub fn run_thread_priority_batch(
     store: &memory::Store,
     scorer: &dyn llm::typesafe::PriorityScorer,
     max_jobs: usize,
 ) -> rusqlite::Result<PriorityBatchOutcome> {
+    run_thread_priority_batch_if(store, scorer, max_jobs, memory::limited_use::TYPESAFE_GOOGLE_DATA_CONFIRMED)
+}
+
+fn run_thread_priority_batch_if(
+    store: &memory::Store,
+    scorer: &dyn llm::typesafe::PriorityScorer,
+    max_jobs: usize,
+    typesafe_may_read_gmail: bool,
+) -> rusqlite::Result<PriorityBatchOutcome> {
     let mut outcome = PriorityBatchOutcome { processed: 0, auth_rejected: false };
+    if !typesafe_may_read_gmail || memory::background_gate::recording_pauses_background_work() {
+        return Ok(outcome);
+    }
     let mut jobs = store.claim_thread_priority_jobs(max_jobs, now_unix_ms())?.into_iter();
     while let Some(job) = jobs.next() {
         let now = now_unix_ms();
@@ -404,7 +447,7 @@ mod tests {
         let store = store_with_waiting_threads(1, "Please confirm by Friday.");
         let scorer = FakeScorer::new(vec![Ok(judgments())]);
 
-        let outcome = run_thread_priority_batch(&store, &scorer, 5).unwrap();
+        let outcome = run_thread_priority_batch_if(&store, &scorer, 5, true).unwrap();
 
         assert_eq!((outcome.processed, outcome.auth_rejected), (1, false));
         let input = scorer.inputs.borrow()[0].clone();
@@ -422,7 +465,7 @@ mod tests {
         let store = store_with_waiting_threads(1, &body);
         let scorer = FakeScorer::new(vec![Ok(judgments())]);
 
-        run_thread_priority_batch(&store, &scorer, 1).unwrap();
+        run_thread_priority_batch_if(&store, &scorer, 1, true).unwrap();
 
         let sent = scorer.inputs.borrow()[0].latest_message.clone();
         assert!(sent.contains("[REDACTED"), "expected a redaction marker, got {sent:?}");
@@ -439,7 +482,7 @@ mod tests {
         let store = store_with_waiting_threads(1, &body);
         let scorer = FakeScorer::new(vec![Ok(judgments())]);
 
-        run_thread_priority_batch(&store, &scorer, 1).unwrap();
+        run_thread_priority_batch_if(&store, &scorer, 1, true).unwrap();
 
         let sent = scorer.inputs.borrow()[0].latest_message.clone();
         assert!(sent.contains("[REDACTED"), "expected a redaction marker, got {sent:?}");
@@ -451,7 +494,7 @@ mod tests {
         let store = store_with_waiting_threads(1, "hi");
         let scorer = FakeScorer::new(vec![Err(llm::LlmError::Network("down".into()))]);
 
-        let outcome = run_thread_priority_batch(&store, &scorer, 1).unwrap();
+        let outcome = run_thread_priority_batch_if(&store, &scorer, 1, true).unwrap();
 
         assert_eq!((outcome.processed, outcome.auth_rejected), (0, false));
         // Not claimable now (30 s backoff), and still pending with zero attempts afterwards.
@@ -466,7 +509,7 @@ mod tests {
         let store = store_with_waiting_threads(3, "hi");
         let scorer = FakeScorer::new(vec![Err(llm::LlmError::Http { status: 401, body: "bad key".into() })]);
 
-        let outcome = run_thread_priority_batch(&store, &scorer, 3).unwrap();
+        let outcome = run_thread_priority_batch_if(&store, &scorer, 3, true).unwrap();
 
         assert!(outcome.auth_rejected);
         assert_eq!(scorer.inputs.borrow().len(), 1, "no further calls after a rejected key");
@@ -484,7 +527,7 @@ mod tests {
             Err(llm::LlmError::Provider("garbled".into())),
         ]);
 
-        run_thread_priority_batch(&store, &scorer, 2).unwrap();
+        run_thread_priority_batch_if(&store, &scorer, 2, true).unwrap();
 
         let soon = store.claim_thread_priority_jobs(10, 5_000 + 60_000).unwrap();
         assert!(soon.is_empty(), "both are backing off");
@@ -498,12 +541,36 @@ mod tests {
     fn a_panicking_scorer_counts_as_a_failed_attempt_instead_of_unwinding() {
         let store = store_with_waiting_threads(1, "hi");
 
-        let outcome = run_thread_priority_batch(&store, &PanickingScorer, 1).unwrap();
+        let outcome = run_thread_priority_batch_if(&store, &PanickingScorer, 1, true).unwrap();
 
         assert_eq!((outcome.processed, outcome.auth_rejected), (0, false));
         let later = store.claim_thread_priority_jobs(10, i64::MAX / 2).unwrap();
         assert_eq!(later.len(), 1);
         assert_eq!(later[0].attempts, 1);
+    }
+
+    /// Limited Use: Gmail text is not sent to TypeSafe until TypeSafe confirms its terms;
+    /// the jobs stay pending with no attempt counted.
+    #[test]
+    fn gmail_threads_are_not_sent_to_typesafe_until_it_confirms_its_terms() {
+        assert!(!memory::limited_use::TYPESAFE_GOOGLE_DATA_CONFIRMED);
+        let store = store_with_waiting_threads(2, "please reply");
+        let outcome = run_thread_priority_batch(&store, &PanickingScorer, 5).unwrap();
+        assert_eq!((outcome.processed, outcome.auth_rejected), (0, false));
+        let later = store.claim_thread_priority_jobs(10, i64::MAX / 2).unwrap();
+        assert_eq!(later.len(), 2);
+        assert!(later.iter().all(|j| j.attempts == 0));
+    }
+
+    /// Thread summaries read Gmail: an Ollama cloud model gets none without the switch.
+    #[test]
+    fn thread_summaries_skip_an_ollama_cloud_model_without_the_switch() {
+        let store = store_with_waiting_threads(1, "hi");
+        store.run_jobs_batch(10, 5_000).unwrap();
+        assert_eq!(run_thread_summarize_batch(&store, "gpt-oss:120b-cloud", 5, "", "").unwrap(), 0);
+        assert_eq!(run_thread_summarize_batch_with(&store, "kimi-k2:1t-cloud", 5, "", "", false).unwrap(), 0);
+        let pending = store.claim_thread_summarize_jobs(10, i64::MAX / 2).unwrap();
+        assert!(!pending.is_empty(), "the jobs stay pending for a local model");
     }
 
     #[test]

@@ -4020,6 +4020,74 @@
         }
       }
     },
+    "Add an email address" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "E-Mail-Adresse hinzufügen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Añade una dirección de correo"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter une adresse e-mail"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajouter une adresse courriel"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adicione um endereço de e-mail"
+          }
+        }
+      }
+    },
+    "Add at least one email address." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fügen Sie mindestens eine E-Mail-Adresse hinzu."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Añade al menos una dirección de correo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajoutez au moins une adresse e-mail."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ajoutez au moins une adresse courriel."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Adicione pelo menos um endereço de e-mail."
+          }
+        }
+      }
+    },
     "Add failed: store unavailable." : {
       "localizations" : {
         "de" : {
@@ -4190,6 +4258,40 @@
         }
       }
     },
+    "Advanced" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erweitert"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Avanzado"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Avancé"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Avancé"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Avançado"
+          }
+        }
+      }
+    },
     "Alert me when someone asks me something" : {
       "localizations" : {
         "de" : {
@@ -4292,6 +4394,40 @@
         }
       }
     },
+    "Allow Gmail and Calendar text with a cloud or remote Ollama model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text aus Gmail und Google Kalender für ein Cloud- oder entferntes Ollama-Modell erlauben"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permitir texto de Gmail y de Google Calendar con un modelo de Ollama en la nube o remoto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Autoriser le texte de Gmail et de Google Agenda avec un modèle Ollama cloud ou distant"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Autoriser le texte de Gmail et de Google Agenda avec un modèle Ollama infonuagique ou distant"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permitir texto do Gmail e do Google Agenda com um modelo do Ollama na nuvem ou remoto"
+          }
+        }
+      }
+    },
     "Also delete my sync account" : {
       "localizations" : {
         "de" : {
@@ -4356,6 +4492,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Também me enviar por e-mail"
+          }
+        }
+      }
+    },
+    "Also give it your Gmail and Google Calendar items, and the titles, people and summaries of meetings from Google Calendar. Without this, those are left out of everything above." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gibt ihm auch Ihre Gmail- und Google Kalender-Inhalte sowie Titel, Teilnehmende und Zusammenfassungen von Besprechungen aus Google Kalender. Ohne diese Option fehlen sie in allem oben."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "También le da tus elementos de Gmail y Google Calendar, y los títulos, las personas y los resúmenes de las reuniones de Google Calendar. Sin esto, todo lo anterior los omite."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lui donne aussi vos éléments Gmail et Google Agenda, ainsi que les titres, les participants et les résumés des réunions de Google Agenda. Sans cela, tout ce qui précède les exclut."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lui donne aussi vos éléments Gmail et Google Agenda, ainsi que les titres, les participants et les résumés des réunions de Google Agenda. Sans cela, tout ce qui précède les exclut."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Também dá a ele seus itens do Gmail e do Google Agenda, e os títulos, as pessoas e os resumos das reuniões do Google Agenda. Sem isso, eles ficam de fora de tudo acima."
           }
         }
       }
@@ -7104,6 +7274,40 @@
         }
       }
     },
+    "Client ID" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Client-ID"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ID de cliente"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ID client"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ID client"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ID do cliente"
+          }
+        }
+      }
+    },
     "Client name (e.g. \"Claude Desktop\")" : {
       "localizations" : {
         "de" : {
@@ -7134,6 +7338,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Nome do cliente (ex.: \"Claude Desktop\")"
+          }
+        }
+      }
+    },
+    "Client secret" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clientschlüssel"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Secreto del cliente"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Code secret du client"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Code secret du client"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chave secreta do cliente"
           }
         }
       }
@@ -8300,6 +8538,74 @@
         }
       }
     },
+    "Copy as Markdown" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Als Markdown kopieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copiar como Markdown"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier en Markdown"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier en Markdown"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copiar como Markdown"
+          }
+        }
+      }
+    },
+    "Copy as Slack" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für Slack kopieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copiar para Slack"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier pour Slack"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copier pour Slack"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copiar para o Slack"
+          }
+        }
+      }
+    },
     "Copy as plain text" : {
       "localizations" : {
         "de" : {
@@ -9048,6 +9354,40 @@
         }
       }
     },
+    "Couldn't delete old screen captures." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alte Bildschirmaufnahmen konnten nicht gelöscht werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudieron eliminar las capturas de pantalla antiguas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de supprimer les anciennes captures d’écran."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de supprimer les anciennes captures d’écran."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível apagar as capturas de tela antigas."
+          }
+        }
+      }
+    },
     "Couldn't delete this skin." : {
       "localizations" : {
         "de" : {
@@ -9626,6 +9966,206 @@
         }
       }
     },
+    "Couldn't re-summarize because Whimbrel does not offer the chosen model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erneute Zusammenfassung nicht möglich, weil Whimbrel das gewählte Modell nicht anbietet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Couldn't re-summarize because Whimbrel does not offer the chosen model."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo volver a resumir porque Whimbrel no ofrece el modelo elegido."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de refaire le résumé, car Whimbrel ne propose pas le modèle choisi."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de refaire le résumé, car Whimbrel ne propose pas le modèle choisi."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível resumir de novo porque o Whimbrel não oferece o modelo escolhido."
+          }
+        }
+      }
+    },
+    "Couldn't re-summarize because Whimbrel was not available." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erneute Zusammenfassung nicht möglich, weil Whimbrel nicht verfügbar war."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Couldn't re-summarize because Whimbrel was not available."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo volver a resumir porque Whimbrel no estaba disponible."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de refaire le résumé, car Whimbrel n’était pas disponible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de refaire le résumé, car Whimbrel n’était pas disponible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível resumir de novo porque o Whimbrel não estava disponível."
+          }
+        }
+      }
+    },
+    "Couldn't re-summarize because local-only mode is on." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erneute Zusammenfassung nicht möglich, weil der Nur-lokal-Modus aktiv ist."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Couldn't re-summarize because local-only mode is on."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo volver a resumir porque el modo solo local está activado."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de refaire le résumé, car le mode local uniquement est activé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de refaire le résumé, car le mode local uniquement est activé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível resumir de novo porque o modo somente local está ativado."
+          }
+        }
+      }
+    },
+    "Couldn't re-summarize because you are not signed in to Whimbrel." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erneute Zusammenfassung nicht möglich, weil Sie nicht bei Whimbrel angemeldet sind."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Couldn't re-summarize because you are not signed in to Whimbrel."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo volver a resumir porque no has iniciado sesión en Whimbrel."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de refaire le résumé, car vous n’êtes pas connecté à Whimbrel."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de refaire le résumé, car vous n’êtes pas connecté à Whimbrel."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível resumir de novo porque você não está conectado ao Whimbrel."
+          }
+        }
+      }
+    },
+    "Couldn't re-summarize because your Whimbrel AI credit or budget ran out." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Erneute Zusammenfassung nicht möglich, weil Ihr Whimbrel-KI-Guthaben oder -Budget aufgebraucht ist."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Couldn't re-summarize because your Whimbrel AI credit or budget ran out."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo volver a resumir porque se agotó tu crédito o presupuesto de IA de Whimbrel."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de refaire le résumé, car votre crédit ou budget d’IA Whimbrel est épuisé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de refaire le résumé, car votre crédit ou budget d’IA Whimbrel est épuisé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível resumir de novo porque seu crédito ou orçamento de IA do Whimbrel acabou."
+          }
+        }
+      }
+    },
     "Couldn't reach %@. The key is saved; models will load when you're online." : {
       "localizations" : {
         "de" : {
@@ -9894,6 +10434,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Não foi possível salvar"
+          }
+        }
+      }
+    },
+    "Couldn't send the recap: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Zusammenfassung konnte nicht gesendet werden: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo enviar el resumen: %@"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible d’envoyer le compte rendu : %@"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible d’envoyer le compte rendu : %@"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Não foi possível enviar o resumo: %@"
           }
         }
       }
@@ -12707,6 +13281,40 @@
         }
       }
     },
+    "Email subject" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Betreff"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asunto"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Objet"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Objet"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Assunto"
+          }
+        }
+      }
+    },
     "Email threads" : {
       "localizations" : {
         "de" : {
@@ -13665,6 +14273,40 @@
         }
       }
     },
+    "For Gmail reading. Create a Desktop OAuth client in your own Google Cloud project, add yourself as its user, and publish it (an unverified app is fine for yourself)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zum Lesen von Gmail. Erstellen Sie in Ihrem eigenen Google Cloud-Projekt einen Desktop-OAuth-Client, fügen Sie sich selbst als Nutzer hinzu und veröffentlichen Sie ihn (für Sie selbst genügt eine nicht bestätigte App)."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para leer Gmail. Crea un cliente OAuth de escritorio en tu propio proyecto de Google Cloud, agrégate como usuario y publícalo (para ti basta con una app sin verificar)."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pour lire Gmail. Créez un client OAuth de bureau dans votre propre projet Google Cloud, ajoutez-vous comme utilisateur et publiez-le (pour vous-même, une app non validée suffit)."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pour lire Gmail. Créez un client OAuth de bureau dans votre propre projet Google Cloud, ajoutez-vous comme utilisateur et publiez-le (pour vous-même, une app non validée suffit)."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Para ler o Gmail. Crie um cliente OAuth para computador no seu próprio projeto do Google Cloud, adicione-se como usuário e publique-o (para você mesmo, um app não verificado serve)."
+          }
+        }
+      }
+    },
     "Forget activity" : {
       "localizations" : {
         "de" : {
@@ -14521,6 +15163,74 @@
         }
       }
     },
+    "Gmail and Calendar text goes to Gemini only when its project has billing on, because Google may train on the free tier." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Text aus Gmail und Google Kalender geht nur an Gemini, wenn für dessen Projekt die Abrechnung aktiviert ist, weil Google mit Daten der kostenlosen Stufe trainieren kann."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El texto de Gmail y de Google Calendar solo va a Gemini si su proyecto tiene la facturación activada, porque Google puede entrenar con los datos del nivel gratuito."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le texte de Gmail et de Google Agenda n’est envoyé à Gemini que si la facturation est activée pour son projet, car Google peut s’entraîner sur les données de l’offre gratuite."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le texte de Gmail et de Google Agenda n'est envoyé à Gemini que si la facturation est activée pour son projet, car Google peut s'entraîner sur les données du forfait gratuit."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O texto do Gmail e do Google Agenda só vai para o Gemini quando o projeto dele tem o faturamento ativado, porque o Google pode treinar com dados do plano gratuito."
+          }
+        }
+      }
+    },
+    "Gmail and Google Calendar" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gmail und Google Kalender"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gmail y Google Calendar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gmail et Google Agenda"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gmail et Google Agenda"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gmail e Google Agenda"
+          }
+        }
+      }
+    },
     "Gmail connector is not configured" : {
       "localizations" : {
         "de" : {
@@ -14619,6 +15329,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "O Gmail não está conectado ou precisa ser reconectado. Verifique Configurações → Conectores e tente aprovar novamente."
+          }
+        }
+      }
+    },
+    "Gmail isn't connected, so this opens in your mail app." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gmail ist nicht verbunden, daher wird dies in Ihrer Mail-App geöffnet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gmail no está conectado, así que se abrirá en tu app de correo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gmail n’est pas connecté, le message s’ouvrira donc dans votre app de messagerie."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Gmail n’est pas connecté, le message s’ouvrira donc dans votre application de courriel."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Gmail não está conectado, então isto abre no seu app de e-mail."
           }
         }
       }
@@ -16254,6 +16998,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Entrar pelo %@"
+          }
+        }
+      }
+    },
+    "Join the Whimbrel Discord…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dem Whimbrel-Discord beitreten …"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unirse al Discord de Whimbrel…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rejoindre le Discord de Whimbrel…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rejoindre le Discord de Whimbrel…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entrar no Discord do Whimbrel…"
           }
         }
       }
@@ -18610,6 +19388,46 @@
         }
       }
     },
+    "Meeting recap: %@ (%@)" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meeting-Zusammenfassung: %1$@ (%2$@)"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Meeting recap: %1$@ (%2$@)"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumen de la reunión: %1$@ (%2$@)"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compte rendu de réunion : %1$@ (%2$@)"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compte rendu de réunion : %1$@ (%2$@)"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumo da reunião: %1$@ (%2$@)"
+          }
+        }
+      }
+    },
     "Meetings" : {
       "localizations" : {
         "de" : {
@@ -19456,6 +20274,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Mover para cima"
+          }
+        }
+      }
+    },
+    "My Google AI Studio project has billing on" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für mein Google AI Studio-Projekt ist die Abrechnung aktiviert"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mi proyecto de Google AI Studio tiene la facturación activada"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La facturation est activée pour mon projet Google AI Studio"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "La facturation est activée pour mon projet Google AI Studio"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meu projeto do Google AI Studio tem o faturamento ativado"
           }
         }
       }
@@ -20588,6 +21440,40 @@
         }
       }
     },
+    "No invitee has an email address. Add one below." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kein Teilnehmer hat eine E-Mail-Adresse. Fügen Sie unten eine hinzu."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ningún invitado tiene dirección de correo. Añade una abajo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucun invité n’a d’adresse e-mail. Ajoutez-en une ci-dessous."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucun invité n’a d’adresse courriel. Ajoutez-en une ci-dessous."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nenhum convidado tem endereço de e-mail. Adicione um abaixo."
+          }
+        }
+      }
+    },
     "No local model is installed." : {
       "localizations" : {
         "de" : {
@@ -20618,6 +21504,40 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Nenhum modelo local está instalado."
+          }
+        }
+      }
+    },
+    "No mail app opened. The recap is on the clipboard." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Es wurde keine Mail-App geöffnet. Die Zusammenfassung ist in der Zwischenablage."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se abrió ninguna app de correo. El resumen está en el portapapeles."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucune app de messagerie ne s’est ouverte. Le compte rendu est dans le presse-papiers."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aucune application de courriel ne s’est ouverte. Le compte rendu est dans le presse-papiers."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nenhum app de e-mail foi aberto. O resumo está na área de transferência."
           }
         }
       }
@@ -22662,6 +23582,40 @@
         }
       }
     },
+    "Off by default. Gmail threads wait until TypeSafe confirms it doesn't train on them. Then, for each thread waiting on you, Whimbrel sends TypeSafe only the redacted subject, the sender's name and domain, and the latest message cut to 1,000 characters. The key and this setting stay on this Mac. Local-only mode blocks it." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Standardmäßig aus. Gmail-Threads warten, bis TypeSafe bestätigt, dass es nicht mit ihnen trainiert. Danach sendet Whimbrel für jeden Thread, der auf Sie wartet, nur Folgendes an TypeSafe: den geschwärzten Betreff, Name und Domain des Absenders sowie die letzte Nachricht, auf 1.000 Zeichen gekürzt. Der Schlüssel und diese Einstellung bleiben auf diesem Mac. Der Nur-lokal-Modus blockiert dies."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desactivado de forma predeterminada. Los hilos de Gmail esperan hasta que TypeSafe confirme que no entrena con ellos. Después, por cada hilo que espera tu respuesta, Whimbrel envía a TypeSafe solo el asunto con datos ocultos, el nombre y el dominio del remitente, y el último mensaje recortado a 1,000 caracteres. La clave y este ajuste se quedan en esta Mac. El modo solo local lo bloquea."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Désactivé par défaut. Les fils Gmail attendent que TypeSafe confirme qu’il ne s’entraîne pas sur eux. Ensuite, pour chaque fil qui attend votre réponse, Whimbrel envoie uniquement à TypeSafe l’objet expurgé, le nom et le domaine de l’expéditeur, et le dernier message limité à 1 000 caractères. La clé et ce réglage restent sur ce Mac. Le mode local uniquement le bloque."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Désactivé par défaut. Les fils Gmail attendent que TypeSafe confirme qu'il ne s'entraîne pas sur eux. Ensuite, pour chaque fil qui attend votre réponse, Whimbrel envoie uniquement à TypeSafe l'objet expurgé, le nom et le domaine de l'expéditeur, et le dernier message tronqué à 1 000 caractères. La clé et ce réglage restent sur ce Mac. Le mode local uniquement le bloque."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desativado por padrão. As conversas do Gmail aguardam até que o TypeSafe confirme que não treina com elas. Depois, para cada conversa que aguarda você, o Whimbrel envia ao TypeSafe apenas o assunto com dados ocultados, o nome e o domínio do remetente e a mensagem mais recente cortada em 1.000 caracteres. A chave e esta configuração ficam neste Mac. O modo somente local bloqueia isso."
+          }
+        }
+      }
+    },
     "Off by default. When on, Whimbrel sends only these to TypeSafe for each Gmail thread waiting on you: the redacted subject, the sender's name and domain, and the latest message cut to 1,000 characters. The key and this setting stay on this Mac. Local-only mode blocks it." : {
       "localizations" : {
         "de" : {
@@ -22738,6 +23692,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Desativado por padrão. Quando ativado, depois que uma reunião da agenda é resumida, o Whimbrel envia o título do evento, os nomes dos participantes e o texto do resumo ao TypeSafe para verificar se o título corresponde ao que foi discutido. Usa a chave acima. Nunca é executado no modo somente local."
+          }
+        }
+      }
+    },
+    "Off keeps Gmail and Calendar text on this computer when Ollama runs elsewhere." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aus: Text aus Gmail und Google Kalender bleibt auf diesem Computer, wenn Ollama anderswo läuft."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desactivado, el texto de Gmail y de Google Calendar se queda en esta computadora cuando Ollama se ejecuta en otro lugar."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Désactivé, le texte de Gmail et de Google Agenda reste sur cet ordinateur quand Ollama tourne ailleurs."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Désactivé, le texte de Gmail et de Google Agenda reste sur cet ordinateur quand Ollama s'exécute ailleurs."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Desativado, o texto do Gmail e do Google Agenda fica neste computador quando o Ollama roda em outro lugar."
           }
         }
       }
@@ -23681,6 +24669,40 @@
         }
       }
     },
+    "Open in Mail" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In Mail öffnen"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir en Mail"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrir dans Mail"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ouvrir dans Mail"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abrir no Mail"
+          }
+        }
+      }
+    },
     "Open in new window" : {
       "localizations" : {
         "de" : {
@@ -24403,6 +25425,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "As páginas desses sites, e de seus subdomínios, são ignoradas antes de qualquer texto ser lido. Funciona em navegadores que expõem o endereço da página."
+          }
+        }
+      }
+    },
+    "Paste the recap here." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fügen Sie die Zusammenfassung hier ein."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pega aquí el resumen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collez le compte rendu ici."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Collez le compte rendu ici."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cole o resumo aqui."
           }
         }
       }
@@ -25665,6 +26721,86 @@
         }
       }
     },
+    "Re-summarize with Whimbrel" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit Whimbrel neu zusammenfassen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Re-summarize with Whimbrel"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volver a resumir con Whimbrel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refaire le résumé avec Whimbrel"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refaire le résumé avec Whimbrel"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumir de novo com o Whimbrel"
+          }
+        }
+      }
+    },
+    "Re-summarizing…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird neu zusammengefasst…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Re-summarizing…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumiendo de nuevo…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nouveau résumé en cours…"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nouveau résumé en cours…"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumindo de novo…"
+          }
+        }
+      }
+    },
     "Read the full list on the privacy page" : {
       "localizations" : {
         "de" : {
@@ -25899,6 +27035,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Recentes"
+          }
+        }
+      }
+    },
+    "Recipients" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Empfänger"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Destinatarios"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Destinataires"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Destinataires"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Destinatários"
           }
         }
       }
@@ -26625,6 +27795,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Remover o modelo local pequeno"
+          }
+        }
+      }
+    },
+    "Remove this Google account?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Google-Konto entfernen?"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "¿Quitar esta cuenta de Google?"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Supprimer ce compte Google ?"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retirer ce compte Google ?"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remover esta conta do Google?"
           }
         }
       }
@@ -29026,6 +30230,108 @@
         }
       }
     },
+    "Send recap" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zusammenfassung senden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviar resumen"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoyer le compte rendu"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoyer le compte rendu"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviar resumo"
+          }
+        }
+      }
+    },
+    "Sending only. Reading email needs your own Google project (Advanced)." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur Senden. Zum Lesen von E-Mails brauchen Sie Ihr eigenes Google-Projekt (Erweitert)."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Solo envío. Para leer el correo necesitas tu propio proyecto de Google (Avanzado)."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoi uniquement. Pour lire les e-mails, il vous faut votre propre projet Google (Avancé)."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoi seulement. Pour lire les courriels, il vous faut votre propre projet Google (Avancé)."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Somente envio. Para ler e-mails, você precisa do seu próprio projeto do Google (Avançado)."
+          }
+        }
+      }
+    },
+    "Sends from %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird von %@ gesendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se envía desde %@."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoi depuis %@."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoi depuis %@."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviado de %@."
+          }
+        }
+      }
+    },
     "Sends short excerpts of emails, meetings, calendar events and screen activity to TypeSafe to choose a topic." : {
       "localizations" : {
         "de" : {
@@ -29060,6 +30366,40 @@
         }
       }
     },
+    "Sends short excerpts of emails, meetings, calendar events and screen activity to TypeSafe to choose a topic. Gmail and Google Calendar items wait until TypeSafe confirms it doesn't train on them." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sendet kurze Auszüge aus E-Mails, Meetings, Kalenderterminen und Bildschirmaktivität an TypeSafe, um ein Thema zu wählen. Einträge aus Gmail und Google Kalender warten, bis TypeSafe bestätigt, dass es nicht mit ihnen trainiert."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envía fragmentos breves de correos, reuniones, eventos del calendario y actividad de pantalla a TypeSafe para elegir un tema. Los elementos de Gmail y de Google Calendar esperan hasta que TypeSafe confirme que no entrena con ellos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoie de courts extraits de courriels, de réunions, d’événements d’agenda et d’activité à l’écran à TypeSafe pour choisir un sujet. Les éléments de Gmail et de Google Agenda attendent que TypeSafe confirme qu’il ne s’entraîne pas sur eux."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoie de courts extraits de courriels, de réunions, d’événements de calendrier et d’activité à l’écran à TypeSafe pour choisir un sujet. Les éléments de Gmail et de Google Agenda attendent que TypeSafe confirme qu'il ne s'entraîne pas sur eux."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envia trechos curtos de e-mails, reuniões, eventos da agenda e atividade da tela ao TypeSafe para escolher um tópico. Os itens do Gmail e do Google Agenda aguardam até que o TypeSafe confirme que não treina com eles."
+          }
+        }
+      }
+    },
     "Sends short excerpts of topic emails, meeting action items and Teams screens to TypeSafe to find steps you owe and are owed. Off: your local model does this." : {
       "localizations" : {
         "de" : {
@@ -29090,6 +30430,108 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Envia trechos curtos de e-mails dos tópicos, itens de ação de reuniões e telas do Teams ao TypeSafe para encontrar o que você deve e o que devem a você. Desligado: seu modelo local faz isso."
+          }
+        }
+      }
+    },
+    "Sent the recap to %lld people" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zusammenfassung an %lld Personen gesendet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumen enviado a %lld personas"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compte rendu envoyé à %lld personnes"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compte rendu envoyé à %lld personnes"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumo enviado para %lld pessoas"
+          }
+        }
+      }
+    },
+    "Sent the recap to 1 person" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zusammenfassung an 1 Person gesendet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumen enviado a 1 persona"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compte rendu envoyé à 1 personne"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compte rendu envoyé à 1 personne"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumo enviado para 1 pessoa"
+          }
+        }
+      }
+    },
+    "Sent with Whimbrel" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit Whimbrel gesendet"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviado con Whimbrel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoyé avec Whimbrel"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Envoyé avec Whimbrel"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviado com o Whimbrel"
           }
         }
       }
@@ -29882,6 +31324,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Reduzir imagens após"
+          }
+        }
+      }
+    },
+    "Sign in to Whimbrel" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bei Whimbrel anmelden"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Sign in to Whimbrel"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Iniciar sesión en Whimbrel"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se connecter à Whimbrel"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se connecter à Whimbrel"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Entrar no Whimbrel"
           }
         }
       }
@@ -31946,6 +33428,326 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "Os resumos usam %1$@, %2$@."
+          }
+        }
+      }
+    },
+    "Summarized on this Mac with %@ because Whimbrel does not offer the chosen model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf diesem Mac mit %1$@ zusammengefasst, weil Whimbrel das gewählte Modell nicht anbietet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Summarized on this Mac with %1$@ because Whimbrel does not offer the chosen model."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido en esta Mac con %1$@ porque Whimbrel no ofrece el modelo elegido."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé sur ce Mac avec %1$@, car Whimbrel ne propose pas le modèle choisi."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé sur ce Mac avec %1$@, car Whimbrel ne propose pas le modèle choisi."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido neste Mac com %1$@ porque o Whimbrel não oferece o modelo escolhido."
+          }
+        }
+      }
+    },
+    "Summarized on this Mac with %@ because Whimbrel was not available." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf diesem Mac mit %1$@ zusammengefasst, weil Whimbrel nicht verfügbar war."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Summarized on this Mac with %1$@ because Whimbrel was not available."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido en esta Mac con %1$@ porque Whimbrel no estaba disponible."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé sur ce Mac avec %1$@, car Whimbrel n’était pas disponible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé sur ce Mac avec %1$@, car Whimbrel n’était pas disponible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido neste Mac com %1$@ porque o Whimbrel não estava disponível."
+          }
+        }
+      }
+    },
+    "Summarized on this Mac with %@ because you were not signed in to Whimbrel." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf diesem Mac mit %1$@ zusammengefasst, weil Sie nicht bei Whimbrel angemeldet waren."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Summarized on this Mac with %1$@ because you were not signed in to Whimbrel."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido en esta Mac con %1$@ porque no habías iniciado sesión en Whimbrel."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé sur ce Mac avec %1$@, car vous n’étiez pas connecté à Whimbrel."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé sur ce Mac avec %1$@, car vous n’étiez pas connecté à Whimbrel."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido neste Mac com %1$@ porque você não estava conectado ao Whimbrel."
+          }
+        }
+      }
+    },
+    "Summarized on this Mac with %@ because your Whimbrel AI credit or budget ran out." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auf diesem Mac mit %1$@ zusammengefasst, weil Ihr Whimbrel-KI-Guthaben oder -Budget aufgebraucht war."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Summarized on this Mac with %1$@ because your Whimbrel AI credit or budget ran out."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido en esta Mac con %1$@ porque se agotó tu crédito o presupuesto de IA de Whimbrel."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé sur ce Mac avec %1$@, car votre crédit ou budget d’IA Whimbrel était épuisé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé sur ce Mac avec %1$@, car votre crédit ou budget d’IA Whimbrel était épuisé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido neste Mac com %1$@ porque seu crédito ou orçamento de IA do Whimbrel acabou."
+          }
+        }
+      }
+    },
+    "Summarized with %@ because Whimbrel does not offer the chosen model." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit %1$@ zusammengefasst, weil Whimbrel das gewählte Modell nicht anbietet."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Summarized with %1$@ because Whimbrel does not offer the chosen model."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido con %1$@ porque Whimbrel no ofrece el modelo elegido."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé avec %1$@, car Whimbrel ne propose pas le modèle choisi."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé avec %1$@, car Whimbrel ne propose pas le modèle choisi."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido com %1$@ porque o Whimbrel não oferece o modelo escolhido."
+          }
+        }
+      }
+    },
+    "Summarized with %@ because Whimbrel was not available." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit %1$@ zusammengefasst, weil Whimbrel nicht verfügbar war."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Summarized with %1$@ because Whimbrel was not available."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido con %1$@ porque Whimbrel no estaba disponible."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé avec %1$@, car Whimbrel n’était pas disponible."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé avec %1$@, car Whimbrel n’était pas disponible."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido com %1$@ porque o Whimbrel não estava disponível."
+          }
+        }
+      }
+    },
+    "Summarized with %@ because you were not signed in to Whimbrel." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit %1$@ zusammengefasst, weil Sie nicht bei Whimbrel angemeldet waren."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Summarized with %1$@ because you were not signed in to Whimbrel."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido con %1$@ porque no habías iniciado sesión en Whimbrel."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé avec %1$@, car vous n’étiez pas connecté à Whimbrel."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé avec %1$@, car vous n’étiez pas connecté à Whimbrel."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido com %1$@ porque você não estava conectado ao Whimbrel."
+          }
+        }
+      }
+    },
+    "Summarized with %@ because your Whimbrel AI credit or budget ran out." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mit %1$@ zusammengefasst, weil Ihr Whimbrel-KI-Guthaben oder -Budget aufgebraucht war."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Summarized with %1$@ because your Whimbrel AI credit or budget ran out."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido con %1$@ porque se agotó tu crédito o presupuesto de IA de Whimbrel."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé avec %1$@, car votre crédit ou budget d’IA Whimbrel était épuisé."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Résumé avec %1$@, car votre crédit ou budget d’IA Whimbrel était épuisé."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Resumido com %1$@ porque seu crédito ou orçamento de IA do Whimbrel acabou."
           }
         }
       }
@@ -35182,6 +36984,142 @@
         }
       }
     },
+    "This removes this account's Calendar events from this Mac and revokes Whimbrel's access to the account with Google. Meetings you recorded are kept." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dadurch werden die Kalendertermine dieses Kontos von diesem Mac entfernt, und der Zugriff von Whimbrel auf das Konto wird bei Google widerrufen. Von Ihnen aufgezeichnete Besprechungen bleiben erhalten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esto quita los eventos de calendario de esta cuenta de esta Mac y revoca ante Google el acceso de Whimbrel a la cuenta. Las reuniones que grabaste se conservan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cela supprime les événements d’agenda de ce compte de ce Mac et révoque auprès de Google l’accès de Whimbrel au compte. Les réunions que vous avez enregistrées sont conservées."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cela supprime les événements d’agenda de ce compte de ce Mac et révoque auprès de Google l’accès de Whimbrel au compte. Les réunions que vous avez enregistrées sont conservées."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Isso remove os eventos de agenda desta conta deste Mac e revoga no Google o acesso do Whimbrel à conta. As reuniões que você gravou são mantidas."
+          }
+        }
+      }
+    },
+    "This removes this account's Calendar events from this Mac. Whimbrel keeps its Google access to this address while another Whimbrel connection to it remains. Meetings you recorded are kept." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dadurch werden die Kalendertermine dieses Kontos von diesem Mac entfernt. Whimbrel behält seinen Google-Zugriff auf diese Adresse, solange eine andere Whimbrel-Verbindung sie nutzt. Von Ihnen aufgezeichnete Besprechungen bleiben erhalten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esto quita los eventos de calendario de esta cuenta de esta Mac. Whimbrel conserva su acceso de Google a esta dirección mientras haya otra conexión de Whimbrel con ella. Las reuniones que grabaste se conservan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cela supprime les événements d’agenda de ce compte de ce Mac. Whimbrel conserve son accès Google à cette adresse tant qu’une autre connexion Whimbrel l’utilise. Les réunions que vous avez enregistrées sont conservées."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cela supprime les événements d’agenda de ce compte de ce Mac. Whimbrel conserve son accès Google à cette adresse tant qu’une autre connexion Whimbrel l’utilise. Les réunions que vous avez enregistrées sont conservées."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Isso remove os eventos de agenda desta conta deste Mac. O Whimbrel mantém o acesso do Google a este endereço enquanto houver outra conexão do Whimbrel com ele. As reuniões que você gravou são mantidas."
+          }
+        }
+      }
+    },
+    "This removes this account's Gmail data from this Mac and revokes Whimbrel's access to the account with Google." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dadurch werden die Gmail-Daten dieses Kontos von diesem Mac entfernt, und der Zugriff von Whimbrel auf das Konto wird bei Google widerrufen."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esto quita los datos de Gmail de esta cuenta de esta Mac y revoca ante Google el acceso de Whimbrel a la cuenta."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cela supprime les données Gmail de ce compte de ce Mac et révoque auprès de Google l’accès de Whimbrel au compte."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cela supprime les données Gmail de ce compte de ce Mac et révoque auprès de Google l’accès de Whimbrel au compte."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Isso remove os dados do Gmail desta conta deste Mac e revoga no Google o acesso do Whimbrel à conta."
+          }
+        }
+      }
+    },
+    "This removes this account's Gmail data from this Mac. Whimbrel keeps its Google access to this address while another Whimbrel connection to it remains." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dadurch werden die Gmail-Daten dieses Kontos von diesem Mac entfernt. Whimbrel behält seinen Google-Zugriff auf diese Adresse, solange eine andere Whimbrel-Verbindung sie nutzt."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esto quita los datos de Gmail de esta cuenta de esta Mac. Whimbrel conserva su acceso de Google a esta dirección mientras haya otra conexión de Whimbrel con ella."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cela supprime les données Gmail de ce compte de ce Mac. Whimbrel conserve son accès Google à cette adresse tant qu’une autre connexion Whimbrel l’utilise."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cela supprime les données Gmail de ce compte de ce Mac. Whimbrel conserve son accès Google à cette adresse tant qu’une autre connexion Whimbrel l’utilise."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Isso remove os dados do Gmail desta conta deste Mac. O Whimbrel mantém o acesso do Google a este endereço enquanto houver outra conexão do Whimbrel com ele."
+          }
+        }
+      }
+    },
     "This skin is too big to export (more than 64 MB or 200 files), so it couldn't be imported again." : {
       "localizations" : {
         "de" : {
@@ -37625,6 +39563,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Usar este computador"
+          }
+        }
+      }
+    },
+    "Use your own Google Cloud project" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Eigenes Google Cloud-Projekt verwenden"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usar tu propio proyecto de Google Cloud"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser votre propre projet Google Cloud"
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Utiliser votre propre projet Google Cloud"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Usar seu próprio projeto do Google Cloud"
           }
         }
       }

@@ -187,8 +187,8 @@ struct TodayView: View {
     private func refresh() {
         guard let store = appState.coreStore else { recentLoaded = true; loadDigestIfNeeded(); return }
         let nextPrepKey = content.upcoming.first.map { TodayLogic.prepKey(eventId: $0.id, start: $0.start) }
-        let events = (appState.allUpcomingMeetings + appState.upcomingWeekMeetings).map { (id: $0.id, title: $0.title) }
-        let prepKeys = Set((appState.allUpcomingMeetings + appState.upcomingWeekMeetings).map { TodayLogic.prepKey(eventId: $0.id, start: $0.startDate) })
+        let events = (appState.allMeetingsWithSynced + appState.upcomingWeekMeetings).map { (id: $0.id, title: $0.title) }
+        let prepKeys = Set((appState.allMeetingsWithSynced + appState.upcomingWeekMeetings).map { TodayLogic.prepKey(eventId: $0.id, start: $0.startDate) })
         CoreMemoryStore.accessQueue.async {
             let prep = nextPrepKey.flatMap { store.meetingPrep(key: $0) }
             // A full key finds only that occurrence's brief; keep the ones that read.

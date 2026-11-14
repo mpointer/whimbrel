@@ -38,6 +38,10 @@ pub mod keys {
     /// docs/superpowers/specs/2026-10-29-cheap-first-routing-and-key-on-ramp-design.md).
     pub const CHEAP_FIRST: &str = "routing.cheapFirst";
     pub const USE_LOCAL_MODEL: &str = "routing.useLocalModel";
+    /// Google "Limited Use" switches (core `llm::limited_use`, 2026-11-12). Device-local: not in
+    /// settings sync, since whether a key's project has billing on is this PC's key's business.
+    pub const GOOGLE_AI_BILLING_CONFIRMED: &str = "routing.googleAIBillingConfirmed";
+    pub const REMOTE_OLLAMA_GOOGLE_DATA: &str = "routing.remoteOllamaGoogleData";
     /// Device-local: OpenRouter prices cached from the catalogue when the key was last
     /// checked, `{model: {in, out}}` in cents per 1K tokens, the shape core parses.
     pub const OPENROUTER_PRICES: &str = "routing.openrouterPrices";
@@ -202,6 +206,12 @@ pub struct RoutingSettings {
     pub cheap_first: bool,
     /// Whether Ollama is a link in the chain at all; ignored in local-only mode. On by default.
     pub use_local_model: bool,
+    /// The user says their Google AI Studio key's project has billing on, so Gemini may get
+    /// Gmail and Calendar text (Google may train on the free tier). Off by default.
+    pub google_ai_billing_confirmed: bool,
+    /// Gmail and Calendar text may go to a cloud or remote Ollama model. Off by default. Windows
+    /// only talks to Ollama on 127.0.0.1, so this matters for Ollama's `-cloud` models.
+    pub remote_ollama_google_data: bool,
     /// Cents per 1K input and output per OpenRouter model id, cached from the catalogue by
     /// the key check. Device-local and never part of the DTO: the UI never edits it.
     #[serde(skip)]
@@ -232,6 +242,8 @@ impl Default for RoutingSettings {
             local_only: false,
             cheap_first: true,
             use_local_model: true,
+            google_ai_billing_confirmed: false,
+            remote_ollama_google_data: false,
             openrouter_prices: BTreeMap::new(),
             output_language: String::new(),
         }
@@ -239,6 +251,21 @@ impl Default for RoutingSettings {
 }
 
 impl RoutingSettings {
+    /// Core's Limited Use settings from these routing settings. Windows streams Ask, meeting Ask and
+    /// window Ask against `ollama_model` on 127.0.0.1, so that is the streamed Ollama model.
+    pub fn limited_use(&self) -> api::routing::LimitedUseSettings {
+        let model = self.ollama_model.trim();
+        api::routing::LimitedUseSettings {
+            policy: llm::limited_use::GoogleDataPolicy {
+                google_ai_billing_confirmed: self.google_ai_billing_confirmed,
+                remote_ollama_google_data: self.remote_ollama_google_data,
+            },
+            streamed_ollama_model: (!model.is_empty()).then(|| model.to_string()),
+            // Windows only talks to Ollama on 127.0.0.1: core's default host.
+            streamed_ollama_base_url: None,
+        }
+    }
+
     /// The model the preferred provider is set to use.
     pub fn preferred_model(&self) -> &str {
         match self.preferred_provider {
@@ -267,6 +294,10 @@ impl RoutingSettings {
     /// instructions differ by surface (Ask, digest, …) and keys can change at any time.
     /// Never persisted: it carries API keys.
     pub fn routing_config(&self, keys: &ApiKeys, instructions: &Instructions) -> api::RoutingConfig {
+        // Core keeps the Limited Use switches process-wide (not RoutingConfig fields). Every call
+        // builds its config here from the current settings, so setting them here keeps core current
+        // at startup and after any AI settings change, before any prompt is built.
+        api::routing::set_limited_use_settings(self.limited_use());
         api::RoutingConfig {
             anthropic_key: keys.anthropic.clone(),
             openai_key: keys.openai.clone(),
@@ -524,6 +555,8 @@ impl SettingsFile {
             local_only: self.get(keys::LOCAL_ONLY_MODE).unwrap_or(d.local_only),
             cheap_first: self.get(keys::CHEAP_FIRST).unwrap_or(d.cheap_first),
             use_local_model: self.get(keys::USE_LOCAL_MODEL).unwrap_or(d.use_local_model),
+            google_ai_billing_confirmed: self.get(keys::GOOGLE_AI_BILLING_CONFIRMED).unwrap_or(d.google_ai_billing_confirmed),
+            remote_ollama_google_data: self.get(keys::REMOTE_OLLAMA_GOOGLE_DATA).unwrap_or(d.remote_ollama_google_data),
             openrouter_prices: self.openrouter_prices(),
             output_language: crate::l10n::output_language(&self.output_language_override(), self.multilingual()),
         }
@@ -566,6 +599,8 @@ impl SettingsFile {
         self.set(keys::LOCAL_ONLY_MODE, Some(r.local_only));
         self.set(keys::CHEAP_FIRST, Some(r.cheap_first));
         self.set(keys::USE_LOCAL_MODEL, Some(r.use_local_model));
+        self.set(keys::GOOGLE_AI_BILLING_CONFIRMED, Some(r.google_ai_billing_confirmed));
+        self.set(keys::REMOTE_OLLAMA_GOOGLE_DATA, Some(r.remote_ollama_google_data));
     }
 
     /// Stored as `{model: {"in": cents, "out": cents}}`, the shape core's parser reads.
@@ -1264,6 +1299,21 @@ mod tests {
 
         assert_eq!(SettingsFile::load(&path).routing(), routing);
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn the_limited_use_switches_default_off_round_trip_and_name_the_streamed_ollama_model() {
+        let mut s = SettingsFile::load(&temp_path("limiteduse"));
+        let r = s.routing();
+        assert!(!r.google_ai_billing_confirmed && !r.remote_ollama_google_data, "both off until the user turns them on");
+        s.set_routing(&RoutingSettings { google_ai_billing_confirmed: true, remote_ollama_google_data: true, ollama_model: "qwen3:8b".into(), ..r });
+        let r = s.routing();
+        assert!(r.google_ai_billing_confirmed && r.remote_ollama_google_data);
+        let lu = r.limited_use();
+        assert!(lu.policy.google_ai_billing_confirmed && lu.policy.remote_ollama_google_data);
+        assert_eq!(lu.streamed_ollama_model.as_deref(), Some("qwen3:8b"));
+        let none = RoutingSettings { ollama_model: "  ".into(), ..RoutingSettings::default() }.limited_use();
+        assert_eq!(none.streamed_ollama_model, None, "an empty model is unknown, which core treats as not on this device");
     }
 
     #[test]

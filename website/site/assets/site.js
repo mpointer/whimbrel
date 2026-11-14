@@ -96,6 +96,8 @@
       "Registering…": "Registrando…",
       "Something went wrong. Please try again.": "Algo salió mal. Inténtalo de nuevo.",
       "Network error. Check your connection and try again.": "Error de red. Revisa tu conexión e inténtalo de nuevo.",
+      "Check your email to confirm.": "Revisa tu correo para confirmar.",
+      "You're already on the list.": "Ya estás en la lista.",
     },
     "fr-CA": {
       "Enter your name.": "Entrez votre nom.",
@@ -106,9 +108,41 @@
       "Registering…": "Inscription…",
       "Something went wrong. Please try again.": "Une erreur s’est produite. Veuillez réessayer.",
       "Network error. Check your connection and try again.": "Erreur réseau. Vérifiez votre connexion et réessayez.",
+      "Check your email to confirm.": "Vérifiez vos courriels pour confirmer.",
+      "You're already on the list.": "Vous êtes déjà sur la liste.",
     },
   };
   function text(s) { return (messages[lang] && messages[lang][s]) || s; }
+
+  // Thank-you page: offer product emails to a registered visitor who isn't opted in yet.
+  // The button mails the same double opt-in confirmation as the form's box.
+  var updatesAsk = document.querySelector("[data-updates-ask]");
+  if (updatesAsk) {
+    fetch("/api/email/updates-status", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) { if (data && data.opted_in === false) updatesAsk.hidden = false; })
+      .catch(function () {});
+    var updatesButton = updatesAsk.querySelector("[data-updates-button]");
+    var updatesResult = updatesAsk.querySelector("[data-updates-result]");
+    var updatesSay = function (message, isError) {
+      updatesResult.textContent = text(message);
+      updatesResult.classList.toggle("is-error", isError);
+      updatesButton.disabled = isError ? false : true;
+      updatesButton.hidden = !isError;
+    };
+    updatesButton.addEventListener("click", function () {
+      updatesButton.disabled = true;
+      fetch("/api/email/request-updates", { method: "POST", credentials: "same-origin" })
+        .then(function (r) { return r.json().catch(function () { return {}; }); })
+        .then(function (res) {
+          if (res.status === "no_lead") updatesAsk.hidden = true;
+          else if (res.status === "sent" || res.status === "too_soon") updatesSay("Check your email to confirm.", false);
+          else if (res.status === "already") updatesSay("You're already on the list.", false);
+          else updatesSay("Something went wrong. Please try again.", true);
+        })
+        .catch(function () { updatesSay("Network error. Check your connection and try again.", true); });
+    });
+  }
 
   // The download form, or the mobile beta form (/mobile-beta/): same fields, spam guard and flow.
   var form = document.getElementById("register-form") || document.getElementById("beta-form");

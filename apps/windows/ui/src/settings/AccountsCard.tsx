@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import { GOOGLE_CLIENT_CHANGED } from "./googleClientModel";
 import { calendarAccounts, calendarConnect, calendarDisconnect, calendarReconnect, calendarSyncNow } from "../api";
+import { RemoveGoogleAccount } from "./RemoveGoogleAccount";
 import { describeError, isCommandError } from "../errors";
 import type { CalendarAccounts } from "../generated/types";
 import { t, useL10n } from "../l10n";
@@ -14,6 +16,7 @@ function message(e: unknown): string {
 export function AccountsCard() {
   const [accounts, setAccounts] = useState<CalendarAccounts | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { locale } = useL10n();
 
@@ -27,6 +30,10 @@ export function AccountsCard() {
 
   useEffect(() => {
     void load();
+    // Saving or clearing your own Google client means signing in again: show it at once.
+    const reload = () => void load();
+    window.addEventListener(GOOGLE_CLIENT_CHANGED, reload);
+    return () => window.removeEventListener(GOOGLE_CLIENT_CHANGED, reload);
   }, [load]);
 
   const run = (call: () => Promise<CalendarAccounts>) => {
@@ -66,9 +73,21 @@ export function AccountsCard() {
                 </>
               )}
               {calendarAccessNote(accounts, email) && <span className="small sign-in-expired">{calendarAccessNote(accounts, email)}</span>}
-              <button className="mode" disabled={busy} onClick={() => run(() => calendarDisconnect(email))}>
+              <button className="mode" disabled={busy} onClick={() => setConfirmRemove(email)}>
                 {t("Disconnect")}
               </button>
+              {confirmRemove === email && (
+                <RemoveGoogleAccount
+                  service="calendar"
+                  email={email}
+                  busy={busy}
+                  onRemove={() => {
+                    setConfirmRemove(null);
+                    run(() => calendarDisconnect(email));
+                  }}
+                  onCancel={() => setConfirmRemove(null)}
+                />
+              )}
             </li>
           ))}
         </ul>

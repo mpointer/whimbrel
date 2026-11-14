@@ -149,6 +149,24 @@ pub fn run_daily_brief(
     custom_instructions: &str,
     lang: &str,
 ) -> Result<RoutineRunOutcome, llm::LlmError> {
+    run_daily_brief_with(store, llm_client, yesterday_start_unix_ms, yesterday_end_unix_ms, today_events, ran_at_unix_ms, custom_instructions, lang, false)
+}
+
+/// [`run_daily_brief`] with Limited Use stated: `allow_google_data` is whether `llm_client`'s link
+/// may receive Gmail and Google Calendar text (`llm::limited_use`); when it may not, Gmail
+/// threads are left out of the context. [`run_daily_brief`] leaves them out.
+#[allow(clippy::too_many_arguments)]
+pub fn run_daily_brief_with(
+    store: &memory::Store,
+    llm_client: &dyn llm::LlmClient,
+    yesterday_start_unix_ms: i64,
+    yesterday_end_unix_ms: i64,
+    today_events: &[CalendarEventSummary],
+    ran_at_unix_ms: i64,
+    custom_instructions: &str,
+    lang: &str,
+    allow_google_data: bool,
+) -> Result<RoutineRunOutcome, llm::LlmError> {
     let items = llm::gather_and_assemble_context_for_window(
         store,
         "",
@@ -158,6 +176,7 @@ pub fn run_daily_brief(
         20,
         true,
     );
+    let items = llm::limited_use::filter_context_in(store, &items, allow_google_data);
     let digest = llm::generate_daily_digest_from_context_in(
         llm_client,
         &items,
@@ -240,6 +259,25 @@ pub fn run_eod_recap(
     custom_instructions: &str,
     lang: &str,
 ) -> Result<EodRecapOutcome, llm::LlmError> {
+    run_eod_recap_with(store, llm_client, today_start_unix_ms, today_end_unix_ms, ran_at_unix_ms, gmail_connected, recipient_email, custom_instructions, lang, false)
+}
+
+/// [`run_eod_recap`] with Limited Use stated: `allow_google_data` is whether `llm_client`'s link
+/// may receive Gmail and Google Calendar text (`llm::limited_use`); when it may not, Gmail
+/// threads are left out of the context. [`run_eod_recap`] leaves them out.
+#[allow(clippy::too_many_arguments)]
+pub fn run_eod_recap_with(
+    store: &memory::Store,
+    llm_client: &dyn llm::LlmClient,
+    today_start_unix_ms: i64,
+    today_end_unix_ms: i64,
+    ran_at_unix_ms: i64,
+    gmail_connected: bool,
+    recipient_email: Option<&str>,
+    custom_instructions: &str,
+    lang: &str,
+    allow_google_data: bool,
+) -> Result<EodRecapOutcome, llm::LlmError> {
     let items = llm::gather_and_assemble_context_for_window(
         store,
         "",
@@ -249,6 +287,7 @@ pub fn run_eod_recap(
         20,
         true,
     );
+    let items = llm::limited_use::filter_context_in(store, &items, allow_google_data);
     let digest = llm::generate_daily_digest_from_context_in(
         llm_client,
         &items,
@@ -324,6 +363,24 @@ pub fn run_weekly_digest(
     recipient_email: Option<&str>,
     custom_instructions: &str,
 ) -> Result<EodRecapOutcome, llm::LlmError> {
+    run_weekly_digest_with(store, llm_client, week_start_unix_ms, week_end_unix_ms, ran_at_unix_ms, gmail_connected, recipient_email, custom_instructions, false)
+}
+
+/// [`run_weekly_digest`] with Limited Use stated: `allow_google_data` is whether `llm_client`'s link
+/// may receive Gmail and Google Calendar text (`llm::limited_use`); when it may not, Gmail
+/// threads are left out of the context. [`run_weekly_digest`] leaves them out.
+#[allow(clippy::too_many_arguments)]
+pub fn run_weekly_digest_with(
+    store: &memory::Store,
+    llm_client: &dyn llm::LlmClient,
+    week_start_unix_ms: i64,
+    week_end_unix_ms: i64,
+    ran_at_unix_ms: i64,
+    gmail_connected: bool,
+    recipient_email: Option<&str>,
+    custom_instructions: &str,
+    allow_google_data: bool,
+) -> Result<EodRecapOutcome, llm::LlmError> {
     let items = llm::gather_and_assemble_context_for_window(
         store,
         "",
@@ -333,6 +390,7 @@ pub fn run_weekly_digest(
         60,
         true,
     );
+    let items = llm::limited_use::filter_context_in(store, &items, allow_google_data);
     let digest = llm::generate_weekly_digest_from_context(
         llm_client,
         &items,
@@ -497,6 +555,50 @@ mod tests {
 
     fn local(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<Local> {
         Local.with_ymd_and_hms(y, mo, d, h, mi, 0).unwrap()
+    }
+
+    /// Records the prompt it is sent.
+    struct PromptRecorder(std::cell::RefCell<Vec<String>>);
+
+    impl llm::LlmClient for PromptRecorder {
+        fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            self.0.borrow_mut().push(prompt.to_string());
+            Ok(llm::Completion { text: r#"{"summary":"s","open_loops":[]}"#.into(), token_usage: llm::TokenUsage::default() })
+        }
+    }
+
+    /// Limited Use: a routine's digest holds Gmail threads only for a link that may receive
+    /// them; the plain entry point leaves them out.
+    #[test]
+    fn daily_brief_holds_gmail_threads_only_when_the_link_may_receive_them() {
+        let store = memory::Store::open_in_memory().unwrap();
+        store
+            .upsert_email_items(&[memory::NewEmailItem {
+                device_id: "dev-1".into(),
+                external_id: "m-1".into(),
+                ts_unix_ms: 1_000,
+                from: "Priya <priya@x.com>".into(),
+                to: "me@x.com".into(),
+                subject: "GMAILSUBJECT".into(),
+                body_text: "hi".into(),
+                gmail_thread_id: "t-1".into(),
+                account_email: "me@x.com".into(),
+                ..Default::default()
+            }])
+            .unwrap();
+        while store.run_thread_state_sync_job(1_500).unwrap() {}
+        let prompt = |allow: Option<bool>| {
+            let client = PromptRecorder(Default::default());
+            match allow {
+                Some(allow) => run_daily_brief_with(&store, &client, 0, 2_000, &[], 50_000, "", "", allow).unwrap(),
+                None => run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "", "").unwrap(),
+            };
+            let joined = client.0.borrow().join("\n");
+            joined
+        };
+        assert!(prompt(Some(true)).contains("GMAILSUBJECT"));
+        assert!(!prompt(Some(false)).contains("GMAILSUBJECT"));
+        assert!(!prompt(None).contains("GMAILSUBJECT"));
     }
 
     struct StubLlmClient {

@@ -52,6 +52,14 @@ pub fn retitle_if_mismatched(
     {
         return false;
     }
+    // Limited Use: a title and attendees that may have come from Google Calendar are not
+    // sent to TypeSafe until it confirms it does not train on API data. The calendar the
+    // meeting came from is the one recorded when it was created, so renaming or removing
+    // the event later does not release it, and a meeting whose source was never recorded
+    // is held. Not marked checked, so the check runs once TypeSafe has confirmed.
+    if !memory::limited_use::TYPESAFE_GOOGLE_DATA_CONFIRMED && store.meeting_may_hold_google_calendar_data(meeting_id) {
+        return false;
+    }
     let input = TitleMatchInput {
         event_title: redacted(&meeting.title),
         attendees: meeting.attendees.iter().map(|a| redacted(a)).collect(),
@@ -150,6 +158,13 @@ mod tests {
             .unwrap()
     }
 
+    /// A calendar meeting recorded as coming from a non-Google calendar.
+    fn other_calendar_meeting(store: &Store, title: &str) -> i64 {
+        let id = meeting(store, title, MeetingTrigger::Calendar);
+        assert!(store.set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_OTHER).unwrap());
+        id
+    }
+
     fn title(store: &Store, id: i64) -> String {
         store.get_meeting(id).unwrap().unwrap().title
     }
@@ -168,7 +183,7 @@ mod tests {
     #[test]
     fn a_mismatch_retitles_once_and_a_second_call_is_skipped() {
         let store = Store::open_in_memory().unwrap();
-        let id = meeting(&store, "CMS Daily Win Room", MeetingTrigger::Calendar);
+        let id = other_calendar_meeting(&store, "CMS Daily Win Room");
         let m = fake(Mode::Answer(0.05));
         assert!(run(&store, id, &m));
         assert_eq!(title(&store, id), RETITLED);
@@ -177,10 +192,74 @@ mod tests {
         assert_eq!(title(&store, id), RETITLED);
     }
 
+    fn calendar_event(store: &Store, source: &str, title: &str) {
+        store
+            .upsert_calendar_event_items(&[memory::NewCalendarEventItem {
+                device_id: "d".into(),
+                source: source.into(),
+                external_id: "evt#1".into(),
+                ts_unix_ms: 1,
+                title: title.into(),
+                actors: vec![],
+            }])
+            .unwrap();
+    }
+
+    /// Limited Use: a title that matches a Google Calendar event is not sent to TypeSafe,
+    /// and the meeting stays unchecked for when TypeSafe confirms its terms.
+    #[test]
+    fn a_google_calendar_meeting_is_not_sent_to_typesafe() {
+        let store = Store::open_in_memory().unwrap();
+        calendar_event(&store, "google_calendar", "CMS Daily Win Room");
+        let id = meeting(&store, "CMS Daily Win Room", MeetingTrigger::Calendar);
+        let m = fake(Mode::Answer(0.05));
+        assert!(!run(&store, id, &m));
+        assert_eq!(m.calls.get(), 0);
+        assert!(!store.title_checked(id).unwrap());
+
+        // The same title from Apple Calendar is not Google user data.
+        let store = Store::open_in_memory().unwrap();
+        calendar_event(&store, "apple_calendar", "CMS Daily Win Room");
+        let id = meeting(&store, "CMS Daily Win Room", MeetingTrigger::Calendar);
+        assert!(run(&store, id, &m));
+    }
+
+    /// The event the meeting came from is renamed or removed afterwards: the meeting still
+    /// holds a Google-sourced title, so it is still not sent.
+    #[test]
+    fn a_google_meeting_stays_held_after_its_event_is_renamed_or_removed() {
+        for rename in [true, false] {
+            let store = Store::open_in_memory().unwrap();
+            calendar_event(&store, "google_calendar", "CMS Daily Win Room");
+            let id = meeting(&store, "CMS Daily Win Room", MeetingTrigger::Calendar);
+            if rename {
+                calendar_event(&store, "google_calendar", "Renamed event");
+            } else {
+                store.delete_calendar_event_items(&["evt".to_string()]).unwrap();
+            }
+            let m = fake(Mode::Answer(0.05));
+            assert!(!run(&store, id, &m), "rename={rename}");
+            assert_eq!(m.calls.get(), 0, "rename={rename}");
+        }
+    }
+
+    /// A calendar meeting whose source was never recorded (a row from before this was
+    /// tracked, or one synced from a peer) is held; one recorded as another calendar is not.
+    #[test]
+    fn a_calendar_meeting_of_unknown_source_is_held() {
+        let store = Store::open_in_memory().unwrap();
+        let id = meeting(&store, "CMS Daily Win Room", MeetingTrigger::Calendar);
+        let m = fake(Mode::Answer(0.05));
+        assert!(!run(&store, id, &m));
+        assert_eq!(m.calls.get(), 0);
+        assert!(store.set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_OTHER).unwrap());
+        assert!(run(&store, id, &m));
+    }
+
     #[test]
     fn a_rename_made_while_the_check_runs_survives() {
         let store = std::rc::Rc::new(Store::open_in_memory().unwrap());
-        let id = meeting(&store, "CMS Daily Win Room", MeetingTrigger::Calendar);
+        let id = other_calendar_meeting(&store, "CMS Daily Win Room");
         let m = fake(Mode::RenameThenAnswer(store.clone(), id));
         assert!(!run(&store, id, &m));
         assert_eq!(title(&store, id), "My own title");
@@ -190,7 +269,7 @@ mod tests {
     #[test]
     fn a_match_keeps_the_title_and_marks_checked() {
         let store = Store::open_in_memory().unwrap();
-        let id = meeting(&store, "CMS Daily Win Room", MeetingTrigger::Calendar);
+        let id = other_calendar_meeting(&store, "CMS Daily Win Room");
         assert!(!run(&store, id, &fake(Mode::Answer(0.9))));
         assert_eq!(title(&store, id), "CMS Daily Win Room");
         assert!(store.title_checked(id).unwrap());
@@ -199,7 +278,7 @@ mod tests {
     #[test]
     fn an_error_keeps_the_title_and_does_not_mark_checked() {
         let store = Store::open_in_memory().unwrap();
-        let id = meeting(&store, "CMS Daily Win Room", MeetingTrigger::Calendar);
+        let id = other_calendar_meeting(&store, "CMS Daily Win Room");
         assert!(!run(&store, id, &fake(Mode::Fail)));
         assert_eq!(title(&store, id), "CMS Daily Win Room");
         assert!(!store.title_checked(id).unwrap());
@@ -208,7 +287,7 @@ mod tests {
     #[test]
     fn a_panicking_matcher_is_contained() {
         let store = Store::open_in_memory().unwrap();
-        let id = meeting(&store, "CMS Daily Win Room", MeetingTrigger::Calendar);
+        let id = other_calendar_meeting(&store, "CMS Daily Win Room");
         assert!(!run(&store, id, &fake(Mode::Panic)));
         assert_eq!(title(&store, id), "CMS Daily Win Room");
         assert!(!store.title_checked(id).unwrap());
@@ -228,7 +307,7 @@ mod tests {
     #[test]
     fn the_matcher_sees_redacted_input() {
         let store = Store::open_in_memory().unwrap();
-        let id = meeting(&store, &format!("Sync {KEY}"), MeetingTrigger::Calendar);
+        let id = other_calendar_meeting(&store, &format!("Sync {KEY}"));
         let m = fake(Mode::Answer(0.9));
         retitle_if_mismatched(&store, id, "Topic", &format!("tldr {KEY}"), &[format!("decided {KEY}")], &m);
         let seen = m.seen.borrow();
@@ -247,6 +326,7 @@ mod tests {
             tldr: "Costs.".into(),
             decisions: vec![],
             action_items: vec![],
+            action_items_detail: vec![],
             open_questions: vec![],
             token_usage: Default::default(),
         };

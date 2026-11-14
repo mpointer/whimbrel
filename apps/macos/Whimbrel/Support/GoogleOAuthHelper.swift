@@ -16,17 +16,27 @@ final class GoogleOAuthHelper: NSObject {
     private let clientSecret: String
     private let scope: String
     private let keychainAccount: String
+    /// Whose tokens an account with no issuer record holds: tokens stored before the
+    /// issuer was recorded all came from the built-in client.
+    private let legacyIssuerClientId: String?
 
     /// `clientSecret` is required at the token-exchange/refresh steps even for a
     /// "Desktop app" OAuth client (confirmed live: Google's token endpoint rejects
     /// PKCE-only requests with `client_secret is missing`). Not a high-security value
     /// (it ships inside the app), but never hardcoded: supplied by the caller.
-    init(clientId: String, clientSecret: String, scope: String, keychainAccount: String) {
+    init(
+        clientId: String, clientSecret: String, scope: String, keychainAccount: String,
+        legacyIssuerClientId: String? = try? SyncConfig.googleOAuthClientId()
+    ) {
         self.clientId = clientId
         self.clientSecret = clientSecret
         self.scope = scope
         self.keychainAccount = keychainAccount
+        self.legacyIssuerClientId = legacyIssuerClientId
     }
+
+    /// The Keychain item recording which OAuth client issued this account's tokens.
+    private var issuerKeychainAccount: String { keychainAccount + "#issuer" }
 
     private var config: CoreOAuthConfig {
         CoreOAuthConfig(provider: "google", clientId: clientId, clientSecret: clientSecret, scope: scope)
@@ -44,6 +54,7 @@ final class GoogleOAuthHelper: NSObject {
         switch await OAuthBrowserFlow.run(session: session, presentationContextProvider: presentationContextProvider, cancellationBox: cancellationBox) {
         case .success(let tokens):
             try storeTokensDirectly(tokens)
+            try storeIssuer(clientId)
         case .failure(let error):
             if cancellationBox.wasCancelled {
                 throw GoogleOAuthError.signInCancelled
@@ -87,14 +98,67 @@ final class GoogleOAuthHelper: NSObject {
         CoreMemoryStore.oauthJwtClaims(jwt)?["email"] as? String
     }
 
-    /// Deletes this instance's own Keychain item. A missing item is not an error.
+    /// Deletes this instance's own Keychain items (tokens and issuer record). A missing
+    /// item is not an error.
     func deleteStoredTokens() {
-        let query: [String: Any] = [
+        for account in [keychainAccount, issuerKeychainAccount] {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: Self.keychainService,
+                kSecAttrAccount as String: account,
+            ]
+            KeychainAccess.delete(query as CFDictionary)
+        }
+    }
+
+    /// The stored refresh token, for revoking it when the account is disconnected. nil when
+    /// nothing is stored. Never log it.
+    func storedRefreshToken() -> String? {
+        try? readStoredTokens()?.refreshToken
+    }
+
+    /// What the stored token was granted, read without any network call.
+    func storedGrant() -> GoogleStoredGrant {
+        guard let stored = try? readStoredTokens() else { return .noTokens }
+        return stored.grantedScope.map(GoogleStoredGrant.granted) ?? .unrecorded
+    }
+
+    /// The client ID that issued the stored tokens; nil when no issuer was recorded.
+    func storedIssuerClientId() -> String? {
+        var query = issuerQuery(issuerKeychainAccount)
+        query[kSecReturnData as String] = true
+        var result: AnyObject?
+        guard KeychainAccess.copyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Whether this helper's client issued the stored tokens. A token is never used or
+    /// refreshed with another client: Google would refuse it, and the account must be
+    /// signed in again under the current client.
+    var tokensIssuedByThisClient: Bool {
+        Self.issuer(recorded: storedIssuerClientId(), legacy: legacyIssuerClientId, matches: clientId)
+    }
+
+    /// No record means the built-in client issued the tokens (`legacy`); with no built-in
+    /// client known either, there's nothing to compare against, so it matches.
+    static func issuer(recorded: String?, legacy: String?, matches clientId: String) -> Bool {
+        guard let issuer = recorded ?? legacy else { return true }
+        return issuer == clientId
+    }
+
+    private func issuerQuery(_ account: String) -> [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.keychainService,
-            kSecAttrAccount as String: keychainAccount,
+            kSecAttrAccount as String: account,
         ]
-        KeychainAccess.delete(query as CFDictionary)
+    }
+
+    private func storeIssuer(_ issuer: String) throws {
+        let status = KeychainAccess.upsert(issuerQuery(issuerKeychainAccount), data: Data(issuer.utf8))
+        guard status == errSecSuccess else { throw GoogleOAuthError.keychainWriteFailed(status) }
     }
 
     /// Reads this instance's stored ID token directly, without validity/expiry checks;
@@ -113,8 +177,14 @@ final class GoogleOAuthHelper: NSObject {
             kSecAttrService as String: Self.keychainService,
             kSecAttrAccount as String: newAccount,
         ]
-        guard let data = try? JSONEncoder().encode(stored) else { return false }
-        return KeychainAccess.upsert(query, data: data) == errSecSuccess
+        guard let data = try? JSONEncoder().encode(stored),
+              KeychainAccess.upsert(query, data: data) == errSecSuccess else { return false }
+        // The issuer travels with the tokens; a legacy item has none to copy.
+        guard let issuer = storedIssuerClientId() else {
+            KeychainAccess.delete(issuerQuery(newAccount + "#issuer") as CFDictionary)
+            return true
+        }
+        return KeychainAccess.upsert(issuerQuery(newAccount + "#issuer"), data: Data(issuer.utf8)) == errSecSuccess
     }
 
     /// Returns the stored Google ID token (what the sync Worker's `POST /v1/auth/google`
@@ -131,7 +201,7 @@ final class GoogleOAuthHelper: NSObject {
     /// away, else a freshly refreshed one. `validIdToken()` would return a token with only a
     /// minute left; Whimbrel AI caches the token, so it needs a longer margin.
     func validIdToken(minimumValidity: TimeInterval) async throws -> String {
-        guard let stored = try readStoredTokens() else {
+        guard tokensIssuedByThisClient, let stored = try readStoredTokens() else {
             throw GoogleOAuthError.notAuthorized
         }
         if let idToken = stored.idToken, let exp = JWTExpiry.date(of: idToken),
@@ -145,7 +215,7 @@ final class GoogleOAuthHelper: NSObject {
     }
 
     private func validTokens() async throws -> OAuthStoredTokens {
-        guard let stored = try readStoredTokens() else {
+        guard tokensIssuedByThisClient, let stored = try readStoredTokens() else {
             throw GoogleOAuthError.notAuthorized
         }
         if stored.isFresh(nowUnixMs: Int64(Date().timeIntervalSince1970 * 1000)) {
@@ -157,6 +227,7 @@ final class GoogleOAuthHelper: NSObject {
     /// The refresh grant runs in the core off the main actor; the merged blob (refresh
     /// token, ID token and scope kept unless the response replaced them) is persisted.
     private func refreshAndStore(_ stored: OAuthStoredTokens) async throws -> OAuthStoredTokens {
+        guard tokensIssuedByThisClient else { throw GoogleOAuthError.notAuthorized }
         let config = self.config
         let result = await Task.detached(priority: .userInitiated) {
             CoreMemoryStore.oauthRefresh(config: config, stored: stored, nowUnixMs: Int64(Date().timeIntervalSince1970 * 1000))
@@ -199,6 +270,20 @@ final class GoogleOAuthHelper: NSObject {
             throw GoogleOAuthError.keychainReadFailed(status)
         }
         return try JSONDecoder().decode(OAuthStoredTokens.self, from: data)
+    }
+}
+
+/// What a stored Google token was granted, read from the Keychain alone.
+enum GoogleStoredGrant: Equatable {
+    case noTokens
+    /// Stored before the granted scope was recorded.
+    case unrecorded
+    case granted(String)
+
+    /// The recorded grant; nil for an unrecorded one (and for no tokens).
+    var grantedScope: String? {
+        if case .granted(let scope) = self { return scope }
+        return nil
     }
 }
 

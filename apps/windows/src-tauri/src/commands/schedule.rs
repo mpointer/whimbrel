@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::commands::library::{has_summary, meeting_row, MeetingRow};
 use crate::commands::prep::event_prep_key;
 use crate::commands::today::day_bounds;
+use crate::connectors::calendar::shown_meetings;
 use crate::device_labels::DeviceLabeler;
 use crate::error::CommandError;
 use crate::meetings::controller::{MeetingRecordingView, RECONCILE_WINDOW};
@@ -185,13 +186,14 @@ pub struct UpcomingView {
 }
 
 /// Today's Upcoming: the qualifying meetings of the next `UPCOMING_DAYS` days, from the calendar's last
-/// sync. Nothing is stored.
+/// sync, and the ones other devices synced (#792). Nothing is stored.
 #[tauri::command]
-pub fn today_upcoming(state: State<'_, AppState>) -> UpcomingView {
+pub async fn today_upcoming(state: State<'_, AppState>) -> Result<UpcomingView, CommandError> {
     let now = chrono::Local::now();
-    let calendar = state.calendar.as_ref().map(|c| c.upcoming(now.timestamp_millis())).unwrap_or_default();
-    let sync_error = state.calendar.as_ref().and_then(|c| c.status().error);
-    UpcomingView { days: build_upcoming(&calendar, &days_after(&now, UPCOMING_DAYS)), sync_error }
+    let calendar = state.calendar.clone();
+    let sync_error = calendar.as_ref().and_then(|c| c.status().error);
+    let shown = state.store()?.call(move |s| shown_meetings(calendar.as_deref(), s, now.timestamp_millis())).await?;
+    Ok(UpcomingView { days: build_upcoming(&shown, &days_after(&now, UPCOMING_DAYS)), sync_error })
 }
 
 #[tauri::command]
@@ -199,11 +201,14 @@ pub async fn today_schedule(state: State<'_, AppState>) -> Result<ScheduleView, 
     let labeler = state.device_labeler();
     let now = chrono::Utc::now().timestamp_millis();
     let (_, day_start, day_end) = day_bounds(&chrono::Local::now());
-    let calendar = state.calendar.as_ref().map(|c| c.upcoming(now)).unwrap_or_default();
+    let service = state.calendar.clone();
     let recording = state.meetings.as_ref().is_some_and(|m| m.status().meeting_id.is_some());
-    let meetings = state
+    let (calendar, meetings) = state
         .store()?
-        .call(move |s| s.recent_meetings(RECONCILE_WINDOW).map_err(|e| e.to_string()))
+        .call(move |s| {
+            let calendar = shown_meetings(service.as_deref(), s, now);
+            s.recent_meetings(RECONCILE_WINDOW).map(|m| (calendar, m)).map_err(|e| e.to_string())
+        })
         .await?
         .map_err(CommandError::store)?;
     let mut view = build_schedule(&calendar, &meetings, now, day_start, day_end, recording, &labeler);
@@ -221,12 +226,22 @@ pub async fn meeting_record_start_event(app: AppHandle, event_id: String) -> Res
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let now = chrono::Utc::now().timestamp_millis();
-        let event = state
-            .calendar
-            .as_ref()
-            .and_then(|c| c.upcoming(now).into_iter().find(|e| e.id == event_id))
-            .ok_or_else(|| CommandError::invalid_input(tr("That meeting is no longer on the calendar.", &[])))?;
-        let started = state.meetings()?.start_calendar(event.title, event.attendees, event.attendee_details, Some(event.start_unix_ms), state.detected.candidate_pid());
+        let local = state.calendar.as_ref().and_then(|c| c.upcoming(now).into_iter().find(|e| e.id == event_id));
+        let started = match local {
+            Some(event) => state.meetings()?.start_calendar(event.title, event.attendees, event.attendee_details, Some(event.start_unix_ms), state.detected.candidate_pid()),
+            // A meeting only another device has (synced, #792) is never a calendar recording here: it
+            // starts as a manual one, with the event's title and invitees.
+            None => {
+                let service = state.calendar.clone();
+                let event = state
+                    .store()?
+                    .call_blocking(move |s| shown_meetings(service.as_deref(), s, now))?
+                    .into_iter()
+                    .find(|e| e.id == event_id)
+                    .ok_or_else(|| CommandError::invalid_input(tr("That meeting is no longer on the calendar.", &[])))?;
+                state.meetings()?.start_manual_titled(event.title, event.attendees)
+            }
+        };
         crate::tray::refresh(&app);
         started
     })

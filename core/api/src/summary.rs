@@ -43,7 +43,8 @@ pub fn summarize_meeting_governed(
     slides: &str,
     custom_instructions: &str,
 ) -> Result<llm::MeetingSummary, GovernedSummaryError> {
-    let max_chars = llm::max_transcript_chars_per_chunk();
+    // Sized from the model's context window: one call when the transcript fits it.
+    let max_chars = llm::summary_chunk_chars(provider);
     let chunks = llm::chunk_transcript(transcript, max_chars);
 
     if chunks.len() == 1 && chunks[0].len() <= max_chars {
@@ -76,13 +77,16 @@ pub fn summarize_meeting_governed(
         ) {
             return Err(GovernedSummaryError::SpendCap(cap_err));
         }
-        let (summary, usage) = llm::summarize_chunk(
+        // Each part after the first is told how the one before it ended.
+        let previous = partials.last().map(|p: &llm::MeetingSummary| p.tldr.as_str());
+        let (summary, usage) = llm::summarize_chunk_with_context(
             client,
             i,
             chunks.len(),
             notes,
             chunk,
             custom_instructions,
+            previous,
         )
         .map_err(GovernedSummaryError::Llm)?;
         log_usage_for(store, provider, &answered(client, model), "meeting_summary", usage);
@@ -130,6 +134,119 @@ pub fn chain_loop_action_for(err: GovernedSummaryError) -> ChainLoopAction {
     }
 }
 
+/// Reason codes of a [`SummaryFallback`]: content-free, stable strings a shell keys its
+/// wording on. `unauthorized`, `not_signed_in` and `no_device_key` are fixed by signing in.
+pub mod fallback_reason {
+    /// No Google ID token: the user is not signed in.
+    pub const NOT_SIGNED_IN: &str = "not_signed_in";
+    /// Signed in, but this device has no key registered.
+    pub const NO_DEVICE_KEY: &str = "no_device_key";
+    /// Whimbrel AI's monthly budget for this device is spent, so its link was dropped.
+    pub const BUDGET: &str = "budget";
+    /// The link may not receive Google data (Limited Use).
+    pub const GOOGLE_DATA_WITHHELD: &str = "google_data_withheld";
+    /// Local-only mode: no cloud model is used at all (forced re-summaries only).
+    pub const LOCAL_ONLY: &str = "local_only";
+    /// The call timed out (a network timeout or HTTP 408).
+    pub const TIMEOUT: &str = "timeout";
+    /// The server could not be reached.
+    pub const NETWORK: &str = "network";
+    /// HTTP 401 or 403: the sign-in was refused (for example it expired).
+    pub const UNAUTHORIZED: &str = "unauthorized";
+    /// HTTP 402: the prepaid credit ran out.
+    pub const CREDIT_EXHAUSTED: &str = "credit_exhausted";
+    /// HTTP 429.
+    pub const RATE_LIMITED: &str = "rate_limited";
+    /// The model is not offered to this account.
+    pub const MODEL_UNAVAILABLE: &str = "model_unavailable";
+    /// Any other failure; `http_status` says which HTTP class when there was one.
+    pub const UNAVAILABLE: &str = "unavailable";
+    /// A forced call whose preferred provider is not set up (other than Whimbrel's sign-in).
+    pub const NOT_CONFIGURED: &str = "not_configured";
+}
+
+/// Why a summary meant for `preferred` was written by `used`. Content-free: provider ids,
+/// the model that answered, a [`fallback_reason`] code, and the HTTP status when the
+/// failing call had one. Never an error text, a prompt or a key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SummaryFallback {
+    pub preferred: String,
+    pub used: String,
+    pub model: String,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+}
+
+impl From<memory::summary_fallback::SummaryFallbackRow> for SummaryFallback {
+    fn from(r: memory::summary_fallback::SummaryFallbackRow) -> Self {
+        SummaryFallback { preferred: r.preferred, used: r.used, model: r.model, reason: r.reason, http_status: r.http_status }
+    }
+}
+
+impl From<&SummaryFallback> for memory::summary_fallback::SummaryFallbackRow {
+    fn from(f: &SummaryFallback) -> Self {
+        memory::summary_fallback::SummaryFallbackRow {
+            preferred: f.preferred.clone(),
+            used: f.used.clone(),
+            model: f.model.clone(),
+            reason: f.reason.clone(),
+            http_status: f.http_status,
+        }
+    }
+}
+
+/// The fallback behind `meeting_id`'s stored summary; `None` when there is none, or the
+/// summary has since been replaced by another provider's.
+pub fn stored_summary_fallback(store: &memory::Store, meeting_id: i64) -> Option<SummaryFallback> {
+    store.summary_fallback(meeting_id).ok().flatten().map(SummaryFallback::from)
+}
+
+/// A reason code (and HTTP status, when there was one) for one failed call. Pure.
+pub fn reason_for_error(provider: llm::Provider, err: &llm::LlmError) -> (&'static str, Option<u16>) {
+    use fallback_reason as r;
+    match err {
+        llm::LlmError::Network(msg) if msg.to_lowercase().contains("timed out") => (r::TIMEOUT, None),
+        llm::LlmError::Network(_) => (r::NETWORK, None),
+        llm::LlmError::Http { status: 408, .. } => (r::TIMEOUT, Some(408)),
+        llm::LlmError::Http { status: 402, .. } => (r::CREDIT_EXHAUSTED, Some(402)),
+        _ if llm::is_model_not_found(provider, err) => (r::MODEL_UNAVAILABLE, None),
+        llm::LlmError::Http { status: status @ (401 | 403), .. } => (r::UNAUTHORIZED, Some(*status)),
+        llm::LlmError::Http { status: 429, .. } => (r::RATE_LIMITED, Some(429)),
+        llm::LlmError::Http { status, .. } => (r::UNAVAILABLE, Some(*status)),
+        llm::LlmError::Provider(_) | llm::LlmError::NotImplemented(_) => (r::UNAVAILABLE, None),
+    }
+}
+
+/// Why Whimbrel AI has no link although it was picked, from the routing alone: a missing
+/// token or device key, else (both there) its budget dropped it.
+fn missing_link_reason(routing: &RoutingConfig) -> &'static str {
+    if routing.whimbrel_id_token.is_none() {
+        fallback_reason::NOT_SIGNED_IN
+    } else if routing.whimbrel_device_key.is_none() {
+        fallback_reason::NO_DEVICE_KEY
+    } else {
+        fallback_reason::BUDGET
+    }
+}
+
+type ReasonCode = (&'static str, Option<u16>);
+
+thread_local! {
+    static LAST_FAILURE_REASON: std::cell::RefCell<Option<ReasonCode>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Why this thread's latest failed summary could not use the preferred provider (a
+/// [`fallback_reason`] code and the HTTP status, if any), and forgets it. The C layer adds
+/// it to a forced call's error envelope.
+pub fn take_last_summary_failure_reason() -> Option<ReasonCode> {
+    LAST_FAILURE_REASON.with(|r| r.borrow_mut().take())
+}
+
+fn set_last_failure_reason(reason: Option<ReasonCode>) {
+    LAST_FAILURE_REASON.with(|r| *r.borrow_mut() = reason);
+}
+
 /// A [`llm::MeetingSummary`] plus the provider/model that produced it. Serializes as the
 /// summary's own object with `provider` and `model` inserted after the fact — those two
 /// live on `Provider`/the model string, not on `MeetingSummary`, so adding them as struct
@@ -141,6 +258,9 @@ pub struct MeetingSummaryData {
     pub summary: llm::MeetingSummary,
     pub provider: llm::Provider,
     pub model: String,
+    /// Set (and serialized as `fallback`) only when the summary was meant for Whimbrel AI
+    /// and another provider wrote it; absent otherwise, so every other payload is unchanged.
+    pub fallback: Option<SummaryFallback>,
 }
 
 impl MeetingSummaryData {
@@ -155,6 +275,9 @@ impl MeetingSummaryData {
                 "model".to_string(),
                 serde_json::Value::String(self.model.clone()),
             );
+            if let Some(fallback) = &self.fallback {
+                obj.insert("fallback".to_string(), serde_json::to_value(fallback)?);
+            }
         }
         Ok(json_value)
     }
@@ -179,6 +302,7 @@ pub fn summary_json_with_attribution(
         summary: summary.clone(),
         provider,
         model: model.to_string(),
+        fallback: None,
     })
     .ok()
 }
@@ -202,6 +326,64 @@ pub fn summarize_meeting(
     routing: &RoutingConfig,
     custom_instructions: &str,
 ) -> ApiResult<MeetingSummaryData> {
+    summarize_meeting_inner(store, meeting_id, notes, transcript, slides, ollama_model, routing, custom_instructions, false)
+}
+
+/// [`summarize_meeting`] for "Re-summarize with Whimbrel": the chain is only the preferred
+/// provider's link, with no fallback and no other link. When that link is not there (not
+/// signed in, no device key, local-only mode) or fails, the call fails as
+/// [`ApiError::ProviderFailure`] (or [`ApiError::BudgetSpent`] when its budget is spent),
+/// and [`take_last_summary_failure_reason`] says why. The Limited Use rules are the same
+/// as for the normal call: a link that may not receive Google data is skipped, so this
+/// never sends a meeting somewhere the chain would not. On success the stored fallback
+/// notice is cleared, since the preferred provider wrote the summary.
+#[allow(clippy::too_many_arguments)]
+pub fn summarize_meeting_preferred(
+    store: &memory::Store,
+    meeting_id: i64,
+    notes: &str,
+    transcript: &str,
+    slides: &str,
+    ollama_model: &str,
+    routing: &RoutingConfig,
+    custom_instructions: &str,
+) -> ApiResult<MeetingSummaryData> {
+    summarize_meeting_inner(store, meeting_id, notes, transcript, slides, ollama_model, routing, custom_instructions, true)
+}
+
+/// The chain for a forced call: the first link, when it is the preferred provider's.
+fn forced_chain(chain: Vec<llm::ChainLink>, routing: &RoutingConfig) -> ApiResult<Vec<llm::ChainLink>> {
+    let wanted = llm::Provider::parse(&routing.preferred_provider).unwrap_or(llm::Provider::Ollama);
+    let reason = if routing.sensitive && wanted != llm::Provider::Ollama && wanted != llm::Provider::Local {
+        fallback_reason::LOCAL_ONLY
+    } else if wanted == llm::Provider::Whimbrel {
+        missing_link_reason(routing)
+    } else {
+        fallback_reason::NOT_CONFIGURED
+    };
+    match chain.into_iter().next() {
+        Some(first) if first.provider == wanted => Ok(vec![first]),
+        _ => {
+            eprintln!("[summarize_meeting] forced {} re-summary refused: {reason}", wanted.as_str());
+            set_last_failure_reason(Some((reason, None)));
+            Err(crate::chain_failed(vec![llm::ProviderFailureKind::NoProviderConfigured]))
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn summarize_meeting_inner(
+    store: &memory::Store,
+    meeting_id: i64,
+    notes: &str,
+    transcript: &str,
+    slides: &str,
+    ollama_model: &str,
+    routing: &RoutingConfig,
+    custom_instructions: &str,
+    forced: bool,
+) -> ApiResult<MeetingSummaryData> {
+    set_last_failure_reason(None);
     // No words, notes or slides: there is nothing to summarize, and a model asked anyway
     // writes one from the instructions alone (the profile included). Fails like a provider
     // failure, so the row is untouched and callers already handle it.
@@ -223,17 +405,69 @@ pub fn summarize_meeting(
         return Err(ApiError::SpendCap(cap_err));
     }
 
-    let chain = crate::budget::apply_budgets(store, build_chain_for(llm::TaskKind::MeetingSummary, ollama_model, routing), false, now_unix_ms())?;
+    let mut chain = build_chain_for(llm::TaskKind::MeetingSummary, ollama_model, routing);
+    if forced {
+        chain = forced_chain(chain, routing)?;
+    }
+    // A forced call is pinned: its one link over budget fails the call instead of leaving no link.
+    let chain = match crate::budget::apply_budgets(store, chain, forced, now_unix_ms()) {
+        Ok(chain) => chain,
+        Err(spent) => {
+            if forced {
+                set_last_failure_reason(Some((fallback_reason::BUDGET, None)));
+            }
+            return Err(spent.into());
+        }
+    };
+    summarize_over_chain(store, &chain, &cap_config, meeting_id, notes, transcript, slides, custom_instructions, routing)
+}
+
+/// The chain walk of [`summarize_meeting`]. Limited Use: a meeting that may have come from
+/// Google Calendar has its invitees' names and title in view when it is summarized, so a
+/// link that may not receive Google data is skipped (the next allowed link answers); when
+/// none does, the call fails as a provider failure and
+/// [`crate::envelope::take_google_data_withheld`] says why.
+#[allow(clippy::too_many_arguments)]
+fn summarize_over_chain(
+    store: &memory::Store,
+    chain: &[llm::ChainLink],
+    cap_config: &llm::SpendCapConfig,
+    meeting_id: i64,
+    notes: &str,
+    transcript: &str,
+    slides: &str,
+    custom_instructions: &str,
+    routing: &RoutingConfig,
+) -> ApiResult<MeetingSummaryData> {
+    crate::envelope::take_google_data_withheld();
+    let calendar_text_policy = store.meeting_may_hold_google_calendar_data(meeting_id).then(|| routing.google_data_policy());
+    let mut withheld_any = false;
     let mut result: Option<(llm::MeetingSummary, llm::Provider, String)> = None;
     let mut last_cap_error: Option<llm::SpendCapError> = None;
     let mut failures = Vec::new();
     if chain.is_empty() {
         failures.push(llm::ProviderFailureKind::NoProviderConfigured);
     }
-    for entry in &chain {
+    // The fallback notice: only for a summary meant for Whimbrel AI (and never in local-only
+    // mode, where a local answer is what the user asked for). `preferred_reason` is why the
+    // preferred provider did not answer: no link at all (not signed in, no device key, its
+    // budget), a link skipped for Limited Use, or the first error its call returned.
+    let preferred = llm::Provider::parse(&routing.preferred_provider);
+    let notice_applies = preferred == Some(llm::Provider::Whimbrel) && !routing.sensitive;
+    let mut preferred_reason: Option<ReasonCode> =
+        (notice_applies && !chain.iter().any(|l| l.provider == llm::Provider::Whimbrel)).then(|| (missing_link_reason(routing), None));
+    for entry in chain {
+        if calendar_text_policy.is_some_and(|policy| !llm::limited_use::link_may_receive_google_data(entry, policy)) {
+            withheld_any = true;
+            failures.push(llm::ProviderFailureKind::Other { provider: entry.provider, status: None });
+            if Some(entry.provider) == preferred {
+                preferred_reason.get_or_insert((fallback_reason::GOOGLE_DATA_WITHHELD, None));
+            }
+            continue;
+        }
         let outcome = summarize_meeting_governed(
             store,
-            &cap_config,
+            cap_config,
             entry.client.as_ref(),
             entry.provider,
             &entry.model,
@@ -256,6 +490,9 @@ pub fn summarize_meeting(
             GovernedSummaryError::Llm(e) => {
                 let kind = llm::note_link_failure(entry.provider, &entry.model, e);
                 failures.push(kind.clone());
+                if Some(entry.provider) == preferred {
+                    preferred_reason.get_or_insert(reason_for_error(entry.provider, e));
+                }
                 Some(kind)
             }
             GovernedSummaryError::SpendCap(_) => None,
@@ -289,7 +526,13 @@ pub fn summarize_meeting(
     let Some((summary, provider, model)) = result else {
         return Err(match last_cap_error {
             Some(cap_err) => ApiError::SpendCap(cap_err),
-            None => crate::chain_failed(failures),
+            None => {
+                if withheld_any {
+                    crate::envelope::note_google_data_withheld();
+                }
+                set_last_failure_reason(preferred_reason);
+                crate::chain_failed(failures)
+            }
         });
     };
     let _ = store.update_meeting_summary(
@@ -301,6 +544,17 @@ pub fn summarize_meeting(
         provider.as_str(),
         &model,
     );
+    let fallback = (notice_applies && provider != llm::Provider::Whimbrel).then(|| {
+        let (reason, http_status) = preferred_reason.unwrap_or((fallback_reason::UNAVAILABLE, None));
+        // The code and providers only: nothing of the meeting or the provider's error text.
+        llm::note_fallback("whimbrel", provider, reason, http_status);
+        eprintln!("[summarize_meeting] meant for whimbrel, written by {} ({model}): reason={reason} status={http_status:?}", provider.as_str());
+        SummaryFallback { preferred: "whimbrel".into(), used: provider.as_str().into(), model: model.clone(), reason: reason.into(), http_status }
+    });
+    // Stored with the summary, so the notice survives a restart; a summary the preferred
+    // provider wrote forgets an older notice.
+    let row = fallback.as_ref().map(memory::summary_fallback::SummaryFallbackRow::from);
+    let _ = store.set_summary_fallback(meeting_id, row.as_ref());
     // #65: retitle a manually-started meeting (still the literal placeholder title
     // "Meeting") now that a real summary exists. No-op for a calendar-titled or
     // already-renamed meeting — see set_meeting_title_if_placeholder's doc comment.
@@ -311,6 +565,7 @@ pub fn summarize_meeting(
         summary,
         provider,
         model,
+        fallback,
     })
 }
 
@@ -408,6 +663,7 @@ mod tests {
             tldr: "We agreed.".into(),
             decisions: vec!["ship".into()],
             action_items: vec![],
+            action_items_detail: vec![],
             open_questions: vec![],
             token_usage: llm::TokenUsage::default(),
         };
@@ -423,6 +679,7 @@ mod tests {
             summary,
             provider: llm::Provider::Ollama,
             model: "gemma4:12b".into(),
+            fallback: None,
         };
         assert_eq!(serde_json::to_string(&data).unwrap(), json);
     }
@@ -521,5 +778,303 @@ mod tests {
         let Err(ApiError::BudgetSpent(spent)) = result else { panic!("{result:?}") };
         assert_eq!((spent.provider, spent.spent_cents, spent.budget_cents), (llm::Provider::OpenAI, 2500, 2500));
         assert_eq!(store.count_usage_log_rows().unwrap(), 1);
+    }
+
+    // --- Limited Use: meetings that may have come from Google Calendar ---
+
+    struct Counting(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl llm::LlmClient for Counting {
+        fn complete(&self, _prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(llm::Completion {
+                text: "{\"tldr\": \"ok\", \"decisions\": [], \"action_items\": [], \"open_questions\": []}".to_string(),
+                token_usage: llm::TokenUsage::default(),
+            })
+        }
+    }
+
+    fn calendar_meeting_of_unknown_source(store: &memory::Store) -> i64 {
+        store
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "d".into(),
+                start_unix_ms: 1_000,
+                end_unix_ms: Some(2_000),
+                title: "Zebra Review".into(),
+                attendees: vec!["Ana".into()],
+                trigger: memory::MeetingTrigger::Calendar,
+                audio_path: None,
+                status: memory::MeetingStatus::Completed,
+            })
+            .unwrap()
+    }
+
+    fn over(store: &memory::Store, id: i64, chain: &[llm::ChainLink]) -> ApiResult<MeetingSummaryData> {
+        let cap = llm::SpendCapConfig::default();
+        summarize_over_chain(store, chain, &cap, id, "notes", "transcript", "", "", &RoutingConfig::default())
+    }
+
+    fn counted(provider: llm::Provider, n: &std::sync::Arc<std::sync::atomic::AtomicUsize>) -> llm::ChainLink {
+        llm::ChainLink { provider, model: "m".into(), client: Box::new(Counting(n.clone())) }
+    }
+
+    #[test]
+    fn a_google_calendar_meeting_is_summarized_only_by_a_link_that_may_receive_it() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = calendar_meeting_of_unknown_source(&store);
+        let (restricted, allowed) = (std::sync::Arc::new(AtomicUsize::new(0)), std::sync::Arc::new(AtomicUsize::new(0)));
+
+        // Only a restricted link: no summary, and the shell is told why.
+        let r = over(&store, id, &[counted(llm::Provider::OpenRouter, &restricted)]);
+        assert!(matches!(r, Err(ApiError::ProviderFailure)));
+        assert_eq!(restricted.load(Ordering::SeqCst), 0, "OpenRouter was sent the meeting");
+        assert!(crate::envelope::provider_failure_envelope().contains(r#""google_data_withheld":true"#));
+        assert!(!crate::envelope::provider_failure_envelope().contains("google_data_withheld"), "reported once");
+
+        // The chain falls through to an allowed link.
+        let r = over(&store, id, &[counted(llm::Provider::OpenRouter, &restricted), counted(llm::Provider::Anthropic, &allowed)]);
+        assert_eq!(r.unwrap().provider, llm::Provider::Anthropic);
+        assert_eq!((restricted.load(Ordering::SeqCst), allowed.load(Ordering::SeqCst)), (0, 1));
+        assert!(!crate::envelope::take_google_data_withheld(), "a summary that succeeds reports nothing");
+
+        // A meeting recorded as another calendar's is summarized by any link.
+        assert!(store.set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_OTHER).unwrap());
+        over(&store, id, &[counted(llm::Provider::OpenRouter, &restricted)]).unwrap();
+        assert_eq!(restricted.load(Ordering::SeqCst), 1);
+    }
+
+    /// Counts calls and keeps prompts; every answer is a valid summary.
+    struct PromptKeeper {
+        prompts: std::cell::RefCell<Vec<String>>,
+    }
+    impl llm::LlmClient for PromptKeeper {
+        fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            self.prompts.borrow_mut().push(prompt.to_string());
+            Ok(llm::Completion {
+                text: "{\"tldr\": \"ok\", \"decisions\": [], \"action_items\": [{\"owner\": \"Ben\", \"task\": \"send it\"}], \"open_questions\": []}".into(),
+                token_usage: llm::TokenUsage::default(),
+            })
+        }
+    }
+
+    fn governed_calls(provider: llm::Provider) -> (usize, llm::MeetingSummary, Vec<String>) {
+        let store = memory::Store::open_in_memory().unwrap();
+        let cap = llm::SpendCapConfig { user_daily_cents: None, global_daily_cents: None };
+        let client = PromptKeeper { prompts: Default::default() };
+        // About 62,500 characters: the size of a 67-minute meeting's transcript.
+        let transcript = "[   0.0s] Ben: this is one line of transcript text that repeats many times.\n".repeat(830);
+        assert!((60_000..65_000).contains(&transcript.len()));
+        let summary = summarize_meeting_governed(&store, &cap, &client, provider, "m", "notes", &transcript, "", "").unwrap();
+        let prompts = client.prompts.borrow().clone();
+        (prompts.len(), summary, prompts)
+    }
+
+    #[test]
+    fn a_hosted_model_summarizes_a_long_meeting_in_one_call() {
+        for provider in [llm::Provider::Anthropic, llm::Provider::Whimbrel, llm::Provider::OpenAI] {
+            let (calls, summary, _) = governed_calls(provider);
+            assert_eq!(calls, 1, "{provider:?}");
+            assert_eq!(summary.action_items, vec!["Ben: send it"]);
+            assert_eq!(summary.action_items_detail.len(), 1);
+        }
+    }
+
+    #[test]
+    fn a_local_model_splits_by_its_window_and_each_later_chunk_gets_the_previous_tldr() {
+        let (calls, _, prompts) = governed_calls(llm::Provider::Ollama);
+        // 62.5k characters over a 37k chunk: two chunks and a reduce, not the old (8192-900)*4 three-plus.
+        assert_eq!(calls, 3);
+        assert!(!prompts[0].contains("previous part"));
+        assert!(prompts[1].contains("previous part ended with this summary: ok"), "{}", prompts[1]);
+        assert!(prompts[2].contains("Part 1:") && prompts[2].contains("\"task\":\"send it\""), "{}", prompts[2]);
+    }
+
+    // --- The fallback notice: a summary meant for Whimbrel AI that another provider wrote ---
+
+    /// Fails every call with the error `make` builds.
+    struct Failing(fn() -> llm::LlmError);
+    impl llm::LlmClient for Failing {
+        fn complete(&self, _prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            Err((self.0)())
+        }
+    }
+
+    fn manual_meeting(store: &memory::Store) -> i64 {
+        store
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "d".into(),
+                start_unix_ms: 1_000,
+                end_unix_ms: Some(2_000),
+                title: "Standup".into(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Manual,
+                audio_path: None,
+                status: memory::MeetingStatus::Completed,
+            })
+            .unwrap()
+    }
+
+    fn whimbrel_routing(token: bool, key: bool) -> RoutingConfig {
+        RoutingConfig {
+            preferred_provider: "whimbrel".into(),
+            whimbrel_id_token: token.then(|| "tok".into()),
+            whimbrel_device_key: key.then(|| "key".into()),
+            ..RoutingConfig::default()
+        }
+    }
+
+    fn walk(store: &memory::Store, id: i64, chain: &[llm::ChainLink], routing: &RoutingConfig) -> ApiResult<MeetingSummaryData> {
+        summarize_over_chain(store, chain, &llm::SpendCapConfig::default(), id, "notes", "transcript", "", "", routing)
+    }
+
+    fn failing_link(provider: llm::Provider, make: fn() -> llm::LlmError) -> llm::ChainLink {
+        llm::ChainLink { provider, model: "whimbrel-model".into(), client: Box::new(Failing(make)) }
+    }
+
+    fn counter() -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+        std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0))
+    }
+
+    #[test]
+    fn a_missing_sign_in_or_device_key_or_budget_says_why_the_local_model_answered() {
+        // Whimbrel has no link in the chain: the routing says which of three causes.
+        for (token, key, reason) in [
+            (false, false, "not_signed_in"),
+            (false, true, "not_signed_in"),
+            (true, false, "no_device_key"),
+            (true, true, "budget"),
+        ] {
+            let store = memory::Store::open_in_memory().unwrap();
+            let id = manual_meeting(&store);
+            let data = walk(&store, id, &[counted(llm::Provider::Ollama, &counter())], &whimbrel_routing(token, key)).unwrap();
+            let fallback = data.fallback.expect("a fallback");
+            assert_eq!((fallback.preferred.as_str(), fallback.used.as_str(), fallback.reason.as_str()), ("whimbrel", "ollama", reason));
+            assert_eq!(fallback.http_status, None);
+            assert_eq!(fallback.model, "m");
+        }
+    }
+
+    #[test]
+    fn a_whimbrel_call_that_failed_says_which_way_it_failed() {
+        let cases: [(fn() -> llm::LlmError, &str, Option<u16>); 8] = [
+            (|| llm::LlmError::Http { status: 429, body: "secret body".into() }, "rate_limited", Some(429)),
+            (|| llm::LlmError::Http { status: 503, body: String::new() }, "unavailable", Some(503)),
+            (|| llm::LlmError::Http { status: 408, body: String::new() }, "timeout", Some(408)),
+            (|| llm::LlmError::Network("operation timed out".into()), "timeout", None),
+            (|| llm::LlmError::Network("connection refused".into()), "network", None),
+            (|| llm::LlmError::Http { status: 401, body: String::new() }, "unauthorized", Some(401)),
+            (|| llm::LlmError::Http { status: 402, body: String::new() }, "credit_exhausted", Some(402)),
+            (|| llm::LlmError::Provider("unreadable".into()), "unavailable", None),
+        ];
+        for (make, reason, status) in cases {
+            let store = memory::Store::open_in_memory().unwrap();
+            let id = manual_meeting(&store);
+            let chain = [failing_link(llm::Provider::Whimbrel, make), counted(llm::Provider::Ollama, &counter())];
+            let data = walk(&store, id, &chain, &whimbrel_routing(true, true)).unwrap();
+            let fallback = data.fallback.expect("a fallback");
+            assert_eq!((fallback.reason.as_str(), fallback.http_status), (reason, status));
+            assert_eq!(fallback.used, "ollama");
+            // Content-free: nothing of the error text reaches the notice.
+            assert!(!serde_json::to_string(&fallback).unwrap().contains("secret"));
+        }
+    }
+
+    #[test]
+    fn no_notice_when_whimbrel_answered_was_not_picked_or_local_only_was() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = manual_meeting(&store);
+        let whimbrel_answers = walk(&store, id, &[counted(llm::Provider::Whimbrel, &counter())], &whimbrel_routing(true, true)).unwrap();
+        assert!(whimbrel_answers.fallback.is_none());
+        assert!(!serde_json::to_string(&whimbrel_answers).unwrap().contains("fallback"));
+        // Ollama picked: a local answer is the plan, so there is nothing to explain.
+        let ollama_picked = walk(&store, id, &[counted(llm::Provider::Ollama, &counter())], &RoutingConfig::default()).unwrap();
+        assert!(ollama_picked.fallback.is_none());
+        // Local-only mode with Whimbrel still picked: local is what the user asked for.
+        let local_only = RoutingConfig { sensitive: true, ..whimbrel_routing(false, false) };
+        assert!(walk(&store, id, &[counted(llm::Provider::Ollama, &counter())], &local_only).unwrap().fallback.is_none());
+    }
+
+    #[test]
+    fn the_notice_is_in_the_result_json_and_survives_a_restart() {
+        let dir = std::env::temp_dir().join(format!("summary-fallback-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("m.sqlite");
+        let id = {
+            let store = memory::Store::open(&path, &dir).unwrap();
+            let id = manual_meeting(&store);
+            let chain = [failing_link(llm::Provider::Whimbrel, || llm::LlmError::Http { status: 502, body: String::new() }), counted(llm::Provider::Ollama, &counter())];
+            let data = walk(&store, id, &chain, &whimbrel_routing(true, true)).unwrap();
+            let json: serde_json::Value = serde_json::to_value(&data).unwrap();
+            assert_eq!(
+                json["fallback"],
+                serde_json::json!({"preferred": "whimbrel", "used": "ollama", "model": "m", "reason": "unavailable", "http_status": 502})
+            );
+            id
+        };
+        // A new connection (an app restart) reads the same notice.
+        let store = memory::Store::open(&path, &dir).unwrap();
+        let stored = stored_summary_fallback(&store, id).expect("persisted");
+        assert_eq!((stored.preferred.as_str(), stored.used.as_str(), stored.reason.as_str(), stored.http_status), ("whimbrel", "ollama", "unavailable", Some(502)));
+        // A summary Whimbrel writes later clears it; one another provider writes leaves it stale.
+        store.update_meeting_summary(id, "t", &[], &[], &[], "anthropic", "claude").unwrap();
+        assert!(stored_summary_fallback(&store, id).is_none(), "stale after another provider's summary");
+        walk(&store, id, &[counted(llm::Provider::Ollama, &counter())], &whimbrel_routing(false, false)).unwrap();
+        assert!(stored_summary_fallback(&store, id).is_some());
+        walk(&store, id, &[counted(llm::Provider::Whimbrel, &counter())], &whimbrel_routing(true, true)).unwrap();
+        assert!(stored_summary_fallback(&store, id).is_none(), "the preferred provider's summary clears it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_forced_resummary_uses_only_the_preferred_link_and_never_falls_back() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = manual_meeting(&store);
+        let routing = whimbrel_routing(true, true);
+        let local = counter();
+
+        // The preferred link answers: one link, no fallback, no local call.
+        let chain = forced_chain(vec![counted(llm::Provider::Whimbrel, &counter()), counted(llm::Provider::Ollama, &local)], &routing).unwrap();
+        assert_eq!(chain.len(), 1);
+        let data = walk(&store, id, &chain, &routing).unwrap();
+        assert_eq!((data.provider, data.fallback), (llm::Provider::Whimbrel, None));
+
+        // The preferred link fails: the call fails with its reason, and the local model is never asked.
+        let chain = forced_chain(
+            vec![failing_link(llm::Provider::Whimbrel, || llm::LlmError::Http { status: 429, body: String::new() }), counted(llm::Provider::Ollama, &local)],
+            &routing,
+        )
+        .unwrap();
+        assert!(matches!(walk(&store, id, &chain, &routing), Err(ApiError::ProviderFailure)));
+        assert_eq!(take_last_summary_failure_reason(), Some(("rate_limited", Some(429))));
+        assert_eq!(local.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_forced_resummary_without_the_preferred_link_fails_with_the_reason() {
+        for (routing, reason) in [
+            (whimbrel_routing(false, false), "not_signed_in"),
+            (whimbrel_routing(true, false), "no_device_key"),
+            (RoutingConfig { sensitive: true, ..whimbrel_routing(true, true) }, "local_only"),
+        ] {
+            let local = counter();
+            // What build_chain gives without the Whimbrel link: the local model first.
+            let refused = forced_chain(vec![counted(llm::Provider::Ollama, &local)], &routing);
+            assert!(matches!(refused, Err(ApiError::ProviderFailure)));
+            assert_eq!(take_last_summary_failure_reason(), Some((reason, None)));
+            assert_eq!(local.load(std::sync::atomic::Ordering::SeqCst), 0);
+        }
+    }
+
+    /// The whole entry point, offline: a forced call with no sign-in builds no Whimbrel link,
+    /// so it fails before any network, logs no usage and leaves the meeting untouched.
+    #[test]
+    fn summarize_meeting_preferred_without_sign_in_fails_before_any_call() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let id = manual_meeting(&store);
+        let result = summarize_meeting_preferred(&store, id, "notes", "transcript", "", "gemma4:12b", &whimbrel_routing(false, true), "");
+        assert!(matches!(result, Err(ApiError::ProviderFailure)), "{result:?}");
+        assert_eq!(take_last_summary_failure_reason(), Some(("not_signed_in", None)));
+        assert_eq!(store.count_usage_log_rows().unwrap(), 0);
+        assert!(stored_summary_fallback(&store, id).is_none());
     }
 }

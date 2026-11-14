@@ -375,14 +375,19 @@ fn link_check() {
         Ok(_) => println!("transcribe: unexpectedly loaded"),
         Err(e) => println!("transcribe: linked (expected load error: {e})"),
     }
-    let paths = diarize::DiarizationModelPaths {
-        segmentation_model_path: missing.into(),
-        embedding_model_path: missing.into(),
-    };
-    match diarize::diarize(missing, &paths, None) {
-        Ok(_) => println!("diarize:    unexpectedly ran"),
-        Err(e) => println!("diarize:    linked (expected error: {e})"),
+    #[cfg(target_arch = "x86_64")]
+    {
+        let paths = diarize::DiarizationModelPaths {
+            segmentation_model_path: missing.into(),
+            embedding_model_path: missing.into(),
+        };
+        match diarize::diarize(missing, &paths, None) {
+            Ok(_) => println!("diarize:    unexpectedly ran"),
+            Err(e) => println!("diarize:    linked (expected error: {e})"),
+        }
     }
+    #[cfg(not(target_arch = "x86_64"))]
+    println!("diarize:    not in this build");
 
     let hwnd = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
     println!("windows:    foreground HWND {:?}", hwnd.0);
@@ -867,6 +872,17 @@ fn cmd_record(pid: Option<u32>, exe: Option<String>, endpoint: bool, also_endpoi
     Ok(())
 }
 
+#[cfg(not(target_arch = "x86_64"))]
+fn cmd_transcribe(_: Option<PathBuf>, _: &Path, _: Option<PathBuf>, _: &str, _: Option<i32>) -> Result<(), String> {
+    Err("transcribe diarizes, and this build has no diarization".into())
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn cmd_diarize_bench(_: &Path, _: Option<PathBuf>, _: &str, _: Option<i32>) -> Result<(), String> {
+    Err("this build has no diarization".into())
+}
+
+#[cfg(target_arch = "x86_64")]
 fn cmd_transcribe(mic: Option<PathBuf>, sys: &Path, models: Option<PathBuf>, whisper_model: &str, speakers: Option<i32>) -> Result<(), String> {
     use transcribe::postprocess::Line;
     let models = models.unwrap_or_else(|| whimbrel_dir().join("models"));
@@ -943,6 +959,7 @@ fn cmd_transcribe(mic: Option<PathBuf>, sys: &Path, models: Option<PathBuf>, whi
 
 /// Mirrors `diarize::diarize` exactly (same models, same 0.9 threshold / exact-count
 /// clustering, same mono f32 input) except for `num_threads` on the two ONNX models.
+#[cfg(target_arch = "x86_64")]
 fn cmd_diarize_bench(wav: &Path, models: Option<PathBuf>, threads: &str, speakers: Option<i32>) -> Result<(), String> {
     use sherpa_onnx::{
         FastClusteringConfig, OfflineSpeakerDiarization, OfflineSpeakerDiarizationConfig,

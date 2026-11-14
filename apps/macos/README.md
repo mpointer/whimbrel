@@ -126,7 +126,7 @@ Each row shows a short explanation of what it unlocks and turns from a hollow to
 
 Output lands in `~/Library/Application Support/Whimbrel/`:
 - `system-audio-<timestamp>.caf`, `mic-audio-<timestamp>.caf` — one pair per capture session.
-- `screen-text.jsonl` — one JSON object per line, appended for the life of the app.
+- `screen-text.jsonl` — the capture queue: one JSON object per line, emptied once the captures are saved to the database.
 
 1. **Grant all five permissions** via the onboarding checklist above; relaunch after granting Screen Recording.
 2. **Meeting audio test:** join or start a Zoom call (or any call). Click the menu-bar icon → toggle **Capture enabled** on. Play some audio through the meeting (e.g. a YouTube tab shared/audible) and speak into your mic. After ~30s, toggle capture off. In Finder, go to the spike folder and play both `.caf` files — confirm the system-audio file has the meeting/call audio and the mic file has your voice, and that they're separate files covering roughly the same time window.

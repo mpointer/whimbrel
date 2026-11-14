@@ -1,9 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { accountNote, canConnect, connectLabel, deleteMailQuestion, gmailIntro, gmailMailNote, gmailPermissions, readStatus } from "./gmailModel";
+import {
+  accountNote,
+  canConnect,
+  connectLabel,
+  deleteMailQuestion,
+  gmailIntro,
+  gmailMailNote,
+  gmailPermissions,
+  gmailReadingIntro,
+  readStatus,
+  readsMail,
+  sendOnlyNote,
+} from "./gmailModel";
 
 const GMAIL_INTRO = gmailIntro();
 const GMAIL_MAIL_NOTE = gmailMailNote();
-const GMAIL_PERMISSIONS = gmailPermissions();
+const GMAIL_PERMISSIONS = gmailPermissions(true);
 
 describe("the Gmail card's words", () => {
   it("says what connecting is for, and that sending needs approval unless the user turns that off", () => {
@@ -11,9 +23,28 @@ describe("the Gmail card's words", () => {
     expect(GMAIL_INTRO).toMatch(/never does unless you turn that on/);
   });
 
-  it("says Whimbrel reads new mail, and only mail that arrives after connecting", () => {
-    expect(GMAIL_INTRO).toMatch(/reads mail that arrives after you connect/);
-    expect(GMAIL_INTRO).toMatch(/not mail from before/);
+  it("says reading needs your own Google project, and reads only mail that arrives after connecting", () => {
+    expect(GMAIL_INTRO).not.toMatch(/reads mail/);
+    expect(gmailReadingIntro()).toMatch(/your own Google Cloud project/);
+    expect(gmailReadingIntro()).toMatch(/reads mail that arrives after you connect, not mail from before/);
+  });
+
+  it("on the app's own client, says Google is asked only to send", () => {
+    const words = gmailPermissions(false);
+    expect(words).toMatch(/send email for you/);
+    expect(words).not.toMatch(/read/);
+  });
+
+  it("marks a send-only account and points at the Advanced setting", () => {
+    expect(sendOnlyNote()).toBe("Sending only. Reading email needs your own Google project (Advanced).");
+  });
+
+  it("shows where read mail goes only when something reads mail", () => {
+    const sendOnly = { accounts: [{ sendOnly: true }] } as Parameters<typeof readsMail>[0];
+    const older = { accounts: [{ sendOnly: false }] } as Parameters<typeof readsMail>[0];
+    expect(readsMail(sendOnly, false)).toBe(false);
+    expect(readsMail(sendOnly, true)).toBe(true);
+    expect(readsMail(older, false)).toBe(true);
   });
 
   it("says where the mail is kept, for how long, and what uses it", () => {
@@ -33,8 +64,8 @@ describe("the Gmail card's words", () => {
     expect(GMAIL_MAIL_NOTE).toMatch(/Disconnecting stops reading but keeps the mail already stored/);
   });
 
-  it("is honest that Google asks for more than Whimbrel uses today", () => {
-    expect(GMAIL_PERMISSIONS).toMatch(/read and compose email/);
+  it("on your own client, is plain that Google asks to read and send", () => {
+    expect(GMAIL_PERMISSIONS).toMatch(/read and send email/);
     expect(GMAIL_PERMISSIONS).toMatch(/to send what you approve and to read new mail/);
     expect(GMAIL_PERMISSIONS).not.toMatch(/does not read your mail/);
     expect(GMAIL_PERMISSIONS).toMatch(/unverified app/);

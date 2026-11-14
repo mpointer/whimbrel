@@ -441,16 +441,21 @@ mod tests {
 
     #[test]
     fn pending_work_shares_one_deadline() {
+        // Generous bounds, so a loaded CI machine that is slow to schedule the fast thread
+        // can't fail this: only a second, separate wait (2 x WAIT) breaks the last check.
+        const WAIT: Duration = Duration::from_secs(2);
         let start = Instant::now();
-        let deadline = start + Duration::from_millis(100);
+        let deadline = start + WAIT;
+        let (release, gate) = mpsc::channel::<()>();
         let fast = spawn_pending("test-fast", || 1);
-        let slow = spawn_pending("test-slow", || {
-            std::thread::sleep(Duration::from_millis(600));
+        let slow = spawn_pending("test-slow", move || {
+            let _ = gate.recv();
             2
         });
         assert_eq!(fast.wait_until(deadline), Some(1));
         assert_eq!(slow.wait_until(deadline), None);
-        assert!(start.elapsed() < Duration::from_millis(400), "waited past the deadline");
+        assert!(start.elapsed() < WAIT * 2, "the second wait started its own deadline");
+        drop(release);
     }
 
     fn body(text: &str) -> WindowInput {

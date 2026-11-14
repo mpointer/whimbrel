@@ -89,6 +89,7 @@ pub enum ContextItemRef {
 }
 
 mod backoff;
+pub mod limited_use;
 mod ledger;
 mod routing;
 pub mod streaming;
@@ -106,7 +107,7 @@ pub use ledger::{
     DEFAULT_USER_DAILY_CAP_CENTS,
 };
 pub use routing::{
-    falls_through, note_link_failure, set_last_chain_failures, take_last_chain_failures, try_chain, try_chain_with_failures,
+    falls_through, note_fallback, note_link_failure, set_last_chain_failures, take_last_chain_failures, try_chain, try_chain_with_failures,
     ChainLink, Provider,
     ProviderFailureKind, TaskKind, Tier,
 };
@@ -173,6 +174,13 @@ pub trait LlmClient {
     /// (see [`is_model_not_found`]). `None` means the requested model answered (or
     /// nothing has answered yet). Usage is logged under this name so spend prices it.
     fn substituted_model(&self) -> Option<String> {
+        None
+    }
+
+    /// The host this client sends prompts to, when that decides what it may receive: an
+    /// Ollama client answers its base URL so Limited Use can tell a loopback Ollama from a
+    /// remote one ([`limited_use`]). `None` for every other client.
+    fn base_url(&self) -> Option<&str> {
         None
     }
 }
@@ -279,30 +287,94 @@ struct OllamaStreamLine {
 }
 
 const OLLAMA_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-/// Streamed, so this is how long Ollama may go quiet: reading a long prompt before the first
-/// word, or a stall. It no longer bounds a whole generation, which on a slow PC with a 12B model
-/// and a long meeting ran past it and failed every summary (a Windows user, 2026-11-11).
-const OLLAMA_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+/// Streamed, so the timeouts bound a silence, not a whole generation (which on a slow PC with a
+/// 12B model and a long meeting ran past ten minutes and failed every summary, 2026-11-11).
+///
+/// Before the first streamed line Ollama says nothing while it waits its turn and reads the
+/// prompt: a ~10k-token summary chunk takes minutes on a CPU-only PC. So the wait for the first
+/// line stays ten minutes. It is also the socket's read timeout, which bounds the response headers.
+const OLLAMA_FIRST_LINE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+/// Once Ollama has started answering it sends a line per token, so a gap this long is a stall: a
+/// stalled server (FEYNMAN, 2026-11-13) otherwise held each waiting job for the full ten minutes.
+const OLLAMA_GAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 /// The most one generation may take in all, so a model that keeps trickling words can't hold a
 /// job forever.
 const OLLAMA_TOTAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45 * 60);
 
+/// What waiting for the next streamed line came to.
+#[derive(Debug)]
+enum StreamEvent {
+    Line(String),
+    /// The answer ended (the connection closed).
+    End,
+    Failed(std::io::Error),
+    /// Nothing arrived within the wait.
+    Silent,
+}
+
+/// Reads `reader`'s lines on a thread of its own, so the caller can wait for each with its own
+/// timeout. A reader left blocked after the caller gives up ends at the socket's read timeout.
+fn stream_events(reader: impl std::io::BufRead + Send + 'static) -> impl FnMut(std::time::Duration) -> StreamEvent {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<std::io::Result<String>>(256);
+    std::thread::spawn(move || {
+        for line in reader.lines() {
+            let failed = line.is_err();
+            if tx.send(line).is_err() || failed {
+                return;
+            }
+        }
+    });
+    move |wait| match rx.recv_timeout(wait) {
+        Ok(Ok(line)) => StreamEvent::Line(line),
+        Ok(Err(e)) => StreamEvent::Failed(e),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => StreamEvent::Silent,
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => StreamEvent::End,
+    }
+}
+
+/// The error for a silence: before the first line, or between lines once the answer started.
+fn silence_error(started: bool) -> LlmError {
+    if started {
+        LlmError::Provider(format!("Ollama stopped responding for {} minutes", OLLAMA_GAP_TIMEOUT.as_secs() / 60))
+    } else {
+        LlmError::Provider(format!("Ollama didn't start answering within {} minutes", OLLAMA_FIRST_LINE_TIMEOUT.as_secs() / 60))
+    }
+}
+
 /// Reads Ollama's streamed answer until its `done` line. `elapsed` says how long the request has
 /// run, checked after each line against `total`.
 fn read_ollama_stream(
-    reader: impl std::io::BufRead,
+    reader: impl std::io::BufRead + Send + 'static,
     elapsed: impl Fn() -> std::time::Duration,
     total: std::time::Duration,
 ) -> Result<String, LlmError> {
+    read_ollama_events(stream_events(reader), elapsed, total, OLLAMA_FIRST_LINE_TIMEOUT, OLLAMA_GAP_TIMEOUT)
+}
+
+/// [`read_ollama_stream`] over `next`, which waits up to `first` for the first line and up to
+/// `gap` for each one after it.
+fn read_ollama_events(
+    mut next: impl FnMut(std::time::Duration) -> StreamEvent,
+    elapsed: impl Fn() -> std::time::Duration,
+    total: std::time::Duration,
+    first: std::time::Duration,
+    gap: std::time::Duration,
+) -> Result<String, LlmError> {
     let mut text = String::new();
-    for line in reader.lines() {
-        let line = line.map_err(|e| match e.kind() {
-            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => LlmError::Provider(format!(
-                "Ollama stopped responding for {} minutes",
-                OLLAMA_READ_TIMEOUT.as_secs() / 60
-            )),
-            _ => LlmError::Provider(format!("Ollama request failed mid-response: {e}")),
-        })?;
+    let mut started = false;
+    loop {
+        let line = match next(if started { gap } else { first }) {
+            StreamEvent::Line(line) => line,
+            StreamEvent::Silent => return Err(silence_error(started)),
+            StreamEvent::Failed(e) => {
+                return Err(match e.kind() {
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => silence_error(started),
+                    _ => LlmError::Provider(format!("Ollama request failed mid-response: {e}")),
+                })
+            }
+            StreamEvent::End => return Err(LlmError::Provider("Ollama's answer ended before it was done".into())),
+        };
+        started = true;
         if line.trim().is_empty() {
             continue;
         }
@@ -322,7 +394,6 @@ fn read_ollama_stream(
             )));
         }
     }
-    Err(LlmError::Provider("Ollama's answer ended before it was done".into()))
 }
 
 /// Calls a locally-running Ollama server (NFR-PRV-1: local-first). Default endpoint is
@@ -349,11 +420,15 @@ impl OllamaClient {
 }
 
 impl LlmClient for OllamaClient {
+    fn base_url(&self) -> Option<&str> {
+        Some(&self.base_url)
+    }
+
     fn complete(&self, prompt: &str) -> Result<Completion, LlmError> {
         let request = OllamaGenerateRequest::new(&self.model, prompt);
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(OLLAMA_CONNECT_TIMEOUT)
-            .timeout_read(OLLAMA_READ_TIMEOUT)
+            .timeout_read(OLLAMA_FIRST_LINE_TIMEOUT)
             .build();
         let response = agent
             .post(&format!("{}/api/generate", self.base_url))
@@ -603,6 +678,16 @@ struct OpenAIMessage<'a> {
 struct OpenAIRequest<'a> {
     model: &'a str,
     messages: Vec<OpenAIMessage<'a>>,
+    /// OpenRouter's provider routing; absent for OpenAI and the local model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<serde_json::Value>,
+}
+
+/// OpenRouter's per-request provider preferences, on every OpenRouter request (blocking and
+/// streaming): `data_collection: "deny"` routes only to providers that neither store nor
+/// train on prompts. https://openrouter.ai/docs/guides/routing/provider-selection
+pub fn openrouter_provider_preferences() -> serde_json::Value {
+    serde_json::json!({ "data_collection": "deny" })
 }
 
 #[derive(Debug, Deserialize)]
@@ -643,6 +728,9 @@ pub struct OpenAIClient {
     model: String,
     extra_headers: Vec<(String, String)>,
     fallback: ModelFallback,
+    /// Built by [`OpenAIClient::openrouter`]: every request carries
+    /// [`openrouter_provider_preferences`].
+    openrouter: bool,
 }
 
 impl OpenAIClient {
@@ -653,6 +741,7 @@ impl OpenAIClient {
             model: model.into(),
             extra_headers: Vec::new(),
             fallback: ModelFallback::default(),
+            openrouter: false,
         }
     }
 
@@ -665,10 +754,12 @@ impl OpenAIClient {
 
     /// The same request against OpenRouter, with the two headers they ask for.
     pub fn openrouter(api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        Self::new(api_key, model)
+        let mut client = Self::new(api_key, model)
             .with_base_url(OPENROUTER_BASE_URL)
             .with_header("HTTP-Referer", OPENROUTER_REFERER)
-            .with_header("X-Title", OPENROUTER_TITLE)
+            .with_header("X-Title", OPENROUTER_TITLE);
+        client.openrouter = true;
+        client
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -695,6 +786,7 @@ impl LlmClient for OpenAIClient {
                     role: "user",
                     content: prompt,
                 }],
+                provider: self.openrouter.then(openrouter_provider_preferences),
             };
             let mut call = ureq::post(&format!("{}/v1/chat/completions", self.base_url))
                 .set("Authorization", &format!("Bearer {}", self.api_key));
@@ -1502,12 +1594,96 @@ pub struct MeetingSummary {
     pub tldr: String,
     #[serde(default)]
     pub decisions: Vec<String>,
-    #[serde(default)]
+    /// One line per item, "Owner: task (due)". A model that answers with objects is rendered
+    /// to this form, so every shell that reads strings keeps working.
+    #[serde(default, deserialize_with = "lenient_action_items")]
     pub action_items: Vec<String>,
+    /// The same items as objects, when the model gave them as objects. Additive: shells
+    /// that only know `action_items` ignore it; empty for an older, string-only answer.
+    #[serde(default)]
+    pub action_items_detail: Vec<ActionItemDetail>,
     #[serde(default)]
     pub open_questions: Vec<String>,
     #[serde(default)]
     pub token_usage: TokenUsage,
+}
+
+/// One action item as the model structured it. Every field but `task` may be absent.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActionItemDetail {
+    /// Who owns it, by the name in the transcript's speaker labels or the invitee list.
+    #[serde(default, deserialize_with = "lenient_opt_string")]
+    pub owner: Option<String>,
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub task: String,
+    /// When it is due, in the speaker's own words ("Friday", "end of Q3").
+    #[serde(default, deserialize_with = "lenient_opt_string")]
+    pub due: Option<String>,
+    /// The words in the transcript that show the commitment.
+    #[serde(default, deserialize_with = "lenient_opt_string")]
+    pub quote: Option<String>,
+}
+
+impl ActionItemDetail {
+    /// "Owner: task (due)"; the owner and due parts are left out when unknown.
+    pub fn render(&self) -> String {
+        let mut line = String::new();
+        if let Some(owner) = &self.owner {
+            line.push_str(owner);
+            line.push_str(": ");
+        }
+        line.push_str(&self.task);
+        if let Some(due) = &self.due {
+            line.push_str(&format!(" ({due})"));
+        }
+        line
+    }
+}
+
+fn json_text(v: &serde_json::Value) -> Option<String> {
+    let t = match v {
+        serde_json::Value::String(s) => s.trim().to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        _ => return None,
+    };
+    let unknown = ["", "null", "none", "n/a", "unknown", "unassigned", "tbd"];
+    (!unknown.contains(&t.to_lowercase().as_str())).then_some(t)
+}
+
+fn lenient_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(serde_json::Value::deserialize(d)?.as_str().map(|s| s.trim().to_string()).unwrap_or_default())
+}
+
+fn lenient_opt_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(json_text(&serde_json::Value::deserialize(d)?))
+}
+
+/// An action item the model gave as an object: `None` when it has no task text.
+fn action_item_from_value(v: &serde_json::Value) -> Option<ActionItemDetail> {
+    let obj = v.as_object()?;
+    let field = |keys: &[&str]| keys.iter().find_map(|k| obj.get(*k).and_then(json_text));
+    let task = field(&["task", "action", "text", "item", "description"])?;
+    Some(ActionItemDetail {
+        owner: field(&["owner", "assignee", "who"]),
+        task,
+        due: field(&["due", "due_date", "deadline", "when"]),
+        quote: field(&["quote", "evidence"]),
+    })
+}
+
+/// Strings stay as they are, objects are rendered to "Owner: task (due)"; anything else is dropped.
+fn lenient_action_items<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    let serde_json::Value::Array(items) = value else {
+        return Ok(Vec::new());
+    };
+    Ok(items
+        .iter()
+        .filter_map(|v| match v {
+            serde_json::Value::String(s) => Some(s.clone()),
+            other => action_item_from_value(other).map(|d| d.render()),
+        })
+        .collect())
 }
 
 /// Conservative token-budget constants for splitting a long transcript before sending
@@ -1553,6 +1729,41 @@ pub fn max_transcript_chars_per_chunk() -> usize {
     MAX_CONTEXT_TOKENS_ESTIMATE
         .saturating_sub(RESPONSE_AND_OVERHEAD_TOKENS_ESTIMATE)
         .saturating_mul(CHARS_PER_TOKEN_ESTIMATE)
+}
+
+/// Tokens of context a prompt to `provider` can rely on. Ollama is what its client asks for
+/// ([`OLLAMA_NUM_CTX`]); the bundled model runs with the 8192 floor; the hosted providers are
+/// far larger, and the figure is the smallest window of the models a user is likely to pick
+/// (Gemini's is bigger, capped here so one prompt stays a sensible size). OpenRouter's model is
+/// the user's own pick and unknown here, so it gets a middling figure.
+pub fn context_window_tokens(provider: Provider) -> usize {
+    match provider {
+        Provider::Ollama => OLLAMA_NUM_CTX as usize,
+        Provider::Local => MAX_CONTEXT_TOKENS_ESTIMATE,
+        Provider::Anthropic | Provider::Whimbrel | Provider::Google => 200_000,
+        Provider::OpenAI => 128_000,
+        Provider::OpenRouter => 32_000,
+    }
+}
+
+/// Tokens held back from the window for a summary's own prompt text, the notes and slides,
+/// and the answer (a JSON summary with structured action items runs to a few thousand).
+const SUMMARY_RESERVE_TOKENS: usize = 4_000;
+/// Meeting transcripts with timestamps and speaker labels tokenize worse than prose, so
+/// this is lower than [`CHARS_PER_TOKEN_ESTIMATE`].
+pub const CONTEXT_CHARS_PER_TOKEN_ESTIMATE: usize = 3;
+
+/// The most transcript characters one summary call should carry on `provider`: the window
+/// less [`SUMMARY_RESERVE_TOKENS`]. A transcript within it takes one call (any hosted model
+/// for all but a very long meeting); a longer one is split. The bundled model keeps the
+/// fixed [`max_transcript_chars_per_chunk`].
+pub fn summary_chunk_chars(provider: Provider) -> usize {
+    match provider {
+        Provider::Local => max_transcript_chars_per_chunk(),
+        p => context_window_tokens(p)
+            .saturating_sub(SUMMARY_RESERVE_TOKENS)
+            .saturating_mul(CONTEXT_CHARS_PER_TOKEN_ESTIMATE),
+    }
 }
 
 /// Splits `transcript` into chunks no larger than `max_chars`, breaking only at line
@@ -1624,6 +1835,22 @@ fn slides_prompt_block(slides: &str) -> String {
     }
 }
 
+/// What the model is told about action items, in every summary prompt.
+const ACTION_ITEM_GUIDANCE: &str = "\"action_items\" lists EVERY commitment, request and follow-up that comes up, \
+     including small ones (\"I'll send that over\", \"can you check on it\", \"let's circle back\"). \
+     Each is an object: \"owner\" is who will do it, named as in the transcript's speaker labels \
+     (or its Invitees line, if there is one), or null when unclear; \"task\" is what is to be done; \
+     \"due\" is when, in the speakers' words, or null; \"quote\" is the short wording from the \
+     transcript that shows it. Do not invent owners or dates.\n\n";
+
+/// The JSON shape a summary answer takes; `with_title` for the whole-meeting and reduce calls.
+fn summary_shape(with_title: bool) -> String {
+    let title = if with_title { "\"title\": \"...\", " } else { "" };
+    format!(
+        "{{{title}\"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [{{\"owner\": \"...\", \"task\": \"...\", \"due\": \"...\", \"quote\": \"...\"}}], \"open_questions\": [\"...\"]}}"
+    )
+}
+
 /// Summarizes one chunk of a (possibly split) transcript. When `chunk_count > 1`, the
 /// prompt tells the model this is a partial excerpt, so it doesn't treat a missing
 /// beginning/end as its own error. No slide text here: a chunk already fills the token
@@ -1636,7 +1863,22 @@ pub fn summarize_chunk(
     chunk: &str,
     custom_instructions: &str,
 ) -> Result<(MeetingSummary, TokenUsage), LlmError> {
-    let context_note = if chunk_count > 1 {
+    summarize_chunk_with_context(client, chunk_index, chunk_count, notes, chunk, custom_instructions, None)
+}
+
+/// [`summarize_chunk`] that also tells the model how the meeting stood at the end of the
+/// part before this one (that part's TL;DR), so a part that opens mid-conversation does not
+/// start blind. Background only: the model summarizes the excerpt, not the earlier part.
+pub fn summarize_chunk_with_context(
+    client: &dyn LlmClient,
+    chunk_index: usize,
+    chunk_count: usize,
+    notes: &str,
+    chunk: &str,
+    custom_instructions: &str,
+    previous_tldr: Option<&str>,
+) -> Result<(MeetingSummary, TokenUsage), LlmError> {
+    let mut context_note = if chunk_count > 1 {
         format!(
             "This is part {n} of {total} of a longer meeting transcript, split into parts \
              for length — it may start or end mid-conversation.\n\n",
@@ -1646,6 +1888,12 @@ pub fn summarize_chunk(
     } else {
         String::new()
     };
+    if let Some(previous) = previous_tldr.map(str::trim).filter(|t| !t.is_empty()) {
+        context_note.push_str(&format!(
+            "Background, so this part does not start blind: the previous part ended with this \
+             summary: {previous}\nSummarize only the excerpt below, not that part.\n\n"
+        ));
+    }
     let instructions_block = if custom_instructions.is_empty() {
         String::new()
     } else {
@@ -1655,19 +1903,47 @@ pub fn summarize_chunk(
         "You are summarizing part of a meeting by blending the user's rough notes with \
          the transcript excerpt below. Respond with ONLY a JSON object, no other text, \
          no markdown fences, matching exactly this shape:\n\
-         {{\"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [\"...\"], \"open_questions\": [\"...\"]}}\n\n\
+         {shape}\n\n\
+         {ACTION_ITEM_GUIDANCE}\
          {context_note}{instructions_block}User's notes:\n{notes}\n\n\
-         Transcript excerpt:\n{chunk}\n"
+         Transcript excerpt:\n{chunk}\n",
+        shape = summary_shape(false),
     );
     let completion = client.complete(&prompt)?;
     let summary = parse_meeting_summary(&completion.text)?;
     Ok((summary, completion.token_usage))
 }
 
+/// One partial summary's decisions and action items, each on its own line exactly as the
+/// part produced them (an action item as its JSON object when the part gave one).
+fn reduce_part_text(n: usize, s: &MeetingSummary) -> String {
+    let lines = |items: &[String]| {
+        if items.is_empty() {
+            "  (none)".to_string()
+        } else {
+            items.iter().map(|i| format!("  - {i}")).collect::<Vec<_>>().join("\n")
+        }
+    };
+    let action_items = if s.action_items_detail.is_empty() {
+        lines(&s.action_items)
+    } else {
+        let objects: Vec<String> =
+            s.action_items_detail.iter().filter_map(|d| serde_json::to_string(d).ok()).collect();
+        lines(&objects)
+    };
+    format!(
+        "Part {n}:\ntldr: {tldr}\ndecisions:\n{decisions}\naction_items:\n{action_items}\nopen_questions: {open_questions:?}",
+        tldr = s.tldr,
+        decisions = lines(&s.decisions),
+        open_questions = s.open_questions,
+    )
+}
+
 /// Combines multiple partial summaries (from `summarize_chunk`) into one final summary
 /// via one more LLM call. The partial summaries are far shorter than the raw
 /// transcript, so this reduce step comfortably fits in context even when the original
-/// transcript didn't.
+/// transcript didn't. Every part's decisions and action items go in verbatim and the
+/// model is told to merge and drop duplicates only: re-summarizing them loses items.
 pub fn reduce_chunk_summaries(
     client: &dyn LlmClient,
     notes: &str,
@@ -1678,16 +1954,7 @@ pub fn reduce_chunk_summaries(
     let combined = partials
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            format!(
-                "Part {n}:\ntldr: {tldr}\ndecisions: {decisions:?}\naction_items: {action_items:?}\nopen_questions: {open_questions:?}",
-                n = i + 1,
-                tldr = s.tldr,
-                decisions = s.decisions,
-                action_items = s.action_items,
-                open_questions = s.open_questions,
-            )
-        })
+        .map(|(i, s)| reduce_part_text(i + 1, s))
         .collect::<Vec<_>>()
         .join("\n\n");
     let instructions_block = if custom_instructions.is_empty() {
@@ -1698,14 +1965,18 @@ pub fn reduce_chunk_summaries(
     let slides_block = slides_prompt_block(slides);
     let prompt = format!(
         "You are combining several partial summaries of different parts of the SAME \
-         meeting into one final summary. Merge and deduplicate — do not just \
-         concatenate. Respond with ONLY a JSON object, no other text, no markdown \
+         meeting into one final summary. Write one tldr for the whole meeting from the parts' \
+         tldrs. Carry EVERY decision and EVERY action item from the parts into your answer: \
+         merge items that are the same thing and drop exact duplicates, nothing else — do not \
+         shorten, reword, re-summarize or drop any. Keep each action item's owner, due and \
+         quote fields as given. Respond with ONLY a JSON object, no other text, no markdown \
          fences, matching exactly this shape:\n\
-         {{\"title\": \"...\", \"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [\"...\"], \"open_questions\": [\"...\"]}}\n\n\
+         {shape}\n\n\
          \"title\" names the meeting's main topic in 3 to 6 words, like a calendar event \
          title (e.g. \"Q3 roadmap review\"), not a sentence.\n\n\
          {instructions_block}User's notes:\n{notes}{slides_block}\n\n\
-         Partial summaries:\n{combined}\n"
+         Partial summaries:\n{combined}\n",
+        shape = summary_shape(true),
     );
     let completion = client.complete(&prompt)?;
     let summary = parse_meeting_summary(&completion.text)?;
@@ -1734,11 +2005,13 @@ pub fn summarize_whole_transcript(
         "You are summarizing a meeting by blending the user's rough notes with the \
          transcript below. Respond with ONLY a JSON object, no other text, no markdown \
          fences, matching exactly this shape:\n\
-         {{\"title\": \"...\", \"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [\"...\"], \"open_questions\": [\"...\"]}}\n\n\
+         {shape}\n\n\
          \"title\" names the meeting's main topic in 3 to 6 words, like a calendar event \
          title (e.g. \"Q3 roadmap review\"), not a sentence.\n\n\
+         {ACTION_ITEM_GUIDANCE}\
          {instructions_block}User's notes:\n{notes}{slides_block}\n\n\
-         Transcript:\n{transcript}\n"
+         Transcript:\n{transcript}\n",
+        shape = summary_shape(true),
     );
     let completion = client.complete(&prompt)?;
     let mut summary = parse_meeting_summary(&completion.text)?;
@@ -1772,13 +2045,15 @@ pub fn summarize_meeting(
     let mut partials = Vec::with_capacity(chunks.len());
     let mut total_usage = TokenUsage::default();
     for (i, chunk) in chunks.iter().enumerate() {
-        let (summary, usage) = summarize_chunk(
+        let previous = partials.last().map(|p: &MeetingSummary| p.tldr.as_str());
+        let (summary, usage) = summarize_chunk_with_context(
             client,
             i,
             chunks.len(),
             notes,
             chunk,
             custom_instructions,
+            previous,
         )?;
         total_usage = add_token_usage(total_usage, usage);
         partials.push(summary);
@@ -1794,8 +2069,19 @@ fn parse_meeting_summary(text: &str) -> Result<MeetingSummary, LlmError> {
     let json_str = extract_json_object(text).ok_or_else(|| {
         LlmError::Provider(format!("model response contained no JSON object: {text:?}"))
     })?;
-    serde_json::from_str(json_str)
-        .map_err(|e| LlmError::Provider(format!("failed to parse summary JSON: {e}")))
+    let mut summary: MeetingSummary = serde_json::from_str(json_str)
+        .map_err(|e| LlmError::Provider(format!("failed to parse summary JSON: {e}")))?;
+    // The objects behind `action_items`, kept when the model gave objects. An answer of
+    // plain strings leaves the detail empty.
+    if summary.action_items_detail.is_empty() {
+        if let Some(items) = serde_json::from_str::<serde_json::Value>(json_str)
+            .ok()
+            .and_then(|v| v.get("action_items").and_then(|a| a.as_array().cloned()))
+        {
+            summary.action_items_detail = items.iter().filter_map(action_item_from_value).collect();
+        }
+    }
+    Ok(summary)
 }
 
 /// Names unnamed speakers from what the meeting conversation shows, choosing only from
@@ -2607,10 +2893,8 @@ mod tests {
         assert_eq!(estimate_cost_cents(Provider::OpenAI, "gpt-4o-mini", usage), 1);
     }
 
-    /// The OpenRouter client is the OpenAI client pointed at their host with the two
-    /// identifying headers; prove the wire shape with a one-shot server.
-    #[test]
-    fn openrouter_client_sends_bearer_and_identifying_headers_to_the_openai_path() {
+    /// A one-shot OpenAI-shaped server: answers "pong" and hands back the raw request.
+    fn serve_openai_once() -> (String, std::sync::mpsc::Receiver<String>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let (tx, rx) = std::sync::mpsc::channel();
@@ -2645,6 +2929,14 @@ mod tests {
                 format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes(),
             );
         });
+        (url, rx)
+    }
+
+    /// The OpenRouter client is the OpenAI client pointed at their host with the two
+    /// identifying headers; prove the wire shape with a one-shot server.
+    #[test]
+    fn openrouter_client_sends_bearer_and_identifying_headers_to_the_openai_path() {
+        let (url, rx) = serve_openai_once();
         let client = OpenAIClient::openrouter("sk-or-1", "vendor/model:free").with_base_url(url);
         let completion = client.complete("ping").unwrap();
         assert_eq!(completion.text, "pong");
@@ -2655,6 +2947,28 @@ mod tests {
         assert!(head.contains(&format!("X-Title: {OPENROUTER_TITLE}")), "{head}");
         assert!(head.contains(r#""model":"vendor/model:free""#), "{head}");
         assert_eq!(OpenAIClient::openrouter("k", "m").base_url, OPENROUTER_BASE_URL);
+    }
+
+    /// Limited Use: every OpenRouter request asks for providers that neither store nor train
+    /// on prompts; `zdr` is not sent (Gmail and Calendar text never goes to OpenRouter).
+    #[test]
+    fn openrouter_requests_deny_data_collection() {
+        let (url, rx) = serve_openai_once();
+        OpenAIClient::openrouter("k", "vendor/model").with_base_url(url).complete("ping").unwrap();
+        let raw = rx.recv().unwrap();
+        let body: serde_json::Value = serde_json::from_str(&raw[raw.find("\r\n\r\n").unwrap() + 4..]).unwrap();
+        assert_eq!(body["provider"]["data_collection"], "deny", "{raw}");
+        assert!(body["provider"].get("zdr").is_none(), "{raw}");
+    }
+
+    /// The same body to OpenAI itself is unchanged: no `provider` field.
+    #[test]
+    fn openai_requests_carry_no_provider_preferences() {
+        let (url, rx) = serve_openai_once();
+        OpenAIClient::new("k", "gpt-x").with_base_url(url).complete("ping").unwrap();
+        let raw = rx.recv().unwrap();
+        let body: serde_json::Value = serde_json::from_str(&raw[raw.find("\r\n\r\n").unwrap() + 4..]).unwrap();
+        assert!(body.get("provider").is_none(), "{raw}");
     }
 
     /// The Whimbrel client is the Anthropic client pointed at Whimbrel's server, with
@@ -3181,6 +3495,7 @@ mod tests {
             tldr: "The team reviewed the Q3 roadmap. Then lunch.".to_string(),
             decisions: vec![],
             action_items: vec![],
+            action_items_detail: vec![],
             open_questions: vec![],
             token_usage: TokenUsage::default(),
         };
@@ -3367,9 +3682,15 @@ mod tests {
         let expected = "You are summarizing a meeting by blending the user's rough notes with the \
          transcript below. Respond with ONLY a JSON object, no other text, no markdown \
          fences, matching exactly this shape:\n\
-         {\"title\": \"...\", \"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [\"...\"], \"open_questions\": [\"...\"]}\n\n\
+         {\"title\": \"...\", \"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [{\"owner\": \"...\", \"task\": \"...\", \"due\": \"...\", \"quote\": \"...\"}], \"open_questions\": [\"...\"]}\n\n\
          \"title\" names the meeting's main topic in 3 to 6 words, like a calendar event \
          title (e.g. \"Q3 roadmap review\"), not a sentence.\n\n\
+         \"action_items\" lists EVERY commitment, request and follow-up that comes up, \
+         including small ones (\"I'll send that over\", \"can you check on it\", \"let's circle back\"). \
+         Each is an object: \"owner\" is who will do it, named as in the transcript's speaker labels \
+         (or its Invitees line, if there is one), or null when unclear; \"task\" is what is to be done; \
+         \"due\" is when, in the speakers' words, or null; \"quote\" is the short wording from the \
+         transcript that shows it. Do not invent owners or dates.\n\n\
          User's notes:\nmy notes\n\n\
          Transcript:\nmy transcript\n";
         assert_eq!(*client.captured_prompt.borrow(), expected);
@@ -3433,9 +3754,15 @@ mod tests {
         let expected = "You are summarizing a meeting by blending the user's rough notes with the \
          transcript below. Respond with ONLY a JSON object, no other text, no markdown \
          fences, matching exactly this shape:\n\
-         {\"title\": \"...\", \"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [\"...\"], \"open_questions\": [\"...\"]}\n\n\
+         {\"title\": \"...\", \"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [{\"owner\": \"...\", \"task\": \"...\", \"due\": \"...\", \"quote\": \"...\"}], \"open_questions\": [\"...\"]}\n\n\
          \"title\" names the meeting's main topic in 3 to 6 words, like a calendar event \
          title (e.g. \"Q3 roadmap review\"), not a sentence.\n\n\
+         \"action_items\" lists EVERY commitment, request and follow-up that comes up, \
+         including small ones (\"I'll send that over\", \"can you check on it\", \"let's circle back\"). \
+         Each is an object: \"owner\" is who will do it, named as in the transcript's speaker labels \
+         (or its Invitees line, if there is one), or null when unclear; \"task\" is what is to be done; \
+         \"due\" is when, in the speakers' words, or null; \"quote\" is the short wording from the \
+         transcript that shows it. Do not invent owners or dates.\n\n\
          User's notes:\nmy notes\n\n\
          Transcript:\nmy transcript\n";
         assert_eq!(
@@ -3470,9 +3797,15 @@ mod tests {
         let expected = "You are summarizing a meeting by blending the user's rough notes with the \
          transcript below. Respond with ONLY a JSON object, no other text, no markdown \
          fences, matching exactly this shape:\n\
-         {\"title\": \"...\", \"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [\"...\"], \"open_questions\": [\"...\"]}\n\n\
+         {\"title\": \"...\", \"tldr\": \"...\", \"decisions\": [\"...\"], \"action_items\": [{\"owner\": \"...\", \"task\": \"...\", \"due\": \"...\", \"quote\": \"...\"}], \"open_questions\": [\"...\"]}\n\n\
          \"title\" names the meeting's main topic in 3 to 6 words, like a calendar event \
          title (e.g. \"Q3 roadmap review\"), not a sentence.\n\n\
+         \"action_items\" lists EVERY commitment, request and follow-up that comes up, \
+         including small ones (\"I'll send that over\", \"can you check on it\", \"let's circle back\"). \
+         Each is an object: \"owner\" is who will do it, named as in the transcript's speaker labels \
+         (or its Invitees line, if there is one), or null when unclear; \"task\" is what is to be done; \
+         \"due\" is when, in the speakers' words, or null; \"quote\" is the short wording from the \
+         transcript that shows it. Do not invent owners or dates.\n\n\
          User's notes:\nmy notes\n\n\
          Transcript:\nmy transcript\n";
         assert_eq!(client.prompts.borrow()[0], expected);
@@ -3501,6 +3834,7 @@ mod tests {
             tldr: "part 1".to_string(),
             decisions: vec![],
             action_items: vec![],
+            action_items_detail: vec![],
             open_questions: vec![],
             token_usage: TokenUsage::default(),
         }];
@@ -3566,6 +3900,7 @@ mod tests {
             tldr: "part 1".to_string(),
             decisions: vec![],
             action_items: vec![],
+            action_items_detail: vec![],
             open_questions: vec![],
             token_usage: TokenUsage::default(),
         }];
@@ -4063,6 +4398,75 @@ mod tests {
             OLLAMA_TOTAL_TIMEOUT,
         );
         assert!(matches!(slow, Err(LlmError::Provider(ref m)) if m.contains("longer than 45 minutes")), "{slow:?}");
+    }
+
+    /// Waits handed out, in order, and what each one returns.
+    fn scripted(events: Vec<StreamEvent>) -> (impl FnMut(std::time::Duration) -> StreamEvent, std::rc::Rc<std::cell::RefCell<Vec<u64>>>) {
+        let waits = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = waits.clone();
+        let mut events = events.into_iter();
+        (move |wait: std::time::Duration| {
+            seen.borrow_mut().push(wait.as_secs());
+            events.next().unwrap_or(StreamEvent::End)
+        }, waits)
+    }
+
+    fn line(s: &str) -> StreamEvent {
+        StreamEvent::Line(s.to_string())
+    }
+
+    #[test]
+    fn ollama_waits_long_for_the_first_line_and_short_between_lines() {
+        let first = std::time::Duration::from_secs(600);
+        let gap = std::time::Duration::from_secs(300);
+        let (next, waits) = scripted(vec![line(r#"{"response":"a","done":false}"#), line(r#"{"response":"b","done":true}"#)]);
+        let text = read_ollama_events(next, || std::time::Duration::ZERO, OLLAMA_TOTAL_TIMEOUT, first, gap).unwrap();
+        assert_eq!(text, "ab");
+        assert_eq!(*waits.borrow(), [600, 300], "the first wait covers the prompt read, later ones a gap");
+    }
+
+    #[test]
+    fn a_silence_before_the_first_line_and_one_mid_answer_say_which_it_was() {
+        let (first, gap) = (OLLAMA_FIRST_LINE_TIMEOUT, OLLAMA_GAP_TIMEOUT);
+        let (next, _) = scripted(vec![StreamEvent::Silent]);
+        let err = read_ollama_events(next, || std::time::Duration::ZERO, OLLAMA_TOTAL_TIMEOUT, first, gap).unwrap_err();
+        assert!(matches!(err, LlmError::Provider(ref m) if m.contains("didn't start answering within 10 minutes")), "{err:?}");
+        let (next, waits) = scripted(vec![line(r#"{"response":"a","done":false}"#), StreamEvent::Silent]);
+        let err = read_ollama_events(next, || std::time::Duration::ZERO, OLLAMA_TOTAL_TIMEOUT, first, gap).unwrap_err();
+        assert!(matches!(err, LlmError::Provider(ref m) if m.contains("stopped responding for 5 minutes")), "{err:?}");
+        assert_eq!(*waits.borrow(), [600, 300]);
+        let (next, _) = scripted(vec![line(r#"{"response":"a","done":false}"#), StreamEvent::Failed(std::io::ErrorKind::TimedOut.into())]);
+        let err = read_ollama_events(next, || std::time::Duration::ZERO, OLLAMA_TOTAL_TIMEOUT, first, gap).unwrap_err();
+        assert!(matches!(err, LlmError::Provider(ref m) if m.contains("stopped responding")), "{err:?}");
+    }
+
+    #[test]
+    fn a_real_stream_that_goes_quiet_after_its_first_line_is_cut_at_the_gap() {
+        // A reader that sends one line, then blocks: the gap wait (here 1 s) ends it.
+        struct Stall(bool);
+        impl std::io::Read for Stall {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if !self.0 {
+                    self.0 = true;
+                    let l = b"{\"response\":\"a\",\"done\":false}\n";
+                    buf[..l.len()].copy_from_slice(l);
+                    return Ok(l.len());
+                }
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                Ok(0)
+            }
+        }
+        let started = std::time::Instant::now();
+        let err = read_ollama_events(
+            stream_events(std::io::BufReader::new(Stall(false))),
+            || std::time::Duration::ZERO,
+            OLLAMA_TOTAL_TIMEOUT,
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(matches!(err, LlmError::Provider(ref m) if m.contains("stopped responding")), "{err:?}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "took {:?}", started.elapsed());
     }
 
     /// A long generation that keeps sending words finishes, however long the whole answer takes:
@@ -5439,5 +5843,181 @@ mod tests {
         answer_with_citations(&client, &[], "what's the status?", &context, "", None).unwrap();
 
         assert!(!client.prompt.borrow().contains("The question is about"));
+    }
+}
+
+#[cfg(test)]
+mod summary_quality_tests {
+    use super::*;
+
+    /// Answers every call with `response` and keeps each prompt.
+    struct Fake {
+        response: String,
+        prompts: std::cell::RefCell<Vec<String>>,
+    }
+    impl Fake {
+        fn new(response: &str) -> Self {
+            Self { response: response.to_string(), prompts: Default::default() }
+        }
+    }
+    impl LlmClient for Fake {
+        fn complete(&self, prompt: &str) -> Result<Completion, LlmError> {
+            self.prompts.borrow_mut().push(prompt.to_string());
+            Ok(Completion { text: self.response.clone(), token_usage: TokenUsage::default() })
+        }
+    }
+
+    const EMPTY: &str = r#"{"tldr": "t", "decisions": [], "action_items": [], "open_questions": []}"#;
+
+    #[test]
+    fn the_window_follows_the_provider() {
+        assert_eq!(context_window_tokens(Provider::Ollama), OLLAMA_NUM_CTX as usize);
+        assert!(context_window_tokens(Provider::Anthropic) >= 100_000);
+        assert!(context_window_tokens(Provider::Whimbrel) > context_window_tokens(Provider::Ollama) * 4);
+    }
+
+    #[test]
+    fn summary_chunks_are_sized_from_the_model_context() {
+        // Ollama is asked for 16,384 tokens: 4,000 held back, 3 chars a token.
+        assert_eq!(summary_chunk_chars(Provider::Ollama), (16_384 - 4_000) * 3);
+        // The bundled model keeps its fixed size.
+        assert_eq!(summary_chunk_chars(Provider::Local), max_transcript_chars_per_chunk());
+        // A 62.5k-character, 67-minute transcript is several chunks locally and one call on a hosted model.
+        let transcript_chars = 62_500;
+        assert!(transcript_chars > summary_chunk_chars(Provider::Ollama));
+        assert!(transcript_chars < summary_chunk_chars(Provider::Anthropic));
+        assert!(transcript_chars < summary_chunk_chars(Provider::Whimbrel));
+        assert!(transcript_chars < summary_chunk_chars(Provider::OpenAI));
+        // What a chunk plus the reserve takes still fits the window.
+        for p in [Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::OpenRouter] {
+            let tokens = summary_chunk_chars(p) / CONTEXT_CHARS_PER_TOKEN_ESTIMATE + SUMMARY_RESERVE_TOKENS;
+            assert!(tokens <= context_window_tokens(p), "{p:?}");
+        }
+    }
+
+    #[test]
+    fn object_action_items_parse_into_strings_and_detail() {
+        let s = parse_meeting_summary(
+            r#"{"tldr":"t","action_items":[
+                {"owner":"Ben","task":"send the deck","due":"Friday","quote":"I'll send the deck by Friday"},
+                {"owner":null,"task":"book a room","due":"unknown"},
+                {"task":"   "}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(s.action_items, vec!["Ben: send the deck (Friday)", "book a room"]);
+        assert_eq!(s.action_items_detail.len(), 2);
+        assert_eq!(s.action_items_detail[0].owner.as_deref(), Some("Ben"));
+        assert_eq!(s.action_items_detail[0].due.as_deref(), Some("Friday"));
+        assert_eq!(s.action_items_detail[0].quote.as_deref(), Some("I'll send the deck by Friday"));
+        assert_eq!(s.action_items_detail[1].owner, None);
+        assert_eq!(s.action_items_detail[1].due, None);
+    }
+
+    #[test]
+    fn an_old_string_only_answer_still_parses_and_leaves_the_detail_empty() {
+        let s = parse_meeting_summary(r#"{"tldr":"t","action_items":["Ben to send the deck","Ana: book a room"]}"#).unwrap();
+        assert_eq!(s.action_items, vec!["Ben to send the deck", "Ana: book a room"]);
+        assert!(s.action_items_detail.is_empty());
+        let none = parse_meeting_summary(r#"{"tldr":"t"}"#).unwrap();
+        assert!(none.action_items.is_empty() && none.action_items_detail.is_empty());
+    }
+
+    #[test]
+    fn a_mixed_or_odd_action_item_array_keeps_what_it_can() {
+        let s = parse_meeting_summary(r#"{"tldr":"t","action_items":["plain",{"assignee":"Ana","action":"call Bo","deadline":"May"},7,null]}"#).unwrap();
+        assert_eq!(s.action_items, vec!["plain", "Ana: call Bo (May)"]);
+        let odd = parse_meeting_summary(r#"{"tldr":"t","action_items":"not a list"}"#).unwrap();
+        assert!(odd.action_items.is_empty());
+    }
+
+    #[test]
+    fn the_strings_stay_additive_in_the_serialized_summary() {
+        let s = parse_meeting_summary(r#"{"tldr":"t","action_items":[{"owner":"Ben","task":"ship","due":null,"quote":null}]}"#).unwrap();
+        let v = serde_json::to_value(&s).unwrap();
+        assert_eq!(v["action_items"][0], "Ben: ship");
+        assert_eq!(v["action_items_detail"][0]["owner"], "Ben");
+        assert!(v["action_items_detail"][0]["due"].is_null());
+        // A stored summary from before the field existed still reads.
+        let old: MeetingSummary = serde_json::from_str(r#"{"tldr":"t","action_items":["a"]}"#).unwrap();
+        assert_eq!(old.action_items, vec!["a"]);
+    }
+
+    #[test]
+    fn the_prompts_ask_for_every_commitment_as_an_object_with_a_named_owner() {
+        let client = Fake::new(EMPTY);
+        summarize_whole_transcript(&client, "n", "Ben: I'll send it", "", "").unwrap();
+        let prompt = client.prompts.borrow()[0].clone();
+        assert!(prompt.contains("EVERY commitment, request and follow-up"), "{prompt}");
+        assert!(prompt.contains("\"owner\": \"...\", \"task\": \"...\", \"due\": \"...\", \"quote\": \"...\""), "{prompt}");
+        assert!(prompt.contains("speaker labels"), "{prompt}");
+        summarize_chunk(&client, 0, 2, "n", "x", "").unwrap();
+        assert!(client.prompts.borrow()[1].contains("EVERY commitment"));
+    }
+
+    #[test]
+    fn a_chunk_after_the_first_is_told_how_the_previous_one_ended() {
+        let client = Fake::new(EMPTY);
+        summarize_chunk_with_context(&client, 1, 3, "n", "excerpt", "", Some("They settled the budget.")).unwrap();
+        summarize_chunk_with_context(&client, 0, 3, "n", "excerpt", "", None).unwrap();
+        let prompts = client.prompts.borrow();
+        assert!(prompts[0].contains("the previous part ended with this summary: They settled the budget."), "{}", prompts[0]);
+        assert!(prompts[0].find("previous part").unwrap() < prompts[0].find("Transcript excerpt:").unwrap());
+        assert!(!prompts[1].contains("previous part"), "the first part has nothing before it");
+    }
+
+    #[test]
+    fn summarize_meeting_hands_each_chunk_the_one_before_it() {
+        let client = Fake::new(r#"{"tldr":"part tldr","decisions":[],"action_items":[],"open_questions":[]}"#);
+        let transcript = "Alice: we talked about the roadmap.\n".repeat(max_transcript_chars_per_chunk() / 12);
+        summarize_meeting(&client, "n", &transcript, "", "").unwrap();
+        let prompts = client.prompts.borrow();
+        assert!(!prompts[0].contains("previous part"));
+        assert!(prompts[1].contains("previous part ended with this summary: part tldr"), "{}", prompts[1]);
+    }
+
+    fn partial(tldr: &str, decisions: &[&str], items: &[&str], detail: Vec<ActionItemDetail>) -> MeetingSummary {
+        MeetingSummary {
+            title: String::new(),
+            tldr: tldr.to_string(),
+            decisions: decisions.iter().map(|s| s.to_string()).collect(),
+            action_items: items.iter().map(|s| s.to_string()).collect(),
+            action_items_detail: detail,
+            open_questions: vec![],
+            token_usage: TokenUsage::default(),
+        }
+    }
+
+    #[test]
+    fn the_reduce_prompt_carries_every_chunks_items_and_decisions_verbatim_and_says_not_to_resummarize() {
+        let detail = vec![ActionItemDetail {
+            owner: Some("Ben".into()),
+            task: "send the \"Q3\" deck".into(),
+            due: Some("Friday".into()),
+            quote: Some("I'll send it".into()),
+        }];
+        let partials = vec![
+            partial("one", &["Ship on the 5th"], &["Ben: send the \"Q3\" deck (Friday)"], detail.clone()),
+            partial("two", &["Drop the beta"], &["Ana: call Bo", "Cy: file the report (May)"], vec![]),
+        ];
+        let client = Fake::new(EMPTY);
+        reduce_chunk_summaries(&client, "notes", &partials, "", "").unwrap();
+        let prompt = client.prompts.borrow()[0].clone();
+        for verbatim in ["Ship on the 5th", "Drop the beta", "Ana: call Bo", "Cy: file the report (May)"] {
+            assert!(prompt.contains(&format!("  - {verbatim}")), "{verbatim} in {prompt}");
+        }
+        // A part that gave objects goes in as its objects, fields intact.
+        assert!(prompt.contains(&serde_json::to_string(&detail[0]).unwrap()), "{prompt}");
+        assert!(prompt.contains("EVERY decision and EVERY action item"), "{prompt}");
+        assert!(prompt.contains("do not shorten, reword, re-summarize or drop any"), "{prompt}");
+        assert!(prompt.find("Part 1:").unwrap() < prompt.find("Part 2:").unwrap());
+    }
+
+    #[test]
+    fn the_reduce_answer_keeps_its_objects() {
+        let client = Fake::new(r#"{"title":"T","tldr":"t","decisions":["d"],"action_items":[{"owner":"Ana","task":"call Bo","due":null,"quote":"I'll call"}]}"#);
+        let (s, _) = reduce_chunk_summaries(&client, "n", &[partial("a", &[], &[], vec![])], "", "").unwrap();
+        assert_eq!(s.action_items, vec!["Ana: call Bo"]);
+        assert_eq!(s.action_items_detail[0].quote.as_deref(), Some("I'll call"));
     }
 }

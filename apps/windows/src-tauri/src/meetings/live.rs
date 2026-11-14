@@ -377,7 +377,17 @@ fn run(
 
     let mut system = system.map(Channel::new);
     let mut mic = mic.map(Channel::new);
+    let mut paused = false;
     while !wait(&stop, CHECK_EVERY) {
+        // The PC is short of memory or CPU (`meeting_load`): wait. The recording goes on, and what
+        // this hasn't covered is transcribed after the meeting from the cursors it published.
+        if crate::meeting_load::live_paused() != paused {
+            paused = !paused;
+            tracing::info!(paused, "live transcript");
+        }
+        if paused {
+            continue;
+        }
         for (channel, which) in [(system.as_mut(), Which::System), (mic.as_mut(), Which::Mic)] {
             let Some(channel) = channel else { continue };
             // One plan for both channels: whichever has speech first locks the meeting's language.
@@ -424,6 +434,15 @@ fn publish(state: &Mutex<Accumulated>, which: Which, channel: &Channel, plan: &P
 /// Takes one slice of a channel, if there is enough new audio. Every failure hands the
 /// channel back to the pipeline rather than risking a gap. Returns whether the channel's
 /// progress changed and should be published.
+/// `system` or `mic`, from the recorder's file name; nothing else of the path.
+fn channel_name(path: &Path) -> &'static str {
+    match path.file_name().and_then(|n| n.to_str()) {
+        Some(n) if n.starts_with("mic-") => "mic",
+        Some(n) if n.starts_with("system-") => "system",
+        _ => "other",
+    }
+}
+
 fn slice_once(speech: &dyn Speech, channel: &mut Channel, slices: &Path, threads: i32, plan: &mut Plan) -> bool {
     if channel.cursor == 0 {
         return false; // already given up on
@@ -476,13 +495,13 @@ fn slice_once(speech: &dyn Speech, channel: &mut Channel, slices: &Path, threads
             channel.cursor = range.end;
             channel.next_start = chunk.next_start;
             channel.slices += 1;
-            tracing::info!(
-                path = %channel.path.display(),
-                audio_s,
-                ms = started.elapsed().as_millis() as u64,
-                at_s = cs_at(at) / 100,
-                "transcribed a slice during the meeting"
-            );
+            let ms = started.elapsed().as_millis() as u64;
+            tracing::info!(path = %channel.path.display(), audio_s, ms, at_s = cs_at(at) / 100, "transcribed a slice during the meeting");
+            crate::perf_report::note(format!(
+                "live_slice channel={} audio_s={audio_s:.1} ms={ms} realtime_x={:.1}",
+                channel_name(&channel.path),
+                audio_s * 1000.0 / ms.max(1) as f64
+            ));
         }
         Err(e) => channel.give_up(&format!("the slice didn't transcribe: {e}")),
     }

@@ -27,8 +27,9 @@ use crate::l10n::tr;
 /// What a calendar write needs from the grant. Google lets a user untick a scope on the consent
 /// page, so a connected account can lack it even though Whimbrel asked.
 pub const CALENDAR_WRITE_SCOPE: &str = "https://www.googleapis.com/auth/calendar.events";
-/// What sending needs. `gmail.compose`, which is what Whimbrel asks for, satisfies it: core's scope
-/// helper knows compose is Google's documented superset of send.
+/// What sending needs. Whimbrel asks for `gmail.send` itself (`accounts::GMAIL_SCOPE`); an older
+/// grant with `gmail.compose` also satisfies it, since core's scope helper knows compose is
+/// Google's documented superset of send.
 pub const GMAIL_SEND_SCOPE: &str = "https://www.googleapis.com/auth/gmail.send";
 
 /// The id core's account registry uses for a connector directory name.
@@ -124,7 +125,14 @@ impl Connectors for Real {
         // actually granted, which is what core says a write action does.
         if stored.granted_scope.is_none() {
             let now = chrono::Utc::now().timestamp_millis();
-            match oauth::refresh_stored(&accounts::provider_for(kind, config), &stored, now) {
+            let provider = match crate::connectors::google_client::refresh_client(&*self.secrets, config, kind, account) {
+                Ok(provider) => provider,
+                Err(e) => {
+                    tracing::warn!(?kind, error = %e, "cannot refresh with the client that signed the account in");
+                    return None;
+                }
+            };
+            match oauth::refresh_stored(&provider, &stored, now) {
                 Ok(refreshed) => {
                     if let Err(e) = accounts::save_tokens_for(kind, &*self.secrets, account, &refreshed) {
                         tracing::warn!(?kind, error = %e, "could not save the refreshed tokens");

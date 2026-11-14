@@ -16,19 +16,30 @@ final class CoreBridgeStorageDecodingTests: XCTestCase {
     func testDecodesNotEnoughDisk() throws {
         let r = try decode(#"{"ran":false,"reason":"not_enough_disk","need_bytes":3000,"file_bytes_before":3000,"file_bytes_after":3000}"#)
         XCTAssertEqual(r.needBytes, 3000)
-        XCTAssertTrue(CompactCopy.message(r).hasPrefix("Not enough free disk"))
+        XCTAssertTrue(CompactCopy.message(r, volumeFree: nil).hasPrefix("Not enough free disk"))
+    }
+
+    func testNotEnoughDiskAsksOnlyForWhatIsMissing() throws {
+        let r = try decode(#"{"ran":false,"reason":"not_enough_disk","need_bytes":3000000000,"file_bytes_before":1500000000,"file_bytes_after":1500000000}"#)
+        func size(_ b: Int64) -> String { ByteCountFormatter.string(fromByteCount: b, countStyle: .file) }
+        XCTAssertEqual(CompactCopy.message(r, volumeFree: 1_000_000_000),
+                       "Not enough free disk to compact. Free \(size(2_000_000_000)) and try again.", "need minus what's already free")
+        XCTAssertEqual(CompactCopy.message(r, volumeFree: nil),
+                       "Not enough free disk to compact. Free \(size(3_000_000_000)) and try again.", "free unknown: the whole need")
+        XCTAssertEqual(CompactCopy.message(r, volumeFree: 5_000_000_000),
+                       "Not enough free disk to compact. Free \(size(3_000_000_000)) and try again.", "free grew since: never asks for 0")
     }
 
     func testNotWorthItSaysNothingToCompact() throws {
         let r = try decode(#"{"ran":false,"reason":"not_worth_it","need_bytes":null,"file_bytes_before":3000,"file_bytes_after":3000}"#)
-        XCTAssertEqual(CompactCopy.message(r), "Nothing to compact yet.")
-        XCTAssertEqual(CompactCopy.message(nil), "Couldn't compact the database.")
+        XCTAssertEqual(CompactCopy.message(r, volumeFree: nil), "Nothing to compact yet.")
+        XCTAssertEqual(CompactCopy.message(nil, volumeFree: nil), "Couldn't compact the database.")
     }
 
     func testARunWhoseSpaceIsStillInTheWALSaysSo() throws {
         let r = try decode(#"{"ran":true,"reason":"ran","need_bytes":null,"file_bytes_before":3000,"file_bytes_after":2000,"space_pending":true}"#)
         XCTAssertEqual(r.spacePending, true)
-        XCTAssertEqual(CompactCopy.message(r), "Compacted. The freed space returns to the disk shortly.")
+        XCTAssertEqual(CompactCopy.message(r, volumeFree: nil), "Compacted. The freed space returns to the disk shortly.")
     }
 
     func testDecodesSpace() throws {

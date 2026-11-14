@@ -91,6 +91,7 @@ pub struct AccountStatus {
 }
 
 type TokenFn = Box<dyn Fn(&str) -> Result<String, CommandError> + Send + Sync>;
+type CanReadFn = Box<dyn Fn(&str) -> bool + Send + Sync>;
 type CallFn = Box<dyn Fn(&str, &str, &str) -> Result<String, CommandError> + Send + Sync>;
 
 /// Reads every connected Gmail account on a timer, and on demand after connecting one.
@@ -98,6 +99,10 @@ pub struct GmailService {
     poller: MailPoller,
     token: TokenFn,
     call: CallFn,
+    /// Whether an account's grant can read mail (`accounts::gmail_can_read`). A send-only account
+    /// (the app's own client, since 2026-11-12) is skipped whole, baseline round included, so it
+    /// never meets Gmail's 403.
+    can_read: CanReadFn,
     status: Mutex<HashMap<String, AccountStatus>>,
     /// Rounds never overlap: a poll on connect and the timer's poll would otherwise race on
     /// the same history id.
@@ -113,15 +118,17 @@ impl GmailService {
         connectors_root: std::path::PathBuf,
         device_id: String,
     ) -> Self {
+        let read_secrets = secrets.clone();
         Self::with(
             MailPoller { store, device_id },
             Box::new(move |email| accounts::fresh_access_token_for(Kind::Gmail, &*secrets, &config, email)),
             Box::new(move |tool, args, token| node::call_connector(&host, &connectors_root, node::GMAIL, "Gmail", tool, args, token)),
+            Box::new(move |email| accounts::gmail_can_read(&*read_secrets, email)),
         )
     }
 
-    fn with(poller: MailPoller, token: TokenFn, call: CallFn) -> Self {
-        GmailService { poller, token, call, status: Mutex::new(HashMap::new()), round: Mutex::new(()) }
+    fn with(poller: MailPoller, token: TokenFn, call: CallFn, can_read: CanReadFn) -> Self {
+        GmailService { poller, token, call, can_read, status: Mutex::new(HashMap::new()), round: Mutex::new(()) }
     }
 
     /// Starts the polling thread: a first round shortly after launch, then every [`POLL`].
@@ -182,6 +189,11 @@ impl GmailService {
             }
         };
         for email in emails {
+            if !(self.can_read)(&email) {
+                // Sending only: nothing to read, and no error to show.
+                self.status.lock().unwrap().remove(&email);
+                continue;
+            }
             let result = self.poller.poll_account(&email, &|| (self.token)(&email), &|tool, args, token| (self.call)(tool, args, token));
             let mut status = self.status.lock().unwrap();
             let entry = status.entry(email.clone()).or_default();
@@ -401,6 +413,7 @@ mod tests {
                 if email == "stale@x.com" { Err(CommandError::not_configured("sign in again")) } else { Ok(format!("token-for-{email}")) }
             }),
             call,
+            Box::new(|email| !email.starts_with("send-only")),
         )
     }
 
@@ -457,6 +470,21 @@ mod tests {
         *fail.lock().unwrap() = false;
         svc.poll_now();
         assert_eq!(svc.status("a@x.com").error, None);
+    }
+
+    #[test]
+    fn a_send_only_account_is_never_read_and_shows_no_error() {
+        let asked = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log = asked.clone();
+        let svc = service(Box::new(move |_, _, token| {
+            log.lock().unwrap().push(token.to_string());
+            Ok(r#"{"nextHistoryId": "1"}"#.into())
+        }));
+        connect(&svc, "send-only@x.com");
+        connect(&svc, "reads@x.com");
+        svc.poll_now();
+        assert_eq!(*asked.lock().unwrap(), ["token-for-reads@x.com"], "not even a baseline round for the send-only account");
+        assert_eq!(svc.status("send-only@x.com"), AccountStatus::default());
     }
 
     #[test]

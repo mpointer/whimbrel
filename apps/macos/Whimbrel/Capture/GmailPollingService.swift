@@ -16,10 +16,12 @@ final class GmailPollingService {
     private static let pollInterval: TimeInterval = 15 * 60
     private weak var coreStore: CoreMemoryStore?
     private var deviceId: String = ""
+    private weak var connectorState: GmailConnectorState?
 
     func start(gmailConnectorState: GmailConnectorState, coreStore: CoreMemoryStore?, deviceId: String) {
         self.coreStore = coreStore
         self.deviceId = deviceId
+        self.connectorState = gmailConnectorState
         pollTimer?.invalidate()
         Task { await poll(gmailConnectorState: gmailConnectorState) }
         pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self, weak gmailConnectorState] _ in
@@ -41,8 +43,16 @@ final class GmailPollingService {
         accountsCancellable = nil
     }
 
+    /// The accounts a poll reads: a send-only account (its grant lacks `gmail.readonly`)
+    /// is skipped before any token or connector work, so it never loops on Gmail's 403.
+    nonisolated static func accountsToSync(_ emails: [String], canRead: (String) -> Bool) -> [String] {
+        emails.filter(canRead)
+    }
+
     private func poll(gmailConnectorState: GmailConnectorState) async {
-        for account in gmailConnectorState.accounts {
+        gmailConnectorState.refreshAccountFlags()
+        let readable = Set(Self.accountsToSync(gmailConnectorState.accounts.map(\.email), canRead: gmailConnectorState.canRead(email:)))
+        for account in gmailConnectorState.accounts where readable.contains(account.email) {
             guard let helper = gmailConnectorState.oauthHelper(forEmail: account.email) else {
                 log.error("poll: no OAuth helper for \(account.email, privacy: .private) -- account listed but not connected")
                 continue
@@ -79,6 +89,12 @@ final class GmailPollingService {
         }
         let resultJSON = try await Self.callConnector(tool: request.tool, argsJSON: request.argsJson, accessToken: accessToken)
         let deviceId = self.deviceId
+        // The account may have been removed while the connector call ran: its mail was
+        // deleted with it, so nothing may be written back.
+        guard connectorState?.accounts.contains(where: { $0.email == email }) == true else {
+            log.log("syncAccount: the account was removed during the sync, so its result was dropped")
+            return
+        }
         guard let outcome = await Self.withStoreAccess({
             coreStore.applyGmailSync(accountEmail: email, deviceId: deviceId, resultJSON: resultJSON)
         }) else {

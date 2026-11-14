@@ -67,21 +67,26 @@ export function HotkeyPanel() {
 
   return (
     <div className="alert hotkey-panel">
-      <input
-        className="input"
-        autoFocus
-        value={query}
-        disabled={blocked}
-        placeholder={t("Ask about this window")}
-        aria-label={t("Ask about this window")}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            ask();
-          }
-        }}
-      />
+      <div className="hotkey-panel-row">
+        <input
+          className="input"
+          autoFocus
+          value={query}
+          disabled={blocked}
+          placeholder={t("Ask about this window")}
+          aria-label={t("Ask about this window")}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              ask();
+            }
+          }}
+        />
+        <button className="hotkey-panel-close" onClick={close} aria-label={t("Dismiss")} title={t("Dismiss")}>
+          ×
+        </button>
+      </div>
       {line?.reading ? <p className="muted small">{line.reading}</p> : null}
       {blocked ? (
         <>

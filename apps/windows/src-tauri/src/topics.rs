@@ -154,6 +154,9 @@ pub fn start_naming(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, secr
         loop {
             std::thread::sleep(delay);
             delay = next_naming_delay(0);
+            if crate::meeting_load::background_paused() {
+                continue;
+            }
             let routing = settings.lock().unwrap().routing();
             if routing.preferred_provider == crate::settings::Provider::Ollama && !heavy_jobs_allowed(on_ac_power(), idle_duration()) {
                 continue;
@@ -189,6 +192,11 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, secrets: Ar
         let mut delay = BUSY_DELAY;
         loop {
             std::thread::sleep(delay);
+            // The whole turn waits while a meeting records: indexing embeds, steps run a model (often
+            // the local one) and the TypeSafe batch is model calls too. They catch up after.
+            if crate::meeting_load::background_paused() {
+                continue;
+            }
             let mut progress = false;
             // Indexing embeds, so it waits for AC power and an idle minute like the other heavy job.
             if heavy_jobs_allowed(on_ac_power(), idle_duration()) {

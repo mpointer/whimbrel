@@ -62,6 +62,8 @@ final class RoutingSettings: ObservableObject {
     private static let localOnlyModeKey = "com.mpointer.kestrel.routingLocalOnlyMode"
     private static let cheapFirstKey = "com.mpointer.kestrel.routingCheapFirst"
     private static let useLocalModelKey = "com.mpointer.kestrel.routingUseLocalModel"
+    private static let googleAiBillingConfirmedKey = "com.mpointer.kestrel.routingGoogleAiBillingConfirmed"
+    private static let remoteOllamaGoogleDataKey = "com.mpointer.kestrel.routingRemoteOllamaGoogleData"
     private static let customPromptInstructionsKey = "com.mpointer.kestrel.summaryCustomPromptInstructions"
     private static let monthlyBudgetCentsKey = "com.mpointer.kestrel.routingMonthlyBudgetCents"
 
@@ -350,6 +352,21 @@ final class RoutingSettings: ObservableObject {
             SettingsFieldTimestamps.touch("routing.useLocalModel")
         }
     }
+    /// Google "Limited Use" (core/api routing::LimitedUseSettings): the user says their
+    /// Google AI Studio key's project has billing on, so Gemini may receive Gmail and
+    /// Calendar text (Google may train on the free tier). Off by default; this Mac only.
+    @Published var googleAiBillingConfirmed: Bool {
+        didSet {
+            UserDefaults.standard.set(googleAiBillingConfirmed, forKey: Self.googleAiBillingConfirmedKey)
+        }
+    }
+    /// Google "Limited Use": a cloud Ollama model or an Ollama on another computer may
+    /// receive Gmail and Calendar text. Off by default; this Mac only.
+    @Published var remoteOllamaGoogleData: Bool {
+        didSet {
+            UserDefaults.standard.set(remoteOllamaGoogleData, forKey: Self.remoteOllamaGoogleDataKey)
+        }
+    }
     /// FR-NOTES-1: a global standing-rules text folded into every chat, daily-digest,
     /// and meeting-summary prompt (core/llm's answer_with_citations,
     /// generate_daily_digest/generate_daily_digest_from_context, and
@@ -451,6 +468,8 @@ final class RoutingSettings: ObservableObject {
         // `bool(forKey:)` reads an unset key as false; these two default to true.
         cheapFirst = defaults.object(forKey: Self.cheapFirstKey) as? Bool ?? true
         useLocalModel = defaults.object(forKey: Self.useLocalModelKey) as? Bool ?? true
+        googleAiBillingConfirmed = defaults.bool(forKey: Self.googleAiBillingConfirmedKey)
+        remoteOllamaGoogleData = defaults.bool(forKey: Self.remoteOllamaGoogleDataKey)
         customPromptInstructions = defaults.string(forKey: Self.customPromptInstructionsKey) ?? ""
         anthropicKeySyncEnabled = defaults.bool(forKey: Self.anthropicKeySyncEnabledKey)
         openaiKeySyncEnabled = defaults.bool(forKey: Self.openaiKeySyncEnabledKey)
@@ -767,7 +786,26 @@ final class RoutingSettings: ObservableObject {
             openrouterPrices: openrouterPrices,
             outputLanguage: outputLanguageProvider(),
             whimbrelIdToken: whimbrel?.idToken,
-            whimbrelDeviceKey: whimbrel?.deviceKey
+            whimbrelDeviceKey: whimbrel?.deviceKey,
+            googleAiBillingConfirmed: googleAiBillingConfirmed,
+            remoteOllamaGoogleData: remoteOllamaGoogleData,
+            streamedOllamaModel: Self.streamedOllamaModel(
+                preferredProvider: preferredProvider, preferredModel: preferredModel, ollamaDefaultModel: ollamaDefaultModel
+            ),
+            streamedOllamaBaseUrl: Self.streamedOllamaBaseUrl
         )
+    }
+
+    /// The Ollama base URL Ask streams to. The Mac has no Ollama host setting: Ask streams
+    /// with no base-URL override (`InferenceStreamClient.start`), so core's own default,
+    /// localhost, is used, and "" says exactly that.
+    static let streamedOllamaBaseUrl = ""
+
+    /// The Ollama model this call's prompt streams against: the call's own model when it
+    /// is on Ollama (Ask and window Ask build each prepare's routing from the model they
+    /// then stream with), else the default Ollama model. Core reads it per call.
+    nonisolated static func streamedOllamaModel(preferredProvider: Provider, preferredModel: String, ollamaDefaultModel: String) -> String {
+        let model = preferredModel.trimmingCharacters(in: .whitespaces)
+        return preferredProvider == .ollama && !model.isEmpty ? model : ollamaDefaultModel
     }
 }

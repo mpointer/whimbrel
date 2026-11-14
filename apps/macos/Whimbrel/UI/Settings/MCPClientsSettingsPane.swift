@@ -26,7 +26,7 @@ struct MCPClientsSettingsPane: View {
 
     /// "write" is reserved for a future pass per the design spec — the underlying scope
     /// model supports the string, but it isn't offered here yet.
-    private static let availableScopes = ["memory", "meetings", "transcripts"]
+    private static let availableScopes = McpClientScopes.all
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -110,7 +110,7 @@ struct MCPClientsSettingsPane: View {
 
             HStack(spacing: Spacing.lg) {
                 ForEach(Self.availableScopes, id: \.self) { scope in
-                    Toggle(scope.capitalized, isOn: Binding(
+                    Toggle(McpClientScopes.label(scope), isOn: Binding(
                         get: { selectedScopes.contains(scope) },
                         set: { isOn in
                             if isOn { selectedScopes.insert(scope) } else { selectedScopes.remove(scope) }
@@ -120,6 +120,10 @@ struct MCPClientsSettingsPane: View {
                 }
             }
 
+            Text("Also give it your Gmail and Google Calendar items, and the titles, people and summaries of meetings from Google Calendar. Without this, those are left out of everything above.")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+
             if let errorMessage {
                 Text(errorMessage)
                     .font(.whimbrelBody(.caption))
@@ -128,7 +132,7 @@ struct MCPClientsSettingsPane: View {
 
             Button("Add Client") { addClient() }
                 .buttonStyle(.whimbrelSecondary)
-                .disabled(newClientName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedScopes.isEmpty)
+                .disabled(!McpClientScopes.canCreate(name: newClientName, scopes: selectedScopes))
         }
     }
 
@@ -145,7 +149,7 @@ struct MCPClientsSettingsPane: View {
                         Text(client.name)
                             .font(.whimbrelBody(.body))
                             .foregroundStyle(Color.whimbrelTextPrimary)
-                        Text("\(client.scopes.joined(separator: ", ")) · created \(formattedDate(client.createdAtUnixMs))")
+                        Text("\(McpClientScopes.line(client.scopes)) · created \(formattedDate(client.createdAtUnixMs))")
                             .font(.whimbrelBody(.caption))
                             .foregroundStyle(Color.whimbrelTextSecondary)
                     }
@@ -218,8 +222,8 @@ struct MCPClientsSettingsPane: View {
             return
         }
         let name = newClientName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !selectedScopes.isEmpty else { return }
-        let scopes = Array(selectedScopes)
+        guard McpClientScopes.canCreate(name: name, scopes: selectedScopes) else { return }
+        let scopes = McpClientScopes.ordered(selectedScopes)
         CoreMemoryStore.accessQueue.async {
             let result = store.generateMcpClientToken(name: name, scopes: scopes)
             DispatchQueue.main.async {

@@ -61,6 +61,22 @@ final class StorageFootprintTests: XCTestCase {
         XCTAssertEqual(low.map(\.name), ["Ext"])
     }
 
+    func testFreeBytesFallsBackWhenImportantUsageReadsZeroOrNil() {
+        XCTAssertEqual(StorageVolume.freeBytes(important: 50, available: 40), 50)
+        XCTAssertEqual(StorageVolume.freeBytes(important: 0, available: 40), 40, "exFAT/SMB may read 0")
+        XCTAssertEqual(StorageVolume.freeBytes(important: nil, available: 40), 40)
+        XCTAssertNil(StorageVolume.freeBytes(important: nil, available: nil), "both missing is unknown, not 0")
+        XCTAssertNil(StorageVolume.freeBytes(important: 0, available: nil), "a lone important-usage 0 isn't trusted")
+        XCTAssertEqual(StorageVolume.freeBytes(important: 0, available: 0), 0, "a full disk")
+    }
+
+    func testUnknownFreeSpaceGivesNoWarning() {
+        let low = StorageFootprint.lowDiskVolumes(
+            dataRoot: URL(fileURLWithPath: "/a"), mediaFolder: URL(fileURLWithPath: "/b"),
+            free: { _ in StorageVolume.freeBytes(important: 0, available: nil) }, volumeID: { $0.path }, name: { $0.path })
+        XCTAssertTrue(low.isEmpty)
+    }
+
     func testNoWarningAtOrAboveThreshold() {
         let low = StorageFootprint.lowDiskVolumes(
             dataRoot: URL(fileURLWithPath: "/a"), mediaFolder: URL(fileURLWithPath: "/b"),

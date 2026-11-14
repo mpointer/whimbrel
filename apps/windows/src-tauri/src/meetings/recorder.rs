@@ -49,6 +49,15 @@ impl RecordingFiles {
         RecordingFiles { system: existing("system-audio"), mic: existing("mic-audio"), degraded }
     }
 
+    /// A finished recording's tracks, WAV or compressed (`.m4a`, Free up space): whichever
+    /// exist, the WAV first. Read them through `compress::readable`.
+    pub fn stored(dir: &Path, stamp: &str) -> Self {
+        let existing = |stem: &str| {
+            ["wav", "m4a"].iter().map(|ext| dir.join(format!("{stem}-{stamp}.{ext}"))).find(|p| p.is_file())
+        };
+        RecordingFiles { system: existing("system-audio"), mic: existing("mic-audio"), degraded: None }
+    }
+
     /// The path a meeting row stores: system audio, else the microphone (the Mac's rule).
     pub fn audio_path(&self) -> Option<&Path> {
         self.system.as_deref().or(self.mic.as_deref())
@@ -155,6 +164,16 @@ pub struct WasapiRecording {
 
 impl WasapiRecording {
     pub fn start(target: AudioTarget, dir: &Path, stamp: &str, transcribe: Option<live::Config>) -> Self {
+        crate::perf_report::set_recording(true);
+        crate::perf_report::note(match &transcribe {
+            Some(c) if c.model.is_file() => format!(
+                "live_transcript model={} threads={} engine={}",
+                crate::perf_report::file_name(&c.model),
+                c.threads,
+                if cfg!(windows) { "whisper-vulkan" } else { "whisper" }
+            ),
+            _ => "live_transcript off".to_string(),
+        });
         let sources = vec![
             match target {
                 AudioTarget::Process(pid) => Source::ProcessLoopback { pid },
@@ -195,9 +214,18 @@ impl WasapiRecording {
     }
 }
 
+// A recording dropped without `stop` (an unwinding panic) still releases background work at once,
+// not when the lease runs out. Clearing an already-cleared flag changes nothing.
+impl Drop for WasapiRecording {
+    fn drop(&mut self) {
+        crate::perf_report::set_recording(false);
+    }
+}
+
 impl ActiveAudio for WasapiRecording {
     fn stop(mut self: Box<Self>) -> Stopped {
         self.stop.store(true, Ordering::Relaxed);
+        crate::perf_report::set_recording(false);
         // Ask transcription to stop first so it isn't competing with the streams'
         // shutdown; its work is collected below, after they have finished.
         if let Some(transcribing) = &self.transcribing {

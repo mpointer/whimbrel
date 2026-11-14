@@ -130,7 +130,9 @@ pub fn episode_summaries_allowed(on_ac: bool, idle: Duration) -> bool {
 
 /// Starts both loops. They run for the life of the process and stop when the store
 /// actor does.
-pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>) {
+/// `store` runs the jobs and thread summaries, `episodes` the episode loop: separate lanes, so an Ollama
+/// call that hangs in one loop doesn't stop the other.
+pub fn start(store: StoreHandle, episodes: StoreHandle, settings: Arc<Mutex<SettingsFile>>) {
     {
         let (store, settings) = (store.clone(), settings.clone());
         spawn("whimbrel-jobs", move || {
@@ -138,7 +140,8 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>) {
             let mut delay = BUSY_DELAY;
             loop {
                 std::thread::sleep(delay);
-                if !heavy_jobs_allowed(on_ac_power(), idle_duration()) {
+                // A recording meeting comes first: nothing heavy runs until it stops.
+                if !heavy_jobs_allowed(on_ac_power(), idle_duration()) || crate::meeting_load::background_paused() {
                     delay = IDLE_DELAY;
                     continue;
                 }
@@ -152,6 +155,9 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>) {
                     if started.elapsed() >= SLOW_TURN {
                         let summarize_ms = started.elapsed().as_millis() as u64 - jobs_ms;
                         tracing::info!(jobs, jobs_ms, threads, summarize_ms, model = %model, total_ms = started.elapsed().as_millis() as u64, "slow jobs turn");
+                    }
+                    if jobs + threads > 0 {
+                        crate::perf_report::job_turn("jobs", jobs + threads, started.elapsed());
                     }
                     jobs + threads
                 });
@@ -167,11 +173,16 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>) {
         let mut delay = BUSY_DELAY;
         loop {
             std::thread::sleep(delay);
+            // Segmentation and summaries wait while a meeting records; they catch up after.
+            if crate::meeting_load::background_paused() {
+                delay = IDLE_DELAY;
+                continue;
+            }
             let on_ac = on_ac_power();
             let idle = idle_duration();
             let summarize = (episode_summaries_allowed(on_ac, idle) && probe.reachable()).then(|| summarize_with(&settings)).flatten();
             let model = summarize.as_ref().map_or_else(String::new, |(m, _)| m.clone());
-            let turn = store.call_blocking(move |s| {
+            let turn = episodes.call_blocking(move |s| {
                 let started = Instant::now();
                 let segmented = s.run_episode_segment_batch(1, now_ms()).unwrap_or(0);
                 let segment_ms = started.elapsed().as_millis() as u64;
@@ -179,6 +190,9 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>) {
                 if started.elapsed() >= SLOW_TURN {
                     let summarize_ms = started.elapsed().as_millis() as u64 - segment_ms;
                     tracing::info!(segmented, segment_ms, summarized, summarize_ms, model = %model, on_ac, idle_s = idle.as_secs(), total_ms = started.elapsed().as_millis() as u64, "slow episode turn");
+                }
+                if segmented + summarized > 0 {
+                    crate::perf_report::job_turn("episodes", segmented + summarized, started.elapsed());
                 }
                 segmented + summarized
             });
@@ -248,6 +262,9 @@ pub fn start_profile_suggestions(
         let mut delay = PROFILE_TICK;
         loop {
             std::thread::sleep(delay);
+            if crate::meeting_load::background_paused() {
+                continue;
+            }
             // One short lock for both; nothing below holds it.
             let (profile, routing) = {
                 let file = settings.lock().unwrap();

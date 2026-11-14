@@ -169,6 +169,50 @@ pub fn sync_window_end(now_unix_ms: i64) -> i64 {
     now_unix_ms + SYNC_HORIZON_MS
 }
 
+/// How far ahead other devices' synced meetings are read: today and Upcoming's week after it.
+/// (The senders store about 48 hours ahead, so this only bounds the query.)
+const SYNCED_LOOKAHEAD_MS: i64 = 9 * 24 * 60 * 60 * 1000;
+
+/// Calendar events other devices sent through sync (core's `synced_additions`, #792) that are not
+/// over at `now_unix_ms`, qualify by the same rule as this PC's own, and that `local_all` does not
+/// already hold. `local_all` is this PC's whole list, unfiltered, so a synced twin never brings
+/// back a meeting the PC left out. Display and Meeting Prep only: the meeting trigger never reads
+/// these, so a meeting that exists only on another device can't prompt or record here.
+pub fn synced_meetings(s: &memory::Store, local_all: &[QualifyingMeeting], now_unix_ms: i64) -> Vec<QualifyingMeeting> {
+    let own = s.own_device_id().unwrap_or_default();
+    // A synced meeting runs the default 30 minutes, so one that started earlier than that is over.
+    let from = now_unix_ms - calendar::SYNCED_MEETING_DEFAULT_LEN_MS;
+    match s.synced_calendar_events(&own, from, now_unix_ms + SYNCED_LOOKAHEAD_MS) {
+        Ok(rows) => calendar::synced_additions(local_all, &rows)
+            .into_iter()
+            .filter(|m| qualifies(m) && m.end_unix_ms > now_unix_ms)
+            .collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the calendar events synced from other devices");
+            Vec::new()
+        }
+    }
+}
+
+/// `local` (this PC's meetings, already merged and filtered) with `synced` added, soonest first. The
+/// sort is stable, so a local meeting stays ahead of a synced one starting at the same time.
+pub fn with_synced(mut local: Vec<QualifyingMeeting>, synced: Vec<QualifyingMeeting>) -> Vec<QualifyingMeeting> {
+    if synced.is_empty() {
+        return local;
+    }
+    local.extend(synced);
+    local.sort_by_key(|m| m.start_unix_ms);
+    local
+}
+
+/// What Today's schedule, Upcoming, the next-meeting card and Meeting Prep read: this PC's
+/// `upcoming` meetings plus other devices' synced ones. Works with no calendar connected here
+/// too (then it is only the synced ones). Never the trigger's list: that stays `upcoming`.
+pub fn shown_meetings(calendar: Option<&CalendarService>, s: &memory::Store, now_unix_ms: i64) -> Vec<QualifyingMeeting> {
+    let (all, upcoming) = calendar.map(|c| (c.meetings(), c.upcoming(now_unix_ms))).unwrap_or_default();
+    with_synced(upcoming, synced_meetings(s, &all, now_unix_ms))
+}
+
 /// The calendar half of the meetings service: polls the connected accounts and prompts
 /// when a meeting is about to start.
 pub struct CalendarService {
@@ -478,5 +522,95 @@ mod tests {
         assert!(qualifies(&meeting("b", &["me@x", "you@x"], false)), "so is someone else");
         assert!(!qualifies(&meeting("c", &["me@x"], false)), "a solo block with no link is not a meeting");
         assert!(!qualifies(&meeting("d", &[], false)));
+    }
+
+    // ---- meetings other devices synced (#792) ----
+
+    /// A store that knows it is "pc", holding `rows` as (device, source, external id, start, title, actors).
+    fn synced_store(rows: &[(&str, &str, &str, i64, &str, &[&str])]) -> memory::Store {
+        let store = memory::Store::open_in_memory().unwrap();
+        let items: Vec<memory::NewCalendarEventItem> = rows
+            .iter()
+            .map(|(device, source, id, ts, title, actors)| memory::NewCalendarEventItem {
+                device_id: device.to_string(),
+                source: source.to_string(),
+                external_id: id.to_string(),
+                ts_unix_ms: *ts,
+                title: title.to_string(),
+                actors: actors.iter().map(|a| a.to_string()).collect(),
+            })
+            .collect();
+        store.upsert_calendar_event_items(&items).unwrap();
+        store.set_own_device_id("pc");
+        store
+    }
+
+    fn ext(id: &str, start: i64) -> String {
+        format!("{id}#{}", start / 1000)
+    }
+
+    #[test]
+    fn another_devices_meeting_is_added_and_its_local_twin_is_not() {
+        let now = 1_800_000_000_000;
+        let (only_mac, shared) = (now + DAY / 4, now + DAY / 2);
+        let store = synced_store(&[
+            ("mac", "apple_calendar", &ext("mac-only", only_mac), only_mac, "Genesys Architecture", &["Ana", "Ben"]),
+            // The same meeting this PC reads from Google, under the Mac's own event id.
+            ("mac", "apple_calendar", &ext("mac-copy", shared), shared, " partner SYNC ", &["Ana", "Ben"]),
+        ]);
+        let local = vec![at("evt-1", "Partner Sync", shared, &["me@x", "them@x"])];
+        let added = synced_meetings(&store, &local, now);
+        assert_eq!(added.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["mac-only"], "the sender's event id, for its prep key");
+        assert_eq!(added[0].source, MeetingSource::Calendar);
+        let shown = with_synced(local.clone(), added);
+        assert_eq!(shown.iter().map(|m| m.title.as_str()).collect::<Vec<_>>(), ["Genesys Architecture", "Partner Sync"], "soonest first");
+    }
+
+    #[test]
+    fn a_local_meeting_the_lists_leave_out_still_hides_its_synced_twin() {
+        // `local_all` is unfiltered: a meeting declined here stays out even when another device sent it.
+        let now = 1_800_000_000_000;
+        let start = now + DAY / 4;
+        let store = synced_store(&[("mac", "google_calendar", &ext("x", start), start, "Board review", &["Ana", "Ben"])]);
+        let mut declined = at("evt-9", "Board review", start, &["me@x", "them@x"]);
+        declined.self_response = Some(SelfResponse::Declined);
+        assert!(synced_meetings(&store, &[declined], now).is_empty());
+    }
+
+    #[test]
+    fn own_rows_finished_meetings_and_solo_blocks_are_left_out() {
+        let now = 1_800_000_000_000;
+        let soon = now + DAY / 4;
+        let store = synced_store(&[
+            ("pc", "google_calendar", &ext("mine", soon), soon, "My own row", &["Ana", "Ben"]),
+            ("mac", "apple_calendar", &ext("over", now - 31 * 60_000), now - 31 * 60_000, "Over", &["Ana", "Ben"]),
+            ("mac", "apple_calendar", &ext("on", now - 10 * 60_000), now - 10 * 60_000, "Still on", &["Ana", "Ben"]),
+            ("mac", "apple_calendar", &ext("solo", soon), soon, "Focus time", &["Ana"]),
+            ("mac", "apple_calendar", &ext("far", now + 10 * DAY), now + 10 * DAY, "Too far", &["Ana", "Ben"]),
+        ]);
+        let titles: Vec<String> = synced_meetings(&store, &[], now).into_iter().map(|m| m.title).collect();
+        assert_eq!(titles, ["Still on"], "a synced meeting runs 30 minutes and must qualify like a local one");
+    }
+
+    #[test]
+    fn a_local_meeting_stays_ahead_of_a_synced_one_at_the_same_start() {
+        let local = vec![at("local", "Local", 5_000, &["a", "b"])];
+        let synced = vec![at("synced", "Synced", 5_000, &["a", "b"]), at("early", "Early", 1_000, &["a", "b"])];
+        let ids: Vec<String> = with_synced(local, synced).into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, ["early", "local", "synced"]);
+    }
+
+    #[test]
+    fn the_trigger_never_prompts_for_a_synced_meeting() {
+        // The trigger reads `upcoming` (this PC's sources); Today and Prep read `shown_meetings`.
+        let now = 1_800_000_000_000;
+        let start = now + 60_000;
+        let store = synced_store(&[("mac", "google_calendar", &ext("mac-only", start), start, "Starts in a minute", &["Ana", "Ben"])]);
+        let local_upcoming: Vec<QualifyingMeeting> = Vec::new();
+        let shown = with_synced(local_upcoming.clone(), synced_meetings(&store, &[], now));
+        assert_eq!(shown.len(), 1, "Today shows it");
+        assert_eq!(trigger::due_prompts(&shown, &mut Default::default(), now, 2.0).len(), 1, "it is in the lead window");
+        assert!(trigger::due_prompts(&local_upcoming, &mut Default::default(), now, 2.0).is_empty(), "the trigger's list never has it");
+        assert!(shown_meetings(None, &store, now).iter().any(|m| m.id == "mac-only"), "no calendar connected here still shows it");
     }
 }

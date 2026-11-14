@@ -109,7 +109,7 @@ export function TypeSafeCard() {
         {t("Sort items into topics with TypeSafe")}
       </label>
       <p className="muted small">
-        {t("Sends short excerpts of emails, meetings, calendar events and screen activity to TypeSafe to choose a topic.")}
+        {t("Sends short excerpts of meetings and screen activity to TypeSafe to choose a topic. Gmail and Google Calendar items wait until TypeSafe confirms it doesn't train on them.")}
       </p>
       {view.enabled && view.localOnly && <p className="muted small">{t("Local-only mode is on, so nothing is sent to TypeSafe.")}</p>}
       {prompt.kind === "failed" && (

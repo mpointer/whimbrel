@@ -32,7 +32,9 @@ final class AppState: ObservableObject {
     /// meeting ends, and its title for display. All 3 trigger paths (manual
     /// `startManualMeeting()`, calendar/detected via `startCapture(for:)`) produce a real
     /// row here, independent of activity capture's own on/off state (FR-MTG-14).
-    @Published private(set) var activeMeetingId: Int64?
+    @Published private(set) var activeMeetingId: Int64? {
+        didSet { syncRecordingGate() }
+    }
     /// Start of the active meeting (the original start for a continued one); drives the menu bar elapsed time.
     @Published private(set) var activeMeetingStartedAt: Date? {
         didSet { restartMenuBarElapsedTimer() }
@@ -133,7 +135,10 @@ final class AppState: ObservableObject {
     /// Previously this role was served by `captureEnabled` itself (shared with
     /// activity capture) -- now that the two are independent, meeting-starting needs
     /// its own dedicated lock.
-    private var isStartingMeeting = false
+    private var isStartingMeeting = false {
+        didSet { syncRecordingGate() }
+    }
+    private var recordingGateTimer: Timer?
     /// Set once by `TimelineView.swift`'s `.onAppear` (which has real access to
     /// `@Environment(\.openWindow)`) — used by the meeting-alert panel's "Start
     /// Recording & Open Timeline" action. `AppState` itself has no SwiftUI environment
@@ -311,28 +316,84 @@ final class AppState: ObservableObject {
     /// Schedule panel, the capture-prompt trigger) reads, instead of either source
     /// directly.
     var allUpcomingMeetings: [QualifyingMeeting] {
-        Self.todaysMeetings(eventKit: calendar.upcomingMeetings, oauth: googleCalendarPolling.oauthMeetings, now: Date())
+        Self.triggerMeetings(eventKit: calendar.upcomingMeetings, oauth: googleCalendarPolling.oauthMeetings, now: Date())
     }
 
-    /// What the Today panel and the At a Glance schedule show: `allUpcomingMeetings` without
+    /// What the meeting trigger may prompt for: this Mac's own calendar sources only. Meetings
+    /// synced from another device are never in it, so one that only exists there cannot start a
+    /// recording here.
+    nonisolated static func triggerMeetings(eventKit: [QualifyingMeeting], oauth: [QualifyingMeeting], now: Date) -> [QualifyingMeeting] {
+        todaysMeetings(eventKit: eventKit, oauth: oauth, now: now)
+    }
+
+    /// `allUpcomingMeetings` plus the calendar events other devices sent through sync. For what
+    /// the user reads and for Meeting Prep only: a meeting that exists only on another device must
+    /// never start a recording prompt here, so the meeting trigger and the split hold keep reading
+    /// `allUpcomingMeetings`.
+    var allMeetingsWithSynced: [QualifyingMeeting] {
+        Self.todaysMeetings(eventKit: calendar.upcomingMeetings, oauth: googleCalendarPolling.oauthMeetings, now: Date(), synced: syncedMeetings)
+    }
+
+    /// What the Today panel and the At a Glance schedule show: `allMeetingsWithSynced` without
     /// the meetings the user declined and the all-day events, the same rule Upcoming uses.
     /// The meeting trigger and the other consumers keep reading `allUpcomingMeetings`.
     var todayPanelMeetings: [QualifyingMeeting] {
-        Self.todaysMeetings(eventKit: calendar.upcomingMeetings, oauth: googleCalendarPolling.oauthMeetings, now: Date(), forPanel: true)
+        Self.todaysMeetings(eventKit: calendar.upcomingMeetings, oauth: googleCalendarPolling.oauthMeetings, now: Date(), forPanel: true, synced: syncedMeetings)
+    }
+
+    /// Calendar events other devices sent through sync (this Mac's own rows, removed ones and
+    /// ones already shown from EventKit or Google left out), from the start of today to the end
+    /// of the week window. The item has no end, RSVP, link or all-day marker (see
+    /// `CoreMemoryStore.syncedMeetings`). Refreshed by `refreshSyncedMeetings`.
+    @Published private(set) var syncedMeetings: [QualifyingMeeting] = []
+    private var syncedRefreshGeneration = 0
+
+    /// Re-reads `syncedMeetings` from the store: after a sync pulls rows, at launch, and whenever
+    /// the local calendar sources publish (a new local meeting can now cover a synced one).
+    /// Reads on the store's queue and publishes on main; a refresh overtaken by a newer one is dropped.
+    func refreshSyncedMeetings() {
+        guard let store = coreStore else { return }
+        let now = Date()
+        let local = calendar.upcomingMeetings + calendar.upcomingWeek + googleCalendarPolling.oauthMeetings
+        let from = Calendar.current.startOfDay(for: now)
+        let until = CalendarService.weekWindow(now: now).upperBound
+        let own = deviceId
+        syncedRefreshGeneration += 1
+        let generation = syncedRefreshGeneration
+        CoreMemoryStore.accessQueue.async { [weak self] in
+            let found = store.syncedMeetings(excludeDeviceId: own, from: from, until: until, local: local)
+            DispatchQueue.main.async {
+                guard let self, generation == self.syncedRefreshGeneration, let found, found != self.syncedMeetings else { return }
+                self.syncedMeetings = found
+            }
+        }
     }
 
     /// The connector keeps every future occurrence of a recurring meeting (for years
     /// ahead), while EventKit covers only the rest of today, so the connector's list is
     /// cut to the same window before merging. `forPanel` also drops all-day events and
     /// declined meetings; it is off for the trigger, which must still see them.
-    nonisolated static func todaysMeetings(eventKit: [QualifyingMeeting], oauth: [QualifyingMeeting], now: Date, forPanel: Bool = false, calendar: Calendar = .current) -> [QualifyingMeeting] {
+    /// `synced` (other devices' events, already deduped against the local list by core) joins
+    /// after the local merge and the same panel rules; it defaults to none, which is what the
+    /// trigger gets. An event is only on that list when no local copy covers it, so a local
+    /// meeting the panel hides (all-day, declined) is not brought back by a synced twin.
+    nonisolated static func todaysMeetings(eventKit: [QualifyingMeeting], oauth: [QualifyingMeeting], now: Date, forPanel: Bool = false, synced: [QualifyingMeeting] = [], calendar: Calendar = .current) -> [QualifyingMeeting] {
         let end = CalendarService.todayWindowEnd(now: now, calendar: calendar)
         // All-day events are dropped before the merge: `isAllDay` is not part of the JSON that
         // round-trips through core, so a merged meeting always reads false. EventKit is the only
         // source that needs it; Google all-day events never get here (core skips events with no
         // dateTime). Declined is on the wire, so it is filtered after the merge.
         let merged = CoreMemoryStore.mergeMeetings(eventKit: forPanel ? eventKit.filter { !$0.isAllDay } : eventKit, oauth: oauth.filter { $0.startDate < end })
-        return forPanel ? merged.filter { $0.selfResponse != .declined } : merged
+        let local = forPanel ? merged.filter { $0.selfResponse != .declined } : merged
+        return withSynced(local, synced.filter { $0.startDate < end })
+    }
+
+    /// `local` with `synced` added, soonest first (stable: a local meeting stays ahead of a
+    /// synced one starting at the same time).
+    nonisolated static func withSynced(_ local: [QualifyingMeeting], _ synced: [QualifyingMeeting]) -> [QualifyingMeeting] {
+        guard !synced.isEmpty else { return local }
+        let all = local + synced
+        return all.enumerated().sorted { ($0.element.startDate, $0.offset) < ($1.element.startDate, $1.offset) }.map(\.element)
     }
 
     /// How far ahead the phones get calendar events: today plus tomorrow, so a reminder
@@ -396,10 +457,11 @@ final class AppState: ObservableObject {
 
     /// Both sources are cut to the window here: EventKit's list is up to a refresh (60 s) old, so
     /// after midnight it can still hold the day that just became today.
-    nonisolated static func weekMeetings(eventKit: [QualifyingMeeting], oauth: [QualifyingMeeting], now: Date) -> [QualifyingMeeting] {
+    nonisolated static func weekMeetings(eventKit: [QualifyingMeeting], oauth: [QualifyingMeeting], now: Date, synced: [QualifyingMeeting] = []) -> [QualifyingMeeting] {
         let week = CalendarService.weekWindow(now: now)
-        return CoreMemoryStore.mergeMeetings(eventKit: eventKit.filter { week.contains($0.startDate) }, oauth: oauth.filter { week.contains($0.startDate) })
+        let local = CoreMemoryStore.mergeMeetings(eventKit: eventKit.filter { week.contains($0.startDate) }, oauth: oauth.filter { week.contains($0.startDate) })
             .filter { $0.selfResponse != .declined }
+        return withSynced(local, synced.filter { week.contains($0.startDate) })
     }
     let meetingTrigger = MeetingTriggerService()
     /// "Away Mode": join Zoom meetings unattended. Owns the keep-awake assertion while on.
@@ -622,6 +684,21 @@ final class AppState: ObservableObject {
         calendarConnectorState = CalendarConnectorState(coreStore: coreStore)
         gmailConnectorState = GmailConnectorState(coreStore: coreStore)
         outlook365ConnectorState = Outlook365ConnectorState(coreStore: coreStore)
+        // A Google account's grant is shared by every Whimbrel connection to the same address
+        // (Gmail, Calendar, sync sign-in): removing one revokes only when it is the last.
+        let gmailForGrants = gmailConnectorState, calendarForGrants = calendarConnectorState
+        calendarForGrants.grantIsSharedElsewhere = { [weak gmailForGrants, weak calendarForGrants] email in
+            GoogleDisconnect.grantIsShared(
+                removing: .calendar, email: email,
+                gmailEmails: gmailForGrants?.accounts.map(\.email) ?? [], calendarEmails: calendarForGrants?.accounts.map(\.email) ?? [],
+                syncEmail: GoogleDisconnect.syncSignInEmail())
+        }
+        gmailForGrants.grantIsSharedElsewhere = { [weak gmailForGrants, weak calendarForGrants] email in
+            GoogleDisconnect.grantIsShared(
+                removing: .gmail, email: email,
+                gmailEmails: gmailForGrants?.accounts.map(\.email) ?? [], calendarEmails: calendarForGrants?.accounts.map(\.email) ?? [],
+                syncEmail: GoogleDisconnect.syncSignInEmail())
+        }
         deviceId = syncState.ensureLocalDeviceIdentity() ?? "spike-device"
         // Queued first, so it runs before any store work enqueued below (serial queue);
         // async, so a long job already on the queue can't block launch. Locals rather
@@ -820,7 +897,8 @@ final class AppState: ObservableObject {
             MainActor.assumeIsolated { self?.pollCheckIn() }
         }
         routineScheduler.start(
-            store: coreStore, slowStore: slowStore, meetingsProvider: { [weak self] in self?.allUpcomingMeetings ?? [] }, routing: routing,
+            store: coreStore, slowStore: slowStore, meetingsProvider: { [weak self] in self?.allUpcomingMeetings ?? [] },
+            prepMeetingsProvider: { [weak self] in self?.allMeetingsWithSynced ?? [] }, routing: routing,
             promptLibrary: promptLibrary, meetingPrepLeadMinutes: { [weak self] in self?.meetingPrepSettings.leadMinutes ?? 30 },
             calendarConnectorState: calendarConnectorState, gmailConnectorState: gmailConnectorState,
             profile: profile, profileSuggestions: profileSuggestions,
@@ -996,11 +1074,12 @@ final class AppState: ObservableObject {
         // `@Published` fires on willSet, so read the sources after the hop (as `persistCalendarEventItems` does).
         calendar.$upcomingWeek
             .merge(with: googleCalendarPolling.$oauthMeetings)
+            .merge(with: $syncedMeetings)
             .sink { [weak self] _ in
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.upcomingWeekMeetings = Self.weekMeetings(
-                        eventKit: self.calendar.upcomingWeek, oauth: self.googleCalendarPolling.oauthMeetings, now: Date()
+                        eventKit: self.calendar.upcomingWeek, oauth: self.googleCalendarPolling.oauthMeetings, now: Date(), synced: self.syncedMeetings
                     )
                 }
             }
@@ -1010,9 +1089,19 @@ final class AppState: ObservableObject {
             .merge(with: calendar.$upcomingWeek)
             .merge(with: googleCalendarPolling.$oauthMeetings)
             .sink { [weak self] _ in
-                DispatchQueue.main.async { self?.persistCalendarEventItems() }
+                DispatchQueue.main.async {
+                    self?.persistCalendarEventItems()
+                    self?.refreshSyncedMeetings()
+                }
             }
             .store(in: &cancellables)
+
+        // Rows pulled by a sync round, and one read at launch for what an earlier run already pulled.
+        contentSyncCoordinator.$lastSyncedAt.dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshSyncedMeetings() }
+            .store(in: &cancellables)
+        DispatchQueue.main.async { [weak self] in self?.refreshSyncedMeetings() }
     }
 
     /// A new pending prompt: Away Mode's if it takes it, else the alert panel (or a hold).
@@ -1289,6 +1378,14 @@ final class AppState: ObservableObject {
             reasons.append(("Microphone", micDegradedReason))
         }
         return reasons
+    }
+
+    /// Settings → Connectors → "Use your own Google Cloud project" saved or cleared it:
+    /// both Google connectors switch client, and accounts the old client signed in are
+    /// flagged for reconnect. Sync sign-in keeps the built-in client.
+    func googleConnectorClientChanged() {
+        calendarConnectorState.reloadClient()
+        gmailConnectorState.reloadClient()
     }
 
     func toggleActivityCapture() {
@@ -2204,6 +2301,24 @@ final class AppState: ObservableObject {
         )
     }
 
+    /// Sends a meeting recap from the default connected Gmail account (`RecapSender`).
+    func makeRecapSender() -> RecapSender {
+        let gmail = gmailConnectorState
+        let log = Logger(subsystem: "com.mpointer.kestrel", category: "recap")
+        return RecapSender(
+            connectedAccount: { [weak gmail] in gmail?.defaultEmail },
+            token: { [weak gmail] email in
+                await RoutineScheduler.fetchAccessToken(from: gmail?.oauthHelper(forEmail: email), requiredScope: RoutineScheduler.gmailWriteScope, log: log)
+            },
+            transport: { plan, token in await RoutineScheduler.performToolCall(plan: plan, accessToken: token) }
+        )
+    }
+
+    /// The user's own addresses (connected Gmail and Google Calendar accounts), left out of a recap.
+    var recapSelfEmails: [String] {
+        gmailConnectorState.accounts.map(\.email) + calendarConnectorState.accounts.map(\.email)
+    }
+
     /// The email goes only to the default connected Gmail account (`GmailSelfSend`); status,
     /// evidence and context lookups go through `accessQueue`.
     private func makeLiveAlertDelivery() -> LiveAlertDelivery {
@@ -2286,6 +2401,25 @@ final class AppState: ObservableObject {
     /// rather than stopping -- Whimbrel is a long-running menubar app and this work must
     /// keep picking up indefinitely, so going dormant after the first catch-up would
     /// stall it until the next relaunch.
+    /// Tells core whether a meeting is recording, so background jobs (here and in core) wait
+    /// for it to end. Runs on every change of `activeMeetingId` / `isStartingMeeting`, which
+    /// covers manual, calendar and detected starts, a start that fails or is superseded, and
+    /// every stop. Core's flag is a lease, so while recording a timer renews it; if this app
+    /// died mid-meeting the lease would lapse on its own.
+    private func syncRecordingGate() {
+        let recording = PowerIdleGate.isRecording(activeMeetingId: activeMeetingId, isStartingMeeting: isStartingMeeting)
+        whimbrel_set_recording_active(recording)
+        guard recording else {
+            recordingGateTimer?.invalidate()
+            recordingGateTimer = nil
+            return
+        }
+        guard recordingGateTimer == nil else { return }
+        recordingGateTimer = Timer.scheduledTimer(withTimeInterval: PowerIdleGate.recordingRenewSeconds, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.syncRecordingGate() }
+        }
+    }
+
     private func scheduleJobsBatchStep() {
         guard let store = coreStore else { return }
         // Read on the main thread and capture -- `routing`/`promptLibrary` (@Published)
@@ -2342,7 +2476,7 @@ final class AppState: ObservableObject {
         let episodeSummaryInstructions = promptLibrary.instructions[.episodeSummary] ?? ""
         let slow = slowStore
         CoreMemoryStore.accessQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            let segmented = store.runEpisodeSegmentBatch(maxJobs: 1)
+            let segmented = PowerIdleGate.recordingPausesBackgroundWork() ? 0 : store.runEpisodeSegmentBatch(maxJobs: 1)
             CoreMemoryStore.slowLaneQueue.async { [weak self] in
                 // Segmenting stays always-on (#52); the Ollama summary waits for the same
                 // AC-power + idle gate as thread summaries, as on Windows, so a backlog
@@ -2381,7 +2515,7 @@ final class AppState: ObservableObject {
                 self?.replyPriority.activeKey(localOnly: self?.routing.localOnlyMode ?? true)
             }
             var prioritized: Int64 = 0
-            if let key {
+            if let key, !PowerIdleGate.recordingPausesBackgroundWork() {
                 let result = slow.runThreadPriorityBatch(apiKey: key, maxJobs: 1)
                 DispatchQueue.main.async { [weak self] in
                     if result == -2 { self?.replyPriority.markKeyRejected(true) }
@@ -2406,7 +2540,7 @@ final class AppState: ObservableObject {
                 self?.topicSort.activeKey(localOnly: self?.routing.localOnlyMode ?? true)
             }
             var judged: Int64 = 0
-            if let key {
+            if let key, !PowerIdleGate.recordingPausesBackgroundWork() {
                 let result = slow.runTopicJudgeBatch(apiKey: key, max: 8, usdPerMillion: TopicSortSettings.usdPerMillion)
                 judged = result
                 DispatchQueue.main.async { [weak self] in
@@ -2493,7 +2627,7 @@ final class AppState: ObservableObject {
                 )
             }
             guard let inputs else { return }
-            let result: Int64 = inputs.wait ? 0 : slow.runTopicStepsBatch(
+            let result: Int64 = inputs.wait || PowerIdleGate.recordingPausesBackgroundWork() ? 0 : slow.runTopicStepsBatch(
                 routing: inputs.routing, ollamaModel: inputs.model, apiKey: inputs.key,
                 max: 4, usdPerMillion: TopicSortSettings.usdPerMillion
             )
@@ -2654,6 +2788,37 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// "Re-summarize with Whimbrel": `regenerateMeetingSummary` through Whimbrel AI alone, so a
+    /// failure says why (the second value, a core `fallback_reason` code) instead of a local model
+    /// answering. `routing` must name Whimbrel as the preferred provider.
+    func resummarizeMeetingWithWhimbrel(
+        meetingId: Int64,
+        notes: String,
+        transcript: String,
+        ollamaModel: String,
+        routing: CoreRoutingConfig,
+        customInstructions: String,
+        completion: @escaping (Result<CoreMeetingSummary, CoreLLMError>?, String?) -> Void
+    ) {
+        guard let slow = slowStore else {
+            completion(nil, nil)
+            return
+        }
+        regeneratingSummaryIds.insert(meetingId)
+        CoreMemoryStore.slowLaneQueue.async { [weak self] in
+            let slides = slow.meetingSlidesText(meetingId: meetingId)
+            let named = slow.meetingTranscriptText(meetingId: meetingId) ?? ""
+            let text = named.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? transcript : named
+            let outcome = slow.summarizeMeetingPreferred(meetingId: meetingId, notes: notes, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions)
+            DispatchQueue.main.async {
+                self?.regeneratingSummaryIds.remove(meetingId)
+                // Only a success is recorded: a failure is shown by the notice's own line, with its reason.
+                if case .success? = outcome?.result { self?.recordSummaryOutcome(outcome?.result, meetingId: meetingId) }
+                completion(outcome?.result, outcome?.reason)
+            }
+        }
+    }
+
     /// FR-MTG-1/2: starts capture for a specific calendar-triggered or heuristically
     /// detected meeting (accepted prompt, or auto-start) and records a `meeting` row —
     /// tagged with the matching trigger — so the session can be completed (end time +
@@ -2718,6 +2883,7 @@ final class AppState: ObservableObject {
                 return
             }
             let insertedId = store.insertMeeting(newMeeting)
+            if let insertedId, meeting.source == .googleCalendar { store.setMeetingCalendarSource(meetingId: insertedId, source: "google") }
             if let insertedId, !meeting.attendeeDetails.isEmpty { store.setMeetingAttendeeDetails(meetingId: insertedId, attendees: meeting.attendeeDetails) }
             let partIndex = insertedId.flatMap { store.beginMeetingPart(meetingId: $0, startUnixMs: partStartMs, continueKey: continueKey) }
             DispatchQueue.main.async { [weak self] in
@@ -2748,6 +2914,7 @@ final class AppState: ObservableObject {
                 store.undoMeetingReopen(meetingId: id, partIndex: 0)
                 MeetingContinuation.log.error("meeting \(id): could not add a part; starting a new meeting instead")
                 let insertedId = store.insertMeeting(newMeeting)
+                if let insertedId, meeting.source == .googleCalendar { store.setMeetingCalendarSource(meetingId: insertedId, source: "google") }
                 if let insertedId, !meeting.attendeeDetails.isEmpty { store.setMeetingAttendeeDetails(meetingId: insertedId, attendees: meeting.attendeeDetails) }
                 let newPart = insertedId.flatMap { store.beginMeetingPart(meetingId: $0, startUnixMs: partStartMs, continueKey: continueKey) }
                 DispatchQueue.main.async { [weak self] in

@@ -128,11 +128,19 @@ fn run(meeting: SnapshotMeeting, deps: &Deps, root: PathBuf, stop: Arc<Stop>) {
     );
     tracing::info!(meeting_id, "meeting snapshots running");
     let mut next = Instant::now() + INTERVAL;
+    let mut last_tick: Option<Instant> = None;
     while !wait_until(&stop, next) {
         // A tick that overran skips the ticks it ran into.
         while next <= Instant::now() {
             next += INTERVAL;
         }
+        // The PC is short of memory or CPU (`meeting_load`): one look every 30 s, not every 5.
+        if crate::meeting_load::under_pressure()
+            && last_tick.is_some_and(|t| t.elapsed() < crate::meeting_load::PRESSURE_SNAPSHOT_EVERY)
+        {
+            continue;
+        }
+        last_tick = Some(Instant::now());
         let (enabled, exclusions) = {
             let settings = deps.settings.lock().unwrap();
             (settings.meeting_snapshots_enabled(), Exclusions { user: settings.excluded_bundle_ids() })
@@ -140,18 +148,30 @@ fn run(meeting: SnapshotMeeting, deps: &Deps, root: PathBuf, stop: Arc<Stop>) {
         if !enabled {
             continue;
         }
+        let tick_started = Instant::now();
         let ticked = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let hwnd = target::meeting_window(meeting.root_pid.or_else(|| (deps.candidate)()), uia.as_ref(), &exclusions);
             let frame = hwnd.and_then(|h| grabber.grab_window(h).map_err(|e| tracing::debug!(error = %e, "no meeting frame")).ok());
             session.tick(frame, Local::now())
         }));
-        match ticked {
+        match &ticked {
             Ok(Ok(Decision::KeepNew)) => tracing::info!(meeting_id, "kept a slide"),
             Ok(Ok(Decision::ReplaceLast)) => tracing::info!(meeting_id, "replaced the last slide with its build"),
             Ok(Ok(_)) => {}
             Ok(Err(e)) => tracing::warn!(meeting_id, error = %e, "snapshot not saved"),
             Err(_) => tracing::error!(meeting_id, "a snapshot tick panicked"),
         }
+        crate::perf_report::note(format!(
+            "snapshot_tick ms={} result={}",
+            tick_started.elapsed().as_millis(),
+            match &ticked {
+                Ok(Ok(Decision::KeepNew)) => "kept",
+                Ok(Ok(Decision::ReplaceLast)) => "replaced",
+                Ok(Ok(_)) => "skipped",
+                Ok(Err(_)) => "failed",
+                Err(_) => "panicked",
+            }
+        ));
     }
     tracing::info!(meeting_id, kept = session.kept, "meeting snapshots stopped");
 }

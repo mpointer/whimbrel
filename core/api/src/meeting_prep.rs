@@ -40,6 +40,7 @@ pub fn run(
 /// [`run`] under a gate: `Off` does nothing; `Failover` (another device is the primary) acts only
 /// within [`PREP_FAILOVER_BEFORE_START_MS`] of the start, and a brief that synced in meanwhile
 /// counts as prepared, also when the peer's calendar id for the meeting differs from ours.
+#[allow(clippy::too_many_arguments)]
 pub fn run_gated(
     store: &memory::Store,
     meetings: &[QualifyingMeeting],
@@ -49,6 +50,31 @@ pub fn run_gated(
     lang: &str,
     gate: impl Into<RunGate>,
     complete: &mut dyn FnMut(&str) -> Option<Completed>,
+) -> rusqlite::Result<Vec<memory::RoutineRun>> {
+    run_gated_prompts(store, meetings, now_unix_ms, lead_minutes, profile, lang, gate, &mut |p: &PrepPrompts| complete(&p.full))
+}
+
+/// One meeting's brief prompt in its two Limited Use forms: `full`, and `without_google`
+/// for a link that may not receive Gmail or Google Calendar text (`llm::limited_use`):
+/// the email sources and the earlier meetings that may have come from Google Calendar
+/// left out, or `None` when the meeting itself came from Google
+/// Calendar (its title and attendees are then Google user data).
+pub struct PrepPrompts {
+    pub full: String,
+    pub without_google: Option<String>,
+}
+
+/// [`run_gated`] with the model call choosing between [`PrepPrompts`] per link.
+#[allow(clippy::too_many_arguments)]
+pub fn run_gated_prompts(
+    store: &memory::Store,
+    meetings: &[QualifyingMeeting],
+    now_unix_ms: i64,
+    lead_minutes: f64,
+    profile: &str,
+    lang: &str,
+    gate: impl Into<RunGate>,
+    complete: &mut dyn FnMut(&PrepPrompts) -> Option<Completed>,
 ) -> rusqlite::Result<Vec<memory::RoutineRun>> {
     let gate = gate.into();
     // Show a peer's brief under our own calendar id even when this device will not generate.
@@ -78,8 +104,8 @@ pub fn run_gated(
         let (brief, provider, model) = if context.sources.is_empty() {
             (llm::meeting_prep::deterministic_brief(&meeting.attendees, &context), "none".to_string(), String::new())
         } else {
-            let prompt = llm::meeting_prep::build_prompt(&meeting.title, &meeting.attendees, &context, profile, lang);
-            let Some(answer) = complete(&prompt) else {
+            let prompts = prep_prompts(store, &meeting, &context, profile, lang);
+            let Some(answer) = complete(&prompts) else {
                 let reason = "no model was available to write the brief";
                 store.record_summarize_error("meeting_prep", reason, now_unix_ms);
                 // Only a record: a write that fails here must not stop prep for the other meetings.
@@ -133,6 +159,46 @@ pub fn run_gated(
     Ok(runs)
 }
 
+/// Both forms of one meeting's prompt (see [`PrepPrompts`]).
+fn prep_prompts(
+    store: &memory::Store,
+    meeting: &QualifyingMeeting,
+    context: &memory::prep::PrepContext,
+    profile: &str,
+    lang: &str,
+) -> PrepPrompts {
+    let full = llm::meeting_prep::build_prompt(&meeting.title, &meeting.attendees, context, profile, lang);
+    let from_google_calendar = meeting.source == crate::connectors::calendar::MeetingSource::GoogleCalendar;
+    let without_google = (!from_google_calendar).then(|| {
+        let sources: Vec<memory::prep::PrepSource> = context
+            .sources
+            .iter()
+            .filter(|s| match s.kind {
+                memory::prep::PrepSourceKind::Email => false,
+                // An earlier meeting may have been scheduled from Google Calendar (its title
+                // and attendees are then Google user data); one with no recorded source
+                // counts as that too.
+                memory::prep::PrepSourceKind::Meeting => {
+                    s.meeting_id.is_some_and(|id| !store.meeting_may_hold_google_calendar_data(id))
+                }
+            })
+            .cloned()
+            .collect();
+        // "Last spoke" may come from an email; without them it is the latest kept meeting.
+        let last_interaction = context
+            .last_interaction
+            .iter()
+            .map(|l| memory::prep::LastInteraction {
+                attendee: l.attendee.clone(),
+                ts_unix_ms: sources.iter().filter(|s| s.attendee == l.attendee).map(|s| s.ts_unix_ms).max(),
+            })
+            .collect();
+        let kept = memory::prep::PrepContext { sources, last_interaction };
+        llm::meeting_prep::build_prompt(&meeting.title, &meeting.attendees, &kept, profile, lang)
+    });
+    PrepPrompts { full, without_google }
+}
+
 /// How many of the routine's newest runs are searched for an earlier failure of the same meeting.
 const FAILURE_LOOKBACK_RUNS: usize = 200;
 
@@ -183,18 +249,29 @@ pub fn run_with_chain(
     gate: impl Into<RunGate>,
 ) -> rusqlite::Result<Vec<memory::RoutineRun>> {
     let cap_config = routing.spend_cap_config();
-    let mut complete = |prompt: &str| -> Option<Completed> {
+    let policy = routing.google_data_policy();
+    let mut complete = |prompts: &PrepPrompts| -> Option<Completed> {
         if llm::check_spend_cap(store, &cap_config, None, Some("routine"), now_unix_ms).is_err() {
             return None;
         }
         // Built per meeting: spend from the previous one can put a provider over budget.
         let chain = crate::routing::build_chain_for(llm::TaskKind::MeetingPrep, ollama_model, routing);
         let chain = crate::budget::apply_budgets(store, chain, false, now_unix_ms).ok()?;
-        let (completion, link) = llm::try_chain(&chain, |link| link.client.complete(prompt))?;
+        let (completion, link) = llm::try_chain(&chain, |link| {
+            // Limited Use: each link gets the prompt it may receive.
+            if llm::limited_use::link_may_receive_google_data(link, policy) {
+                link.client.complete(&prompts.full)
+            } else {
+                match &prompts.without_google {
+                    Some(prompt) => link.client.complete(prompt),
+                    None => Err(llm::limited_use::withheld_from_link()),
+                }
+            }
+        })?;
         crate::util::log_link_usage(store, link, "routine", completion.token_usage);
         Some(Completed { text: completion.text, provider: link.provider.as_str().to_string(), model: link.model.clone() })
     };
-    run_gated(store, meetings, now_unix_ms, lead_minutes, &routing.profile, &routing.output_language, gate, &mut complete)
+    run_gated_prompts(store, meetings, now_unix_ms, lead_minutes, &routing.profile, &routing.output_language, gate, &mut complete)
 }
 
 #[cfg(test)]
@@ -259,6 +336,78 @@ mod tests {
             provider: "ollama".into(),
             model: "gemma4:12b".into(),
         }
+    }
+
+    fn prep_source(id: &str, kind: memory::prep::PrepSourceKind, text: &str, ts: i64) -> memory::prep::PrepSource {
+        memory::prep::PrepSource {
+            id: id.into(),
+            kind,
+            title: id.into(),
+            ts_unix_ms: ts,
+            attendee: "Ben Lawrick".into(),
+            text: text.into(),
+            meeting_id: None,
+            thread_id: None,
+        }
+    }
+
+    /// Limited Use: a link that may not receive Google user data gets the brief without the
+    /// Gmail sources, and nothing at all for a meeting that came from Google Calendar.
+    #[test]
+    fn the_prompt_without_google_drops_email_sources_and_google_calendar_meetings() {
+        use memory::prep::{LastInteraction, PrepContext, PrepSourceKind};
+        let store = store(true);
+        earlier_meeting_with(&store, "Ben Lawrick");
+        let earlier = store.recent_meetings(10).unwrap()[0].id;
+        assert!(store.set_meeting_calendar_source(earlier, memory::limited_use::CALENDAR_SOURCE_OTHER).unwrap());
+        let mut meeting_source = prep_source("M1", PrepSourceKind::Meeting, "MEETINGTEXT kickoff", 1_000);
+        meeting_source.meeting_id = Some(earlier);
+        let context = PrepContext {
+            sources: vec![
+                meeting_source,
+                prep_source("E1", PrepSourceKind::Email, "GMAILTEXT pricing", 9_000),
+            ],
+            last_interaction: vec![LastInteraction { attendee: "Ben Lawrick".into(), ts_unix_ms: Some(9_000) }],
+        };
+        let mut apple = upcoming("evt-1", 100 * MIN, &["Ben Lawrick"]);
+        apple.source = MeetingSource::Calendar;
+        let p = prep_prompts(&store, &apple, &context, "", "");
+        assert!(p.full.contains("GMAILTEXT") && p.full.contains("MEETINGTEXT"));
+        let without = p.without_google.unwrap();
+        assert!(!without.contains("GMAILTEXT") && without.contains("MEETINGTEXT"), "{without}");
+
+        let google = upcoming("evt-2", 100 * MIN, &["Ben Lawrick"]);
+        assert!(prep_prompts(&store, &google, &context, "", "").without_google.is_none());
+    }
+
+    /// Limited Use: an earlier meeting that came from Google Calendar (or whose calendar is
+    /// unknown) is left out of the prompt for a link that may not receive Google data; one
+    /// from another calendar stays.
+    #[test]
+    fn the_prompt_without_google_drops_earlier_meetings_from_google_calendar() {
+        use memory::limited_use::{CALENDAR_SOURCE_GOOGLE, CALENDAR_SOURCE_OTHER};
+        let without_google = |source: Option<&str>| {
+            let store = store(true);
+            earlier_meeting_with(&store, "Ben Lawrick");
+            if let Some(source) = source {
+                let id = store.recent_meetings(10).unwrap()[0].id;
+                assert!(store.set_meeting_calendar_source(id, source).unwrap());
+            }
+            let mut apple = upcoming("evt-1", 100 * MIN, &["Ben Lawrick"]);
+            apple.source = MeetingSource::Calendar;
+            let seen = std::cell::RefCell::new(None);
+            run_gated_prompts(&store, &[apple], 99 * MIN, 5.0, "", "", RunGate::Full, &mut |p: &PrepPrompts| {
+                *seen.borrow_mut() = p.without_google.clone();
+                Some(good_answer())
+            })
+            .unwrap();
+            let prompt = seen.into_inner();
+            prompt.expect("an Apple Calendar meeting has a prompt without Google data")
+        };
+        assert!(without_google(Some(CALENDAR_SOURCE_OTHER)).contains("Acme kickoff"));
+        assert!(!without_google(Some(CALENDAR_SOURCE_GOOGLE)).contains("Acme kickoff"));
+        // Created with no calendar event to match: the source is unknown, so it is held.
+        assert!(!without_google(None).contains("Acme kickoff"));
     }
 
     fn never(_: &str) -> Option<Completed> {
