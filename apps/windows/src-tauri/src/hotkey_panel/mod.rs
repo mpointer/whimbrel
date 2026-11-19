@@ -323,6 +323,16 @@ fn read_current(app: &AppHandle) -> Result<HotkeyPanelRead, CommandError> {
             (false, None)
         }
     };
+    // Core's line for what was read (`destination_for`, as the Mac asks on open): local only when the window
+    // carries a client excluded from hosted models. If the store can't answer, the settings' line stands;
+    // `window_ask` asks core again before anything is sent.
+    let destination = match (&outcome, state.store()) {
+        (ReadOutcome::Read(input), Ok(store)) => {
+            let (input, routing) = (input.clone(), settings.routing_config(&ApiKeys::default(), &instructions));
+            store.call_blocking(move |s| api::window_ask::destination_for(s, &routing, "", &[], &input)).unwrap_or(destination)
+        }
+        _ => destination,
+    };
     let view = WindowReadView::from(&outcome);
     // Never the text: what kind of read it was.
     tracing::info!(request = id, outcome = ?view_kind(&view), "hotkey panel read the window");

@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS device (
   revoked_at_unix_ms INTEGER,
   last_seen_unix_ms INTEGER,
   replaces_device_id TEXT,
-  resetting_since_unix_ms INTEGER
+  resetting_since_unix_ms INTEGER,
+  runner_token_hash TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS device_account_public_key_idx ON device(account_id, public_key);
@@ -114,7 +115,9 @@ CREATE INDEX IF NOT EXISTS account_creation_ip ON account_creation(ip_bucket, cr
 `;
 
 export type PhoneAudience = "ios" | "android";
-export type DevicePlatform = "mac" | "windows" | "ios" | "android";
+/** "cloud" is the headless routine runner; it is only ever created by the
+ * runner registration route, never from a request body (see platformFor). */
+export type DevicePlatform = "mac" | "windows" | "ios" | "android" | "cloud";
 
 /** A phone Google audience always wins; otherwise only "mac" or "windows"
  * from the body is trusted. Old builds that send nothing count as a Mac. */
@@ -261,8 +264,9 @@ export async function countDevicesForAccount(db: SqlExecutor, accountId: string)
  * revoked rows) here would permanently lock an account out once its only
  * device is revoked, since the count would never return to zero. */
 export async function countActiveDevicesForAccount(db: SqlExecutor, accountId: string): Promise<number> {
+  // A cloud runner is not a person's device: it never makes a real device "not first".
   const rows = await db.execute(
-    "SELECT COUNT(*) as count FROM device WHERE account_id = ? AND status != 'revoked'",
+    "SELECT COUNT(*) as count FROM device WHERE account_id = ? AND status != 'revoked' AND COALESCE(platform, '') != 'cloud'",
     [accountId],
   );
   return Number(rows[0].count);
@@ -296,6 +300,45 @@ export async function enrollDevice(
     revokedAtUnixMs: null,
     replacesDeviceId: null,
   };
+}
+
+/** Registers the headless runner as an approved `cloud` device. Only the
+ * SHA-256 of the runner token is stored, never the token itself. */
+export async function enrollRunnerDevice(
+  db: SqlExecutor,
+  accountId: string,
+  publicKey: string,
+  name: string,
+  runnerTokenHash: string,
+  nowUnixMs: number,
+): Promise<DeviceRecord> {
+  const id = crypto.randomUUID();
+  await db.execute(
+    "INSERT INTO device (id, account_id, public_key, name, platform, status, enrolled_at_unix_ms, runner_token_hash) VALUES (?, ?, ?, ?, 'cloud', 'approved', ?, ?)",
+    [id, accountId, publicKey, name, nowUnixMs, runnerTokenHash],
+  );
+  return { id, accountId, publicKey, name, platform: "cloud", status: "approved", enrolledAtUnixMs: nowUnixMs, revokedAtUnixMs: null, replacesDeviceId: null };
+}
+
+/** True when the account has an approved device that is not the cloud runner. */
+export async function hasApprovedNonCloudDevice(db: SqlExecutor, accountId: string): Promise<boolean> {
+  const rows = await db.execute(
+    "SELECT COUNT(*) as count FROM device WHERE account_id = ? AND status = 'approved' AND COALESCE(platform, '') != 'cloud'",
+    [accountId],
+  );
+  return Number(rows[0].count) > 0;
+}
+
+/** Every `cloud` device row with this public key (across accounts) and its stored token hash. */
+export async function findRunnerDevicesByPublicKey(
+  db: SqlExecutor,
+  publicKey: string,
+): Promise<{ device: DeviceRecord; runnerTokenHash: string | null }[]> {
+  const rows = await db.execute(
+    `SELECT ${DEVICE_COLUMNS}, runner_token_hash FROM device WHERE public_key = ? AND platform = 'cloud'`,
+    [publicKey],
+  );
+  return rows.map((r) => ({ device: rowToDevice(r), runnerTokenHash: r.runner_token_hash == null ? null : (r.runner_token_hash as string) }));
 }
 
 /** Flips a pending device's status to approved. Does not check the
@@ -493,7 +536,7 @@ export async function recentlySeenApprovedDevices(
   sinceUnixMs: number,
 ): Promise<{ id: string; name: string | null; platform: string | null }[]> {
   const rows = await db.execute(
-    "SELECT id, name, platform FROM device WHERE account_id = ? AND status = 'approved' AND id != ? AND last_seen_unix_ms >= ?",
+    "SELECT id, name, platform FROM device WHERE account_id = ? AND status = 'approved' AND id != ? AND last_seen_unix_ms >= ? AND COALESCE(platform, '') != 'cloud'",
     [accountId, exceptDeviceId, sinceUnixMs],
   );
   return rows.map((r) => ({

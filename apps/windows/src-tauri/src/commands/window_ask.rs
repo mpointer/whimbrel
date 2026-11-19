@@ -96,6 +96,8 @@ pub async fn window_ask(app: AppHandle, request_id: u64, query: String, on_event
 }
 
 fn prepare_and_stream(app: &AppHandle, request_id: u64, query: String, on_event: Channel<ChatEvent>) -> Result<WindowAskReply, CommandError> {
+    // Background model requests hold back from now until the answer ends (PR 874).
+    let gate = crate::user_model_gate::enter();
     let state = app.state::<AppState>();
     let panel = app.state::<HotkeyPanel>();
     let (Some(input), Some(shown)) = (panel.requests.input(request_id), panel.requests.shown(request_id)) else {
@@ -111,23 +113,37 @@ fn prepare_and_stream(app: &AppHandle, request_id: u64, query: String, on_event:
     // On ask only, never on open (the Mac's `beforeAsk`).
     chat::freshen_whimbrel(state.sync.as_deref(), &settings, &mut keys);
     let routing = settings.routing_config(&keys, &instructions);
-    let destination = api::window_ask::destination(&routing);
+    // Core's line for this window and question (`destination_for`, the Mac's): local only when either carries
+    // a client excluded from hosted models, else where the settings send it. The prepare decides the same.
+    let (for_input, for_query, for_routing) = (input.clone(), query.clone(), routing.clone());
+    let destination = store.call_blocking(move |s| api::window_ask::destination_for(s, &for_routing, &for_query, &[], &for_input))?;
     if destination != shown {
         // The page shows the new line; asking again then goes ahead without a new read.
         panel.requests.set_shown(request_id, destination.clone());
         return Ok(WindowAskReply::DestinationChanged { request_id, destination: DestinationView::from(&destination) });
     }
-    let route = route_or_reason(&settings, &keys).map_err(|reason| CommandError::ProviderFailure { reason: Some(reason) })?;
+    // Kept on this PC for an excluded client: the local route only (Ollama or the bundled model), never the
+    // settings' hosted one; with none, "Not sent…" and nothing goes anywhere.
+    let (route, routing) = if destination == api::window_ask::Destination::LocalOnly && !settings.local_only {
+        let mut local = settings.clone();
+        local.local_only = true;
+        let route = route_or_reason(&local, &keys)
+            .map_err(|_| CommandError::ProviderFailure { reason: Some(ProviderFailureReason::ExcludedClient) })?;
+        (route, local.routing_config(&keys, &instructions))
+    } else {
+        (route_or_reason(&settings, &keys).map_err(|reason| CommandError::ProviderFailure { reason: Some(reason) })?, routing)
+    };
     // Never the question or the window: only how it was routed.
     tracing::info!(provider = route.provider, model = %route.model, "answering a question about a window");
+    // Converted on the store thread, where core left a refusal's reason (take-once).
     let prepared = store
-        .call_blocking(move |s| api::window_ask::prepare_window_ask(s, &input, &query, &[], &routing))?
-        .map_err(window_ask_error)?;
+        .call_blocking(move |s| api::window_ask::prepare_window_ask(s, &input, &query, &[], &routing).map_err(window_ask_error))??;
     let reply = WindowAskReply::Started { request_id, destination: DestinationView::from(&prepared.destination), truncated: prepared.truncated };
     let app = app.clone();
     std::thread::Builder::new()
         .name("whimbrel-window-ask".into())
         .spawn(move || {
+            let _gate = gate;
             // A closed panel drops the UI's end of the channel; the run still ends cleanly.
             let send = |event: ChatEvent| {
                 let _ = on_event.send(event);
@@ -161,19 +177,23 @@ fn stream(app: &AppHandle, request_id: u64, store: &StoreHandle, route: StreamRo
     match chat::terminal_action_for(route.provider, &end.outcome, end.produced_output) {
         TerminalAction::Finalize => {
             let (prepare_id, text, model, usage) = (prepared.prepare_id, end.text.clone(), route.model.clone(), end.usage);
-            let citations = store
-                .call_blocking(move |s| api::ask::finalize_ask(s, &prepare_id, &text, &model, usage).citations)
+            let (citations, left_out) = store
+                .call_blocking(move |s| {
+                    let finalized = api::ask::finalize_ask(s, &prepare_id, &text, &model, usage);
+                    (finalized.citations, chat::left_out(&finalized.exclusion))
+                })
                 .unwrap_or_default();
-            send(ChatEvent::Completed { answer: end.text, citations, conversation_id: None, narrowed: false });
+            send(ChatEvent::Completed { answer: end.text, citations, conversation_id: None, narrowed: false, left_out });
         }
         TerminalAction::Restore => {
             api::ask::discard_ask(&prepared.prepare_id);
             send(ChatEvent::Cancelled);
         }
-        // No fallback: another provider would answer where the destination line didn't say.
+        // No fallback: another provider would answer where the destination line didn't say. A stream the
+        // exclusion gate held back says "Not sent…" (nothing went), never "couldn't reach the provider".
         TerminalAction::FallBack | TerminalAction::Fail => {
             api::ask::discard_ask(&prepared.prepare_id);
-            fail(send, CommandError::provider_failure(), end.produced_output);
+            fail(send, chat::gate_refusal(&end.outcome).unwrap_or_else(CommandError::provider_failure), end.produced_output);
         }
         TerminalAction::CreditExhausted => {
             api::ask::discard_ask(&prepared.prepare_id);

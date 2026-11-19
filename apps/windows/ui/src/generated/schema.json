@@ -329,6 +329,26 @@
       ],
       "type": "object"
     },
+    "AudioLevel": {
+      "description": "The audio level meter's reading, 0 to 1 for each source. Read, drawn and thrown away.",
+      "properties": {
+        "mic": {
+          "description": "The microphone.",
+          "format": "double",
+          "type": "number"
+        },
+        "system": {
+          "description": "What the meeting app and the PC play.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "system",
+        "mic"
+      ],
+      "type": "object"
+    },
     "BriefRecap": {
       "description": "Today's Daily Brief as the recap: the routine's own summary, from this PC or a synced device\n(docs/superpowers/plans/2026-10-17-today-recap-daily-brief-windows.md).",
       "properties": {
@@ -639,6 +659,14 @@
             "null"
           ]
         },
+        "resumeAtUnixMs": {
+          "description": "When a timed pause ends (unix ms). Set only while one runs; `enabled` stays true during it.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "running": {
           "description": "False if the service could not start (see `last_error`).",
           "type": "boolean"
@@ -665,6 +693,22 @@
         "ocrRuns"
       ],
       "type": "object"
+    },
+    "CardBadge": {
+      "oneOf": [
+        {
+          "enum": [
+            "encrypted",
+            "notEncrypted"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "needsAttention",
+          "description": "Running without the memory database.",
+          "type": "string"
+        }
+      ]
     },
     "ChatEvent": {
       "description": "What the UI hears about one question, over a Tauri `Channel`.",
@@ -770,6 +814,14 @@
               "const": "completed",
               "type": "string"
             },
+            "leftOut": {
+              "format": "uint",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "narrowed": {
               "type": "boolean"
             }
@@ -837,6 +889,53 @@
             "title"
           ],
           "type": "object"
+        },
+        {
+          "description": "Library Ask: the question still waits for its lane after a moment (another question or a recap holds\nit). The page says so rather than naming a model (PR 874).",
+          "properties": {
+            "kind": {
+              "const": "waiting",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Library Ask: the question names a client excluded from hosted models, so a model on this PC answers it\nwhatever the picker says. Sent after `Started`; the spinner says so (PR 867/874). Never names the client.",
+          "properties": {
+            "kind": {
+              "const": "routed_locally",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Library Ask, the blocking path: the model that really answered, sent just before `Completed`.\n`excluded_client`: it ran on this PC because the question names a client excluded from hosted models.",
+          "properties": {
+            "excludedClient": {
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "answered_by",
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "model",
+            "excludedClient"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -883,6 +982,64 @@
         "userCents"
       ],
       "type": "object"
+    },
+    "ChosenFile": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "chosen",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "cancelled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Over 64 KiB, not UTF-8 or not readable.",
+          "properties": {
+            "kind": {
+              "const": "unreadable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Not on the recovery screen.",
+          "properties": {
+            "kind": {
+              "const": "refused",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "CommandError": {
       "oneOf": [
@@ -1073,7 +1230,7 @@
           "type": "boolean"
         },
         "reason": {
-          "description": "`\"ran\"`, `\"not_worth_it\"` or `\"not_enough_disk\"`.",
+          "description": "`\"ran\"`, `\"not_worth_it\"`, `\"not_enough_disk\"` or `\"recording\"` (a recording is starting or running).",
           "type": "string"
         },
         "spacePending": {
@@ -1319,6 +1476,22 @@
       ],
       "type": "object"
     },
+    "DamageReasonView": {
+      "oneOf": [
+        {
+          "enum": [
+            "damaged",
+            "noAccess"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "openElsewhere",
+          "description": "Another program has the file open with no sharing: in use, not damaged.",
+          "type": "string"
+        }
+      ]
+    },
     "DataTermsView": {
       "properties": {
         "checked": {
@@ -1332,6 +1505,75 @@
       "required": [
         "text",
         "checked"
+      ],
+      "type": "object"
+    },
+    "DeleteEverythingPreview": {
+      "description": "What the confirmation shows.",
+      "properties": {
+        "dataBytes": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "dataFolder": {
+          "description": "The data folder; everything in it goes, the logs too, except the models and the settings file.",
+          "type": "string"
+        },
+        "endsMeeting": {
+          "description": "The meeting being recorded or processed, which Delete everything ends first, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "googleAccounts": {
+          "description": "The connected Google accounts (Calendar and Gmail), which stay connected; `None` when they\ncan't be listed (the app runs without its database, or the database couldn't list them).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "snapshotsBytes": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "snapshotsFolder": {
+          "description": "The slide-image folder, when it is outside the data folder and holds meetings Whimbrel made.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "snapshotsRefused": {
+          "description": "Why the slide-image folder is left alone, if it is (a link, or a user folder).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "storeOpen": {
+          "description": "The memory database is open: an unlisted `google_accounts` means the list failed, not\nthat Whimbrel runs without its database.",
+          "type": "boolean"
+        },
+        "syncOn": {
+          "description": "Sync is on: the dialog offers to delete the sync account too.",
+          "type": "boolean"
+        },
+        "syncSignedIn": {
+          "description": "A sync sign-in is stored in Credential Manager (on or not, Ready or not). It stays unless\nthe sync account is deleted too.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "dataFolder",
+        "dataBytes",
+        "snapshotsBytes",
+        "syncOn",
+        "syncSignedIn",
+        "storeOpen"
       ],
       "type": "object"
     },
@@ -1563,6 +1805,231 @@
       ],
       "type": "object"
     },
+    "EncryptOutcome": {
+      "oneOf": [
+        {
+          "enum": [
+            "twoKeysFound",
+            "failed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "atNextLaunch",
+          "description": "Stored (or confirmed) and flagged: the migration runs at the next launch.",
+          "type": "string"
+        },
+        {
+          "const": "notReady",
+          "description": "The setup's test has not passed, or the Settings setup is not open.",
+          "type": "string"
+        }
+      ]
+    },
+    "EncryptionCardView": {
+      "properties": {
+        "badge": {
+          "$ref": "#/definitions/CardBadge"
+        },
+        "cleanupRunning": {
+          "description": "The deferred backup cleanup runs: every note button is off meanwhile.",
+          "type": "boolean"
+        },
+        "fastSearch": {
+          "$ref": "#/definitions/FastSearchView"
+        },
+        "notes": {
+          "items": {
+            "$ref": "#/definitions/NoteRow"
+          },
+          "type": "array"
+        },
+        "pendingNextLaunch": {
+          "description": "Encrypt finished in Settings and the migration waits for the next launch.",
+          "type": "boolean"
+        },
+        "plainBackupPresent": {
+          "description": "`<db>.plain.bak` exists and the `PlainBackupKept` note is not showing.",
+          "type": "boolean"
+        },
+        "showsStoreTools": {
+          "description": "Faster search and the speed check (hidden without the memory database).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "badge",
+        "plainBackupPresent",
+        "pendingNextLaunch",
+        "notes",
+        "cleanupRunning",
+        "fastSearch",
+        "showsStoreTools"
+      ],
+      "type": "object"
+    },
+    "EncryptionSkip": {
+      "description": "Why a migration did not start (core's `SkipReason`), for the notes.",
+      "oneOf": [
+        {
+          "properties": {
+            "reason": {
+              "const": "recording",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "free_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "need_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "reason": {
+              "const": "low_disk",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "need_bytes",
+            "free_bytes"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "reason": {
+              "const": "free_space_unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reason": {
+              "const": "open_elsewhere",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reason": {
+              "const": "not_plain",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "phase": {
+              "type": "string"
+            },
+            "reason": {
+              "const": "interrupted_run",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reason": {
+              "const": "plain_backup_exists",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "attempts": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "last": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "const": "failed_before",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "attempts"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "reason": {
+              "const": "unreadable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A store of this app has the database open: the migration runs at launch, before any\nstore opens.",
+          "properties": {
+            "reason": {
+              "const": "open_in_this_process",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "EpisodeRow": {
       "properties": {
         "app": {
@@ -1730,6 +2197,21 @@
       ],
       "type": "object"
     },
+    "FastSearchView": {
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "available",
+        "enabled"
+      ],
+      "type": "object"
+    },
     "FeedbackResult": {
       "description": "What Send feedback did with the diagnostics bundle, for the About card.",
       "properties": {
@@ -1749,6 +2231,65 @@
         }
       },
       "type": "object"
+    },
+    "FileActionView": {
+      "description": "A file action's end when it did not finish.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": {
+              "const": "done",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "result": {
+              "const": "refused",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "movedAside": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "result": {
+              "const": "partlyDone",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result",
+            "movedAside"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "result": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "result"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "Footprint": {
       "description": "What Whimbrel keeps on this PC, by part, in bytes.",
@@ -1784,6 +2325,52 @@
         "models",
         "other",
         "total"
+      ],
+      "type": "object"
+    },
+    "ForeignFilesDeleted": {
+      "description": "What a delete did, from core's fresh listing at that moment.",
+      "properties": {
+        "failed": {
+          "description": "Names that matched but could not be removed.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "removed": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "removedBytes": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "removed",
+        "removedBytes",
+        "failed"
+      ],
+      "type": "object"
+    },
+    "ForeignFilesView": {
+      "description": "What the card shows: nothing at all while `count` is 0.",
+      "properties": {
+        "bytes": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "count",
+        "bytes"
       ],
       "type": "object"
     },
@@ -2178,6 +2765,18 @@
       ],
       "type": "object"
     },
+    "KeyFailureView": {
+      "enum": [
+        "keychainUnavailable",
+        "differentKeyStored",
+        "noPreviousSlot",
+        "pendingDiffers",
+        "unverified",
+        "keyChangedMeanwhile",
+        "other"
+      ],
+      "type": "string"
+    },
     "LanguageSettings": {
       "properties": {
         "choice": {
@@ -2222,6 +2821,450 @@
         "writeInOptions",
         "outputLanguage",
         "localModelNote"
+      ],
+      "type": "object"
+    },
+    "LastActionView": {
+      "description": "The previous press on the encrypted-file-missing screen, when it did not finish.",
+      "properties": {
+        "action": {
+          "description": "`restore` or `reset`.",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/definitions/FileActionView"
+        }
+      },
+      "required": [
+        "action",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "LaunchAnswer": {
+      "description": "The webview's answers (`launch_respond`). A restored key is not one of them: it is made in\nRust by the unlock commands.",
+      "enum": [
+        "retry",
+        "quit",
+        "restoreRollbackCopy",
+        "resetEncryptionStatus",
+        "continueWithoutStore"
+      ],
+      "type": "string"
+    },
+    "LaunchErrorView": {
+      "description": "Why the launch stopped on its error screen (no diagnostic text).",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "decisionUnavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "tooManyDecisions",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "code": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "stepOutOfOrder",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "plainOpenFailed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`open`: how the keyed open answered (`damaged`, `startupFailed`, `unsupported`, ...).",
+          "properties": {
+            "kind": {
+              "const": "keyedOpenFailed",
+              "type": "string"
+            },
+            "open": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "open"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "onboardingKeyMismatch",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "freshKeyRefused",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`source`: `dbKey` or `pendingKey`.",
+          "properties": {
+            "kind": {
+              "const": "keyMissing",
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "source"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "databaseMissingForRecoveredKey",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "LaunchScreenView": {
+      "description": "A blocking screen drawn from its type (brief 3.3.6).",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "keyStorageUnavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "migrationInterrupted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "damaged",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/definitions/DamageReasonView"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "backupPresent": {
+              "type": "boolean"
+            },
+            "encryptedCopyPresent": {
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "encryptedFileMissing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "backupPresent",
+            "encryptedCopyPresent"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": {
+              "$ref": "#/definitions/LaunchErrorView"
+            },
+            "kind": {
+              "const": "error",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "error"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Shown as their own stages; here only for completeness.",
+          "properties": {
+            "kind": {
+              "const": "keyUnavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "recovery",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/definitions/RecoveryReasonView"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "LaunchStageView": {
+      "description": "Where the launch is (brief 4.2 `launch_state`).",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "starting",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "onboarding",
+              "type": "string"
+            },
+            "reusesKey": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "reusesKey"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "migrating",
+              "type": "string"
+            },
+            "overall": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "overall"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "recovery",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/definitions/RecoveryReasonView"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "keyUnavailable",
+              "type": "string"
+            },
+            "stillUnavailable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "stillUnavailable"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "screen",
+              "type": "string"
+            },
+            "lastAction": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/LastActionView"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "offers": {
+              "items": {
+                "$ref": "#/definitions/LaunchAnswer"
+              },
+              "type": "array"
+            },
+            "screen": {
+              "$ref": "#/definitions/LaunchScreenView"
+            }
+          },
+          "required": [
+            "kind",
+            "screen",
+            "offers"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "opened",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "openedWithoutStore",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "quitting",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "LaunchView": {
+      "properties": {
+        "busy": {
+          "description": "The launch is working (not waiting for the user, not finished).",
+          "type": "boolean"
+        },
+        "generation": {
+          "description": "Moves on every screen shown, even the same screen again (a Retry that changed\nnothing): the webview re-enables its buttons when it changes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stage": {
+          "$ref": "#/definitions/LaunchStageView"
+        },
+        "waitingForUser": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "stage",
+        "busy",
+        "waitingForUser",
+        "generation"
       ],
       "type": "object"
     },
@@ -2765,6 +3808,42 @@
       ],
       "type": "object"
     },
+    "MeetingMarkerView": {
+      "description": "A moment marked while a meeting recorded (\"Mark this moment\"), kept on this PC with its meeting.",
+      "properties": {
+        "atCs": {
+          "description": "Centiseconds from the start of the recording on the clock live transcript lines use; includes paused time.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "createdUnixMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "id": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "label": {
+          "description": "The note line being written when it was marked, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "meetingId": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "meetingId",
+        "atCs",
+        "createdUnixMs"
+      ],
+      "type": "object"
+    },
     "MeetingModelsStatus": {
       "description": "Which meeting models are on disk.",
       "properties": {
@@ -2822,6 +3901,23 @@
             "null"
           ]
         },
+        "paused": {
+          "description": "The recording is paused; the state stays `recording`, so a paused meeting is still a recording.",
+          "type": "boolean"
+        },
+        "pausedSinceUnixMs": {
+          "description": "When the running pause began, while paused.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pausedTotalMs": {
+          "description": "Time spent paused so far, a running pause included. Recorded time is wall time minus this.",
+          "format": "int64",
+          "type": "integer"
+        },
         "processing": {
           "anyOf": [
             {
@@ -2832,6 +3928,10 @@
             }
           ],
           "description": "The meeting being transcribed or summarized right now, if any (M3.3 Task 4)."
+        },
+        "resuming": {
+          "description": "Resume was asked for and audio has not arrived yet.",
+          "type": "boolean"
         },
         "startedUnixMs": {
           "format": "int64",
@@ -2845,7 +3945,10 @@
         }
       },
       "required": [
-        "state"
+        "state",
+        "paused",
+        "pausedTotalMs",
+        "resuming"
       ],
       "type": "object"
     },
@@ -3052,6 +4155,265 @@
         "startUnixMs"
       ],
       "type": "object"
+    },
+    "NoteAction": {
+      "enum": [
+        "retryAfterFailedBefore",
+        "resetEncryptionStatus",
+        "deletePlainBackup"
+      ],
+      "type": "string"
+    },
+    "NoteActionResult": {
+      "oneOf": [
+        {
+          "enum": [
+            "done",
+            "failed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "partlyDone",
+          "description": "Some files were moved aside, then a later step failed.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "Its conditions did not hold, or the cleanup is running.",
+          "type": "string"
+        }
+      ]
+    },
+    "NoteRow": {
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/NoteAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The note's only button, if it has one."
+        },
+        "note": {
+          "$ref": "#/definitions/NoteView"
+        }
+      },
+      "required": [
+        "note"
+      ],
+      "type": "object"
+    },
+    "NoteView": {
+      "description": "A coordinator note, typed (no diagnostic text reaches the webview).",
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "keyStoreUnavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "attempts": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "failedBefore",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "attempts"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`stateUnreadable`: nothing retries until the status is reset. Otherwise `skip` is the\nprecheck's reason when there was one.",
+          "properties": {
+            "kind": {
+              "const": "migrationSkipped",
+              "type": "string"
+            },
+            "skip": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/EncryptionSkip"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stateUnreadable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "stateUnreadable"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "migrationFailed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "encryptionAvailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "plainBackupKept",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Shown as the app's banner (`launch_library_missing`), never in the card.",
+          "properties": {
+            "kind": {
+              "const": "libraryMissing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "`warning`: `stateNotMovedAside` or `stateNotCleared`.",
+          "properties": {
+            "kind": {
+              "const": "restoredCopy",
+              "type": "string"
+            },
+            "movedAside": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "warning": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "movedAside"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "failure": {
+              "$ref": "#/definitions/KeyFailureView"
+            },
+            "kind": {
+              "const": "pendingKeyNotPromoted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "failure"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "failure": {
+              "$ref": "#/definitions/KeyFailureView"
+            },
+            "kind": {
+              "const": "pendingKeyNotDeleted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "failure"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "failure": {
+              "$ref": "#/definitions/KeyFailureView"
+            },
+            "kind": {
+              "const": "recoveredKeyNotStored",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "failure"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "recoveredKeyStoreUnverified",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "memoryDatabaseUnavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "OcrLanguages": {
       "properties": {
@@ -3667,6 +5029,32 @@
             "model"
           ],
           "type": "object"
+        },
+        {
+          "description": "The request involves a client excluded from hosted models, so it was not sent.",
+          "properties": {
+            "kind": {
+              "const": "excluded_client",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The exclusion setting could not be read, so no hosted request is sent until it can.",
+          "properties": {
+            "kind": {
+              "const": "exclusion_unreadable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3980,6 +5368,13 @@
         "idle",
         "starting",
         "recording"
+      ],
+      "type": "string"
+    },
+    "RecoveryReasonView": {
+      "enum": [
+        "needsKey",
+        "keyRejected"
       ],
       "type": "string"
     },
@@ -4358,6 +5753,66 @@
       ],
       "type": "object"
     },
+    "SaveFileResult": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "saved",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "sameDiskAsDatabase": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "path",
+            "sameDiskAsDatabase"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "cancelled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "refused",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ScheduleEvent": {
       "properties": {
         "actionItemCount": {
@@ -4476,6 +5931,125 @@
         "name"
       ],
       "type": "object"
+    },
+    "SetupBegun": {
+      "oneOf": [
+        {
+          "description": "The 24 words to show (they ARE the key: shown, never logged or copied).",
+          "properties": {
+            "kind": {
+              "const": "made",
+              "type": "string"
+            },
+            "words": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "words"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "passphraseTooShort",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Start over first.",
+          "properties": {
+            "kind": {
+              "const": "alreadyMade",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A key exists and this setup was not given it.",
+          "properties": {
+            "kind": {
+              "const": "keyExists",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Not in this scope's stage.",
+          "properties": {
+            "kind": {
+              "const": "refused",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SetupRefusal": {
+      "oneOf": [
+        {
+          "enum": [
+            "twoKeysFound",
+            "recording",
+            "lowDisk",
+            "openElsewhere",
+            "failedBefore",
+            "other"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "keychainUnavailable",
+          "description": "Credential Manager could not be read.",
+          "type": "string"
+        },
+        {
+          "const": "notAvailable",
+          "description": "Running without the memory database, or already encrypted.",
+          "type": "string"
+        }
+      ]
+    },
+    "SetupScope": {
+      "enum": [
+        "launch",
+        "settings"
+      ],
+      "type": "string"
     },
     "SkinLine": {
       "description": "A chat line from an image action, and whether it was stored in the skin's chat.",
@@ -4723,6 +6297,160 @@
       "required": [
         "snapshots",
         "keep"
+      ],
+      "type": "object"
+    },
+    "SpeedCheckResult": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "done",
+              "type": "string"
+            },
+            "report": {
+              "$ref": "#/definitions/SpeedCheckView"
+            }
+          },
+          "required": [
+            "kind",
+            "report"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "recording",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A cancelled check is still finishing; try again when it has.",
+          "properties": {
+            "kind": {
+              "const": "draining",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Cancelled: the result was dropped.",
+          "properties": {
+            "kind": {
+              "const": "cancelled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "noStore",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SpeedCheckView": {
+      "description": "The report as the card shows it (timings and hardware class only).",
+      "properties": {
+        "cpuArch": {
+          "type": "string"
+        },
+        "encrypted": {
+          "type": "boolean"
+        },
+        "keywordP50Ms": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "keywordP95Ms": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "openMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "os": {
+          "type": "string"
+        },
+        "ramGib": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "semanticP50Ms": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "semanticP95Ms": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "semanticUnavailable": {
+          "type": "boolean"
+        },
+        "tooLittleData": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "encrypted",
+        "tooLittleData",
+        "semanticUnavailable",
+        "cpuArch",
+        "os"
       ],
       "type": "object"
     },
@@ -5094,6 +6822,16 @@
         "deviceLimit": {
           "description": "Stopped at the free plan's device limit: Settings offers Cloud here.",
           "type": "boolean"
+        },
+        "kindBackfillPercent": {
+          "description": "How far the one-time history indexing (the `kind_tag` backfill) has got, 0 to 99, for \"Indexing history: N%\". `None` when it is not running: not started, finished, or nothing to count.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "message": {
           "type": [
@@ -6003,8 +7741,28 @@
           "description": "\"Capturing · Synced 2:05 PM\", also the tray tooltip.",
           "type": "string"
         },
+        "pausedSinceUnixMs": {
+          "description": "When that recording pause began.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "recordingPaused": {
+          "description": "The recording meeting is paused (recording pause, not capture pause).",
+          "type": "boolean"
+        },
         "recordingStartedUnixMs": {
           "description": "When the recording meeting started, if one is recording.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "resumeAtUnixMs": {
+          "description": "When a timed capture pause ends, if one is running.",
           "format": "int64",
           "type": [
             "integer",
@@ -6014,7 +7772,8 @@
       },
       "required": [
         "line",
-        "captureEnabled"
+        "captureEnabled",
+        "recordingPaused"
       ],
       "type": "object"
     },
@@ -6260,6 +8019,34 @@
         "monthByProvider"
       ],
       "type": "object"
+    },
+    "UseKeyResult": {
+      "oneOf": [
+        {
+          "enum": [
+            "wrongPassphrase",
+            "notARecoveryFile",
+            "badWords",
+            "noFileChosen"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "opened",
+          "description": "The key opened the database (and was then stored).",
+          "type": "string"
+        },
+        {
+          "const": "keyRejected",
+          "description": "The recovery screen again: this key belongs to another database.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Not on the recovery screen, or the launch went somewhere else.",
+          "type": "string"
+        }
+      ]
     },
     "VaultView": {
       "properties": {
@@ -6633,7 +8420,7 @@
       "type": "object"
     }
   },
-  "description": "Generated from apps/windows/src-tauri's command DTOs. Do not edit; run `cargo run --bin gen-schema`.",
+  "description": "Generated from apps/windows/src-tauri's command DTOs. Do not edit; run `cargo run --example gen-schema`.",
   "title": "WhimbrelDtos",
   "type": "object"
 }

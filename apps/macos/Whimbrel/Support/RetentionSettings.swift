@@ -81,7 +81,7 @@ final class RetentionSettings: ObservableObject {
     /// an unbounded time if one of those happened to be in flight.
     /// `compactAllowed` false (a meeting is recording) skips the compaction after retention: it
     /// holds the store for about a minute, which live transcription can't wait for.
-    func applyNow(store: CoreMemoryStore?, compactAllowed: Bool = true, completion: @escaping (CoreRetentionResult?) -> Void) {
+    func applyNow(store: CoreMemoryStore?, backgroundStore: CoreMemoryStore? = nil, compactAllowed: Bool = true, completion: @escaping (CoreRetentionResult?) -> Void) {
         guard let store else {
             completion(nil)
             return
@@ -92,7 +92,11 @@ final class RetentionSettings: ObservableObject {
         let capturedConversationDays = conversationKeepForever ? nil : conversationDays
         // Behind `MediaMover.queue`: an expired meeting may be mid-move or mid-compress.
         MediaMover.queue.async { [weak self] in
-            let result = CoreMemoryStore.accessQueue.sync { store.applyRetention(
+            // On the background lane (core deletes captures in short batches there), so the screens on
+            // `accessQueue` never wait behind it. Without a background connection: the main one.
+            let lane = backgroundStore.map { (store: $0, queue: CoreMemoryStore.backgroundQueue) }
+                ?? (store: store, queue: CoreMemoryStore.accessQueue)
+            let result = lane.queue.sync { lane.store.applyRetention(
                 captureItemDays: capturedCaptureItemDays,
                 meetingDays: capturedMeetingDays,
                 conversationDays: capturedConversationDays,
@@ -101,12 +105,15 @@ final class RetentionSettings: ObservableObject {
             ) }
             // Deleted rows leave free pages inside the file; give them back to the disk when it
             // pays off (core decides) and the disk can hold the rewrite.
-            let compacted = result == nil || !compactAllowed ? nil : StorageCompaction.run(store, forced: false)
+            // Not while a client delete runs (the retention run was put off for it).
+            let compacted = result == nil || result?.skippedForClientDelete == true || !compactAllowed ? nil : StorageCompaction.run(store, forced: false)
             DispatchQueue.main.async {
                 if let compacted, compacted.ran {
                     self?.log.info("Compacted the database: \(compacted.fileBytesBefore, privacy: .public) → \(compacted.fileBytesAfter, privacy: .public) bytes")
                 }
-                if let result {
+                if let result, result.skippedForClientDelete {
+                    self?.log.info("Retention run put off while a client delete runs; the next run sweeps")
+                } else if let result {
                     self?.log.info(
                         "Applied retention: \(result.captureItemsDeleted, privacy: .public) capture items, \(result.meetingsDeleted, privacy: .public) meetings deleted (\(result.deletedMeetingFiles.count, privacy: .public) meeting file set(s) cleaned up)"
                     )

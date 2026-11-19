@@ -219,7 +219,7 @@ struct TerminalTodayLayout: TodayArchetypeView {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if event.showsStart {
-                Button("Start") { actions.startMeeting(event.event) }.buttonStyle(.whimbrelPrimary)
+                Button("Start") { actions.startMeeting(event.event) }.buttonStyle(.whimbrelPrimary).recordingControl()
             }
         }
     }

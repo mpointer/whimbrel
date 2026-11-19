@@ -56,15 +56,56 @@ impl From<ApiError> for WindowAskError {
 }
 
 pub fn destination(routing: &RoutingConfig) -> Destination {
+    // Local-only mode never sends: with an Ollama cloud model the prepare refuses rather than
+    // stream, so "local only" stays true.
     if routing.sensitive {
         return Destination::LocalOnly;
     }
     // Fails closed: only the providers that run on this computer are local. Any other name,
-    // including one this build doesn't know (or an empty one), is shown as leaving it.
+    // including one this build doesn't know (or an empty one), is shown as leaving it. An
+    // Ollama cloud model leaves it too.
     match routing.preferred_provider.as_str() {
+        "ollama" if crate::exclusion::ollama_is_cloud(routing) => Destination::Hosted { provider: "ollama".to_string() },
         "ollama" | "local" => Destination::Local,
         p => Destination::Hosted { provider: p.to_string() },
     }
+}
+
+/// The destination line for one request, before Return: local only when the question, the
+/// conversation so far (its words, or an earlier answer made on this computer from an excluded
+/// client's material) or the window carries a client excluded from hosted models (spec 7.2),
+/// else [`destination`]. The line never says why. The same decision the prepare makes.
+pub fn destination_for(
+    store: &memory::Store,
+    routing: &RoutingConfig,
+    query: &str,
+    history: &[llm::ChatTurn],
+    input: &WindowInput,
+) -> Destination {
+    if request_carries(store, &crate::exclusion::context_filter(store), query, history, input) {
+        Destination::LocalOnly
+    } else {
+        destination(routing)
+    }
+}
+
+/// Whether the question (with the conversation so far) or the window's app, title or text
+/// carries an excluded client.
+fn request_carries(
+    store: &memory::Store,
+    filter: &llm::ContextFilter,
+    query: &str,
+    history: &[llm::ChatTurn],
+    input: &WindowInput,
+) -> bool {
+    let window_text = format!("{}\n{}\n{}", input.app_name, input.title, input.text);
+    crate::ask::request_carries(store, filter, query, history, &crate::exclusion::RequestOrigin::HotkeyWindow { window_text })
+}
+
+/// What a window Ask's clean stamp records of the window: the app name, title and the redacted,
+/// capped text the prompt carries, joined as the request check joins them.
+fn window_stamp_text(input: &WindowInput) -> String {
+    format!("{}\n{}\n{}", input.app_name, input.title, prepare_window_text(&input.text).0)
 }
 
 /// Redacts, caps (on a char boundary) and returns `(text, truncated)`.
@@ -183,6 +224,7 @@ pub fn prepare_window_ask(
     // Production passes true: in sensitive mode `build_chain` always builds the Ollama
     // link (ignoring `use_local_model`), and `RoutingConfig` has no Ollama model name to
     // probe. `LocalModelMissing` and the injected bool stay for a future Ollama probe.
+    crate::exclusion::refresh_published_gate(store);
     prepare_with(store, input, query, history, routing, true, None)
 }
 
@@ -196,6 +238,7 @@ pub fn prepare_window_ask_for(
     routing: &RoutingConfig,
     call: &crate::routing::LimitedUseSettings,
 ) -> Result<PreparedWindowAsk, WindowAskError> {
+    crate::exclusion::refresh_published_gate(store);
     prepare_with(store, input, query, history, routing, true, Some(call))
 }
 
@@ -211,7 +254,8 @@ fn prepare_with(
     if input.text.trim().is_empty() {
         return Err(WindowAskError::NoText);
     }
-    if routing.sensitive && !local_model_available {
+    // Local-only mode with an Ollama cloud model has no model on this computer to answer.
+    if routing.sensitive && (!local_model_available || crate::exclusion::local_only_mode_refuses(routing)) {
         return Err(WindowAskError::LocalModelMissing);
     }
     let cap_config = routing.spend_cap_config();
@@ -219,7 +263,17 @@ fn prepare_with(
     let provider = provider_for_streamed_answer(routing);
     check_provider(store, provider, now_unix_ms()).map_err(ApiError::from)?;
 
-    let context = llm::gather_and_assemble_context(store, query, now_unix_ms(), 5, true, true);
+    // A question or window that carries an excluded client goes local-only, or is refused
+    // here when the shell would stream it to a hosted model. Otherwise a hosted stream gets
+    // background without any excluded client's material.
+    let filter = crate::exclusion::context_filter(store);
+    let carries = request_carries(store, &filter, query, history, input);
+    let hosted = crate::exclusion::streamed_is_hosted(routing);
+    if carries && hosted {
+        return Err(crate::exclusion::refused().into());
+    }
+    let open = llm::ContextFilter::none();
+    let context = llm::gather_and_assemble_context(store, query, now_unix_ms(), 5, true, true, if hosted { &filter } else { &open });
     // Limited Use: Gmail threads only for a streamed provider that may receive them.
     let may_receive_google = crate::routing::streamed_may_receive_google_data(provider, call);
     let context = llm::limited_use::filter_context_in(store, &context, may_receive_google);
@@ -228,13 +282,27 @@ fn prepare_with(
     let instructions =
         llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language);
     let (prompt, truncated) = window_prompt_with_history(input, query, &context, &instructions, &history);
+    // The shell streams this prompt to `provider`: a hosted one that must not see it is refused here.
+    crate::exclusion::check_stream(store, provider, &prompt)?;
+    let exclusion = if hosted {
+        crate::exclusion::ExclusionOutcome::after_hosted(true, &filter)
+    } else {
+        crate::ask::note_local_stream(&filter, carries, &context, &prompt)
+    };
+    let destination = if carries { Destination::LocalOnly } else { destination(routing) };
 
     let prepare_id = llm::streaming::new_run_id();
-    prepared_asks()
-        .lock()
-        .unwrap()
-        .insert(prepare_id.clone(), PreparedAsk { context, provider, history_google: Some(history_google) });
-    Ok(PreparedWindowAsk { prepare_id, prompt, truncated, destination: destination(routing) })
+    // The window has no stored row: it is recorded as one input, the app name, title and the
+    // redacted, capped text the prompt carries, joined as the request check reads them, so a name
+    // split across them is found and no secret the prompt never carries is fingerprinted (fix
+    // round 5, N2, N3).
+    let window = window_stamp_text(input);
+    let clean_keys = crate::ask::clean_keys_for(store, &filter, exclusion, &context, [], &[query, &window], &history);
+    prepared_asks().lock().unwrap().insert(
+        prepare_id.clone(),
+        PreparedAsk { context, provider, exclusion, clean_keys, history_google: Some(history_google) },
+    );
+    Ok(PreparedWindowAsk { prepare_id, prompt, truncated, destination })
 }
 
 #[cfg(test)]
@@ -249,6 +317,8 @@ mod tests {
         RoutingConfig {
             sensitive,
             preferred_provider: preferred.into(),
+            // Local-only mode needs to know the Ollama model is on this computer.
+            ollama_model: "gemma4:12b".into(),
             ..RoutingConfig::default()
         }
     }

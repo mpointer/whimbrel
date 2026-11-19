@@ -16,7 +16,13 @@ function fakeFetch(overrides: Record<string, () => Response> = {}) {
   const routes: Record<string, () => Response> = {
     [`${UPDATES}/version.json`]: () => Response.json({ version: "0.9.21", url: `${UPDATES}/Whimbrel-0.9.21.zip`, sha256: "x" }),
     [`${UPDATES}/windows/latest.json`]: () =>
-      Response.json({ version: "0.9.21", platforms: { "windows-x86_64": { signature: "s", url: `${UPDATES}/windows/Whimbrel_0.9.21_x64-setup.exe` } } }),
+      Response.json({
+        version: "0.9.21",
+        platforms: {
+          "windows-x86_64": { signature: "s", url: `${UPDATES}/windows/Whimbrel_0.9.21_x64-setup.exe` },
+          "windows-aarch64": { signature: "s", url: `${UPDATES}/windows/Whimbrel_0.9.21_arm64-setup.exe` },
+        },
+      }),
     ...overrides,
   };
   const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -137,6 +143,13 @@ describe("POST /api/register", () => {
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/download/thanks/?platform=windows");
     expect(res.headers.get("set-cookie")).toContain(LEAD_COOKIE);
+  });
+
+  it("registers a Windows on Arm choice as windows and sends it to the Arm download", async () => {
+    const res = await call(registerJson({ ...valid, email: "arm@example.com", platform: "windows-arm" }));
+    expect(await res.json()).toEqual({ ok: true, next: "/download/thanks/?platform=windows&arch=arm64" });
+    const lead = await env.DB.prepare("SELECT platform FROM leads WHERE email = 'arm@example.com'").first("platform");
+    expect(lead).toBe("windows");
   });
 
   it("redirects an invalid form post back to the form with an error flag", async () => {
@@ -313,6 +326,31 @@ describe("GET /api/download/:platform", () => {
     expect(refused.headers.get("location")).toBe("/download/unavailable/?platform=mac");
   });
 
+  it("sends a Windows on Arm visitor to the arm64 installer, or to the form remembering Arm", async () => {
+    const unregistered = await call(new Request("https://whimbrel.test/api/download/windows-arm"));
+    expect(unregistered.headers.get("location")).toBe("/download/?platform=windows&arch=arm64#register");
+
+    const cookie = cookieFrom(await call(registerJson(valid)));
+    const res = await call(new Request("https://whimbrel.test/api/download/windows-arm", { headers: { cookie } }));
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(`${UPDATES}/windows/Whimbrel_0.9.21_arm64-setup.exe`);
+    const row = await env.DB.prepare("SELECT platform, version FROM downloads ORDER BY id DESC").first();
+    expect(row).toEqual({ platform: "windows", version: "0.9.21 arm64" });
+  });
+
+  it("has no Arm download, and says so, when the manifest lists only x64", async () => {
+    const cookie = cookieFrom(await call(registerJson(valid)));
+    const x64Only = () =>
+      fakeFetch({
+        [`${UPDATES}/windows/latest.json`]: () =>
+          Response.json({ version: "0.9.22", platforms: { "windows-x86_64": { signature: "s", url: `${UPDATES}/windows/Whimbrel_0.9.22_x64-setup.exe` } } }),
+      });
+    const res = await call(new Request("https://whimbrel.test/api/download/windows-arm", { headers: { cookie } }), { fetch: x64Only() });
+    expect(res.headers.get("location")).toBe("/download/unavailable/?platform=windows&arch=arm64");
+    const releases = await call(new Request("https://whimbrel.test/api/releases"), { fetch: x64Only() });
+    expect(((await releases.json()) as { windows_arm: unknown }).windows_arm).toBeNull();
+  });
+
   it("shows the unavailable page when nothing is published", async () => {
     const cookie = cookieFrom(await call(registerJson(valid)));
     const empty = fakeFetch({ [`${UPDATES}/windows/latest.json`]: () => new Response("Not Found", { status: 404 }) });
@@ -353,7 +391,7 @@ describe("canonical host", () => {
 describe("other routes", () => {
   it("GET /api/releases reports versions without download URLs", async () => {
     const res = await call(new Request("https://whimbrel.test/api/releases"));
-    expect(await res.json()).toEqual({ mac: { version: "0.9.21" }, windows: { version: "0.9.21" } });
+    expect(await res.json()).toEqual({ mac: { version: "0.9.21" }, windows: { version: "0.9.21" }, windows_arm: { version: "0.9.21" } });
   });
 
   it("unknown /api/ paths are JSON 404s", async () => {
@@ -433,6 +471,21 @@ describe("other routes", () => {
   // The trust surface (docs/superpowers/specs/2026-11-04-trust-surface-design.md): the
   // privacy page carries the "what leaves your computer" table the apps link to, and no
   // page claims "no telemetry" while the update check sends a weekly identifier.
+  // X4 Task 13c: the Mac app's "library not found" notice links here. The steps must be the
+  // safe ones: quit first, set the old -wal/-shm aside with the library, never delete.
+  it("serves the library backup help page the app links to, with the safe steps", async () => {
+    const res = await call(new Request("https://whimbrel.test/help/restore-library-backup/"));
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<h1>Restoring a library backup</h1>");
+    expect(html).toContain("Show in Finder");
+    expect(html).toContain("<code>core-memory.sqlite-wal</code>, <code>core-memory.sqlite-shm</code>");
+    expect(html).toContain("Do not delete them yet.");
+    expect(html).toContain("It cannot bring back a library whose file is gone");
+    expect(html.indexOf("<strong>Quit Whimbrel</strong>")).toBeLessThan(html.indexOf("<strong>Move the current library"));
+    expect(html.toLowerCase()).not.toMatch(/nothing leaves|never leaves|we never receive/);
+  });
+
   it("lists what leaves the computer on the privacy page and nowhere claims no telemetry", async () => {
     const privacy = await (await call(new Request("https://whimbrel.test/privacy/"))).text();
     expect(privacy).toContain('<h2 id="leaves">What leaves your computer</h2>');

@@ -18,7 +18,8 @@ src-tauri/    Rust shell — its own Cargo workspace, path deps into ../../../co
   src/commands/ the Tauri commands the UI calls; schema.rs generates the UI's types
   src/capture/  uia.rs, ocr.rs, audio.rs, window.rs, proc_stats.rs, policy.rs, service.rs
   src/syncing/  enrollment, the Devices pane, content sync
-  src/bin/      capture_spike.rs (M3.1 measurement CLI), gen_schema.rs
+  examples/     capture_spike.rs (M3.1 measurement CLI), gen_schema.rs; examples, so the installer never carries them
+  src/link_check.rs  the app's hidden `--link-check <file>` load check (the Arm smoke test runs it)
   tauri.conf.json, capabilities/, icons/ (app icon from apps/macos/design/app-icon-flat*.svg; icons/tray/ from design/tray-glyph.svg)
 scripts/      dev-env.ps1, check-no-libsql-core.ps1, render-icons.mjs (app and tray icons)
 ui/           React + TypeScript + Vite; src/tokens.css is the ported design system
@@ -95,12 +96,16 @@ Three things that are not obvious:
 - **Short target directory.** whisper.cpp's CMake try-compile runs under MSBuild, whose FileTracker fails (`FTK1011`) once a path passes 260 characters; a deep checkout (a git worktree) crosses it. `dev-env.ps1` sets `CARGO_TARGET_DIR=%LOCALAPPDATA%\kestrel-win-target`. That folder grows fast (a debug and a release build together pass 100 GB), so to keep it on a bigger drive set `WHIMBREL_TARGET_DIR` once, for example `setx WHIMBREL_TARGET_DIR E:\kestrel-win-target`, and `dev-env.ps1` will use it. It is deliberately not `CARGO_TARGET_DIR`: the self-hosted CI runner runs as the same user and its jobs need that unset.
 - **Never enable libsql's `core` feature** anywhere in this graph (docs/12 §3). `check-no-libsql-core.ps1` verifies.
 
-The UI's TypeScript types are generated from the Rust DTOs: `cargo run --bin gen-schema`, then `npm --prefix ui run gen:types`. A test fails when the committed schema is stale.
+The UI's TypeScript types are generated from the Rust DTOs: `cargo run --example gen-schema`, then `npm --prefix ui run gen:types`. A test fails when the committed schema is stale.
 
 ## capture-spike
 
+A Cargo example, not a `[[bin]]`: Tauri puts every `[[bin]]` in the installer. Build it with
+`cargo build --release --example capture-spike`.
+
 ```powershell
-$spike = "$env:LOCALAPPDATA\kestrel-win-target\release\capture-spike.exe"
+$spike = "$env:LOCALAPPDATA\kestrel-win-target\release\examples\capture-spike.exe"
+& $spike link-check                                    # the same report as the app's --link-check
 & $spike windows --exe msedge.exe                     # windows + §4.3 app identity
 & $spike measure --exe msedge.exe --title Gmail --label "Edge: Gmail thread"
 & $spike ocr --foreground --delay 3 --request-access

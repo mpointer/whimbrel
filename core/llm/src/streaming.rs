@@ -143,6 +143,11 @@ pub enum InferenceFailureClass {
     Provider,
     Parse,
     Timeout,
+    /// Not sent: the prompt involves a client excluded from hosted models (`crate::guard`). A shell retries
+    /// it with a local model.
+    ExcludedClient,
+    /// Not sent: the exclusion setting could not be read, so no hosted request goes until it can.
+    ExclusionUnreadable,
 }
 
 #[async_trait]
@@ -387,9 +392,12 @@ impl StreamingRunSupervisor {
                 status: 401 | 403, ..
             } => InferenceFailureClass::Authentication,
             LlmError::Http { status: 429, .. } => InferenceFailureClass::RateLimited,
-            LlmError::Http { .. } | LlmError::Provider(_) | LlmError::NotImplemented(_) => {
-                InferenceFailureClass::Provider
-            }
+            // The exclusion gate's refusals have classes of their own (shells decode the class as a string).
+            LlmError::Refused(ref r) => match r.failure_kind() {
+                crate::ProviderFailureKind::ExclusionUnreadable => InferenceFailureClass::ExclusionUnreadable,
+                _ => InferenceFailureClass::ExcludedClient,
+            },
+            LlmError::Http { .. } | LlmError::Provider(_) | LlmError::NotImplemented(_) => InferenceFailureClass::Provider,
         };
         let _ = self.sink.try_emit(InferenceEvent::Terminal {
             run_id: request.run_id.clone(),
@@ -468,6 +476,7 @@ impl StreamingLlmClient for OllamaStreamingClient {
         cancel: CancellationToken,
     ) -> Result<ProviderEventStream, LlmError> {
         let body = ollama_request_body(&request.model, &request.prompt);
+        crate::request_log::record("ollama", &format!("{}/api/generate", self.base_url), &body);
 
         let response = tokio::select! {
             _ = cancel.cancelled() => {
@@ -688,8 +697,11 @@ impl StreamingLlmClient for GoogleStreamingClient {
         // the same token a second time). A retired model (404) is retried once with the
         // fallback, as the blocking client does.
         let (response, model) = send_with_model_retry(Provider::Google, &request.model, self.fallback.as_deref(), &cancel, |model| {
+            let url = format!("{}/v1beta/models/{}:streamGenerateContent", self.base_url, model);
+            // Logged before the key is added: the key goes in the query string.
+            crate::request_log::record("google", &url, &body);
             self.http
-                .post(format!("{}/v1beta/models/{}:streamGenerateContent", self.base_url, model))
+                .post(url)
                 .query(&[("alt", "sse"), ("key", self.api_key.as_str())])
                 .json(&body)
                 .send()
@@ -884,7 +896,9 @@ impl StreamingLlmClient for AnthropicStreamingClient {
                 "stream": true,
                 "messages": [{"role": "user", "content": request.prompt}],
             });
-            let post = self.http.post(format!("{}/v1/messages", self.base_url));
+            let url = format!("{}/v1/messages", self.base_url);
+            crate::request_log::record(self.provider().as_str(), &url, &body);
+            let post = self.http.post(url);
             let post = match &self.auth {
                 crate::AnthropicAuth::ApiKey(key) => post.header("x-api-key", key),
                 crate::AnthropicAuth::Whimbrel { id_token, device_key } => post
@@ -1027,9 +1041,11 @@ impl StreamingLlmClient for OpenAIStreamingClient {
     ) -> Result<ProviderEventStream, LlmError> {
         let (response, model) = send_with_model_retry(self.provider, &request.model, self.fallback.as_deref(), &cancel, |model| {
             let body = openai_stream_body(self.provider, &model, &request.prompt);
+            let url = format!("{}/v1/chat/completions", self.base_url);
+            crate::request_log::record(self.provider.as_str(), &url, &body);
             let mut call = self
                 .http
-                .post(format!("{}/v1/chat/completions", self.base_url))
+                .post(url)
                 .bearer_auth(&self.api_key);
             for (name, value) in &self.extra_headers {
                 call = call.header(name, value);
@@ -1729,6 +1745,22 @@ mod tests {
         let chain = vec![StreamingChainLink { provider, model: "test-model".to_string(), client }];
         supervisor.drive(request, &chain, CancellationToken::new(), now).await;
         sink.events()
+    }
+
+    /// The debug request log sees streaming requests too, with the prompt and without the key.
+    #[tokio::test]
+    async fn request_log_records_streaming_anthropic_and_google_requests() {
+        let path = crate::request_log::tests::log_to_temp("streaming");
+        let done = "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+        drive_with(Provider::Anthropic, vec![ScriptStep::Raw(done.into())]).await;
+        drive_google(vec![ScriptStep::Raw("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}]}\n\n".into())]).await;
+        let lines = crate::request_log::tests::read_lines(&path);
+        let providers: Vec<_> = lines.iter().map(|l| l["provider"].as_str().unwrap().to_string()).collect();
+        assert_eq!(providers, ["anthropic", "google"], "{lines:?}");
+        assert_eq!(lines[0]["body"]["messages"][0]["content"], "hi");
+        assert!(lines[1]["body"].to_string().contains("hi"), "{lines:?}");
+        assert!(!lines[1]["url"].as_str().unwrap().contains("key="), "{lines:?}");
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("test-key"));
     }
 
     #[test]

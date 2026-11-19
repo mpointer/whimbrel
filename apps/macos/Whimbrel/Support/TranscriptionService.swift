@@ -162,7 +162,11 @@ enum TranscriptionService {
         if hasSystemAudio, hasMicAudio {
             log.info("filterBleedThrough: \(micLines.count) mic lines before, \(micLinesKept) after")
         }
-        return (url: try writeTranscript(lines, stamp: stamp), lines: lines, language: language, voices: voices)
+        // A recording that was paused has silence where nothing was captured; a transcriber can invent
+        // words there. The paused stretches are stored beside the audio; text inside one is dropped.
+        let spans = RecordingPausedSpans.read(forAudioPath: systemURL.path)
+        let kept = RecordingPausedSpans.dropping(lines, spans: spans.isEmpty ? RecordingPausedSpans.read(forAudioPath: micURL.path) : spans)
+        return (url: try writeTranscript(kept, stamp: stamp), lines: kept, language: language, voices: voices)
     }
 
     private static func timestamp(from url: URL, prefix: String) -> String {

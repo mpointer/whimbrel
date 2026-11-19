@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WhimbrelUI
 
 struct MenuBarContentView: View {
     @EnvironmentObject var appState: AppState
@@ -17,6 +18,29 @@ struct MenuBarContentView: View {
         return appState.allUpcomingMeetings.filter { $0.endDate > now }.min { $0.startDate < $1.startDate }
     }
 
+    /// Redesign flag only: the timed pause choices, and the time a pause ends. Not offered while capture is off.
+    @ViewBuilder
+    private var capturePauseControls: some View {
+        let state = CapturePauseModel.state(captureOn: appState.activityCaptureEnabled, resumeAt: appState.captureResumeAt)
+        if let at = appState.captureResumeAt, state == .paused {
+            Text(String(localized: "Paused until \(CapturePauseModel.untilText(at, now: Date()))", comment: "Work memory state in the sidebar footer. The placeholder is a clock time, for example 10:52 AM."))
+                .font(.whimbrelBody(.caption).weight(.semibold))
+                .foregroundStyle(Color.whimbrelTextPrimary)
+        }
+        if state != .off {
+            Menu(String(localized: "Pause", comment: "Button on the recording bar that pauses a recording.")) {
+                Button(String(localized: "Pause for 15 minutes")) { appState.pauseCapture(.fifteenMinutes) }
+                Button(String(localized: "Pause for 1 hour")) { appState.pauseCapture(.oneHour) }
+                Button(String(localized: "Pause until tomorrow")) { appState.pauseCapture(.untilTomorrow) }
+                if state == .paused {
+                    Divider()
+                    Button(String(localized: "Resume now")) { appState.resumeCaptureNow() }
+                }
+            }
+            .recordingControl()
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
             Text("Whimbrel")
@@ -30,6 +54,9 @@ struct MenuBarContentView: View {
                 set: { _ in Task { @MainActor in appState.toggleActivityCapture() } }
             ))
             .tint(Color.whimbrelAccentPrimary)
+            .recordingControl()
+
+            if appState.redesignEnabled { capturePauseControls }
 
             Text(appState.statusSummary)
                 .font(.whimbrelBody(.caption))
@@ -65,6 +92,23 @@ struct MenuBarContentView: View {
             Button("Ask about this window…") { appState.openHotkeyPanelFromMenu(menuOpenedAt: openedAt) }
                 .buttonStyle(.whimbrelSecondary)
 
+            // Recorded time, Pause or Resume and the in-meeting window (redesign flag only).
+            if appState.redesignEnabled, appState.activeMeetingId != nil {
+                if let elapsed = appState.menuBarElapsed {
+                    Text("\(appState.recordingPaused ? String(localized: "Paused") : String(localized: "Recording")) \(elapsed)")
+                        .font(.whimbrelBody(.caption))
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                }
+                Button(appState.recordingPaused ? String(localized: "Resume") : String(localized: "Pause")) {
+                    Task { @MainActor in appState.toggleRecordingPause() }
+                }
+                .buttonStyle(.whimbrelSecondary)
+                .disabled(!appState.canPauseRecording && !appState.recordingPaused)
+                Button(String(localized: "Show in-meeting window")) {
+                    Task { @MainActor in appState.meetingBar.showFromMenu() }
+                }
+                .buttonStyle(.whimbrelSecondary)
+            }
             if appState.activeMeetingId != nil {
                 Button("End Meeting") {
                     Task { @MainActor in appState.endActiveMeetingIfNeeded() }
@@ -75,6 +119,8 @@ struct MenuBarContentView: View {
                     Task { @MainActor in appState.startManualMeeting() }
                 }
                 .buttonStyle(.whimbrelSecondary)
+                .recordingControl()
+                RecordingOffCaption()
             }
 
             if !appState.inactiveCapabilities.isEmpty {

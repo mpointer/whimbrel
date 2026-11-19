@@ -29,11 +29,336 @@ StoreHandle *whimbrel_memory_open(const char *path, const char *models_dir);
  * UTF-8 input. Free with whimbrel_core_free_string. */
 char *whimbrel_redact_secrets(const char *text);
 
+/* X4 encryption at rest. Outcome codes of whimbrel_memory_open_keyed, one per
+ * api::store_key::OpenOutcome. Pinned: never renumber (core/ffi/tests/store_key_ffi.rs). */
+#define WHIMBREL_OPEN_OPENED (0)
+#define WHIMBREL_OPEN_NEW_INSTALL (1)
+#define WHIMBREL_OPEN_NEEDS_KEY (2)
+#define WHIMBREL_OPEN_KEY_UNAVAILABLE (3)
+#define WHIMBREL_OPEN_KEY_REJECTED (4)
+#define WHIMBREL_OPEN_NEEDS_MIGRATION (5)
+#define WHIMBREL_OPEN_DAMAGED (6)
+#define WHIMBREL_OPEN_STARTUP_FAILED (7)
+#define WHIMBREL_OPEN_UNSUPPORTED (8)
+#define WHIMBREL_OPEN_MIGRATION_INTERRUPTED (9)
+/* Not an outcome: the call was malformed (NULL path or out_store, unknown key_state, a
+ * found key that is not 32 bytes). Nothing was looked at or created. */
+#define WHIMBREL_OPEN_INVALID_ARGUMENT (-1)
+
+/* The shell's keychain lookup result, passed as key_state. */
+#define WHIMBREL_KEY_FOUND (0)
+#define WHIMBREL_KEY_ABSENT (1)
+#define WHIMBREL_KEY_UNAVAILABLE (2)
+
+/* Opens the main store when it may be encrypted (api::store_key::open_store) and returns
+ * a WHIMBREL_OPEN_* code. key_state: WHIMBREL_KEY_FOUND (key/key_len = the 32-byte key),
+ * WHIMBREL_KEY_ABSENT, or WHIMBREL_KEY_UNAVAILABLE (unavailable_message, may be NULL,
+ * says why and comes back as the message). models_dir may be NULL as whimbrel_memory_open.
+ * out_store (required) is set to the store on WHIMBREL_OPEN_OPENED, else NULL; release it
+ * with whimbrel_memory_close. out_message (may be NULL) is set to a message for
+ * KEY_UNAVAILABLE, KEY_REJECTED, DAMAGED, STARTUP_FAILED, UNSUPPORTED and
+ * MIGRATION_INTERRUPTED, else NULL; free with whimbrel_core_free_string. On OPENED the
+ * startup sweep and model defaults have run. Every other outcome leaves an existing file
+ * untouched. Never logs or returns key bytes. */
+int32_t whimbrel_memory_open_keyed(
+    const char *path, const char *models_dir,
+    int32_t key_state, const uint8_t *key, size_t key_len, const char *unavailable_message,
+    StoreHandle **out_store, char **out_message);
+
+/* whimbrel_memory_open_keyed for the MAIN store with the launch plan's cache (OpenKeyed
+ * {"cache_kib"}, the Faster search setting): cache_kib > 0 sets that cache in KiB, 0 keeps
+ * SQLite's default, negative is WHIMBREL_OPEN_INVALID_ARGUMENT (nothing opened). The MCP
+ * server and per-call opens never get the cache. */
+int32_t whimbrel_memory_open_keyed_with_cache(
+    const char *path, const char *models_dir,
+    int32_t key_state, const uint8_t *key, size_t key_len, const char *unavailable_message,
+    int64_t cache_kib, StoreHandle **out_store, char **out_message);
+
+/* The keyed open that NEVER creates: the proof that a recovered key belongs to the existing
+ * database. key/key_len (32 bytes) are required. A missing database (also one removed during
+ * the open) is WHIMBREL_OPEN_DAMAGED and nothing is created. cache_kib as above; other
+ * outcomes as whimbrel_memory_open_keyed. */
+int32_t whimbrel_memory_open_keyed_existing(
+    const char *path, const char *models_dir, const uint8_t *key, size_t key_len,
+    int64_t cache_kib, StoreHandle **out_store, char **out_message);
+
 /* Opens a second connection to path sharing primary's embedder, for a slow lane of
- * calls that hold a store across an LLM request. No startup sweep. primary must not be
- * in use on another thread during this call. Returns NULL on failure. Release with
+ * calls that hold a store across an LLM request. No startup sweep. key/key_len: the
+ * 32-byte database key when the primary was opened keyed, else NULL/0; with a key only an
+ * existing encrypted file opens. primary must not be in use on another thread during this
+ * call. Returns NULL on failure (including a key that is not 32 bytes). Release with
  * whimbrel_memory_close. */
-StoreHandle *whimbrel_memory_open_secondary(StoreHandle *primary, const char *path);
+StoreHandle *whimbrel_memory_open_secondary(
+    StoreHandle *primary, const char *path, const uint8_t *key, size_t key_len);
+
+/* The shell's keychain write for the encryption migration: store key (key_len = 32) under
+ * account ("db-key-pending", then "db-key"). Return 0 on success, any other value (an
+ * OSStatus) on failure. Called on the migration's thread. */
+typedef int32_t (*whimbrel_key_store_fn)(void *ctx, const char *account, const uint8_t *key, size_t key_len);
+
+/* Migration progress: step (0 checkpoint, 1 copy, 2 verify, 3 swap), fraction within the
+ * step, overall fraction (0..1, never going backwards). note is NULL or valid only during
+ * the call. Calls never overlap but may come from a helper thread. */
+typedef void (*whimbrel_migration_progress_fn)(void *ctx, int32_t step, double step_fraction, double overall, const char *note);
+
+/* Encrypts the plain database at db_path in place (api::encrypt_migration::run_with_progress).
+ * Blocking: call off the main thread. recording: a meeting is being recorded (refused).
+ * key/key_len: the 32-byte key. store_key (required) stores the key through the keychain;
+ * progress may be NULL. Returns JSON {"ok":true,"phase":"done"} or {"ok":false,"error":
+ * {"kind","message","skip"?}}; kind is skipped (skip.reason: recording, low_disk
+ * (+need_bytes, free_bytes), free_space_unknown, open_elsewhere, not_plain, interrupted_run
+ * (+phase), plain_backup_exists, failed_before (+attempts, last), unreadable,
+ * open_in_this_process (a store of THIS process has the file open; open_elsewhere means
+ * another process)), key_store, copy, verify, swap, state, recovery, refused or
+ * partly_done. NULL on malformed arguments (nothing done). Free with
+ * whimbrel_core_free_string. */
+char *whimbrel_encrypt_migration_run(
+    const char *db_path, bool recording, const uint8_t *key, size_t key_len,
+    whimbrel_key_store_fn store_key, void *store_ctx,
+    whimbrel_migration_progress_fn progress, void *progress_ctx);
+
+/* api::encrypt_migration::resume: call at launch before opening the store. JSON
+ * {"ok":true,"phase":null|"key_pending"|"copy_written"|"verified"|"swapped"|"done"} (done =
+ * recorded finished; any other phase = undone, the plain file is back) or the error shape
+ * above. NULL on a NULL path. */
+char *whimbrel_encrypt_migration_resume(const char *db_path);
+
+/* api::encrypt_migration::precheck: {"ok":true,"phase":null} when a run may start, else
+ * the skipped error shape. Changes nothing. NULL on a NULL path. */
+char *whimbrel_encrypt_migration_precheck(const char *db_path, bool recording);
+
+/* api::encrypt_migration::reset_failures (Retry after failed_before): {"ok":true,
+ * "phase":null} or the error shape. NULL on a NULL path. */
+char *whimbrel_encrypt_migration_reset_failures(const char *db_path);
+
+/* Whether <db>.plain.bak exists. */
+bool whimbrel_encrypt_migration_plain_backup_exists(const char *db_path);
+
+/* Deletes <db>.plain.bak after good_launches >= 3 good launches on the encrypted file
+ * (api::encrypt_migration::cleanup_plain_backup). Returns whether it was removed. */
+bool whimbrel_encrypt_migration_cleanup_plain_backup(const char *db_path, uint32_t good_launches);
+
+/* The good-launch counter (StartCleanupCounter, RecordGoodLaunch, ResetCleanupCounter, and
+ * the reset after a successful CleanupPlainBackup) lives in the SHELL's settings, not in
+ * core: core has no settings store before the database opens. The shell writes it only once
+ * the first window has rendered (or the app has been up a few seconds), and passes it back
+ * as the decision input's "good_launches". */
+
+/* User-confirmed file actions behind the launch screens (api::encrypt_migration). Codes and
+ * counts only, never paths or messages. Result codes (pinned, never renumbered,
+ * core/ffi/tests/launch_actions_ffi.rs): */
+#define WHIMBREL_ENC_ACTION_DONE (0)
+/* Its conditions do not hold; nothing was changed. */
+#define WHIMBREL_ENC_ACTION_REFUSED (1)
+/* Restore only: stray sidecars at the database path were moved aside (count in
+ * out_moved_aside; kept as <db>.foreign-<ms>-*, never deleted), then a later step failed. The
+ * copy did not move; pressing the button again continues. */
+#define WHIMBREL_ENC_ACTION_PARTLY_DONE (2)
+/* A move or delete failed; some files may have changed. Ask the launch decision again. */
+#define WHIMBREL_ENC_ACTION_FAILED (3)
+/* A NULL path; nothing was looked at. */
+#define WHIMBREL_ENC_ACTION_INVALID_ARGUMENT (-1)
+
+/* The warning of a restore that returned WHIMBREL_ENC_ACTION_DONE (the copy is back either
+ * way; never repeat the restore). */
+#define WHIMBREL_RESTORE_WARNING_NONE (0)
+/* The unreadable state file could not be moved aside: offer "Reset encryption status"
+ * (whimbrel_encrypt_reset_encryption_status) later. */
+#define WHIMBREL_RESTORE_WARNING_STATE_NOT_MOVED_ASIDE (1)
+/* The state file could not be rewritten to "no run"; the next launch decides from it. */
+#define WHIMBREL_RESTORE_WARNING_STATE_NOT_CLEARED (2)
+
+/* "Put back the unencrypted copy" (restore_rollback_copy): the button of
+ * WHIMBREL_LAUNCH_SHOW_ENCRYPTED_FILE_MISSING with backup_present. out_moved_aside (may be
+ * NULL): stray sidecars moved aside, for DONE and PARTLY_DONE, else 0. out_warning (may be
+ * NULL): a WHIMBREL_RESTORE_WARNING_* for DONE, else NONE. Then ask the decision again. */
+int32_t whimbrel_encrypt_restore_rollback_copy(const char *db_path, uint32_t *out_moved_aside, int32_t *out_warning);
+
+/* "Reset encryption status" (reset_encryption_status): moves an unreadable state file (or
+ * an unfinished run's state with the database and both copies gone) aside, never deleting
+ * it. The button of WHIMBREL_LAUNCH_SHOW_ENCRYPTED_FILE_MISSING with neither copy present
+ * and of the Settings note WHIMBREL_LAUNCH_SHOW_MIGRATION_SKIPPED reason "state_unreadable".
+ * Returns DONE, REFUSED, FAILED or INVALID_ARGUMENT. */
+int32_t whimbrel_encrypt_reset_encryption_status(const char *db_path);
+
+/* "Delete the unencrypted copy" (delete_plain_backup): the button of the Settings note
+ * WHIMBREL_LAUNCH_SHOW_PLAIN_BACKUP_KEPT. opened_with_key_this_launch: the shell opened the
+ * encrypted main store with its key during this launch. out_removed (may be NULL): files
+ * removed on DONE, else 0. Deleting a file does not guarantee its bytes are gone. */
+int32_t whimbrel_encrypt_delete_plain_backup(const char *db_path, bool opened_with_key_this_launch, uint32_t *out_removed);
+
+/* Delete everything, step 1 (api::delete_everything::remove_database_files): removes the
+ * memory database's files beside db_path (the database and its sidecars, .plain.bak,
+ * .enc.tmp, .foreign-*, .creating*, the encryption state file), then looks again. JSON
+ * {"removed":[path],"remaining":[path],"keys_may_be_deleted":bool}. Delete the database keys
+ * (db-key, db-key-pending, every db-key-previous*) and clear the launch flags ONLY when
+ * keys_may_be_deleted; otherwise keep them and tell the user which files remain. Blocking.
+ * NULL on a NULL path. Free with whimbrel_core_free_string. */
+char *whimbrel_delete_everything_remove_database_files_json(const char *db_path);
+
+/* Delete everything's note rule (api::delete_everything::confine_to_root): candidate resolved
+ * under root when it is an absolute direct child of root with every symlink on the way
+ * resolved (delete that path; a symlink there is removed itself, never followed); NULL when
+ * it must not be deleted, or on a NULL argument. Free with whimbrel_core_free_string. */
+char *whimbrel_delete_everything_confine(const char *root, const char *candidate);
+
+/* Files the encryption work set aside beside db_path (api::foreign_files, Task 13c): exactly
+ * <db>.foreign-<digits>, its -wal/-shm, and its -journal while the main file exists; never
+ * .plain-journal-*, a look-alike, a link or a folder. db_path must be ABSOLUTE (entries are
+ * confined to its folder; a relative path lists nothing). Show the Settings row only when count > 0.
+ * JSON {"files":[{"name":str,"size":u64}],"count":n,"total_bytes":u64}; an unreadable folder
+ * lists nothing. Read-only. NULL on a NULL path. Free with whimbrel_core_free_string. */
+char *whimbrel_foreign_files_list_json(const char *db_path);
+
+/* "Delete these files", after the user confirmed: lists afresh NOW and removes only the
+ * matches (never from an earlier list; links and folders are never removed or followed).
+ * JSON {"ok":true,"removed":[{"name","size"}],"removed_count":n,"removed_bytes":u64,
+ * "failed":[name]}, or {"ok":false} when the folder cannot be read (nothing removed).
+ * Blocking. NULL on a NULL path. Free with whimbrel_core_free_string. */
+char *whimbrel_foreign_files_delete_all_json(const char *db_path);
+
+/* The shared launch decision (api::launch_decision). Step codes, one per LaunchAction.
+ * Pinned: never renumber (core/ffi/tests/launch_ffi.rs). */
+#define WHIMBREL_LAUNCH_OPEN_PLAIN (0)
+#define WHIMBREL_LAUNCH_OPEN_PLAIN_RECORD_KEY_UNAVAILABLE (1)
+#define WHIMBREL_LAUNCH_HARD_STOP_NO_KEY_STORAGE (2)
+#define WHIMBREL_LAUNCH_SHOW_KEY_UNAVAILABLE_SCREEN (3)
+#define WHIMBREL_LAUNCH_SHOW_RECOVERY_SCREEN (4)
+#define WHIMBREL_LAUNCH_SHOW_MIGRATION_INTERRUPTED (5)
+/* {"action":"show_damaged","reason":"damaged"|"no_access"|"open_elsewhere"} (no_access: a
+ * permissions problem, not damage; open_elsewhere: another program holds the file, Windows,
+ * not damage; both offer Retry). */
+#define WHIMBREL_LAUNCH_SHOW_DAMAGED (6)
+#define WHIMBREL_LAUNCH_SHOW_FAILED_BEFORE (7)
+/* {"action":"show_migration_skipped","reason":"precheck"|"state_unreadable"}. */
+#define WHIMBREL_LAUNCH_SHOW_MIGRATION_SKIPPED (8)
+#define WHIMBREL_LAUNCH_SHOW_MIGRATION_FAILED (9)
+#define WHIMBREL_LAUNCH_NEW_INSTALL_ONBOARDING (10)
+#define WHIMBREL_LAUNCH_FINISH_UNDO_VIA_RESUME (11)
+#define WHIMBREL_LAUNCH_PRECHECK_MIGRATION (12)
+#define WHIMBREL_LAUNCH_RUN_MIGRATION (13)
+#define WHIMBREL_LAUNCH_OPEN_KEYED (14)
+#define WHIMBREL_LAUNCH_PROMOTE_PENDING_KEY (15)
+#define WHIMBREL_LAUNCH_DELETE_PENDING_KEY (16)
+#define WHIMBREL_LAUNCH_CLEAR_MIGRATE_FLAG (17)
+#define WHIMBREL_LAUNCH_START_CLEANUP_COUNTER (18)
+#define WHIMBREL_LAUNCH_RECORD_GOOD_LAUNCH (19)
+#define WHIMBREL_LAUNCH_CLEANUP_PLAIN_BACKUP (20)
+#define WHIMBREL_LAUNCH_RESET_CLEANUP_COUNTER (21)
+#define WHIMBREL_LAUNCH_START_MCP_SERVER (22)
+#define WHIMBREL_LAUNCH_SHOW_ENCRYPTION_AVAILABLE (23)
+/* {"action":"show_encrypted_file_missing","backup_present":bool,"encrypted_copy_present":bool}:
+ * backup_present offers "Put back the unencrypted copy" (whimbrel_encrypt_restore_rollback_copy:
+ * out_moved_aside counts stray sidecars set aside and kept, out_warning says the copy is back
+ * but the state file was not put in order; never repeat a DONE restore; PARTLY_DONE may be
+ * pressed again); neither offers "Reset encryption status"
+ * (whimbrel_encrypt_reset_encryption_status); only encrypted_copy_present means support is
+ * needed (.enc.tmp is kept untouched, no button changes files). Ask again after a button. */
+#define WHIMBREL_LAUNCH_SHOW_ENCRYPTED_FILE_MISSING (24)
+/* Settings note after a keyed open: "Delete the unencrypted copy"
+ * (whimbrel_encrypt_delete_plain_backup). */
+#define WHIMBREL_LAUNCH_SHOW_PLAIN_BACKUP_KEPT (25)
+/* After the open, before the MCP server: no database and no recoverable copy, but a launch
+ * here had opened a store before (files.store_existed). The new empty store opened: show ONE
+ * non-blocking notice. Clear the marker at this step (whimbrel_launch_clear_store_existed);
+ * it is written again after the open. Never on a new install or after Delete everything. */
+#define WHIMBREL_LAUNCH_NOTICE_LIBRARY_MISSING (26)
+
+/* The "a store was opened here" marker (store_existed, beside db_path; no user data). Mark
+ * after every successful open of the main store; never written through a link. Clear at
+ * WHIMBREL_LAUNCH_NOTICE_LIBRARY_MISSING and in Delete everything's flag cleanup (a missing
+ * marker counts as cleared). Both false on a NULL path or a failure. */
+bool whimbrel_launch_mark_store_existed(const char *db_path);
+bool whimbrel_launch_clear_store_existed(const char *db_path);
+
+/* What is on disk beside db_path, as JSON for the decision input's "files": {"db_file":
+ * "missing"|"empty"|"damaged"|"plain"|"not_plain"|"unreadable"|"no_access"|"open_elsewhere", "plain_backup_exists",
+ * "encrypted_tmp_exists", "migration": {"kind":"none"|"unreadable"|"idle"|"in_progress"|
+ * "done", ...}, "store_existed": bool (optional in input; absent reads as false)}. Read-only.
+ * NULL on a NULL path. Free with whimbrel_core_free_string. */
+char *whimbrel_launch_observe_files(const char *db_path);
+
+/* Decides this launch's steps (pure; nothing is opened or changed). input_json is a
+ * LaunchInput: {"files": <observe_files>, "db_key"/"pending_key": "found"|"absent"|
+ * "unavailable" (presence only, never key bytes), "migrate_at_next_launch", "recording",
+ * "settings": {"fast_search": bool, required}, "physical_ram_bytes", "good_launches", "this_launch":
+ * {"resume", "migration", "db_key_rejected", "pending_key_rejected", "key_store_failed"}}.
+ * Every field is required (this_launch too); unknown names (camelCase typos) are rejected.
+ * Returns {"steps":[{"code":WHIMBREL_LAUNCH_*,"action":...,<fields>}]}: run them in order
+ * as api/src/launch_decision.rs describes, and cap how often one launch asks again. NULL on
+ * NULL or unparseable input: do nothing and show an error. Free with
+ * whimbrel_core_free_string. */
+char *whimbrel_launch_decision(const char *input_json);
+
+/* Whether to offer "Faster search (uses more memory)": a 16 GB computer (14 GiB or more
+ * reported; prefer the installed amount). The cache only applies to an encrypted database. */
+bool whimbrel_fast_search_available(uint64_t physical_ram_bytes);
+
+/* Speed check progress, 0 to 1, on the calling thread. */
+typedef void (*whimbrel_speed_progress_fn)(void *ctx, float fraction);
+
+/* "Check encryption speed" (api::speed_check::run_with) on an open store, locally. open_ms:
+ * the main store's open time at launch, negative when not measured. physical_ram_bytes: 0
+ * when not known. progress may be NULL. Blocking (seconds): call it on the store's queue,
+ * off the main thread. Returns {"ok":true,"report":{...}} (timings and hardware class only:
+ * no search words, content, paths or names) or {"ok":false,"error":"<fixed text>"}. NULL on
+ * a NULL handle. Free with whimbrel_core_free_string. */
+char *whimbrel_speed_check_run(StoreHandle *handle, int64_t open_ms, uint64_t physical_ram_bytes,
+    whimbrel_speed_progress_fn progress, void *progress_ctx);
+
+/* The local text file's contents (api::speed_check::to_text) for the "report" object above.
+ * NULL on NULL or JSON that is not a report. Free with whimbrel_core_free_string. */
+char *whimbrel_speed_check_text(const char *report_json);
+
+/* Recovery-key setup and restore (api::encrypt_setup, X4 design 3.4). All in memory: no file
+ * is read or written and no key store is touched. Calls that take a passphrase run Argon2id
+ * (about a second): call them off the main thread. Result codes (pinned, never renumbered): */
+#define WHIMBREL_RECOVERY_OK (0)
+#define WHIMBREL_RECOVERY_PASSPHRASE_TOO_SHORT (1)
+#define WHIMBREL_RECOVERY_WRONG_PASSPHRASE_OR_DAMAGED (2)
+#define WHIMBREL_RECOVERY_MALFORMED (3)
+#define WHIMBREL_RECOVERY_BAD_WORDS (4)
+/* Not an outcome: a NULL pointer, an out buffer that is not 32 bytes, or an existing key that
+ * is not 32 bytes. Nothing was done. */
+#define WHIMBREL_RECOVERY_INVALID_ARGUMENT (-1)
+
+/* Starts setup: a fresh random key (existing_key NULL) or the given 32-byte existing_key (the
+ * pending key, never replaced). passphrase needs 12+ characters after NFC. out_key (32 bytes)
+ * receives the key, zeroed on failure; the caller wipes it after use. On WHIMBREL_RECOVERY_OK,
+ * *out_recovery_file is the text of "Whimbrel recovery key.txt" and *out_words the 24 words
+ * separated by single spaces (the raw key: never log); else both are NULL. Free both with
+ * whimbrel_core_free_secret_string. */
+int32_t whimbrel_encrypt_setup_begin(
+    const char *passphrase,
+    const uint8_t *existing_key,
+    size_t existing_key_len,
+    uint8_t *out_key,
+    size_t out_key_len,
+    char **out_recovery_file,
+    char **out_words);
+
+/* The type-it-back test: true when passphrase opens recovery_file (text held in memory). False
+ * for any failure or NULL argument. */
+bool whimbrel_encrypt_setup_verify_passphrase(const char *recovery_file, const char *passphrase);
+
+/* The key from a recovery file's text and passphrase into out_key (32 bytes; zeroed on
+ * failure). Returns a WHIMBREL_RECOVERY_* code. */
+int32_t whimbrel_encrypt_restore_from_file(
+    const char *recovery_file, const char *passphrase, uint8_t *out_key, size_t out_key_len);
+
+/* The key from the 24 words as pasted (any spacing, capitals, commas, numbering) into out_key
+ * (32 bytes; zeroed on failure). Returns WHIMBREL_RECOVERY_OK or WHIMBREL_RECOVERY_BAD_WORDS. */
+int32_t whimbrel_encrypt_restore_from_words(const char *words, uint8_t *out_key, size_t out_key_len);
+
+/* Characters of the NFC form (what the minimum counts); 0 for NULL. */
+size_t whimbrel_encrypt_passphrase_length(const char *passphrase);
+
+/* The minimum passphrase length (12). */
+size_t whimbrel_encrypt_min_passphrase_chars(void);
+
+/* Frees a string holding secret text (the words, the recovery file), wiping it first. NULL is
+ * a no-op. */
+void whimbrel_core_free_secret_string(char *s);
 
 /* Releases a store opened with whimbrel_memory_open. Safe to call with NULL. */
 void whimbrel_memory_close(StoreHandle *handle);
@@ -255,21 +580,37 @@ char *whimbrel_llm_answer(
     StoreHandle *handle, const char *query, const char *model, size_t context_limit, const char *history_json,
     const char *routing_config_json);
 
+/* whimbrel_llm_answer, with the envelope data also carrying "exclusion" (what client
+ * exclusion did: {"kind":"allowed"|"filtered_hosted"|"local_only"|"refused", ...}) and
+ * "answered_by" ({"provider","model","local"}: the link that really answered). Same
+ * arguments and behaviour otherwise. */
+char *whimbrel_llm_answer_detailed(
+    StoreHandle *handle, const char *query, const char *model, size_t context_limit, const char *history_json,
+    const char *routing_config_json);
+
+/* Whether an Ask bar question (with history_json, as whimbrel_llm_answer) names a client
+ * excluded from hosted models, so core answers it on this computer or refuses it. Envelope
+ * data is a bool. Cheap, no model call, never the client's name. Bare NULL on a NULL handle,
+ * a non-UTF-8 query or a malformed history. Free with whimbrel_core_free_string. */
+char *whimbrel_ask_names_excluded_client(StoreHandle *handle, const char *query, const char *history_json);
+
 /* Live question: decides whether lines[index] is a question for the user. lines_json is
  * [{"id","channel","start_cs","text"}]; names_json is ["Mike", ...]. Envelope data is
  * {"is_for_user","confidence","quote","asker","restatement"} or null when the model says no
  * or is not highly confident. Route "live_question"; spend cap applies. routing_config_json
- * as whimbrel_llm_answer. Bare NULL on a NULL handle, bad JSON, or an out-of-range index. */
+ * as whimbrel_llm_answer. meeting_id: the live meeting (0 or less: none, and core fails closed
+ * while an excluded client's meeting records). Bare NULL on a NULL handle, bad JSON, or an
+ * out-of-range index. */
 char *whimbrel_live_question_detect(
     StoreHandle *handle, const char *lines_json, size_t index, const char *names_json, const char *model,
-    const char *routing_config_json);
+    const char *routing_config_json, int64_t meeting_id);
 
 /* Live question: drafts the user's reply to a verdict (verdict_json, as returned above),
  * grounded in memory; recent_json is the same line shape. Envelope data is a ChatAnswer.
- * Bare NULL on a NULL handle or bad JSON. */
+ * meeting_id as for whimbrel_live_question_detect. Bare NULL on a NULL handle or bad JSON. */
 char *whimbrel_live_question_draft(
     StoreHandle *handle, const char *verdict_json, const char *recent_json, const char *model,
-    const char *routing_config_json);
+    const char *routing_config_json, int64_t meeting_id);
 
 /* Live question rule: a JSON array of indices into lines_json worth judging, or NULL on
  * bad input. room_audio: the recording is known to be room audio. Free with
@@ -290,10 +631,12 @@ bool whimbrel_live_question_is_duplicate(const char *restatement, const char *ea
  * "skin") before the call, usage logged after. Returns the
  * LB0-5 envelope with the SkinTurnReply
  * ({"intent","reply","notes","skin","palettes","imageQueries","imagePrompts"}) as data;
- * an unreadable reply after one retry is provider_failure. Bare NULL on malformed
+ * an unreadable reply after one retry is provider_failure. db_key/db_key_len: the 32-byte
+ * database key when the store is encrypted, else NULL/0. Bare NULL on malformed
  * arguments or a store that won't open. Free with whimbrel_core_free_string. */
 char *whimbrel_skin_turn(
-    const char *db_path, const char *device_id, const char *provider, const char *model, const char *api_key,
+    const char *db_path, const uint8_t *db_key, size_t db_key_len,
+    const char *device_id, const char *provider, const char *model, const char *api_key,
     const char *input_json,
     const char *routing_config_json);
 
@@ -302,18 +645,21 @@ char *whimbrel_skin_turn(
  * routing_config_json (as whimbrel_skin_turn) then charges 1 cent on route
  * "skin-image-search" before any network. Envelope data is
  * [{"url","thumbnailUrl","title","source":"web"}] (url is the image itself). Any search
- * failure is provider_failure (still charged). Bare NULL on malformed arguments or a
- * store that won't open. Free with whimbrel_core_free_string. */
+ * failure is provider_failure (still charged). db_key/db_key_len as whimbrel_skin_turn.
+ * Bare NULL on malformed arguments or a store that won't open. Free with
+ * whimbrel_core_free_string. */
 char *whimbrel_skin_image_search(
-    const char *db_path, const char *api_key, const char *query, const char *routing_config_json);
+    const char *db_path, const uint8_t *db_key, size_t db_key_len,
+    const char *api_key, const char *query, const char *routing_config_json);
 
 /* Skins Release 2: generates one image. provider is "openai" (gpt-image-1, 1536x1024) or
  * "google" (imagen-4.0-generate-001); anything else is a bare NULL. prompt cut to 200
- * chars. device_id as whimbrel_skin_turn. Spend handling as whimbrel_skin_image_search, 5 cents on route
+ * chars. device_id, db_key/db_key_len as whimbrel_skin_turn. Spend handling as whimbrel_skin_image_search, 5 cents on route
  * "skin-image-generate". Envelope data is the image bytes as a base64 string; any
  * failure is provider_failure (still charged). Free with whimbrel_core_free_string. */
 char *whimbrel_skin_image_generate(
-    const char *db_path, const char *device_id, const char *provider, const char *api_key, const char *prompt,
+    const char *db_path, const uint8_t *db_key, size_t db_key_len,
+    const char *device_id, const char *provider, const char *api_key, const char *prompt,
     const char *routing_config_json);
 
 /* Skins Release 2: downloads a user-approved image: https only, port 443, public addresses only
@@ -360,6 +706,15 @@ char *whimbrel_llm_prepare_meeting_ask(
 char *whimbrel_llm_prepare_window_ask(
     StoreHandle *handle, const char *window_json, const char *query, const char *history_json,
     const char *routing_config_json);
+
+/* The hotkey panel's destination line for one request, before Return: "local_only" when the
+ * window (app, title, text) or the question carries a client excluded from hosted models,
+ * else where the routing sends it; an Ollama cloud model is {"hosted":{"provider":"ollama"}}.
+ * window_json as above. Returns the bare destination JSON ("local_only", "local" or
+ * {"hosted":{"provider":"..."}}), not an envelope. NULL on a null handle or malformed
+ * arguments. */
+char *whimbrel_window_ask_destination(
+    StoreHandle *handle, const char *window_json, const char *query, const char *routing_config_json);
 
 /* Blocking meeting Ask through the governed chain (not pinned: a provider over its monthly
  * budget is skipped for the next). Used when the streamed provider's budget is spent.
@@ -509,6 +864,42 @@ char *whimbrel_routines_tick(
     StoreHandle *handle, int64_t now_unix_ms, const char *ollama_model, const char *routing_config_json,
     const char *today_events_json, bool gmail_connected, const char *recipient_email, uint8_t gate);
 
+/* whimbrel_routines_tick on a device of an account with the cloud runner (tick_cloud, device role).
+ * cloud_templates_json is a JSON array of the template names flagged "Run in the cloud" (NULL or
+ * "[]" for none: then it behaves as whimbrel_routines_tick), or an object
+ * {"templates": [...], "ready_by": {"daily_brief": "HH:MM", ...}}. A flagged routine is left to the
+ * runner until the failover grace (3 hours) past its ready-by time (its scheduled time when it has
+ * none), then runs here if no run is dated today.
+ * runner_fresh is whimbrel_cloud_runner_fresh's answer; core does not change the device's rule on it
+ * today. Same envelope as whimbrel_routines_tick; NULL on a NULL handle, bad arguments (including a
+ * malformed cloud_templates_json) or a database error. */
+char *whimbrel_routines_tick_cloud(
+    StoreHandle *handle, int64_t now_unix_ms, const char *ollama_model, const char *routing_config_json,
+    const char *today_events_json, bool gmail_connected, const char *recipient_email, uint8_t gate,
+    const char *cloud_templates_json, bool runner_fresh);
+
+/* whimbrel_meeting_prep_run on a device of an account with the cloud runner. The first seven
+ * parameters are whimbrel_meeting_prep_run's. cloud_templates_json takes the same JSON as
+ * whimbrel_routines_tick_cloud: with "meeting_prep" flagged, a meeting from a calendar that is not
+ * Google's (source "calendar", the only kind the runner pulls) is left to the runner until five minutes
+ * before it starts, then prepared here only if no brief synced in for it; a Google Calendar or detected
+ * meeting is prepared at lead time as before. NULL, or a policy that
+ * does not flag meeting_prep, behaves as whimbrel_meeting_prep_run. Same envelope; NULL on a NULL
+ * handle, bad arguments (including a malformed policy) or a database error. */
+char *whimbrel_meeting_prep_run_cloud(
+    StoreHandle *handle, int64_t now_unix_ms, double lead_minutes, const char *ollama_model,
+    const char *routing_config_json, const char *upcoming_meetings_json, uint8_t gate,
+    const char *cloud_templates_json);
+
+/* What the "Run in the cloud" toggle needs for a template name: {"eligible": bool, "grant": [row
+ * types], "grant_list": "meetings, ... and client settings", "grant_sentence": "Reads your ...",
+ * "google_calendar_limit": sentence or ""}. Unknown templates are not eligible. NULL on NULL input. */
+char *whimbrel_routines_cloud_info(const char *template_name);
+
+/* Whether the runner's heartbeat text (cloud.runner.lastRun, unix ms) is under the failover grace
+ * old at now_unix_ms. False for NULL or unreadable text. */
+bool whimbrel_cloud_runner_fresh(const char *heartbeat_value, int64_t now_unix_ms);
+
 /* Prepares a cited brief for each upcoming meeting whose lead window has opened (Meeting
  * Prep). upcoming_meetings_json is a JSON array of QualifyingMeeting. Returns the
  * whimbrel_routines_tick envelope with the routine runs created (empty when the routine is
@@ -551,6 +942,26 @@ char *whimbrel_routines_list(StoreHandle *handle);
 char *whimbrel_routines_recent_runs(StoreHandle *handle, uint64_t limit);
 
 char *whimbrel_memory_recent_episodes(StoreHandle *handle, uint64_t limit);
+
+/* Memory blocks for Home. Captures in [start_unix_ms, end_unix_ms) as time, app and window title only
+ * (never body text), grouped after a 10 minute gap, at most 4 apps per block and 3 titles per app with
+ * the counts of the rest. meetings_json is a JSON array of [start_unix_ms, end_unix_ms] pairs the blocks
+ * are cut around, or NULL for none. Returns a JSON array of
+ * {"start_unix_ms","end_unix_ms","apps":[{"app_bundle_id","items":[title],"more_items"}],"more_apps"},
+ * or NULL on a null/invalid handle, unparseable meetings_json or a DB error. Read-only. */
+char *whimbrel_memory_day_blocks(StoreHandle *handle, int64_t start_unix_ms, int64_t end_unix_ms, const char *meetings_json);
+
+/* Capture search with filters. semantic selects nearest-neighbor over FTS5 keyword. app is a bundle id
+ * or NULL for any. start_unix_ms and end_unix_ms bound capture time as [start, end); 0 or less means no
+ * bound. An app with no bounds searches the last 30 days. With no filter the result equals
+ * whimbrel_memory_search_keyword / _semantic. Semantic results may be fewer than limit. Returns a JSON
+ * array of CaptureItem, or NULL on a null/invalid handle, a null query or a DB error. */
+char *whimbrel_memory_search_captures_filtered(StoreHandle *handle, const char *query, bool semantic, const char *app, int64_t start_unix_ms, int64_t end_unix_ms, size_t limit);
+
+/* Apps with captures in [start_unix_ms, end_unix_ms), most captures first: the search app filter's
+ * choices. Returns a JSON array of {"app_bundle_id","captures"}, or NULL on a null/invalid handle or a
+ * DB error. */
+char *whimbrel_memory_capture_apps(StoreHandle *handle, int64_t start_unix_ms, int64_t end_unix_ms, size_t limit);
 char *whimbrel_memory_get_episode(StoreHandle *handle, int64_t id);
 
 /* Shows/hides one episode from the default episode list without deleting anything.
@@ -681,6 +1092,13 @@ char *whimbrel_llm_summarize_meeting_preferred(
     StoreHandle *handle, int64_t meeting_id, const char *notes, const char *transcript,
     const char *slides, const char *model, const char *routing_config_json,
     const char *custom_instructions);
+
+/* 1 when a summary of the meeting would be refused right now: it names a client excluded from
+ * hosted models and no on-device model is available, so whimbrel_llm_summarize_meeting sends
+ * nothing. Takes that call's model and routing_config_json. 0 otherwise, and on a null handle
+ * or unreadable arguments. Reads only. */
+int32_t whimbrel_meeting_summary_refused_for_exclusion(StoreHandle *handle, int64_t meeting_id,
+                                                       const char *model, const char *routing_config_json);
 
 /* The notice for a meeting whose summary was meant for Whimbrel AI but written by another
  * provider: {"ok":true,"data":null}, or data {"preferred","used","model","reason",
@@ -938,6 +1356,14 @@ char *whimbrel_memory_find_meetings_without_audio(StoreHandle *handle, const cha
  * Returns false on a null/invalid handle or a NULL or empty device_id. */
 bool whimbrel_memory_set_device_id(StoreHandle *handle, const char *device_id);
 
+/**
+ * Sets how long this connection waits for another connection's write lock before a statement
+ * fails with "database is locked" (`ms`, 0 to 600000). A connection starts with 5 s. The Mac
+ * app raises it on its screen, slow and background connections. Returns `false` on a null
+ * handle or an out-of-range value.
+ */
+bool whimbrel_memory_set_busy_timeout(StoreHandle *handle, uint64_t ms);
+
 /* Marks a meeting completed with its actual end time and (if captured) the audio file
  * path. audio_path may be NULL. Returns true on success, false on a null/invalid handle
  * or DB error. */
@@ -1123,6 +1549,27 @@ bool whimbrel_meeting_set_part_transcript(StoreHandle *handle, int64_t meeting_i
 
 /* JSON array of {part_index,start_unix_ms,end_unix_ms,audio_path,transcript_path,transcribed}. */
 char *whimbrel_meeting_parts(StoreHandle *handle, int64_t meeting_id);
+
+/* Mark this moment (live meeting). Markers are device-local: never synced, deleted with their
+ * meeting, trimmed with it, moved with it on a split or merge. at_cs is centiseconds from the start
+ * of the recording on the meeting-absolute clock (paused time included), the clock live alerts and
+ * transcript seek use. A marker is {"id","meeting_id","at_cs","label","created_unix_ms"} with label
+ * a string (trimmed, at most 200 characters) or null. Free returned strings with
+ * whimbrel_core_free_string. */
+
+/* Adds a marker; label may be NULL (blank also stores null). Returns the stored marker object, or
+ * NULL on a null handle, a negative at_cs or a meeting that does not exist. */
+char *whimbrel_meeting_marker_add(StoreHandle *handle, int64_t meeting_id, int64_t at_cs, const char *label, int64_t created_unix_ms);
+
+/* The meeting's markers as a JSON array ordered by at_cs then id ([] for none), or NULL on a null
+ * handle or a DB error. */
+char *whimbrel_meeting_marker_list(StoreHandle *handle, int64_t meeting_id);
+
+/* true when a marker was removed; false for no such marker, a null handle or an error. */
+bool whimbrel_meeting_marker_delete(StoreHandle *handle, int64_t id);
+
+/* Sets a marker's label (NULL or blank clears it). true when the marker exists. */
+bool whimbrel_meeting_marker_set_label(StoreHandle *handle, int64_t id, const char *label);
 
 /* segments_json: [{"start_cs","speaker_label","text"}] with part-relative start_cs.
  * Returns {"inserted":N}. */
@@ -1335,6 +1782,11 @@ char *whimbrel_sync_take_forgotten_meeting_files(void);
  * made, for "N changes waiting since ...". NULL on a null handle or store error. Caller frees with
  * whimbrel_core_free_string. */
 char *whimbrel_sync_outbox_backlog(StoreHandle *handle);
+
+/* How far the one-time kind_tag backfill has got, 0 to 99, for "Indexing history: N%". -1 when nothing
+ * should show: it has not run, it finished, nothing to count, a NULL handle or a store error. Read from
+ * the store, so it is right after a relaunch. */
+int32_t whimbrel_sync_kind_backfill_percent(StoreHandle *handle);
 
 typedef struct McpHostHandle McpHostHandle;
 
@@ -1847,6 +2299,12 @@ char *whimbrel_sync_worker_list_devices(const char *base_url, const char *id_tok
 char *whimbrel_sync_worker_approve_device(const char *base_url, const char *id_token, const char *device_public_key, const char *target_device_id, const char *wrapped_group_key);
 char *whimbrel_sync_worker_revoke_device(const char *base_url, const char *id_token, const char *device_public_key, const char *target_device_id);
 char *whimbrel_sync_worker_set_device_name(const char *base_url, const char *id_token, const char *device_public_key, const char *name);
+/* POST /v1/devices/runner: this device (its secret key, base64) registers the cloud runner whose
+ * public key `whimbrel-cloud-runner init` printed, with the group key (base64). Returns
+ * {"provision_bundle": base64, "approver_public_key": base64} for the runner's host, or the {"error": ...}
+ * envelope (a runner key that does not decode to 32 bytes is malformed_response, no request made).
+ * NULL on a NULL argument or a secret/group key that does not decode. Never log or store the bundle. */
+char *whimbrel_sync_worker_register_runner(const char *base_url, const char *id_token, const char *device_secret_key_base64, const char *runner_public_key_base64, const char *name, const char *group_key_base64);
 /* Open sign-in routes, same envelope as above. swap: POST /v1/devices/swap (platform NULL or
  * "" sends none) -> {"ok":true}. join_waitlist: POST /v1/waitlist, wants_json a JSON array of
  * the Worker's wants strings -> {"ok":true}. reset_account: POST /v1/account/reset with
@@ -1957,5 +2415,117 @@ char *whimbrel_voice_people(StoreHandle *handle);
 
 /* Forgets one person's voice (names stay). data: the remaining [VoicePerson]. */
 char *whimbrel_forget_voice(StoreHandle *handle, const char *person_key);
+
+/* ---- Client controls (X6 Task 9; core/ffi/src/client_controls_ffi.rs) ----
+ * Every *_json call returns an envelope: {"ok":true,"data":..} or {"ok":false,"error":{"kind":..}} with kind
+ * "not_found" | "no_device_id" | "invalid_input" | "selection_changed" | "busy" | "folder_not_allowed" | "failed" (never a client's
+ * name). selection_changed: reload the review screen; busy: background work is finishing, try again shortly. NULL only on a NULL
+ * handle or argument. Items cross as {"kind","id"} (kind: "meeting","email","thread","calendar_event",
+ * "capture","episode","conversation","step","vault_note","export_folder"; a capture id may be "i:<n>").
+ * Delete, expire and export-write are slow: run them on the slow lane, never a queue the UI waits on. */
+
+/* data: {"linked":[ClientItem],"possible":[ClientItem],"possible_truncated":bool,"counts":[[kind,n]],
+ * "left_for_you":[LeftForYou]}. ClientItem: {"kind","id","also_client":null|"..","date_unix_ms","removed",
+ * "label":null|".."}. label: the row's short name (title, subject, step text; one line, at most 80 characters)
+ * for the user's own screen only: never in a receipt, a saved receipt or a log line; null shows kind and date.
+ * LeftForYou: "mailbox_originals" | "backups_and_cloud" | "relay_copies_before_this_release" |
+ * "copies_on_other_devices" | "vault_sync_off" | {"media_folder":path} | {"vault_folder":path} |
+ * {"export_folders":[path]} | {"files_not_removed":[path]} | {"expired_here_only":n}. folders_json may be NULL:
+ * {"media_roots":[path],"vault":path|null,"vault_sync_off":bool} (media_roots[0] is the media folder shown as
+ * left for you). vault_sync_off: the vault integration is off on this device; then the vault is never touched
+ * (pass no vault) and left_for_you says "vault_sync_off". The delete and expiry requests take the same fields. */
+char *whimbrel_client_inventory_json(StoreHandle *handle, const char *key, const char *folders_json);
+
+/* Deletes a client and its material ("Delete this client"). request_json: {"key","include_possible":[{"kind","id"}] (required; []
+ * for none),"delete_exports":bool,"media_roots":[path],"vault":path|null}. A ticked item a fresh inventory does
+ * not list: "selection_changed", nothing touched. Background work not finished in time: "busy", nothing
+ * touched. device_id: this device's sync id, set on the store first (NULL keeps the one set before; with none,
+ * or the legacy "spike-device": "no_device_id", nothing touched). A delete drops the client's export media
+ * tokens. group_key_base64: NULL when sync is not set up; a malformed key is "invalid_input". Job loops are
+ * paused while it runs. data: {"date_unix_ms","counts":[[kind,n]],"not_sent":[[kind,n]],"local_only":
+ * [[kind,n]],"client":"removed"|"removed_here_only"|"still_present","left_for_you":[LeftForYou],
+ * "pending_devices":n|null,"failed":[kind],"failed_stages":["derived_text"|"client_record"|"cleanup"|"files"|
+ * "no_device_id"],"complete":bool,"retry_helps":bool}. retry_helps: running it again can finish it, but only
+ * with a selection rebuilt from a fresh whimbrel_client_inventory_json: an item the partial run already removed is
+ * no longer listed, so sending the same ticked items again answers "selection_changed". */
+char *whimbrel_client_delete_json(StoreHandle *handle, const char *request_json, const char *device_id, const char *group_key_base64);
+
+/* {"pending_devices": n | null, "topic_rows_held_devices": n | null} (not an envelope): devices that still need to
+ * update before they apply client deletes; and devices that hold back this device's client records, and with them
+ * the exclude setting (warn on the exclude toggle while > 0: another device may not learn the client is excluded).
+ * null when not known yet (never show it as 0). */
+char *whimbrel_client_pending_devices_json(StoreHandle *handle);
+
+/* {"devices": [id] | null} (not an envelope): the sync device ids (public keys) of the devices
+ * whimbrel_client_pending_devices_json counts, for naming them in Settings. NULL on a NULL handle. */
+char *whimbrel_client_pending_device_ids_json(StoreHandle *handle);
+
+/* "Remove this device" (desktop Settings only: the Mac here, Windows through the same api call in its Tauri
+ * command client_retire_device; never from a phone): stops counting device_id, one of
+ * whimbrel_client_pending_device_ids_json's, in the devices still to update, here at once and on every device
+ * after this desktop's next content-sync round. Releases nothing (client deletes are never held). data:
+ * {"pending_devices": n|null} after it. "not_found": this device's own id, or one not listed. */
+char *whimbrel_client_retire_device_json(StoreHandle *handle, const char *device_id);
+
+/* data: {"exclude_hosted":bool,"keep_months":n|null}. */
+char *whimbrel_client_control_get_json(StoreHandle *handle, const char *key);
+/* Saves {"exclude_hosted","keep_months"} (it syncs) and republishes the streaming gate. data: the saved value. */
+char *whimbrel_client_control_set_json(StoreHandle *handle, const char *key, const char *control_json);
+/* data: {"meetings":[id],"already_left_note":".."}: meetings a hosted model summarised, to offer summarising
+ * again with whimbrel_llm_summarize_meeting (which keeps an excluded client's meeting on this computer). */
+char *whimbrel_client_resummary_offer_json(StoreHandle *handle, const char *key);
+
+/* data: [{"key","items":[ClientItem]}], every client's items past its keep period. Read only. */
+char *whimbrel_client_due_items_json(StoreHandle *handle);
+/* data: [ClientItem] for one client. Read only. */
+char *whimbrel_client_due_items_for_json(StoreHandle *handle, const char *key);
+/* item_json {"kind","id"}; decision_json {"decision":"keep"} | {"decision":"snooze","until_ms":n}. This
+ * device only. data: null. */
+char *whimbrel_client_retention_decide_json(StoreHandle *handle, const char *key, const char *item_json, const char *decision_json);
+/* data: {"clients","items","raised_at_unix_ms"} or null: the weekly "items ready to review" flag. */
+char *whimbrel_client_review_flag_json(StoreHandle *handle);
+/* "Later": puts the review prompt off for a week. data: null. */
+char *whimbrel_client_review_flag_dismiss_json(StoreHandle *handle);
+/* Deletes confirmed due items on this device only. request_json: {"key","items":[{"kind","id"}],
+ * "media_roots":[path],"vault":path|null}. sync_on: sync is set up here (unsent material waits; the store must
+ * know this device's id, else "no_device_id" with nothing touched). Stops starting
+ * new items after budget_ms; call again while data.more. "busy" as for delete. data: {"date_unix_ms","counts","not_due",
+ * "waiting_to_sync" (all [[kind,n]]),"more","failed","failed_stages","left_for_you","complete"}. */
+char *whimbrel_client_expire_json(StoreHandle *handle, const char *request_json, bool sync_on, uint64_t budget_ms);
+
+/* Writes a client export's text. request_json: {"key","dest_parent":path,"include_possible":[{"kind","id"}],
+ * "include_media":bool,"media_roots":[path]}. data: {"folder":path,"media_token":n|null}. With a token, call
+ * whimbrel_client_export_copy_media_json next, off the store's queue, within an hour. A network share (UNC
+ * path) as dest_parent: "folder_not_allowed". */
+char *whimbrel_client_export_write_json(StoreHandle *handle, const char *request_json);
+/* Copies that export's media (no store). data: {"folder","media":{"files","skipped","failed"},"partial":bool};
+ * partial: the text is complete but some media was not copied. A used, unknown or expired token, or one of a
+ * client since deleted: "not_found". */
+char *whimbrel_client_export_copy_media_json(uint64_t media_token);
+
+/* A client delete that waits for running background work as long as it takes, in two steps so the wait holds no
+ * store. Step 1, whimbrel_client_pause_wait(token): pauses the job loops (no new tick starts), blocks until the
+ * running ticks are gone, and keeps the pause held under `token` (a number not used before). 0 = held; 1 =
+ * cancelled, nothing held. Step 2, whimbrel_client_delete_held_json: whimbrel_client_delete_json with the held
+ * pause, on the slow-lane store. The request may add "reviewed_linked":[{"kind","id"}], the linked items the user
+ * saw: when the linked set differs after the wait the answer is "selection_changed", nothing touched. Without a
+ * held pause, or after a cancel: "cancelled"/"busy", nothing touched. Every way out releases the pause. */
+int32_t whimbrel_client_pause_wait(uint64_t token);
+char *whimbrel_client_delete_held_json(StoreHandle *handle, const char *request_json, const char *device_id, const char *group_key_base64, uint64_t token);
+
+/* Cancels the delete with `token` before step 2 starts (waiting or queued): the pause is released, nothing is
+ * deleted. true = cancelled; false = too late, the delete has started. A cancel sent before step 1 also counts. */
+bool whimbrel_client_cancel_wait(uint64_t token);
+
+/* Drops the pause held under `token` (step 2 could not run). */
+void whimbrel_client_release_pause(uint64_t token);
+
+/* Background ticks running now: what a waiting delete is waiting for. */
+uint32_t whimbrel_client_jobs_running(void);
+
+/* A job loop's tick may start: true = go, then call whimbrel_client_job_end once; false = a client delete or
+ * expiry is running, skip the tick. */
+bool whimbrel_client_job_begin(void);
+void whimbrel_client_job_end(void);
 
 #endif /* WHIMBREL_CORE_H */

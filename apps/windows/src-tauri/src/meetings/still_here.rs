@@ -116,6 +116,22 @@ pub fn speech_listener(inner: Option<Listener>, tracking: bool) -> Listener {
     }))
 }
 
+/// When "This recording is still paused." was last asked; 0 for never. A time before the current
+/// pause began is a previous pause's and is ignored.
+static PAUSED_ASKED_MS: AtomicI64 = AtomicI64::new(0);
+
+/// One poll of a paused recording: whether to ask now (an hour into the pause, then every hour).
+/// Asking never ends the recording; there is no answer timer. The clock is wall time, so a PC that
+/// slept through the hour asks on its first poll awake.
+pub fn poll_paused(paused_since_ms: i64, now_ms: i64) -> bool {
+    let asked = PAUSED_ASKED_MS.load(Ordering::Relaxed);
+    let due = super::pause_clock::paused_check_due(paused_since_ms, Some(asked).filter(|at| *at > paused_since_ms), now_ms);
+    if due {
+        PAUSED_ASKED_MS.store(now_ms, Ordering::Relaxed);
+    }
+    due
+}
+
 fn timer() -> &'static Mutex<Option<Timer>> {
     static TIMER: std::sync::OnceLock<Mutex<Option<Timer>>> = std::sync::OnceLock::new();
     TIMER.get_or_init(|| Mutex::new(None))
@@ -264,6 +280,18 @@ mod tests {
     fn a_pc_that_slept_through_the_quiet_asks_on_its_first_poll_awake() {
         let mut t = Timer::new(1, 0);
         assert_eq!(t.tick(3 * 60 * MIN), Action::Ask);
+    }
+
+    #[test]
+    fn a_paused_recording_asks_an_hour_in_and_every_hour_after_and_never_stops() {
+        PAUSED_ASKED_MS.store(0, Ordering::Relaxed);
+        assert!(!poll_paused(1_000, 1_000 + 59 * MIN));
+        assert!(poll_paused(1_000, 1_000 + 60 * MIN));
+        assert!(!poll_paused(1_000, 1_000 + 61 * MIN), "asked once for that hour");
+        assert!(poll_paused(1_000, 1_000 + 120 * MIN));
+        // A new pause forgets the last one's question.
+        assert!(!poll_paused(1_000 + 200 * MIN, 1_000 + 201 * MIN));
+        PAUSED_ASKED_MS.store(0, Ordering::Relaxed);
     }
 
     #[test]

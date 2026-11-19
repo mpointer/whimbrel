@@ -209,10 +209,23 @@ pub async fn today_recap(state: State<'_, AppState>, refresh: bool) -> Result<To
     let ollama_model = settings.ollama_model.clone();
     let key = day.clone();
     let started = std::time::Instant::now();
+    // Held for the whole run, so a client delete waits for it; none while a delete runs (`api::client_controls`):
+    // then the recap is the cached one, if any, and nothing is generated or cached (a digest made part-way
+    // through a delete could name the deleted client).
+    let ticket = api::client_controls::job_ticket();
+    // A recap the user is waiting for: background model requests hold back until it is made (PR 874).
+    let _gate = crate::user_model_gate::enter();
     // The slow lane: generating a recap holds a store for the provider call.
     let outcome = state
         .slow_store()?
         .call(move |s| -> Result<TodayRecap, CommandError> {
+            let Some(_ticket) = ticket else {
+                let cached = s.get_cached_daily_digest(&key).map_err(|e| CommandError::store(e.to_string()))?;
+                if let Some(recap) = cached.as_deref().and_then(|json| recap_from_cache(&key, json)) {
+                    return Ok(recap);
+                }
+                return Ok(TodayRecap { day: key, summary: String::new(), open_loops: Vec::new(), cached: false, empty_day: true });
+            };
             if !refresh {
                 let cached = s.get_cached_daily_digest(&key).map_err(|e| CommandError::store(e.to_string()))?;
                 if let Some(recap) = cached.as_deref().and_then(|json| recap_from_cache(&key, json)) {
@@ -223,7 +236,8 @@ pub async fn today_recap(state: State<'_, AppState>, refresh: bool) -> Result<To
             if is_empty_day(&digest, &routing) {
                 return Ok(TodayRecap { day: key, summary: digest.summary, open_loops: Vec::new(), cached: false, empty_day: true });
             }
-            // Stored verbatim: the MCP server reads these rows as `llm::DailyDigest`.
+            // Stored verbatim under the bare day. The MCP server keeps its own rows (`mcp:<day>`,
+            // with the exclusion state they were built under), so neither overwrites the other.
             let json = serde_json::to_string(&digest).map_err(|e| CommandError::store(e.to_string()))?;
             s.cache_daily_digest(&key, &json, now_ms()).map_err(|e| CommandError::store(e.to_string()))?;
             Ok(TodayRecap { day: key, summary: digest.summary, open_loops: digest.open_loops, cached: false, empty_day: false })
@@ -288,10 +302,10 @@ mod tests {
             text: text.into(),
             source: "uia".into(),
         };
-        ingest::ingest_record(&store, "MAC", &record(1_000, "first mac capture"));
-        ingest::ingest_record(&store, "MAC", &record(2_000, "second mac capture"));
-        ingest::ingest_record(&store, "PC", &record(3_000, "a capture on this pc"));
-        ingest::ingest_record(&store, "MAC", &record(9_000, "tomorrow's mac capture"));
+        ingest::ingest_record(&store, "MAC", &record(1_000, "first mac capture")).unwrap();
+        ingest::ingest_record(&store, "MAC", &record(2_000, "second mac capture")).unwrap();
+        ingest::ingest_record(&store, "PC", &record(3_000, "a capture on this pc")).unwrap();
+        ingest::ingest_record(&store, "MAC", &record(9_000, "tomorrow's mac capture")).unwrap();
         let counts = device_counts(&store.capture_activity_by_device(0, 5_000).unwrap(), &labeler());
         let shape: Vec<(&str, i64, Option<i64>)> =
             counts.iter().map(|c| (c.device.device_id.as_str(), c.captures, c.last_ts_unix_ms)).collect();

@@ -16,10 +16,15 @@ members = [
     "skins",
     "ffi",
     "eval",
+    # Tests that need libsql's `core` feature (a local relay); kept out of api so api's
+    # tests can run on SQLCipher. See its Cargo.toml.
+    "phone-tests",
+    "sealed",
+    "cloud-runner",
 ]
 
 [workspace.package]
-version = "0.9.72"
+version = "0.9.80"
 edition = "2021"
 license = "Apache-2.0"
 publish = false

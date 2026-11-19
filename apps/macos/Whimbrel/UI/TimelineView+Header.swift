@@ -19,6 +19,7 @@ extension TimelineView {
                     set: { _ in Task { @MainActor in appState.toggleActivityCapture() } }
                 ))
                 .tint(Color.whimbrelAccentPrimary)
+                .recordingControl()
                 Spacer()
             }
             Text(appState.statusSummary)
@@ -50,11 +51,13 @@ extension TimelineView {
                 activeMeetingNotesSection
             } else {
                 HStack {
+                    RecordingOffCaption()
                     Spacer()
                     Button("Start Meeting") {
                         Task { @MainActor in appState.startManualMeeting() }
                     }
                     .buttonStyle(.whimbrelPrimary)
+                    .recordingControl()
                 }
             }
         }

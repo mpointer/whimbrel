@@ -38,6 +38,9 @@ pub extern "C" fn whimbrel_inference_start(
     let provider = cstr_to_string(provider).unwrap_or_else(|| "ollama".to_string());
     let api_key = cstr_to_string(api_key);
     let base_url_override = cstr_to_string(base_url_override);
+    // No store here (see the module doc): the gate is the one the prompt's prepare call
+    // read (`api::exclusion::published_gate`).
+    let gate = api::exclusion::published_gate();
     // Whimbrel AI needs two credentials, so it cannot ride `start`'s one key: for it,
     // `api_key` carries the Google ID token and `base_url_override` the device's public key.
     let started = if provider == "whimbrel" {
@@ -46,9 +49,10 @@ pub extern "C" fn whimbrel_inference_start(
             &model,
             api_key.as_deref().unwrap_or_default(),
             base_url_override.as_deref().unwrap_or_default(),
+            gate,
         )
     } else {
-        api::inference::start(&prompt, &model, &provider, api_key.as_deref(), base_url_override.as_deref())
+        api::inference::start(&prompt, &model, &provider, api_key.as_deref(), base_url_override.as_deref(), gate)
     };
     let Some(started) = started else {
         return ptr::null_mut();
@@ -253,6 +257,9 @@ mod tests {
     /// Completed terminal carrying the streamed text and reported usage.
     #[test]
     fn google_run_streams_to_a_completed_terminal_through_the_ffi() {
+        // As an Ask prepare call does before a hosted stream: read the exclusion setting
+        // (nothing excluded), which publishes the gate this store-less entry point uses.
+        api::exclusion::refresh_published_gate(&memory::Store::open_in_memory().unwrap());
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {

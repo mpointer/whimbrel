@@ -234,6 +234,18 @@ extension CoreMemoryStore {
         return syncWorkerOutcome(json, OkReply.self).map { _ in () }
     }
 
+    /// BLOCKING: `POST /v1/devices/runner`: this device registers the cloud runner whose public key the user pasted,
+    /// with this device's secret key and the group key. The provision bundle carries the group key wrapped to the
+    /// runner: the caller shows it once and never logs or stores it.
+    static func syncWorkerRegisterRunner(
+        baseURL: String, idToken: String, deviceSecretKey: String, runnerPublicKey: String, name: String, groupKey: String
+    ) -> Result<RunnerProvision, SyncAPIError> {
+        let json = baseURL.withCString { b in idToken.withCString { t in deviceSecretKey.withCString { s in runnerPublicKey.withCString { r in
+            name.withCString { n in groupKey.withCString { g in whimbrel_sync_worker_register_runner(b, t, s, r, n, g) } }
+        } } } }
+        return syncWorkerOutcome(json, RunnerProvision.self)
+    }
+
     /// BLOCKING: `POST /v1/devices/:id/revoke`.
     static func syncWorkerRevokeDevice(baseURL: String, idToken: String, devicePublicKey: String, targetDeviceId: String) -> Result<Void, SyncAPIError> {
         let json = baseURL.withCString { b in idToken.withCString { t in devicePublicKey.withCString { k in targetDeviceId.withCString { d in

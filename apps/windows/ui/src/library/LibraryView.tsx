@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { libraryEpisodes, libraryRecent, librarySearch, librarySettings, setEpisodeAppHidden, setShowScreenCaptures } from "../api";
+import type { SearchRequest } from "./searchRequest";
+import { searchWithPerson } from "./personSearch";
+import { libraryEpisodes, libraryRecent, librarySearch, librarySearchFiltered, librarySettings, setEpisodeAppHidden, setShowScreenCaptures } from "../api";
 import { AskView } from "../chat/AskView";
 import { TopicPageOffer } from "../topics/TopicChip";
 import type { AskRequest } from "../chat/chatModel";
@@ -40,18 +42,26 @@ export function DeviceChip({ device }: { device: DeviceTag }) {
 export function LibraryView({
   askRequest,
   onAskHandled,
+  searchRequest,
+  onSearchHandled,
   onOpenSettings,
 }: {
   askRequest?: AskRequest | null;
   onAskHandled?: () => void;
+  /** A filtered search the redesigned Home handed over; run once on open. Nothing passes one with the flag off. */
+  searchRequest?: SearchRequest | null;
+  onSearchHandled?: () => void;
   onOpenSettings?: () => void;
 }) {
-  // Opens on Ask when Today handed it a question (this view mounts fresh when the tab is shown).
-  const [mode, setMode] = useState<Mode>(askRequest ? "ask" : "recent");
+  // Opens on Ask when Today handed it a question (this view mounts fresh when the tab is shown), or on keyword
+  // search when the redesigned Home handed it a filtered search.
+  const [mode, setMode] = useState<Mode>(askRequest ? "ask" : searchRequest ? "keyword" : "recent");
+  // The filter of a search that came from Home's chips; it applies to every search here until cleared.
+  const [filter, setFilter] = useState<SearchRequest | null>(searchRequest ?? null);
   const [rows, setRows] = useState<LibraryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(searchRequest?.query ?? "");
   // The query last searched, for "Open topic page" (topics piece 2).
   const [searched, setSearched] = useState("");
   const [includeHidden, setIncludeHidden] = useState(false);
@@ -110,11 +120,28 @@ export function LibraryView({
       })
       .catch((e: unknown) => setError(message(e)));
 
+  const runSearch = (text: string, from: SearchRequest | null) => {
+    setSearched(text);
+    run(() =>
+      from?.person
+        ? searchWithPerson(text, mode === "semantic", from)
+        : from
+          ? librarySearchFiltered(text, mode === "semantic", from.app, from.startUnixMs, from.endUnixMs)
+          : librarySearch(text, mode === "semantic"),
+    );
+  };
   const search = (e: React.FormEvent) => {
     e.preventDefault();
-    setSearched(query);
-    run(() => librarySearch(query, mode === "semantic"));
+    runSearch(query, filter);
   };
+
+  // The search Home handed over runs once, here, after the mode effect above has cleared the list.
+  useEffect(() => {
+    if (!searchRequest) return;
+    runSearch(searchRequest.query, searchRequest);
+    onSearchHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const all = modes();
   const current = all.find((m) => m.id === mode)!;
@@ -175,6 +202,16 @@ export function LibraryView({
             {t("Search")}
           </button>
         </form>
+      )}
+      {(mode === "keyword" || mode === "semantic") && filter && (
+        <p className="muted small" role="status">
+          {filter.person
+            ? t("Meetings with {name}, and captures that mention {name}.", { name: filter.person })
+            : t("Captures only, filtered to {filters}.", { filters: filter.summary })}{" "}
+          <button type="button" className="mode" onClick={() => setFilter(null)}>
+            {t("Clear filters")}
+          </button>
+        </p>
       )}
       {(mode === "keyword" || mode === "semantic") && <TopicPageOffer text={searched} />}
       {mode === "semantic" && (

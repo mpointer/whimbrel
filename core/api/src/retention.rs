@@ -47,6 +47,9 @@ pub fn apply_within(
     for deleted in &result.deleted_meeting_files {
         delete_all_meeting_files_within(deleted, roots);
     }
+    // The weekly keep-for-N-months check (spec 5): raises a count-only "ready to review" flag, never
+    // deletes. Its failure never fails the sweep; the flag is simply not raised this time.
+    let _ = crate::client_retention::refresh_review_flag(store, now_unix_ms);
     Ok(result)
 }
 

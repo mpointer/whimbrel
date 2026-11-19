@@ -27,10 +27,12 @@ use sync::GroupKey;
 use tokio::runtime::Runtime;
 
 mod content;
+mod kind_backfill;
 mod outbox;
+pub use kind_backfill::{kind_backfill_percent, kind_backfill_step, KindBackfillProgress};
 pub use content::{
     ensure_content_schema, last_pull_stats_json, more_to_pull, pull_content, push_content,
-    take_forgotten_meeting_files, PullOptions,
+    seal_client_cleanup, take_forgotten_meeting_files, PullOptions,
 };
 pub use outbox::{dispatch_outbox, OutboxDispatchSummary};
 
@@ -42,7 +44,7 @@ pub struct SettingsField {
     pub is_deleted: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SyncEngineError {
     Connection(String),
     Query(String),
@@ -214,7 +216,7 @@ pub(crate) fn now_unix_ms() -> i64 {
 /// than what `local_fields` already has, decrypts it, and returns it as
 /// a delta — only the fields the caller needs to apply locally, not the
 /// full remote state.
-async fn sync_settings_with_connection(
+pub async fn sync_settings_with_connection(
     conn: &Connection,
     group_key: &GroupKey,
     local_fields: &HashMap<String, SettingsField>,
@@ -225,7 +227,8 @@ async fn sync_settings_with_connection(
 }
 
 /// Connects to the account's Turso data-plane database over the network
-/// and delegates to `sync_settings_with_connection`. The only function in
+/// and delegates to `sync_settings_with_connection` (public so tests, here and in the
+/// cloud runner, can run it against a local database). The only function in
 /// this crate that actually touches the network — everything else is
 /// tested locally via `Builder::new_local`.
 pub fn sync_settings(
@@ -252,17 +255,26 @@ pub fn sync_content(
     store: &memory::Store,
     device_id: &str,
 ) -> Result<(), SyncEngineError> {
+    // Before connecting: it needs only the group key and the local epoch, so a round that never reaches the
+    // relay still leaves no raw calendar id behind.
+    content::seal_client_cleanup(store, group_key, device_id);
     let phase = Mutex::new("connect");
     let set = |p: &'static str| *phase.lock().unwrap() = p;
+    // Before connecting: the timeout covers the connect too, and the backfill step measures its room from here.
+    let started = std::time::Instant::now();
+    content::round_peers::begin(device_id);
     let result = runtime().block_on(with_timeout(SYNC_TIMEOUT, "content sync", async {
         let conn = remote_connection(turso_url, turso_token).await?;
-        content_round(&conn, group_key, store, device_id, &set).await
+        content_round_from(&conn, group_key, store, device_id, &set, started).await
     }));
+    content::round_peers::end();
     finish_round(store, &result, *phase.lock().unwrap());
     result
 }
 
-/// One `sync_content` round after connecting; `set` names the phase it is in.
+/// One `sync_content` round after connecting; `set` names the phase it is in. Tests only: it takes its own clock
+/// after the connect, so no production caller may use it (`sync_content` times from before the connect).
+#[cfg(test)]
 async fn content_round(
     conn: &Connection,
     group_key: &GroupKey,
@@ -270,8 +282,22 @@ async fn content_round(
     device_id: &str,
     set: &dyn Fn(&'static str),
 ) -> Result<(), SyncEngineError> {
+    content_round_from(conn, group_key, store, device_id, set, std::time::Instant::now()).await
+}
+
+/// [`content_round`] for a round whose `SYNC_TIMEOUT` clock started at `round_started` (before the connect).
+async fn content_round_from(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    set: &dyn Fn(&'static str),
+    round_started: std::time::Instant,
+) -> Result<(), SyncEngineError> {
     set("schema");
     content::ensure_content_schema(conn).await?;
+    // Also here (already done before connecting in `sync_content`), for rounds driven on a connection.
+    content::seal_client_cleanup(store, group_key, device_id);
     set("push");
     content::push_content(conn, group_key, store, device_id).await?;
     set("pull");
@@ -280,19 +306,112 @@ async fn content_round(
     // (same keys, same plaintext). It runs after the pull so that if its pass overruns the
     // shared SYNC_TIMEOUT, inbound data has already been applied — a backlog can
     // slow the outbox down, never starve the pull.
+    // "Remove this device" requests made here go on the relay before the outbox pass counts the devices still to
+    // update. Desktop rounds only: the pull-only round never publishes a removal.
+    content::publish_retired_devices(conn, group_key, store, device_id).await;
     set("outbox");
-    outbox::dispatch_outbox(conn, group_key, store, device_id).await?;
+    // The outbox stops OUTBOX_SPARE before the round's timeout; what it did not send goes next round.
+    let round_end = tokio::time::Instant::from_std(round_started) + SYNC_TIMEOUT;
+    outbox::dispatch_outbox_until(conn, group_key, store, device_id, now_unix_ms(), Some(round_end - OUTBOX_SPARE))
+        .await?;
     // Last: a tombstone this device just enqueued is on the relay before its meeting's server rows go, and
     // a peer's tombstone for this device's meeting pulled above is cleaned up this round. Best effort and
-    // time-boxed: it never fails the round.
+    // time-boxed: it never fails the round, and it gets only what is left of the round (none left: next round).
     set("forgotten cleanup");
-    content::delete_forgotten_meeting_rows(conn, group_key, store, device_id).await;
+    if let Some(left) = time_left(round_end) {
+        let _ = tokio::time::timeout(left, content::delete_forgotten_meeting_rows(conn, group_key, store, device_id)).await;
+    }
+    // The same for a client delete's items (its own, or a peer's tombstone naming this device's rows).
+    if let Some(left) = time_left(round_end) {
+        let _ = tokio::time::timeout(left, content::delete_forgotten_client_rows(conn, store, device_id)).await;
+    }
+    set("kind backfill");
+    run_kind_backfill(conn, group_key, store, device_id, round_started).await;
     Ok(())
+}
+
+/// What a desktop round keeps back from its outbox for the steps after it, so the round ends inside
+/// `SYNC_TIMEOUT`.
+const OUTBOX_SPARE: Duration = Duration::from_secs(3);
+
+/// Time to give a best-effort step before `round_end`, keeping a second spare; `None` when under that.
+fn time_left(round_end: tokio::time::Instant) -> Option<Duration> {
+    round_end
+        .checked_duration_since(tokio::time::Instant::now())
+        .and_then(|d| d.checked_sub(Duration::from_secs(1)))
+        .filter(|d| !d.is_zero())
+}
+
+/// How long one desktop round spends on the `kind_tag` backfill. Short on purpose: the step runs on the thread that
+/// serialises every local store call (the Mac's access queue, the Windows store actor), so it is throttled to this
+/// once per round rather than a long burst.
+const KIND_BACKFILL_BUDGET: Duration = Duration::from_secs(2);
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: the backfill budget of a round.
+    static TEST_BACKFILL_BUDGET: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+    /// Tests: this round's pull has more to pull (the real flag is process-wide, so parallel tests would race on it).
+    static TEST_MORE_TO_PULL: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+fn pull_has_more() -> bool {
+    #[cfg(test)]
+    if let Some(b) = TEST_MORE_TO_PULL.with(|c| c.get()) {
+        return b;
+    }
+    more_to_pull()
+}
+
+fn kind_backfill_budget() -> Duration {
+    #[cfg(test)]
+    if let Some(b) = TEST_BACKFILL_BUDGET.with(|c| c.get()) {
+        return b;
+    }
+    KIND_BACKFILL_BUDGET
+}
+
+/// Whether a round `elapsed` into its [`SYNC_TIMEOUT`] still has room for a backfill step: its budget, its hang
+/// backstop and 2 s to spare. A step that cannot finish inside the timeout does not start, so the backfill never
+/// turns an otherwise good round into a timeout.
+fn kind_backfill_fits(elapsed: Duration, budget: Duration) -> bool {
+    // `elapsed` runs from before the connect, which the same timeout covers.
+    const SPARE: Duration = Duration::from_secs(2);
+    elapsed + budget + kind_backfill::BACKSTOP_SLACK + SPARE <= SYNC_TIMEOUT
+}
+
+/// The last thing a desktop round does: one bounded `kind_tag` backfill step (docs/superpowers/specs/
+/// 2026-11-17-items-kind-tag-design.md). Best effort: an error is logged and the round carries on.
+async fn run_kind_backfill(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    round_started: std::time::Instant,
+) {
+    // This round's own pull stopped with rows still waiting (the flag is set at the end of every pull): the device is
+    // catching up, and the store's serial lane is better spent on that than on the backfill.
+    if pull_has_more() {
+        return;
+    }
+    let budget = kind_backfill_budget();
+    if !kind_backfill_fits(round_started.elapsed(), budget) {
+        return;
+    }
+    match kind_backfill_step(conn, group_key, store, device_id, budget).await {
+        Ok(progress) => {
+            if let Err(e) = kind_backfill::record_progress(store, &progress) {
+                eprintln!("[sync] kind_tag backfill progress not saved: {e}");
+            }
+        }
+        Err(e) => eprintln!("[sync] kind_tag backfill: {e}"),
+    }
 }
 
 /// [`sync_content`] for a peer that only pulls (the iPhone in M4.0, which has nothing to
 /// push): no `push_content`, no `dispatch_outbox`, and the pull takes [`PullOptions`]
-/// (its capture window). Same timeout and last-error recording as `sync_content`.
+/// (its capture window). Its only relay write is its capability markers at `local_seq` 0
+/// (`content::PULL_ONLY_MARKERS`). Same timeout and last-error recording as `sync_content`.
 pub fn sync_content_pull_only(
     turso_url: &str,
     turso_token: &str,
@@ -301,6 +420,8 @@ pub fn sync_content_pull_only(
     device_id: &str,
     options: &PullOptions,
 ) -> Result<(), SyncEngineError> {
+    // Before connecting, as in `sync_content`.
+    content::seal_client_cleanup(store, group_key, device_id);
     let phase = Mutex::new("connect");
     let result = runtime().block_on(with_timeout(SYNC_TIMEOUT, "content sync", async {
         let conn = remote_connection(turso_url, turso_token).await?;
@@ -311,7 +432,7 @@ pub fn sync_content_pull_only(
 }
 
 /// The body of [`sync_content_pull_only`] after connecting, public so tests (here and
-/// api's phone_meeting_count) can run it against a local database.
+/// core/phone-tests' phone_meeting_count) can run it against a local database.
 pub async fn pull_only_with_connection(
     conn: &Connection,
     group_key: &GroupKey,
@@ -342,9 +463,212 @@ async fn pull_only_phased(
 ) -> Result<(), SyncEngineError> {
     *phase.lock().unwrap() = "schema";
     content::ensure_content_schema(conn).await?;
+    content::seal_client_cleanup(store, group_key, device_id);
+    // Its only write: the markers of what it applies, so desktops count it in "N devices still need to
+    // update" (client deletes). Before the pull, so a long or failed pull still announces them.
+    content::announce_pull_only_markers(conn, group_key, device_id).await;
     *phase.lock().unwrap() = "pull";
     // A pull-only peer (the phone) has no skins, so it never fetches their rows.
-    content::pull_content_without_skins(conn, group_key, store, device_id, options).await
+    let pulled = content::pull_content_without_skins(conn, group_key, store, device_id, options).await;
+    // The phone's own "update needed" line (a desktop's outbox pass stores the same count).
+    content::record_pending_tombstone_devices(conn, store, device_id).await;
+    pulled
+}
+
+/// What one [`runner_pull`] read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RunnerPullReport {
+    /// Every allowlisted row on the relay was read: no peer had rows still waiting when the pull
+    /// stopped. Its store then holds every client setting and filing the allowlist names. False when
+    /// the budget ran out first (the newest rows are in, older ones are not).
+    pub complete: bool,
+    /// Rows applied to the store, over every round.
+    pub rows_applied: usize,
+    /// Every other device on the relay has announced the topics capability, so no sender is holding its
+    /// client settings and filings back. While one has not, a complete pull can still lack an exclusion.
+    pub exclusion_rows_published: bool,
+    /// Rows fetched from the relay (applied or not) and pull rounds run, over the whole pull: what the
+    /// run cost in rows read. Counts only.
+    pub rows_fetched: usize,
+    pub rounds: usize,
+}
+
+/// How long the cloud runner's pull keeps starting rounds. Its store starts empty every run, so one
+/// round (bounded for a phone's `SYNC_TIMEOUT`) is rarely enough; the runner has no UI waiting on it.
+const RUNNER_PULL_BUDGET: Duration = Duration::from_secs(420);
+
+/// The cloud runner's pull, before it runs its routines: into `store` (empty each run), only the row
+/// types in `options.row_type_allowlist` (plus tombstones and markers, and a transcript's meeting),
+/// newest first, inside `options.item_window_ms`. It announces the pull-only markers first, so no peer
+/// holds rows back for it, and sends nothing else: no `push_content`, no outbox (see [`runner_dispatch`]).
+/// Rounds repeat until nothing waits or [`RUNNER_PULL_BUDGET`] is spent. The store is new, so the live
+/// ranges read every peer's tombstones from the start (the once-per-database catch-up is marked done, see
+/// `content::mark_new_store_tombstones_read`). A pull stopped by the budget succeeds and its report says it
+/// is not complete, so a run never works from rows a delete may have removed.
+pub fn runner_pull(
+    turso_url: &str,
+    turso_token: &str,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    options: &PullOptions,
+) -> Result<RunnerPullReport, SyncEngineError> {
+    content::seal_client_cleanup(store, group_key, device_id);
+    let phase = Mutex::new("connect");
+    let result = runtime().block_on(with_timeout(
+        RUNNER_PULL_BUDGET + SYNC_TIMEOUT,
+        "runner pull",
+        async {
+            let conn = remote_connection(turso_url, turso_token).await?;
+            runner_pull_phased(&conn, group_key, store, device_id, options, RUNNER_PULL_BUDGET, &phase).await
+        },
+    ));
+    finish_round(store, &result.as_ref().map(|_| ()).map_err(Clone::clone), *phase.lock().unwrap());
+    result
+}
+
+/// The body of [`runner_pull`] after connecting, public so tests can run it against a local database.
+pub async fn runner_pull_with_connection(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    options: &PullOptions,
+) -> Result<RunnerPullReport, SyncEngineError> {
+    runner_pull_phased(
+        conn,
+        group_key,
+        store,
+        device_id,
+        options,
+        RUNNER_PULL_BUDGET,
+        &Mutex::new("connect"),
+    )
+    .await
+}
+
+async fn runner_pull_phased(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    options: &PullOptions,
+    budget: Duration,
+    phase: &Mutex<&'static str>,
+) -> Result<RunnerPullReport, SyncEngineError> {
+    *phase.lock().unwrap() = "schema";
+    content::ensure_content_schema(conn).await?;
+    content::seal_client_cleanup(store, group_key, device_id);
+    content::announce_pull_only_markers(conn, group_key, device_id).await;
+    // Before the run writes anything: this store is new, but this device has rows on the relay from earlier
+    // runs. Its rows are numbered above them, and so are its run ids (a peer keys a synced run by origin
+    // device and run id): every earlier run's ids are below the relay top, since `runner_dispatch` sends
+    // above every run id in its store.
+    let floor = content::own_top_seq(conn, device_id).await? + 1;
+    store
+        .raise_local_seq_floor(floor)
+        .and_then(|()| store.raise_routine_run_id_floor(floor))
+        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    // This store is new: see `mark_new_store_tombstones_read`.
+    content::mark_new_store_tombstones_read(store)?;
+    *phase.lock().unwrap() = "pull";
+    let deadline = std::time::Instant::now() + budget;
+    let mut settled = false;
+    let mut report = RunnerPullReport::default();
+    loop {
+        // Each round applies tombstones and runs the owed full-text clean-up after a delete.
+        let (more, applied, fetched) = content::runner_pull_round(conn, group_key, store, device_id, options).await?;
+        report.rows_applied += applied;
+        report.rows_fetched += fetched;
+        report.rounds += 1;
+        let caught_up = content::tombstones_caught_up(store);
+        if !more && caught_up {
+            // One more round retries lines read before their (held) meeting, which only a round's
+            // pending pass does.
+            if settled || !content::any_pending_dependency(conn, store, device_id).await? {
+                report.complete = true;
+                break;
+            }
+            settled = true;
+            continue;
+        }
+        if std::time::Instant::now() >= deadline {
+            // Defensive: the runner's store is always marked caught up, so this is not reached.
+            if !caught_up {
+                return Err(SyncEngineError::Query(
+                    "not every device's deletes were read in time".to_string(),
+                ));
+            }
+            // The newest rows are in; older history inside the window is left for a later run.
+            break;
+        }
+    }
+    // After the peers' rows (tombstones included), so a result a delete forgot stays forgotten.
+    let own_types: Vec<&str> = match &options.row_type_allowlist {
+        Some(allow) => allow.iter().map(String::as_str).collect(),
+        None => vec![memory::OUTBOX_ROW_TYPE_ROUTINE_RUN, memory::OUTBOX_ROW_TYPE_MEETING_PREP],
+    };
+    report.rows_applied += content::read_own_results(conn, group_key, store, device_id, &own_types).await?;
+    report.exclusion_rows_published = content::client_settings_published(conn, device_id).await?;
+    content::record_pending_tombstone_devices(conn, store, device_id).await;
+    Ok(report)
+}
+
+/// The cloud runner's send, after its routines ran: delivers its outbox (the `routine_run` and
+/// `meeting_prep` rows the run wrote), numbered above every row this device already has on the relay
+/// (its store is new each run), then removes the relay rows of anything a delete named. Never runs
+/// `push_content`, so nothing pulled is sent back.
+pub fn runner_dispatch(
+    turso_url: &str,
+    turso_token: &str,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+) -> Result<(), SyncEngineError> {
+    content::seal_client_cleanup(store, group_key, device_id);
+    let phase = Mutex::new("connect");
+    let result = runtime().block_on(with_timeout(SYNC_TIMEOUT, "runner dispatch", async {
+        let conn = remote_connection(turso_url, turso_token).await?;
+        runner_dispatch_phased(&conn, group_key, store, device_id, &phase).await
+    }));
+    finish_round(store, &result, *phase.lock().unwrap());
+    result
+}
+
+/// The body of [`runner_dispatch`] after connecting, public so tests can run it against a local database.
+pub async fn runner_dispatch_with_connection(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+) -> Result<(), SyncEngineError> {
+    runner_dispatch_phased(conn, group_key, store, device_id, &Mutex::new("connect")).await
+}
+
+async fn runner_dispatch_phased(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &memory::Store,
+    device_id: &str,
+    phase: &Mutex<&'static str>,
+) -> Result<(), SyncEngineError> {
+    *phase.lock().unwrap() = "schema";
+    content::ensure_content_schema(conn).await?;
+    content::seal_client_cleanup(store, group_key, device_id);
+    *phase.lock().unwrap() = "outbox";
+    // A relay insert at a key it already holds is ignored, and this store's counter started at 1. Above every
+    // run id here too (pulled runs take ids in this store), so the relay top passes every run id this device
+    // sent, which is what the next run's id floor ([`runner_pull`]) relies on.
+    let top = content::own_top_seq(conn, device_id).await?;
+    store
+        .max_routine_run_id()
+        .and_then(|max_run| store.raise_local_seq_floor(top.max(max_run) + 1))
+        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    outbox::dispatch_outbox(conn, group_key, store, device_id).await?;
+    *phase.lock().unwrap() = "forgotten cleanup";
+    content::delete_forgotten_meeting_rows(conn, group_key, store, device_id).await;
+    content::delete_forgotten_client_rows(conn, store, device_id).await;
+    Ok(())
 }
 
 static LAST_CONTENT_SYNC_ERROR: Mutex<Option<String>> = Mutex::new(None);
@@ -1088,6 +1412,57 @@ mod tests {
             .expect("connect is lazy and must not fail offline");
     }
 
+    /// A client delete's raw calendar id is sealed before connecting, so a round that never reaches the
+    /// relay (offline, wrong credentials) still leaves none behind: desktop and pull-only rounds alike.
+    /// `remote_connection`'s cache and build counter are process-wide: tests that reach it hold
+    /// this, so a parallel test cannot swap the cached connector between two calls.
+    static REMOTE_CONNECTION_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn cleanup_targets_are_sealed_even_when_the_relay_is_unreachable() {
+        let _serial = REMOTE_CONNECTION_TESTS.lock().unwrap_or_else(|p| p.into_inner());
+        // libsql configures SQLite first in a test process, so it opens before the store does.
+        let dir = tempfile::tempdir().unwrap();
+        runtime().block_on(async {
+            libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        });
+        let group_key = GroupKey::generate();
+        let forget_event = |store: &memory::Store| {
+            store
+                .upsert_calendar_event_items(&[memory::NewCalendarEventItem {
+                    device_id: "device-a".into(),
+                    source: "google_calendar".into(),
+                    external_id: "kickoff-1@zorblax.com#1700000000".into(),
+                    ts_unix_ms: 1_700_000_000_000,
+                    title: "Zorblax kickoff".into(),
+                    actors: vec![],
+                }])
+                .unwrap();
+            let id = store.export_items_page("calendar_event", 0, 10).unwrap()[0].id;
+            store
+                .enqueue_client_item_forgotten(memory::ClientItemKind::CalendarEvent, &id.to_string())
+                .unwrap();
+            assert!(store.client_relay_cleanup(10).unwrap().iter().any(|t| t.0.starts_with("raw:")));
+        };
+        let no_raw = |store: &memory::Store| {
+            for (target, _, _) in store.client_relay_cleanup(10).unwrap() {
+                assert!(!target.starts_with("raw:") && !target.contains("zorblax"), "{target}");
+            }
+        };
+        let desktop = memory::Store::open_in_memory().unwrap();
+        desktop.set_own_device_id("device-a");
+        forget_event(&desktop);
+        assert!(sync_content("https://127.0.0.1:9", "t", &group_key, &desktop, "device-a").is_err());
+        no_raw(&desktop);
+
+        let pull_only = memory::Store::open_in_memory().unwrap();
+        pull_only.set_own_device_id("device-a");
+        forget_event(&pull_only);
+        let options = PullOptions::default();
+        assert!(sync_content_pull_only("https://127.0.0.1:9", "t", &group_key, &pull_only, "device-a", &options).is_err());
+        no_raw(&pull_only);
+    }
+
     /// `remote_connection`'s whole point is to stop rebuilding the HTTPS
     /// connector (and re-triggering its risky native-cert load) on every
     /// sync tick. `Builder::new_remote(...).build()` doesn't touch the
@@ -1095,8 +1470,10 @@ mod tests {
     /// against a bogus URL/token and checks the connector build count
     /// directly rather than needing a real Turso database.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // a current-thread test runtime; the lock only orders tests
     async fn remote_connection_reuses_the_cached_connector_for_the_same_credentials() {
         use std::sync::atomic::Ordering;
+        let _serial = REMOTE_CONNECTION_TESTS.lock().unwrap_or_else(|p| p.into_inner());
         REMOTE_BUILD_COUNT.store(0, Ordering::SeqCst);
 
         remote_connection("https://example.invalid", "token-a")
@@ -1173,6 +1550,7 @@ mod tests {
     #[test]
     #[ignore = "requires a real Turso database — see doc comment"]
     fn syncs_against_a_real_remote_turso_database() {
+        let _serial = REMOTE_CONNECTION_TESTS.lock().unwrap_or_else(|p| p.into_inner());
         let turso_url = std::env::var("WHIMBREL_TEST_TURSO_URL")
             .expect("set WHIMBREL_TEST_TURSO_URL to a real Turso database URL to run this test");
         let turso_token = std::env::var("WHIMBREL_TEST_TURSO_TOKEN")
@@ -1210,6 +1588,7 @@ mod tests {
     #[test]
     #[ignore = "requires a real Turso database — see doc comment"]
     fn syncs_content_against_a_real_remote_turso_database() {
+        let _serial = REMOTE_CONNECTION_TESTS.lock().unwrap_or_else(|p| p.into_inner());
         let turso_url = std::env::var("WHIMBREL_TEST_TURSO_URL")
             .expect("set WHIMBREL_TEST_TURSO_URL to a real Turso database URL to run this test");
         let turso_token = std::env::var("WHIMBREL_TEST_TURSO_TOKEN")
@@ -1247,7 +1626,8 @@ mod tests {
     }
 
     /// The phone's M4.0 round: it has its own unpushed meeting and outbox entry, and a
-    /// peer has a row waiting. The round applies the peer row and writes nothing.
+    /// peer has a row waiting. The round applies the peer row and writes no content: its
+    /// only rows are its capability markers at `local_seq` 0.
     #[tokio::test]
     async fn pull_only_never_pushes() {
         let dir = tempfile::tempdir().unwrap();
@@ -1305,13 +1685,13 @@ mod tests {
 
         let mut rows = conn
             .query(
-                "SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a'",
+                "SELECT COUNT(*) FROM sync_row WHERE device_id = 'device-a' AND local_seq != 0",
                 (),
             )
             .await
             .unwrap();
         let own_rows: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
-        assert_eq!(own_rows, 0, "pull-only must write nothing to the relay");
+        assert_eq!(own_rows, 0, "pull-only must write no content to the relay");
         assert_eq!(
             store.get_sync_push_cursor().unwrap(),
             0,

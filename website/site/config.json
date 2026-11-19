@@ -2,7 +2,7 @@
   "name": "Whimbrel",
   "url": "https://whimbrelapp.com",
   "renameNote": "",
-  "tagline": "Your client calls stay on your computer",
+  "tagline": "In Local-only mode, your client calls stay on your computer",
   "description": "Whimbrel is a private AI memory for Mac and Windows that records meetings without a bot, keeps a page for every client, and stores recordings on your computer, not on our servers.",
   "ogImage": "/assets/og-image.png",
   "sameAs": [],
@@ -10,7 +10,7 @@
   "turnstileSiteKey": "",
   "requirements": {
     "mac": "macOS 14 Sonoma or later, Apple silicon (M1 or newer)",
-    "windows": "Windows 11, 64-bit (x64)"
+    "windows": "Windows 11, 64-bit (x64 or Arm)"
   },
   "demoVideo": {
     "title": "Whimbrel product tour",

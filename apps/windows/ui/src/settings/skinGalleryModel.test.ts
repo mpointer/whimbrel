@@ -17,9 +17,11 @@ import {
   swatchColors,
 } from "./skinGalleryModel";
 
-const manifests = Object.values(import.meta.glob("../../../../../skins/*.json", { import: "default", eager: true }) as Record<string, SkinManifest>).filter((m) =>
+const allManifests = Object.values(import.meta.glob("../../../../../skins/*.json", { import: "default", eager: true }) as Record<string, SkinManifest>).filter((m) =>
   Array.isArray(m.palettes),
 );
+// The shell lists Thread only when the hidden redesign flag is on (src-tauri `list_skins`); the flag-off gallery has these.
+const manifests = allManifests.filter((m) => m.id !== "thread");
 const pool: SkinPalette[] = [
   ...THEMES.map((t) => ({ id: t.id, name: t.name, author: t.author, light: t.light, dark: t.dark })),
   ...Object.values(import.meta.glob("../../../../../skins/palettes/*.json", { import: "default", eager: true }) as Record<string, SkinPalette>),
@@ -37,6 +39,18 @@ describe("the gallery", () => {
     const cards = galleryState(builtIns, DEFAULT_SELECTION);
     expect(cards.map((c) => c.name)).toEqual(["Whimbrel", "Almanac", "Game Day", "High Contrast", "Hypermodern", "Reference", "Retro Terminal"]);
     expect(cards.every((c) => !c.yours)).toBe(true);
+  });
+
+  it("lists Thread like any other built-in when the shell sends it (the redesign flag is on)", () => {
+    const thread = allManifests.find((m) => m.id === "thread")!;
+    const withThread = [...builtIns, dto(thread)];
+    const cards = galleryState(withThread, DEFAULT_SELECTION);
+    expect(cards.map((c) => c.name).slice(-2)).toEqual(["Retro Terminal", "Thread"]);
+    expect(cards.find((c) => c.id === "thread")?.yours).toBe(false);
+    expect(cards.filter((c) => c.selected).map((c) => c.id), "the stored skin is not changed").toEqual(["whimbrel"]);
+    expect(pickCard(withThread, DEFAULT_SELECTION, "thread").skinId).toBe("thread");
+    // With the flag off the shell never sends it, so it has no card and picking it falls back to Whimbrel.
+    expect(galleryState(builtIns, DEFAULT_SELECTION).some((c) => c.id === "thread")).toBe(false);
   });
 
   it("puts your skins after the built-ins, by name, marked as yours", () => {

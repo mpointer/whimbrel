@@ -278,10 +278,27 @@ pub fn run_topic_steps_batch(
         return Ok(out);
     }
     let me = store.self_identity()?;
+    // Paid reads go to TypeSafe (hosted): an excluded client's source is finished here with
+    // nothing found, never sent, before the batch takes its `max` (so they cannot stall it).
+    let filter = if paid { crate::exclusion::context_filter(store) } else { llm::ContextFilter::none() };
+    if filter.is_closed() {
+        return Ok(out);
+    }
+    settle_excluded_sources(store, &filter, max)?;
     let mut failures = 0;
     // Limited Use: Gmail and Google Calendar sources only for a judge that may read them;
     // the others stay queued.
     for src in store.next_step_sources_for(max, judge.may_read_google_data())? {
+        // Read again for each source (cached until anything changes): a client excluded during
+        // the batch is never sent for the rest of it (fix round 3).
+        let filter = if paid { crate::exclusion::context_filter(store) } else { llm::ContextFilter::none() };
+        if filter.is_closed() {
+            break;
+        }
+        if source_is_excluded(store, &filter, &src) {
+            finish_unread(store, &src)?;
+            continue;
+        }
         if paid {
             match store.topic_steps_gate()? {
                 JudgeGate::Open => {}
@@ -355,6 +372,11 @@ pub fn run_topic_steps_batch(
                         out.no_model = !paid;
                         break;
                     }
+                    // Held back by the exclusion gate: never sent, so not charged and not
+                    // counted against the source. An unreadable setting holds back every
+                    // call, so the batch stops; a source naming an excluded client is skipped.
+                    LlmError::Refused(r) if r.reason == llm::guard::REASON_UNREADABLE => break,
+                    LlmError::Refused(_) => continue,
                     // Says something about this source: the third such failure drops it.
                     // A paid call may still have been billed, so it counts at the estimate.
                     _ => {
@@ -375,6 +397,59 @@ pub fn run_topic_steps_batch(
         store.end_topic_steps_first_pass_if_drained()?;
     }
     Ok(out)
+}
+
+/// The `model` recorded for a source finished without a read because it is an excluded client's.
+const NOT_SENT_MODEL: &str = "not_sent";
+
+/// Whether queued source `src` is an excluded client's: filed under one, or any of its text
+/// names one.
+fn source_is_excluded(store: &memory::Store, filter: &llm::ContextFilter, src: &memory::topics::steps::StepSource) -> bool {
+    if !filter.is_active() {
+        return false;
+    }
+    let Some(m) = filter.material() else { return true };
+    let by_ref = match store.source_ref(src.source_id) {
+        Ok(Some((kind, r))) => filter.excludes_source(&kind, r),
+        Ok(None) => false,
+        Err(_) => true,
+    };
+    by_ref
+        || m.topic_keys.contains(&src.topic_key)
+        || m.source_ids.contains(&src.source_id)
+        || filter.names_client(&src.title)
+        || filter.names_client(&src.context)
+        || src.from.as_deref().is_some_and(|f| filter.names_client(f) || llm::exclusion::attendee_is_client(m, f))
+        || src.candidates.iter().chain(src.open_steps.iter().map(|(_, t)| t)).any(|t| filter.names_client(t))
+}
+
+/// Finishes `src` as read with nothing found, without a call.
+fn finish_unread(store: &memory::Store, src: &memory::topics::steps::StepSource) -> rusqlite::Result<()> {
+    let none: Vec<memory::topics::steps::LineLabel> =
+        src.candidates.iter().map(|_| memory::topics::steps::LineLabel { direction: None, is_date: false }).collect();
+    store.record_step_extraction(src, &none, &[], NOT_SENT_MODEL, crate::util::now_unix_ms())
+}
+
+/// Finishes excluded sources at the head of the queue, `max` at a time, until a page holds none.
+fn settle_excluded_sources(store: &memory::Store, filter: &llm::ContextFilter, max: usize) -> rusqlite::Result<()> {
+    if !filter.is_active() || max == 0 {
+        return Ok(());
+    }
+    // Each pass must finish a source it has not finished before, so this always ends.
+    let mut done = std::collections::HashSet::new();
+    loop {
+        let page = store.next_step_sources(max)?;
+        let mut settled = 0;
+        for src in page.iter().filter(|s| source_is_excluded(store, filter, s)) {
+            if done.insert(src.source_id) {
+                finish_unread(store, src)?;
+                settled += 1;
+            }
+        }
+        if settled == 0 {
+            return Ok(());
+        }
+    }
 }
 
 /// The unpaid run: `LocalStepJudge` over `chain` (from `routing::build_local_chain`). An
@@ -544,6 +619,29 @@ mod tests {
         c.query_row(sql, [], |r| r.get(0)).unwrap()
     }
 
+    /// Carried requirement (a): a paid (hosted) read never gets an excluded client's source;
+    /// those are finished here with nothing found, and do not stall a clean source behind them.
+    #[test]
+    fn topics_steps_never_send_excluded_text_and_excluded_sources_do_not_stall_the_queue() {
+        let (_d, st, c, t) = setup();
+        let acme = st.create_seed_topic("Acme", &[], None).unwrap();
+        st.set_client_control(&acme.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+        mail(&c, t, "clean", 5, BODY);
+        mail(&c, acme.topic_id, "x1", 3, "Please send the zebracanary SOW by Friday.");
+        mail(&c, acme.topic_id, "x2", 2, "Please send the zebracanary deck by Monday.");
+        st.start_topic_steps_judging(10_000).unwrap();
+        let j = fake([0.9, 0.0, 0.0, 0.1], 0.0, 100);
+        let out = run_topic_steps_batch(&st, &j, true, 2, 1.0).unwrap();
+        let seen = j.seen.borrow();
+        assert_eq!(seen.len(), 1, "only the clean source is sent");
+        assert_eq!(out.processed, 1);
+        for input in seen.iter() {
+            assert!(!format!("{input:?}").contains("zebracanary"));
+        }
+        assert_eq!(n(&c, "SELECT COUNT(*) FROM topic_extraction WHERE model = 'not_sent'"), 2);
+    }
+
     /// Limited Use: a Gmail source is read by a local model on this device, but not by an
     /// Ollama cloud model without the switch, and not by TypeSafe until it confirms its
     /// terms. Held sources stay queued.
@@ -556,7 +654,7 @@ mod tests {
         // TypeSafe (paid), started: nothing read, nothing sent, the pass can still end.
         st.start_topic_steps_judging(10_000).unwrap();
         assert_eq!(st.topic_steps_estimate(1.0).unwrap().sources, 0);
-        assert!(!llm::typesafe::TypeSafeClient::new("k").may_read_google_data());
+        assert!(!llm::typesafe::TypeSafeClient::new("k", std::sync::Arc::new(llm::guard::NoExclusions)).may_read_google_data());
         let typesafe = failing(|| LlmError::Provider("must not be called".into()));
         let out = run_topic_steps_batch(&st, &typesafe, true, 10, 1.0).unwrap();
         assert_eq!(out.processed, 0);
@@ -757,6 +855,28 @@ mod tests {
                    AND model = 'jev-test' AND input_tokens = 200 AND output_tokens = 100"),
             2
         );
+    }
+
+    /// A call the exclusion gate held back was never sent: no charge, no attempt recorded,
+    /// still queued after three batches; an unreadable setting stops the batch.
+    #[test]
+    fn a_refused_source_is_not_charged_counted_or_dropped() {
+        let (_d, st, c, t) = setup();
+        mail(&c, t, "a", 1, BODY);
+        mail(&c, t, "b", 2, BODY);
+        st.start_topic_steps_judging(10_000).unwrap();
+        let j = failing(|| LlmError::Refused(llm::GateRefusal { reason: llm::guard::REASON_EXCLUDED }));
+        for _ in 0..4 {
+            assert_eq!(run_topic_steps_batch(&st, &j, true, 10, 1.0).unwrap().processed, 0);
+        }
+        assert_eq!(j.seen.borrow().len(), 4 * 2);
+        assert_eq!(st.topic_steps_budget().unwrap(), Some((10_000, 0)), "nothing charged");
+        assert_eq!(n(&c, "SELECT COUNT(*) FROM topic_step_attempt"), 0, "no failure recorded");
+        assert_eq!(st.next_step_sources(10).unwrap().len(), 2, "none dropped");
+
+        let j = failing(|| LlmError::Refused(llm::GateRefusal { reason: llm::guard::REASON_UNREADABLE }));
+        run_topic_steps_batch(&st, &j, true, 10, 1.0).unwrap();
+        assert_eq!(j.seen.borrow().len(), 1, "an unreadable setting stops the batch");
     }
 
     #[test]

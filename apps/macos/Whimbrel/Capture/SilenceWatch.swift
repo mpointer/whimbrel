@@ -60,3 +60,36 @@ final class PeakMeter: @unchecked Sendable {
         return value
     }
 }
+
+extension PeakMeter {
+    /// Clears the reading without returning it.
+    func reset() { _ = take() }
+}
+
+/// The loudest sample since the last `take()`, for the level meter. Kept apart from `PeakMeter` so reading
+/// it never touches the silence meter, and it records nothing while it is off (redesign flag off).
+final class LevelPeak: @unchecked Sendable {
+    private let lock = NSLock()
+    private var peak: Float = 0
+    private var enabled = false
+
+    var isEnabled: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return enabled }
+        set { lock.lock(); enabled = newValue; if !newValue { peak = 0 }; lock.unlock() }
+    }
+
+    func record(_ value: Float) {
+        lock.lock()
+        if enabled { peak = max(peak, value) }
+        lock.unlock()
+    }
+
+    func take() -> Float {
+        lock.lock(); defer { lock.unlock() }
+        let value = peak
+        peak = 0
+        return value
+    }
+
+    func reset() { _ = take() }
+}

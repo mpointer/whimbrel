@@ -205,10 +205,18 @@ export class FakeSqlExecutor implements SqlExecutor {
     }
     // NOTE: this check must come BEFORE the plain count check below, since
     // the plain count query text is a string prefix of this one.
-    if (q.startsWith("SELECT COUNT(*) as count FROM device WHERE account_id = ? AND status != 'revoked'")) {
+    if (q === "SELECT COUNT(*) as count FROM device WHERE account_id = ? AND status = 'approved' AND COALESCE(platform, '') != 'cloud'") {
       const [accountId] = params as [string];
       const count = [...this.devices.values()].filter(
-        (d) => d.account_id === accountId && d.status !== "revoked",
+        (d) => d.account_id === accountId && d.status === "approved" && d.platform !== "cloud",
+      ).length;
+      return [{ count }];
+    }
+    if (q.startsWith("SELECT COUNT(*) as count FROM device WHERE account_id = ? AND status != 'revoked'")) {
+      const [accountId] = params as [string];
+      const excludeCloud = q.includes("COALESCE(platform, '') != 'cloud'");
+      const count = [...this.devices.values()].filter(
+        (d) => d.account_id === accountId && d.status !== "revoked" && !(excludeCloud && d.platform === "cloud"),
       ).length;
       return [{ count }];
     }
@@ -216,6 +224,28 @@ export class FakeSqlExecutor implements SqlExecutor {
       const [accountId] = params as [string];
       const count = [...this.devices.values()].filter((d) => d.account_id === accountId).length;
       return [{ count }];
+    }
+    if (q.startsWith("INSERT INTO device (id, account_id, public_key, name, platform, status, enrolled_at_unix_ms, runner_token_hash)")) {
+      const [id, accountId, publicKey, name, enrolledAtUnixMs, runnerTokenHash] = params as [string, string, string, string, number, string];
+      this.devices.set(id, {
+        id,
+        account_id: accountId,
+        public_key: publicKey,
+        name,
+        platform: "cloud",
+        status: "approved",
+        enrolled_at_unix_ms: enrolledAtUnixMs,
+        revoked_at_unix_ms: null,
+        last_seen_unix_ms: null,
+        replaces_device_id: null,
+        resetting_since_unix_ms: null,
+        runner_token_hash: runnerTokenHash,
+      });
+      return [];
+    }
+    if (q.includes(", runner_token_hash FROM device WHERE public_key = ? AND platform = 'cloud'")) {
+      const [publicKey] = params as [string];
+      return [...this.devices.values()].filter((d) => d.public_key === publicKey && d.platform === "cloud");
     }
     if (q.startsWith("INSERT INTO device")) {
       const [id, accountId, publicKey, status, enrolledAtUnixMs, platform] = params as [
@@ -374,9 +404,11 @@ export class FakeSqlExecutor implements SqlExecutor {
       )
     ) {
       const [accountId, exceptId, since] = params as [string, string, number];
+      const excludeCloud = q.includes("COALESCE(platform, '') != 'cloud'");
       return [...this.devices.values()]
         .filter(
           (d) =>
+            !(excludeCloud && d.platform === "cloud") &&
             d.account_id === accountId &&
             d.status === "approved" &&
             d.id !== exceptId &&

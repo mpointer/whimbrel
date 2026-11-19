@@ -5,8 +5,9 @@ import { fakeWindow } from "../testWindow";
 import { THEMES } from "../themes";
 import { SkinGallery } from "./SkinGallery";
 
-const manifests = Object.values(import.meta.glob("../../../../../skins/*.json", { import: "default", eager: true }) as Record<string, SkinManifest>).filter((m) =>
-  Array.isArray(m.palettes),
+// The shell lists Thread only when the hidden redesign flag is on (src-tauri `list_skins`), so the flag-off gallery has none.
+const manifests = Object.values(import.meta.glob("../../../../../skins/*.json", { import: "default", eager: true }) as Record<string, SkinManifest>).filter(
+  (m) => Array.isArray(m.palettes) && m.id !== "thread",
 );
 const pool: SkinPalette[] = [
   ...THEMES.map((t) => ({ id: t.id, name: t.name, author: t.author, light: t.light, dark: t.dark })),

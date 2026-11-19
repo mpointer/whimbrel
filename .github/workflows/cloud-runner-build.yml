@@ -1,0 +1,58 @@
+name: Cloud runner image
+
+# Build and test only. This workflow never pushes an image and never deploys anything: the runner's
+# host and secrets are Mike's (docs/self-hosting-runner.md).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "core/**"
+      - ".github/workflows/cloud-runner-build.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # load: true keeps the image on this runner for the smoke test; push is off.
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: core
+          file: core/cloud-runner/Dockerfile
+          push: false
+          load: true
+          tags: whimbrel-cloud-runner:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test, --version
+        run: |
+          out="$(docker run --rm --read-only whimbrel-cloud-runner:ci --version)"
+          echo "$out"
+          if ! grep -qE '^whimbrel-cloud-runner [0-9]+\.[0-9]+\.[0-9]+' <<<"$out"; then echo "bad version line"; exit 1; fi
+      - name: Smoke test, a run with no settings fails with a short reason
+        run: |
+          code=0
+          err="$(docker run --rm --read-only whimbrel-cloud-runner:ci 2>&1 >/dev/null)" || code=$?
+          echo "$err"
+          if [ "$code" -ne 1 ]; then echo "expected exit 1, got $code"; exit 1; fi
+          if ! grep -q 'RUNNER_' <<<"$err"; then echo "expected a RUNNER_ reason"; exit 1; fi
+      - name: The image runs as a non-root user and sets no TZ and no volume
+        run: |
+          user="$(docker image inspect whimbrel-cloud-runner:ci --format '{{.Config.User}}')"
+          if [ "$user" != "10001:10001" ]; then echo "wrong user: $user"; exit 1; fi
+          env="$(docker image inspect whimbrel-cloud-runner:ci --format '{{json .Config.Env}}')"
+          if grep -q 'TZ=' <<<"$env"; then echo "TZ is set in the image"; exit 1; fi
+          vols="$(docker image inspect whimbrel-cloud-runner:ci --format '{{json .Config.Volumes}}')"
+          if [ "$vols" != "null" ] && [ "$vols" != "{}" ]; then echo "the image declares a volume"; exit 1; fi

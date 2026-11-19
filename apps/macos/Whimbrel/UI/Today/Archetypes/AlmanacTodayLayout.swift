@@ -148,7 +148,7 @@ struct AlmanacTodayLayout: TodayArchetypeView {
             if !event.attendees.isEmpty { SkinText(event.attendees, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             SkinPrepLine(prep: event.prep).multilineTextAlignment(.leading)
             if event.showsStart {
-                Button("Start") { actions.startMeeting(event.event) }.buttonStyle(.whimbrelPrimary).padding(.top, Spacing.xs)
+                Button("Start") { actions.startMeeting(event.event) }.buttonStyle(.whimbrelPrimary).padding(.top, Spacing.xs).recordingControl()
             }
         }
         .frame(maxWidth: .infinity)

@@ -255,6 +255,11 @@ impl Detection {
         state: &mut EndState,
     ) {
         let Some(started) = self.controller.status().started_unix_ms else { return };
+        // A recording pause holds every end rule but the length cap (see `check_paused`).
+        if self.controller.is_paused() {
+            self.check_paused(meeting_id, started, state);
+            return;
+        }
         let audible = self.controller.audio_active(now_ms()).unwrap_or(false);
         // A recording started by hand never ends on 60 s of silence: after 15 quiet minutes it
         // asks "Still in a meeting?" instead (trim spec). The 4 h cap still applies.
@@ -296,6 +301,35 @@ impl Detection {
         if let Some(reason) = end_rule::evaluate(&signals, &EndThresholds::default(), state) {
             tracing::info!(meeting_id, ?reason, "the meeting ended on its own");
             self.end(meeting_id, reason);
+        }
+    }
+
+    /// One poll of a paused recording. Nothing ends it because it is paused: the silence, browser
+    /// tab and capture-session rules are held and their clocks cleared, so they start over on
+    /// resume, and "Still in a meeting?" is not asked. The length cap still counts the pause. An hour
+    /// into a pause, and every hour after, "This recording is still paused." asks; it never stops
+    /// the recording on its own.
+    fn check_paused(&self, meeting_id: i64, started: i64, state: &mut EndState) {
+        *state = EndState::default();
+        let now = now_ms();
+        let signals = EndSignals {
+            now_unix_ms: now,
+            recording_started_unix_ms: started,
+            app_running: true,
+            on_meeting_tab: None,
+            scheduled_end_unix_ms: None,
+            audio_active: true,
+            capture_session_active: None,
+        };
+        if let Some(reason) = end_rule::evaluate(&signals, &EndThresholds::default(), state) {
+            tracing::info!(meeting_id, ?reason, "the paused meeting reached the length cap");
+            self.end(meeting_id, reason);
+            return;
+        }
+        let Some(paused_since) = self.controller.paused_since() else { return };
+        if super::still_here::poll_paused(paused_since, now) {
+            tracing::info!(meeting_id, "paused for an hour: asking if the recording should go on");
+            super::still_here::show(&self.app);
         }
     }
 

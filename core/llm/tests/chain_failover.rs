@@ -47,6 +47,7 @@ impl CloneResult for Result<&'static str, LlmError> {
             Err(LlmError::Network(s)) => Err(LlmError::Network(s.clone())),
             Err(LlmError::Provider(s)) => Err(LlmError::Provider(s.clone())),
             Err(LlmError::NotImplemented(s)) => Err(LlmError::NotImplemented(s)),
+            Err(LlmError::Refused(r)) => Err(LlmError::Refused(*r)),
         }
     }
 }

@@ -4,7 +4,8 @@
 # Development happens in the private repository (mpointer/kestrel), which runs the
 # self-hosted CI runners. The public repository (mpointer/whimbrel) is a mirror of
 # main at each release: one commit per release carrying the whole tree except
-# docs/superpowers/ (design plans and specs), tagged with the same version, with
+# docs/superpowers/ (design plans and specs) and docs/ui-redesign/ (redesign research,
+# audit and mockups), tagged with the same version, with
 # the GitHub release notes copied across. No private history is pushed.
 #
 #   scripts/publish-public.sh vX          # from a clean tree with HEAD at tag vX
@@ -23,7 +24,7 @@ PHONES=1
 PUBLIC_REPO="${PUBLIC_REPO:-mpointer/whimbrel}"
 PUBLIC_URL="${PUBLIC_URL:-https://github.com/$PUBLIC_REPO}"
 PRIVATE_REPO="mpointer/kestrel"
-EXCLUDE=(docs/superpowers)
+EXCLUDE=(docs/superpowers docs/ui-redesign)
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

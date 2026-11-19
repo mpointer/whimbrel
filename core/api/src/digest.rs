@@ -18,6 +18,20 @@ pub fn daily_digest(
     end_unix_ms: i64,
     routing: &RoutingConfig,
 ) -> ApiResult<llm::DailyDigest> {
+    let chain = build_chain_for(llm::TaskKind::Digest, ollama_model, routing, &crate::exclusion::current_gate(store));
+    daily_digest_with(store, start_unix_ms, end_unix_ms, routing, chain)
+}
+
+/// [`daily_digest`] over `chain`. A chain that can reach a hosted model gets the day without
+/// any excluded client's material (spec 7.2).
+pub(crate) fn daily_digest_with(
+    store: &memory::Store,
+    start_unix_ms: i64,
+    end_unix_ms: i64,
+    routing: &RoutingConfig,
+    chain: Vec<llm::ChainLink>,
+) -> ApiResult<llm::DailyDigest> {
+    let filter = crate::exclusion::filter_for_chain(store, &chain);
     let items = llm::gather_and_assemble_context_for_window(
         store,
         "",
@@ -26,6 +40,7 @@ pub fn daily_digest(
         end_unix_ms,
         20,
         true,
+        &filter,
     );
 
     if items.is_empty() {
@@ -39,7 +54,7 @@ pub fn daily_digest(
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("digest"), now_unix_ms())?;
 
-    let chain = crate::budget::apply_budgets(store, build_chain_for(llm::TaskKind::Digest, ollama_model, routing), false, now_unix_ms())?;
+    let chain = crate::budget::apply_budgets(store, chain, false, now_unix_ms())?;
     let policy = routing.google_data_policy();
     let (digest, entry) = llm::try_chain_with_failures(&chain, |entry| {
         // Limited Use: Gmail threads only for a link that may receive them.

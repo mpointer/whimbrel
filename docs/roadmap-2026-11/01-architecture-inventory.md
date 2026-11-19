@@ -142,7 +142,8 @@ and an email to the user's own address.
   sync is field-level last-writer-wins (opt-in API keys included); content sync carries
   items, meetings, routine runs, meeting prep, profile suggestions, live alerts and skins.
   Conversations and note edits do not sync. The relay sees device ids, row types,
-  timestamps, entity tags and ciphertext sizes, and settings field names; never content.
+  timestamps, entity tags, item kind tags and ciphertext sizes, and settings field names; never
+  content. Item kinds are not readable by the relay.
 
 ## 1.7 Dormant, partial, and missing
 

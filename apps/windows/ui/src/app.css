@@ -833,6 +833,85 @@ details summary {
   background: var(--color-background-card);
 }
 
+/* Client controls (topics/ClientControls.tsx): the Client section and its review dialogs. */
+.client-controls p {
+  margin: 0 0 var(--space-sm);
+}
+
+.client-path {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.client-review-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+}
+
+.client-review-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--color-background-page);
+  opacity: 0.85;
+}
+
+.client-review {
+  position: relative;
+  width: min(640px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.client-review-body {
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* PR 875: the name field and export options, pinned below the scrolling lists. */
+.client-review-pinned {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-sm);
+}
+
+.client-row {
+  align-items: flex-start;
+}
+
+.client-row-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.client-excerpt {
+  font-style: italic;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.client-group > summary {
+  display: flex;
+  align-items: flex-start;
+}
+
+.client-group-items,
+.client-linked > .client-row {
+  padding-left: var(--space-lg);
+}
+
+.client-review-footer {
+  justify-content: flex-end;
+  margin-bottom: 0;
+}
+
 .topic-page {
   max-width: 720px;
   display: flex;
@@ -2185,4 +2264,169 @@ button.link:focus-visible {
 .storage-row .grow {
   flex: 1;
   min-width: 12rem;
+}
+
+/* ---- The launch before the memory database opens, and the recovery setup (X4 Task 11c) ---- */
+.launch {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-lg);
+  box-sizing: border-box;
+}
+.launch-screen,
+.launch .setup {
+  max-width: 44rem;
+  margin: 0 auto;
+}
+.launch-starting {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+}
+.launch-spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent-primary);
+  border-radius: 50%;
+  animation: skin-chat-spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .launch-spinner {
+    animation: none;
+  }
+}
+.setup h2 {
+  margin: 0;
+  font-size: var(--text-body);
+}
+.setup-ok {
+  color: var(--color-success);
+}
+.setup-error {
+  color: var(--color-error);
+}
+.setup-warning {
+  color: var(--color-warning);
+}
+.setup-strong {
+  font-weight: 600;
+}
+.setup-primary {
+  font-size: var(--text-body);
+  padding: var(--space-sm) var(--space-lg);
+}
+.setup-destructive {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+.recovery-words-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-lg);
+}
+/* The 24 words, 3 columns of 8, down each column. They are the key: never selectable. */
+.recovery-words,
+.print-page-words {
+  display: grid;
+  grid-template-rows: repeat(8, auto);
+  grid-auto-flow: column;
+  gap: var(--space-xs) var(--space-lg);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.recovery-word-number {
+  display: inline-block;
+  min-width: 2.2em;
+  text-align: right;
+  color: var(--color-text-secondary);
+}
+.recovery-words-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+/* The QR is black on a white quiet zone on every theme, so any camera reads it. */
+.recovery-qr {
+  flex: none;
+  user-select: none;
+}
+.recovery-qr-quiet {
+  fill: white;
+}
+.recovery-qr-modules {
+  fill: black;
+}
+.encryption-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+.encryption-note p {
+  margin: 0;
+}
+.encryption-speed {
+  margin: 0;
+  padding-left: var(--space-lg);
+}
+.no-store-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+/* The printed recovery page (brief 3.3.2): black on white, only in print media. */
+.print-page {
+  display: none;
+}
+@media print {
+  @page {
+    margin: 12mm;
+  }
+  #root {
+    display: none;
+  }
+  body {
+    background: white;
+  }
+  .print-page {
+    display: block;
+    color: black;
+    background: white;
+    font-family: var(--font-body);
+    font-size: 11pt;
+  }
+  .print-page h1 {
+    font-size: 16pt;
+    margin: 0 0 8pt;
+  }
+  .print-page-notice {
+    font-weight: 600;
+    margin: 0 0 12pt;
+  }
+  .print-page-words {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 12pt;
+    gap: 4pt 24pt;
+    margin-bottom: 12pt;
+  }
+  .print-page-words .recovery-word-number {
+    color: black;
+  }
+  .print-page .recovery-qr {
+    display: block;
+    margin: 0 0 12pt;
+  }
+  .print-page-footer {
+    margin: 0;
+  }
 }

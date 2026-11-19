@@ -127,6 +127,8 @@ fn spawn_spec(state: &AppState) -> Result<SpawnSpec, String> {
         db: state.paths.db.clone(),
         models: state.paths.minilm.clone(),
         ollama_model: state.settings.lock().unwrap().routing().ollama_model,
+        // The key the launch handed the MCP gate (X4), never looked up again.
+        key: state.mcp_gate.key.clone(),
     })
 }
 
@@ -140,7 +142,7 @@ fn current_view(state: &AppState) -> McpServerView {
 
 /// Starts the server at launch if the user left it on. After the store is open.
 pub fn start_if_enabled(state: &AppState) {
-    if state.store.is_none() || !state.settings.lock().unwrap().mcp_server_enabled() {
+    if state.store.is_none() || !state.mcp_gate.allowed || !state.settings.lock().unwrap().mcp_server_enabled() {
         return;
     }
     let Some(server) = &state.mcp_server else { return };
@@ -165,7 +167,7 @@ pub async fn mcp_set_enabled(app: AppHandle, enabled: bool) -> Result<McpServerV
         let Some(server) = &state.mcp_server else {
             return Err(CommandError::not_configured(tr("The MCP server could not be set up on this PC.", &[])));
         };
-        if enabled && state.store.is_none() {
+        if enabled && (state.store.is_none() || !state.mcp_gate.allowed) {
             return Err(CommandError::store(tr("The database is not open; see Settings for the startup error", &[])));
         }
         apply_enabled(server, &state.settings, enabled, || spawn_spec(&state))
@@ -296,7 +298,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("core-memory.sqlite");
         std::fs::write(&db, b"").unwrap();
-        SpawnSpec { exe: dir.join("whimbrel-mcp-server.exe"), db, models: dir.join("models"), ollama_model: "m".into() }
+        SpawnSpec { exe: dir.join("whimbrel-mcp-server.exe"), db, models: dir.join("models"), ollama_model: "m".into(), key: None }
     }
 
     #[test]

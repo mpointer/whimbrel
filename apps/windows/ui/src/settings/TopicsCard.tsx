@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   acceptTopicSuggestion,
-  deleteTopicSeed,
   dismissTopicSuggestion,
   mergeTopicSeeds,
   saveTopicSeed,
@@ -132,23 +131,15 @@ export function TopicsCard() {
                 }}
               />
             )}
+            {/* A topic you named is a client: deleting it here would keep its name and aliases (a soft delete that
+                then blocks Delete this client), so this only points to the client's page (final review, Major 2). */}
             {deleting === seed.key && (
               <div className="field-row">
-                <span role="alert" className="small grow">
-                  {t("Delete {name}? Items stay in your timeline.", { name: seed.name })}
+                <span role="note" className="small muted grow">
+                  {t("To delete a client and what Whimbrel holds on them, open the client's page and choose Delete this client.")}
                 </span>
-                <button
-                  type="button"
-                  className="mode"
-                  onClick={() => {
-                    setDeleting(null);
-                    run(deleteTopicSeed(seed.key), t("Could not delete that topic."));
-                  }}
-                >
-                  {t("Delete")}
-                </button>
                 <button type="button" className="mode" onClick={() => setDeleting(null)}>
-                  {t("Cancel")}
+                  {t("Close")}
                 </button>
               </div>
             )}

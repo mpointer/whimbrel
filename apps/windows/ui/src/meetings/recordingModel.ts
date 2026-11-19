@@ -16,3 +16,9 @@ export function recordAction(view: MeetingRecordingView | null): RecordAction {
   if (!view || view.state === "starting") return "wait";
   return view.state === "recording" ? "stop" : "start";
 }
+
+/** "Record now" / "Stop recording" is off while busy, while the state is settling, and, for a
+ *  start, while Whimbrel runs without the memory database (no-store mode). Stop always works. */
+export function recordButtonDisabled(action: RecordAction, busy: boolean, noStore: boolean): boolean {
+  return busy || action === "wait" || (noStore && action !== "stop");
+}

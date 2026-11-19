@@ -24,6 +24,8 @@ pub use embedding::{
 
 pub mod background_gate;
 pub mod calendar_flags;
+pub mod capture_search;
+pub mod day_blocks;
 pub mod calendar_presence;
 pub mod synced_calendar;
 pub mod copies;
@@ -33,6 +35,7 @@ pub mod limited_use;
 pub use limited_use::is_google_user_data;
 pub mod live;
 pub mod live_alert;
+pub mod meeting_marker;
 pub mod meeting_parts;
 pub mod prep;
 pub mod priority;
@@ -46,11 +49,25 @@ pub mod recap_sent;
 pub mod token;
 pub mod topics;
 pub mod trim;
+pub mod words;
 
+pub mod client_forget;
+pub mod client_delete;
+pub mod client_export;
 mod forget;
+mod fs_atomic;
+pub use fs_atomic::move_no_replace;
+mod keyed;
+pub mod keyed_migrate;
+pub use keyed::{db_file_state, DbFileState, DbKey, KeyedOpenError, KeyedOpenOptions, KEYED_HMAC_ALGORITHM, KEYED_PAGE_SIZE};
+mod open_registry;
+pub use open_registry::open_in_this_process;
+#[cfg(test)]
+pub(crate) mod test_store;
 pub mod skin_sync;
 mod sync_backfill;
 mod sync_outbox;
+pub use client_forget::{is_unsent_ops, ClientItemForgotten, ClientItemKind, Reach, TombstoneOutcome};
 pub use forget::MeetingForgotten;
 /// Outbox `row_type`/`connector` values. `row_type` must equal the `sync_row.row_type`
 /// the dispatcher writes, which is also `sync-engine::content`'s constant of the same
@@ -72,6 +89,14 @@ pub const OUTBOX_ROW_TYPE_SKIN_IMAGE_CHUNK: &str = "skin_image_chunk";
 pub const OUTBOX_ROW_TYPE_PROVIDER_SPEND: &str = "provider_spend";
 /// "Forget meeting" (`forget`): a tombstone naming a meeting every device deletes.
 pub const OUTBOX_ROW_TYPE_MEETING_FORGOTTEN: &str = "meeting_forgotten";
+/// Client deletes (`client_forget`): a tombstone naming one client item by kind and opaque id, and a seed
+/// topic's purge (a nameless `TopicSeedPayload` with `purged: true`). Both wait for every device's
+/// `client_controls_capability`.
+pub const OUTBOX_ROW_TYPE_CLIENT_ITEM_FORGOTTEN: &str = "client_item_forgotten";
+pub const OUTBOX_ROW_TYPE_TOPIC_SEED_PURGED: &str = "topic_seed_purged";
+/// The device id early Mac builds used before a device had its own identity (and the Mac still falls back to when
+/// it cannot make one). It names no real device: anything that must tell this device apart treats it as no id.
+pub const LEGACY_SPIKE_DEVICE: &str = "spike-device";
 /// Topics (`topics::seeds`, `topics::judge`): a seed topic by its key, a Jev verdict by its source key.
 pub const OUTBOX_ROW_TYPE_TOPIC_SEED: &str = "topic_seed";
 pub const OUTBOX_ROW_TYPE_TOPIC_VERDICT: &str = "topic_verdict";
@@ -382,8 +407,60 @@ pub struct RetentionCounts {
 /// [`Store::retention_preview`] so a count can never disagree with what a sweep does;
 /// `?1` is the cutoff. Meetings exclude `status = 'recording'` — see
 /// [`Store::delete_meetings_before`] for why.
-const EXPIRED_CAPTURE_ITEMS: &str = "ts_unix_ms < ?1";
-const EXPIRED_MEETINGS: &str = "start_unix_ms < ?1 AND status != 'recording'";
+pub(crate) const EXPIRED_CAPTURE_ITEMS: &str = "ts_unix_ms < ?1";
+/// Rows one retention DELETE removes before it commits and lets other connections write.
+pub(crate) const RETENTION_DELETE_BATCH: usize = 1000;
+/// The pause between two retention batches, with the write lock free. Longer than SQLite's
+/// longest busy-handler sleep (100 ms), so a write waiting on the lock wakes inside every pause
+/// rather than possibly sleeping through it. Also the pause [`WriteYield`] takes in other long
+/// runs of back-to-back writes (the sync pull apply, screen-text ingest).
+pub const RETENTION_BATCH_PAUSE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Paces a long run of back-to-back short write transactions (one per row) so another
+/// connection waiting on the write lock gets in: SQLite's busy handler sleeps between tries, so a
+/// connection that commits and starts its next write at once leaves no gap it ever sees, and a
+/// recording start on the main connection could wait out its whole retry budget (#850 review,
+/// I2). Once [`Self::EVERY`] of writing has passed, [`Self::due`] says so and the caller pauses for
+/// [`RETENTION_BATCH_PAUSE`] with no transaction open, then calls [`Self::paused`].
+#[derive(Debug)]
+pub struct WriteYield {
+    since: std::time::Instant,
+}
+
+impl WriteYield {
+    /// How long a run writes between pauses: short against the recording start's 5 s per attempt,
+    /// long enough that the pauses cost a backlog little (about an eighth of its time).
+    pub const EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+
+    pub fn new() -> Self {
+        Self { since: std::time::Instant::now() }
+    }
+
+    /// True once [`Self::EVERY`] has passed since the start or the last pause.
+    pub fn due(&self) -> bool {
+        self.since.elapsed() >= Self::EVERY
+    }
+
+    /// The caller has just paused: the next stretch starts now.
+    pub fn paused(&mut self) {
+        self.since = std::time::Instant::now();
+    }
+
+    /// For a blocking caller with no transaction open: pauses when [`Self::due`].
+    pub fn pause_if_due(&mut self) {
+        if self.due() {
+            std::thread::sleep(RETENTION_BATCH_PAUSE);
+            self.paused();
+        }
+    }
+}
+
+impl Default for WriteYield {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+pub(crate) const EXPIRED_MEETINGS: &str = "start_unix_ms < ?1 AND status != 'recording'";
 const EXPIRED_CONVERSATIONS: &str = "updated_at_unix_ms < ?1 AND starred = 0";
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1168,6 +1245,18 @@ pub struct MeetingNoteDraft {
     pub last_regenerated_seen_unix_ms: Option<i64>,
 }
 
+impl MeetingNoteDraft {
+    /// The draft's words: personal notes and the edited summary, decisions and open questions.
+    pub fn text(&self) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        parts.extend(self.personal_notes.as_deref());
+        parts.extend(self.summary_edited.as_deref());
+        parts.extend(self.decisions_edited.iter().flatten().map(String::as_str));
+        parts.extend(self.open_questions_edited.iter().flatten().map(String::as_str));
+        parts.join("\n")
+    }
+}
+
 /// A to-do Away Mode left behind for a meeting it could not attend. `routine_run_id` is the
 /// pending organizer draft in the approvals inbox, when there is one; resolving that draft does
 /// not clear the to-do.
@@ -1350,10 +1439,20 @@ pub struct Store {
     /// means "enqueue nothing", which keeps tests and tools that never sync outbox-free.
     /// `RefCell`, not a lock: `Store` is already `!Sync` (one connection, one queue).
     own_device_id: std::cell::RefCell<Option<String>>,
+    /// `topics::exclusion`: the excluded material, the generation and time it was last computed in
+    /// full, and how far the dirty-row queue has been applied to it.
+    exclusion_cache: std::cell::RefCell<Option<topics::exclusion::ExclusionCache>>,
     /// While set, `apply_synced_item` stores rows without embedding them; the reindex sweep
     /// embeds them later. Sync sets it while catching up on a peer, so a backlog applies at
     /// row speed instead of embedding speed (~0.5 s a row on a laptop CPU).
     defer_embedding: std::cell::Cell<bool>,
+    /// While set, the client exclusion settings read as unreadable (`exclusion_unreadable`), so every
+    /// hosted path fails closed. The cloud runner sets it on its scratch store until it has read every
+    /// exclusion row: an empty store would otherwise read as "nothing excluded".
+    exclusion_unconfirmed: std::cell::Cell<bool>,
+    /// This file is open in this process (`open_registry`), so header reads never open it
+    /// raw. Declared last: it unregisters after the connection has closed.
+    _open: Option<open_registry::OpenRegistration>,
 }
 
 /// A database file's page counts (`Store::db_space`).
@@ -1362,6 +1461,18 @@ pub struct DbSpace {
     pub page_size: i64,
     pub page_count: i64,
     pub freelist_count: i64,
+}
+
+/// Read-only facts about an open store for the local speed check (`Store::speed_profile`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoreProfile {
+    pub page_size: i64,
+    /// The connection's page cache in KiB.
+    pub cache_kib: i64,
+    /// The file on disk does not start with the plain SQLite header.
+    pub encrypted: bool,
+    /// The database file plus its WAL, in bytes (0 for an in-memory store).
+    pub file_bytes: u64,
 }
 
 /// What `Store::compact` did: the space afterwards, and whether a reader kept it in the WAL.
@@ -1383,19 +1494,59 @@ impl DbSpace {
     }
 }
 
+/// Whether `e` is SQLite saying another connection holds a lock ("database is locked" or busy),
+/// including a snapshot conflict, which the busy timeout can never retry.
+pub fn is_busy_error(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _)
+            if matches!(f.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    )
+}
+
+/// Runs `f` again, with a growing pause, for as long as it fails because another connection
+/// holds a lock, until `budget` has passed. For a write that must not be dropped (the insert
+/// that starts a recording): the connection's busy timeout covers a wait for the lock, this
+/// covers what that cannot (a snapshot conflict) and a lock held longer than the timeout. Any
+/// other error is returned at once. `f` must be safe to run again (a failed attempt rolled back).
+pub fn retry_when_busy<T>(
+    budget: std::time::Duration,
+    mut f: impl FnMut() -> rusqlite::Result<T>,
+) -> rusqlite::Result<T> {
+    let started = std::time::Instant::now();
+    let mut pause = std::time::Duration::from_millis(50);
+    loop {
+        match f() {
+            Err(e) if is_busy_error(&e) && started.elapsed() < budget => {
+                std::thread::sleep(pause);
+                pause = (pause * 2).min(std::time::Duration::from_millis(500));
+            }
+            other => return other,
+        }
+    }
+}
+
 impl Store {
     pub fn open(path: &Path, models_dir: &Path) -> rusqlite::Result<Self> {
         ensure_vec_extension_registered();
+        keyed_migrate::refuse_create_over_interrupted_migration(path)?;
+        // Registered right after the open, declared first: on an error below the
+        // connection closes first, then the file unregisters (`open_registry`).
+        let registration;
         let conn = Connection::open(path)?;
+        registration = open_registry::register(path, DbFileState::Plain)?;
         Self::init(&conn)?;
         embedding::prune_stale_embedding_models(models_dir);
         Ok(Store {
-            conn,
+            conn: Self::with_immediate_writes(conn),
             embedder: std::sync::Arc::new(LazyModelEmbedder::new(embedding::embedding_model_dir(
                 models_dir,
             ))),
             own_device_id: Default::default(),
+            exclusion_cache: Default::default(),
             defer_embedding: Default::default(),
+            exclusion_unconfirmed: Default::default(),
+            _open: registration,
         })
     }
 
@@ -1404,7 +1555,7 @@ impl Store {
         let conn = Connection::open_in_memory()?;
         Self::init(&conn)?;
         Ok(Store {
-            conn,
+            conn: Self::with_immediate_writes(conn),
             // Empty models_dir — in-memory stores start empty (nothing to migrate)
             // and every existing test using this constructor predates embedding-
             // quality concerns entirely. LazyModelEmbedder degrades gracefully via
@@ -1412,8 +1563,17 @@ impl Store {
             // as any other missing-model case — no special-casing needed.
             embedder: std::sync::Arc::new(LazyModelEmbedder::new(std::path::PathBuf::new())),
             own_device_id: Default::default(),
+            exclusion_cache: Default::default(),
             defer_embedding: Default::default(),
+            exclusion_unconfirmed: Default::default(),
+            _open: None,
         })
+    }
+
+    /// Whether this store lives only in memory ([`Self::open_in_memory`]): no database file
+    /// exists for it.
+    pub fn is_in_memory(&self) -> bool {
+        self.conn.path().is_none_or(str::is_empty)
     }
 
     /// An empty id clears it: `""` names no device.
@@ -1554,14 +1714,78 @@ impl Store {
         embedder: std::sync::Arc<dyn Embedder>,
     ) -> rusqlite::Result<Self> {
         ensure_vec_extension_registered();
+        keyed_migrate::refuse_create_over_interrupted_migration(path)?;
+        let registration;
         let conn = Connection::open(path)?;
+        registration = open_registry::register(path, DbFileState::Plain)?;
         Self::init(&conn)?;
         Ok(Store {
-            conn,
+            conn: Self::with_immediate_writes(conn),
             embedder,
             own_device_id: Default::default(),
+            exclusion_cache: Default::default(),
             defer_embedding: Default::default(),
+            exclusion_unconfirmed: Default::default(),
+            _open: registration,
         })
+    }
+
+    /// Every transaction this connection starts through `unchecked_transaction` takes the write
+    /// lock when it begins (BEGIN IMMEDIATE). A deferred one that reads and then writes fails
+    /// at once with SQLITE_BUSY_SNAPSHOT when another connection of the app (the background
+    /// lane, the slow lane, the MCP server) committed in between, and the busy timeout cannot
+    /// retry that. Taking the lock first makes it wait instead.
+    pub(crate) fn with_immediate_writes(mut conn: Connection) -> Connection {
+        conn.set_transaction_behavior(rusqlite::TransactionBehavior::Immediate);
+        conn
+    }
+
+    /// How long a statement waits for another connection's write lock before it fails with
+    /// "database is locked". Every connection starts with rusqlite's 5 s. The shell raises
+    /// it on the connections whose writes must not be dropped, and on the background lane
+    /// whose steps would otherwise fail and repeat.
+    pub fn set_busy_timeout(&self, timeout: std::time::Duration) -> rusqlite::Result<()> {
+        self.conn.busy_timeout(timeout)
+    }
+
+    /// The busy timeout in force now, in milliseconds.
+    pub fn busy_timeout_ms(&self) -> rusqlite::Result<i64> {
+        self.conn.query_row("PRAGMA busy_timeout", [], |r| r.get(0))
+    }
+
+    /// Runs `f` in one write transaction, unless the caller already holds one. Used where a
+    /// `local_seq` is taken and the row that carries it is written: the counter bump and the
+    /// row commit together, and the lock is held in between, so rows commit in `local_seq`
+    /// order. The sync push cursor is the highest `local_seq` sent, so a row that commits
+    /// after a higher one has been sent would never be pushed.
+    fn with_write_tx<T>(&self, f: impl FnOnce() -> rusqlite::Result<T>) -> rusqlite::Result<T> {
+        if !self.conn.is_autocommit() {
+            return f();
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let out = f()?;
+        tx.commit()?;
+        Ok(out)
+    }
+
+    /// Runs `f` against one snapshot of the database: every read in it sees the same commits.
+    /// The sync push reads meetings, then items; as separate reads, a row committed between
+    /// them with a lower `local_seq` than one already read would be skipped for good once the
+    /// cursor passes it. A caller already in a transaction gets that transaction's snapshot.
+    /// `f` must not write: a deferred transaction that upgrades can fail with a snapshot error.
+    pub fn with_read_snapshot<T>(&self, f: impl FnOnce(&Store) -> rusqlite::Result<T>) -> rusqlite::Result<T> {
+        if !self.conn.is_autocommit() {
+            return f(self);
+        }
+        self.conn.execute_batch("BEGIN DEFERRED")?;
+        let out = f(self);
+        // Nothing was written, so ending the read transaction cannot lose anything. If the COMMIT
+        // fails, roll back, so the connection is never left inside the read transaction (every later
+        // write on it would then fail with "cannot start a transaction within a transaction").
+        if self.conn.execute_batch("COMMIT").is_err() && !self.conn.is_autocommit() {
+            let _ = self.conn.execute_batch("ROLLBACK");
+        }
+        out
     }
 
     /// The embedder this store uses, for a second connection to the same database that
@@ -1626,6 +1850,9 @@ impl Store {
             );
             CREATE INDEX IF NOT EXISTS idx_capture_item_ts ON capture_item(ts_unix_ms);
             CREATE INDEX IF NOT EXISTS idx_capture_item_app ON capture_item(app_bundle_id);
+            -- The per-line dedupe lookup (last hash for an app): without it every captured line sorts
+            -- all of the app's rows while holding the screens' queue.
+            CREATE INDEX IF NOT EXISTS idx_capture_item_app_ts ON capture_item(app_bundle_id, ts_unix_ms, id);
             CREATE VIRTUAL TABLE IF NOT EXISTS capture_item_fts USING fts5(
                 text, window_title, content='capture_item', content_rowid='id'
             );
@@ -1715,6 +1942,9 @@ impl Store {
             );
             CREATE INDEX IF NOT EXISTS idx_items_ts ON items(ts_unix_ms);
             CREATE INDEX IF NOT EXISTS idx_items_kind ON items(kind);
+            -- Captures by time (retention sweep, Today's device activity, the timeline): with only
+            -- idx_items_kind these read every capture row while holding the screens' queue.
+            CREATE INDEX IF NOT EXISTS idx_items_kind_ts ON items(kind, ts_unix_ms, device_id);
             CREATE INDEX IF NOT EXISTS idx_items_source ON items(source_table, source_id);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_items_external ON items(kind, source, external_id) WHERE external_id IS NOT NULL;
             CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
@@ -1988,9 +2218,11 @@ impl Store {
         speaker_names::ensure_speaker_names_tables(conn)?;
         skin_sync::ensure_skin_sync_tables(conn)?;
         forget::ensure_forget_tables(conn)?;
+        client_forget::ensure_client_forget_tables(conn)?;
         sync_backfill::ensure_sync_backfill_schema(conn)?;
         provider_budget::ensure_provider_budget_tables(conn)?;
         meeting_parts::ensure_meeting_part_schema(conn)?;
+        meeting_marker::ensure_meeting_marker_table(conn)?;
         summary_fallback::ensure_summary_fallback_table(conn)?;
         recap_sent::ensure_recap_sent_table(conn)?;
         Self::ensure_items_app_fields_columns(conn)?;
@@ -2204,6 +2436,12 @@ impl Store {
         if !existing_columns.iter().any(|c| c == "local_seq") {
             conn.execute("ALTER TABLE items ADD COLUMN local_seq INTEGER", [])?;
         }
+        // Each sync round looks up this device's rows past the push cursor; without this it
+        // scans every capture row while holding the queue the screens read from.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_items_device_seq ON items(device_id, local_seq) WHERE local_seq IS NOT NULL",
+            [],
+        )?;
         Ok(())
     }
 
@@ -2422,6 +2660,11 @@ impl Store {
         if !existing_columns.iter().any(|c| c == "local_seq") {
             conn.execute("ALTER TABLE capture_item ADD COLUMN local_seq INTEGER", [])?;
         }
+        // The pre-cutover push path's lookup, same reason as `idx_items_device_seq`.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_capture_item_device_seq ON capture_item(device_id, local_seq) WHERE local_seq IS NOT NULL",
+            [],
+        )?;
         Ok(())
     }
 
@@ -2681,6 +2924,41 @@ impl Store {
             [],
             |row| row.get(0),
         )
+    }
+
+    /// Makes the next `local_seq` at least `floor`; never lowers it. For a store that starts empty under a
+    /// device id that already has rows on the relay (the cloud runner's per-run store): its counter would start
+    /// over at 1, and a relay insert at a key it already holds is ignored.
+    pub fn raise_local_seq_floor(&self, floor: i64) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE sync_local_seq_counter SET next_seq = MAX(next_seq, ?1) WHERE id = 1",
+            params![floor],
+        )?;
+        Ok(())
+    }
+
+    /// Makes the next `routine_run` id at least `floor`; never lowers it. A synced run's identity on peers is
+    /// (origin device, run id), so a store that starts empty under a device id that has sent runs before (the
+    /// cloud runner's per-run store) would otherwise reuse id 1 and overwrite an earlier run on every peer.
+    pub fn raise_routine_run_id_floor(&self, floor: i64) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let raised = tx.execute(
+            "UPDATE sqlite_sequence SET seq = MAX(seq, ?1 - 1) WHERE name = 'routine_run'",
+            params![floor],
+        )?;
+        if raised == 0 {
+            let max_id: i64 = tx.query_row("SELECT COALESCE(MAX(id), 0) FROM routine_run", [], |r| r.get(0))?;
+            tx.execute(
+                "INSERT INTO sqlite_sequence (name, seq) VALUES ('routine_run', MAX(?1 - 1, ?2))",
+                params![floor, max_id],
+            )?;
+        }
+        tx.commit()
+    }
+
+    /// The highest `routine_run` id in this store (0 with none), pulled runs included.
+    pub fn max_routine_run_id(&self) -> rusqlite::Result<i64> {
+        self.conn.query_row("SELECT COALESCE(MAX(id), 0) FROM routine_run", [], |r| r.get(0))
     }
 
     /// How far this device has pulled a given peer's rows — 0 if never pulled from
@@ -3548,12 +3826,18 @@ impl Store {
     }
 
     /// Inserts every chunk of one capture record, deduping the *record* once: nothing is
-    /// stored when the app's most recent item already has the record's hash, otherwise
-    /// every chunk is. (`ingest` gives all chunks of a record the record's hash, so
-    /// calling [`insert_capture_item`](Self::insert_capture_item) per chunk compared
-    /// chunk 2 against chunk 1 and dropped every chunk after the first.) All chunks must
-    /// share `app_bundle_id` and `hash`. Returns the new row ids in order, or `None` if
-    /// the record was a consecutive duplicate.
+    /// stored when the app's most recent item at or before the record's timestamp already
+    /// has the record's hash, or when this exact record (same app, hash and timestamp) is
+    /// already stored, otherwise every chunk is. (`ingest` gives all chunks of a record the record's hash, so calling
+    /// [`insert_capture_item`](Self::insert_capture_item) per chunk compared chunk 2
+    /// against chunk 1 and dropped every chunk after the first.) All chunks must share
+    /// `app_bundle_id`, `hash` and `ts_unix_ms`. The dedupe checks and every chunk commit
+    /// in ONE write transaction: a failure leaves none of the record's rows, so a replay
+    /// stores it whole and a committed record is skipped, never duplicated, and makes the
+    /// same consecutive-dedupe decisions as the first pass. The exact-record key is the
+    /// timestamp at the source's precision: the Mac log has whole seconds, so on a replay
+    /// only, text A, B, A of one app within one second drops the second A. Returns the new
+    /// row ids in order, or `None` if the record was already stored.
     pub fn insert_capture_record(
         &self,
         chunks: &[NewCaptureItem],
@@ -3561,21 +3845,55 @@ impl Store {
         let Some(first) = chunks.first() else {
             return Ok(Some(Vec::new()));
         };
-        debug_assert!(chunks
-            .iter()
-            .all(|c| c.app_bundle_id == first.app_bundle_id && c.hash == first.hash));
-        if self.last_capture_hash(&first.app_bundle_id)? == Some(first.hash) {
+        debug_assert!(chunks.iter().all(|c| c.app_bundle_id == first.app_bundle_id
+            && c.hash == first.hash
+            && c.ts_unix_ms == first.ts_unix_ms));
+        // Cheap early exit so a duplicate is not embedded; the checks are repeated inside the
+        // transaction, which is the authoritative one.
+        if self.capture_record_is_duplicate(first)? {
             return Ok(None);
         }
-        chunks
-            .iter()
-            .map(|chunk| self.insert_capture_row(chunk))
-            .collect::<rusqlite::Result<Vec<i64>>>()
-            .map(Some)
+        // Embeddings are slow: all computed before the transaction, never inside it.
+        let embeddings: Vec<Option<Vec<f32>>> =
+            chunks.iter().map(|c| self.embed(&c.text).ok()).collect();
+        self.with_write_tx(|| {
+            if self.capture_record_is_duplicate(first)? {
+                return Ok(None);
+            }
+            chunks
+                .iter()
+                .zip(&embeddings)
+                .map(|(chunk, embedding)| self.insert_capture_row_in_tx(chunk, embedding.as_deref()))
+                .collect::<rusqlite::Result<Vec<i64>>>()
+                .map(Some)
+        })
     }
 
-    /// The `hash` of the app's most recent capture item — what FR-CAP-6's consecutive
-    /// dedupe compares against.
+    /// The record is skipped when it repeats the app's most recent item (FR-CAP-6) or is
+    /// already stored exactly (a replayed file).
+    fn capture_record_is_duplicate(&self, first: &NewCaptureItem) -> rusqlite::Result<bool> {
+        Ok(self.last_capture_hash_at_or_before(&first.app_bundle_id, first.ts_unix_ms)? == Some(first.hash)
+            || self.capture_record_exists(&first.app_bundle_id, first.hash, first.ts_unix_ms)?)
+    }
+
+    /// Whether a row with this app, hash AND timestamp is stored: "this exact record is
+    /// already here", unlike [`capture_hash_exists`](Self::capture_hash_exists), which would
+    /// also drop legitimately repeated text. Uses `idx_capture_item_app_ts` (app, ts), so
+    /// it reads only the rows at one timestamp for the app.
+    pub fn capture_record_exists(
+        &self,
+        app_bundle_id: &str,
+        hash: i64,
+        ts_unix_ms: i64,
+    ) -> rusqlite::Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM capture_item \
+             WHERE app_bundle_id = ?1 AND ts_unix_ms = ?2 AND hash = ?3)",
+            params![app_bundle_id, ts_unix_ms, hash],
+            |row| row.get(0),
+        )
+    }
+
     /// Whether any item from `app_bundle_id` has this hash, so a repeat import is skipped.
     pub fn capture_hash_exists(&self, app_bundle_id: &str, hash: i64) -> rusqlite::Result<bool> {
         self.conn.query_row(
@@ -3583,6 +3901,23 @@ impl Store {
             params![app_bundle_id, hash],
             |row| row.get(0),
         )
+    }
+
+    /// The `hash` of the app's most recent capture item — what FR-CAP-6's consecutive
+    /// dedupe compares against.
+    /// The `hash` of the app's most recent item at or before `ts_unix_ms`. A record is
+    /// compared with what preceded it, not with the app's newest row, so a replayed file makes
+    /// the same consecutive-dedupe decisions as the first pass. For live capture (newest
+    /// timestamp) this is the same row as `last_capture_hash`.
+    fn last_capture_hash_at_or_before(&self, app_bundle_id: &str, ts_unix_ms: i64) -> rusqlite::Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT hash FROM capture_item WHERE app_bundle_id = ?1 AND ts_unix_ms <= ?2 \
+                 ORDER BY ts_unix_ms DESC, id DESC LIMIT 1",
+                params![app_bundle_id, ts_unix_ms],
+                |row| row.get(0),
+            )
+            .optional()
     }
 
     fn last_capture_hash(&self, app_bundle_id: &str) -> rusqlite::Result<Option<i64>> {
@@ -3596,54 +3931,69 @@ impl Store {
             .optional()
     }
 
-    /// One capture row (plus its embedding and `items` mirror), no dedupe check.
+    /// One capture row (plus its embedding and `items` mirror), no dedupe check. The row, its
+    /// vector and its `items` mirror carry one `local_seq` and commit together: the push
+    /// reads `items`, so a mirror that committed after a higher `local_seq` was sent would
+    /// never be pushed. The embedding runs before the transaction, never inside it.
     fn insert_capture_row(&self, item: &NewCaptureItem) -> rusqlite::Result<i64> {
-        let local_seq = self.next_local_seq()?;
-
-        self.conn.execute(
-            "INSERT INTO capture_item (device_id, ts_unix_ms, app_bundle_id, window_title, url, text, hash, source, local_seq) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                item.device_id,
-                item.ts_unix_ms,
-                item.app_bundle_id,
-                item.window_title,
-                item.url,
-                item.text,
-                item.hash,
-                item.source,
-                local_seq
-            ],
-        )?;
-        let id = self.conn.last_insert_rowid();
-
         let embedding = self.embed(&item.text).ok();
-        if let Some(embedding) = &embedding {
+        self.with_write_tx(|| self.insert_capture_row_in_tx(item, embedding.as_deref()))
+    }
+
+    /// The body of [`insert_capture_row`](Self::insert_capture_row): the caller holds the write
+    /// transaction (so one record's rows can share it) and has already embedded the text.
+    fn insert_capture_row_in_tx(
+        &self,
+        item: &NewCaptureItem,
+        embedding: Option<&[f32]>,
+    ) -> rusqlite::Result<i64> {
+        {
+            let local_seq = self.next_local_seq()?;
+
             self.conn.execute(
-                "INSERT INTO capture_item_vec(rowid, embedding) VALUES (?1, ?2)",
-                params![id, embedding_to_json(embedding)],
+                "INSERT INTO capture_item (device_id, ts_unix_ms, app_bundle_id, window_title, url, text, hash, source, local_seq) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    item.device_id,
+                    item.ts_unix_ms,
+                    item.app_bundle_id,
+                    item.window_title,
+                    item.url,
+                    item.text,
+                    item.hash,
+                    item.source,
+                    local_seq
+                ],
             )?;
+            let id = self.conn.last_insert_rowid();
+
+            if let Some(embedding) = embedding {
+                self.conn.execute(
+                    "INSERT INTO capture_item_vec(rowid, embedding) VALUES (?1, ?2)",
+                    params![id, embedding_to_json(embedding)],
+                )?;
+            }
+
+            self.mirror_into_items(
+                &item.device_id,
+                "capture",
+                Some(item.source.as_str()),
+                None,
+                item.ts_unix_ms,
+                None,
+                Some(&item.window_title),
+                &item.text,
+                Some(item.hash),
+                "capture_item",
+                id,
+                embedding,
+                Some(item.app_bundle_id.as_str()),
+                item.url.as_deref(),
+                local_seq,
+            );
+
+            Ok(id)
         }
-
-        self.mirror_into_items(
-            &item.device_id,
-            "capture",
-            Some(item.source.as_str()),
-            None,
-            item.ts_unix_ms,
-            None,
-            Some(&item.window_title),
-            &item.text,
-            Some(item.hash),
-            "capture_item",
-            id,
-            embedding.as_deref(),
-            Some(item.app_bundle_id.as_str()),
-            item.url.as_deref(),
-            local_seq,
-        );
-
-        Ok(id)
     }
 
     /// Inserts a batch of transcript segments (all belonging to one meeting, in
@@ -3672,9 +4022,16 @@ impl Store {
     ) -> rusqlite::Result<()> {
         // One transaction per batch (docs/adr/0001 slice 2): the segment rows, their
         // `items` mirrors and their outbox rows land together or not at all.
+        // Embedding is slow: done before the transaction, never inside it.
+        let embeddings = self.embed_segments(segments);
         let tx = self.conn.unchecked_transaction()?;
-        self.insert_transcript_segments_tx(&tx, segments)?;
+        self.insert_transcript_segments_tx(&tx, segments, &embeddings)?;
         tx.commit()
+    }
+
+    /// One (best-effort) embedding per segment, for `insert_transcript_segments_tx`.
+    pub(crate) fn embed_segments(&self, segments: &[NewTranscriptSegment]) -> Vec<Option<Vec<f32>>> {
+        segments.iter().map(|s| self.embed(&s.text).ok()).collect()
     }
 
     /// Body of [`Store::insert_transcript_segments`], run inside the caller's transaction
@@ -3683,6 +4040,7 @@ impl Store {
         &self,
         tx: &rusqlite::Transaction<'_>,
         segments: &[NewTranscriptSegment],
+        embeddings: &[Option<Vec<f32>>],
     ) -> rusqlite::Result<()> {
         let Some(first) = segments.first() else {
             return Ok(());
@@ -3698,7 +4056,7 @@ impl Store {
             return Ok(());
         };
         let now_unix_ms = now_unix_ms();
-        for seg in segments {
+        for (seg, embedding) in segments.iter().zip(embeddings) {
             // A trimmed meeting never gets lines back past its cut ("Transcribe again" on
             // audio whose truncation failed).
             if trimmed_keep_ms.is_some_and(|keep| seg.start_cs * 10 >= keep) {
@@ -3710,8 +4068,7 @@ impl Store {
                 params![seg.meeting_id, seg.start_cs, seg.speaker_label, seg.text, local_seq],
             )?;
             let id = tx.last_insert_rowid();
-            let embedding = self.embed(&seg.text).ok();
-            if let Some(embedding) = &embedding {
+            if let Some(embedding) = embedding {
                 tx.execute(
                     "INSERT INTO transcript_segment_vec(rowid, embedding) VALUES (?1, ?2)",
                     params![id, embedding_to_json(embedding)],
@@ -3910,29 +4267,35 @@ impl Store {
             if !seen.insert((it.source.as_str(), it.external_id.as_str())) {
                 continue;
             }
+            // A client delete forgot this event: a poll must not bring it back.
+            if self.is_forgotten_calendar_event(&it.source, &it.external_id)? {
+                continue;
+            }
             let actors_json =
                 serde_json::to_string(&it.actors).unwrap_or_else(|_| "[]".to_string());
-            let local_seq = self.next_local_seq()?;
             // Stamped only when the change test below passes; this clears `removed`.
             let flags_json = calendar_flags::CalendarFlags {
                 removed: false,
                 changed_at: now_ms,
             }
             .to_json();
-            self.conn.execute(
-                "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, external_id, local_seq, flags) \
-                 VALUES (?1, 'calendar_event', ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8) \
-                 ON CONFLICT(kind, source, external_id) WHERE external_id IS NOT NULL DO UPDATE SET \
-                    device_id = excluded.device_id, ts_unix_ms = excluded.ts_unix_ms, \
-                    actors = excluded.actors, title = excluded.title, body_text = excluded.body_text, \
-                    local_seq = excluded.local_seq, flags = excluded.flags \
-                 WHERE items.local_seq IS NULL \
-                    OR items.ts_unix_ms IS NOT excluded.ts_unix_ms \
-                    OR items.actors IS NOT excluded.actors \
-                    OR items.title IS NOT excluded.title \
-                    OR items.body_text IS NOT excluded.body_text",
-                params![it.device_id, it.source, it.ts_unix_ms, actors_json, it.title, it.external_id, local_seq, flags_json],
-            )?;
+            self.with_write_tx(|| {
+                let local_seq = self.next_local_seq()?;
+                self.conn.execute(
+                    "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, external_id, local_seq, flags) \
+                     VALUES (?1, 'calendar_event', ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8) \
+                     ON CONFLICT(kind, source, external_id) WHERE external_id IS NOT NULL DO UPDATE SET \
+                        device_id = excluded.device_id, ts_unix_ms = excluded.ts_unix_ms, \
+                        actors = excluded.actors, title = excluded.title, body_text = excluded.body_text, \
+                        local_seq = excluded.local_seq, flags = excluded.flags \
+                     WHERE items.local_seq IS NULL \
+                        OR items.ts_unix_ms IS NOT excluded.ts_unix_ms \
+                        OR items.actors IS NOT excluded.actors \
+                        OR items.title IS NOT excluded.title \
+                        OR items.body_text IS NOT excluded.body_text",
+                    params![it.device_id, it.source, it.ts_unix_ms, actors_json, it.title, it.external_id, local_seq, flags_json],
+                )
+            })?;
         }
         if !items.is_empty() {
             // Guarantees the backlog sweep notices this write promptly instead of
@@ -4111,26 +4474,32 @@ impl Store {
     /// `thread_id` column is a different, internal concept and is never used for this.
     pub fn upsert_email_items(&self, items: &[NewEmailItem]) -> rusqlite::Result<()> {
         for it in items {
+            // A client delete forgot this message: a resync must not bring it back.
+            if self.is_forgotten_email(&it.external_id)? {
+                continue;
+            }
             let actors_json = serde_json::to_string(&[it.from.clone(), it.to.clone()])
                 .unwrap_or_else(|_| "[]".to_string());
             let refs_json = serde_json::to_string(&serde_json::json!({ "gmail_thread_id": it.gmail_thread_id, "account_email": it.account_email, "gmail_labels": it.gmail_labels, "list_unsubscribe": it.list_unsubscribe }))
                 .unwrap_or_else(|_| "{}".to_string());
-            let local_seq = self.next_local_seq()?;
-            self.conn.execute(
-                "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id, local_seq) \
-                 VALUES (?1, 'email', 'gmail', ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
-                 ON CONFLICT(kind, source, external_id) WHERE external_id IS NOT NULL DO UPDATE SET \
-                    device_id = excluded.device_id, ts_unix_ms = excluded.ts_unix_ms, \
-                    actors = excluded.actors, title = excluded.title, body_text = excluded.body_text, \
-                    refs = excluded.refs, local_seq = excluded.local_seq \
-                 WHERE items.local_seq IS NULL \
-                    OR items.ts_unix_ms IS NOT excluded.ts_unix_ms \
-                    OR items.actors IS NOT excluded.actors \
-                    OR items.title IS NOT excluded.title \
-                    OR items.body_text IS NOT excluded.body_text \
-                    OR items.refs IS NOT excluded.refs",
-                params![it.device_id, it.ts_unix_ms, actors_json, it.subject, it.body_text, refs_json, it.external_id, local_seq],
-            )?;
+            self.with_write_tx(|| {
+                let local_seq = self.next_local_seq()?;
+                self.conn.execute(
+                    "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id, local_seq) \
+                     VALUES (?1, 'email', 'gmail', ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+                     ON CONFLICT(kind, source, external_id) WHERE external_id IS NOT NULL DO UPDATE SET \
+                        device_id = excluded.device_id, ts_unix_ms = excluded.ts_unix_ms, \
+                        actors = excluded.actors, title = excluded.title, body_text = excluded.body_text, \
+                        refs = excluded.refs, local_seq = excluded.local_seq \
+                     WHERE items.local_seq IS NULL \
+                        OR items.ts_unix_ms IS NOT excluded.ts_unix_ms \
+                        OR items.actors IS NOT excluded.actors \
+                        OR items.title IS NOT excluded.title \
+                        OR items.body_text IS NOT excluded.body_text \
+                        OR items.refs IS NOT excluded.refs",
+                    params![it.device_id, it.ts_unix_ms, actors_json, it.subject, it.body_text, refs_json, it.external_id, local_seq],
+                )
+            })?;
         }
         if !items.is_empty() {
             // See upsert_calendar_event_items's identical call for the full
@@ -5124,10 +5493,10 @@ impl Store {
         // still belong to a still-growing episode, so it's left for a future run.
         let horizon_ts = now_unix_ms - EPISODE_IDLE_GAP_MS;
 
-        let tx = self.conn.unchecked_transaction()?;
-
+        // Read before the write transaction: a scan of every item must not hold the write lock, and
+        // a device list that is a moment stale only delays a device to the next run.
         let device_ids: Vec<String> = {
-            let mut stmt = tx.prepare(
+            let mut stmt = self.conn.prepare(
                 "SELECT DISTINCT device_id FROM items WHERE kind = 'capture' AND ts_unix_ms <= ?1",
             )?;
             let ids = stmt
@@ -5135,6 +5504,8 @@ impl Store {
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             ids
         };
+
+        let tx = self.conn.unchecked_transaction()?;
 
         let mut finalized_any = false;
         for device_id in device_ids {
@@ -5315,10 +5686,9 @@ impl Store {
     /// per-device (one Gmail thread is the same conversation regardless of which
     /// device's sync delivered which message) -- only the scan cursor is.
     pub fn run_thread_state_sync_job(&self, now_unix_ms: i64) -> rusqlite::Result<bool> {
-        let tx = self.conn.unchecked_transaction()?;
-
+        // Read before the write transaction (see `run_episode_segment_job`).
         let device_ids: Vec<String> = {
-            let mut stmt = tx.prepare(
+            let mut stmt = self.conn.prepare(
                 "SELECT DISTINCT device_id FROM items WHERE kind = 'email' AND source = 'gmail'",
             )?;
             let ids = stmt
@@ -5326,6 +5696,8 @@ impl Store {
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             ids
         };
+
+        let tx = self.conn.unchecked_transaction()?;
 
         let mut processed_any = false;
         for device_id in device_ids {
@@ -6478,14 +6850,110 @@ impl Store {
 
     /// FR-MEM-4: hard-delete by time range (retention policy enforcement).
     pub fn delete_before(&self, cutoff_unix_ms: i64) -> rusqlite::Result<usize> {
-        self.conn.execute(
-            &format!("DELETE FROM items WHERE kind = 'capture' AND {EXPIRED_CAPTURE_ITEMS}"),
-            params![cutoff_unix_ms],
-        )?;
-        self.conn.execute(
-            &format!("DELETE FROM capture_item WHERE {EXPIRED_CAPTURE_ITEMS}"),
-            params![cutoff_unix_ms],
-        )
+        self.delete_captures_matching(EXPIRED_CAPTURE_ITEMS, EXPIRED_CAPTURE_ITEMS, cutoff_unix_ms)
+    }
+
+    /// [`Store::delete_before`] with its predicates given (`?1` is the cutoff): one for `items`, one for
+    /// `capture_item`.
+    ///
+    /// Deletes in batches of [`RETENTION_DELETE_BATCH`] rows, each its own commit. One DELETE of a
+    /// year of captures runs every FTS, vector and exclusion trigger per row inside a single write
+    /// transaction, which held the write lock for minutes on a large store and made every other
+    /// connection's write (starting a recording above all) wait or fail. Between batches the lock
+    /// is free. A pass cut short by an error leaves the rest for the next sweep.
+    fn delete_captures_matching(&self, items_pred: &str, capture_pred: &str, cutoff_unix_ms: i64) -> rusqlite::Result<usize> {
+        self.delete_captures_batched(cutoff_unix_ms, || Ok((items_pred.to_string(), capture_pred.to_string())))
+    }
+
+    /// The `items` and `capture_item` predicates for one retention batch: expired, and not a kept
+    /// client's material as it stands now.
+    pub(crate) fn capture_retention_predicates(&self) -> rusqlite::Result<(String, String)> {
+        let p = self.client_kept_material()?.predicates();
+        Ok((p.items, p.capture_item))
+    }
+
+    /// Deletes expired captures in batches. `preds` gives the `items` and `capture_item` predicates
+    /// (what retention must keep: a client's keep period, an episode filed under a kept client).
+    /// A sweep of a large store runs for minutes, and that can change meanwhile on another
+    /// connection, so the predicates must be current for every batch.
+    ///
+    /// They are read outside the batches' write transactions (#850 review, I4: the read walks
+    /// every kept client's members and episodes, which held the write lock for every batch), once
+    /// per sweep, and again only when another connection has committed since
+    /// (`PRAGMA data_version`). Inside each batch's write transaction the version is checked once
+    /// more: if a commit slipped in between the read and the lock, the predicates are read again
+    /// there, under the lock, so material kept meanwhile is never deleted. This connection's own
+    /// writes do not move the version; nothing else writes on it while the sweep runs.
+    fn delete_captures_batched(
+        &self,
+        cutoff_unix_ms: i64,
+        preds: impl Fn() -> rusqlite::Result<(String, String)>,
+    ) -> rusqlite::Result<usize> {
+        // Let a waiting writer in: another connection's busy handler polls, so a lock released
+        // and retaken at once would starve it.
+        self.delete_captures_batched_with(cutoff_unix_ms, preds, || std::thread::sleep(RETENTION_BATCH_PAUSE))
+    }
+
+    /// [`Self::delete_captures_batched`] with what runs between two batches (the pause; a test
+    /// writes on another connection there).
+    fn delete_captures_batched_with(
+        &self,
+        cutoff_unix_ms: i64,
+        preds: impl Fn() -> rusqlite::Result<(String, String)>,
+        mut between_batches: impl FnMut(),
+    ) -> rusqlite::Result<usize> {
+        let batch = RETENTION_DELETE_BATCH;
+        let mut total = 0;
+        // The predicates, and the data version they were read at.
+        let mut kept: Option<(i64, (String, String))> = None;
+        loop {
+            let version = self.data_version()?;
+            if kept.as_ref().is_none_or(|(read_at, _)| *read_at != version) {
+                kept = Some((version, preds()?));
+            }
+            let Some((read_at, (items_pred, capture_pred))) = kept.as_ref() else {
+                unreachable!("read just above")
+            };
+            let (items_n, capture_n, reread) = self.with_write_tx(|| {
+                let fresh;
+                let (items_pred, capture_pred, reread) = if self.data_version()? == *read_at {
+                    (items_pred, capture_pred, false)
+                } else {
+                    fresh = preds()?;
+                    (&fresh.0, &fresh.1, true)
+                };
+                let items_n = self.conn.execute(
+                    &format!(
+                        "DELETE FROM items WHERE id IN \
+                         (SELECT id FROM items WHERE kind = 'capture' AND {items_pred} LIMIT {batch})"
+                    ),
+                    params![cutoff_unix_ms],
+                )?;
+                let capture_n = self.conn.execute(
+                    &format!(
+                        "DELETE FROM capture_item WHERE id IN \
+                         (SELECT id FROM capture_item WHERE {capture_pred} LIMIT {batch})"
+                    ),
+                    params![cutoff_unix_ms],
+                )?;
+                Ok((items_n, capture_n, reread))
+            })?;
+            if reread {
+                // Read under the lock this once; the next batch reads outside it again.
+                kept = None;
+            }
+            total += capture_n;
+            if items_n < batch && capture_n < batch {
+                return Ok(total);
+            }
+            between_batches();
+        }
+    }
+
+    /// `PRAGMA data_version`: changes whenever another connection commits to the database (never
+    /// for this connection's own commits).
+    fn data_version(&self) -> rusqlite::Result<i64> {
+        self.conn.query_row("PRAGMA data_version", [], |r| r.get(0))
     }
 
     /// FR-MEM-4: hard-delete by app (per-app deletion).
@@ -6520,9 +6988,18 @@ impl Store {
         &self,
         cutoff_unix_ms: i64,
     ) -> rusqlite::Result<(usize, Vec<DeletedMeetingFiles>)> {
+        self.delete_meetings_matching(EXPIRED_MEETINGS, cutoff_unix_ms)
+    }
+
+    /// [`Store::delete_meetings_before`] with its meeting predicate given (`?1` is the cutoff).
+    fn delete_meetings_matching(
+        &self,
+        expired: &str,
+        cutoff_unix_ms: i64,
+    ) -> rusqlite::Result<(usize, Vec<DeletedMeetingFiles>)> {
         let deleted_files = {
             let mut stmt = self.conn.prepare(&format!(
-                "SELECT id, audio_path, transcript_path, CASE WHEN keep_snapshots = 0 THEN snapshots_dir END FROM meeting WHERE {EXPIRED_MEETINGS}"
+                "SELECT id, audio_path, transcript_path, CASE WHEN keep_snapshots = 0 THEN snapshots_dir END FROM meeting WHERE {expired}"
             ))?;
             let rows = stmt.query_map(params![cutoff_unix_ms], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
@@ -6534,7 +7011,7 @@ impl Store {
                 })
                 .collect::<rusqlite::Result<Vec<_>>>()?
         };
-        let expired_ids = format!("(SELECT id FROM meeting WHERE {EXPIRED_MEETINGS})");
+        let expired_ids = format!("(SELECT id FROM meeting WHERE {expired})");
         self.conn.execute(
             &format!("DELETE FROM items WHERE kind = 'transcript' AND thread_id IN {expired_ids}"),
             params![cutoff_unix_ms],
@@ -6608,13 +7085,18 @@ impl Store {
             &format!("DELETE FROM meeting_part WHERE meeting_id IN {expired_ids}"),
             params![cutoff_unix_ms],
         )?;
+        // Marks taken while recording go with the meeting (device-local, see `meeting_marker`).
+        self.conn.execute(
+            &format!("DELETE FROM meeting_marker WHERE meeting_id IN {expired_ids}"),
+            params![cutoff_unix_ms],
+        )?;
         // No tombstone follows a retention delete: nothing will delete these server rows.
         self.conn.execute(
             &format!("DELETE FROM pushed_meeting_row WHERE meeting_id IN {expired_ids}"),
             params![cutoff_unix_ms],
         )?;
         let meetings_deleted = self.conn.execute(
-            &format!("DELETE FROM meeting WHERE {EXPIRED_MEETINGS}"),
+            &format!("DELETE FROM meeting WHERE {expired}"),
             params![cutoff_unix_ms],
         )?;
         Ok((meetings_deleted, deleted_files))
@@ -6632,7 +7114,7 @@ impl Store {
 
     /// Every file path of meeting `id` (all parts, plus `snapshots_dir` unless kept), for
     /// the caller to remove after the row is gone.
-    fn meeting_deleted_files(
+    pub(crate) fn meeting_deleted_files(
         &self,
         id: i64,
         audio_path: Option<String>,
@@ -6673,7 +7155,7 @@ impl Store {
         };
         let mut audio_paths = Vec::new();
         let mut transcript_paths = Vec::new();
-        let mut push = |v: &mut Vec<String>, p: Option<String>| {
+        let push = |v: &mut Vec<String>, p: Option<String>| {
             if let Some(p) = p {
                 if !v.contains(&p) {
                     v.push(p);
@@ -6758,6 +7240,7 @@ impl Store {
             params![id],
         )?;
         tx.execute("DELETE FROM live_alert WHERE meeting_id = ?1", params![id])?;
+        tx.execute("DELETE FROM meeting_marker WHERE meeting_id = ?1", params![id])?;
         tx.execute(
             "DELETE FROM meeting_speaker WHERE meeting_id = ?1",
             params![id],
@@ -6986,10 +7469,15 @@ impl Store {
         model: Option<&str>,
         now_unix_ms: i64,
     ) -> rusqlite::Result<()> {
+        // An answer made on this computer from an excluded client's material is stored as such,
+        // so it never rides to a hosted model as history or a title's input (X6).
+        let local_only = self.is_local_only_text(answer)?;
+        // A conversation deleted while its answer streamed (a client delete took it) stays gone: the exchange
+        // is dropped, not stored against a missing conversation.
         self.conn.execute(
-            "INSERT INTO conversation_exchange (conversation_id, query, answer, citations_json, model, created_at_unix_ms) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![conversation_id, query, answer, citations_json, model, now_unix_ms],
+            "INSERT INTO conversation_exchange (conversation_id, query, answer, citations_json, model, created_at_unix_ms, local_only) \
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE EXISTS (SELECT 1 FROM conversation WHERE id = ?1)",
+            params![conversation_id, query, answer, citations_json, model, now_unix_ms, local_only],
         )?;
         self.conn.execute(
             "UPDATE conversation SET updated_at_unix_ms = ?1 WHERE id = ?2",
@@ -7095,6 +7583,12 @@ impl Store {
     /// row existed and was deleted, `Ok(false)` otherwise (already deleted, bad id) —
     /// not an error, matching `delete_meeting`'s convention.
     pub fn delete_conversation(&self, id: i64) -> rusqlite::Result<bool> {
+        // Its answers' clean stamps and the word fingerprints they own go too (X6 fix round 5, N1).
+        topics::exclusion::drop_conversation_stamps_tx(
+            &self.conn,
+            "SELECT answer FROM conversation_exchange WHERE conversation_id = ?1",
+            params![id],
+        )?;
         self.conn.execute(
             "DELETE FROM conversation_exchange WHERE conversation_id = ?1",
             params![id],
@@ -7109,6 +7603,14 @@ impl Store {
     /// WHERE clause entirely, regardless of age (mirrors `delete_meetings_before`'s
     /// `status != 'recording'` guard: a structural exemption, not a second pass).
     pub fn delete_conversations_before(&self, cutoff_unix_ms: i64) -> rusqlite::Result<usize> {
+        topics::exclusion::drop_conversation_stamps_tx(
+            &self.conn,
+            &format!(
+                "SELECT answer FROM conversation_exchange WHERE conversation_id IN \
+                 (SELECT id FROM conversation WHERE {EXPIRED_CONVERSATIONS})"
+            ),
+            params![cutoff_unix_ms],
+        )?;
         self.conn.execute(
             &format!(
                 "DELETE FROM conversation_exchange WHERE conversation_id IN \
@@ -7135,12 +7637,96 @@ impl Store {
     /// The database file's pages: how big it is and how much of it is free (left by deletes,
     /// reused before the file grows). `compact` gives the free part back to the disk.
     pub fn db_space(&self) -> rusqlite::Result<DbSpace> {
-        let pragma = |name: &str| self.conn.query_row(&format!("PRAGMA {name}"), [], |r| r.get::<_, i64>(0));
+        let pragma = |name: &str| self.pragma_i64(name);
         Ok(DbSpace {
             page_size: pragma("page_size")?,
             page_count: pragma("page_count")?,
             freelist_count: pragma("freelist_count")?,
         })
+    }
+
+    /// An integer pragma. On a keyed connection SQLCipher answers `PRAGMA page_size` itself,
+    /// as text (column `cipher_page_size`), so text holding a number is accepted too.
+    fn pragma_i64(&self, name: &str) -> rusqlite::Result<i64> {
+        let v: rusqlite::types::Value = self.conn.query_row(&format!("PRAGMA {name}"), [], |r| r.get(0))?;
+        match v {
+            rusqlite::types::Value::Integer(n) => Ok(n),
+            rusqlite::types::Value::Text(s) => s
+                .trim()
+                .parse()
+                .map_err(|_| rusqlite::Error::InvalidColumnType(0, name.into(), rusqlite::types::Type::Text)),
+            _ => Err(rusqlite::Error::InvalidColumnType(0, name.into(), rusqlite::types::Type::Null)),
+        }
+    }
+
+    /// Read-only facts for the local speed check (`api::speed_check`): page size, the
+    /// connection's cache in KiB, whether the file is encrypted (its first 16 bytes are not
+    /// the plain header) and the file's bytes plus its WAL. No path or content leaves here.
+    pub fn speed_profile(&self) -> rusqlite::Result<StoreProfile> {
+        let pragma = |name: &str| self.pragma_i64(name);
+        let page_size = pragma("page_size")?;
+        let cache_size = pragma("cache_size")?;
+        // Negative: KiB; positive: pages.
+        let cache_kib = if cache_size < 0 { -cache_size } else { cache_size.saturating_mul(page_size) / 1024 };
+        let path = self.conn.path().filter(|p| !p.is_empty()).map(std::path::PathBuf::from);
+        let (encrypted, file_bytes) = match &path {
+            Some(p) => {
+                let encrypted = matches!(db_file_state(p), Ok(DbFileState::NotPlain));
+                let mut wal = p.as_os_str().to_owned();
+                wal.push("-wal");
+                let len = |q: &Path| std::fs::metadata(q).map(|m| m.len()).unwrap_or(0);
+                (encrypted, len(p) + len(Path::new(&wal)))
+            }
+            None => (false, 0),
+        };
+        Ok(StoreProfile { page_size, cache_kib, encrypted, file_bytes })
+    }
+
+    /// Up to `max` distinct words (letters and digits only, 4 to 24 characters) from capture
+    /// titles and text spread across the whole history, for timing searches on the user's own
+    /// data. Read-only; the caller must never store or report them.
+    pub fn sample_search_terms(&self, max: usize) -> rusqlite::Result<Vec<String>> {
+        if max == 0 {
+            return Ok(Vec::new());
+        }
+        let (count, lo, hi): (i64, i64, i64) = self.conn.query_row(
+            "SELECT COUNT(*), COALESCE(MIN(id), 0), COALESCE(MAX(id), 0) FROM items WHERE kind = 'capture'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        // Probe ids spread evenly from the oldest to the newest capture.
+        let probes = (max as i64).clamp(1, 256);
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(title, ''), COALESCE(body_text, '') FROM items \
+             WHERE kind = 'capture' AND id >= ?1 ORDER BY id LIMIT 1",
+        )?;
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for i in 0..probes {
+            let at = lo + (hi - lo) * i / probes.max(1);
+            let row: Option<(String, String)> =
+                stmt.query_row(params![at], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+            let Some((title, body)) = row else { continue };
+            let mut from_row = 0;
+            for word in title.split(|c: char| !c.is_alphanumeric()).chain(body.split(|c: char| !c.is_alphanumeric())) {
+                let n = word.chars().count();
+                // A few words per row, so the sample spans the history rather than one note.
+                if from_row >= 8 {
+                    break;
+                }
+                if (4..=24).contains(&n) && seen.insert(word.to_lowercase()) {
+                    from_row += 1;
+                    out.push(word.to_lowercase());
+                    if out.len() >= max {
+                        return Ok(out);
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Rewrites the database without its free pages (`VACUUM`), checkpointing the WAL before and
@@ -7167,16 +7753,35 @@ impl Store {
         policy: &RetentionPolicy,
         now_unix_ms: i64,
     ) -> rusqlite::Result<RetentionResult> {
+        self.apply_retention_with(policy, now_unix_ms, || {})
+    }
+
+    /// [`Self::apply_retention`] with what runs between the capture and the meeting phase (a test
+    /// writes on another connection there).
+    pub(crate) fn apply_retention_with(
+        &self,
+        policy: &RetentionPolicy,
+        now_unix_ms: i64,
+        mut after_captures: impl FnMut(),
+    ) -> rusqlite::Result<RetentionResult> {
+        // A client with its own keep-for-N-months period keeps its material out of this sweep (spec 5: the
+        // client's period overrides global retention for the client's material). Unreadable: nothing runs.
+        // The capture sweep runs for minutes on a large store, so neither phase uses this first read:
+        // each reads the kept material as it stands when it deletes (`delete_captures_batched`,
+        // `delete_expired_meetings`).
+        self.client_kept_material()?;
         let capture_items_deleted = match policy.capture_item_days {
-            Some(days) => self.delete_before(now_unix_ms - days_to_ms(days))?,
+            Some(days) => {
+                // Word fingerprints of window text and questions age out with the screen text
+                // (X6 fix round 5, N1); stamps that used them become unclean.
+                self.prune_input_words_before(now_unix_ms - days_to_ms(days))?;
+                self.delete_captures_batched(now_unix_ms - days_to_ms(days), || self.capture_retention_predicates())?
+            }
             None => 0,
         };
+        after_captures();
         let (meetings_deleted, deleted_meeting_files) = match policy.meeting_days {
-            Some(days) => {
-                let cutoff = now_unix_ms - days_to_ms(days);
-                self.stub_topic_sources_for_expired_meetings(cutoff)?;
-                self.delete_meetings_before(cutoff)?
-            }
+            Some(days) => self.delete_expired_meetings(now_unix_ms - days_to_ms(days))?,
             None => (0, Vec::new()),
         };
         let conversations_deleted = match policy.conversation_days {
@@ -7191,19 +7796,41 @@ impl Store {
         })
     }
 
+    /// Retention's meeting phase: stubs the expired meetings' topic sources and deletes them, minus
+    /// what a client keeps, in one write transaction. The kept material is read before the lock
+    /// (it walks every kept client's members) and checked inside it with `PRAGMA data_version`, as
+    /// in [`Self::delete_captures_batched`]: if another connection committed after the read, it is
+    /// read again under the lock, so a meeting kept meanwhile is never deleted (#850 review
+    /// round 1, Important 2).
+    fn delete_expired_meetings(&self, cutoff: i64) -> rusqlite::Result<(usize, Vec<DeletedMeetingFiles>)> {
+        let version = self.data_version()?;
+        let read = self.client_kept_material()?.predicates().meetings;
+        self.with_write_tx(|| {
+            let fresh;
+            let expired = if self.data_version()? == version {
+                &read
+            } else {
+                fresh = self.client_kept_material()?.predicates().meetings;
+                &fresh
+            };
+            self.stub_topic_sources_for_expired_meetings(cutoff, expired)?;
+            self.delete_meetings_matching(expired, cutoff)
+        })
+    }
+
     /// Retention deletes meetings and their snapshot items (capture items and episodes are not
     /// topic sources, and retention does not touch episodes). Stub exactly those topic sources
     /// first so memberships survive; the delete triggers then find no `ref_id` to match.
-    fn stub_topic_sources_for_expired_meetings(&self, cutoff: i64) -> rusqlite::Result<()> {
+    fn stub_topic_sources_for_expired_meetings(&self, cutoff: i64, expired: &str) -> rusqlite::Result<()> {
         let ids = |sql: String| -> rusqlite::Result<Vec<i64>> {
             self.conn
                 .prepare(&sql)?
                 .query_map(params![cutoff], |r| r.get(0))?
                 .collect()
         };
-        let meetings = ids(format!("SELECT id FROM meeting WHERE {EXPIRED_MEETINGS}"))?;
+        let meetings = ids(format!("SELECT id FROM meeting WHERE {expired}"))?;
         let snapshots = ids(format!(
-            "SELECT id FROM items WHERE kind = 'snapshot' AND thread_id IN (SELECT id FROM meeting WHERE {EXPIRED_MEETINGS})"
+            "SELECT id FROM items WHERE kind = 'snapshot' AND thread_id IN (SELECT id FROM meeting WHERE {expired})"
         ))?;
         topics::schema::stub_sources_for_retention(&self.conn, "meeting", &meetings)?;
         topics::schema::stub_sources_for_retention(&self.conn, "snapshot", &snapshots)?;
@@ -7227,13 +7854,14 @@ impl Store {
                 |row| row.get::<_, i64>(0).map(|n| n as usize),
             )
         };
+        let preds = self.client_kept_material()?.predicates();
         Ok(RetentionCounts {
             capture_items: count(
                 "capture_item",
-                EXPIRED_CAPTURE_ITEMS,
+                &preds.capture_item,
                 policy.capture_item_days,
             )?,
-            meetings: count("meeting", EXPIRED_MEETINGS, policy.meeting_days)?,
+            meetings: count("meeting", &preds.meetings, policy.meeting_days)?,
             conversations: count(
                 "conversation",
                 EXPIRED_CONVERSATIONS,
@@ -7420,23 +8048,26 @@ impl Store {
     }
 
     pub fn insert_meeting(&self, m: &NewMeeting) -> rusqlite::Result<i64> {
-        let local_seq = self.next_local_seq()?;
-        self.conn.execute(
-            "INSERT INTO meeting (device_id, start_unix_ms, end_unix_ms, title, attendees, trigger, audio_path, status, local_seq) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                m.device_id,
-                m.start_unix_ms,
-                m.end_unix_ms,
-                m.title,
-                serde_json::to_string(&m.attendees).unwrap_or_else(|_| "[]".to_string()),
-                m.trigger.as_str(),
-                m.audio_path,
-                m.status.as_str(),
-                local_seq,
-            ],
-        )?;
-        let id = self.conn.last_insert_rowid();
+        // One transaction, so the row commits in `local_seq` order (see `with_write_tx`).
+        let id = self.with_write_tx(|| {
+            let local_seq = self.next_local_seq()?;
+            self.conn.execute(
+                "INSERT INTO meeting (device_id, start_unix_ms, end_unix_ms, title, attendees, trigger, audio_path, status, local_seq) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    m.device_id,
+                    m.start_unix_ms,
+                    m.end_unix_ms,
+                    m.title,
+                    serde_json::to_string(&m.attendees).unwrap_or_else(|_| "[]".to_string()),
+                    m.trigger.as_str(),
+                    m.audio_path,
+                    m.status.as_str(),
+                    local_seq,
+                ],
+            )?;
+            Ok(self.conn.last_insert_rowid())
+        })?;
         self.stamp_meeting_calendar_source(id, m);
         Ok(id)
     }
@@ -8449,6 +9080,11 @@ impl Store {
         )?;
         tx.execute(
             "UPDATE live_alert SET meeting_id = ?1 WHERE meeting_id = ?2",
+            params![keep, drop],
+        )?;
+        // Same recording, same clock: marks keep their time.
+        tx.execute(
+            "UPDATE meeting_marker SET meeting_id = ?1 WHERE meeting_id = ?2",
             params![keep, drop],
         )?;
         // A speaker id the kept copy already has stays the kept copy's.
@@ -11054,6 +11690,39 @@ mod tests {
         assert!(out.get("keep_media").is_none(), "None is not serialized");
     }
 
+    #[test]
+    fn the_local_seq_floor_only_ever_raises_the_counter() {
+        let store = Store::open_in_memory().unwrap();
+        store.raise_local_seq_floor(40).unwrap();
+        assert_eq!(store.next_local_seq().unwrap(), 40);
+        store.raise_local_seq_floor(10).unwrap();
+        assert_eq!(store.next_local_seq().unwrap(), 41, "a lower floor changes nothing");
+    }
+
+    #[test]
+    fn the_routine_run_id_floor_only_ever_raises_the_next_id() {
+        let store = Store::open_in_memory().unwrap();
+        store.seed_builtin_routines().unwrap();
+        let routine_id = store.list_routines().unwrap()[0].id;
+        let run = || {
+            store
+                .insert_routine_run(&NewRoutineRun {
+                    routine_id,
+                    ran_at_unix_ms: 1,
+                    status: RunStatus::Success,
+                    output_summary: "s".into(),
+                    output_json: "{}".into(),
+                })
+                .unwrap()
+        };
+        store.raise_routine_run_id_floor(500).unwrap();
+        assert_eq!(run(), 500, "no run yet: the floor is the first id");
+        store.raise_routine_run_id_floor(900).unwrap();
+        assert_eq!(run(), 900);
+        store.raise_routine_run_id_floor(10).unwrap();
+        assert_eq!(run(), 901, "a lower floor changes nothing");
+    }
+
     /// SYNC-001/002 shape at the Store level: if the underlying transaction can't
     /// commit (simulated here by failing the outbox insert via a duplicate local_seq),
     /// neither the meeting mutation nor the outbox row survives.
@@ -11854,6 +12523,98 @@ mod tests {
         assert_eq!(store.insert_capture_record(&[]).unwrap(), Some(Vec::new()));
     }
 
+    fn record_chunks(ts: i64, hash: i64, texts: &[&str]) -> Vec<NewCaptureItem> {
+        texts
+            .iter()
+            .map(|t| NewCaptureItem {
+                device_id: "device-a".into(),
+                ts_unix_ms: ts,
+                app_bundle_id: "com.app.rec".into(),
+                window_title: "W".into(),
+                url: None,
+                text: (*t).into(),
+                hash,
+                source: "ax".into(),
+            })
+            .collect()
+    }
+
+    const FAIL_ON_POISON: &str = "CREATE TRIGGER poison BEFORE INSERT ON capture_item \
+        WHEN NEW.text LIKE '%poison%' BEGIN SELECT RAISE(ABORT, 'poisoned'); END";
+
+    #[test]
+    fn a_record_whose_second_chunk_fails_leaves_no_rows_and_replays_whole() {
+        let store = Store::open_in_memory().unwrap();
+        let record = record_chunks(1_000, 7, &["first chunk", "second chunk poison", "third chunk"]);
+        store.conn.execute_batch(FAIL_ON_POISON).unwrap();
+        assert!(store.insert_capture_record(&record).is_err());
+        assert_eq!(store.recent(10).unwrap().len(), 0, "no partial record is left behind");
+
+        store.conn.execute_batch("DROP TRIGGER poison").unwrap();
+        let ids = store.insert_capture_record(&record).unwrap().expect("replay stores it");
+        assert_eq!(ids.len(), 3);
+        assert_eq!(store.recent(10).unwrap().len(), 3);
+        assert_eq!(store.insert_capture_record(&record).unwrap(), None, "and a second replay adds nothing");
+    }
+
+    #[test]
+    fn an_already_stored_record_is_skipped_even_when_not_the_latest() {
+        let store = Store::open_in_memory().unwrap();
+        let a = record_chunks(1_000, 1, &["record a"]);
+        let b = record_chunks(2_000, 2, &["record b"]);
+        let c = record_chunks(3_000, 3, &["record c"]);
+        for r in [&a, &b, &c] {
+            assert!(store.insert_capture_record(r).unwrap().is_some());
+        }
+        assert_eq!(store.insert_capture_record(&a).unwrap(), None, "a replayed older record is not duplicated");
+        assert_eq!(store.recent(10).unwrap().len(), 3);
+        assert!(store.capture_record_exists("com.app.rec", 1, 1_000).unwrap());
+        assert!(!store.capture_record_exists("com.app.rec", 1, 1_001).unwrap());
+    }
+
+    #[test]
+    fn a_replay_repeats_the_first_passes_consecutive_dedupe_decisions() {
+        let store = Store::open_in_memory().unwrap();
+        let a = record_chunks(1_000, 1, &["page text"]);
+        let a2 = record_chunks(2_000, 1, &["page text, clock ticked"]);
+        let b = record_chunks(3_000, 2, &["another page"]);
+        let pass = |s: &Store| [&a, &a2, &b].map(|r| s.insert_capture_record(r).unwrap().is_some());
+        assert_eq!(pass(&store), [true, false, true]);
+        assert_eq!(store.recent(10).unwrap().len(), 2);
+        assert_eq!(pass(&store), [false, false, false], "the replay adds nothing");
+        assert_eq!(store.recent(10).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn capture_record_queries_use_the_app_ts_index() {
+        let store = Store::open_in_memory().unwrap();
+        for sql in [
+            "SELECT EXISTS(SELECT 1 FROM capture_item WHERE app_bundle_id = ?1 AND ts_unix_ms = ?2 AND hash = ?3)",
+            "SELECT hash FROM capture_item WHERE app_bundle_id = ?1 AND ts_unix_ms <= ?2 ORDER BY ts_unix_ms DESC, id DESC LIMIT 1",
+        ] {
+            let mut stmt = store.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            let n = stmt.parameter_count();
+            let plan = stmt
+                .query_map(rusqlite::params_from_iter((0..n).map(|i| i as i64)), |r| r.get::<_, String>(3))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(plan.contains("idx_capture_item_app_ts"), "{sql}: {plan}");
+            assert!(!plan.contains("TEMP B-TREE") && !plan.contains("SCAN capture_item"), "{sql}: {plan}");
+        }
+    }
+
+    #[test]
+    fn repeated_text_at_a_different_timestamp_is_still_stored() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.insert_capture_record(&record_chunks(1_000, 5, &["same text"])).unwrap().is_some());
+        assert!(store.insert_capture_record(&record_chunks(2_000, 6, &["other text"])).unwrap().is_some());
+        let again = store.insert_capture_record(&record_chunks(3_000, 5, &["same text"])).unwrap();
+        assert!(again.is_some(), "same app+hash at a new time, not consecutive, is a real capture");
+        assert_eq!(store.recent(10).unwrap().len(), 3);
+    }
+
     #[test]
     fn opening_a_store_twice_does_not_error_on_existing_capture_item_source_column() {
         let dir = tempfile::tempdir().unwrap();
@@ -12365,6 +13126,17 @@ mod tests {
         assert_eq!(updated, true);
         let convo = store.get_conversation(id).unwrap().unwrap();
         assert_eq!(convo.title, "LLM Generated Title");
+    }
+
+    #[test]
+    fn an_answer_finishing_after_its_conversation_was_deleted_is_not_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("t.sqlite"), &models_dir_for_tests()).unwrap();
+        let id = store.insert_conversation("q", 1_000).unwrap();
+        assert!(store.delete_conversation(id).unwrap());
+        store.append_conversation_exchange(id, "about Acme", "Acme said", "[]", None, 2_000).unwrap();
+        let n: i64 = store.conn.query_row("SELECT COUNT(*) FROM conversation_exchange", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "no orphan exchange holding the question and answer");
     }
 
     #[test]
@@ -13838,6 +14610,84 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, local_id);
         assert_eq!(results[0].meeting_id, local_meeting_id);
+    }
+
+    /// Each sync round asks for this device's rows past the push cursor. Without an index on
+    /// `(device_id, local_seq)` that is a scan of every capture row (228k on a real 3.4 GB
+    /// store), and it holds the queue the screens read from (0.9.80 device checks).
+    /// The retention sweep and Today's device activity filter captures by time. With only
+    /// `idx_items_kind` both read every capture row (226k on a real store), holding the queue
+    /// the screens read from for many seconds, even when nothing is old enough to delete.
+    /// Every captured line checks the app's last hash. With only `idx_capture_item_app` that sorts
+    /// all of the app's rows (tens of thousands for a browser) per line, holding the screens' queue
+    /// for as long as screen text arrives (0.9.80 device check: Today never loaded during a call).
+    #[test]
+    fn last_capture_hash_reads_one_row_from_an_index() {
+        let store = Store::open_in_memory().unwrap();
+        let mut stmt = store
+            .conn
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT hash FROM capture_item WHERE app_bundle_id = ?1 \
+                 ORDER BY ts_unix_ms DESC, id DESC LIMIT 1",
+            )
+            .unwrap();
+        let plan = stmt
+            .query_map(params!["com.a"], |r| r.get::<_, String>(3))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(plan.contains("idx_capture_item_app_ts"), "{plan}");
+        assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+    }
+
+    #[test]
+    fn capture_time_queries_use_the_kind_ts_index() {
+        let store = Store::open_in_memory().unwrap();
+        let plan = |sql: &str| -> String {
+            let mut stmt = store.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            stmt.query_map(params![0, 1], |r| r.get::<_, String>(3))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let sweep = plan(&format!("DELETE FROM items WHERE kind = 'capture' AND {EXPIRED_CAPTURE_ITEMS} AND ?2 = ?2"));
+        assert!(sweep.contains("idx_items_kind_ts"), "{sweep}");
+        let activity = plan(
+            "SELECT device_id, COUNT(*), MAX(ts_unix_ms) FROM items \
+             WHERE kind = 'capture' AND ts_unix_ms >= ?1 AND ts_unix_ms < ?2 \
+             GROUP BY device_id ORDER BY COUNT(*) DESC, device_id ASC",
+        );
+        assert!(activity.contains("COVERING INDEX idx_items_kind_ts"), "{activity}");
+    }
+
+    #[test]
+    fn unpushed_queries_use_the_device_seq_indexes() {
+        let store = Store::open_in_memory().unwrap();
+        let plan = |sql: &str| -> String {
+            let mut stmt = store.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            stmt.query_map(params!["d", 0], |r| r.get::<_, String>(3))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let items = plan(
+            "SELECT local_seq FROM items WHERE device_id = ?1 AND local_seq IS NOT NULL AND local_seq > ?2 \
+             AND kind IN ('capture', 'calendar_event')",
+        );
+        assert!(items.contains("idx_items_device_seq"), "{items}");
+        let transcripts = plan(
+            "SELECT items.local_seq FROM items JOIN meeting ON meeting.id = items.thread_id \
+             WHERE items.device_id = ?1 AND items.local_seq IS NOT NULL AND items.local_seq > ?2 \
+             AND items.kind = 'transcript' AND meeting.status IN ('completed', 'cancelled')",
+        );
+        assert!(transcripts.contains("idx_items_device_seq") || transcripts.contains("idx_items_thread"), "{transcripts}");
+        let captures = plan(
+            "SELECT local_seq FROM capture_item WHERE device_id = ?1 AND local_seq IS NOT NULL AND local_seq > ?2",
+        );
+        assert!(captures.contains("idx_capture_item_device_seq"), "{captures}");
     }
 
     #[test]
@@ -19096,12 +19946,12 @@ mod tests {
         ).unwrap();
         store.conn.execute(
             "INSERT INTO items (device_id, kind, ts_unix_ms, app_bundle_id, title, body_text, local_seq) \
-             VALUES ('dev-1', 'capture', 60_000, NULL, NULL, 'text', 0)",
+             VALUES ('dev-1', 'capture', 60000, NULL, NULL, 'text', 0)",
             [],
         ).unwrap();
         store.conn.execute(
             "INSERT INTO items (device_id, kind, ts_unix_ms, app_bundle_id, title, body_text, local_seq) \
-             VALUES ('dev-1', 'capture', 120_000, 'com.app.b', 'Window B', 'text', 0)",
+             VALUES ('dev-1', 'capture', 120000, 'com.app.b', 'Window B', 'text', 0)",
             [],
         ).unwrap();
 
@@ -19337,7 +20187,7 @@ mod tests {
         store
             .conn
             .execute(
-                "UPDATE jobs SET not_before = 999_999_999 WHERE job_type = 'episode_summarize'",
+                "UPDATE jobs SET not_before = 999999999 WHERE job_type = 'episode_summarize'",
                 [],
             )
             .unwrap();
@@ -19490,12 +20340,12 @@ mod tests {
         ).unwrap();
         store.conn.execute(
             "INSERT INTO items (device_id, kind, ts_unix_ms, app_bundle_id, title, body_text, local_seq) \
-             VALUES ('dev-1', 'capture', 60_000, NULL, NULL, 'text', 0)",
+             VALUES ('dev-1', 'capture', 60000, NULL, NULL, 'text', 0)",
             [],
         ).unwrap();
         store.conn.execute(
             "INSERT INTO items (device_id, kind, ts_unix_ms, app_bundle_id, title, body_text, local_seq) \
-             VALUES ('dev-1', 'capture', 120_000, 'com.app.b', 'Window B', 'text', 0)",
+             VALUES ('dev-1', 'capture', 120000, 'com.app.b', 'Window B', 'text', 0)",
             [],
         ).unwrap();
         assert!(store

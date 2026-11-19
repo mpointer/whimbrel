@@ -49,6 +49,16 @@
   }
   var platform = detectPlatform();
 
+  // Windows on Arm: a download link sends an unregistered visitor to the form with
+  // ?arch=arm64. Remember it for this tab, so the thank-you page starts the Arm installer.
+  var ARCH_KEY = "whimbrel-arch";
+  if (params.get("arch") === "arm64") {
+    try { sessionStorage.setItem(ARCH_KEY, "arm64"); } catch (e) {}
+  }
+  function wantsArm() {
+    try { return sessionStorage.getItem(ARCH_KEY) === "arm64"; } catch (e) { return false; }
+  }
+
   // Put the visitor's own platform first wherever both are offered.
   if (platform === "windows") {
     document.querySelectorAll(".cta-actions, .hero-actions, .download-buttons").forEach(function (group) {
@@ -62,15 +72,19 @@
     });
   }
 
-  // Current version labels.
+  // Current version labels, and the Windows on Arm choices once a release carries one.
   var versionEls = document.querySelectorAll("[data-version]");
-  if (versionEls.length) {
+  if (versionEls.length || document.querySelector("[data-arm-download]")) {
     fetch("/api/releases").then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
       if (!data) return;
       versionEls.forEach(function (el) {
         var rel = data[el.getAttribute("data-version")];
         if (rel && rel.version) el.textContent = "Version " + rel.version;
       });
+      // The Windows on Arm link stays hidden until a release carries an arm64 installer.
+      if (data.windows_arm && data.windows_arm.version) {
+        document.querySelectorAll("[data-arm-download]").forEach(function (el) { el.hidden = false; });
+      }
     }).catch(function () {});
   }
 
@@ -80,7 +94,8 @@
     document.querySelectorAll("[data-platform-name]").forEach(function (el) {
       el.textContent = platform === "mac" ? "Mac" : "Windows";
     });
-    setTimeout(function () { location.href = "/api/download/" + platform; }, 900);
+    var target = platform === "windows" && wantsArm() ? "windows-arm" : platform;
+    setTimeout(function () { location.href = "/api/download/" + target; }, 900);
   }
 
   // The form's messages on the translated sites (site/pages/es, site/pages/fr).
@@ -154,7 +169,9 @@
   });
 
   if (platform) {
-    var radio = form.querySelector('input[name="platform"][value="' + platform + '"], input[name="computer"][value="' + platform + '"]');
+    // Arriving from a Windows on Arm link (?arch=arm64) picks that choice.
+    var choice = platform === "windows" && wantsArm() ? "windows-arm" : platform;
+    var radio = form.querySelector('input[name="platform"][value="' + choice + '"], input[name="computer"][value="' + platform + '"]');
     if (radio) radio.checked = true;
   }
 
@@ -195,7 +212,7 @@
     var errors = {};
     if (!String(data.name || "").trim()) errors.name = text("Enter your name.");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(data.email || "").trim())) errors.email = text("Enter a valid email address.");
-    if (form.elements.namedItem("platform") && data.platform !== "mac" && data.platform !== "windows") errors.platform = text("Choose Mac or Windows.");
+    if (form.elements.namedItem("platform") && data.platform !== "mac" && data.platform !== "windows" && data.platform !== "windows-arm") errors.platform = text("Choose Mac or Windows.");
     if (form.elements.namedItem("phones") && !/^(iphone|android|both)$/.test(data.phones || "")) errors.phones = text("Choose iPhone, Android or both.");
     if (form.elements.namedItem("computer") && !/^(mac|windows|none)$/.test(data.computer || "")) errors.computer = text("Choose Mac, Windows or none.");
     return errors;

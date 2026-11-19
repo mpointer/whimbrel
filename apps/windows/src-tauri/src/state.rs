@@ -24,6 +24,7 @@ use crate::store_actor::StoreHandle;
 use crate::syncing::config::SyncConfig;
 use crate::syncing::controller::SyncController;
 use crate::l10n::tr;
+pub use crate::launch::app::McpGate;
 
 pub struct AppState {
     pub paths: Paths,
@@ -41,6 +42,17 @@ pub struct AppState {
     /// summaries), so their Ollama calls queue neither clicks nor asks. `None` if it didn't
     /// open, in which case the loops use the main store as before.
     pub bg_store: Option<StoreHandle>,
+    /// The I/O lane (issue 850): a connection for the work that writes in the background on a
+    /// schedule (content and settings sync rounds, capture ingest, the retention sweep and its
+    /// compact), so a sync round of several seconds no longer queues every screen. `None` if it
+    /// didn't open, in which case that work shares the main store as before.
+    pub io_store: Option<StoreHandle>,
+    /// The launch's MCP gate (X4): the sidecar starts only if the plan reached
+    /// `StartMcpServer`, and only with the key the launch handed over.
+    pub mcp_gate: McpGate,
+    /// The launch went on without the memory database (brief 2.12): no recording, no capture,
+    /// no sync, no MCP server.
+    pub no_store: bool,
     pub identity: Option<DeviceIdentity>,
     /// Ambient capture; `None` until [`start_capture`](Self::start_capture), or if it
     /// could not start.
@@ -70,11 +82,18 @@ pub struct AppState {
     pub startup_errors: Vec<String>,
 }
 
+/// What the launch (`crate::launch`) hands `AppState`: the main store it opened (`None` when
+/// the user went on without it) and the MCP gate.
+pub struct Launched {
+    pub store: Option<StoreHandle>,
+    pub mcp_gate: McpGate,
+}
+
 impl AppState {
-    /// Loads the device identity, opens the store, and tells the store its own device
-    /// id before anything else can touch it (until then the sync outbox enqueues
-    /// nothing).
-    pub fn start(paths: Paths, secrets: Arc<dyn SecretStore>) -> Self {
+    /// Loads the device identity and tells the store the launch opened its own device id
+    /// before anything else can touch it (until then the sync outbox enqueues nothing). The
+    /// store is the launch's; `settings` is the launch's handle on THE settings file.
+    pub fn start(paths: Paths, secrets: Arc<dyn SecretStore>, settings: Arc<Mutex<SettingsFile>>, launched: Launched) -> Self {
         let mut startup_errors = Vec::new();
 
         let identity = match DeviceIdentity::load_or_create(&*secrets) {
@@ -89,14 +108,12 @@ impl AppState {
             }
         };
 
-        let store = match StoreHandle::open(paths.db.clone(), paths.minilm.clone()) {
-            Ok(store) => Some(store),
-            Err(e) => {
-                tracing::error!(error = %e, "store did not open");
-                startup_errors.push(format!("Database: {e}"));
-                None
-            }
-        };
+        // X4: the launch decided and opened (or the user went on without the database).
+        let Launched { store, mcp_gate } = launched;
+        let no_store = store.is_none();
+        if no_store {
+            startup_errors.push("Database: the memory database could not be opened".into());
+        }
 
         if let Some(store) = &store {
             if let Err(e) = reroot_stored_paths(store, &paths) {
@@ -122,11 +139,18 @@ impl AppState {
                 None
             }
         });
+        let io_store = store.as_ref().and_then(|primary| match StoreHandle::open_lane(paths.db.clone(), primary, "whimbrel-store-io") {
+            Ok(io) => Some(io),
+            Err(e) => {
+                tracing::warn!(error = %e, "I/O-lane store did not open; sync, capture and retention share the main store");
+                None
+            }
+        });
 
         if let Some(identity) = &identity {
             // Every connection: the other lanes' summary and title writes enqueue sync
             // outbox rows only once they know their own device id.
-            for handle in store.iter().chain(slow_store.iter()).chain(bg_store.iter()) {
+            for handle in store.iter().chain(slow_store.iter()).chain(bg_store.iter()).chain(io_store.iter()) {
                 let device_id = identity.device_id.clone();
                 if let Err(e) = handle.call_blocking(move |s| s.set_own_device_id(&device_id)) {
                     startup_errors.push(format!("Database: {e}"));
@@ -134,15 +158,16 @@ impl AppState {
             }
         }
 
-        let mut loaded = SettingsFile::load(&paths.settings);
-        // Better transcripts (W-1.2): before the launch download can fetch anything, a small model
-        // on disk marks an existing install, which keeps Fast until it accepts the offer.
-        if loaded.migrate_transcription_quality(paths.whisper_model().is_file()) {
-            if let Err(e) = loaded.save() {
-                tracing::warn!(error = %e, "could not save the transcription quality");
+        {
+            let mut loaded = settings.lock().unwrap_or_else(|p| p.into_inner());
+            // Better transcripts (W-1.2): before the launch download can fetch anything, a small model
+            // on disk marks an existing install, which keeps Fast until it accepts the offer.
+            if loaded.migrate_transcription_quality(paths.whisper_model().is_file()) {
+                if let Err(e) = loaded.save() {
+                    tracing::warn!(error = %e, "could not save the transcription quality");
+                }
             }
         }
-        let settings = Arc::new(Mutex::new(loaded));
         // Off the launch path: the sweep for a helper a crash left behind runs a process.
         let local_paths = paths.clone();
         std::thread::spawn(move || crate::local_model::configure(&local_paths));
@@ -228,6 +253,7 @@ impl AppState {
             store,
             slow_store,
             bg_store,
+            io_store,
             identity,
             capture: None,
             sync: None,
@@ -241,6 +267,8 @@ impl AppState {
             retention: None,
             mcp_server: None,
             startup_errors,
+            mcp_gate,
+            no_store,
         }
     }
 
@@ -248,7 +276,9 @@ impl AppState {
     /// silent resume and upkeep. A missing `Secrets.toml` still builds a controller,
     /// which reports "not configured" to Settings.
     pub fn start_sync(&mut self) {
-        if self.identity.is_none() {
+        // Without the memory database nothing is pulled, applied or acknowledged (brief 2.12):
+        // neither content nor settings sync starts.
+        if self.identity.is_none() || self.store.is_none() {
             return;
         }
         // The controller keeps its own copy of the identity: the same stored secret
@@ -261,8 +291,16 @@ impl AppState {
             }
         };
         let controller = SyncController::new(SyncConfig::embedded(), self.secrets.clone(), identity, self.device_names.clone());
+        if let Some(store) = self.io_lane() {
+            // A deleted sync account: a later account gets everything again (Mac: `resetPushCursor`).
+            let store = store.clone();
+            controller.set_cursor_reset(Box::new(move || {
+                matches!(store.call_blocking(|s| s.set_sync_push_cursor(0).map_err(|e| e.to_string())), Ok(Ok(())))
+            }));
+        }
         controller.start();
-        if let Some(store) = &self.store {
+        // The I/O lane: a round holds its connection for seconds (the push lookup, the pull's apply).
+        if let Some(store) = self.io_lane() {
             let device_id = controller.identity().device_id.clone();
             crate::syncing::content::start(
                 controller.clone(),
@@ -321,6 +359,11 @@ impl AppState {
     /// is open (the sidecar must never be the first to create the database) and after
     /// everything else has started, so a slow start never delays the rest.
     pub fn start_mcp_server(&mut self) {
+        // Only when the launch's plan reached `StartMcpServer` (never without a store).
+        if !self.mcp_gate.allowed || self.store.is_none() {
+            tracing::info!("the MCP server stays off: the launch did not allow it");
+            return;
+        }
         match crate::mcp_server::RealSpawner::new() {
             Ok(spawner) => self.mcp_server = Some(Arc::new(crate::mcp_server::McpServer::new(Box::new(spawner)))),
             Err(e) => {
@@ -378,7 +421,8 @@ impl AppState {
     /// Starts the daily retention sweep. Kept out of `start` so tests never delete
     /// anything on the machine running them.
     pub fn start_retention(&mut self) {
-        if let Some(store) = &self.store {
+        // The I/O lane: the sweep, the orphan scan and the compact each hold the store for a while.
+        if let Some(store) = self.io_lane() {
             self.retention = Some(crate::retention::start(
                 store.clone(),
                 self.settings.clone(),
@@ -415,8 +459,9 @@ impl AppState {
             crate::topics::start_naming(self.own_lane("whimbrel-store-topic-names", &slow), self.settings.clone(), self.secrets.clone());
             let own_device_id = self.identity.as_ref().map(|i| i.device_id.clone());
             crate::jobs::start_profile_suggestions(self.own_lane("whimbrel-store-profile", &slow), self.settings.clone(), self.secrets.clone(), own_device_id, self.approved_devices());
-            // Topic pages for the phone and the Obsidian vault: the slow lane, as on the Mac.
-            crate::topic_vault::start(slow, self.settings.clone(), self.sync.clone());
+            // Topic pages for the phone and the Obsidian vault: a lane of their own, off the slow lane the user's
+            // questions use (PR 874; the Mac moved them to its background model lane).
+            crate::topic_vault::start(self.own_lane("whimbrel-store-topic-vault", bg), self.settings.clone(), self.sync.clone());
         }
     }
 
@@ -432,21 +477,46 @@ impl AppState {
     /// the real desktop). Needs the store and the device identity: a capture row
     /// without the right `device_id` would be misattributed on every peer.
     pub fn start_capture(&mut self) {
-        let (Some(store), Some(identity)) = (&self.store, &self.identity) else {
+        let (Some(store), Some(identity)) = (self.io_lane(), &self.identity) else {
             self.startup_errors.push("Capture: not started because the database or device identity is missing".into());
             return;
         };
-        let (enabled, exclusions) = {
+        let (enabled, stored_resume_at, exclusions) = {
             let settings = self.settings.lock().unwrap();
-            (settings.capture_enabled(), settings.excluded_bundle_ids())
+            (settings.capture_enabled(), settings.capture_resume_at(), settings.excluded_bundle_ids())
         };
-        match crate::capture::service::start(store.clone(), identity.device_id.clone(), enabled, exclusions) {
+        // A timed pause survives a restart: a deadline still ahead keeps capture paused until then, and one that
+        // passed while the app was closed is over (capture starts as the on setting says; the stale key is
+        // cleared here so nothing reads it again).
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+        let resume_at = crate::capture::session_gate::deadline_to_keep(stored_resume_at, now_ms);
+        if stored_resume_at.is_some() && resume_at.is_none() {
+            let mut settings = self.settings.lock().unwrap();
+            settings.set_capture_resume_at(None);
+            if let Err(e) = settings.save() {
+                tracing::warn!(error = %e, "could not clear the ended capture pause");
+            }
+        }
+        // The I/O lane: every captured record is a write, and they arrive while the screens read.
+        match crate::capture::service::start(store.clone(), identity.device_id.clone(), enabled, resume_at, exclusions) {
             Ok(handle) => self.capture = Some(handle),
             Err(e) => {
                 tracing::error!(error = %e, "capture did not start");
                 self.startup_errors.push(format!("Capture: {e}"));
             }
         }
+    }
+
+    /// The connection for scheduled background writes (sync rounds, capture ingest,
+    /// retention): the I/O lane, or the main store if it didn't open. `None` without a store.
+    fn io_lane(&self) -> Option<&StoreHandle> {
+        self.store.as_ref().map(|main| self.io_store.as_ref().unwrap_or(main))
+    }
+
+    /// The I/O lane for a command, for work that must queue the scheduled writes behind it
+    /// rather than make them wait on its lock (a compaction's VACUUM).
+    pub fn io_store(&self) -> Result<&StoreHandle, CommandError> {
+        self.io_lane().ok_or_else(|| CommandError::store(tr("The database is not open; see Settings for the startup error", &[])))
     }
 
     /// The store for calls that hold it across a provider call: the slow lane, or the
@@ -458,7 +528,13 @@ impl AppState {
         }
     }
 
+    /// Every recording start goes through here (the Start buttons, a calendar prompt, a
+    /// detected call's alert, `meeting_record_start_event`, "still here"), so without the
+    /// memory database each one is refused with the same line.
     pub fn meetings(&self) -> Result<&Arc<MeetingController>, CommandError> {
+        if self.no_store {
+            return Err(CommandError::store(tr("Whimbrel can't record meetings because the memory database could not be opened.", &[])));
+        }
         self.meetings.as_ref().ok_or_else(|| CommandError::store(tr("Meetings need the database and device identity; see Settings for the startup error", &[])))
     }
 
@@ -545,18 +621,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(&paths.root);
     }
 
+    fn settings_of(paths: &Paths) -> Arc<Mutex<SettingsFile>> {
+        Arc::new(Mutex::new(SettingsFile::load(&paths.settings)))
+    }
+
+    /// A plain store, opened as the launch's `OpenPlain` does, and the MCP gate it opens.
+    fn launched_plain(paths: &Paths) -> Launched {
+        Launched {
+            store: StoreHandle::open_plain_main(paths.db.clone(), paths.minilm.clone()),
+            mcp_gate: McpGate { allowed: true, key: None },
+        }
+    }
+
     #[test]
     fn starts_with_a_store_and_a_stable_identity() {
         let paths = temp_paths("start");
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
-        let first = AppState::start(paths.clone(), secrets.clone());
+        let first = AppState::start(paths.clone(), secrets.clone(), settings_of(&paths), launched_plain(&paths));
         assert!(first.startup_errors.is_empty(), "{:?}", first.startup_errors);
         assert!(first.store().is_ok());
         assert!(first.slow_store.is_some(), "the slow lane opens alongside the main store");
         let first_id = first.identity.as_ref().unwrap().device_id.clone();
         drop(first);
 
-        let second = AppState::start(paths.clone(), secrets);
+        let second = AppState::start(paths.clone(), secrets, settings_of(&paths), launched_plain(&paths));
         assert_eq!(second.identity.as_ref().unwrap().device_id, first_id);
         drop(second);
         let _ = std::fs::remove_dir_all(&paths.root);
@@ -596,15 +684,39 @@ mod tests {
         assert_eq!(reroot_prefixes(&Paths::under(r"C:\U\AppData\Local\Old")), None);
     }
 
+    /// Brief 2.12: without the memory database, recording is refused by every path (they all
+    /// go through `meetings()`), and sync, capture and the MCP server stay off.
     #[test]
-    fn a_store_that_cannot_open_is_a_startup_error_not_a_crash() {
-        let paths = temp_paths("badstore");
-        // A directory where the database file should be.
-        std::fs::create_dir_all(&paths.db).unwrap();
-        let state = AppState::start(paths.clone(), Arc::new(MemorySecrets::default()));
-        assert!(state.store().is_err());
+    fn without_the_store_recording_sync_capture_and_mcp_stay_off() {
+        let paths = temp_paths("nostore");
+        // The gate as a plan that never opened leaves it (even if it said allowed, no store
+        // means no server).
+        let launched = Launched { store: None, mcp_gate: McpGate { allowed: true, key: None } };
+        let mut state = AppState::start(paths.clone(), Arc::new(MemorySecrets::default()), settings_of(&paths), launched);
+        assert!(state.no_store && state.store().is_err());
         assert!(state.startup_errors.iter().any(|e| e.starts_with("Database:")), "{:?}", state.startup_errors);
         assert!(state.identity.is_some());
+        let refused = state.meetings().err().unwrap().to_string();
+        assert!(refused.contains("can't record meetings because the memory database could not be opened"), "{refused}");
+        state.start_sync();
+        assert!(state.sync.is_none(), "nothing is pulled, applied or acknowledged");
+        state.start_capture();
+        assert!(state.capture.is_none());
+        state.start_mcp_server();
+        assert!(state.mcp_server.is_none());
+        state.start_retention();
+        assert!(state.retention.is_none());
+        let _ = std::fs::remove_dir_all(&paths.root);
+    }
+
+    #[test]
+    fn the_mcp_server_waits_for_the_launchs_gate() {
+        let paths = temp_paths("mcpgate");
+        let launched = Launched { mcp_gate: McpGate::default(), ..launched_plain(&paths) };
+        let mut state = AppState::start(paths.clone(), Arc::new(MemorySecrets::default()), settings_of(&paths), launched);
+        state.start_mcp_server();
+        assert!(state.mcp_server.is_none(), "a plan that never reached StartMcpServer starts nothing");
+        drop(state);
         let _ = std::fs::remove_dir_all(&paths.root);
     }
 }

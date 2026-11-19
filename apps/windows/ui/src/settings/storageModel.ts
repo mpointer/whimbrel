@@ -31,6 +31,7 @@ export function compactLine(result: CompactView): string {
   if (result.ran && result.spacePending) return t("Compacted. The freed space returns to the disk shortly.");
   if (result.ran) return t("Compacted: {before} → {after}.", { before: diskSize(result.fileBytesBefore), after: diskSize(result.fileBytesAfter) });
   if (result.reason === "not_enough_disk") return t("Not enough free disk to compact. Free {need} and try again.", { need: diskSize(result.needBytes ?? 0) });
+  if (result.reason === "recording") return t("Not compacted while a meeting is recording. Try again when it ends.");
   return t("Nothing to compact yet.");
 }
 

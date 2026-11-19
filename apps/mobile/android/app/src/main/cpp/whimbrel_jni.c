@@ -200,7 +200,8 @@ JNIEXPORT jboolean JNICALL JNI(nSyncContentPullOnly)(JNIEnv *env, jobject self, 
     char *a = cstr(env, url), *b = cstr(env, token), *c = cstr(env, key), *d = cstr(env, device);
     bool ok = a && b && c && d && whimbrel_sync_content_pull_only(H(handle), a, b, c, d, (int32_t)days);
     free(a); free(b); free(c); free(d);
-    // The phone keeps no recordings: drain the files of meetings forgotten elsewhere, or the core's list grows.
+    // The phone keeps no recordings or slide images: drain the files of meetings forgotten elsewhere (one at a
+    // time, or in a client delete), or the core's list grows. Other client-delete tombstones remove rows only.
     whimbrel_core_free_string(whimbrel_sync_take_forgotten_meeting_files());
     return ok ? JNI_TRUE : JNI_FALSE;
 }
@@ -213,6 +214,12 @@ JNIEXPORT jboolean JNICALL JNI(nSyncContentMoreToPull)(JNIEnv *env, jobject self
 JNIEXPORT jboolean JNICALL JNI(nSyncContentOlderHistoryLoading)(JNIEnv *env, jobject self, jlong handle) {
     (void)env; (void)self;
     return whimbrel_sync_content_older_history_loading(H(handle)) ? JNI_TRUE : JNI_FALSE;
+}
+
+// {"pending_devices": n | null}: other devices that have not announced client deletes yet (the sync line).
+JNIEXPORT jbyteArray JNICALL JNI(nClientPendingDevicesJson)(JNIEnv *env, jobject self, jlong handle) {
+    (void)self;
+    return take(env, whimbrel_client_pending_devices_json(H(handle)));
 }
 
 JNIEXPORT jbyteArray JNICALL JNI(nSyncContentLastPullStats)(JNIEnv *env, jobject self) {

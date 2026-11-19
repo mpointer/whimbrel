@@ -175,6 +175,11 @@ pub enum ProviderFailureKind {
     /// The provider answered that `model` does not exist (`crate::is_model_not_found`), and
     /// no fallback answered for it either.
     ModelUnavailable { #[serde(serialize_with = "provider_id")] provider: Provider, model: String },
+    /// The exclusion gate held the request back from a hosted model (`crate::guard`). Never
+    /// names the client.
+    ExcludedClient,
+    /// The exclusion setting could not be read, so every hosted request is held back.
+    ExclusionUnreadable,
 }
 
 fn provider_id<S: serde::Serializer>(provider: &Provider, s: S) -> Result<S::Ok, S::Error> {
@@ -202,6 +207,7 @@ impl ProviderFailureKind {
             LlmError::Network(_) => Self::Network { provider },
             LlmError::Http { status, .. } => Self::Other { provider, status: Some(*status) },
             LlmError::Provider(_) | LlmError::NotImplemented(_) => Self::Other { provider, status: None },
+            LlmError::Refused(r) => r.failure_kind(),
         }
     }
 
@@ -231,6 +237,8 @@ impl ProviderFailureKind {
                 "{} doesn't offer the model {model} to your key. Pick another in Settings → AI Providers.",
                 name(provider)
             ),
+            Self::ExcludedClient => crate::guard::REFUSED_MESSAGE.into(),
+            Self::ExclusionUnreadable => crate::guard::UNREADABLE_MESSAGE.into(),
             Self::Network { .. } | Self::Other { .. } => "Every AI provider failed.".into(),
         }
     }
@@ -281,6 +289,9 @@ pub fn take_last_chain_failures() -> Vec<ProviderFailureKind> {
 pub fn falls_through(err: &LlmError) -> bool {
     match err {
         LlmError::Network(_) | LlmError::Provider(_) | LlmError::NotImplemented(_) => true,
+        // Every hosted link shares the gate and refuses without a request; a local link
+        // after it may still answer (spec 7.2: go local, never another hosted model).
+        LlmError::Refused(_) => true,
         LlmError::Http { status, .. } => {
             is_retryable(err)
                 || matches!(status, 401 | 402 | 403 | 404 | 408)

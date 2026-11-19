@@ -69,6 +69,12 @@ class SyncModel(
     /** A new phone pulls newest first (#572): older meetings are still on their way. The sync line says so. */
     val olderHistoryLoading: StateFlow<Boolean> = _olderHistoryLoading.asStateFlow()
 
+    private val _updateNeeded = MutableStateFlow(false)
+
+    /** Another of the user's devices has not announced client deletes yet (the core's count after a good pull;
+     *  unknown shows nothing). The phone never starts a delete; the sync line only says so. */
+    val updateNeeded: StateFlow<Boolean> = _updateNeeded.asStateFlow()
+
     /** Bumped when the store opens, after every successful pull and on reset, so screens reload what they read. */
     val readRevision: StateFlow<Int> = _readRevision.asStateFlow()
 
@@ -146,6 +152,7 @@ class SyncModel(
         moreToPull = false
         _catchingUp.value = false
         _olderHistoryLoading.value = false
+        _updateNeeded.value = false
         _readRevision.value += 1
         scope.launch(storeDispatcher) {
             runCatching { old?.close() }
@@ -223,6 +230,9 @@ class SyncModel(
             val count = onStore { store.groupedMeetingCount() }
             if (pendingReset != null) return
             _meetingCount.value = count ?: _meetingCount.value
+            val toUpdate = onStore { store.devicesStillToUpdate() }
+            if (pendingReset != null) return
+            _updateNeeded.value = (toUpdate ?: 0) > 0
             // Keys and routing for Ask: a network round trip off the store thread. Never fails the round.
             settingsPull?.let { pull ->
                 try {

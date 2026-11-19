@@ -677,6 +677,60 @@ pub fn update_vault(store: &Store, root: &Path, now_ms: i64) -> ApiResult<Export
     write_owners(store, &wh, "", true, now_ms)
 }
 
+/// The vault notes a client delete removes, by the ids in their `whimbrel_id` frontmatter.
+#[derive(Debug, Clone, Default)]
+pub struct VaultOwners {
+    pub topics: Vec<i64>,
+    /// `entity` ids: a person's or an organization's note (`person-{id}` / `org-{id}`).
+    pub entities: Vec<i64>,
+    pub meetings: Vec<i64>,
+}
+
+/// What [`delete_vault_notes`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VaultDeleteReport {
+    pub removed: usize,
+    /// `.md` files it could not check (too large or unreadable): they may be ours, so they are reported.
+    pub unchecked: Vec<PathBuf>,
+}
+
+/// Deletes every note under `root/Whimbrel/` (archived ones included) whose `whimbrel_id` names one of
+/// `owners`. Only regular `.md` files with valid frontmatter are touched; symlinks are never followed. A file
+/// too large or unreadable to check is listed in `unchecked`, never silently passed over. No `Whimbrel`
+/// folder: nothing to do. An unreadable folder or a note that can't be removed is an error, so the caller
+/// never reports these notes gone.
+pub fn delete_vault_notes(root: &Path, owners: &VaultOwners) -> ApiResult<VaultDeleteReport> {
+    let mut report = VaultDeleteReport::default();
+    let wh = root.join("Whimbrel");
+    if fs::symlink_metadata(&wh).is_err() {
+        return Ok(report);
+    }
+    let wh = resolve_whimbrel(root).map_err(ioe)?;
+    let mut files = vec![];
+    walk(&wh, &mut files).map_err(ioe)?;
+    let wanted = |o: Owner| match o {
+        Owner::Topic(i) => owners.topics.contains(&i),
+        Owner::Person(i) | Owner::Org(i) => owners.entities.contains(&i),
+        Owner::Meeting(i) => owners.meetings.contains(&i),
+    };
+    for path in files {
+        if fs::metadata(&path).map_err(ioe)?.len() > MAX_SCAN_BYTES {
+            report.unchecked.push(path);
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&path) else {
+            report.unchecked.push(path);
+            continue;
+        };
+        let body = text.strip_prefix('\u{FEFF}').unwrap_or(&text);
+        if parse_frontmatter(body).is_some_and(|(o, _)| wanted(o)) {
+            fs::remove_file(&path).map_err(ioe)?;
+            report.removed += 1;
+        }
+    }
+    Ok(report)
+}
+
 /// "SOW due 2026-11-14 · next call 2026-11-18 10:00": the topic page's lead and next meeting.
 fn summary_line(page: &TopicPage) -> Option<String> {
     let mut parts = vec![];

@@ -16,9 +16,11 @@ export function limitCheck(
   unlimited: boolean,
 ): { ok: true } | { ok: false; kind: DeviceKind; holders: DeviceRecord[] } {
   if (unlimited) return { ok: true };
+  // The headless runner is not a person's device and holds no slot.
+  if (platform === "cloud") return { ok: true };
   const kind = kindOf(platform);
   const replaced = new Set(devices.filter((d) => (d.status === "pending" || d.status === "resetting") && d.replacesDeviceId).map((d) => d.replacesDeviceId));
-  const holders = devices.filter((d) => d.status !== "revoked" && !replaced.has(d.id) && kindOf(d.platform) === kind);
+  const holders = devices.filter((d) => d.platform !== "cloud" && d.status !== "revoked" && !replaced.has(d.id) && kindOf(d.platform) === kind);
   return holders.length === 0 ? { ok: true } : { ok: false, kind, holders };
 }
 

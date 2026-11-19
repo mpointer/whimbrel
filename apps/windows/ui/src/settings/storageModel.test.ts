@@ -30,6 +30,7 @@ describe("storage model", () => {
     expect(compactLine({ ran: true, reason: "ran", needBytes: null, fileBytesBefore: 3 * GB, fileBytesAfter: 3 * GB, spacePending: true })).toContain("returns to the disk shortly");
     expect(compactLine({ ran: false, reason: "not_worth_it", needBytes: null, fileBytesBefore: GB, fileBytesAfter: GB, spacePending: false })).toBe("Nothing to compact yet.");
     expect(compactLine({ ran: false, reason: "not_enough_disk", needBytes: 3 * GB, fileBytesBefore: 3 * GB, fileBytesAfter: 3 * GB, spacePending: false })).toContain("Not enough free disk");
+    expect(compactLine({ ran: false, reason: "recording", needBytes: null, fileBytesBefore: GB, fileBytesAfter: GB, spacePending: false })).toContain("while a meeting is recording");
   });
 
   it("hides what frees nothing and asks before deleting", () => {

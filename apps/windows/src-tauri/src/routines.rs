@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use api::connectors::calendar::QualifyingMeeting;
-use api::routine_runs::RunGate;
+use api::routine_runs::{CloudPolicy, RunGate, RunnerRole};
 use chrono::{DateTime, Local, TimeZone};
 use memory::RoutineTemplate;
 
@@ -120,13 +120,13 @@ pub fn todays_events(meetings: &[QualifyingMeeting], now: DateTime<Local>) -> Ve
     let now_ms = now.timestamp_millis();
     let mut today: Vec<&QualifyingMeeting> = meetings.iter().filter(|m| m.end_unix_ms > now_ms && m.start_unix_ms < day_end).collect();
     today.sort_by_key(|m| m.start_unix_ms);
-    today.into_iter().map(|m| routines::CalendarEventSummary { title: m.title.clone(), start_unix_ms: m.start_unix_ms }).collect()
+    today.into_iter().map(|m| routines::CalendarEventSummary { id: Some(m.id.clone()), title: m.title.clone(), start_unix_ms: m.start_unix_ms }).collect()
 }
 
 // --- which device runs routines ------------------------------------------------------------------------
 
 /// The Mac's fallback id for rows from before devices had real identities; never a real device.
-const LEGACY_SPIKE_DEVICE: &str = "spike-device";
+const LEGACY_SPIKE_DEVICE: &str = memory::LEGACY_SPIKE_DEVICE;
 
 /// What this device may run, with the Mac's rule (`RoutineHost.gate`). `Full` unless the user chose a
 /// **different** device that is approved, in which case this one is a `Failover`: it runs only the
@@ -147,9 +147,21 @@ pub fn gate(primary: &str, own: Option<&str>, approved: &HashSet<String>) -> Run
     }
 }
 
-/// The public keys of the approved devices: what a choice must name to count.
+/// The public keys of the approved devices: what a choice must name to count. Whimbrel Cloud (platform
+/// `cloud`) runs only the routines set to run in the cloud; it is never the device routines run on.
 pub fn approved_ids(devices: &[DeviceView]) -> HashSet<String> {
-    devices.iter().filter(|d| d.status == "approved").map(|d| d.public_key.clone()).collect()
+    devices.iter().filter(|d| d.status == "approved" && !is_cloud_runner(d)).map(|d| d.public_key.clone()).collect()
+}
+
+/// Whether `device` is Whimbrel Cloud, the cloud routine runner.
+pub fn is_cloud_runner(device: &DeviceView) -> bool {
+    device.platform.as_deref() == Some("cloud")
+}
+
+/// The cloud policy Meeting Prep gets: the routines' policy when Meeting Prep is set to run in the cloud,
+/// else none, so the prep is exactly as before.
+pub fn prep_policy(policy: &CloudPolicy) -> Option<&CloudPolicy> {
+    policy.cloud_templates.iter().any(|t| t == "meeting_prep").then_some(policy)
 }
 
 // --- the loop --------------------------------------------------------------------------------------
@@ -170,7 +182,11 @@ pub fn gate_now(settings: &Mutex<SettingsFile>, own_device_id: Option<&str>, app
 /// Meeting Prep for the meetings on the calendar, under the same gate as the routines. Called every
 /// tick, whether or not any routine was due: prep is event-driven and core decides what is due (the
 /// lead window, a brief already made here or by a peer, the Meeting Prep routine being on). `Off`
-/// still shows a peer's brief under this PC's own calendar id.
+/// still shows a peer's brief under this PC's own calendar id. With `cloud` set (Meeting Prep runs in
+/// the cloud), a meeting Whimbrel Cloud can prepare (one from a non-Google calendar) is left to it until
+/// five minutes before its start; every other meeting is prepared here as before. `None` is the prep
+/// as it always was. Meetings keep their source as the calendar gave it.
+#[allow(clippy::too_many_arguments)]
 pub fn prep_tick(
     store: &memory::Store,
     now_unix_ms: i64,
@@ -179,8 +195,9 @@ pub fn prep_tick(
     config: &api::RoutingConfig,
     meetings: &[QualifyingMeeting],
     gate: RunGate,
+    cloud: Option<&CloudPolicy>,
 ) -> Result<Vec<memory::RoutineRun>, String> {
-    api::meeting_prep::run_with_chain(store, meetings, now_unix_ms, lead_minutes, ollama_model, config, gate).map_err(|e| e.to_string())
+    api::meeting_prep::run_with_chain_cloud(store, meetings, now_unix_ms, lead_minutes, ollama_model, config, gate, cloud).map_err(|e| e.to_string())
 }
 
 pub fn start(
@@ -201,10 +218,14 @@ pub fn start(
         loop {
             std::thread::sleep(delay);
             delay = TICK;
+            // Skipped while a client delete runs (`api::client_controls`); held for the whole turn.
+            let Some(_ticket) = api::client_controls::job_ticket() else { continue };
             // One short lock; nothing below holds it.
-            let (routing, instructions, primary, prep_lead) = {
+            let (routing, instructions, primary, prep_lead, cloud) = {
                 let file = settings.lock().unwrap();
-                (file.routing(), file.instructions(PromptSurface::DailyDigest), file.primary_device_id(), file.prep_lead_minutes())
+                // Which routines run in the cloud, their stored ready-by times and the runner's heartbeat.
+                let cloud = crate::syncing::settings::cloud_policy(&file, crate::syncing::settings::now_ms());
+                (file.routing(), file.instructions(PromptSurface::DailyDigest), file.primary_device_id(), file.prep_lead_minutes(), cloud)
             };
             // Read each tick, so a change the user makes takes effect within a minute.
             let run_gate = gate(&primary, own_device_id.as_deref(), &approved());
@@ -220,18 +241,37 @@ pub fn start(
             let prep_calendar = calendar.clone();
             // The gate: which routines this device may run (the user's choice of device). Core seeds the
             // built-in routines whatever it is.
+            let hold_for_user = crate::user_model_gate::busy() && crate::jobs::local_model_may_run(&routing);
             let outcome = store.call_blocking(move |s| {
                 let (gmail_connected, recipient) = tick_inputs(s);
                 let now_ms = now.timestamp_millis();
                 // The routines wait while a meeting records; Meeting Prep below does not (it's for the next one).
-                let ran = if crate::meeting_load::background_paused() {
+                // They also wait while the user has a model call in flight and a local model could serve them
+                // (it serves one request at a time; PR 874). The tick repeats every minute.
+                let ran = if crate::meeting_load::background_paused() || hold_for_user {
                     Vec::new()
-                } else {
+                } else if cloud.cloud_templates.is_empty() {
                     api::routine_runs::tick(s, now_ms, &ollama_model, &config, &events, gmail_connected, recipient.as_deref(), run_gate).map_err(|e| e.to_string())?
+                } else {
+                    // A routine set to run in the cloud is left to Whimbrel Cloud, and runs here after the grace
+                    // only if no run is dated today; the others run as above.
+                    api::routine_runs::tick_cloud(
+                        s,
+                        now_ms,
+                        &ollama_model,
+                        &config,
+                        &events,
+                        gmail_connected,
+                        recipient.as_deref(),
+                        run_gate,
+                        &cloud,
+                        RunnerRole::Device,
+                    )
+                    .map_err(|e| e.to_string())?
                 };
                 // Meeting Prep is event-driven, so it is asked every tick, after the routines have seeded.
                 let upcoming = crate::connectors::calendar::shown_meetings(prep_calendar.as_deref(), s, now_ms);
-                let prepared = prep_tick(s, now_ms, prep_lead, &ollama_model, &config, &upcoming, run_gate).unwrap_or_else(|e| {
+                let prepared = prep_tick(s, now_ms, prep_lead, &ollama_model, &config, &upcoming, run_gate, prep_policy(&cloud)).unwrap_or_else(|e| {
                     tracing::warn!(error = %e, "meeting prep: could not run");
                     Vec::new()
                 });
@@ -308,7 +348,55 @@ mod tests {
     }
 
     fn prep(store: &memory::Store, meetings: &[QualifyingMeeting], gate: RunGate) -> usize {
-        prep_tick(store, NOW, 30.0, "no-such-model", &api::RoutingConfig::default(), meetings, gate).unwrap().len()
+        prep_tick(store, NOW, 30.0, "no-such-model", &api::RoutingConfig::default(), meetings, gate, None).unwrap().len()
+    }
+
+    fn prep_at(store: &memory::Store, now: i64, meetings: &[QualifyingMeeting], cloud: Option<&CloudPolicy>) -> usize {
+        prep_tick(store, now, 30.0, "no-such-model", &api::RoutingConfig::default(), meetings, RunGate::Full, cloud).unwrap().len()
+    }
+
+    fn flagged(templates: &[&str]) -> CloudPolicy {
+        CloudPolicy { cloud_templates: templates.iter().map(|t| t.to_string()).collect(), ..CloudPolicy::default() }
+    }
+
+    #[test]
+    fn meeting_prep_gets_the_cloud_policy_only_when_it_is_set_to_run_in_the_cloud() {
+        let brief_only = flagged(&["daily_brief"]);
+        assert_eq!(prep_policy(&brief_only), None, "the prep is exactly as before");
+        assert_eq!(prep_policy(&CloudPolicy::default()), None);
+        let prep = flagged(&["daily_brief", "meeting_prep"]);
+        assert_eq!(prep_policy(&prep), Some(&prep));
+    }
+
+    #[test]
+    fn a_cloud_flagged_prep_leaves_a_non_google_meeting_to_the_runner_until_five_minutes_before_and_keeps_google_ones_here() {
+        let store = prep_store(true);
+        let policy = flagged(&["meeting_prep"]);
+        let mut apple = prep_meeting("apple", 20);
+        apple.source = MeetingSource::Calendar;
+        // Different titles: a brief with the same title and start under another id counts as a peer's
+        // (alias_synced_meeting_prep) and would make the other meeting look already prepared.
+        apple.title = "Apple sync".into();
+        let mut google = prep_meeting("google", 20);
+        google.title = "Google sync".into();
+        assert_eq!(prep_at(&store, NOW, &[apple.clone(), google], prep_policy(&policy)), 1, "the Google meeting, which the runner never reads");
+        assert!(store.get_meeting_prep("google").unwrap().is_some());
+        assert!(store.get_meeting_prep("apple").unwrap().is_none(), "left to Whimbrel Cloud");
+        assert_eq!(prep_at(&store, NOW + 16 * MIN, &[apple.clone()], prep_policy(&policy)), 1, "four minutes before, nothing synced: made here");
+        assert!(store.get_meeting_prep("apple").unwrap().is_some());
+
+        let store = prep_store(true);
+        assert_eq!(prep_at(&store, NOW, &[apple], prep_policy(&flagged(&["daily_brief"]))), 1, "not flagged: prepared at lead time as before");
+    }
+
+    #[test]
+    fn whimbrel_cloud_is_never_the_device_routines_run_on() {
+        let mut runner = device("runner", "approved");
+        runner.platform = Some("cloud".into());
+        assert!(is_cloud_runner(&runner) && !is_cloud_runner(&device("mac", "approved")));
+        let devices = [device("me", "approved"), runner];
+        assert_eq!(approved_ids(&devices), ids(&["me"]));
+        assert_eq!(gate("runner", Some("me"), &approved_ids(&devices)), RunGate::Full, "a choice naming the runner runs everything here");
     }
 
     #[test]

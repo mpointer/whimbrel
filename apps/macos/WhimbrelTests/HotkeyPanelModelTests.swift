@@ -40,8 +40,17 @@ private final class FakeBridge: WindowAskBridge {
     /// The destination core reports. Nil: what core would say for the routing passed in.
     var preparedDestination: WindowAskDestination?
 
+    /// Core's destination line before Return. Nil: the panel's mirror of the settings.
+    var coreDestination: WindowAskDestination?
+    private(set) var preparedRoutings: [CoreRoutingConfig] = []
+
+    func destination(_ window: WindowContext, query: String, routing: CoreRoutingConfig) async -> WindowAskDestination? {
+        coreDestination
+    }
+
     func prepare(_ window: WindowContext, query: String, routing: CoreRoutingConfig) async -> Result<WindowAskPrepared, CoreLLMError>? {
         prepareCalls.append((window, query))
+        preparedRoutings.append(routing)
         guard case .success(let p)? = prepareResult else { return prepareResult }
         let destination = preparedDestination ?? HotkeyPanelModel.destination(routing)
         return .success(WindowAskPrepared(prepareId: p.prepareId, prompt: p.prompt, truncated: p.truncated, destination: destination))
@@ -250,6 +259,80 @@ final class HotkeyPanelModelTests: XCTestCase {
         await model.ask("q")
         XCTAssertEqual(bridge.streamCalls.count, 1)
         XCTAssertTrue(bridge.discarded.isEmpty)
+    }
+
+    // MARK: - Excluded clients (X6)
+
+    private static func withLocal(_ r: WindowAskRouting) -> WindowAskRouting {
+        var r = r
+        var local = Self.routing(provider: "ollama").config
+        local.ollamaModel = "llama3"
+        r.local = .init(config: local, stream: AskStreamRoute(provider: .ollama, apiKey: nil, baseURLOverride: nil))
+        return r
+    }
+
+    func testAWindowCarryingAnExcludedClientSaysSoBeforeReturnAndStaysOnThisMac() async {
+        routing = Self.withLocal(Self.routing(provider: "anthropic", stream: AskStreamRoute(provider: .anthropic, apiKey: "k", baseURLOverride: nil)))
+        bridge.coreDestination = .localOnly
+        bridge.preparedDestination = .local
+        reader.results = [selection()]
+        let model = makeModel()
+        await model.open(frontmost: mail)
+        XCTAssertEqual(readyLine(model)?.destination, HotkeyPanelModel.keptLocalText)
+        await model.ask("q")
+        XCTAssertEqual(bridge.preparedRoutings.map(\.preferredProvider), ["ollama"], "prepared on the local route")
+        XCTAssertEqual(bridge.streamCalls.map(\.route.provider), [.ollama], "never the hosted stream")
+        XCTAssertEqual(bridge.finalized, ["p1"])
+    }
+
+    func testAnExcludedClientWithNoLocalModelIsRefusedBeforeReturn() async {
+        routing = Self.routing(provider: "anthropic", stream: AskStreamRoute(provider: .anthropic, apiKey: "k", baseURLOverride: nil))
+        bridge.coreDestination = .localOnly
+        reader.results = [selection()]
+        let model = makeModel()
+        await model.open(frontmost: mail)
+        XCTAssertEqual(model.state, .blocked(.clientNeedsLocalModel))
+        XCTAssertEqual(model.context?.destination, HotkeyPanelModel.keptLocalRefusedText)
+        await model.ask("q")
+        XCTAssertTrue(bridge.prepareCalls.isEmpty)
+        XCTAssertTrue(bridge.streamCalls.isEmpty)
+    }
+
+    func testCoreSayingLocalOnlyWhileTheLineSaidHostedShowsTheNewLineAndSendsNothing() async {
+        routing = Self.withLocal(Self.routing(provider: "openai", stream: AskStreamRoute(provider: .openai, apiKey: "k", baseURLOverride: nil)))
+        reader.results = [selection()]
+        let model = makeModel()
+        await model.open(frontmost: mail)
+        XCTAssertEqual(readyLine(model)?.destination, "The text above will be sent to OpenAI")
+        // The question names the client: core's line changes at Return, and nothing is sent yet.
+        bridge.coreDestination = .localOnly
+        await model.ask("what did the client say?")
+        XCTAssertEqual(readyLine(model)?.destination, HotkeyPanelModel.keptLocalText)
+        XCTAssertTrue(bridge.prepareCalls.isEmpty)
+    }
+
+    func testTypingAfterAnAnswerKeepsTheAnswerAndUpdatesTheLine() async {
+        routing = Self.withLocal(Self.routing(provider: "anthropic", stream: AskStreamRoute(provider: .anthropic, apiKey: "k", baseURLOverride: nil)))
+        bridge.preparedDestination = .hosted(provider: "anthropic")
+        reader.results = [selection()]
+        let model = makeModel()
+        await model.open(frontmost: mail)
+        await model.ask("q")
+        XCTAssertEqual(model.state, .answered("The answer."))
+        bridge.coreDestination = .localOnly
+        model.questionChanged("and the client?")
+        try? await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(model.state, .answered("The answer."), "the answer and Copy stay")
+        XCTAssertEqual(model.context?.destination, HotkeyPanelModel.keptLocalText)
+    }
+
+    func testAnOllamaCloudModelIsNamedAsLeaving() {
+        var config = Self.routing(provider: "ollama").config
+        config.ollamaModel = "gpt-oss:120b-cloud"
+        XCTAssertEqual(HotkeyPanelModel.destination(config), .hosted(provider: "ollama"))
+        XCTAssertEqual(HotkeyPanelModel.destinationText(.hosted(provider: "ollama")), "The text above will be sent to Ollama's cloud")
+        XCTAssertTrue(isOllamaCloudModel("kimi-k2:1t-cloud"))
+        XCTAssertFalse(isOllamaCloudModel("llama3:8b"))
     }
 
     // MARK: - Blocked states

@@ -273,7 +273,11 @@ pub fn start(
             let (outbox_before, _) = backlog_for_log(&store);
             let round_started = Instant::now();
             let result = run_round(&store, secrets.clone(), device_id.clone(), move |key, s, device| {
-                sync_engine::sync_content(&url, &token, key, s, device).map_err(|e| e.to_string())
+                let round = sync_engine::sync_content(&url, &token, key, s, device).map_err(|e| e.to_string());
+                // A peer's client setting or client delete may have arrived (a failed round may have
+                // applied part of a pull): the streaming gate is read again either way.
+                api::client_controls::after_sync_round(s);
+                round
             });
             mark("after round");
             let (outbox_pending, outbox_oldest_min) = backlog_for_log(&store);
@@ -305,6 +309,9 @@ pub fn start(
             }
             schedule.set_catching_up(ok && sync_engine::more_to_pull());
             controller.record_content_result(result.map(|()| now_ms()));
+            // The one-time history indexing runs inside the round; Settings shows how far it has got.
+            let indexing = store.call_blocking(sync_engine::kind_backfill_percent).ok().flatten();
+            controller.record_kind_backfill_percent(indexing);
             if ok && last_label_refresh.is_none_or(|t| t.elapsed() >= LABEL_REFRESH_MIN) && has_unnamed_peer(&controller, &store) {
                 last_label_refresh = Some(Instant::now());
                 if let Err(e) = controller.refresh_devices() {

@@ -9,6 +9,7 @@ pub mod accounts;
 pub mod calendar;
 pub mod gmail;
 pub mod google_disconnect;
+pub mod kept_accounts;
 pub mod google_client;
 pub mod node;
 pub mod write;

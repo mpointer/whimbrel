@@ -1,10 +1,12 @@
 [package]
 name = "whimbrel-windows"
-version = "0.9.72"
+version = "0.9.80"
 edition = "2021"
 publish = false
-# Two binaries (the app and the M3.1 capture-spike CLI); the Tauri CLI builds and
-# runs this one.
+# One binary, the app; the Tauri CLI builds and bundles it. Tauri puts every [[bin]] in the
+# installer, so the developer tools (capture-spike, gen-schema) are examples instead:
+# `cargo run --example gen-schema`. The app's hidden `--link-check` keeps the installed
+# load check (see src/link_check.rs).
 default-run = "whimbrel-windows"
 
 # The Windows shell is its own Cargo workspace with path dependencies into core/ —
@@ -22,24 +24,32 @@ name = "whimbrel_windows"
 path = "src/lib.rs"
 
 # M3.1 capture spike: a CLI with no UI (§9). The capture modules under src/capture/ are
-# the ones the M3.2 Tauri shell will call; the binary is measurement scaffolding.
-[[bin]]
+# the ones the M3.2 Tauri shell will call; the program is measurement scaffolding, so it
+# is an example and never ships: `cargo run --release --example capture-spike -- link-check`.
+[[example]]
 name = "capture-spike"
-path = "src/bin/capture_spike.rs"
+path = "examples/capture_spike.rs"
 
-# Writes ui/src/generated/schema.json from the command DTOs (plan Decision 11).
-[[bin]]
+# Writes ui/src/generated/schema.json from the command DTOs (plan Decision 11):
+# `cargo run --example gen-schema`.
+[[example]]
 name = "gen-schema"
-path = "src/bin/gen_schema.rs"
+path = "examples/gen_schema.rs"
 
 [dependencies]
-api = { path = "../../../core/api" }
-memory = { path = "../../../core/memory" }
+# X4 encryption at rest: SQLCipher (vendored OpenSSL) replaces the bundled SQLite, still one SQLite
+# in the build (check-no-libsql-core.ps1). Building needs Strawberry Perl and NASM on PATH (or PERL
+# set); see scripts/dev-env.ps1.
+api = { path = "../../../core/api", features = ["sqlcipher"] }
+memory = { path = "../../../core/memory", features = ["sqlcipher"] }
 agent = { path = "../../../core/agent" }
 routines = { path = "../../../core/routines" }
 transcribe = { path = "../../../core/transcribe" }
 skins = { path = "../../../core/skins" }
 hound = "3"
+# The database key (db_key.rs): OS random bytes, wiped after use. Both already in the lock through core.
+rand = "0.8"
+zeroize = "1"
 rubato = "0.16"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -52,7 +62,6 @@ png = "0.18"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 # Slide thumbnails for the workspace strip; also already in the build through Tauri.
 image = { version = "0.25", default-features = false, features = ["png"] }
-clap = { version = "4", features = ["derive"] }
 # The Tauri shell (M3.2). `tray-icon`: the app is tray-resident (docs/12 §4, W2).
 # `image-ico`: the tray's state icons are .ico files (Task 10).
 tauri = { version = "2", features = ["tray-icon", "image-ico"] }
@@ -161,13 +170,21 @@ version = "0.62"
 # without one falls back to the CPU. Building needs the Vulkan SDK (VULKAN_SDK; scripts/dev-env.ps1).
 whisper-rs = { version = "0.16", features = ["vulkan"] }
 diarize = { path = "../../../core/diarize" }
-# Same version core/diarize pins. Only `capture-spike diarize-bench` uses it directly, to
-# time the pipeline at thread counts core/diarize does not expose (M3.1 finding).
-sherpa-onnx = "1.13.4"
 
 # IIterable, to pass a language list to WinRT (l10n.rs); already in the lock through windows.
 [dependencies.windows-collections]
 version = "0.3"
+
+# Only the capture-spike example uses these (its command line; `diarize-bench` timing the
+# pipeline at thread counts core/diarize does not expose, an M3.1 finding), so they stay out
+# of the app. sherpa-onnx is the same version core/diarize pins.
+[dev-dependencies]
+clap = { version = "4", features = ["derive"] }
+# Core's migration test hooks (an antivirus-style hold during the swap, X4 brief 5.3); test builds only.
+api = { path = "../../../core/api", features = ["sqlcipher", "migration-test-hooks"] }
+
+[target.'cfg(target_arch = "x86_64")'.dev-dependencies]
+sherpa-onnx = "1.13.4"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

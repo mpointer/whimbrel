@@ -66,7 +66,10 @@ pub async fn retention_run_now(app: AppHandle) -> Result<RetentionView, CommandE
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let retention = state.retention.as_ref().ok_or_else(|| CommandError::store(tr("Retention isn't running", &[])))?;
-        retention.run_now()?;
+        // Put off (not a failure) while a client delete runs (`api::client_controls`); held for the sweep.
+        if let Some(_ticket) = api::client_controls::job_ticket() {
+            retention.run_now()?;
+        }
         Ok(view(&state))
     })
     .await

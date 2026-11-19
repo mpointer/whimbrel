@@ -37,6 +37,9 @@ final class MeetingAskSession: ObservableObject {
     private var store: CoreMemoryStore?
     /// The provider the current answer streams from; a Whimbrel AI 402 shows the credit message.
     private var streamProvider: InferenceStreamClient.Provider = .ollama
+    /// What the running stream needs to be answered again on this Mac if the exclusion gate holds it back.
+    private var localRetry: (meetingId: Int64, query: String, history: [CoreChatTurn], routing: CoreRoutingConfig,
+                             fallback: (slowStore: CoreMemoryStore, ollamaModel: String))?
     private var subscriptions: [AnyCancellable] = []
 
     var isBusy: Bool { isPreparing || isRefreshingCredentials || pending != nil }
@@ -93,7 +96,9 @@ final class MeetingAskSession: ObservableObject {
                 case .none:
                     self.exchanges[index].errorText = String(localized: "Couldn't prepare the question. Try again.")
                 case .some(.failure(let error)):
-                    if let fallback, error.fallsBackToGovernedAsk(alreadyFellBack: false) {
+                    // A question carrying an excluded client: core's blocking meeting answer keeps it on this Mac,
+                    // or refuses when there is no local model.
+                    if let fallback, error == .providerFailureBecause(.excludedClient) || error.fallsBackToGovernedAsk(alreadyFellBack: false) {
                         self.answerGoverned(index: index, meetingId: meetingId, query: prompt ?? text, history: past, routing: routing, fallback: fallback)
                     } else {
                         self.show(error, at: index)
@@ -101,6 +106,7 @@ final class MeetingAskSession: ObservableObject {
                 case .some(.success(let data)):
                     self.exchanges[index].narrowed = data.narrowed
                     self.pending = (data.prepareId, index, model, route.provider)
+                    self.localRetry = fallback.map { (meetingId, prompt ?? text, past, routing, $0) }
                     self.streamProvider = route.provider
                     self.streaming.start(prompt: data.prompt, model: model, provider: route.provider, apiKey: route.apiKey, baseURLOverride: route.baseURLOverride)
                 }
@@ -122,7 +128,7 @@ final class MeetingAskSession: ObservableObject {
         isPreparing = true
         let token = UUID()
         prepareToken = token
-        CoreMemoryStore.slowLaneQueue.async {
+        UserModelGate.runOnSlowLane {
             let answered = fallback.slowStore.answerMeetingQuestion(
                 meetingId: meetingId, query: query, model: fallback.ollamaModel, history: history, routing: routing)
             DispatchQueue.main.async { [weak self] in
@@ -210,9 +216,22 @@ final class MeetingAskSession: ObservableObject {
         case .failed(let message):
             Self.discard(pending.prepareId, store: store)
             exchanges[pending.index].partial = streaming.streamedText
+            let retry = localRetry
+            localRetry = nil
             if streamProvider == .whimbrel, message.hasPrefix("HTTP 402") {
                 // A 402 from Whimbrel's server: the Whimbrel AI credit is used up.
                 show(.providerFailureBecause(.creditExhausted), at: pending.index)
+            } else if streaming.exclusionRefusal == .excludedClient, streaming.streamedText.isEmpty, let retry {
+                // Held back by the exclusion gate, nothing sent: answer it on this Mac instead.
+                self.pending = nil
+                exchanges[pending.index].partial = ""
+                answerGoverned(index: pending.index, meetingId: retry.meetingId, query: retry.query, history: retry.history,
+                               routing: retry.routing, fallback: retry.fallback)
+                return
+            } else if streaming.exclusionRefusal == .excludedClient {
+                show(.providerFailureBecause(.excludedClient), at: pending.index)
+            } else if streaming.exclusionRefusal == .unreadable {
+                show(.providerFailureBecause(.exclusionUnreadable), at: pending.index)
             } else {
                 exchanges[pending.index].errorText = String(localized: "Couldn't reach the AI provider. Try again.")
             }
@@ -278,6 +297,16 @@ struct MeetingAskBar: View {
         }
         .padding(Spacing.md)
         .frame(maxWidth: 760)
+        // A question typed in the in-meeting window (redesign flag only): the answer shows here, in the main window.
+        .onReceive(appState.$liveAskHandoff) { _ in takeHeldQuestion() }
+        .onAppear { takeHeldQuestion() }
+        .onChange(of: disabledReason) { _, _ in takeHeldQuestion() }
+    }
+
+    /// Takes a question held by `AppState` (once), as soon as this bar can send it.
+    private func takeHeldQuestion() {
+        guard liveContext, disabledReason == nil, let text = appState.takeLiveAsk() else { return }
+        submit(text)
     }
 
     private var answerPanel: some View {

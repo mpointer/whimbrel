@@ -60,6 +60,8 @@ pub struct SyncView {
     pub content_last_synced_ms: Option<i64>,
     /// The last content-sync failure, cleared by the next success.
     pub content_error: Option<String>,
+    /// How far the one-time history indexing (the `kind_tag` backfill) has got, 0 to 99, for "Indexing history: N%". `None` when it is not running: not started, finished, or nothing to count.
+    pub kind_backfill_percent: Option<u8>,
     /// When settings (the Profile) last synced successfully, if they have this session.
     pub settings_last_synced_ms: Option<i64>,
     /// The last settings-sync failure, cleared by the next success.
@@ -94,6 +96,59 @@ pub struct DeviceView {
     pub enrolled_at_unix_ms: i64,
     /// Short code both devices show while approving (`None` for an unparseable key).
     pub comparison_code: Option<String>,
+}
+
+/// The name Whimbrel Cloud is registered under; the UI shows its own words for a `cloud` device.
+pub const RUNNER_NAME: &str = "Whimbrel Cloud";
+
+/// What "Add Whimbrel Cloud" came to. Its JSON goes to the UI as is (`status` plus the fields, snake_case);
+/// the UI holds the words for each outcome. It is not in the schema bundle: the TS type is written by hand
+/// (`ui/src/automations/cloudRoutineModel.ts`).
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum RunnerRegistration {
+    /// Registered. The values the runner's host needs, shown once: `provision_bundle` carries the group key
+    /// wrapped to the runner, so it is never logged or stored here.
+    Added { provision_bundle: String, approver_public_key: String, worker_url: String },
+    /// What was pasted is not a runner public key (nothing was sent), or the Worker refused it (400).
+    NotAKey,
+    /// The route's own 403: cloud routines are not open for this account. This PC stays signed in.
+    NotAvailable,
+    /// 409: this runner is already on the account.
+    AlreadyAdded,
+    /// Sync is not on here, so there is no account to add it to.
+    SyncOff,
+    /// Anything else, in words.
+    Failed { message: String },
+}
+
+/// Never prints the provision bundle: it carries the group key wrapped to the runner.
+impl std::fmt::Debug for RunnerRegistration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunnerRegistration::Added { approver_public_key, worker_url, .. } => f
+                .debug_struct("Added")
+                .field("provision_bundle", &"<redacted>")
+                .field("approver_public_key", approver_public_key)
+                .field("worker_url", worker_url)
+                .finish(),
+            RunnerRegistration::NotAKey => f.write_str("NotAKey"),
+            RunnerRegistration::NotAvailable => f.write_str("NotAvailable"),
+            RunnerRegistration::AlreadyAdded => f.write_str("AlreadyAdded"),
+            RunnerRegistration::SyncOff => f.write_str("SyncOff"),
+            RunnerRegistration::Failed { message } => f.debug_struct("Failed").field("message", message).finish(),
+        }
+    }
+}
+
+/// The outcome of a Worker error from registering the runner.
+pub fn registration_error(error: &WorkerError) -> RunnerRegistration {
+    match error {
+        WorkerError::MalformedResponse | WorkerError::Http { status: 400, .. } => RunnerRegistration::NotAKey,
+        WorkerError::Http { status: 403, body } if body.contains("not available") => RunnerRegistration::NotAvailable,
+        WorkerError::Http { status: 409, .. } => RunnerRegistration::AlreadyAdded,
+        other => RunnerRegistration::Failed { message: en::user_message_in(other, &crate::l10n::ui_language()) },
+    }
 }
 
 pub fn view_of(config_error: Option<&str>, status: &SyncStatus) -> (SyncState, Option<String>) {
@@ -267,6 +322,7 @@ pub struct SyncController {
     last_retry: Mutex<Option<Instant>>,
     content: Mutex<ContentStatus>,
     settings: Mutex<ContentStatus>,
+    kind_backfill_percent: Mutex<Option<u8>>,
     open_url: Opener,
     /// Cloud v1: the last plan read, and how many reads in a row have failed.
     plan: Mutex<Option<en::AccountPlan>>,
@@ -278,6 +334,50 @@ pub struct SyncController {
     /// Whimbrel AI: the last credit read, and the poll after a pack's Checkout opens.
     ai_balance: Mutex<Option<en::AiBalance>>,
     ai_poll: AtomicU64,
+    /// Sets the database's sync push cursor back to 0 after the account is deleted, so a later
+    /// account gets everything (the cursor lives in the database, which this doesn't hold).
+    cursor_reset: Mutex<Option<CursorReset>>,
+    /// The Mac's `deleteInFlight`: set by [`SyncController::delete_account`] for the length of
+    /// its call and cleared only by it. While set, no auth path probes or authenticates: a probe
+    /// that read "exists" before the delete landed would clear the pending flag, and an
+    /// authentication after it could make a new account on the old key.
+    delete_in_flight: AtomicBool,
+    /// How long [`SyncController::delete_account`] waits for an auth pass already under way to
+    /// end before it gives up: past one authenticate call (30 s Worker timeout) and a token refresh.
+    delete_wait: Duration,
+}
+
+/// Clears `delete_in_flight` when the delete returns, on every path.
+struct DeleteInFlight<'a>(&'a AtomicBool);
+
+impl Drop for DeleteInFlight<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// See [`SyncController::set_cursor_reset`].
+pub type CursorReset = Box<dyn Fn() -> bool + Send + Sync>;
+
+/// What a probe after a lost delete reply found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingDelete {
+    /// The account is still there: nothing was deleted.
+    Exists,
+    /// The account is gone: the local cleanup ran.
+    Gone,
+    /// No answer (no network, the Google sign-in dead, another 403): the flag stays and nothing
+    /// authenticates until a later probe settles it.
+    Unknown(String),
+}
+
+/// A lost reply, a malformed one or a 5xx: the Worker may have deleted the account before the
+/// answer got lost. A 503 `account_deleting` is a definite "not now" (Mac: `resetMayHaveSucceeded`).
+pub fn delete_may_have_succeeded(e: &WorkerError) -> bool {
+    match e {
+        WorkerError::Network | WorkerError::MalformedResponse => true,
+        WorkerError::Http { status, body } => (500..=599).contains(status) && !body.contains("account_deleting"),
+    }
 }
 
 impl SyncController {
@@ -322,6 +422,7 @@ impl SyncController {
             last_retry: Mutex::new(None),
             content: Mutex::new(ContentStatus::default()),
             settings: Mutex::new(ContentStatus::default()),
+            kind_backfill_percent: Mutex::new(None),
             open_url,
             plan: Mutex::new(None),
             plan_failures: std::sync::atomic::AtomicU32::new(0),
@@ -329,7 +430,149 @@ impl SyncController {
             whimbrel: Arc::new(crate::whimbrel_ai::Cache::default()),
             ai_balance: Mutex::new(None),
             ai_poll: AtomicU64::new(0),
+            cursor_reset: Mutex::new(None),
+            delete_in_flight: AtomicBool::new(false),
+            delete_wait: Duration::from_secs(60),
         }
+    }
+
+    /// How to set the sync push cursor back to 0 once the account is deleted (the app sets it
+    /// when the store is open).
+    pub fn set_cursor_reset(&self, reset: CursorReset) {
+        *self.cursor_reset.lock().unwrap() = Some(reset);
+    }
+
+    fn delete_pending(&self) -> bool {
+        matches!(self.secrets.get_string(crate::secrets::SYNC_SERVICE, accounts::SYNC_DELETE_PENDING), Ok(Some(_)))
+    }
+
+    fn set_delete_pending(&self, pending: bool) -> Result<(), String> {
+        let r = if pending {
+            self.secrets.set_string(crate::secrets::SYNC_SERVICE, accounts::SYNC_DELETE_PENDING, "1")
+        } else {
+            self.secrets.delete(crate::secrets::SYNC_SERVICE, accounts::SYNC_DELETE_PENDING)
+        };
+        r.map_err(|e| e.to_string())
+    }
+
+    /// "Also delete my sync account" (Mac: `SyncState.deleteSyncAccount`): the Worker deletes the
+    /// account's sync database and every device's access. On success the group key and the Google
+    /// sign-in go here; the device keypair stays (it is this PC's identity on its own rows) and the
+    /// push cursor goes back to 0. `Err` means the account was NOT deleted (or it can't be known
+    /// yet): the caller must not go on as if it were. A lost reply is settled at once by asking
+    /// the Worker whether the account still exists.
+    pub fn delete_account(&self) -> Result<(), String> {
+        if self.ready_credentials().is_none() {
+            return Err(tr("Sync isn't on, so there is no sync account to delete from this PC.", &[]));
+        }
+        if self.delete_in_flight.swap(true, Ordering::SeqCst) {
+            return Err(tr("Your sync account is already being deleted. Try again in a few minutes.", &[]));
+        }
+        let _in_flight = DeleteInFlight(&self.delete_in_flight);
+        // An auth pass that started before the guard (the upkeep re-auth, a retry) may be inside
+        // its authenticate call, which could land after the delete and make a new account on the
+        // old key: wait for it to end. New passes see the guard and return (`auth_loop_with`
+        // re-checks it after claiming `polling`, so one of the two always sees the other).
+        let deadline = Instant::now() + self.delete_wait;
+        while self.polling.load(Ordering::SeqCst) {
+            if Instant::now() >= deadline {
+                tracing::warn!("the sync account delete gave up waiting for a sign-in check to end");
+                return Err(tr("Sync is busy. Try again in a moment.", &[]));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let generation = self.generation.load(Ordering::SeqCst);
+        let worker = self.worker()?;
+        let id_token = self.fresh_id_token()?;
+        // Set before the call: if the app dies with it in flight, the next authentication probes
+        // first instead of making a new account on the old key.
+        self.set_delete_pending(true)?;
+        match worker.delete_account(&id_token, &self.identity.device_id) {
+            Ok(()) => {
+                self.clear_after_deletion(false);
+                Ok(())
+            }
+            Err(e) if delete_may_have_succeeded(&e) => {
+                tracing::warn!(error = ?e, "the sync account delete's reply was lost; asking whether the account is gone");
+                match self.settle_pending_delete(false, generation) {
+                    PendingDelete::Gone => Ok(()),
+                    PendingDelete::Exists => Err(tr("Your sync account wasn't deleted. Try again.", &[])),
+                    PendingDelete::Unknown(message) => Err(message),
+                }
+            }
+            Err(e) => {
+                let _ = self.set_delete_pending(false);
+                Err(match &e {
+                    WorkerError::Http { status: 503, body } if body.contains("account_deleting") => {
+                        tr("Your sync account is already being deleted. Try again in a few minutes.", &[])
+                    }
+                    _ => en::user_message_in(&e, &crate::l10n::ui_language()),
+                })
+            }
+        }
+    }
+
+    /// Asks the Worker whether a deleted-maybe account still exists (an approved device can list
+    /// devices; a deleted account answers 403 "device not approved"). An unknown outcome sets an
+    /// error status that says so (the Mac's), so content sync stops and Settings doesn't show sync
+    /// as on. `keep_sign_in` (Enable Sync's fresh sign-in, the Mac's `keepSignIn: true`) keeps that
+    /// sign-in and the status when the account is gone, so enrolment carries on. The error lands
+    /// only while `generation` is current, so a cancel during the probe wins.
+    pub fn settle_pending_delete(&self, keep_sign_in: bool, generation: u64) -> PendingDelete {
+        let unknown = |message: String| {
+            self.apply_current(generation, &EnrollmentEvent::Failed { message: message.clone() });
+            PendingDelete::Unknown(message)
+        };
+        let unsure = || tr("Whimbrel couldn't confirm that your sync account was deleted. It will check again the next time it opens.", &[]);
+        let Ok(worker) = self.worker() else { return unknown(unsure()) };
+        let id_token = match self.fresh_id_token_step() {
+            Ok(t) => t,
+            Err(StepError::Token(_)) => return unknown(tr("Sign in to sync again so Whimbrel can check whether your sync account was deleted.", &[])),
+            Err(_) => return unknown(unsure()),
+        };
+        match worker.list_devices(&id_token, &self.identity.device_id) {
+            Ok(_) => {
+                let _ = self.set_delete_pending(false);
+                PendingDelete::Exists
+            }
+            Err(WorkerError::Http { status: 403, body }) if body.contains("device not approved") => {
+                self.clear_after_deletion(keep_sign_in);
+                PendingDelete::Gone
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, "could not settle a pending sync account delete");
+                unknown(unsure())
+            }
+        }
+    }
+
+    /// After the account is gone: the group key and the Google sign-in go, the device keypair
+    /// stays, the push cursor goes to 0 and the status to signed out. `keep_sign_in` (Enable
+    /// Sync's fresh sign-in) keeps that sign-in and the status, so enrolment carries on.
+    fn clear_after_deletion(&self, keep_sign_in: bool) {
+        if let Err(e) = self.secrets.delete(crate::secrets::SYNC_SERVICE, accounts::GROUP_KEY) {
+            tracing::warn!(error = %e, "could not delete the sync group key after the account delete");
+        }
+        if !keep_sign_in {
+            if let Err(e) = self.secrets.delete(GOOGLE_OAUTH_SERVICE, accounts::GOOGLE_SYNC) {
+                tracing::warn!(error = %e, "could not delete the sync sign-in after the account delete");
+            }
+        }
+        let reset = self.cursor_reset.lock().unwrap().as_ref().map(|r| r());
+        if reset == Some(false) {
+            tracing::error!("resetting the sync push cursor failed; a later account starts from the old cursor");
+        }
+        let _ = self.set_delete_pending(false);
+        if !keep_sign_in {
+            let mut status = self.status.lock().unwrap();
+            self.generation.fetch_add(1, Ordering::SeqCst);
+            *status = SyncStatus::NotSignedIn;
+        }
+        *self.last_auth.lock().unwrap() = None;
+        self.devices.lock().unwrap().clear();
+        *self.plan.lock().unwrap() = None;
+        *self.kind_backfill_percent.lock().unwrap() = None;
+        tracing::info!("the sync account was deleted");
     }
 
     pub fn view(&self) -> SyncView {
@@ -348,6 +591,7 @@ impl SyncController {
             device_id: self.identity.device_id.clone(),
             content_last_synced_ms: content.last_synced_ms,
             content_error: content.last_error,
+            kind_backfill_percent: *self.kind_backfill_percent.lock().unwrap(),
             settings_last_synced_ms: settings.last_synced_ms,
             settings_error: settings.last_error,
         }
@@ -356,6 +600,11 @@ impl SyncController {
     /// Records a content-sync round: `Ok(synced_at_ms)` or the failure message.
     pub fn record_content_result(&self, result: Result<i64, String>) {
         record(&mut self.content.lock().unwrap(), result);
+    }
+
+    /// Records how far the history indexing has got after a round (`None`: not running).
+    pub fn record_kind_backfill_percent(&self, percent: Option<u8>) {
+        *self.kind_backfill_percent.lock().unwrap() = percent;
     }
 
     /// Records a settings-sync round, the same way.
@@ -444,11 +693,12 @@ impl SyncController {
         enrollment::authenticate(worker, &id_token, &self.identity, &*self.secrets).map_err(StepError::Worker)
     }
 
-    /// Sleeps up to `d`, returning early (false) if a cancel bumped the generation.
+    /// Sleeps up to `d`, returning early (false) if a cancel bumped the generation or the sync
+    /// account delete started (it waits for this loop to end).
     fn sleep_unless_cancelled(&self, d: Duration, generation: u64) -> bool {
         let deadline = Instant::now() + d;
         while Instant::now() < deadline {
-            if self.generation.load(Ordering::SeqCst) != generation {
+            if self.generation.load(Ordering::SeqCst) != generation || self.delete_in_flight.load(Ordering::SeqCst) {
                 return false;
             }
             std::thread::sleep(Duration::from_millis(50).min(deadline.saturating_duration_since(Instant::now())));
@@ -459,12 +709,40 @@ impl SyncController {
     /// Authenticates until approved (polling while pending), a permanent failure, or a
     /// cancel. One loop at a time.
     fn auth_loop(&self, generation: u64) {
+        self.auth_loop_with(generation, false)
+    }
+
+    /// [`Self::auth_loop`]; `fresh_sign_in` (Enable Sync) keeps the sign-in just made when a
+    /// pending delete turns out to have gone through, and carries on enrolling (the Mac's
+    /// `keepSignIn: true`). Returns at once while a delete is in flight, and never clears that.
+    fn auth_loop_with(&self, generation: u64, fresh_sign_in: bool) {
+        if self.delete_in_flight.load(Ordering::SeqCst) {
+            return;
+        }
         if self.polling.swap(true, Ordering::SeqCst) {
             return;
         }
+        // Re-checked after claiming `polling`: a delete that set its guard between the check above
+        // and the claim may already have read `polling` as false and gone on to the Worker.
+        if self.delete_in_flight.load(Ordering::SeqCst) {
+            self.polling.store(false, Ordering::SeqCst);
+            return;
+        }
+        // A delete whose outcome isn't known yet: authenticating would make a new account on the
+        // old key, so the account's fate is settled first.
+        if self.delete_pending() {
+            match self.settle_pending_delete(fresh_sign_in, generation) {
+                PendingDelete::Exists => {}
+                PendingDelete::Gone if fresh_sign_in => {}
+                PendingDelete::Gone | PendingDelete::Unknown(_) => {
+                    self.polling.store(false, Ordering::SeqCst);
+                    return;
+                }
+            }
+        }
         let mut delay = self.poll_base;
         loop {
-            if self.generation.load(Ordering::SeqCst) != generation {
+            if self.generation.load(Ordering::SeqCst) != generation || self.delete_in_flight.load(Ordering::SeqCst) {
                 break;
             }
             // A cancel can land while the Worker call is in flight, so every result is
@@ -541,7 +819,7 @@ impl SyncController {
             }
             match result {
                 Ok(tokens) => match me.save_tokens(&tokens) {
-                    Ok(()) => me.auth_loop(generation),
+                    Ok(()) => me.auth_loop_with(generation, true),
                     Err(message) => {
                         me.apply_current(generation, &EnrollmentEvent::Failed { message });
                     }
@@ -571,6 +849,9 @@ impl SyncController {
 
     /// "Check Again" (and re-auth): one more authentication loop in the background.
     pub fn check_again(self: &Arc<Self>) {
+        if self.delete_in_flight.load(Ordering::SeqCst) {
+            return;
+        }
         let me = self.clone();
         let generation = self.generation.load(Ordering::SeqCst);
         std::thread::spawn(move || me.auth_loop(generation));
@@ -593,6 +874,10 @@ impl SyncController {
                 let mut last_tick = Instant::now();
                 loop {
                     std::thread::sleep(TICK);
+                    // The account is being deleted: no re-auth, retry or device read until it returns.
+                    if me.delete_in_flight.load(Ordering::SeqCst) {
+                        continue;
+                    }
                     let ready = me.ready_credentials().is_some();
                     me.whimbrel_upkeep(ready);
                     let now = Instant::now();
@@ -938,6 +1223,53 @@ impl SyncController {
         self.refresh_devices()
     }
 
+    /// Settings → Sync & Devices → "Add Whimbrel Cloud": registers the cloud runner whose public key
+    /// `whimbrel-cloud-runner init` printed, approved by this PC with its own key and the group key (the
+    /// sources `approve` uses). On success, the values the runner's host needs; the bundle is never logged
+    /// or kept here. A 403 or 409 here never changes the sync status.
+    pub fn register_runner(&self, runner_public_key: &str) -> RunnerRegistration {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        if self.ready_credentials().is_none() {
+            return RunnerRegistration::SyncOff;
+        }
+        let Some(runner_key) = STANDARD.decode(runner_public_key.trim()).ok().filter(|k| k.len() == 32) else {
+            return RunnerRegistration::NotAKey;
+        };
+        let group_key = match keys::load_group_key(&*self.secrets) {
+            Ok(Some(key)) => key,
+            Ok(None) => {
+                return RunnerRegistration::Failed { message: tr("This PC doesn't hold the account key yet, so it can't approve other devices.", &[]) }
+            }
+            Err(e) => return RunnerRegistration::Failed { message: e.to_string() },
+        };
+        let worker_url = match &self.config {
+            Ok(c) => c.worker_base_url.clone(),
+            Err(e) => return RunnerRegistration::Failed { message: e.clone() },
+        };
+        let id_token = match self.fresh_id_token() {
+            Ok(token) => token,
+            Err(message) => return RunnerRegistration::Failed { message },
+        };
+        let worker = match self.worker() {
+            Ok(w) => w,
+            Err(message) => return RunnerRegistration::Failed { message },
+        };
+        let me = self.identity.keypair();
+        match worker.register_runner(&id_token, &runner_key, RUNNER_NAME, &me, &group_key) {
+            Ok(bundle) => {
+                if let Err(e) = self.refresh_devices() {
+                    tracing::warn!(error = %e, "the device list after adding Whimbrel Cloud didn't load");
+                }
+                RunnerRegistration::Added {
+                    provision_bundle: STANDARD.encode(&bundle),
+                    approver_public_key: STANDARD.encode(me.public_key_bytes()),
+                    worker_url,
+                }
+            }
+            Err(e) => registration_error(&e),
+        }
+    }
+
     /// Revoke a device. The Worker then rotates every device's token, so all devices
     /// re-authenticate (the UI says so before confirming).
     pub fn revoke(&self, target_id: &str) -> Result<Vec<DeviceView>, String> {
@@ -1019,6 +1351,276 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         c.view()
+    }
+
+    /// A Ready controller holding a group key, with a push-cursor reset that records its calls.
+    fn ready_to_delete(worker: FakeWorker) -> (SyncController, Arc<MemorySecrets>, Arc<Mutex<u32>>) {
+        let secrets = Arc::new(MemorySecrets::default());
+        let c = controller(worker, secrets.clone());
+        *c.status.lock().unwrap() = SyncStatus::Ready { turso_token: "tok".into(), turso_database_url: "libsql://db".into() };
+        secrets.set_string(crate::secrets::SYNC_SERVICE, accounts::GROUP_KEY, "group").unwrap();
+        let resets = Arc::new(Mutex::new(0));
+        let r = resets.clone();
+        c.set_cursor_reset(Box::new(move || {
+            *r.lock().unwrap() += 1;
+            true
+        }));
+        (c, secrets, resets)
+    }
+
+    fn held(secrets: &MemorySecrets, service: &str, account: &str) -> bool {
+        secrets.get_string(service, account).unwrap().is_some()
+    }
+
+    fn gone_cleanly(c: &SyncController, secrets: &MemorySecrets, resets: &Mutex<u32>) {
+        assert!(!held(secrets, crate::secrets::SYNC_SERVICE, accounts::GROUP_KEY), "the group key goes");
+        assert!(!held(secrets, GOOGLE_OAUTH_SERVICE, accounts::GOOGLE_SYNC), "the sync sign-in goes");
+        assert!(held(secrets, crate::secrets::SYNC_SERVICE, accounts::DEVICE_SECRET_KEY), "this PC's keypair stays");
+        assert!(!c.delete_pending(), "settled");
+        assert_eq!(*resets.lock().unwrap(), 1, "the push cursor goes back to 0");
+        assert!(c.ready_credentials().is_none());
+    }
+
+    fn untouched(c: &SyncController, secrets: &MemorySecrets, resets: &Mutex<u32>) {
+        assert!(held(secrets, crate::secrets::SYNC_SERVICE, accounts::GROUP_KEY) && held(secrets, GOOGLE_OAUTH_SERVICE, accounts::GOOGLE_SYNC));
+        assert!(!c.delete_pending());
+        assert_eq!(*resets.lock().unwrap(), 0);
+        assert!(c.ready_credentials().is_some(), "still syncing");
+    }
+
+    #[test]
+    fn a_deleted_sync_account_drops_the_group_key_and_sign_in_but_keeps_the_keypair() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        let (c, secrets, resets) = ready_to_delete(worker.clone());
+        c.delete_account().unwrap();
+        assert_eq!(*worker.delete_calls.lock().unwrap(), 1);
+        gone_cleanly(&c, &secrets, &resets);
+    }
+
+    #[test]
+    fn a_refused_sync_account_delete_changes_nothing() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        *worker.delete.lock().unwrap() = Err(WorkerError::Http { status: 403, body: r#"{"error":"email not allowed"}"#.into() });
+        let (c, secrets, resets) = ready_to_delete(worker.clone());
+        assert!(c.delete_account().is_err());
+        assert_eq!(*worker.list_calls.lock().unwrap(), 0, "a definite refusal is not probed");
+        untouched(&c, &secrets, &resets);
+    }
+
+    #[test]
+    fn a_lost_reply_with_the_account_still_there_says_it_was_not_deleted() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        *worker.delete.lock().unwrap() = Err(WorkerError::Network);
+        let (c, secrets, resets) = ready_to_delete(worker.clone());
+        let e = c.delete_account().unwrap_err();
+        assert!(e.contains("wasn't deleted"), "{e}");
+        assert_eq!(*worker.list_calls.lock().unwrap(), 1, "settled by listing the devices");
+        untouched(&c, &secrets, &resets);
+    }
+
+    #[test]
+    fn a_lost_reply_answered_by_a_403_means_the_account_is_gone() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        *worker.delete.lock().unwrap() = Err(WorkerError::Http { status: 502, body: "bad gateway".into() });
+        *worker.devices_error.lock().unwrap() = Some(WorkerError::Http { status: 403, body: r#"{"error":"device not approved"}"#.into() });
+        let (c, secrets, resets) = ready_to_delete(worker.clone());
+        c.delete_account().unwrap();
+        gone_cleanly(&c, &secrets, &resets);
+    }
+
+    #[test]
+    fn a_503_account_deleting_means_try_again_later() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        *worker.delete.lock().unwrap() = Err(WorkerError::Http { status: 503, body: r#"{"error":"account_deleting"}"#.into() });
+        let (c, secrets, resets) = ready_to_delete(worker.clone());
+        let e = c.delete_account().unwrap_err();
+        assert!(e.contains("already being deleted"), "{e}");
+        assert_eq!(*worker.list_calls.lock().unwrap(), 0);
+        untouched(&c, &secrets, &resets);
+        assert!(!delete_may_have_succeeded(&WorkerError::Http { status: 503, body: "account_deleting".into() }));
+        assert!(delete_may_have_succeeded(&WorkerError::Http { status: 503, body: "overloaded".into() }));
+        assert!(delete_may_have_succeeded(&WorkerError::MalformedResponse) && !delete_may_have_succeeded(&WorkerError::Http { status: 400, body: String::new() }));
+    }
+
+    #[test]
+    fn an_unsettled_delete_keeps_sync_from_signing_in_on_the_old_key() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        *worker.delete.lock().unwrap() = Err(WorkerError::Network);
+        *worker.devices_error.lock().unwrap() = Some(WorkerError::Network);
+        let (c, secrets, _resets) = ready_to_delete(worker.clone());
+        assert!(c.delete_account().unwrap_err().contains("couldn't confirm"));
+        assert!(c.delete_pending(), "the outcome isn't known: the flag stays");
+        assert!(held(&secrets, crate::secrets::SYNC_SERVICE, accounts::GROUP_KEY), "nothing is cleared on a guess");
+        // A later sign-in probes first and stops while it still can't tell.
+        *c.status.lock().unwrap() = SyncStatus::NotSignedIn;
+        c.auth_loop(c.generation.load(Ordering::SeqCst));
+        assert!(matches!(*c.status.lock().unwrap(), SyncStatus::Error { .. }), "{}", *c.status.lock().unwrap());
+        // Once the Worker answers that the account is gone, the cleanup runs and nothing authenticates.
+        *worker.devices_error.lock().unwrap() = Some(WorkerError::Http { status: 403, body: "device not approved".into() });
+        c.auth_loop(c.generation.load(Ordering::SeqCst));
+        assert!(!c.delete_pending() && !held(&secrets, crate::secrets::SYNC_SERVICE, accounts::GROUP_KEY));
+        assert!(c.ready_credentials().is_none(), "no new account was made on the old key");
+    }
+
+    /// The Mac's `deleteInFlight`: while the delete call is out, nothing else may probe (which
+    /// would clear the pending flag on an "exists" read before the delete lands) or authenticate
+    /// (which could make a new account on the old key once it has).
+    #[test]
+    fn a_delete_in_flight_keeps_every_auth_path_from_probing_or_signing_in() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        let (c, secrets, _resets) = ready_to_delete(worker.clone());
+        let c = Arc::new(c);
+        // Holding the fake's answer blocks `delete_account` inside the Worker call.
+        let gate = worker.delete.lock().unwrap();
+        let deleting = {
+            let c = c.clone();
+            std::thread::spawn(move || c.delete_account())
+        };
+        let started = Instant::now();
+        while *worker.delete_calls.lock().unwrap() == 0 {
+            assert!(started.elapsed() < Duration::from_secs(5), "the delete never reached the Worker");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // The upkeep tick's re-auth, the launch resume and a content-sync failure's reauth_now.
+        c.auth_loop(c.generation.load(Ordering::SeqCst));
+        c.reauth_now();
+        std::thread::sleep(Duration::from_millis(200));
+        let (probes, auths, pending) = (*worker.list_calls.lock().unwrap(), *worker.auth_calls.lock().unwrap(), c.delete_pending());
+        drop(gate);
+        deleting.join().unwrap().unwrap();
+        assert_eq!(probes, 0, "nothing probed while the delete was out");
+        assert_eq!(auths, 0, "nothing authenticated while the delete was out");
+        assert!(pending, "only the delete itself settles its flag");
+        assert!(!held(&secrets, crate::secrets::SYNC_SERVICE, accounts::GROUP_KEY));
+        assert!(!c.delete_in_flight.load(Ordering::SeqCst), "the delete clears its own guard");
+        assert_eq!(*worker.auth_calls.lock().unwrap(), 0, "no new account on the old key");
+        // A refused delete clears it too, and a second delete while one is out is turned away.
+        *worker.delete.lock().unwrap() = Err(WorkerError::Http { status: 400, body: String::new() });
+        secrets.set_string(GOOGLE_OAUTH_SERVICE, accounts::GOOGLE_SYNC, &secrets_tokens()).unwrap();
+        *c.status.lock().unwrap() = SyncStatus::Ready { turso_token: "tok".into(), turso_database_url: "libsql://db".into() };
+        assert!(c.delete_account().is_err());
+        assert!(!c.delete_in_flight.load(Ordering::SeqCst));
+        c.delete_in_flight.store(true, Ordering::SeqCst);
+        assert!(c.delete_account().unwrap_err().contains("already being deleted"));
+        assert!(c.delete_in_flight.load(Ordering::SeqCst), "a turned-away second call leaves the first one's guard alone");
+    }
+
+    fn wait_until(what: &str, done: impl Fn() -> bool) {
+        let started = Instant::now();
+        while !done() {
+            assert!(started.elapsed() < Duration::from_secs(5), "{what}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A loop already inside `auth_once` when the delete starts (the upkeep re-auth while Ready):
+    /// its authenticate call could land after the delete and make a new account on the old key,
+    /// so the delete waits for that pass to end before it calls the Worker.
+    #[test]
+    fn a_delete_waits_for_an_auth_pass_already_under_way() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        let (c, secrets, resets) = ready_to_delete(worker.clone());
+        let c = Arc::new(c);
+        // Holding the fake's answer blocks the loop inside its authenticate call.
+        let gate = worker.auth.lock().unwrap();
+        let looping = {
+            let c = c.clone();
+            std::thread::spawn(move || c.auth_loop(c.generation.load(Ordering::SeqCst)))
+        };
+        wait_until("the loop never reached authenticate", || *worker.auth_calls.lock().unwrap() == 1);
+        let deleting = {
+            let c = c.clone();
+            std::thread::spawn(move || c.delete_account())
+        };
+        std::thread::sleep(Duration::from_millis(300));
+        let early = *worker.delete_calls.lock().unwrap();
+        drop(gate);
+        looping.join().unwrap();
+        deleting.join().unwrap().unwrap();
+        assert_eq!(early, 0, "the delete waited for the auth pass already under way");
+        assert_eq!(*worker.delete_calls.lock().unwrap(), 1);
+        assert_eq!(*worker.auth_calls.lock().unwrap(), 1, "nothing authenticated after the delete");
+        gone_cleanly(&c, &secrets, &resets);
+    }
+
+    /// A pass that doesn't end within the bound: the delete gives up before the Worker call, says
+    /// so truthfully, and leaves its guard and the pending flag clear.
+    #[test]
+    fn a_delete_gives_up_when_an_auth_pass_does_not_end_in_time() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        let (mut c, secrets, resets) = ready_to_delete(worker.clone());
+        c.delete_wait = Duration::from_millis(100);
+        c.polling.store(true, Ordering::SeqCst); // a pass stuck in its Worker call
+        let e = c.delete_account().unwrap_err();
+        assert!(e.contains("Sync is busy"), "{e}");
+        assert_eq!(*worker.delete_calls.lock().unwrap(), 0, "the Worker was never asked");
+        assert!(!c.delete_in_flight.load(Ordering::SeqCst), "the guard clears");
+        c.polling.store(false, Ordering::SeqCst);
+        untouched(&c, &secrets, &resets);
+    }
+
+    /// A cancel while a pending delete is being settled wins: the settle's "couldn't confirm"
+    /// error doesn't overwrite it (`apply_current`, as every other loop result).
+    #[test]
+    fn a_cancel_during_a_pending_delete_settle_is_not_overwritten() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        *worker.devices_error.lock().unwrap() = Some(WorkerError::Network);
+        let (c, _secrets, _resets) = ready_to_delete(worker.clone());
+        c.set_delete_pending(true).unwrap();
+        *c.status.lock().unwrap() = SyncStatus::SigningIn;
+        let c = Arc::new(c);
+        // Holding the canned error blocks the settle's device read.
+        let gate = worker.devices_error.lock().unwrap();
+        let looping = {
+            let c = c.clone();
+            std::thread::spawn(move || c.auth_loop(c.generation.load(Ordering::SeqCst)))
+        };
+        wait_until("the settle never asked the Worker", || *worker.list_calls.lock().unwrap() == 1);
+        c.cancel_sign_in();
+        let cancelled = c.status.lock().unwrap().clone();
+        drop(gate);
+        looping.join().unwrap();
+        assert!(!matches!(*c.status.lock().unwrap(), SyncStatus::Error { .. }), "{}", *c.status.lock().unwrap());
+        assert_eq!(*c.status.lock().unwrap(), cancelled);
+        assert!(c.delete_pending(), "still unknown: the flag stays");
+    }
+
+    /// Stored sync tokens that need no refresh.
+    fn secrets_tokens() -> String {
+        serde_json::to_string(&StoredTokens { access_token: "a".into(), refresh_token: "r".into(), id_token: Some("id".into()), expires_at_unix_ms: i64::MAX / 2, granted_scope: None }).unwrap()
+    }
+
+    /// Enable Sync after a delete whose reply was lost (the Mac's `keepSignIn: true`): the probe
+    /// finds the account gone, the old group key goes, and the sign-in just made stays and enrols.
+    #[test]
+    fn enable_sync_after_a_gone_delete_keeps_its_new_sign_in_and_enrols() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        *worker.devices_error_once.lock().unwrap() = Some(WorkerError::Http { status: 403, body: "device not approved".into() });
+        let (c, secrets, resets) = ready_to_delete(worker.clone());
+        c.set_delete_pending(true).unwrap();
+        *c.status.lock().unwrap() = SyncStatus::SigningIn;
+        c.auth_loop_with(c.generation.load(Ordering::SeqCst), true);
+        assert!(!c.delete_pending());
+        assert_eq!(*resets.lock().unwrap(), 1, "the push cursor goes back to 0");
+        assert!(held(&secrets, GOOGLE_OAUTH_SERVICE, accounts::GOOGLE_SYNC), "the fresh sign-in stays");
+        assert_eq!(*worker.auth_calls.lock().unwrap(), 1, "and enrolment carries on");
+        assert!(c.ready_credentials().is_some(), "{}", *c.status.lock().unwrap());
+        let key = secrets.get_string(crate::secrets::SYNC_SERVICE, accounts::GROUP_KEY).unwrap();
+        assert!(key.is_some_and(|k| k != "group"), "a new group key, never the old one");
+    }
+
+    /// The Mac sets an error status when a delete's outcome can't be known: content sync stops
+    /// and Settings doesn't show sync as on.
+    #[test]
+    fn an_unknown_delete_outcome_stops_sync_with_an_error() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        *worker.delete.lock().unwrap() = Err(WorkerError::Network);
+        *worker.devices_error.lock().unwrap() = Some(WorkerError::Network);
+        let (c, _secrets, _resets) = ready_to_delete(worker.clone());
+        assert!(c.delete_account().is_err());
+        assert!(matches!(*c.status.lock().unwrap(), SyncStatus::Error { .. }), "{}", *c.status.lock().unwrap());
+        assert!(c.ready_credentials().is_none(), "content sync stops");
+        assert_eq!(c.view().state, SyncState::Error);
     }
 
     fn plan(name: &str, billing: bool) -> api::sync_ops::enrollment::AccountPlan {
@@ -1328,5 +1930,93 @@ mod tests {
         *worker.ai_models.lock().unwrap() = Ok(vec!["claude-opus-5-5".into()]);
         c.refresh_ai_models().unwrap();
         assert_eq!(c.whimbrel.models(), None);
+    }
+
+    // --- Whimbrel Cloud ---------------------------------------------------------------------------------
+
+    fn ready(worker: FakeWorker, with_group_key: bool) -> SyncController {
+        let secrets = Arc::new(MemorySecrets::default());
+        if with_group_key {
+            keys::save_group_key(&*secrets, &sync::GroupKey::generate()).unwrap();
+        }
+        let c = controller(worker, secrets);
+        *c.status.lock().unwrap() = SyncStatus::Ready { turso_token: "tok".into(), turso_database_url: "libsql://db".into() };
+        c
+    }
+
+    #[test]
+    fn adding_whimbrel_cloud_returns_the_values_for_its_host_and_this_pcs_public_key() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        let c = ready(worker.clone(), true);
+        let runner = sync::DeviceKeypair::generate();
+        let pasted = format!("  {}\n", STANDARD.encode(runner.public_key_bytes()));
+        match c.register_runner(&pasted) {
+            RunnerRegistration::Added { provision_bundle, approver_public_key, worker_url } => {
+                assert_eq!(provision_bundle, STANDARD.encode([1u8, 2, 3]));
+                assert_eq!(approver_public_key, STANDARD.encode(c.identity.keypair().public_key_bytes()));
+                assert_eq!(approver_public_key, c.identity.device_id, "the approver is this PC");
+                assert_eq!(worker_url, "https://w.test");
+            }
+            other => panic!("expected Added, got {other:?}"),
+        }
+        assert_eq!(*worker.runner_keys.lock().unwrap(), vec![runner.public_key_bytes().to_vec()], "the pasted key, trimmed");
+    }
+
+    #[test]
+    fn adding_whimbrel_cloud_needs_sync_on_a_real_key_and_the_account_key() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        let off = controller(worker.clone(), Arc::new(MemorySecrets::default()));
+        assert_eq!(off.register_runner(&STANDARD.encode([7u8; 32])), RunnerRegistration::SyncOff);
+        let c = ready(worker.clone(), true);
+        let short = STANDARD.encode([7u8; 31]);
+        for bad in ["", "   ", "not base64!", short.as_str()] {
+            assert_eq!(c.register_runner(bad), RunnerRegistration::NotAKey, "{bad:?}");
+        }
+        assert!(worker.runner_keys.lock().unwrap().is_empty(), "nothing was sent");
+        let no_key = ready(worker.clone(), false);
+        assert!(matches!(no_key.register_runner(&STANDARD.encode([7u8; 32])), RunnerRegistration::Failed { message } if message.contains("doesn't hold the account key")));
+    }
+
+    #[test]
+    fn the_workers_refusals_become_their_own_outcomes_and_never_sign_this_pc_out() {
+        let worker = FakeWorker::new(approved(), vec![]);
+        let c = ready(worker.clone(), true);
+        let key = STANDARD.encode([7u8; 32]);
+        for (error, want) in [
+            (WorkerError::Http { status: 403, body: r#"{"error":"cloud routines are not available for this account"}"#.into() }, RunnerRegistration::NotAvailable),
+            (WorkerError::Http { status: 409, body: "{}".into() }, RunnerRegistration::AlreadyAdded),
+            (WorkerError::Http { status: 400, body: "{}".into() }, RunnerRegistration::NotAKey),
+            (WorkerError::MalformedResponse, RunnerRegistration::NotAKey),
+        ] {
+            *worker.runner.lock().unwrap() = Err(error);
+            assert_eq!(c.register_runner(&key), want);
+            assert!(c.ready_credentials().is_some(), "still signed in");
+        }
+        *worker.runner.lock().unwrap() = Err(WorkerError::Http { status: 403, body: "device revoked".into() });
+        assert!(matches!(c.register_runner(&key), RunnerRegistration::Failed { .. }), "any other 403 is the usual message");
+        assert!(matches!(registration_error(&WorkerError::Network), RunnerRegistration::Failed { .. }));
+    }
+
+    #[test]
+    fn the_registration_json_is_what_the_ui_reads() {
+        let added = RunnerRegistration::Added { provision_bundle: "b".into(), approver_public_key: "a".into(), worker_url: "u".into() };
+        assert_eq!(
+            serde_json::to_value(&added).unwrap(),
+            serde_json::json!({ "status": "added", "provision_bundle": "b", "approver_public_key": "a", "worker_url": "u" })
+        );
+        assert_eq!(serde_json::to_value(RunnerRegistration::NotAKey).unwrap(), serde_json::json!({ "status": "not_a_key" }));
+        assert_eq!(serde_json::to_value(RunnerRegistration::NotAvailable).unwrap(), serde_json::json!({ "status": "not_available" }));
+        assert_eq!(serde_json::to_value(RunnerRegistration::AlreadyAdded).unwrap(), serde_json::json!({ "status": "already_added" }));
+        assert_eq!(serde_json::to_value(RunnerRegistration::SyncOff).unwrap(), serde_json::json!({ "status": "sync_off" }));
+        assert_eq!(serde_json::to_value(RunnerRegistration::Failed { message: "m".into() }).unwrap(), serde_json::json!({ "status": "failed", "message": "m" }));
+    }
+
+    #[test]
+    fn the_registrations_debug_never_shows_the_bundle() {
+        let added = RunnerRegistration::Added { provision_bundle: "SECRET-BUNDLE".into(), approver_public_key: "APPROVER".into(), worker_url: "https://w.test".into() };
+        let shown = format!("{added:?}");
+        assert!(!shown.contains("SECRET-BUNDLE"), "{shown}");
+        assert!(shown.contains("<redacted>") && shown.contains("APPROVER") && shown.contains("https://w.test"), "{shown}");
+        assert_eq!(format!("{:?}", RunnerRegistration::NotAKey), "NotAKey");
     }
 }

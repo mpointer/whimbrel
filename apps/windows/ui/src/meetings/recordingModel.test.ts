@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MeetingRecordingView } from "../generated/types";
 import { elapsedLabel, recordAction } from "./recordingModel";
 
-const view = (state: MeetingRecordingView["state"]): MeetingRecordingView => ({ state });
+const view = (state: MeetingRecordingView["state"]): MeetingRecordingView => ({ state, paused: false, pausedTotalMs: 0, resuming: false });
 
 
 describe("elapsedLabel", () => {

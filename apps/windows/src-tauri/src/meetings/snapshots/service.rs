@@ -9,6 +9,7 @@
 
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -46,6 +47,8 @@ pub type StartSnapshots = Arc<dyn Fn(SnapshotMeeting) -> Option<SnapshotHandle> 
 struct Stop {
     stopped: Mutex<bool>,
     wake: Condvar,
+    /// A recording pause: ticks take no frame until it ends.
+    paused: AtomicBool,
 }
 
 /// A running meeting's snapshots. Dropping it doesn't stop them; `stop` does.
@@ -59,6 +62,11 @@ impl SnapshotHandle {
         *self.stop.stopped.lock().unwrap() = true;
         self.stop.wake.notify_all();
     }
+
+    /// Starts or ends a recording pause: while paused no window is grabbed.
+    pub fn set_paused(&self, paused: bool) {
+        self.stop.paused.store(paused, Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]
@@ -68,6 +76,13 @@ impl SnapshotHandle {
         let stop = Arc::new(Stop::default());
         let probe = stop.clone();
         (SnapshotHandle { stop }, move || *probe.stopped.lock().unwrap())
+    }
+
+    /// A handle with no worker behind it, and a probe for whether a recording pause is on.
+    pub(crate) fn unwatched_paused() -> (Self, impl Fn() -> bool) {
+        let stop = Arc::new(Stop::default());
+        let probe = stop.clone();
+        (SnapshotHandle { stop }, move || probe.paused.load(Ordering::Relaxed))
     }
 }
 
@@ -133,6 +148,10 @@ fn run(meeting: SnapshotMeeting, deps: &Deps, root: PathBuf, stop: Arc<Stop>) {
         // A tick that overran skips the ticks it ran into.
         while next <= Instant::now() {
             next += INTERVAL;
+        }
+        // A recording pause: no look at all, and the pressure clock below does not advance.
+        if stop.paused.load(Ordering::Relaxed) {
+            continue;
         }
         // The PC is short of memory or CPU (`meeting_load`): one look every 30 s, not every 5.
         if crate::meeting_load::under_pressure()

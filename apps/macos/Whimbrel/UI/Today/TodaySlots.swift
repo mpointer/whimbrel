@@ -61,6 +61,7 @@ struct TodaySlots: View {
                 action: { actions.startNote() }
             )
             .frame(maxWidth: .infinity, minHeight: 240)
+            .recordingControl()
         case .live, .upcoming, .none:
             EmptyView()
         }

@@ -37,6 +37,8 @@ interface CoreNative {
     fun syncContentLastPullStats(): String? = null
     /** Older history is still being pulled, newest first (#572): read from the store, so it holds across relaunches. */
     fun syncContentOlderHistoryLoading(handle: Long): Boolean = false
+    /** `{"pending_devices": n | null}`: other devices that have not announced client deletes yet. */
+    fun clientPendingDevicesJson(handle: Long): String? = null
     /** Meetings after grouping copies, over every meeting (no cap); -1 on failure. */
     fun meetingsGroupedCount(handle: Long): Long
     fun meetingsRecentGrouped(handle: Long, limit: Long): String?

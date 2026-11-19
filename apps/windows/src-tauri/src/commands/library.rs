@@ -336,6 +336,65 @@ pub async fn search_rows(store: &StoreHandle, labeler: DeviceLabeler, query: Str
         .collect())
 }
 
+/// Library search narrowed to captures from one app and a time range (Home's Apps and Dates filters). Only
+/// captures carry an app, so the rows are captures only. An app filter with no dates reads the last 30 days.
+/// Read-only. Semantic search filters after the nearest-neighbour step, so it can return fewer than keyword.
+#[tauri::command]
+pub async fn library_search_filtered(
+    state: State<'_, AppState>,
+    query: String,
+    semantic: bool,
+    app: Option<String>,
+    start_unix_ms: Option<i64>,
+    end_unix_ms: Option<i64>,
+) -> Result<Vec<LibraryRow>, CommandError> {
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let labeler = state.device_labeler();
+    let now_unix_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+    let captures = state
+        .store()?
+        .call(move |s| {
+            s.search_captures_filtered(query.trim(), semantic, app.as_deref(), start_unix_ms, end_unix_ms, SEARCH_LIMIT, now_unix_ms)
+                .map_err(|e| e.to_string())
+        })
+        .await?
+        .map_err(store_error)?;
+    Ok(captures.iter().map(|c| LibraryRow::Capture(capture_row(c, &labeler))).collect())
+}
+
+/// The apps seen in `[start_unix_ms, end_unix_ms)`, most captures first, for the Apps filter. Read-only.
+#[tauri::command]
+pub async fn library_capture_apps(
+    state: State<'_, AppState>,
+    start_unix_ms: i64,
+    end_unix_ms: i64,
+    limit: usize,
+) -> Result<Vec<memory::capture_search::CaptureApp>, CommandError> {
+    state
+        .store()?
+        .call(move |s| s.capture_apps(start_unix_ms, end_unix_ms, limit).map_err(|e| e.to_string()))
+        .await?
+        .map_err(store_error)
+}
+
+/// Memory blocks for Home's time line: time, app and window title only, never body text, with the day cut
+/// around `meetings` (start, end) pairs in unix ms. Read-only, on the store's queue.
+#[tauri::command]
+pub async fn library_day_blocks(
+    state: State<'_, AppState>,
+    start_unix_ms: i64,
+    end_unix_ms: i64,
+    meetings: Vec<(i64, i64)>,
+) -> Result<Vec<memory::day_blocks::DayBlock>, CommandError> {
+    state
+        .store()?
+        .call(move |s| s.day_blocks(start_unix_ms, end_unix_ms, &meetings).map_err(|e| e.to_string()))
+        .await?
+        .map_err(store_error)
+}
+
 #[tauri::command]
 pub async fn library_recent(state: State<'_, AppState>) -> Result<Vec<LibraryRow>, CommandError> {
     let show = state.settings.lock().unwrap().show_screen_captures();
@@ -445,9 +504,9 @@ mod tests {
         let store = StoreHandle::spawn(|| Store::open_in_memory().map_err(|e| e.to_string())).unwrap();
         store
             .call_blocking(|s| {
-                ingest::ingest_record(s, THIS_PC, &record(1_000, "notepad.exe", "first note from windows"));
-                ingest::ingest_record(s, MAC, &record(2_000, "com.apple.Safari", "mac page about falcons"));
-                ingest::ingest_record(s, THIS_PC, &record(3_000, "code.exe", "second note from windows"));
+                ingest::ingest_record(s, THIS_PC, &record(1_000, "notepad.exe", "first note from windows")).unwrap();
+                ingest::ingest_record(s, MAC, &record(2_000, "com.apple.Safari", "mac page about falcons")).unwrap();
+                ingest::ingest_record(s, THIS_PC, &record(3_000, "code.exe", "second note from windows")).unwrap();
             })
             .unwrap();
         store

@@ -148,6 +148,11 @@ impl std::fmt::Debug for StreamRoute {
 pub fn stream_route(routing: &RoutingSettings, keys: &ApiKeys) -> Option<StreamRoute> {
     let ollama = || StreamRoute { provider: "ollama", model: routing.ollama_model.clone(), key: None, device_key: None };
     if routing.local_only {
+        // An Ollama cloud model is not local: local-only mode never streams to it. The blocking
+        // path's local-only chain leaves it out too (the bundled model answers, or nothing).
+        if llm::is_ollama_cloud_model(&routing.ollama_model) {
+            return None;
+        }
         return Some(ollama());
     }
     let hosted = |provider: &'static str, key: &Option<String>, model: &str| {
@@ -188,10 +193,12 @@ pub fn freshen_whimbrel(sync: Option<&crate::syncing::controller::SyncController
 /// Starts `route`'s stream: Whimbrel AI through `api::inference::start_whimbrel`, every other
 /// provider through `api::inference::start`. `None` when it couldn't start.
 pub fn start_stream(prompt: &str, route: &StreamRoute) -> Option<api::inference::StartedRun> {
+    // The gate the prompt's `api` prepare call just read; hosted streams pass it.
+    let gate = api::exclusion::published_gate();
     match (route.provider, route.key.as_deref(), route.device_key.as_deref()) {
-        ("whimbrel", Some(id_token), Some(device_key)) => api::inference::start_whimbrel(prompt, &route.model, id_token, device_key),
+        ("whimbrel", Some(id_token), Some(device_key)) => api::inference::start_whimbrel(prompt, &route.model, id_token, device_key, gate),
         ("whimbrel", ..) => None,
-        _ => api::inference::start(prompt, &route.model, route.provider, route.key.as_deref(), None),
+        _ => api::inference::start(prompt, &route.model, route.provider, route.key.as_deref(), None, gate),
     }
 }
 
@@ -369,8 +376,10 @@ pub enum ChatEvent {
     Progress { label: String },
     /// The stream failed before any output; the blocking path is answering instead.
     FellBack,
+    // `left_out`: retrieved items a hosted model answered without, because they involve a client excluded from
+    // hosted models (core's `filtered_hosted`; items, not clients). The page shows a note; it is never saved.
     #[serde(rename_all = "camelCase")]
-    Completed { answer: String, citations: Vec<ContextItemRef>, conversation_id: Option<i64>, narrowed: bool },
+    Completed { answer: String, citations: Vec<ContextItemRef>, conversation_id: Option<i64>, narrowed: bool, left_out: Option<usize> },
     /// Stopped: the question goes back into the composer.
     Cancelled,
     /// `partial`: some of the answer had streamed before it failed.
@@ -378,6 +387,37 @@ pub enum ChatEvent {
     /// A new conversation got its generated title.
     #[serde(rename_all = "camelCase")]
     Titled { conversation_id: i64, title: String },
+    /// Library Ask: the question still waits for its lane after a moment (another question or a recap holds
+    /// it). The page says so rather than naming a model (PR 874).
+    Waiting,
+    /// Library Ask: the question names a client excluded from hosted models, so a model on this PC answers it
+    /// whatever the picker says. Sent after `Started`; the spinner says so (PR 867/874). Never names the client.
+    RoutedLocally,
+    /// Library Ask, the blocking path: the model that really answered, sent just before `Completed`.
+    /// `excluded_client`: it ran on this PC because the question names a client excluded from hosted models.
+    #[serde(rename_all = "camelCase")]
+    AnsweredBy { model: String, excluded_client: bool },
+}
+
+/// How many retrieved items an answer was made without because they involve an excluded client, for the
+/// note under it: `Some` only for core's `filtered_hosted` with at least one.
+pub fn left_out(outcome: &api::exclusion::ExclusionOutcome) -> Option<usize> {
+    match outcome {
+        api::exclusion::ExclusionOutcome::FilteredHosted { left_out } if *left_out > 0 => Some(*left_out),
+        _ => None,
+    }
+}
+
+/// The provider failure for a stream the exclusion gate held back (nothing was sent), if it was one: the
+/// shell shows "Not sent…", never "couldn't reach the provider".
+pub fn gate_refusal(outcome: &TerminalOutcome) -> Option<CommandError> {
+    use crate::error::ProviderFailureReason as R;
+    let reason = match outcome {
+        TerminalOutcome::Failed { class: InferenceFailureClass::ExcludedClient, .. } => R::ExcludedClient,
+        TerminalOutcome::Failed { class: InferenceFailureClass::ExclusionUnreadable, .. } => R::ExclusionUnreadable,
+        _ => return None,
+    };
+    Some(CommandError::ProviderFailure { reason: Some(reason) })
 }
 
 /// How a stream ended.
@@ -632,7 +672,7 @@ mod tests {
             text: "the falcon migration plan".into(),
             source: "uia".into(),
         };
-        ingest::ingest_record(&store, "dev", &record);
+        ingest::ingest_record(&store, "dev", &record).unwrap();
         let context = fetch_context(&store, "falcon");
         let capture = context.iter().find(|e| matches!(e.item, ContextItemRef::Capture { .. })).expect("the keyword hit");
         let ContextItemRef::Capture { id } = capture.item else { unreachable!() };
@@ -720,15 +760,37 @@ mod tests {
     }
 
     #[test]
+    fn the_left_out_note_and_gate_refusals_come_from_cores_outcomes() {
+        use api::exclusion::ExclusionOutcome as O;
+        assert_eq!(left_out(&O::FilteredHosted { left_out: 3 }), Some(3));
+        assert_eq!(left_out(&O::FilteredHosted { left_out: 0 }), None);
+        assert_eq!(left_out(&O::Allowed), None);
+        assert_eq!(left_out(&O::LocalOnly), None);
+        let refused = TerminalOutcome::Failed { class: InferenceFailureClass::ExcludedClient, message: "x".into() };
+        assert!(matches!(
+            gate_refusal(&refused),
+            Some(CommandError::ProviderFailure { reason: Some(crate::error::ProviderFailureReason::ExcludedClient) })
+        ));
+        let unreadable = TerminalOutcome::Failed { class: InferenceFailureClass::ExclusionUnreadable, message: "x".into() };
+        assert!(matches!(
+            gate_refusal(&unreadable),
+            Some(CommandError::ProviderFailure { reason: Some(crate::error::ProviderFailureReason::ExclusionUnreadable) })
+        ));
+        let network = TerminalOutcome::Failed { class: InferenceFailureClass::Network, message: "x".into() };
+        assert!(gate_refusal(&network).is_none());
+    }
+
+    #[test]
     fn events_serialize_with_a_kind_tag_and_camel_case_fields() {
         let started = ChatEvent::Started { run_id: Some("r".into()), provider: "ollama".into(), model: "m".into(), context: vec![] };
         let v = serde_json::to_value(started).unwrap();
         assert_eq!((v["kind"].as_str(), v["runId"].as_str()), (Some("started"), Some("r")));
         assert_eq!(serde_json::to_value(ChatEvent::FellBack).unwrap(), serde_json::json!({"kind": "fell_back"}));
-        let done = ChatEvent::Completed { answer: "a".into(), citations: vec![ContextItemRef::Episode { id: 7 }], conversation_id: Some(3), narrowed: false };
+        let done = ChatEvent::Completed { answer: "a".into(), citations: vec![ContextItemRef::Episode { id: 7 }], conversation_id: Some(3), narrowed: false, left_out: Some(2) };
         let v = serde_json::to_value(done).unwrap();
         assert_eq!(v["citations"][0], serde_json::json!({"kind": "episode", "id": 7}));
         assert_eq!(v["conversationId"], 3);
+        assert_eq!(v["leftOut"], 2);
         let failed = serde_json::to_value(ChatEvent::Failed { error: CommandError::provider_failure(), partial: true }).unwrap();
         assert_eq!(failed["error"]["kind"], "provider_failure");
     }

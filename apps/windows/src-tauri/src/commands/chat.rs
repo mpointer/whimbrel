@@ -106,9 +106,12 @@ pub fn chat_ask(state: State<'_, AppState>, query: String, conversation_id: Opti
     };
     let mut ask = Ask { query, conversation_id, settings, keys: ApiKeys::load(&*state.secrets)?, instructions, slow };
     let sync = state.sync.clone();
+    // Background model requests hold back from now until the answer ends (PR 874).
+    let gate = crate::user_model_gate::enter();
     std::thread::Builder::new()
         .name("whimbrel-ask".into())
         .spawn(move || {
+            let _gate = gate;
             crate::chat::freshen_whimbrel(sync.as_deref(), &ask.settings, &mut ask.keys);
             // A closed window drops the UI's end of the channel. The answer is still
             // finished and persisted, so a failed send is ignored.
@@ -127,7 +130,7 @@ pub fn chat_stop(run_id: String) -> bool {
     api::inference::cancel(&run_id)
 }
 
-fn run(store: &StoreHandle, ask: &Ask, send: &dyn Fn(ChatEvent)) {
+fn run(store: &StoreHandle, ask: &Ask, send: &(dyn Fn(ChatEvent) + Sync)) {
     let ollama_up = chat::ollama_serves(&ask.settings.ollama_model);
     let effective = chat::effective_routing(&ask.settings, &ask.query, ollama_up);
     let route = chat::local_instead(chat::stream_route(&effective, &ask.keys), ollama_up, api::local_model::is_configured());
@@ -150,7 +153,8 @@ fn run(store: &StoreHandle, ask: &Ask, send: &dyn Fn(ChatEvent)) {
             .map(|c| chat::history_from(&c.exchanges))
             .unwrap_or_default();
         let context = chat::fetch_context(s, &query);
-        let prepared = streams.then(|| api::ask::prepare_ask(s, &query, chat::CONTEXT_LIMIT, &history, &routing));
+        // Converted here: core leaves a refusal's reason on this thread, take-once (`From<ApiError>`).
+        let prepared = streams.then(|| api::ask::prepare_ask(s, &query, chat::CONTEXT_LIMIT, &history, &routing).map_err(CommandError::from));
         (history, context, prepared)
     });
     let (history, context, prepared) = match gathered {
@@ -162,25 +166,74 @@ fn run(store: &StoreHandle, ask: &Ask, send: &dyn Fn(ChatEvent)) {
         // The spend cap, checked before any provider is tried. A spent monthly budget on the
         // provider that would stream is not the end: the preferred provider only orders the
         // chain, so the blocking answer tries the next one (it fails with the budget message
-        // only when every provider is spent).
-        (_, Some(Err(error))) if !streams_past(&error) => fail(send, error.into(), false),
-        (_, Some(Err(_))) => {
+        // only when every provider is spent). Nor is a question that carries an excluded client:
+        // the blocking path answers it on this PC, or refuses with its own words (the Mac's
+        // `fallbackToBlocking`).
+        (_, Some(Err(error))) if !prepare_falls_back(&error) => fail(send, error, false),
+        (_, Some(Err(error))) => {
+            // An excluded client: prepare already knows the answer is made on this PC.
+            let local = names_excluded_client(&error) || question_names_excluded(ask, &history, send);
             // The chain picks a provider past the spent one and doesn't say which: name none.
             send(blocking_started(&effective, &context));
-            send(ChatEvent::FellBack);
+            if local {
+                send(ChatEvent::RoutedLocally);
+            } else {
+                send(ChatEvent::FellBack);
+            }
             blocking(store, ask, &effective, history, &context, send);
         }
         _ => {
+            // Until the pre-check says the question names no excluded client, the page names no model.
+            let local = question_names_excluded(ask, &history, send);
             send(blocking_started(&effective, &context));
+            if local {
+                send(ChatEvent::RoutedLocally);
+            }
             blocking(store, ask, &effective, history, &context, send);
         }
     }
 }
 
-/// Whether a failed `prepare_ask` still leaves the blocking answer to try: a spent monthly budget
-/// on the streaming provider does, since the blocking chain skips it for the next provider.
-pub(crate) fn streams_past(error: &api::ApiError) -> bool {
-    matches!(error, api::ApiError::BudgetSpent(_))
+/// How long a question may wait for the slow lane before the page says it is waiting (the Mac's
+/// `AskLocalRouteCopy.waitingShownAfter`).
+pub(crate) const WAITING_SHOWN_AFTER: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// A failed prepare that means the question names a client excluded from hosted models.
+fn names_excluded_client(error: &CommandError) -> bool {
+    matches!(error, CommandError::ProviderFailure { reason: Some(crate::error::ProviderFailureReason::ExcludedClient) })
+}
+
+/// Core's pre-check (`question_names_excluded_client`), first thing on the slow lane the answer will use (it can
+/// rescan, so never on the main store). Sends `Waiting` when the lane is not free after
+/// [`WAITING_SHOWN_AFTER`]. False when the store is gone: the answer then fails on its own.
+fn question_names_excluded(ask: &Ask, history: &[llm::ChatTurn], send: &(dyn Fn(ChatEvent) + Sync)) -> bool {
+    let (query, history) = (ask.query.clone(), history.to_vec());
+    let (reached, waiting) = std::sync::mpsc::channel::<()>();
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = waiting.recv_timeout(WAITING_SHOWN_AFTER) {
+                send(ChatEvent::Waiting);
+            }
+        });
+        ask.slow
+            .call_blocking(move |s| {
+                let _ = reached.send(());
+                api::ask::question_names_excluded_client(s, &query, &history)
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Whether a failed prepare (converted on the store thread that recorded its reason) still leaves the
+/// blocking answer to try: a spent monthly budget on the streaming provider (the blocking chain skips it
+/// for the next provider), or a question that carries a client excluded from hosted models (the blocking
+/// path answers it on this PC, or refuses). An unreadable exclusion setting does not: nothing hosted goes
+/// until it reads, and the page says so (as on the Mac).
+pub(crate) fn prepare_falls_back(error: &CommandError) -> bool {
+    matches!(
+        error,
+        CommandError::BudgetSpent { .. } | CommandError::ProviderFailure { reason: Some(crate::error::ProviderFailureReason::ExcludedClient) }
+    )
 }
 
 /// Reports a failed question to the UI and the log (the error, never the question).
@@ -220,15 +273,16 @@ fn stream(
             let answered = end.model.clone().unwrap_or_else(|| route.model.clone());
             let (prepare_id, text, model, usage) = (prepared.prepare_id, end.text.clone(), answered.clone(), end.usage);
             let (provider, requested, substitute) = (llm::Provider::parse(route.provider), route.model.clone(), end.model.clone());
-            let citations = store
+            let (citations, left_out) = store
                 .call_blocking(move |s| {
                     if let Some(provider) = provider {
                         api::model_defaults::note_answer(s, provider, &requested, substitute.as_deref(), api::util::now_unix_ms());
                     }
-                    api::ask::finalize_ask(s, &prepare_id, &text, &model, usage).citations
+                    let finalized = api::ask::finalize_ask(s, &prepare_id, &text, &model, usage);
+                    (finalized.citations, chat::left_out(&finalized.exclusion))
                 })
                 .unwrap_or_default();
-            finish(store, ask, end.text, citations, &context, &answered, send);
+            finish(store, ask, end.text, citations, &context, &answered, left_out, send);
         }
         TerminalAction::Restore => {
             api::ask::discard_ask(&prepared.prepare_id);
@@ -257,16 +311,40 @@ fn blocking(store: &StoreHandle, ask: &Ask, effective: &RoutingSettings, history
     let (_, model) = chat::answering(effective);
     let routing = effective.routing_config(&ask.keys, &ask.instructions);
     let (query, ollama_model) = (ask.query.clone(), effective.ollama_model.clone());
-    match ask.slow.call_blocking(move |s| api::ask::answer(s, &query, &ollama_model, chat::CONTEXT_LIMIT, &history, &routing)) {
-        Ok(Ok(answer)) => finish(store, ask, answer.text, answer.citations, context, &model, send),
-        Ok(Err(error)) => fail(send, error.into(), false),
-        Err(error) => fail(send, error, false),
+    // The error is converted on the slow lane's thread, where core left the refusal's reason (take-once), so
+    // an excluded client's refusal shows "Not sent…", not the generic provider failure.
+    let answered = ask.slow.call_blocking(move |s| {
+        api::ask::answer_detailed(s, &query, &ollama_model, chat::CONTEXT_LIMIT, &history, &routing).map_err(CommandError::from)
+    });
+    match answered {
+        Ok(Ok(done)) => {
+            let excluded_client = matches!(done.exclusion, api::exclusion::ExclusionOutcome::LocalOnly);
+            let model = answered_model(&done.answered_by, &done.exclusion, &model);
+            send(ChatEvent::AnsweredBy { model: model.clone(), excluded_client });
+            finish(store, ask, done.answer.text, done.answer.citations, context, &model, chat::left_out(&done.exclusion), send)
+        }
+        Ok(Err(error)) | Err(error) => fail(send, error, false),
+    }
+}
+
+/// The model name a blocking answer is saved and shown under: the one that really answered (PR 867 parity; the
+/// chain may have moved past the preferred one). An answer made on this PC because the question carries an
+/// excluded client never carries the preferred hosted model's name: with no answering model reported, it is
+/// saved with none.
+pub(crate) fn answered_model(by: &api::ask::AnsweredBy, outcome: &api::exclusion::ExclusionOutcome, routed: &str) -> String {
+    if !by.model.trim().is_empty() {
+        return by.model.clone();
+    }
+    match outcome {
+        api::exclusion::ExclusionOutcome::LocalOnly => String::new(),
+        _ => routed.to_string(),
     }
 }
 
 /// Persists the exchange, shows the answer, then (for a new conversation) generates its
 /// title. Title generation is best effort and never retried: any failure leaves the
-/// placeholder.
+/// placeholder. `left_out` is shown under the answer, never saved.
+#[allow(clippy::too_many_arguments)]
 fn finish(
     store: &StoreHandle,
     ask: &Ask,
@@ -274,13 +352,14 @@ fn finish(
     citations: Vec<llm::ContextItemRef>,
     context: &[ContextEntry],
     model: &str,
+    left_out: Option<usize>,
     send: &dyn Fn(ChatEvent),
 ) {
     tracing::info!(chars = answer.len(), citations = citations.len(), "question answered");
     let cited: Vec<&ContextEntry> = context.iter().filter(|e| citations.contains(&e.item)).collect();
     let citations_json = serde_json::to_string(&cited).unwrap_or_else(|_| "[]".into());
     let conversation_id = persist(store, ask.conversation_id, &ask.query, &answer, citations_json, model);
-    send(ChatEvent::Completed { answer: answer.clone(), citations, conversation_id, narrowed: false });
+    send(ChatEvent::Completed { answer: answer.clone(), citations, conversation_id, narrowed: false, left_out });
     let (None, Some(id)) = (ask.conversation_id, conversation_id) else { return };
     let routing = chat::title_routing(&ask.settings, chat::ollama_serves(&ask.settings.ollama_model))
         .routing_config(&ask.keys, &Instructions::default());
@@ -402,10 +481,53 @@ mod tests {
     #[test]
     fn a_spent_budget_on_the_streaming_provider_falls_back_to_the_chain() {
         let spent = api::ApiError::BudgetSpent(api::budget::BudgetSpent { provider: llm::Provider::Anthropic, spent_cents: 2500, budget_cents: 2500 });
-        assert!(streams_past(&spent), "the blocking chain tries the next provider");
+        assert!(prepare_falls_back(&spent.into()), "the blocking chain tries the next provider");
         let cap = api::ApiError::SpendCap(llm::SpendCapError { spent_cents: 200, cap_cents: 200, scope: llm::SpendCapScope::User });
-        assert!(!streams_past(&cap), "the daily cap stops every provider");
-        assert!(!streams_past(&api::ApiError::ProviderFailure));
+        assert!(!prepare_falls_back(&cap.into()), "the daily cap stops every provider");
+        assert!(!prepare_falls_back(&CommandError::provider_failure()));
+    }
+
+    /// Final review, Major 20: a question that carries an excluded client is answered on the blocking path
+    /// (on this PC, or refused there); an unreadable setting is shown, not retried. The reason is read on the
+    /// thread core recorded it on: converted there, it survives the hop.
+    #[test]
+    fn an_excluded_client_refusal_falls_back_to_the_blocking_path_and_keeps_its_reason() {
+        use crate::error::ProviderFailureReason as R;
+        assert!(prepare_falls_back(&CommandError::ProviderFailure { reason: Some(R::ExcludedClient) }));
+        assert!(!prepare_falls_back(&CommandError::ProviderFailure { reason: Some(R::ExclusionUnreadable) }));
+        let s = store();
+        let converted = s
+            .call_blocking(|_| CommandError::from(api::envelope::chain_failed(vec![llm::ProviderFailureKind::ExcludedClient])))
+            .unwrap();
+        assert_eq!(converted, CommandError::ProviderFailure { reason: Some(R::ExcludedClient) });
+    }
+
+    /// Final-wave review, Major 2: a local answer about an excluded client is never saved under a hosted name.
+    #[test]
+    fn a_local_only_answer_is_saved_under_no_hosted_model_name() {
+        use api::exclusion::ExclusionOutcome as O;
+        let none = api::ask::AnsweredBy { provider: String::new(), model: String::new(), local: false };
+        assert_eq!(answered_model(&none, &O::LocalOnly, "claude-sonnet"), "");
+        assert_eq!(answered_model(&none, &O::Allowed, "claude-sonnet"), "claude-sonnet");
+        assert_eq!(answered_model(&none, &O::FilteredHosted { left_out: 2 }, "claude-sonnet"), "claude-sonnet");
+    }
+
+    /// PR 867 parity: the answer is labelled with the model that really answered, the local one for an excluded
+    /// client, never the picker's hosted model.
+    #[test]
+    fn an_answer_is_labelled_with_the_model_that_answered() {
+        use api::exclusion::ExclusionOutcome as O;
+        let local = api::ask::AnsweredBy { provider: "ollama".into(), model: "gemma4:12b".into(), local: true };
+        assert_eq!(answered_model(&local, &O::LocalOnly, "hosted-pick"), "gemma4:12b");
+        let next = api::ask::AnsweredBy { provider: "anthropic".into(), model: "hosted-next".into(), local: false };
+        assert_eq!(answered_model(&next, &O::Allowed, "hosted-pick"), "hosted-next");
+    }
+
+    #[test]
+    fn a_prepare_refused_for_an_excluded_client_means_a_local_answer() {
+        use crate::error::ProviderFailureReason as R;
+        assert!(names_excluded_client(&CommandError::ProviderFailure { reason: Some(R::ExcludedClient) }));
+        assert!(!names_excluded_client(&CommandError::ProviderFailure { reason: Some(R::ExclusionUnreadable) }));
     }
 
     fn store() -> StoreHandle {
@@ -463,7 +585,9 @@ mod tests {
         for (label, routing) in [("Ollama first", chat::title_routing(&settings, true)), ("as preferred", settings.clone())] {
             let config = routing.routing_config(&keys, &Instructions::default());
             println!("== {label}: preferred {} / {}", config.preferred_provider, config.preferred_model);
-            for link in api::routing::build_chain(&routing.ollama_model, &config) {
+            // A diagnostic over the saved keys, outside any store: no client is excluded here.
+            let open: std::sync::Arc<dyn llm::HostedGate> = std::sync::Arc::new(llm::NoExclusions);
+            for link in api::routing::build_chain(&routing.ollama_model, &config, &open) {
                 let outcome = match link.client.complete("Reply with the single word OK.") {
                     Ok(c) => format!("ok: {:?}", c.text.chars().take(40).collect::<String>()),
                     Err(e) => redact(format!("error: {e:?}")),

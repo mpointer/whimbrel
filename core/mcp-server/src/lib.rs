@@ -45,6 +45,17 @@
 //! `"memory"`-scoped tools, `assemble_context` is the first to expose episode summaries,
 //! email-thread data (subject, participants, and LLM summary), and routine-run outputs —
 //! data no prior tool under `"memory"` has served.
+//!
+//! ## Clients excluded from hosted models (X6, spec 7.3)
+//!
+//! Tool results go to outside AI tools, so every tool treats them as hosted: material filed
+//! under a client excluded from hosted models, or naming one, is never returned
+//! (`llm::ContextFilter`, read from the store on each call; an unreadable setting returns
+//! nothing). An excluded client's meeting reads as unknown (`get_meeting` null, `get_transcript`
+//! empty). The daily digest is built from the day without that material and cached with the
+//! exclusion state it was built under; a cached digest is served only under the same state (and
+//! naming no excluded client), the state is read again after the model call before anything is
+//! cached, and any change to what is excluded drops the cache (triggers in `memory`).
 
 use rmcp::{
     handler::server::{
@@ -81,6 +92,17 @@ pub fn build_router(
     store: Arc<Mutex<memory::Store>>,
     llm_client: Arc<dyn llm::LlmClient + Send + Sync>,
 ) -> axum::Router {
+    let filter_store = Arc::clone(&store);
+    build_router_with_filter_store(store, filter_store, llm_client)
+}
+
+/// [`build_router`] with the exclusion filter read through its own connection (`filter_store`),
+/// so the filter's scans never hold the store the tools query.
+pub fn build_router_with_filter_store(
+    store: Arc<Mutex<memory::Store>>,
+    filter_store: Arc<Mutex<memory::Store>>,
+    llm_client: Arc<dyn llm::LlmClient + Send + Sync>,
+) -> axum::Router {
     let session_manager = Arc::new(LocalSessionManager::default());
     let config = StreamableHttpServerConfig::default();
     let service_store = Arc::clone(&store);
@@ -90,7 +112,8 @@ pub fn build_router(
             Ok(WhimbrelMcpServer::new(
                 Arc::clone(&service_store),
                 Arc::clone(&service_llm),
-            ))
+            )
+            .with_filter_store(Arc::clone(&filter_store)))
         },
         session_manager,
         config,
@@ -102,6 +125,9 @@ pub fn build_router(
 
 pub struct WhimbrelMcpServer {
     store: Arc<Mutex<memory::Store>>,
+    /// The connection the exclusion filter is read through. The binary gives it its own, so a
+    /// filter's scans never hold the store the tools query (fix round 1, M5); tests share one.
+    filter_store: Arc<Mutex<memory::Store>>,
     llm_client: Arc<dyn llm::LlmClient + Send + Sync>,
     tool_router: ToolRouter<Self>,
 }
@@ -112,6 +138,7 @@ impl WhimbrelMcpServer {
         llm_client: Arc<dyn llm::LlmClient + Send + Sync>,
     ) -> Self {
         Self {
+            filter_store: Arc::clone(&store),
             store,
             llm_client,
             tool_router: Self::tool_router(),
@@ -140,6 +167,22 @@ impl WhimbrelMcpServer {
     /// missing/insufficient scope here means "quietly skip these results," not "fail the
     /// whole call," since a memory-only-scoped client still gets a fully valid answer
     /// from screen-text results alone.
+    /// Reads the exclusion filter through `filter_store` (its own connection in the binary).
+    pub fn with_filter_store(mut self, filter_store: Arc<Mutex<memory::Store>>) -> Self {
+        self.filter_store = filter_store;
+        self
+    }
+
+    /// What may leave in a tool result: every tool's output is treated as hosted. Read before a
+    /// tool takes the store lock, never while holding it.
+    fn load_filter(&self) -> Result<llm::ContextFilter, ErrorData> {
+        let store = self
+            .filter_store
+            .lock()
+            .map_err(|_| ErrorData::internal_error("store lock poisoned".to_string(), None))?;
+        Ok(llm::ContextFilter::load(&store))
+    }
+
     fn has_scope(&self, parts: &http::request::Parts, scope: &str) -> bool {
         parts
             .extensions
@@ -279,6 +322,43 @@ pub struct GetDailyDigestOutput {
     pub digest: llm::DailyDigest,
 }
 
+/// The MCP server's own rows in `mcp_daily_digest_cache`: the Windows Today recap keeps the plain
+/// digest under the bare day, so the two never overwrite each other (fix round 1, M6).
+fn mcp_digest_key(day: &str) -> String {
+    format!("mcp:{day}")
+}
+
+/// A cached digest and the inputs it was built from (fix round 4, S2).
+#[derive(Deserialize)]
+struct CachedDigest {
+    /// The captures it was built from ([`memory::topics::exclusion::input_ref`]).
+    input_refs: Vec<String>,
+    digest: llm::DailyDigest,
+}
+
+#[derive(Serialize)]
+struct CachedDigestRef<'a> {
+    input_refs: &'a [String],
+    digest: &'a llm::DailyDigest,
+}
+
+/// The most captures a cached digest records; a digest built from more is returned, not cached
+/// (never cached with a shortened list).
+const MAX_DIGEST_INPUTS: usize = 20_000;
+
+/// Whether none of `inputs` is excluded under `filter` (fix round 4, S2): new material of a client
+/// that was not among them never matters. Nothing is while the setting is unreadable.
+fn inputs_clean(store: &memory::Store, filter: &llm::ContextFilter, inputs: &[String]) -> bool {
+    match filter.material() {
+        // A capture that no longer exists cannot be checked: the digest is built again.
+        Some(m) => {
+            inputs.iter().all(|r| !m.excludes_input_ref(r))
+                && store.missing_input_refs(inputs).is_ok_and(|missing| missing.is_empty())
+        }
+        None => !filter.is_closed(),
+    }
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct AssembleContextParams {
     /// The question or topic to gather context for.
@@ -352,15 +432,20 @@ impl WhimbrelMcpServer {
     ) -> Result<Json<SearchMemoryOutput>, ErrorData> {
         self.check_scope(&parts, "memory")?;
         let include_transcripts = self.has_scope(&parts, "transcripts");
+        let filter = self.load_filter()?;
         let allow_google = self.has_scope(&parts, GOOGLE_DATA_SCOPE);
         let store = self
             .store
             .lock()
             .map_err(|_| ErrorData::internal_error("store lock poisoned".to_string(), None))?;
+        let keep_capture = |c: &memory::CaptureItem| filter.keeps(&llm::ContextItem::Capture(c.clone()));
+        let keep_segment = |t: &memory::MeetingTranscriptSegment| filter.keeps(&llm::ContextItem::Transcript(t.clone()));
         let mut results = Vec::new();
         for item in store
             .search_keyword(&params.query, params.limit)
             .unwrap_or_default()
+            .into_iter()
+            .filter(keep_capture)
         {
             results.push(SearchMemoryHit {
                 domain: "screen_text".to_string(),
@@ -373,6 +458,8 @@ impl WhimbrelMcpServer {
         for item in store
             .search_semantic(&params.query, params.limit)
             .unwrap_or_default()
+            .into_iter()
+            .filter(keep_capture)
         {
             results.push(SearchMemoryHit {
                 domain: "screen_text".to_string(),
@@ -390,6 +477,8 @@ impl WhimbrelMcpServer {
             for seg in store
                 .search_transcript_keyword(&params.query, params.limit)
                 .unwrap_or_default()
+                .into_iter()
+                .filter(keep_segment)
             {
                 results.push(SearchMemoryHit {
                     domain: "meeting_speech".to_string(),
@@ -402,6 +491,8 @@ impl WhimbrelMcpServer {
             for seg in store
                 .search_transcript_semantic(&params.query, params.limit)
                 .unwrap_or_default()
+                .into_iter()
+                .filter(keep_segment)
             {
                 results.push(SearchMemoryHit {
                     domain: "meeting_speech".to_string(),
@@ -441,13 +532,17 @@ impl WhimbrelMcpServer {
         Parameters(params): Parameters<ListMeetingsParams>,
     ) -> Result<Json<ListMeetingsOutput>, ErrorData> {
         self.check_scope(&parts, "meetings")?;
+        let filter = self.load_filter()?;
         let store = self
             .store
             .lock()
             .map_err(|_| ErrorData::internal_error("store lock poisoned".to_string(), None))?;
         let mut meetings = store
             .recent_meetings(params.limit)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .into_iter()
+            .filter(|m| !meeting_excluded(&store, &filter, m))
+            .collect::<Vec<_>>();
         let google_data_withheld = if self.has_scope(&parts, GOOGLE_DATA_SCOPE) {
             0
         } else {
@@ -466,13 +561,15 @@ impl WhimbrelMcpServer {
         Parameters(params): Parameters<GetMeetingParams>,
     ) -> Result<Json<GetMeetingOutput>, ErrorData> {
         self.check_scope(&parts, "meetings")?;
+        let filter = self.load_filter()?;
         let store = self
             .store
             .lock()
             .map_err(|_| ErrorData::internal_error("store lock poisoned".to_string(), None))?;
         let mut meeting = store
             .get_meeting(params.meeting_id)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .filter(|m| !meeting_excluded(&store, &filter, m));
         let google_data_withheld = match &mut meeting {
             Some(m) if !self.has_scope(&parts, GOOGLE_DATA_SCOPE) => usize::from(withhold_calendar_text(&store, m)),
             _ => 0,
@@ -490,13 +587,24 @@ impl WhimbrelMcpServer {
         Parameters(params): Parameters<GetTranscriptParams>,
     ) -> Result<Json<GetTranscriptOutput>, ErrorData> {
         self.check_scope(&parts, "transcripts")?;
+        let filter = self.load_filter()?;
         let store = self
             .store
             .lock()
             .map_err(|_| ErrorData::internal_error("store lock poisoned".to_string(), None))?;
-        let (mut segments, total) = store
+        let excluded = match store.get_meeting(params.meeting_id) {
+            Ok(Some(m)) => meeting_excluded(&store, &filter, &m),
+            Ok(None) => filter.is_closed() || filter.material().is_some_and(|x| x.meetings.contains(&params.meeting_id)),
+            Err(e) => return Err(ErrorData::internal_error(e.to_string(), None)),
+        };
+        if excluded {
+            return Ok(Json(GetTranscriptOutput { segments: Vec::new(), total: 0, google_data_withheld: 0, note: None }));
+        }
+        let (segments, total) = store
             .get_transcript_segments_page(params.meeting_id, params.offset, params.limit)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        let mut segments: Vec<_> =
+            segments.into_iter().filter(|t| filter.keeps(&llm::ContextItem::Transcript(t.clone()))).collect();
         // Limited Use: the words stay; the title of a meeting that may have come from
         // Google Calendar does not.
         let mut google_data_withheld = 0;
@@ -522,13 +630,17 @@ impl WhimbrelMcpServer {
         Parameters(params): Parameters<GetTimelineParams>,
     ) -> Result<Json<GetTimelineOutput>, ErrorData> {
         self.check_scope(&parts, "memory")?;
+        let filter = self.load_filter()?;
         let store = self
             .store
             .lock()
             .map_err(|_| ErrorData::internal_error("store lock poisoned".to_string(), None))?;
         let items = store
             .timeline_range(params.start_unix_ms, params.end_unix_ms)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .into_iter()
+            .filter(|c| filter.keeps(&llm::ContextItem::Capture(c.clone())))
+            .collect();
         Ok(Json(GetTimelineOutput { items }))
     }
 
@@ -542,37 +654,54 @@ impl WhimbrelMcpServer {
         Parameters(params): Parameters<GetDailyDigestParams>,
     ) -> Result<Json<GetDailyDigestOutput>, ErrorData> {
         self.check_scope(&parts, "memory")?;
-        let store = self
-            .store
-            .lock()
-            .map_err(|_| ErrorData::internal_error("store lock poisoned".to_string(), None))?;
-        if let Some(cached) = store
-            .get_cached_daily_digest(&params.day)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
-        {
-            let digest: llm::DailyDigest = serde_json::from_str(&cached)
-                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        let internal = |e: String| ErrorData::internal_error(e, None);
+        let lock = || self.store.lock().map_err(|_| internal("store lock poisoned".to_string()));
+        let mut filter = self.load_filter()?;
+        let store = lock()?;
+        // Served while none of the captures it was built from is excluded now, and it names no
+        // excluded client (fix round 4, S2). A cache with no inputs recorded is built again.
+        if let Some(cached) = store.get_cached_daily_digest(&mcp_digest_key(&params.day)).map_err(|e| internal(e.to_string()))? {
+            if let Ok(entry) = serde_json::from_str::<CachedDigest>(&cached) {
+                // The backstop reads the digest's own decoded words, not the escaped cache entry
+                // (fix round 6, J4).
+                let words = format!("{}\n{}", entry.digest.summary, entry.digest.open_loops.join("\n"));
+                if !filter.is_closed() && inputs_clean(&store, &filter, &entry.input_refs) && !filter.names_client(&words) {
+                    return Ok(Json(GetDailyDigestOutput { digest: entry.digest }));
+                }
+            }
+        }
+        drop(store);
+        // Built from the day without excluded material. The model call runs unlocked, so the
+        // setting may change meanwhile: it is read again after the call, and a digest one of
+        // whose inputs became excluded is neither cached nor returned; it is built once more.
+        for _ in 0..2 {
+            let items: Vec<memory::CaptureItem> = lock()?
+                .timeline_range(params.start_unix_ms, params.end_unix_ms)
+                .map_err(|e| internal(e.to_string()))?
+                .into_iter()
+                .filter(|c| filter.keeps(&llm::ContextItem::Capture(c.clone())))
+                .collect();
+            let inputs: Vec<String> =
+                items.iter().map(|c| llm::exclusion::input_ref_of(&llm::ContextItem::Capture(c.clone()))).collect();
+
+            let digest = llm::generate_daily_digest(self.llm_client.as_ref(), &items, "").map_err(|e| internal(e.to_string()))?;
+
+            let now_filter = self.load_filter()?;
+            let store = lock()?;
+            if !inputs.is_empty() && !inputs_clean(&store, &now_filter, &inputs) {
+                filter = now_filter;
+                continue;
+            }
+            // An unreadable setting at the start: returned (built from nothing), never cached.
+            if !filter.is_closed() && !now_filter.is_closed() && inputs.len() <= MAX_DIGEST_INPUTS {
+                let entry = serde_json::to_string(&CachedDigestRef { input_refs: &inputs, digest: &digest })
+                    .map_err(|e| internal(e.to_string()))?;
+                let now = chrono::Utc::now().timestamp_millis();
+                store.cache_daily_digest(&mcp_digest_key(&params.day), &entry, now).map_err(|e| internal(e.to_string()))?;
+            }
             return Ok(Json(GetDailyDigestOutput { digest }));
         }
-        let items = store
-            .timeline_range(params.start_unix_ms, params.end_unix_ms)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        drop(store); // release the lock before the (potentially slow) LLM call
-
-        let digest = llm::generate_daily_digest(self.llm_client.as_ref(), &items, "")
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let digest_json = serde_json::to_string(&digest)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        let store = self
-            .store
-            .lock()
-            .map_err(|_| ErrorData::internal_error("store lock poisoned".to_string(), None))?;
-        let now = chrono::Utc::now().timestamp_millis();
-        store
-            .cache_daily_digest(&params.day, &digest_json, now)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        Ok(Json(GetDailyDigestOutput { digest }))
+        Err(internal("the hosted-model exclusions changed while the digest was written; try again".to_string()))
     }
 
     #[tool(
@@ -586,6 +715,7 @@ impl WhimbrelMcpServer {
     ) -> Result<Json<AssembleContextOutput>, ErrorData> {
         self.check_scope(&parts, "memory")?;
         let include_transcripts = self.has_scope(&parts, "transcripts");
+        let filter = self.load_filter()?;
         let store = self
             .store
             .lock()
@@ -600,6 +730,7 @@ impl WhimbrelMcpServer {
             // Raw email text is not part of the "memory" scope and no token scope grants
             // it yet, so MCP clients keep getting thread summaries only.
             false,
+            &filter,
         );
         // Limited Use: Gmail threads and the routine output written from Gmail and Calendar
         // are Google user data. Leave them out unless this client's token opts in.
@@ -624,6 +755,29 @@ impl WhimbrelMcpServer {
             .collect();
         Ok(Json(AssembleContextOutput { items, google_data_withheld, note }))
     }
+}
+
+/// Whether meeting `m` is an excluded client's: filed under one, or its title, attendees,
+/// notes, summary or any other text written about it (Store::meeting_authored_text) name one.
+fn meeting_excluded(store: &memory::Store, filter: &llm::ContextFilter, m: &memory::Meeting) -> bool {
+    if !filter.is_active() {
+        return false;
+    }
+    // Every other text written about the meeting (fix round 4, S1); unreadable is the client's.
+    let draft = match store.meeting_authored_text(m.id) {
+        Ok(text) => text,
+        Err(_) => return true,
+    };
+    let text = format!(
+        "{}\n{}\n{}\n{}\n{}\n{}\n{draft}",
+        m.notes.as_deref().unwrap_or_default(),
+        m.summary_tldr.as_deref().unwrap_or_default(),
+        m.summary_decisions.join("\n"),
+        m.summary_action_items.join("\n"),
+        m.summary_open_questions.join("\n"),
+        m.transcript_path.as_deref().unwrap_or_default(),
+    );
+    filter.excludes_meeting(m.id, &m.title, &m.attendees) || filter.names_client(&text)
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -686,6 +840,323 @@ mod tests {
     /// tool method without going through `AuthMiddleware` (misconfiguration).
     fn parts_with_no_auth() -> http::request::Parts {
         http::Request::builder().body(()).unwrap().into_parts().0
+    }
+
+    /// Keeps every prompt; answers with an empty digest.
+    struct RecordingLlm(Arc<Mutex<Vec<String>>>);
+
+    impl llm::LlmClient for RecordingLlm {
+        fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            self.0.lock().unwrap().push(prompt.to_string());
+            Ok(llm::Completion { text: r#"{"summary": "A day.", "open_loops": []}"#.into(), token_usage: llm::TokenUsage::default() })
+        }
+    }
+
+    /// Excludes client `key` during its first call (the setting changes while the model runs).
+    struct ExcludingLlm {
+        prompts: Arc<Mutex<Vec<String>>>,
+        store: Arc<Mutex<memory::Store>>,
+        key: String,
+    }
+
+    impl llm::LlmClient for ExcludingLlm {
+        fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            let mut prompts = self.prompts.lock().unwrap();
+            if prompts.is_empty() {
+                self.store
+                    .lock()
+                    .unwrap()
+                    .set_client_control(&self.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+                    .unwrap();
+            }
+            prompts.push(prompt.to_string());
+            Ok(llm::Completion { text: r#"{"summary": "A day.", "open_loops": []}"#.into(), token_usage: llm::TokenUsage::default() })
+        }
+    }
+
+    /// The digest cache follows the exclusion state: a cached digest built under another state
+    /// is built again even when it names no client; one built under this state is served; and a
+    /// digest whose setting changed during the model call is neither cached nor returned, but
+    /// built again under the new state.
+    #[tokio::test]
+    async fn the_digest_cache_follows_the_exclusion_state() {
+        let now = chrono::Utc::now().timestamp_millis();
+        let store = memory::Store::open_in_memory().unwrap();
+        let globex = store.create_seed_topic("Globex", &[], None).unwrap();
+        for (i, text) in ["Globex renewal notes", "giraffe pricing notes"].iter().enumerate() {
+            store
+                .insert_capture_item(&memory::NewCaptureItem {
+                    device_id: "d".into(),
+                    ts_unix_ms: now - 1_000 + i as i64,
+                    app_bundle_id: "com.apple.Notes".into(),
+                    window_title: "Notes".into(),
+                    url: None,
+                    text: text.to_string(),
+                    hash: i as i64,
+                    source: "ax".into(),
+                })
+                .unwrap();
+        }
+        // Built under some other state, naming nobody: still built again.
+        store
+            .cache_daily_digest("mcp:2026-11-12", r#"{"exclusion_version":"x0000000000000000","digest":{"summary":"Old.","open_loops":[]}}"#, 1)
+            .unwrap();
+        let store = Arc::new(Mutex::new(store));
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let llm = ExcludingLlm { prompts: prompts.clone(), store: store.clone(), key: globex.key.clone() };
+        let server = WhimbrelMcpServer::new(store.clone(), Arc::new(llm));
+        let call = || async {
+            server
+                .get_daily_digest(
+                    Extension(parts_with_scopes(&["memory"])),
+                    Parameters(GetDailyDigestParams { day: "2026-11-12".into(), start_unix_ms: 0, end_unix_ms: now + 1 }),
+                )
+                .await
+                .unwrap()
+                .0
+        };
+        let out = call().await;
+        assert_eq!(out.digest.summary, "A day.", "the stale-state cache was not served");
+        let p = prompts.lock().unwrap().clone();
+        assert_eq!(p.len(), 2, "Globex was excluded during the first call: built again");
+        assert!(p[0].contains("Globex") && !p[1].contains("Globex"), "{p:?}");
+        // Cached with the inputs it was built from, and served with no model call.
+        let cached = store.lock().unwrap().get_cached_daily_digest("mcp:2026-11-12").unwrap().unwrap();
+        assert!(cached.contains("input_refs") && !cached.to_lowercase().contains("globex"), "{cached}");
+        call().await;
+        assert_eq!(prompts.lock().unwrap().len(), 2);
+    }
+
+    /// Fix round 6, J4: the cached digest's name backstop reads the digest's decoded words. A cached
+    /// summary naming the client after an escaped newline is built again, not served.
+    #[tokio::test]
+    async fn a_cached_digest_naming_the_client_after_an_escape_is_built_again() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+        store.set_client_control(&acme.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None }).unwrap();
+        let entry = serde_json::json!({"input_refs": [], "digest": {"summary": "The week.\n\nAcme renewal call.", "open_loops": []}}).to_string();
+        assert!(entry.contains("\\n\\nAcme"), "{entry}");
+        store.cache_daily_digest("mcp:2026-11-14", &entry, 1).unwrap();
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let server = WhimbrelMcpServer::new(Arc::new(Mutex::new(store)), Arc::new(RecordingLlm(prompts.clone())));
+        let now = chrono::Utc::now().timestamp_millis();
+        let Json(out) = server
+            .get_daily_digest(Extension(parts_with_scopes(&["memory"])), Parameters(GetDailyDigestParams { day: "2026-11-14".into(), start_unix_ms: 0, end_unix_ms: now }))
+            .await
+            .unwrap();
+        assert!(!out.digest.summary.contains("Acme"), "the cached digest naming Acme was served");
+    }
+
+    /// Captures the excluded client's material during every model call, as steady screen capture
+    /// does while the user works on the client.
+    struct CapturingLlm {
+        prompts: Arc<Mutex<Vec<String>>>,
+        store: Arc<Mutex<memory::Store>>,
+    }
+
+    impl llm::LlmClient for CapturingLlm {
+        fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            let mut prompts = self.prompts.lock().unwrap();
+            let n = prompts.len() as i64;
+            capture(&self.store.lock().unwrap(), 100 + n, &format!("Acme contract draft {n}"));
+            prompts.push(prompt.to_string());
+            Ok(llm::Completion { text: r#"{"summary": "A day.", "open_loops": []}"#.into(), token_usage: llm::TokenUsage::default() })
+        }
+    }
+
+    fn capture(store: &memory::Store, hash: i64, text: &str) {
+        store
+            .insert_capture_item(&memory::NewCaptureItem {
+                device_id: "d".into(),
+                ts_unix_ms: chrono::Utc::now().timestamp_millis() - 500,
+                app_bundle_id: "com.apple.Notes".into(),
+                window_title: "Notes".into(),
+                url: None,
+                text: text.to_string(),
+                hash,
+                source: "ax".into(),
+            })
+            .unwrap();
+    }
+
+    /// Fix round 4, S2: new material of an excluded client that is not among a digest's inputs
+    /// neither fails the build ("try again") nor drops the cached digest. Control: an input later
+    /// found to be the client's does drop it.
+    #[tokio::test]
+    async fn steady_capture_of_an_excluded_client_never_fails_the_digest() {
+        let now = chrono::Utc::now().timestamp_millis();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m.db");
+        let store = memory::Store::open(&path, dir.path()).unwrap();
+        let c = rusqlite::Connection::open(&path).unwrap();
+        let acme = store.create_seed_topic("Acme", &["Roadrunner Co".to_string()], None).unwrap();
+        store.set_client_control(&acme.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None }).unwrap();
+        capture(&store, 2, "okapi planning notes");
+        capture(&store, 1, "giraffe pricing notes");
+        let store = Arc::new(Mutex::new(store));
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let server = WhimbrelMcpServer::new(store.clone(), Arc::new(CapturingLlm { prompts: prompts.clone(), store: store.clone() }));
+        let call = || async {
+            server
+                .get_daily_digest(
+                    Extension(parts_with_scopes(&["memory"])),
+                    Parameters(GetDailyDigestParams { day: "2026-11-13".into(), start_unix_ms: 0, end_unix_ms: now + 60_000 }),
+                )
+                .await
+        };
+        let out = call().await.expect("built, not 'try again'").0;
+        assert_eq!(out.digest.summary, "A day.");
+        assert_eq!(prompts.lock().unwrap().len(), 1, "built once");
+        // More of the client's captures arrive: the cached digest is still served.
+        capture(&store.lock().unwrap(), 50, "Acme renewal call notes");
+        call().await.unwrap();
+        assert_eq!(prompts.lock().unwrap().len(), 1, "served from the cache");
+        // Control: the digest's own input is found to be the client's through a lift no cache-drop
+        // trigger covers (fix round 5, T1): an episode joins the giraffe capture to a new Acme
+        // capture, so every capture of that episode is Acme's. The cached row survives up to the
+        // read; the serve-side check is what rebuilds it.
+        {
+            let s = store.lock().unwrap();
+            capture(&s, 60, "Acme kickoff notes");
+            let item = |text: &str| -> i64 {
+                c.query_row("SELECT id FROM items WHERE kind = 'capture' AND body_text = ?1", [text], |r| r.get(0)).unwrap()
+            };
+            let (from, to) = (item("giraffe pricing notes"), item("Acme kickoff notes"));
+            c.execute(
+                "INSERT INTO episodes (device_id, app_bundle_id, window_title, start_ts_unix_ms, end_ts_unix_ms, start_item_id, end_item_id, item_count, status, created_at_unix_ms, updated_at_unix_ms) \
+                 VALUES ('d', 'com.apple.Notes', 'Notes', 1, 2, ?1, ?2, 2, 'summarized', 1, 1)",
+                [from, to],
+            )
+            .unwrap();
+            assert!(s.get_cached_daily_digest("mcp:2026-11-13").unwrap().is_some(), "no trigger dropped the cache");
+        }
+        call().await.unwrap();
+        assert_eq!(prompts.lock().unwrap().len(), 2, "an input became the client's");
+        let p = prompts.lock().unwrap().clone();
+        assert!(p[0].contains("giraffe") && !p[1].contains("giraffe") && p[1].contains("okapi"), "{p:?}");
+    }
+
+    /// X6 spec 7.3: tool results go to outside AI tools, so none carries a client excluded
+    /// from hosted models: its meetings (filed under it, never naming it: the canary), or
+    /// anything that names it.
+    #[tokio::test]
+    async fn mcp_tools_never_return_excluded_text() {
+        const CANARY: &str = "zebracanary";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m.db");
+        let store = memory::Store::open(&path, dir.path()).unwrap();
+        let c = rusqlite::Connection::open(&path).unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+        let meeting = |title: &str, line: &str| {
+            let id = store
+                .insert_meeting(&memory::NewMeeting {
+                    device_id: "d".into(),
+                    start_unix_ms: now - 3_600_000,
+                    end_unix_ms: Some(now - 3_000_000),
+                    title: title.into(),
+                    attendees: vec![],
+                    trigger: memory::MeetingTrigger::Calendar,
+                    audio_path: None,
+                    status: memory::MeetingStatus::Completed,
+                })
+                .unwrap();
+            store
+                .insert_transcript_segments(&[memory::NewTranscriptSegment { meeting_id: id, start_cs: 0, speaker_label: "S".into(), text: line.into() }])
+                .unwrap();
+            store.update_meeting_summary(id, line, &[], &[], &[], "ollama", "m").unwrap();
+            id
+        };
+        let excluded = meeting("Quarterly sync", &format!("The {CANARY} pricing was agreed."));
+        let other = meeting("Team standup", "The giraffe pricing review is next week.");
+        // Fix round 4, S1: a meeting the client is named in only by its workspace notes.
+        let drafted = meeting("Call", &format!("The {CANARY} quote stands."));
+        store.save_meeting_personal_notes(drafted, "Acme Q3 pricing", 1).unwrap();
+        let undrafted = meeting("Other call", "The okapi quote stands.");
+        c.execute("INSERT INTO topic_source (kind, ref_id, ts_unix_ms, indexed_at_unix_ms) VALUES ('meeting', ?1, 1, 1)", [excluded]).unwrap();
+        c.execute("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'seed')", [acme.topic_id, c.last_insert_rowid()])
+            .unwrap();
+        // B7: the third names the client only in its URL.
+        let urls = [None, None, Some("https://acme.sharepoint.example/renewal".to_string())];
+        for (i, text) in ["Notes on the Acme pricing renewal", "giraffe pricing notes", "renewal pricing draft"].iter().enumerate() {
+            store
+                .insert_capture_item(&memory::NewCaptureItem {
+                    device_id: "d".into(),
+                    ts_unix_ms: now - 1_000 + i as i64,
+                    app_bundle_id: "com.apple.Notes".into(),
+                    window_title: "Notes".into(),
+                    url: urls[i].clone(),
+                    text: text.to_string(),
+                    hash: i as i64,
+                    source: "ax".into(),
+                })
+                .unwrap();
+        }
+        store
+            .set_client_control(&acme.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+        // A digest cached with the client in it is built again.
+        store.cache_daily_digest("2026-11-12", r#"{"summary":"The Acme call.","open_loops":[]}"#, 1).unwrap();
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let server = WhimbrelMcpServer::new(Arc::new(Mutex::new(store)), Arc::new(RecordingLlm(prompts.clone())));
+        let all = || Extension(parts_with_scopes(&["memory", "meetings", "transcripts"]));
+        let clean = |what: &str, text: String| {
+            let lower = text.to_lowercase();
+            assert!(!lower.contains(CANARY) && !lower.contains("acme"), "{what} returned excluded material: {text}");
+        };
+
+        let Json(out) = server.search_memory(all(), Parameters(SearchMemoryParams { query: "pricing".into(), limit: 20 })).await.unwrap();
+        let texts: Vec<String> = out.results.iter().map(|h| format!("{} {:?}", h.text, h.meeting_title)).collect();
+        assert!(texts.iter().any(|t| t.contains("giraffe")), "{texts:?}");
+        clean("search_memory", texts.join("\n"));
+
+        // Fix round 4, S1: named only in its workspace notes. Control: the undrafted call.
+        let Json(out) = server.search_memory(all(), Parameters(SearchMemoryParams { query: "quote".into(), limit: 20 })).await.unwrap();
+        let texts: Vec<String> = out.results.iter().map(|h| format!("{} {:?}", h.text, h.meeting_title)).collect();
+        assert!(texts.iter().any(|t| t.contains("okapi")), "{texts:?}");
+        clean("search_memory (workspace notes)", texts.join("\n"));
+
+        let Json(out) = server.list_meetings(all(), Parameters(ListMeetingsParams { limit: 20 })).await.unwrap();
+        let mut listed: Vec<i64> = out.meetings.iter().map(|m| m.id).collect();
+        listed.sort();
+        assert_eq!(listed, vec![other, undrafted]);
+
+        let Json(out) = server.get_meeting(all(), Parameters(GetMeetingParams { meeting_id: excluded })).await.unwrap();
+        assert!(out.meeting.is_none());
+        let Json(out) = server.get_meeting(all(), Parameters(GetMeetingParams { meeting_id: other })).await.unwrap();
+        assert!(out.meeting.is_some());
+        let Json(out) = server.get_meeting(all(), Parameters(GetMeetingParams { meeting_id: drafted })).await.unwrap();
+        assert!(out.meeting.is_none(), "named only in its workspace notes");
+        let Json(out) = server
+            .get_transcript(all(), Parameters(GetTranscriptParams { meeting_id: drafted, offset: 0, limit: 20 }))
+            .await
+            .unwrap();
+        assert!(out.segments.is_empty());
+
+        let Json(out) = server
+            .get_transcript(all(), Parameters(GetTranscriptParams { meeting_id: excluded, offset: 0, limit: 20 }))
+            .await
+            .unwrap();
+        assert!(out.segments.is_empty() && out.total == 0);
+
+        let Json(out) = server.get_timeline(all(), Parameters(GetTimelineParams { start_unix_ms: 0, end_unix_ms: now + 1 })).await.unwrap();
+        assert_eq!(out.items.len(), 1);
+        clean("get_timeline", out.items.iter().map(|i| format!("{} {:?}", i.text, i.url)).collect::<Vec<_>>().join("\n"));
+
+        let Json(out) = server
+            .get_daily_digest(all(), Parameters(GetDailyDigestParams { day: "2026-11-12".into(), start_unix_ms: 0, end_unix_ms: now + 1 }))
+            .await
+            .unwrap();
+        assert_eq!(out.digest.summary, "A day.", "the cached digest naming the client was built again");
+        assert_eq!(prompts.lock().unwrap().len(), 1);
+        clean("the digest prompt", prompts.lock().unwrap().join("\n"));
+
+        let Json(out) = server
+            .assemble_context(all(), Parameters(AssembleContextParams { query: "pricing".into(), context_limit: 20 }))
+            .await
+            .unwrap();
+        assert!(!out.items.is_empty());
+        clean("assemble_context", out.items.iter().map(|i| format!("{} {}", i.label, i.text)).collect::<Vec<_>>().join("\n"));
     }
 
     #[tokio::test]
@@ -1260,7 +1731,8 @@ mod tests {
         let (server, store) = test_server_with_store();
         {
             let store = store.lock().unwrap();
-            store.cache_daily_digest("2026-08-02", r#"{"summary":"cached","open_loops":[],"token_usage":{"input_tokens":null,"output_tokens":null}}"#, 1234).unwrap();
+            // Cached with the inputs it was built from (none).
+            store.cache_daily_digest("mcp:2026-08-02", r#"{"input_refs":[],"digest":{"summary":"cached","open_loops":[],"token_usage":{"input_tokens":null,"output_tokens":null}}}"#, 1234).unwrap();
         }
         let Json(output) = server
             .get_daily_digest(

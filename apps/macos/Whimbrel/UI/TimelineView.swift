@@ -33,6 +33,43 @@ func effectiveAskRoutingProvider(
     return (.ollama, defaults.ollamaModel)
 }
 
+/// Ask copy for a question that core answers on this Mac because it names a client excluded from hosted
+/// models. Generic on purpose: it never says which client.
+enum AskLocalRouteCopy {
+    /// While the question is in flight.
+    static let inFlight = String(localized: "Answering on this Mac: this question names a client excluded from hosted models…")
+    /// Under the finished answer.
+    static let answered = String(localized: "Answered locally: a client named here is excluded from hosted models.")
+
+    /// Before the check ran: no model named, since the question may be answered on this Mac.
+    static let askingPlain = String(localized: "Asking…")
+    /// While the question waits for its turn on the model lane (other work holds it).
+    static let waiting = String(localized: "Waiting for background work…")
+    /// How long a question may wait before the spinner says so (a normal turn starts at once).
+    static let waitingShownAfter: TimeInterval = 1
+
+    /// The spinner text: the local note when the question is routed locally, else the wait note while
+    /// it is queued, else the picked model.
+    static func spinnerTitle(routedLocally: Bool, waitingForLane: Bool = false, modelConfirmed: Bool, modelLabel: String) -> String {
+        if routedLocally { return inFlight }
+        if waitingForLane { return waiting }
+        // The model's name only once the question is known not to be routed to this Mac.
+        return modelConfirmed ? String(localized: "Asking \(modelLabel)…") : askingPlain
+    }
+}
+
+/// The label for a finished blocking answer: the model core says answered, else the one asked for.
+func answeredModelLabel(requested: String, answeredBy: CoreAnsweredBy?) -> String {
+    guard let model = answeredBy?.model.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty else { return requested }
+    return model
+}
+
+/// Whether to show "Answered locally" under an answer: the question named an excluded client and core
+/// says it answered on this Mac (not refused, not a hosted answer).
+func answeredLocallyForExclusion(namesExcludedClient: Bool, outcome: CoreExclusionOutcome?) -> Bool {
+    namesExcludedClient && outcome == .localOnly
+}
+
 /// FR-CHAT-6: starred conversations first (regardless of age), then most-recently-
 /// updated. A free function so it's testable without constructing a SwiftUI view —
 /// matches `effectiveAskRoutingProvider`'s own precedent. `core/memory`'s
@@ -227,6 +264,12 @@ struct ChatExchange: Identifiable {
     /// The model that answered, shown under the answer. Nil for exchanges saved before
     /// the model was stored.
     var modelLabel: String? = nil
+    /// Retrieved items a hosted model answered without, because they involve an excluded client (shown on
+    /// screen only, never saved or sent).
+    var leftOut: Int = 0
+    /// The question named a client excluded from hosted models and was answered on this Mac (shown on
+    /// screen only, never saved or sent).
+    var answeredLocally: Bool = false
 }
 
 /// #74: everything `handleStreamingAskPhaseChange`/`finalizeStreamingAnswer` need once
@@ -246,6 +289,8 @@ struct PendingStreamAsk {
     let answerModel: String
     /// The provider the answer streams from; a Whimbrel AI 402 shows the credit message.
     var streamProvider: InferenceStreamClient.Provider = .ollama
+    /// Core's prepare: retrieved items left out because they involve an excluded client.
+    var leftOut: Int = 0
     let titleGenEffective: (provider: RoutingSettings.Provider, modelLabel: String)
     /// Runs `askBlocking` with this same turn's already-captured arguments — used only
     /// when the stream reaches `.failed` with zero output ever emitted (see
@@ -363,6 +408,14 @@ struct TimelineView: View {
     @State var renameText: String = ""
     @State var isAsking = false
     @State var inFlightModelLabel: String = ""
+    /// The in-flight question names an excluded client, so it is answered on this Mac whatever the picker says.
+    @State var askRoutedLocally = false
+    /// The question is queued behind other work on the model lane (shown after `AskLocalRouteCopy.waitingShownAfter`).
+    @State var askWaitingForLane = false
+    /// The question's excluded-client check has said it names none, so the picked model may be shown.
+    @State var askModelConfirmed = false
+    /// Held in `UserModelGate` while a question is in flight, so background model jobs start nothing new.
+    @State var askGateToken: UUID?
     // #74: drives askIfNeeded's Ollama-route streaming path (askStreaming/
     // handleStreamingAskPhaseChange) — see PendingStreamAsk's doc comment.
     @StateObject var streamingAsk = StreamingAskViewModel()
@@ -374,6 +427,8 @@ struct TimelineView: View {
     @State var headphonesWarningDismissed = false
     /// Topics the current search or question names, each offered as "Open topic page".
     @State var namedTopics: [TopicRef] = []
+    /// Set only by Home's search chips (redesign flag): narrows Keyword and Semantic to captures from one app and date range.
+    @State var captureFilter: LibraryCaptureFilter?
 
     enum SearchMode: String, CaseIterable, Identifiable {
         case recent = "Recent"
@@ -416,10 +471,32 @@ struct TimelineView: View {
         } else if appState.pendingLibrarySearch {
             appState.pendingLibrarySearch = false
             if ![.keyword, .semantic, .ask].contains(mode) { mode = .keyword }
+            if let pending = appState.pendingLibraryFilter {
+                appState.pendingLibraryFilter = nil
+                captureFilter = pending.filter
+                query = pending.query
+                mode = .keyword
+                refresh()
+            }
         } else {
             return
         }
         DispatchQueue.main.async { searchFieldFocused = true }
+    }
+
+    /// The query with the person's name added as a quoted term; the name alone when the query is empty.
+    static func searchTerm(query: String, person: String?) -> String {
+        guard let person else { return query }
+        let quoted = "\"" + person.replacingOccurrences(of: "\"", with: "") + "\""
+        return query.isEmpty ? quoted : query + " " + quoted
+    }
+
+    /// Meetings the person attended (among the 50 most recent), narrowed by the query when there is one. Run on the store's queue.
+    static func meetings(attendedBy person: String?, matching query: String, in store: CoreMemoryStore) -> [TimelineEntry] {
+        guard let person else { return [] }
+        return store.recentMeetingsGrouped(limit: 50)
+            .filter { $0.attendees.contains(person) && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)) }
+            .map(TimelineEntry.meeting)
     }
 
     static var storeUnavailableMessage: String { String(localized: "Whimbrel's local database didn't open. Try restarting Whimbrel.") }
@@ -435,8 +512,13 @@ struct TimelineView: View {
             let isSnapshot: (TimelineEntry) -> Bool = {
                 if case .snapshot = $0 { return true } else { return false }
             }
+            let isMeeting: (TimelineEntry) -> Bool = {
+                if case .meeting = $0 { return true } else { return false }
+            }
             return [
-                LibrarySection(label: String(localized: "Screen activity"), items: entries.filter { !isTranscript($0) && !isSnapshot($0) }),
+                // Meetings appear only with Home's People filter (meetings that person attended).
+                LibrarySection(label: String(localized: "Meetings"), items: entries.filter(isMeeting)),
+                LibrarySection(label: String(localized: "Screen activity"), items: entries.filter { !isTranscript($0) && !isSnapshot($0) && !isMeeting($0) }),
                 LibrarySection(label: String(localized: "Transcript matches"), items: entries.filter(isTranscript)),
                 LibrarySection(label: String(localized: "Slide matches"), items: entries.filter(isSnapshot)),
             ].filter { !$0.items.isEmpty }
@@ -554,6 +636,26 @@ struct TimelineView: View {
 
             if [.keyword, .semantic, .ask].contains(mode) {
                 ForEach(namedTopics, id: \.topicId) { TopicPageLink(topic: $0) }
+            }
+
+            if let captureFilter, [.keyword, .semantic].contains(mode) {
+                HStack(spacing: Spacing.sm) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let person = captureFilter.person {
+                            Text("Meetings with \(person), and captures that mention \(person).", comment: "Line over Library search results narrowed by the People filter. Both placeholders are the same person's name.")
+                        }
+                        if captureFilter.appName != nil || captureFilter.dateLabel != nil {
+                            Text("Filtered: \([captureFilter.appName, captureFilter.dateLabel].compactMap { $0 }.joined(separator: ", "))")
+                        }
+                    }
+                        .font(.whimbrelBody(.caption))
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                    Button("Clear filter") {
+                        self.captureFilter = nil
+                        refresh()
+                    }
+                    .buttonStyle(.whimbrelSecondary)
+                }
             }
 
             if mode == .digest {
@@ -679,34 +781,49 @@ struct TimelineView: View {
                 }
             }
         case .keyword:
-            guard !query.isEmpty else {
+            guard !query.isEmpty || captureFilter?.person != nil else {
                 entries = []
                 return
             }
             let capturedQuery = query
+            let filter = captureFilter
             isLoadingEntries = true
             CoreMemoryStore.accessQueue.async {
-                let captureResults = store.searchKeyword(capturedQuery, limit: 50).map(TimelineEntry.capture)
-                let transcriptResults = store.searchTranscriptKeyword(capturedQuery, limit: 50).map(TimelineEntry.transcriptSegment)
-                let snapshotResults = store.searchSnapshotKeyword(capturedQuery, limit: 50).map(TimelineEntry.snapshot)
+                // A person narrows captures to those whose text mentions the name (a quoted extra search term, since captures record
+                // no person) and adds the meetings that person attended.
+                let term = Self.searchTerm(query: capturedQuery, person: filter?.person)
+                let captureResults = (filter.map {
+                    store.searchCapturesFiltered(term, semantic: false, app: $0.appId, startUnixMs: $0.startUnixMs, endUnixMs: $0.endUnixMs, limit: 50)
+                } ?? store.searchKeyword(capturedQuery, limit: 50)).map(TimelineEntry.capture)
+                let meetingResults = Self.meetings(attendedBy: filter?.person, matching: capturedQuery, in: store)
+                // Transcripts and screen snapshots have no app and no capture time to filter on, so a filter leaves them out.
+                let transcriptResults = filter != nil ? [] : store.searchTranscriptKeyword(capturedQuery, limit: 50).map(TimelineEntry.transcriptSegment)
+                let snapshotResults = filter != nil ? [] : store.searchSnapshotKeyword(capturedQuery, limit: 50).map(TimelineEntry.snapshot)
                 DispatchQueue.main.async {
-                    entries = captureResults + transcriptResults + snapshotResults
+                    entries = meetingResults + captureResults + transcriptResults + snapshotResults
                     isLoadingEntries = false
                 }
             }
         case .semantic:
-            guard !query.isEmpty else {
+            guard !query.isEmpty || captureFilter?.person != nil else {
                 entries = []
                 return
             }
             let capturedQuery = query
+            let filter = captureFilter
             isLoadingEntries = true
             CoreMemoryStore.accessQueue.async {
-                let captureResults = store.searchSemantic(capturedQuery, limit: 50).map(TimelineEntry.capture)
-                let transcriptResults = store.searchTranscriptSemantic(capturedQuery, limit: 50).map(TimelineEntry.transcriptSegment)
-                let snapshotResults = store.searchSnapshotSemantic(capturedQuery, limit: 50).map(TimelineEntry.snapshot)
+                // A person narrows captures to those whose text mentions the name (a quoted extra search term, since captures record
+                // no person) and adds the meetings that person attended.
+                let term = Self.searchTerm(query: capturedQuery, person: filter?.person)
+                let captureResults = (filter.map {
+                    store.searchCapturesFiltered(term, semantic: true, app: $0.appId, startUnixMs: $0.startUnixMs, endUnixMs: $0.endUnixMs, limit: 50)
+                } ?? store.searchSemantic(capturedQuery, limit: 50)).map(TimelineEntry.capture)
+                let meetingResults = Self.meetings(attendedBy: filter?.person, matching: capturedQuery, in: store)
+                let transcriptResults = filter != nil ? [] : store.searchTranscriptSemantic(capturedQuery, limit: 50).map(TimelineEntry.transcriptSegment)
+                let snapshotResults = filter != nil ? [] : store.searchSnapshotSemantic(capturedQuery, limit: 50).map(TimelineEntry.snapshot)
                 DispatchQueue.main.async {
-                    entries = captureResults + transcriptResults + snapshotResults
+                    entries = meetingResults + captureResults + transcriptResults + snapshotResults
                     isLoadingEntries = false
                 }
             }

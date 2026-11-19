@@ -23,13 +23,13 @@ final class RetentionScheduler: ObservableObject {
     private weak var runner: MediaRetentionRunner?
 
     /// The 30-second initial run is media retention's launch trigger; the repeating one its daily trigger.
-    func start(retention: RetentionSettings, media: MediaSettings, deviceId: String, store: CoreMemoryStore?, audio: AudioCaptureService,
+    func start(retention: RetentionSettings, media: MediaSettings, deviceId: String, store: CoreMemoryStore?, backgroundStore: CoreMemoryStore? = nil, audio: AudioCaptureService,
                runner: MediaRetentionRunner) {
         stop()
         self.deviceId = deviceId
         self.runner = runner
         initialTimer = Timer.scheduledTimer(withTimeInterval: Self.initialDelaySeconds, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.runAndScheduleRepeating(retention: retention, media: media, store: store, audio: audio) }
+            Task { @MainActor in self?.runAndScheduleRepeating(retention: retention, media: media, store: store, backgroundStore: backgroundStore, audio: audio) }
         }
     }
 
@@ -40,15 +40,15 @@ final class RetentionScheduler: ObservableObject {
         repeatingTimer = nil
     }
 
-    private func runAndScheduleRepeating(retention: RetentionSettings, media: MediaSettings, store: CoreMemoryStore?, audio: AudioCaptureService) {
-        run(retention: retention, media: media, store: store, audio: audio)
+    private func runAndScheduleRepeating(retention: RetentionSettings, media: MediaSettings, store: CoreMemoryStore?, backgroundStore: CoreMemoryStore?, audio: AudioCaptureService) {
+        run(retention: retention, media: media, store: store, backgroundStore: backgroundStore, audio: audio)
         repeatingTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.run(retention: retention, media: media, store: store, audio: audio) }
+            Task { @MainActor in self?.run(retention: retention, media: media, store: store, backgroundStore: backgroundStore, audio: audio) }
         }
     }
 
-    private func run(retention: RetentionSettings, media: MediaSettings, store: CoreMemoryStore?, audio: AudioCaptureService) {
-        retention.applyNow(store: store, compactAllowed: !audio.micActive && !audio.systemAudioActive) { [weak self] result in
+    private func run(retention: RetentionSettings, media: MediaSettings, store: CoreMemoryStore?, backgroundStore: CoreMemoryStore?, audio: AudioCaptureService) {
+        retention.applyNow(store: store, backgroundStore: backgroundStore, compactAllowed: !audio.micActive && !audio.systemAudioActive) { [weak self] result in
             if result != nil {
                 self?.log.info("Automatic daily retention run completed")
             } else {

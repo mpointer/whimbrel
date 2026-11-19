@@ -16,8 +16,9 @@ use serde::Serialize;
 use crate::capture::events::{self, SystemEvent};
 use crate::capture::exclusions::{ExcludeReason, Exclusions};
 use crate::capture::schedule::{is_chromium_host, Cadence, ChangeFilter, OcrLimiter, Reason, Scheduler, WindowKey};
-use crate::capture::session_gate::{idle_duration, PauseReason, SessionGate};
+use crate::capture::session_gate::{idle_duration, timed_pause_active, PauseReason, SessionGate};
 use crate::capture::{app_id, merge, ocr, policy, uia, window};
+use crate::error::CommandError;
 use crate::store_actor::StoreHandle;
 
 /// What Settings shows about capture.
@@ -39,11 +40,14 @@ pub struct CaptureStatus {
     pub last_stored_at_ms: Option<i64>,
     pub last_app: Option<String>,
     pub last_error: Option<String>,
+    /// When a timed pause ends (unix ms). Set only while one runs; `enabled` stays true during it.
+    pub resume_at_unix_ms: Option<i64>,
 }
 
 enum Msg {
     System(SystemEvent),
     SetEnabled(bool),
+    SetResumeAt(Option<i64>),
     SetUserExclusions(Vec<String>),
 }
 
@@ -58,8 +62,21 @@ impl CaptureHandle {
     }
 
     pub fn set_enabled(&self, enabled: bool) {
-        self.status.lock().unwrap().enabled = enabled;
+        {
+            let mut st = self.status.lock().unwrap();
+            st.enabled = enabled;
+            // Turning capture off ends any timed pause: off wins, and nothing is left to expire.
+            if !enabled {
+                st.resume_at_unix_ms = None;
+            }
+        }
         let _ = self.tx.send(Msg::SetEnabled(enabled));
+    }
+
+    /// Starts, replaces (`Some`) or ends (`None`) a timed pause. It never changes `enabled`.
+    pub fn set_resume_at(&self, resume_at_unix_ms: Option<i64>) {
+        self.status.lock().unwrap().resume_at_unix_ms = resume_at_unix_ms;
+        let _ = self.tx.send(Msg::SetResumeAt(resume_at_unix_ms));
     }
 
     pub fn set_user_exclusions(&self, user: Vec<String>) {
@@ -69,9 +86,15 @@ impl CaptureHandle {
 
 /// Starts the service. It runs for the life of the process; `enabled = false` idles
 /// it without tearing down the hooks.
-pub fn start(store: StoreHandle, device_id: String, enabled: bool, user_exclusions: Vec<String>) -> Result<CaptureHandle, String> {
+pub fn start(
+    store: StoreHandle,
+    device_id: String,
+    enabled: bool,
+    resume_at_unix_ms: Option<i64>,
+    user_exclusions: Vec<String>,
+) -> Result<CaptureHandle, String> {
     let (tx, rx) = mpsc::channel::<Msg>();
-    let status = Arc::new(Mutex::new(CaptureStatus { enabled, running: true, ..Default::default() }));
+    let status = Arc::new(Mutex::new(CaptureStatus { enabled, running: true, resume_at_unix_ms, ..Default::default() }));
     let event_tx = tx.clone();
     events::start(move |e| {
         let _ = event_tx.send(Msg::System(e));
@@ -80,7 +103,7 @@ pub fn start(store: StoreHandle, device_id: String, enabled: bool, user_exclusio
     std::thread::Builder::new()
         .name("whimbrel-capture".into())
         .spawn(move || {
-            let mut service = match Service::new(store, device_id, enabled, user_exclusions, loop_status.clone()) {
+            let mut service = match Service::new(store, device_id, enabled, resume_at_unix_ms, user_exclusions, loop_status.clone()) {
                 Ok(s) => s,
                 Err(e) => {
                     let mut st = loop_status.lock().unwrap();
@@ -95,10 +118,16 @@ pub fn start(store: StoreHandle, device_id: String, enabled: bool, user_exclusio
     Ok(CaptureHandle { tx, status })
 }
 
+fn now_unix_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
 struct Service {
     store: StoreHandle,
     device_id: String,
     enabled: bool,
+    /// The end of a timed pause (unix ms). While it is ahead, nothing is read; `enabled` is untouched.
+    resume_at_ms: Option<i64>,
     exclusions: Exclusions,
     status: Arc<Mutex<CaptureStatus>>,
     uia: uia::Uia,
@@ -116,6 +145,7 @@ impl Service {
         store: StoreHandle,
         device_id: String,
         enabled: bool,
+        resume_at_ms: Option<i64>,
         user_exclusions: Vec<String>,
         status: Arc<Mutex<CaptureStatus>>,
     ) -> Result<Self, String> {
@@ -124,6 +154,7 @@ impl Service {
             store,
             device_id,
             enabled,
+            resume_at_ms,
             exclusions: Exclusions { user: user_exclusions },
             status,
             uia: uia::Uia::new().map_err(|e| format!("UI Automation: {e}"))?,
@@ -150,7 +181,25 @@ impl Service {
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
-            let pause = if self.enabled { self.gate.pause_reason(idle_duration()) } else { Some(PauseReason::Disabled) };
+            // A timed pause ends when the wall clock reaches its deadline, checked on every pass (a timer would
+            // drift across sleep). Only the pause ends; `enabled` is whatever the person set.
+            let now_ms = now_unix_ms();
+            if self.resume_at_ms.is_some() && !timed_pause_active(self.resume_at_ms, now_ms) {
+                tracing::info!("capture timed pause ended");
+                let ended = self.resume_at_ms.take();
+                let mut st = self.status.lock().unwrap();
+                // Only if nobody has set a newer deadline since: that message is still waiting in the queue.
+                if st.resume_at_unix_ms == ended {
+                    st.resume_at_unix_ms = None;
+                }
+            }
+            let pause = if !self.enabled {
+                Some(PauseReason::Disabled)
+            } else if timed_pause_active(self.resume_at_ms, now_ms) {
+                Some(PauseReason::TimedPause)
+            } else {
+                self.gate.pause_reason(idle_duration())
+            };
             self.status.lock().unwrap().paused = pause.map(|p| p.describe().to_string());
             if pause.is_some() {
                 continue;
@@ -171,6 +220,13 @@ impl Service {
             Msg::SetEnabled(enabled) => {
                 tracing::info!(enabled, "capture toggled");
                 self.enabled = enabled;
+                if !enabled {
+                    self.resume_at_ms = None;
+                }
+            }
+            Msg::SetResumeAt(resume_at) => {
+                tracing::info!(?resume_at, "capture timed pause set");
+                self.resume_at_ms = resume_at;
             }
             Msg::SetUserExclusions(user) => self.exclusions.user = user,
         }
@@ -256,7 +312,12 @@ impl Service {
             source: source.to_string(),
         };
         let device_id = self.device_id.clone();
-        match self.store.call_blocking(move |s| ingest::ingest_record(s, &device_id, &record)) {
+        // The closure's own `Result` (a store error from the insert) joins the actor's.
+        let stored = self
+            .store
+            .call_blocking(move |s| ingest::ingest_record(s, &device_id, &record))
+            .and_then(|r| r.map_err(|e| CommandError::store(e.to_string())));
+        match stored {
             Ok(stats) => {
                 let mut st = self.status.lock().unwrap();
                 if stats.items_inserted > 0 {
@@ -266,8 +327,11 @@ impl Service {
                 }
             }
             Err(e) => {
+                // Retried at the window's next read, which the change filter would otherwise
+                // skip as unchanged (issue 850 review, I5: a busy store dropped the line).
+                self.changes.forget(&key);
                 tracing::warn!(error = %e, "capture insert failed");
-                self.status.lock().unwrap().last_error = Some(e.to_string());
+                self.status.lock().unwrap().last_error = Some("The capture could not be stored; retrying.".to_string());
             }
         }
     }

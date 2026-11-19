@@ -31,6 +31,18 @@ struct SyncDeviceRecord: Decodable, Identifiable, Equatable {
     let revokedAtUnixMs: Int64?
 }
 
+/// What the runner's host needs from registering Whimbrel Cloud (`RUNNER_PROVISION`, `RUNNER_APPROVER_PUBLIC_KEY`).
+/// The bundle carries the group key wrapped to the runner: shown once, never logged or stored.
+struct RunnerProvision: Decodable, Equatable {
+    let provisionBundle: String
+    let approverPublicKey: String
+
+    enum CodingKeys: String, CodingKey {
+        case provisionBundle = "provision_bundle"
+        case approverPublicKey = "approver_public_key"
+    }
+}
+
 /// The Worker calls `SyncState` makes: `SyncClient` in the app, a fake in tests.
 protocol SyncWorker: AnyObject {
     func authenticateGoogle(idToken: String, devicePublicKey: String) async throws -> GoogleAuthResult
@@ -42,6 +54,18 @@ protocol SyncWorker: AnyObject {
     func joinWaitlist(idToken: String, devicePublicKey: String, wants: [String]) async throws
     func resetAccount(idToken: String, devicePublicKey: String) async throws -> GoogleAuthResult
     func deleteAccount(idToken: String, devicePublicKey: String) async throws
+    /// Registers the cloud runner (`POST /v1/devices/runner`), approved by this device.
+    func registerRunner(idToken: String, deviceSecretKey: String, runnerPublicKey: String, name: String, groupKey: String) async throws -> RunnerProvision
+    /// The Worker's base URL, for the runner's `RUNNER_WORKER_URL`.
+    var workerURL: String { get }
+}
+
+extension SyncWorker {
+    func registerRunner(idToken: String, deviceSecretKey: String, runnerPublicKey: String, name: String, groupKey: String) async throws -> RunnerProvision {
+        throw SyncAPIError.malformedResponse
+    }
+
+    var workerURL: String { "" }
 }
 
 /// Typed client for the sync auth Worker's routes (`POST /v1/auth/google`,
@@ -88,6 +112,16 @@ final class SyncClient: SyncWorker {
             CoreMemoryStore.syncWorkerApproveDevice(baseURL: base, idToken: idToken, devicePublicKey: devicePublicKey, targetDeviceId: targetDeviceId, wrappedGroupKey: wrappedGroupKey)
         }.value
         try outcome.get()
+    }
+
+    var workerURL: String { baseURL.absoluteString }
+
+    func registerRunner(idToken: String, deviceSecretKey: String, runnerPublicKey: String, name: String, groupKey: String) async throws -> RunnerProvision {
+        let base = baseURL.absoluteString
+        let outcome = await Task.detached(priority: .userInitiated) {
+            CoreMemoryStore.syncWorkerRegisterRunner(baseURL: base, idToken: idToken, deviceSecretKey: deviceSecretKey, runnerPublicKey: runnerPublicKey, name: name, groupKey: groupKey)
+        }.value
+        return try outcome.get()
     }
 
     /// Self-revocation is allowed, no special-casing.

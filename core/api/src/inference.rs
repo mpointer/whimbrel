@@ -15,6 +15,7 @@ use llm::streaming::{
     OllamaStreamingClient, OpenAIStreamingClient,
     StreamRequest, StreamingChainLink, StreamingLlmClient, StreamingRunSupervisor,
 };
+use llm::guard::{GuardedStreamingClient, HostedGate};
 use llm::Provider;
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -75,12 +76,17 @@ fn with_base<C: StreamingLlmClient + 'static>(
 ///
 /// Returns immediately — the actual network/model work runs on this module's own Tokio
 /// runtime, never on the caller's thread and never behind the store.
+///
+/// A hosted provider's stream is behind `gate` (`crate::exclusion`): a refused prompt
+/// ends the run `Failed` with the refusal's message before any request. Ollama and the
+/// local model are never gated.
 pub fn start(
     prompt: &str,
     model: &str,
     provider: &str,
     api_key: Option<&str>,
     base_url_override: Option<&str>,
+    gate: Arc<dyn HostedGate>,
 ) -> Option<StartedRun> {
     // As in the blocking chain: a model the user never chose (empty, or an old default)
     // runs the current default, and a missing one retries once with the default.
@@ -123,15 +129,35 @@ pub fn start(
         }
         _ => return None,
     };
+    // An Ollama cloud model is hosted: behind the gate, and never given a prompt a prepare
+    // built from material that must stay on this computer (`exclusion::stream_gate`).
+    let client = match provider {
+        Provider::Ollama if llm::is_ollama_cloud_model(model) => guarded(client, gate),
+        p if p.is_local() => client,
+        _ => guarded(client, gate),
+    };
 
     spawn_run(prompt, model, provider, client)
 }
 
+/// A hosted stream behind `gate` and behind the prompts a prepare marked local-only
+/// (`exclusion::stream_gate`), whichever provider the shell picked.
+fn guarded(client: Arc<dyn StreamingLlmClient>, gate: Arc<dyn HostedGate>) -> Arc<dyn StreamingLlmClient> {
+    Arc::new(GuardedStreamingClient::new(client, crate::exclusion::stream_gate(gate)))
+}
+
 /// Starts a streaming run through Whimbrel AI. Additive to [`start`] because Whimbrel
 /// needs two credentials (the Google ID token and the device's public key), which the
-/// one-key `start` signature cannot carry. `None` when either is missing or empty.
-pub fn start_whimbrel(prompt: &str, model: &str, id_token: &str, device_key: &str) -> Option<StartedRun> {
-    start_whimbrel_at(prompt, model, id_token, device_key, None)
+/// one-key `start` signature cannot carry. `None` when either is missing or empty. Behind
+/// `gate`, as [`start`]'s hosted providers.
+pub fn start_whimbrel(
+    prompt: &str,
+    model: &str,
+    id_token: &str,
+    device_key: &str,
+    gate: Arc<dyn HostedGate>,
+) -> Option<StartedRun> {
+    start_whimbrel_at(prompt, model, id_token, device_key, None, gate)
 }
 
 /// [`start_whimbrel`] against `base_url_override` (tests pass a fake server; null in production).
@@ -141,12 +167,14 @@ fn start_whimbrel_at(
     id_token: &str,
     device_key: &str,
     base_url_override: Option<&str>,
+    gate: Arc<dyn HostedGate>,
 ) -> Option<StartedRun> {
     let id_token = hosted_key(Some(id_token))?;
     let device_key = hosted_key(Some(device_key))?;
     let client = AnthropicStreamingClient::whimbrel(id_token, device_key);
     // One link, always: a pinned Whimbrel stream that fails (a 402 included) ends there.
-    spawn_run(prompt, model, Provider::Whimbrel, with_base(client, base_url_override, AnthropicStreamingClient::with_base_url))
+    let client = guarded(with_base(client, base_url_override, AnthropicStreamingClient::with_base_url), gate);
+    spawn_run(prompt, model, Provider::Whimbrel, client)
 }
 
 fn spawn_run(prompt: &str, model: &str, provider: Provider, client: Arc<dyn StreamingLlmClient>) -> Option<StartedRun> {
@@ -227,6 +255,95 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
+    /// No client excluded.
+    fn open() -> Arc<dyn HostedGate> {
+        Arc::new(llm::guard::NoExclusions)
+    }
+
+    fn excluding_acme() -> Arc<dyn HostedGate> {
+        Arc::new(llm::guard::ExclusionSet::new(vec!["Acme".into()]))
+    }
+
+    fn terminal_of(run: &StartedRun) -> InferenceEvent {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if let Some(t) = poll(&run.run_id).unwrap().into_iter().find(InferenceEvent::is_terminal) {
+                return t;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("no terminal event");
+    }
+
+    /// A hosted stream whose prompt names an excluded client ends Failed with the generic
+    /// refusal, and the provider never sees a request; Whimbrel AI too.
+    #[test]
+    fn a_hosted_stream_naming_an_excluded_client_is_never_sent() {
+        let (base_url, hits) = spawn_402_server();
+        for provider in ["google", "anthropic", "openai", "openrouter"] {
+            let run = start("notes from the ACME call", "m", provider, Some("k"), Some(&base_url), excluding_acme()).unwrap();
+            match terminal_of(&run) {
+                InferenceEvent::Terminal { outcome: llm::streaming::TerminalOutcome::Failed { class, message }, .. } => {
+                    assert_eq!(message, llm::guard::REFUSED_MESSAGE, "{provider}");
+                    // Typed, so a shell retries it on this computer without reading the message.
+                    assert_eq!(class, llm::streaming::InferenceFailureClass::ExcludedClient, "{provider}");
+                }
+                other => panic!("{provider}: expected a Failed terminal, got {other:?}"),
+            }
+            release(&run.run_id);
+        }
+        let run = start_whimbrel_at("acme", "m", "t", "d", Some(&base_url), excluding_acme()).unwrap();
+        assert!(matches!(terminal_of(&run), InferenceEvent::Terminal { outcome: llm::streaming::TerminalOutcome::Failed { .. }, .. }));
+        release(&run.run_id);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0, "no request reached a provider");
+    }
+
+    /// An unreadable exclusion setting refuses every hosted stream, with its own class.
+    #[test]
+    fn a_hosted_stream_with_an_unreadable_exclusion_setting_has_its_own_class() {
+        let (base_url, hits) = spawn_402_server();
+        let run = start("anything", "m", "openai", Some("k"), Some(&base_url), Arc::new(llm::guard::RefuseAllHosted)).unwrap();
+        match terminal_of(&run) {
+            InferenceEvent::Terminal { outcome: llm::streaming::TerminalOutcome::Failed { class, message }, .. } => {
+                assert_eq!(class, llm::streaming::InferenceFailureClass::ExclusionUnreadable);
+                assert_eq!(message, llm::guard::UNREADABLE_MESSAGE);
+            }
+            other => panic!("expected a Failed terminal, got {other:?}"),
+        }
+        release(&run.run_id);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// Ollama is local: the gate never holds it back.
+    #[test]
+    fn an_ollama_stream_is_not_gated() {
+        let (base_url, hits) = spawn_402_server();
+        let run = start("notes from the ACME call", "m", "ollama", None, Some(&base_url), excluding_acme()).unwrap();
+        terminal_of(&run);
+        release(&run.run_id);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    /// An Ollama cloud model is hosted: a prompt naming an excluded client, or one a prepare
+    /// marked as holding material that must stay on this computer, never reaches it.
+    #[test]
+    fn an_ollama_cloud_stream_is_gated() {
+        let (base_url, hits) = spawn_402_server();
+        let run = start("notes from the ACME call", "gpt-oss:120b-cloud", "ollama", None, Some(&base_url), excluding_acme()).unwrap();
+        terminal_of(&run);
+        release(&run.run_id);
+        crate::exclusion::mark_local_only("a prompt built from excluded material");
+        let run = start("a prompt built from excluded material", "gpt-oss:120b-cloud", "ollama", None, Some(&base_url), open()).unwrap();
+        terminal_of(&run);
+        release(&run.run_id);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        // The same marked prompt on a model on this computer goes.
+        let run = start("a prompt built from excluded material", "gemma4:12b", "ollama", None, Some(&base_url), open()).unwrap();
+        terminal_of(&run);
+        release(&run.run_id);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
     /// How long the fake server holds its connection, and the bound for unrelated store
     /// work. The bound is half the hang: work that waited for the provider would take the
     /// whole hang, while a loaded CI machine can take several seconds just to open a store.
@@ -250,11 +367,14 @@ mod tests {
     #[test]
     fn start_does_not_block_unrelated_store_work_while_provider_hangs() {
         let base_url = spawn_hanging_server();
-        let run = start("hello", "test-model", "ollama", None, Some(&base_url)).unwrap();
+        let run = start("hello", "test-model", "ollama", None, Some(&base_url), open()).unwrap();
 
         let started = Instant::now();
         let store = memory::Store::open_in_memory().unwrap();
         assert!(store.list_routines().unwrap().is_empty());
+        // Blocked, this would wait out the fake server's whole HANG. STORE_WORK_BOUND sits well
+        // under that but far above what a busy machine takes to open an in-memory store (4-8 s
+        // seen on a Windows CI runner with the full suite and a local model running).
         assert!(
             started.elapsed() < STORE_WORK_BOUND,
             "unrelated store work must not be delayed by a hanging provider call; took {:?}",
@@ -282,13 +402,13 @@ mod tests {
 
     #[test]
     fn start_refuses_google_without_a_key_and_unknown_providers() {
-        assert!(start("hello", "gemini-2.5-flash", "google", None, None).is_none());
-        assert!(start("hello", "gemini-2.5-flash", "google", Some(""), None).is_none());
+        assert!(start("hello", "gemini-2.5-flash", "google", None, None, open()).is_none());
+        assert!(start("hello", "gemini-2.5-flash", "google", Some(""), None, open()).is_none());
         for provider in ["anthropic", "openai"] {
-            assert!(start("hello", "m", provider, None, None).is_none(), "{provider} needs a key");
-            assert!(start("hello", "m", provider, Some(""), None).is_none());
+            assert!(start("hello", "m", provider, None, None, open()).is_none(), "{provider} needs a key");
+            assert!(start("hello", "m", provider, Some(""), None, open()).is_none());
         }
-        assert!(start("hello", "m", "carrier-pigeon", None, None).is_none());
+        assert!(start("hello", "m", "carrier-pigeon", None, None, open()).is_none());
     }
 
     #[test]
@@ -332,10 +452,10 @@ mod tests {
 
     #[test]
     fn start_whimbrel_refuses_a_missing_token_or_device_key() {
-        assert!(start_whimbrel("hi", "m", "", "d").is_none());
-        assert!(start_whimbrel("hi", "m", "t", "").is_none());
+        assert!(start_whimbrel("hi", "m", "", "d", open()).is_none());
+        assert!(start_whimbrel("hi", "m", "t", "", open()).is_none());
         // The generic entry point never builds a Whimbrel client from one key.
-        assert!(start("hi", "m", "whimbrel", Some("t"), None).is_none());
+        assert!(start("hi", "m", "whimbrel", Some("t"), None, open()).is_none());
     }
 
     /// A pinned Whimbrel stream is a one-link chain: a 402 ends the run Failed and the
@@ -343,7 +463,7 @@ mod tests {
     #[test]
     fn pinned_whimbrel_stops_on_402() {
         let (base_url, hits) = spawn_402_server();
-        let run = start_whimbrel_at("hi", "claude-haiku-4-5", "t", "d", Some(&base_url)).unwrap();
+        let run = start_whimbrel_at("hi", "claude-haiku-4-5", "t", "d", Some(&base_url), open()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut terminal = None;
         while Instant::now() < deadline && terminal.is_none() {

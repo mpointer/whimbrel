@@ -1,7 +1,7 @@
 import { handleAdminLeads } from "./admin";
 import { leadExists, parseLead, PLATFORMS, recordDownload, upsertLead, type Contact, type LeadInput, type Platform } from "./leads";
 import { handleBeta, handleReview } from "./beta";
-import { resolveRelease } from "./downloads";
+import { platformOf, resolveRelease, type DownloadTarget } from "./downloads";
 import { leadAlertEmail, send, welcomeEmail, type Email } from "./email";
 import { preferencesPage } from "./preferences-page";
 import { language, leadByEmail, leadById, logEvent, markSynced, setPreference, signToken, syncContact, verifyToken, type ProductEmails } from "./preferences";
@@ -183,10 +183,12 @@ export async function handleRegister(request: Request, env: Env, ctx: ExecutionC
   const fail = (status: number, errors: Record<string, string>) =>
     isJson ? Response.json({ ok: false, errors }, { status }) : redirect("/download/?error=1#register");
 
-  const result = parseLead(body);
+  // "Windows on Arm" registers as windows; the thank-you page then starts the arm64 installer.
+  const arm = body.platform === "windows-arm";
+  const result = parseLead(arm ? { ...body, platform: "windows" } : body);
   if (!result.ok) return fail(400, result.errors);
   const lead = result.lead;
-  const thanks = `/download/thanks/?platform=${lead.platform}`;
+  const thanks = `/download/thanks/?platform=${lead.platform}${arm ? "&arch=arm64" : ""}`;
 
   // A bot filled the hidden field: answer exactly as a success would, store nothing.
   const spam = await spamCheck(request, env, lead, fetcher);
@@ -221,20 +223,24 @@ export async function handleRegister(request: Request, env: Env, ctx: ExecutionC
     : redirect(thanks, cookie);
 }
 
-/** GET /api/download/{mac|windows} — registered visitors are redirected to the current
+/** GET /api/download/{mac|windows|windows-arm} — registered visitors are redirected to the current
  * installer and the download is recorded; everyone else is sent to the form first. The
  * welcome email's links carry the lead id as `?lead=` instead of the cookie; a valid one
  * also sets the cookie, so the site remembers that browser too. */
-export async function handleDownload(request: Request, env: Env, platform: Platform, fetcher: typeof fetch = fetch): Promise<Response> {
+export async function handleDownload(request: Request, env: Env, target: DownloadTarget, fetcher: typeof fetch = fetch): Promise<Response> {
+  const platform = platformOf(target);
+  const arm = target === "windows-arm";
   const fromLink = new URL(request.url).searchParams.get("lead");
   const linkId = fromLink && UUID_RE.test(fromLink) ? fromLink : null;
   const leadId = linkId ?? readLeadCookie(request);
   if (!leadId || !(await leadExists(env.DB, leadId))) {
-    return redirect(`/download/?platform=${platform}#register`);
+    return redirect(`/download/?platform=${platform}${arm ? "&arch=arm64" : ""}#register`);
   }
-  const release = await resolveRelease(platform, env.UPDATES_URL, fetcher, list(env.UPDATES_HOSTS));
-  if (!release) return redirect(`/download/unavailable/?platform=${platform}`);
-  await recordDownload(env.DB, leadId, platform, release.version, country(request), new Date().toISOString());
+  const release = await resolveRelease(target, env.UPDATES_URL, fetcher, list(env.UPDATES_HOSTS));
+  if (!release) return redirect(`/download/unavailable/?platform=${platform}${arm ? "&arch=arm64" : ""}`);
+  // An Arm download is recorded as windows, its version marked arm64 (the leads view shows both).
+  const version = arm && release.version ? `${release.version} arm64` : release.version;
+  await recordDownload(env.DB, leadId, platform, version, country(request), new Date().toISOString());
   const headers: Record<string, string> = { location: release.url, "cache-control": "no-store" };
   if (linkId) headers["set-cookie"] = leadCookie(linkId);
   return new Response(null, { status: 302, headers });
@@ -243,9 +249,14 @@ export async function handleDownload(request: Request, env: Env, platform: Platf
 /** GET /api/releases — current version numbers, for the "Version x.y.z" labels on the
  * download page. URLs are deliberately not included; downloads go through the gate. */
 export async function handleReleases(env: Env, fetcher: typeof fetch = fetch): Promise<Response> {
-  const [mac, windows] = await Promise.all(PLATFORMS.map((p) => resolveRelease(p, env.UPDATES_URL, fetcher, list(env.UPDATES_HOSTS))));
+  const targets: DownloadTarget[] = [...PLATFORMS, "windows-arm"];
+  const [mac, windows, windowsArm] = await Promise.all(targets.map((t) => resolveRelease(t, env.UPDATES_URL, fetcher, list(env.UPDATES_HOSTS))));
   return Response.json(
-    { mac: mac ? { version: mac.version } : null, windows: windows ? { version: windows.version } : null },
+    {
+      mac: mac ? { version: mac.version } : null,
+      windows: windows ? { version: windows.version } : null,
+      windows_arm: windowsArm ? { version: windowsArm.version } : null,
+    },
     { headers: { "cache-control": "public, max-age=300" } },
   );
 }
@@ -275,10 +286,10 @@ export async function handle(request: Request, env: Env, ctx: ExecutionContext, 
     return handleRegister(request, env, ctx, fetcher);
   }
 
-  const download = pathname.match(/^\/api\/download\/(mac|windows)\/?$/);
+  const download = pathname.match(/^\/api\/download\/(mac|windows|windows-arm)\/?$/);
   if (download) {
     if (request.method !== "GET") return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET" } });
-    return handleDownload(request, env, download[1] as Platform, fetcher);
+    return handleDownload(request, env, download[1] as DownloadTarget, fetcher);
   }
 
   if (pathname === "/api/releases" && request.method === "GET") return handleReleases(env, fetcher);

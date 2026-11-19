@@ -223,3 +223,363 @@ fn simultaneous_opens_of_one_database_all_succeed() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------
+// The Mac app's background lane (issue #850): a third connection runs the long jobs (content
+// sync, screen-text ingest, retention) while the screens write on the main one. These tests
+// pin what the single queue used to give for free.
+
+fn capture(i: i64, text: &str) -> NewCaptureItem {
+    NewCaptureItem {
+        device_id: DEVICE.to_string(),
+        ts_unix_ms: 1_000 + i,
+        app_bundle_id: format!("app-{}", i % 5),
+        window_title: "w".to_string(),
+        url: None,
+        text: text.to_string(),
+        // Distinct per row so the consecutive-duplicate check never drops one.
+        hash: i,
+        source: "uia".to_string(),
+    }
+}
+
+fn open_with_device(path: &Path) -> Store {
+    let s = Store::open(path, Path::new("")).unwrap();
+    s.set_own_device_id(DEVICE);
+    s
+}
+
+/// Invariant (a): a `local_seq` is taken and its row written in one transaction, so across
+/// connections no two rows share one, and rows commit in `local_seq` order (row id order here).
+#[test]
+fn local_seq_is_unique_and_in_commit_order_across_connections() {
+    const PER_THREAD: i64 = 40;
+    let (_dir, path) = temp_db("seq-order.sqlite");
+    drop(open_with_device(&path));
+    let barrier = Arc::new(Barrier::new(3));
+    let handles: Vec<_> = (0..3i64)
+        .map(|t| {
+            let (path, barrier) = (path.clone(), barrier.clone());
+            std::thread::spawn(move || {
+                let s = open_with_device(&path);
+                barrier.wait();
+                for i in 0..PER_THREAD {
+                    let n = t * 1_000 + i;
+                    match t {
+                        0 => {
+                            s.insert_capture_item(&capture(n, &format!("text {n}"))).unwrap();
+                        }
+                        1 => {
+                            s.insert_meeting(&meeting(n, MeetingStatus::Recording)).unwrap();
+                        }
+                        _ => {
+                            s.insert_capture_item(&capture(n, &format!("other {n}"))).unwrap();
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let col = |sql: &str| -> Vec<i64> {
+        conn.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
+    };
+    let captures = col("SELECT local_seq FROM capture_item ORDER BY id");
+    let items = col("SELECT local_seq FROM items WHERE kind = 'capture' ORDER BY id");
+    let meetings = col("SELECT local_seq FROM meeting ORDER BY id");
+    assert_eq!(captures.len() as i64, 2 * PER_THREAD);
+    assert_eq!(items, captures, "the items mirror carries the capture's own local_seq");
+    for (name, seqs) in [("capture_item", &captures), ("meeting", &meetings)] {
+        assert!(seqs.windows(2).all(|w| w[0] < w[1]), "{name}: local_seq out of commit order: {seqs:?}");
+    }
+    let mut all: Vec<i64> = captures.iter().chain(meetings.iter()).copied().collect();
+    all.sort_unstable();
+    all.dedup();
+    assert_eq!(all.len() as i64, 3 * PER_THREAD, "a local_seq was handed out twice");
+}
+
+/// Invariant (b): a push round on the background connection, running while the main one writes,
+/// never advances the cursor past a row that commits later. Every row ends up pushed.
+#[test]
+fn the_push_cursor_never_skips_a_row_another_connection_commits_late() {
+    const ROWS: i64 = 120;
+    let (_dir, path) = temp_db("push-gap.sqlite");
+    drop(open_with_device(&path));
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let writer = |offset: i64| {
+        let (path, done) = (path.clone(), done.clone());
+        std::thread::spawn(move || {
+            let s = open_with_device(&path);
+            for i in 0..ROWS {
+                let n = offset + i;
+                s.insert_capture_item(&capture(n, &format!("row {n}"))).unwrap();
+            }
+            drop(done);
+        })
+    };
+    let w1 = writer(0);
+    let w2 = writer(10_000);
+
+    // The background lane's round, as `sync_engine::content::push_content` runs it.
+    let pusher = {
+        let (path, done) = (path.clone(), done.clone());
+        std::thread::spawn(move || {
+            let s = open_with_device(&path);
+            let mut pushed: HashSet<i64> = HashSet::new();
+            let mut final_pass = false;
+            loop {
+                let cursor = s.get_sync_push_cursor().unwrap();
+                let rows = s.with_read_snapshot(|s| s.unpushed_item_rows(DEVICE, cursor)).unwrap();
+                let mut highest = cursor;
+                for r in rows {
+                    if let memory::SyncableRow::Item { local_seq, .. } = r {
+                        pushed.insert(local_seq);
+                        highest = highest.max(local_seq);
+                    }
+                }
+                s.set_sync_push_cursor(highest).unwrap();
+                if final_pass {
+                    return pushed;
+                }
+                final_pass = done.load(std::sync::atomic::Ordering::SeqCst);
+            }
+        })
+    };
+    w1.join().unwrap();
+    w2.join().unwrap();
+    done.store(true, std::sync::atomic::Ordering::SeqCst);
+    let pushed = pusher.join().unwrap();
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let committed: Vec<i64> = conn
+        .prepare("SELECT local_seq FROM items WHERE kind = 'capture'")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(committed.len() as i64, 2 * ROWS);
+    let missed: Vec<i64> = committed.iter().copied().filter(|s| !pushed.contains(s)).collect();
+    assert!(missed.is_empty(), "rows never pushed (a silent sync gap): {missed:?}");
+}
+
+/// A read snapshot holds one view of the database: a row another connection commits while it is
+/// open is not seen by a later read in the same snapshot, but is by the next one.
+#[test]
+fn a_read_snapshot_sees_one_commit_point() {
+    let (_dir, path) = temp_db("snapshot.sqlite");
+    let reader = open_with_device(&path);
+    let writer = open_with_device(&path);
+    writer.insert_capture_item(&capture(1, "first")).unwrap();
+    let (before, after) = reader
+        .with_read_snapshot(|r| {
+            let before = r.unpushed_item_rows(DEVICE, 0)?.len();
+            writer.insert_capture_item(&capture(2, "second")).unwrap();
+            Ok((before, r.unpushed_item_rows(DEVICE, 0)?.len()))
+        })
+        .unwrap();
+    assert_eq!((before, after), (1, 1), "the second read still sees the first commit point");
+    assert_eq!(reader.unpushed_item_rows(DEVICE, 0).unwrap().len(), 2);
+}
+
+/// Invariant (c): the exclusion queue lives in the database, so a cached excluded-material
+/// set on the main connection notices ingest on the background one (the capture triggers note
+/// the row; the generation does not move).
+#[test]
+fn the_main_connections_exclusion_cache_notices_ingest_on_another_connection() {
+    let (_dir, path) = temp_db("exclusion.sqlite");
+    let main_store = open_with_device(&path);
+    let background = open_with_device(&path);
+    let acme = main_store.create_seed_topic("Acme", &[], None).unwrap();
+    main_store
+        .set_client_control(
+            &acme.key,
+            &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None },
+        )
+        .unwrap();
+    let names = |t: &str| t.to_lowercase().contains("acme");
+    let first = main_store.excluded_material_with(&names).unwrap();
+    let generation = main_store.exclusion_generation().unwrap();
+
+    background.insert_capture_item(&capture(1, "Acme pricing notes")).unwrap();
+
+    assert_eq!(main_store.exclusion_generation().unwrap(), generation, "ingest does not move the generation");
+    let second = main_store.excluded_material_with(&names).unwrap();
+    assert!(
+        second.items.len() > first.items.len(),
+        "the new capture naming Acme is excluded on the main connection ({} -> {})",
+        first.items.len(),
+        second.items.len()
+    );
+}
+
+/// Every connection starts at rusqlite's 5 s; the shell can raise it, and the exclusion code's
+/// best-effort write puts back whatever was set rather than a fixed 5 s.
+#[test]
+fn the_busy_timeout_defaults_to_five_seconds_and_can_be_raised() {
+    let (_dir, path) = temp_db("busy.sqlite");
+    let s = open_with_device(&path);
+    assert_eq!(s.busy_timeout_ms().unwrap(), 5_000);
+    s.set_busy_timeout(Duration::from_secs(30)).unwrap();
+    assert_eq!(s.busy_timeout_ms().unwrap(), 30_000);
+}
+
+/// A write that must not be dropped waits out another connection's long transaction.
+#[test]
+fn retry_when_busy_outlasts_a_lock_held_past_the_busy_timeout() {
+    let (_dir, path) = temp_db("retry.sqlite");
+    let s = open_with_device(&path);
+    s.set_busy_timeout(Duration::from_millis(100)).unwrap();
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(700));
+        raw.execute_batch("COMMIT").unwrap();
+    });
+    assert!(s.insert_meeting(&meeting(1, MeetingStatus::Recording)).is_err(), "one try gives up after 100 ms");
+    let id = memory::retry_when_busy(Duration::from_secs(10), || s.insert_meeting(&meeting(2, MeetingStatus::Recording)));
+    releaser.join().unwrap();
+    assert!(id.is_ok(), "{:?}", id.err());
+}
+
+/// Retention deletes captures in batches, so the write lock is free between them: another
+/// connection's write lands while expired captures still remain (with one big DELETE the
+/// remaining count only ever reads all or none), and the FTS and `items` mirror stay in step.
+#[test]
+fn a_large_retention_sweep_lets_another_connection_write_between_batches() {
+    let (_dir, path) = temp_db("retention.sqlite");
+    let sweeper = open_with_device(&path);
+    // Both sides get the apps' 30 s (both apps set it on every connection).
+    sweeper.set_busy_timeout(Duration::from_secs(30)).unwrap();
+    let n = 5_000; // five batches
+    for i in 0..n {
+        sweeper.insert_capture_item(&capture(i, &format!("expired{i} alpha"))).unwrap();
+    }
+    let now = 10 * 24 * 3_600_000i64;
+    let mut fresh = capture(n + 1, "fresh survivor beta");
+    fresh.ts_unix_ms = now - 1_000;
+    sweeper.insert_capture_item(&fresh).unwrap();
+    let policy = memory::RetentionPolicy { capture_item_days: Some(1), meeting_days: None, conversation_days: None };
+    let writer = open_with_device(&path);
+    // The apps give every connection 30 s; with the 5 s default a slow runner (debug build, tests
+    // in parallel) can take longer than that over one batch and the write fails instead of waiting.
+    writer.set_busy_timeout(Duration::from_secs(30)).unwrap();
+    let reader = rusqlite::Connection::open(&path).unwrap();
+    let remaining = |c: &rusqlite::Connection| -> i64 {
+        c.query_row("SELECT COUNT(*) FROM capture_item WHERE ts_unix_ms < ?1", [now - 24 * 3_600_000], |r| r.get(0)).unwrap()
+    };
+    // Timeline, printed only on failure: when each batch committed (a sampler on its own
+    // connection, polling every 20 ms) and when each write started, how long it waited, and
+    // what it then read.
+    let t0 = std::time::Instant::now();
+    let ms = move || t0.elapsed().as_millis();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sampler = {
+        let (stop, path) = (stop.clone(), path.clone());
+        std::thread::spawn(move || {
+            let c = rusqlite::Connection::open(&path).unwrap();
+            let mut seen = Vec::new();
+            let mut last = -1;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let left: i64 = c
+                    .query_row("SELECT COUNT(*) FROM capture_item WHERE ts_unix_ms < ?1", [now - 24 * 3_600_000], |r| r.get(0))
+                    .unwrap_or(-1);
+                if left != last {
+                    seen.push(format!("{}ms left={left}", ms()));
+                    last = left;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            seen
+        })
+    };
+    let handle = std::thread::spawn(move || sweeper.apply_retention(&policy, now).unwrap());
+    let mut landed_mid_sweep = 0;
+    let mut writes = Vec::new();
+    let mut i = 0;
+    while !handle.is_finished() {
+        let started = ms();
+        writer.insert_meeting(&meeting(i, MeetingStatus::Recording)).unwrap();
+        let waited = ms() - started;
+        i += 1;
+        let left = remaining(&reader);
+        writes.push(format!("{started}ms waited={waited}ms left={left}"));
+        if left > 0 && left < n {
+            landed_mid_sweep += 1;
+        }
+        // App writes come apart, never back to back. Without a pause this loop takes the lock again
+        // the moment it lets go, and the sweep's busy handler (which sleeps between tries) can miss
+        // every gap: on the Windows runner the sweep itself then failed with "database is locked".
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let result = handle.join().unwrap();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let batches = sampler.join().unwrap();
+    assert_eq!(result.capture_items_deleted as i64, n);
+    assert!(
+        landed_mid_sweep >= 1,
+        "no write landed while the sweep was partly done: the delete held the lock throughout\n\
+         sweep done at {}ms\nbatches: {batches:?}\nwrites: {writes:?}",
+        ms()
+    );
+    assert_eq!(remaining(&reader), 0);
+    let count = |sql: &str| -> i64 { reader.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(count("SELECT COUNT(*) FROM items WHERE kind = 'capture'"), 1, "only the fresh mirror is left");
+    assert_eq!(count("SELECT COUNT(*) FROM capture_item_fts WHERE capture_item_fts MATCH 'alpha'"), 0, "no stale FTS rows");
+    assert_eq!(count("SELECT COUNT(*) FROM capture_item_fts WHERE capture_item_fts MATCH 'survivor'"), 1);
+}
+
+/// A recording start on one connection (30 s busy timeout, as the apps set) lands while another
+/// connection is still pruning a large backlog of kept word fingerprints (#850 review, I2). The
+/// prune commits a batch at a time; without a pause between batches it takes the lock again the
+/// moment it lets go, the waiting insert's busy handler (which sleeps between tries) misses every
+/// gap, and the start only lands once the whole prune is done.
+#[test]
+fn a_recording_start_lands_while_another_connection_prunes_word_fingerprints() {
+    let (_dir, path) = temp_db("prune-starve.sqlite");
+    let pruner = open_with_device(&path);
+    pruner.set_busy_timeout(Duration::from_secs(30)).unwrap();
+    let starter = open_with_device(&path);
+    starter.set_busy_timeout(Duration::from_secs(30)).unwrap();
+    // Many batches: the prune runs well past the moment the start asks.
+    let rows = 20_000i64;
+    let words: Vec<(i64, Vec<u32>)> = (0..rows).map(|h| (h, vec![1, 2, 3])).collect();
+    pruner.mark_clean_text("an answer", "stamp", &words).unwrap();
+    let reader = rusqlite::Connection::open(&path).unwrap();
+    // How far the prune had got when the start committed, recorded inside the insert's own
+    // transaction: a test thread descheduled after the insert cannot skew it.
+    reader
+        .execute_batch(
+            "CREATE TABLE prune_probe (left INTEGER NOT NULL); \
+             CREATE TRIGGER prune_probe_on_start AFTER INSERT ON meeting \
+             BEGIN INSERT INTO prune_probe SELECT COUNT(*) FROM input_words; END;",
+        )
+        .unwrap();
+    let left = |c: &rusqlite::Connection| -> i64 { c.query_row("SELECT COUNT(*) FROM input_words", [], |r| r.get(0)).unwrap() };
+    let t0 = std::time::Instant::now();
+    let looper = std::thread::spawn(move || {
+        let n = pruner.prune_input_words_before(i64::MAX).unwrap();
+        (n, t0.elapsed())
+    });
+    // Ask once the prune is under way (its first batch has committed).
+    while left(&reader) == rows && !looper.is_finished() {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let asked = t0.elapsed();
+    let inserted = starter.insert_meeting(&meeting(1, MeetingStatus::Recording));
+    let waited = t0.elapsed() - asked;
+    let (pruned, prune_took) = looper.join().unwrap();
+    assert!(inserted.is_ok(), "{:?}", inserted.err());
+    let remaining: i64 = reader.query_row("SELECT left FROM prune_probe", [], |r| r.get(0)).unwrap();
+    assert_eq!(pruned as i64, rows);
+    assert!(
+        remaining > 0,
+        "the start only landed after the whole prune (asked at {asked:?}, waited {waited:?}, prune took {prune_took:?})"
+    );
+    // Generous for a slow runner: with the pause the insert gets in within a batch or two.
+    assert!(waited < Duration::from_secs(8), "the recording start waited {waited:?} behind the prune");
+}

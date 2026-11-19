@@ -1,12 +1,15 @@
 pub mod aliases;
 pub mod budget;
 pub(crate) mod chrome;
+pub mod client_controls;
 pub mod cluster;
 pub mod edit;
 pub mod entities;
+pub mod exclusion;
 #[cfg(test)]
 mod fixture;
 pub mod index;
+pub mod inventory;
 pub mod judge;
 pub mod page;
 pub mod read;

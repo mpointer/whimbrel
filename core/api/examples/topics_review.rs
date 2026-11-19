@@ -115,7 +115,7 @@ fn main() {
         let mut ans = String::new();
         std::io::stdin().read_line(&mut ans).unwrap();
         if ans.trim() == "y" {
-            let client = llm::typesafe::TypeSafeClient::new(key);
+            let client = llm::typesafe::TypeSafeClient::new(key, api::exclusion::current_gate(&store));
             store.start_topic_judging(est.tokens * 3 / 2).unwrap();
             loop {
                 let o =

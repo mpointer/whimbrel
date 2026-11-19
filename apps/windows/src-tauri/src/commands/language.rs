@@ -54,9 +54,11 @@ fn save(settings: &SettingsFile) -> Result<(), CommandError> {
     settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))
 }
 
+/// Works before `AppState` exists (the launch screens): `main.tsx` asks before the first
+/// render. The launch's handle is THE settings file `AppState` shares.
 #[tauri::command]
-pub fn language_settings(state: State<'_, AppState>) -> LanguageSettings {
-    view(&state.settings.lock().unwrap())
+pub fn language_settings(launch: State<'_, crate::launch::app::LaunchState>) -> LanguageSettings {
+    view(&launch.settings.lock().unwrap_or_else(|p| p.into_inner()))
 }
 
 /// Async, so the tray's relabel runs off the main thread (see `tray::refresh`).

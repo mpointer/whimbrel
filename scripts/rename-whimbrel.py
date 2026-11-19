@@ -58,6 +58,7 @@ KEEP = [
                                                   # Keychain and Credential Manager services,
                                                   # LaunchAgent label, OSLog subsystems
     'previousFolderName = "Kestrel"',            # the Mac data folder's old name, searched for once
+    'LEGACY_NAME="Kestrel"',                    # the same old folder name, in the redesign baseline script
     "`Application Support/Kestrel/`, and before", # SpikePaths doc comment naming that move
     "(Kestrel, then littlebird)",
     "testMovesKestrelFolderToWhimbrel",           # SpikePathsTests for that move

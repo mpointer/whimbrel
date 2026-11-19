@@ -10,14 +10,16 @@ use serde::Serialize;
 
 use crate::budget::{apply_budgets, check_provider};
 use crate::envelope::{ApiError, ApiResult};
-use crate::routing::{build_chain_for, RoutingConfig};
+use crate::exclusion::{ExclusionOutcome, RequestOrigin};
+use crate::routing::{build_chain_for, build_local_chain, RoutingConfig};
 use crate::util::{log_usage_for, now_unix_ms};
 
 /// Retrieval (keyword and semantic, fused) using `query` alone, then the spend-cap
 /// check, then the provider chain, then usage logging. `history` is fed to the model for
 /// conversational continuity but does not affect retrieval. Returns [`llm::ChatAnswer`]
 /// unchanged — its serialized shape (`text`, `citations`, `token_usage`) is exactly what
-/// the C boundary already emits.
+/// the C boundary already emits. Asked from the Ask bar; [`answer_from`] takes the origin
+/// and also says what client exclusion did.
 pub fn answer(
     store: &memory::Store,
     query: &str,
@@ -26,13 +28,379 @@ pub fn answer(
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
 ) -> ApiResult<llm::ChatAnswer> {
-    let (context, date_scope_label) = assemble_ask_context(store, query, context_limit);
+    answer_from(store, query, RequestOrigin::AskBar, ollama_model, context_limit, history, routing).map(|(a, _)| a)
+}
+
+/// [`answer`] for a question asked from `origin`. A question that carries an excluded client
+/// (spec 7.2) is answered by the on-device links only, with all of memory, and refused when there
+/// is none: it never falls back to a hosted model. Otherwise a hosted link answers from memory
+/// without any excluded client's material, and the outcome says how much was left out.
+pub fn answer_from(
+    store: &memory::Store,
+    query: &str,
+    origin: RequestOrigin,
+    ollama_model: &str,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+) -> ApiResult<(llm::ChatAnswer, ExclusionOutcome)> {
+    answer_from_filter(store, crate::exclusion::context_filter(store), query, origin, ollama_model, context_limit, history, routing)
+}
+
+/// The link that produced an answer: its provider id and the model that answered (the one
+/// the provider stood in when the requested one did not exist). Never the client's name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AnsweredBy {
+    pub provider: String,
+    pub model: String,
+    /// The link runs on this computer (Ollama or the bundled model).
+    pub local: bool,
+}
+
+impl AnsweredBy {
+    fn of(link: &llm::ChainLink) -> Self {
+        AnsweredBy {
+            provider: link.provider.as_str().to_string(),
+            model: link.client.substituted_model().unwrap_or_else(|| link.model.clone()),
+            local: link.provider.is_local(),
+        }
+    }
+}
+
+/// [`llm::ChatAnswer`] with what exclusion did and which model answered, for shells that
+/// label the answer with the model that really produced it.
+#[derive(Debug, Clone, Serialize)]
+pub struct DetailedAnswer {
+    #[serde(flatten)]
+    pub answer: llm::ChatAnswer,
+    pub exclusion: ExclusionOutcome,
+    pub answered_by: AnsweredBy,
+}
+
+/// [`answer`] that also reports the exclusion outcome and the answering model. Same routing
+/// and exclusion behaviour as [`answer_from`]; asked from the Ask bar.
+pub fn answer_detailed(
+    store: &memory::Store,
+    query: &str,
+    ollama_model: &str,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+) -> ApiResult<DetailedAnswer> {
+    let filter = crate::exclusion::context_filter(store);
+    let (answer, exclusion, answered_by) =
+        answer_from_filter_by(store, filter, query, RequestOrigin::AskBar, ollama_model, context_limit, history, routing)?;
+    Ok(DetailedAnswer { answer, exclusion, answered_by })
+}
+
+/// Whether a question asked in the Ask bar (with the conversation so far) names an excluded
+/// client, so core answers it on this computer or refuses it. A cheap check on names the
+/// store already holds; true when the setting cannot be read. Never returns the name.
+pub fn question_names_excluded_client(store: &memory::Store, query: &str, history: &[llm::ChatTurn]) -> bool {
+    let filter = crate::exclusion::context_filter(store);
+    request_carries(store, &filter, query, history, &RequestOrigin::AskBar)
+}
+
+/// [`answer_from`] through `filter`, read once by the caller (fix round 3).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn answer_from_filter(
+    store: &memory::Store,
+    filter: llm::ContextFilter,
+    query: &str,
+    origin: RequestOrigin,
+    ollama_model: &str,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+) -> ApiResult<(llm::ChatAnswer, ExclusionOutcome)> {
+    answer_from_filter_by(store, filter, query, origin, ollama_model, context_limit, history, routing)
+        .map(|(answer, outcome, _)| (answer, outcome))
+}
+
+/// [`answer_from_filter`] that also says which link answered.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn answer_from_filter_by(
+    store: &memory::Store,
+    filter: llm::ContextFilter,
+    query: &str,
+    origin: RequestOrigin,
+    ollama_model: &str,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+) -> ApiResult<(llm::ChatAnswer, ExclusionOutcome, AnsweredBy)> {
+    answer_with_filter_by(
+        store,
+        filter,
+        query,
+        &origin,
+        context_limit,
+        history,
+        routing,
+        || build_chain_for(llm::TaskKind::Chat, ollama_model, routing, &crate::exclusion::current_gate(store)),
+        || build_local_chain(ollama_model, routing),
+    )
+}
+
+/// The text of a request beyond retrieval: the question and the conversation so far.
+pub(crate) fn request_text(query: &str, history: &[llm::ChatTurn]) -> String {
+    let mut text = query.to_string();
+    for turn in history {
+        text.push('\n');
+        text.push_str(&turn.text);
+    }
+    text
+}
+
+/// Whether a request carries an excluded client: its words or history name one, it is asked from
+/// one's page or meeting, or an earlier turn of the conversation was answered on this computer
+/// from an excluded client's material (fix round 1, B2: such an answer never rides to a hosted
+/// model as history).
+pub(crate) fn request_carries(
+    store: &memory::Store,
+    filter: &llm::ContextFilter,
+    query: &str,
+    history: &[llm::ChatTurn],
+    origin: &RequestOrigin,
+) -> bool {
+    crate::exclusion::carries_with(store, filter, &request_text(query, history), origin)
+        || (filter.is_active() && history.iter().any(|t| turn_carries(store, filter, t)))
+}
+
+/// Whether an earlier turn may not ride to a hosted model: an answer made on this computer from
+/// an excluded client's material, or any answer not marked clean for every client excluded now
+/// (fix round 2, N7: an answer from before a client was excluded is not clean, whatever made
+/// it). The user's own words carry only by naming a client (checked with the question).
+fn turn_carries(store: &memory::Store, filter: &llm::ContextFilter, turn: &llm::ChatTurn) -> bool {
+    if store.is_local_only_text(&turn.text).unwrap_or(true) {
+        return true;
+    }
+    match turn.role {
+        llm::ChatRole::User => false,
+        llm::ChatRole::Assistant => !text_is_clean(store, filter, &turn.text),
+    }
+}
+
+/// A clean stamp ready to write: the recorded inputs, and the word fingerprints of its `text:`
+/// inputs. Nothing is written until [`mark_clean`] / [`finalize_ask`] writes the stamp, so a
+/// cancelled stream, a capped or unstamped answer leaves no fingerprints (fix round 5, N1).
+#[derive(Clone)]
+pub(crate) struct CleanStamp {
+    stamp: String,
+    words: Vec<(i64, Vec<u32>)>,
+}
+
+#[cfg(test)]
+impl CleanStamp {
+    pub(crate) fn refs(&self) -> Vec<String> {
+        memory::topics::exclusion::stamp_input_refs(&self.stamp).unwrap_or_default()
+    }
+    pub(crate) fn kept_words(&self) -> &[(i64, Vec<u32>)] {
+        &self.words
+    }
+}
+
+/// The stamp an answer built from `context` (plus `extra` inputs) after `history` carries: the
+/// inputs it was built from (fix round 4, S2), clean while none of them is excluded. A clean
+/// earlier answer in `history` adds its own inputs; one with no record, a closed filter, or more
+/// inputs than the cap gives no stamp (never clean while a client is excluded).
+///
+/// `texts` are words the answer was built from that have no stored row (the question, a window's
+/// redacted text), and so is every user turn of `history` (a live draft's meeting background):
+/// recorded as `text:` inputs whose word fingerprints (never the words) are checked by name
+/// whenever the stamp is. The fingerprints are kept only while some client is excluded: with
+/// nothing excluded the `text:` inputs are recorded without them, so the answer stops being clean
+/// once a client is excluded (fail-closed, and no trace for users who never exclude anyone).
+pub(crate) fn clean_stamp(
+    filter: &llm::ContextFilter,
+    store: &memory::Store,
+    context: &[llm::ContextItem],
+    extra: impl IntoIterator<Item = String>,
+    texts: &[&str],
+    history: &[llm::ChatTurn],
+) -> Option<CleanStamp> {
+    if filter.is_closed() {
+        return None;
+    }
+    let mut refs: Vec<String> = context.iter().map(llm::exclusion::input_ref_of).chain(extra).collect();
+    let mut words = Vec::new();
+    let user_turns = history.iter().filter(|t| t.role == llm::ChatRole::User).map(|t| t.text.as_str());
+    for text in texts.iter().copied().chain(user_turns).filter(|t| !t.trim().is_empty()) {
+        let (r, hash, fingerprints) = memory::topics::exclusion::input_text_ref(text);
+        refs.push(r);
+        if filter.is_active() {
+            words.push((hash, fingerprints));
+        }
+    }
+    for turn in history.iter().filter(|t| t.role == llm::ChatRole::Assistant) {
+        let stamp = store.clean_text_stamp(&turn.text).ok().flatten()?;
+        refs.extend(memory::topics::exclusion::stamp_input_refs(&stamp)?);
+    }
+    let stamp = memory::topics::exclusion::input_refs_stamp(refs)?;
+    Some(CleanStamp { stamp, words })
+}
+
+/// Whether `text` (an answer) is clean for the material `filter` excludes now: none of the inputs
+/// it recorded is excluded (fix round 4, S2). Anything is while nothing is excluded.
+fn text_is_clean(store: &memory::Store, filter: &llm::ContextFilter, text: &str) -> bool {
+    match filter.material() {
+        Some(m) => store.clean_text_stamp(text).ok().flatten().is_some_and(|stamp| stamp_is_clean(store, filter, m, &stamp)),
+        None => !filter.is_closed(),
+    }
+}
+
+/// Whether none of `stamp`'s recorded inputs is excluded now: stored rows by id, kept word
+/// fingerprints (`text:` inputs) by name. Words that cannot be read, or rows that no longer exist, are not
+/// clean.
+fn stamp_is_clean(store: &memory::Store, filter: &llm::ContextFilter, m: &memory::topics::exclusion::ExcludedMaterial, stamp: &str) -> bool {
+    let Some(refs) = memory::topics::exclusion::stamp_input_refs(stamp) else { return false };
+    // An input whose row is gone cannot be checked (deleted, pruned): not clean.
+    if !store.missing_input_refs(&refs).is_ok_and(|missing| missing.is_empty()) {
+        return false;
+    }
+    refs.iter().all(|r| match r.strip_prefix("text:") {
+        Some(hash) => hash
+            .parse::<i64>()
+            .ok()
+            .and_then(|h| store.input_words(h).ok().flatten())
+            .is_some_and(|fingerprints| !filter.names_client_in_fingerprints(&fingerprints)),
+        None => !m.excludes_input_ref(r),
+    })
+}
+
+/// Records `answer`'s inputs ([`clean_stamp`]) and the word fingerprints it owns; `None` records
+/// nothing (not clean).
+pub(crate) fn mark_clean(store: &memory::Store, stamp: Option<CleanStamp>, answer: &str) {
+    let Some(stamp) = stamp else { return };
+    if let Err(e) = store.mark_clean_text(answer, &stamp.stamp, &stamp.words) {
+        eprintln!("[exclusion] could not mark a clean answer: {e}");
+    }
+}
+
+/// Marks `answer` as made on this computer from an excluded client's material (best effort: a
+/// failed write is logged, and the answer is still returned).
+pub(crate) fn mark_local_only(store: &memory::Store, answer: &str) {
+    if let Err(e) = store.mark_local_only_text(answer) {
+        eprintln!("[exclusion] could not mark a local-only answer: {e}");
+    }
+}
+
+/// [`answer_with_filter`] with the filter read here. Tests only (the exclusion sweep); the callers read the
+/// filter themselves.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn answer_with(
+    store: &memory::Store,
+    query: &str,
+    origin: &RequestOrigin,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    chain: impl FnOnce() -> Vec<llm::ChainLink>,
+    local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
+) -> ApiResult<(llm::ChatAnswer, ExclusionOutcome)> {
+    answer_with_filter(store, crate::exclusion::context_filter(store), query, origin, context_limit, history, routing, chain, local_chain)
+}
+
+/// [`answer_with`] through `filter`, read once by the caller for the origin, the decision, the
+/// context and the stamp (fix round 3).
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn answer_with_filter(
+    store: &memory::Store,
+    filter: llm::ContextFilter,
+    query: &str,
+    origin: &RequestOrigin,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    chain: impl FnOnce() -> Vec<llm::ChainLink>,
+    local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
+) -> ApiResult<(llm::ChatAnswer, ExclusionOutcome)> {
+    answer_with_filter_by(store, filter, query, origin, context_limit, history, routing, chain, local_chain)
+        .map(|(answer, outcome, _)| (answer, outcome))
+}
+
+/// [`answer_with_filter`] that also says which link answered.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn answer_with_filter_by(
+    store: &memory::Store,
+    filter: llm::ContextFilter,
+    query: &str,
+    origin: &RequestOrigin,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    chain: impl FnOnce() -> Vec<llm::ChainLink>,
+    local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
+) -> ApiResult<(llm::ChatAnswer, ExclusionOutcome, AnsweredBy)> {
+    let carries = request_carries(store, &filter, query, history, origin);
 
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms())?;
 
-    let chain = apply_budgets(store, build_chain_for(llm::TaskKind::Chat, ollama_model, routing), false, now_unix_ms())?;
-    answer_over_chain(store, &chain, query, &context, date_scope_label.as_deref(), history, routing)
+    let instructions = llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language);
+    let policy = routing.google_data_policy();
+    if carries {
+        let chain = apply_budgets(store, local_chain(), false, now_unix_ms())?;
+        if chain.is_empty() {
+            return Err(crate::exclusion::refused());
+        }
+        let open = llm::ContextFilter::none();
+        let (context, label) = assemble_ask_context(store, query, context_limit, &open);
+        let (answer, entry) = llm::try_chain_with_failures(&chain, |entry| {
+            // Limited Use applies on this computer too (an Ollama host off loopback).
+            let may_receive = llm::limited_use::link_may_receive_google_data(entry, policy);
+            let context = llm::limited_use::filter_context_in(store, &context, may_receive);
+            let (history, history_google) = history_for_link(store, history, may_receive);
+            let answer = llm::answer_with_citations(entry.client.as_ref(), &history, query, &context, &instructions, label.as_deref())?;
+            record_answer_provenance(store, &answer.text, history_google || context.iter().any(|c| c.is_google_user_data()));
+            Ok(answer)
+        })
+        .map_err(crate::chain_failed)?;
+        crate::util::log_link_usage(store, entry, "ask", answer.token_usage);
+        mark_local_only(store, &answer.text);
+        return Ok((answer, ExclusionOutcome::LocalOnly, AnsweredBy::of(entry)));
+    }
+
+    let chain = apply_budgets(store, chain(), false, now_unix_ms())?;
+    let hosted = crate::exclusion::chain_is_hosted(&chain);
+    // Hosted links answer from memory without excluded material; on-device links from all of it.
+    let open = llm::ContextFilter::none();
+    let (hosted_context, label) = assemble_ask_context(store, query, context_limit, if hosted { &filter } else { &open });
+    let local_context = if hosted && filter.is_active() && chain.iter().any(|l| !llm::is_hosted(l.provider, &l.model)) {
+        Some(assemble_ask_context(store, query, context_limit, &open).0)
+    } else {
+        None
+    };
+    let (answer, entry) = llm::try_chain_with_failures(&chain, |entry| {
+        let context = match &local_context {
+            Some(local) if !llm::is_hosted(entry.provider, &entry.model) => local,
+            _ => &hosted_context,
+        };
+        // Limited Use: each link also gets only the Google user data it may receive, and its
+        // citations point into that same context.
+        let may_receive = llm::limited_use::link_may_receive_google_data(entry, policy);
+        let context = llm::limited_use::filter_context_in(store, context, may_receive);
+        let (history, history_google) = history_for_link(store, history, may_receive);
+        let answer = llm::answer_with_citations(entry.client.as_ref(), &history, query, &context, &instructions, label.as_deref())?;
+        // The answer inherits the taint of the context and the turns this link received.
+        record_answer_provenance(store, &answer.text, history_google || context.iter().any(|c| c.is_google_user_data()));
+        Ok(answer)
+    })
+    .map_err(crate::chain_failed)?;
+    crate::util::log_link_usage(store, entry, "ask", answer.token_usage);
+    let answered_hosted = llm::is_hosted(entry.provider, &entry.model);
+    // An on-device link answered from a context holding excluded material: the answer is
+    // the client's as far as any later hosted call goes, and the outcome says so.
+    let used = local_context.as_ref().filter(|_| !answered_hosted).unwrap_or(&hosted_context);
+    if !answered_hosted && filter.is_active() && (filter.is_closed() || used.iter().any(|i| !filter.keeps(i))) {
+        mark_local_only(store, &answer.text);
+        return Ok((answer, ExclusionOutcome::LocalOnly, AnsweredBy::of(entry)));
+    }
+    mark_clean(store, clean_stamp(&filter, store, used, [], &[query], history), &answer.text);
+    let outcome = ExclusionOutcome::after_hosted(answered_hosted, &filter);
+    Ok((answer, outcome, AnsweredBy::of(entry)))
 }
 
 /// Limited Use: `history` as one link may receive it, and whether the turns kept hold
@@ -69,46 +437,14 @@ pub(crate) fn record_answer_provenance(store: &memory::Store, answer: &str, goog
     let _ = store.record_answer_provenance(answer, google, now_unix_ms());
 }
 
-/// The chain walk of [`answer`]. Each link gets the context it may receive (Limited Use:
-/// Gmail threads are left out of a link that may not receive Google user data), and its
-/// citations point into that same context.
-fn answer_over_chain(
-    store: &memory::Store,
-    chain: &[llm::ChainLink],
-    query: &str,
-    context: &[llm::ContextItem],
-    date_scope_label: Option<&str>,
-    history: &[llm::ChatTurn],
-    routing: &RoutingConfig,
-) -> ApiResult<llm::ChatAnswer> {
-    let policy = routing.google_data_policy();
-    let (answer, entry) = llm::try_chain_with_failures(chain, |entry| {
-        let may_receive = llm::limited_use::link_may_receive_google_data(entry, policy);
-        let context = llm::limited_use::filter_context_in(store, context, may_receive);
-        let (history, history_google) = history_for_link(store, history, may_receive);
-        let answer = llm::answer_with_citations(
-            entry.client.as_ref(),
-            &history,
-            query,
-            &context,
-            &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language),
-            date_scope_label,
-        )?;
-        // The answer inherits the taint of the context and the turns this link received.
-        record_answer_provenance(store, &answer.text, history_google || context.iter().any(|c| c.is_google_user_data()));
-        Ok(answer)
-    })
-    .map_err(crate::chain_failed)?;
-    crate::util::log_link_usage(store, entry, "ask", answer.token_usage);
-    Ok(answer)
-}
-
 /// Shared phase-A logic for both the blocking [`answer`] and the streaming
-/// [`prepare_ask`]: date-scoped ("today"/"yesterday") or generic context retrieval.
+/// [`prepare_ask`]: date-scoped ("today"/"yesterday") or generic context retrieval, through
+/// `filter` (open for a prompt that stays on this computer).
 fn assemble_ask_context(
     store: &memory::Store,
     query: &str,
     context_limit: usize,
+    filter: &llm::ContextFilter,
 ) -> (Vec<llm::ContextItem>, Option<String>) {
     match llm::detect_date_scope(query) {
         Some(scope) => {
@@ -121,11 +457,12 @@ fn assemble_ask_context(
                 end,
                 context_limit,
                 true,
+                filter,
             );
             (items, Some(llm::format_date_scope_label(scope, start)))
         }
         None => (
-            llm::gather_and_assemble_context(store, query, now_unix_ms(), context_limit, true, true),
+            llm::gather_and_assemble_context(store, query, now_unix_ms(), context_limit, true, true, filter),
             None,
         ),
     }
@@ -143,10 +480,32 @@ pub(crate) struct PreparedAsk {
     /// the routing config's preferred provider, the same one the shell then streams
     /// against — forced to Ollama in local-only mode, mirroring `build_chain`.
     pub(crate) provider: llm::Provider,
+    /// What exclusion did to this prompt; `LocalOnly` marks the streamed answer at
+    /// [`finalize_ask`] so it never reaches a hosted model later.
+    pub(crate) exclusion: ExclusionOutcome,
+    /// The inputs this prompt was built from ([`clean_stamp`]), so [`finalize_ask`] can mark the
+    /// answer clean with them; `None` when it is not clean (local-only, closed, over the cap).
+    pub(crate) clean_keys: Option<CleanStamp>,
     /// Limited Use: `Some(history_google)` when the answer's provenance is recorded at
     /// `finalize_ask` (an Ask over memory or a window), where `history_google` is whether
     /// the earlier turns sent with it held Google data. `None` for a meeting Ask.
     pub(crate) history_google: Option<bool>,
+}
+
+/// What a prepare stashes for [`finalize_ask`] to mark a non-local-only answer clean with.
+pub(crate) fn clean_keys_for(
+    store: &memory::Store,
+    filter: &llm::ContextFilter,
+    exclusion: ExclusionOutcome,
+    context: &[llm::ContextItem],
+    extra: impl IntoIterator<Item = String>,
+    texts: &[&str],
+    history: &[llm::ChatTurn],
+) -> Option<CleanStamp> {
+    if exclusion == ExclusionOutcome::LocalOnly {
+        return None;
+    }
+    clean_stamp(filter, store, context, extra, texts, history)
 }
 
 static PREPARED_ASKS: OnceLock<Mutex<HashMap<String, PreparedAsk>>> = OnceLock::new();
@@ -171,17 +530,20 @@ pub(crate) fn provider_for_streamed_answer(routing: &RoutingConfig) -> llm::Prov
 
 /// What [`prepare_ask`] hands back: the one-shot id to pass to [`finalize_ask`] (or
 /// [`discard_ask`]) exactly once, and the exact prompt `answer_with_citations` would
-/// have sent, for the caller to stream against. Field order is the wire order.
+/// have sent, for the caller to stream against. Field order is the wire order. `exclusion`
+/// says what client exclusion did, for the shell to show locally (never in the prompt).
 #[derive(Debug, Clone, Serialize)]
 pub struct PreparedAskData {
     pub prepare_id: String,
     pub prompt: String,
+    pub exclusion: ExclusionOutcome,
 }
 
 /// #74: the assembly half of [`answer`], for a caller that wants to stream the actual
 /// model call (via `inference`) instead of blocking on it. Runs retrieval + the spend-cap
 /// check (both DB-bound), builds the prompt, and stashes the assembled context for
-/// [`finalize_ask`] to extract citations from later.
+/// [`finalize_ask`] to extract citations from later. Asked from the Ask bar; see
+/// [`prepare_ask_from`].
 pub fn prepare_ask(
     store: &memory::Store,
     query: &str,
@@ -189,7 +551,7 @@ pub fn prepare_ask(
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
 ) -> ApiResult<PreparedAskData> {
-    prepare_ask_with(store, query, context_limit, history, routing, None)
+    prepare_ask_with(store, query, RequestOrigin::AskBar, context_limit, history, routing, None)
 }
 
 /// [`prepare_ask`] with this call's own Limited Use settings (`call`, read from this
@@ -203,18 +565,45 @@ pub fn prepare_ask_for(
     routing: &RoutingConfig,
     call: &crate::routing::LimitedUseSettings,
 ) -> ApiResult<PreparedAskData> {
-    prepare_ask_with(store, query, context_limit, history, routing, Some(call))
+    prepare_ask_with(store, query, RequestOrigin::AskBar, context_limit, history, routing, Some(call))
+}
+
+/// [`prepare_ask`] for a question asked from `origin`. The shell streams against the routing's
+/// provider: when that leaves this computer, retrieval leaves excluded material out, and a
+/// question that carries an excluded client is refused here (`excluded_client`); the shell may
+/// ask again with local-only routing. A stream on this computer gets all of memory.
+pub fn prepare_ask_from(
+    store: &memory::Store,
+    query: &str,
+    origin: RequestOrigin,
+    context_limit: usize,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+) -> ApiResult<PreparedAskData> {
+    prepare_ask_with(store, query, origin, context_limit, history, routing, None)
 }
 
 fn prepare_ask_with(
     store: &memory::Store,
     query: &str,
+    origin: RequestOrigin,
     context_limit: usize,
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
     call: Option<&crate::routing::LimitedUseSettings>,
 ) -> ApiResult<PreparedAskData> {
-    let (context, date_scope_label) = assemble_ask_context(store, query, context_limit);
+    crate::exclusion::refresh_published_gate(store);
+    let filter = crate::exclusion::context_filter(store);
+    if crate::exclusion::local_only_mode_refuses(routing) {
+        return Err(crate::exclusion::refused());
+    }
+    let carries = request_carries(store, &filter, query, history, &origin);
+    let hosted = crate::exclusion::streamed_is_hosted(routing);
+    if carries && hosted {
+        return Err(crate::exclusion::refused());
+    }
+    let open = llm::ContextFilter::none();
+    let (context, date_scope_label) = assemble_ask_context(store, query, context_limit, if hosted { &filter } else { &open });
 
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms())?;
@@ -235,12 +624,41 @@ fn prepare_ask_with(
         &llm::profile::compose_instructions(&routing.custom_instructions, &routing.profile, &routing.output_language),
         date_scope_label.as_deref(),
     );
+    // The shell streams this prompt to `provider`: a hosted one that must not see it is refused here.
+    crate::exclusion::check_stream(store, provider, &prompt)?;
+    let exclusion = if hosted {
+        ExclusionOutcome::after_hosted(true, &filter)
+    } else {
+        note_local_stream(&filter, carries, &context, &prompt)
+    };
     let prepare_id = llm::streaming::new_run_id();
+    let clean_keys = clean_keys_for(store, &filter, exclusion, &context, [], &[query], &history);
     prepared_asks().lock().unwrap().insert(
         prepare_id.clone(),
-        PreparedAsk { context, provider, history_google: Some(history_google) },
+        PreparedAsk { context, provider, exclusion, clean_keys, history_google: Some(history_google) },
     );
-    Ok(PreparedAskData { prepare_id, prompt })
+    Ok(PreparedAskData { prepare_id, prompt, exclusion })
+}
+
+/// A prompt built for a stream on this computer: when it carries an excluded client's
+/// material, it is marked so an Ollama cloud model never gets it, and the outcome is
+/// `LocalOnly`.
+pub(crate) fn note_local_stream(
+    filter: &llm::ContextFilter,
+    carries: bool,
+    context: &[llm::ContextItem],
+    prompt: &str,
+) -> ExclusionOutcome {
+    if !filter.is_active() {
+        return ExclusionOutcome::Allowed;
+    }
+    let holds_excluded = carries || filter.is_closed() || context.iter().any(|i| !filter.keeps(i));
+    if holds_excluded {
+        crate::exclusion::mark_local_only(prompt);
+        ExclusionOutcome::LocalOnly
+    } else {
+        ExclusionOutcome::Allowed
+    }
 }
 
 /// What [`prepare_meeting_ask`] hands back: [`PreparedAskData`] plus whether the
@@ -276,40 +694,97 @@ pub fn prepare_meeting_ask(
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
 ) -> Result<PreparedMeetingAskData, MeetingAskError> {
+    prepare_meeting_ask_with(store, meeting_id, query, history, routing, |provider, carries| {
+        streamed_link(store, routing, provider, carries)
+    })
+}
+
+/// [`prepare_meeting_ask`] with the link a long transcript is read on injected:
+/// `link_for(provider, carries)` ([`streamed_link`] in production).
+pub(crate) fn prepare_meeting_ask_with(
+    store: &memory::Store,
+    meeting_id: i64,
+    query: &str,
+    history: &[llm::ChatTurn],
+    routing: &RoutingConfig,
+    link_for: impl FnOnce(llm::Provider, bool) -> Option<llm::ChainLink>,
+) -> Result<PreparedMeetingAskData, MeetingAskError> {
+    crate::exclusion::refresh_published_gate(store);
+    // A meeting of an excluded client, or a question naming one, stays on this computer.
+    let filter = crate::exclusion::context_filter(store);
+    if crate::exclusion::local_only_mode_refuses(routing) {
+        return Err(crate::exclusion::refused().into());
+    }
+    let carries = request_carries(store, &filter, query, history, &RequestOrigin::Meeting { meeting_id });
+    let hosted = crate::exclusion::streamed_is_hosted(routing);
+    if carries && hosted {
+        return Err(crate::exclusion::refused().into());
+    }
     let provider = provider_for_streamed_answer(routing);
     let may_receive_google = crate::routing::streamed_may_receive_google_data(provider, None);
     let mut built = meeting_ask_prompt(store, meeting_id, query, history, routing, may_receive_google, provider, None)?;
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms()).map_err(ApiError::from)?;
     check_provider(store, provider, now_unix_ms()).map_err(ApiError::from)?;
+    // The shell streams this prompt to `provider`: a hosted one that must not see it is refused
+    // here, before any part is read.
+    crate::exclusion::check_stream(store, provider, &built.prompt)?;
     // A whole-meeting question on a transcript the streamed model cannot take whole: read it
     // part by part first (blocking), then stream the final answer. When no link can be built
-    // for the streamed provider the keyword-narrowed prompt stands.
+    // for the streamed provider the keyword-narrowed prompt stands. The parts go through the
+    // same exclusion gate as the stream: an excluded client's meeting is read on this computer
+    // only, and a hosted link is guarded.
     if let Some(parts) = built.map_parts.take() {
-        if let Some(link) = streamed_link(routing, provider) {
-            if let Ok(findings) = gather_findings(store, &cap_config, &link, query, &parts) {
-                built = meeting_ask_prompt(store, meeting_id, query, history, routing, may_receive_google, provider, Some(&findings))?;
+        if let Some(link) = link_for(provider, carries) {
+            match gather_findings(store, &cap_config, &link, query, &parts) {
+                Ok(findings) => {
+                    built = meeting_ask_prompt(store, meeting_id, query, history, routing, may_receive_google, provider, Some(&findings))?;
+                }
+                // The gate refused the meeting on a hosted link: do not fall back to streaming a
+                // keyword-narrowed slice of it.
+                Err(llm::LlmError::Refused(r)) => return Err(crate::envelope::chain_failed(vec![r.failure_kind()]).into()),
+                Err(_) => {}
             }
         }
     }
+    let MeetingAskPrompt { context, prompt, narrowed, google, .. } = built;
+    let exclusion = if hosted { ExclusionOutcome::Allowed } else { note_local_stream(&filter, carries, &[], &prompt) };
+    // The prompt with the findings is the one streamed: checked again.
+    crate::exclusion::check_stream(store, provider, &prompt)?;
 
     let prepare_id = llm::streaming::new_run_id();
+    let meeting_ref = memory::topics::exclusion::input_ref("meeting", meeting_id);
+    let clean_keys = clean_keys_for(store, &filter, exclusion, &context, [meeting_ref], &[query], history);
     prepared_asks().lock().unwrap().insert(
         prepare_id.clone(),
-        PreparedAsk { context: built.context, provider, history_google: Some(built.google) },
+        PreparedAsk { context, provider, exclusion, clean_keys, history_google: Some(google) },
     );
-    Ok(PreparedMeetingAskData { prepare_id, prompt: built.prompt, narrowed: built.narrowed })
+    Ok(PreparedMeetingAskData { prepare_id, prompt, narrowed })
 }
 
 /// The link a streamed answer runs against, built the way the blocking chain builds it, for
 /// the calls that read a long transcript part by part before the stream starts. `None` when
 /// the provider has no link (no key, or an Ollama model the shell has not sent).
-fn streamed_link(routing: &RoutingConfig, provider: llm::Provider) -> Option<llm::ChainLink> {
+///
+/// Exclusion: when the request carries an excluded client (`carries`) only an on-device link is
+/// built ([`build_local_chain`], never an Ollama cloud model); otherwise hosted links are behind
+/// the current exclusion gate, as in the blocking chain.
+fn streamed_link(
+    store: &memory::Store,
+    routing: &RoutingConfig,
+    provider: llm::Provider,
+    carries: bool,
+) -> Option<llm::ChainLink> {
     let ollama_model = crate::routing::limited_use_settings().streamed_ollama_model.unwrap_or_default();
     if provider == llm::Provider::Ollama && ollama_model.is_empty() {
         return None;
     }
-    build_chain_for(llm::TaskKind::Chat, &ollama_model, routing).into_iter().find(|l| l.provider == provider)
+    let chain = if carries {
+        build_local_chain(&ollama_model, routing)
+    } else {
+        build_chain_for(llm::TaskKind::Chat, &ollama_model, routing, &crate::exclusion::current_gate(store))
+    };
+    chain.into_iter().find(|l| l.provider == provider)
 }
 
 /// Reads a transcript that does not fit one prompt part by part, one call per part, on
@@ -322,12 +797,27 @@ fn gather_findings(
     query: &str,
     parts: &MapParts,
 ) -> Result<Vec<String>, llm::LlmError> {
-    let mut findings = Vec::with_capacity(parts.parts.len());
-    for (i, part) in parts.parts.iter().enumerate() {
+    let prompts: Vec<String> = parts
+        .parts
+        .iter()
+        .enumerate()
+        .map(|(i, part)| llm::meeting_ask::build_map_prompt(query, &parts.title, i + 1, parts.parts.len(), part, &parts.instructions))
+        .collect();
+    // Exclusion: a hosted link gets the transcript whole or not at all. Every part is checked
+    // against the gate before the first is sent, so a meeting naming an excluded client only in a
+    // late part never has its earlier parts sent part by part (the guard alone would refuse only
+    // the part that names it), as the summary checks the whole meeting first.
+    if llm::is_hosted(link.provider, &link.model) {
+        let gate = crate::exclusion::current_gate(store);
+        for prompt in &prompts {
+            gate.check(prompt).map_err(llm::LlmError::Refused)?;
+        }
+    }
+    let mut findings = Vec::with_capacity(prompts.len());
+    for prompt in &prompts {
         llm::check_spend_cap(store, cap_config, None, Some("ask"), now_unix_ms())
             .map_err(|_| llm::LlmError::NotImplemented("meeting ask spend cap"))?;
-        let prompt = llm::meeting_ask::build_map_prompt(query, &parts.title, i + 1, parts.parts.len(), part, &parts.instructions);
-        let completion = link.client.complete(&prompt)?;
+        let completion = link.client.complete(prompt)?;
         crate::util::log_link_usage(store, link, "ask", completion.token_usage);
         findings.push(completion.text);
     }
@@ -354,24 +844,41 @@ pub fn answer_meeting(
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
 ) -> Result<MeetingAnswer, MeetingAskError> {
-    answer_meeting_with(store, meeting_id, query, history, routing, || {
-        build_chain_for(llm::TaskKind::Chat, ollama_model, routing)
-    })
+    answer_meeting_with(
+        store,
+        meeting_id,
+        query,
+        history,
+        routing,
+        || build_chain_for(llm::TaskKind::Chat, ollama_model, routing, &crate::exclusion::current_gate(store)),
+        || build_local_chain(ollama_model, routing),
+    )
 }
 
-fn answer_meeting_with(
+/// A meeting of an excluded client, or a question naming one, is answered by `local_chain`
+/// (on this computer) or not at all; any other by `chain`.
+pub(crate) fn answer_meeting_with(
     store: &memory::Store,
     meeting_id: i64,
     query: &str,
     history: &[llm::ChatTurn],
     routing: &RoutingConfig,
     chain: impl FnOnce() -> Vec<llm::ChainLink>,
+    local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
 ) -> Result<MeetingAnswer, MeetingAskError> {
+    // One read of the filter for the decision and the stamp (fix round 3, T1): a client excluded
+    // during the call makes the answer not clean, never clean for it.
+    let filter = crate::exclusion::context_filter(store);
+    let carries = request_carries(store, &filter, query, history, &RequestOrigin::Meeting { meeting_id });
     // Fails early (no transcript) before anything is spent.
     meeting_ask_prompt(store, meeting_id, query, history, routing, true, llm::Provider::Ollama, None)?;
     let cap_config = routing.spend_cap_config();
     llm::check_spend_cap(store, &cap_config, None, Some("ask"), now_unix_ms()).map_err(ApiError::from)?;
-    let chain = apply_budgets(store, chain(), false, now_unix_ms()).map_err(ApiError::from)?;
+    let chain = if carries { local_chain() } else { chain() };
+    if carries && chain.is_empty() {
+        return Err(crate::exclusion::refused().into());
+    }
+    let chain = apply_budgets(store, chain, false, now_unix_ms()).map_err(ApiError::from)?;
     let policy = routing.google_data_policy();
     // Limited Use: each link gets the prompt it may receive.
     let Some(((completion, built), entry)) = llm::try_chain(&chain, |entry| {
@@ -394,6 +901,12 @@ fn answer_meeting_with(
     };
     crate::util::log_link_usage(store, entry, "ask", completion.token_usage);
     record_answer_provenance(store, &completion.text, built.google);
+    if carries {
+        mark_local_only(store, &completion.text);
+    } else {
+        let meeting_ref = memory::topics::exclusion::input_ref("meeting", meeting_id);
+        mark_clean(store, clean_stamp(&filter, store, &built.context, [meeting_ref], &[query], history), &completion.text);
+    }
     let citations = llm::extract_citations(&completion.text, &built.context);
     Ok(MeetingAnswer { text: completion.text, citations, narrowed: built.narrowed })
 }
@@ -530,6 +1043,8 @@ fn meeting_ask_prompt(
 #[derive(Debug, Clone, Serialize)]
 pub struct FinalizedAsk {
     pub citations: Vec<llm::ContextItemRef>,
+    /// What exclusion did to the streamed answer (the prepare's outcome, carried through).
+    pub exclusion: ExclusionOutcome,
 }
 
 /// #74: the citation-extraction half, run once a streaming answer started via
@@ -553,13 +1068,22 @@ pub fn finalize_ask(
         Some(prepared) => llm::extract_citations(final_text, &prepared.context),
         None => Vec::new(),
     };
+    let exclusion = prepared.as_ref().map_or(ExclusionOutcome::Allowed, |p| p.exclusion);
+    let clean_keys = prepared.as_ref().and_then(|p| p.clean_keys.clone());
     if let Some(prepared) = prepared {
         if let Some(history_google) = prepared.history_google {
             record_answer_provenance(store, final_text, history_google || prepared.context.iter().any(|c| c.is_google_user_data()));
         }
         log_usage_for(store, prepared.provider, model, "ask", usage);
     }
-    FinalizedAsk { citations }
+    // A stream answered on this computer from an excluded client's material: the answer is
+    // marked, so neither its title nor a later turn sends it to a hosted model.
+    if exclusion == ExclusionOutcome::LocalOnly {
+        mark_local_only(store, final_text);
+    } else {
+        mark_clean(store, clean_keys, final_text);
+    }
+    FinalizedAsk { citations, exclusion }
 }
 
 /// #74: discards a prepared ask's stashed context without extracting citations — call
@@ -593,21 +1117,44 @@ pub fn generate_conversation_title(
         now_unix_ms(),
     )?;
 
-    let chain = apply_budgets(store, build_chain_for(llm::TaskKind::ConversationTitle, ollama_model, routing), false, now_unix_ms())?;
-    title_over_chain(store, &chain, query, answer, routing)
+    generate_conversation_title_with(
+        store,
+        query,
+        answer,
+        routing,
+        || build_chain_for(llm::TaskKind::ConversationTitle, ollama_model, routing, &crate::exclusion::current_gate(store)),
+        || build_local_chain(ollama_model, routing),
+    )
 }
 
-/// The chain walk of [`generate_conversation_title`].
-fn title_over_chain(
+/// A first exchange that carries an excluded client is titled by `local_chain` (on this
+/// computer), or keeps its placeholder; any other by `chain`.
+pub(crate) fn generate_conversation_title_with(
     store: &memory::Store,
-    chain: &[llm::ChainLink],
     query: &str,
     answer: &str,
     routing: &RoutingConfig,
+    chain: impl FnOnce() -> Vec<llm::ChainLink>,
+    local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
 ) -> ApiResult<ConversationTitle> {
+    // Also when the answer was made on this computer from an excluded client's material, whatever
+    // its words; with no local model the placeholder stays (an error here keeps it).
+    let filter = crate::exclusion::context_filter(store);
+    // An answer not clean for every client excluded now (made before one was excluded, or on
+    // this computer from one's material) is titled locally too (fix round 2, N7).
+    let marked = filter.is_active()
+        && (store.is_local_only_text(answer).unwrap_or(true)
+            || store.is_local_only_text(query).unwrap_or(true)
+            || !text_is_clean(store, &filter, answer));
+    let carries = marked || crate::exclusion::carries_with(store, &filter, &format!("{query}\n{answer}"), &RequestOrigin::Other);
+    let chain = if carries { local_chain() } else { chain() };
+    if carries && chain.is_empty() {
+        return Err(crate::exclusion::refused());
+    }
+    let chain = apply_budgets(store, chain, false, now_unix_ms())?;
     let policy = routing.google_data_policy();
     let answer_holds_google = store.answer_may_hold_google_data(answer);
-    let ((title, token_usage), entry) = llm::try_chain_with_failures(chain, |entry| {
+    let ((title, token_usage), entry) = llm::try_chain_with_failures(&chain, |entry| {
         // Limited Use: a link that may not receive Google data titles from the question alone.
         let answer = if answer_holds_google && !llm::limited_use::link_may_receive_google_data(entry, policy) { "" } else { answer };
         llm::generate_conversation_title(entry.client.as_ref(), query, answer, &routing.output_language)
@@ -620,6 +1167,33 @@ fn title_over_chain(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Main's Limited Use tests walk a given chain over a given context; here the chain goes
+    /// through the exclusion-aware [`answer_with_filter`] (which assembles the same context
+    /// itself), so both gates apply to what these tests see.
+    fn answer_over_chain(
+        store: &memory::Store,
+        chain: Vec<llm::ChainLink>,
+        query: &str,
+        _context: &[llm::ContextItem],
+        _label: Option<&str>,
+        history: &[llm::ChatTurn],
+        routing: &RoutingConfig,
+    ) -> ApiResult<llm::ChatAnswer> {
+        answer_with_filter(store, crate::exclusion::context_filter(store), query, &RequestOrigin::AskBar, 10, history, routing, || chain, Vec::new)
+            .map(|(a, _)| a)
+    }
+
+    /// [`generate_conversation_title_with`] over a given chain (see [`answer_over_chain`]).
+    fn title_over_chain(
+        store: &memory::Store,
+        chain: Vec<llm::ChainLink>,
+        query: &str,
+        answer: &str,
+        routing: &RoutingConfig,
+    ) -> ApiResult<ConversationTitle> {
+        generate_conversation_title_with(store, query, answer, routing, || chain, Vec::new)
+    }
 
     fn store_with_capture_text(text: &str) -> memory::Store {
         let store = memory::Store::open_in_memory().unwrap();
@@ -928,10 +1502,11 @@ mod tests {
         let data = PreparedAskData {
             prepare_id: "id".into(),
             prompt: "p".into(),
+            exclusion: ExclusionOutcome::FilteredHosted { left_out: 2 },
         };
         assert_eq!(
             serde_json::to_string(&data).unwrap(),
-            r#"{"prepare_id":"id","prompt":"p"}"#
+            r#"{"prepare_id":"id","prompt":"p","exclusion":{"kind":"filtered_hosted","left_out":2}}"#
         );
     }
 
@@ -1042,14 +1617,14 @@ mod tests {
     /// The prompt each of `links` receives for one Ask over the Gmail store.
     fn prompts_per_link(links: Vec<llm::ChainLink>, routing: &RoutingConfig) -> Vec<String> {
         let store = store_with_gmail_and_capture();
-        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10);
+        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10, &llm::ContextFilter::none());
         assert!(context.iter().any(|c| c.is_google_user_data()), "the fixture reaches Ask through its Gmail thread");
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let chain: Vec<llm::ChainLink> = links
             .into_iter()
             .map(|l| llm::ChainLink { client: Box::new(Recorder(seen.clone())), ..l })
             .collect();
-        let _ = answer_over_chain(&store, &chain, "Falcon budget", &context, label.as_deref(), &[], routing);
+        let _ = answer_over_chain(&store, chain, "Falcon budget", &context, label.as_deref(), &[], routing);
         let out = seen.lock().unwrap().clone();
         out
     }
@@ -1194,12 +1769,12 @@ mod tests {
 
         let answer = answer_meeting_with(&store, id, "when?", &[], &routing, || {
             fake_chain(&[llm::Provider::Anthropic, llm::Provider::OpenAI])
-        })
+        }, Vec::new)
         .unwrap();
         assert_eq!(answer.text, "Friday [1].");
         assert_eq!(answer.citations.len(), 1);
 
-        let result = answer_meeting_with(&store, id, "when?", &[], &routing, || fake_chain(&[llm::Provider::Anthropic]));
+        let result = answer_meeting_with(&store, id, "when?", &[], &routing, || fake_chain(&[llm::Provider::Anthropic]), Vec::new);
         let Err(MeetingAskError::Api(ApiError::BudgetSpent(spent))) = result else { panic!("{result:?}") };
         assert_eq!(spent.provider, llm::Provider::Anthropic);
     }
@@ -1234,13 +1809,13 @@ mod tests {
     fn earlier_answers_built_from_google_data_reach_only_links_that_may_receive_it() {
         let store = store_with_gmail_and_capture();
         let history = history_of_three(&store);
-        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10);
+        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10, &llm::ContextFilter::none());
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let chain: Vec<llm::ChainLink> = [(llm::Provider::OpenRouter, "vendor/m"), (llm::Provider::Anthropic, "claude")]
             .into_iter()
             .map(|(provider, model)| llm::ChainLink { provider, model: model.into(), client: Box::new(Recorder(seen.clone())) })
             .collect();
-        let _ = answer_over_chain(&store, &chain, "Falcon budget", &context, label.as_deref(), &history, &RoutingConfig::default());
+        let _ = answer_over_chain(&store, chain, "Falcon budget", &context, label.as_deref(), &history, &RoutingConfig::default());
         let prompts = seen.lock().unwrap().clone();
         let (restricted, allowed) = (&prompts[0], &prompts[1]);
         for text in [GMAIL_ANSWER, UNKNOWN_ANSWER, "QGMAIL", "QUNKNOWN"] {
@@ -1273,22 +1848,22 @@ mod tests {
     fn an_answer_is_recorded_as_google_when_the_context_it_was_built_from_was() {
         // Blocking: Gmail in the context the answering link received.
         let store = store_with_gmail_and_capture();
-        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10);
+        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10, &llm::ContextFilter::none());
         let chain = fake_chain(&[llm::Provider::Anthropic]);
-        answer_over_chain(&store, &chain, "Falcon budget", &context, label.as_deref(), &[], &RoutingConfig::default()).unwrap();
+        answer_over_chain(&store, chain, "Falcon budget", &context, label.as_deref(), &[], &RoutingConfig::default()).unwrap();
         assert!(store.answer_may_hold_google_data("Friday [1]."));
 
         // Only screen text: recorded clean, so it keeps flowing into later turns.
         let store = store_with_capture_text("Falcon budget spreadsheet on screen");
-        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10);
+        let (context, label) = assemble_ask_context(&store, "Falcon budget", 10, &llm::ContextFilter::none());
         assert!(context.iter().all(|c| !c.is_google_user_data()));
-        answer_over_chain(&store, &chain, "Falcon budget", &context, label.as_deref(), &[], &RoutingConfig::default()).unwrap();
+        answer_over_chain(&store, fake_chain(&[llm::Provider::Anthropic]), "Falcon budget", &context, label.as_deref(), &[], &RoutingConfig::default()).unwrap();
         assert!(!store.answer_may_hold_google_data("Friday [1]."));
 
         // A clean question that carries a Google answer in its history is Google too.
         store.record_answer_provenance(GMAIL_ANSWER, true, 1).unwrap();
         let history = [turn(llm::ChatRole::User, "q"), turn(llm::ChatRole::Assistant, GMAIL_ANSWER)];
-        answer_over_chain(&store, &fake_chain(&[llm::Provider::Anthropic]), "Falcon budget", &context, label.as_deref(), &history, &RoutingConfig::default()).unwrap();
+        answer_over_chain(&store, fake_chain(&[llm::Provider::Anthropic]), "Falcon budget", &context, label.as_deref(), &history, &RoutingConfig::default()).unwrap();
         assert!(store.answer_may_hold_google_data("Friday [1]."));
     }
 
@@ -1320,7 +1895,7 @@ mod tests {
                 .into_iter()
                 .map(|(provider, model)| llm::ChainLink { provider, model: model.into(), client: Box::new(Recorder(seen.clone())) })
                 .collect();
-            let _ = title_over_chain(&store, &chain, "QTITLE", answer, &RoutingConfig::default());
+            let _ = title_over_chain(&store, chain, "QTITLE", answer, &RoutingConfig::default());
             let prompts = seen.lock().unwrap().clone();
             prompts
         };
@@ -1388,7 +1963,7 @@ mod tests {
             .into_iter()
             .map(|(provider, model)| llm::ChainLink { provider, model: model.into(), client: Box::new(Recorder(seen.clone())) })
             .collect();
-        let _ = answer_meeting_with(&store, id, "who sends it?", &[], &RoutingConfig::default(), || chain);
+        let _ = answer_meeting_with(&store, id, "who sends it?", &[], &RoutingConfig::default(), || chain, Vec::new);
         let prompts = seen.lock().unwrap().clone();
         assert_eq!(prompts.len(), 2);
         assert!(!prompts[0].contains("Zebra Review") && !prompts[0].contains("Zebrowski"));
@@ -1412,7 +1987,7 @@ mod tests {
         finalize_ask(&store, &data.prepare_id, "MEETINGANSWER two", "claude", llm::TokenUsage::default());
         assert!(!store.answer_may_hold_google_data("MEETINGANSWER two"));
         // Blocking.
-        let a = answer_meeting_with(&store, id, "q", &[], &anthropic, || fake_chain(&[llm::Provider::Anthropic])).unwrap();
+        let a = answer_meeting_with(&store, id, "q", &[], &anthropic, || fake_chain(&[llm::Provider::Anthropic]), Vec::new).unwrap();
         assert!(!store.answer_may_hold_google_data(&a.text));
     }
 
@@ -1449,7 +2024,7 @@ mod tests {
         let id = long_meeting(&store, 40); // 40k characters: over a local model's budget
         let (chain, seen) = seen_chain(llm::Provider::Anthropic);
         let answer =
-            answer_meeting_with(&store, id, "list the action items", &[], &RoutingConfig::default(), || chain).unwrap();
+            answer_meeting_with(&store, id, "list the action items", &[], &RoutingConfig::default(), || chain, Vec::new).unwrap();
         assert!(!answer.narrowed);
         let prompts = seen.lock().unwrap();
         assert_eq!(prompts.len(), 1);
@@ -1462,7 +2037,7 @@ mod tests {
         let id = long_meeting(&store, 40);
         let (chain, seen) = seen_chain(llm::Provider::Ollama);
         let answer =
-            answer_meeting_with(&store, id, "list the action items", &[], &RoutingConfig::default(), || chain).unwrap();
+            answer_meeting_with(&store, id, "list the action items", &[], &RoutingConfig::default(), || chain, Vec::new).unwrap();
         let prompts = seen.lock().unwrap();
         // Two parts read, then the answer.
         assert_eq!(prompts.len(), 3, "{}", prompts.len());
@@ -1483,7 +2058,7 @@ mod tests {
         let store = memory::Store::open_in_memory().unwrap();
         let id = long_meeting(&store, 40);
         let (chain, seen) = seen_chain(llm::Provider::Ollama);
-        let answer = answer_meeting_with(&store, id, "what about LINE7", &[], &RoutingConfig::default(), || chain).unwrap();
+        let answer = answer_meeting_with(&store, id, "what about LINE7", &[], &RoutingConfig::default(), || chain, Vec::new).unwrap();
         assert!(answer.narrowed);
         let prompts = seen.lock().unwrap();
         assert_eq!(prompts.len(), 1);
@@ -1495,7 +2070,7 @@ mod tests {
         let store = memory::Store::open_in_memory().unwrap();
         let id = long_meeting(&store, 30); // 30k: within a local model's budget
         let (chain, seen) = seen_chain(llm::Provider::Ollama);
-        answer_meeting_with(&store, id, "summarize", &[], &RoutingConfig::default(), || chain).unwrap();
+        answer_meeting_with(&store, id, "summarize", &[], &RoutingConfig::default(), || chain, Vec::new).unwrap();
         let prompts = seen.lock().unwrap();
         assert_eq!(prompts.len(), 1);
         assert!(prompts[0].contains("LINE0 ") && prompts[0].contains("LINE29 "));
@@ -1509,9 +2084,46 @@ mod tests {
         store.set_meeting_title(id, "Zebra Review").unwrap();
         store.set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_GOOGLE).unwrap();
         let (chain, seen) = seen_chain(llm::Provider::OpenRouter);
-        let _ = answer_meeting_with(&store, id, "list the action items", &[], &RoutingConfig::default(), || chain).unwrap();
+        let _ = answer_meeting_with(&store, id, "list the action items", &[], &RoutingConfig::default(), || chain, Vec::new).unwrap();
         let prompts = seen.lock().unwrap();
         assert!(prompts.len() >= 3, "{}", prompts.len());
         assert!(prompts.iter().all(|p| !p.contains("Zebra")), "the title reached a link that may not receive it");
+    }
+
+    /// Merge 3: reading a transcript part by part on a hosted link checks every part against the
+    /// exclusion gate before the first is sent, so a part naming an excluded client late in the
+    /// transcript stops the reading before anything leaves (the guard alone would refuse only that
+    /// part, after the earlier ones went). An on-device link is not held back.
+    #[test]
+    fn gather_findings_checks_every_part_before_the_first_hosted_call() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+        store
+            .set_client_control(&acme.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+        let segment = |text: &str| memory::MeetingTranscriptSegment {
+            id: 1,
+            meeting_id: 1,
+            meeting_title: "Planning".into(),
+            start_cs: 0,
+            speaker_label: "Ben".into(),
+            text: text.into(),
+        };
+        let parts = MapParts {
+            parts: vec![vec![segment("the budget plan")], vec![segment("and then Acme came up")]],
+            title: "Planning".into(),
+            instructions: String::new(),
+        };
+        let cap = llm::SpendCapConfig::default();
+        let (link, seen) = seen_chain(llm::Provider::OpenRouter);
+        let link = llm::guard_hosted(link.into_iter().next().unwrap(), crate::exclusion::current_gate(&store));
+        let r = gather_findings(&store, &cap, &link, "list the action items", &parts);
+        assert!(matches!(r, Err(llm::LlmError::Refused(_))), "{r:?}");
+        assert_eq!(seen.lock().unwrap().len(), 0, "no part was sent");
+        // On this computer every part is read.
+        let (local, seen) = seen_chain(llm::Provider::Ollama);
+        let r = gather_findings(&store, &cap, &local[0], "list the action items", &parts);
+        assert_eq!(r.unwrap().len(), 2);
+        assert_eq!(seen.lock().unwrap().len(), 2);
     }
 }

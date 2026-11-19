@@ -77,7 +77,7 @@ pub fn file_stem(name: &str) -> String {
 }
 
 /// `yyyy-mm-dd` in UTC for a folder or file name.
-fn ymd(unix_ms: i64) -> String {
+pub(crate) fn ymd(unix_ms: i64) -> String {
     use chrono::TimeZone;
     chrono::Utc
         .timestamp_millis_opt(unix_ms)
@@ -86,7 +86,7 @@ fn ymd(unix_ms: i64) -> String {
         .unwrap_or_else(|| "unknown-date".to_string())
 }
 
-fn rfc3339(unix_ms: i64) -> String {
+pub(crate) fn rfc3339(unix_ms: i64) -> String {
     use chrono::TimeZone;
     chrono::Utc
         .timestamp_millis_opt(unix_ms)
@@ -96,7 +96,7 @@ fn rfc3339(unix_ms: i64) -> String {
 }
 
 /// Resolves `name` inside `dir`, refusing anything that would escape it.
-fn inside(dir: &Path, name: &str) -> ApiResult<PathBuf> {
+pub(crate) fn inside(dir: &Path, name: &str) -> ApiResult<PathBuf> {
     let candidate = dir.join(name);
     if name.contains("..") || name.contains('/') || name.contains('\\') || candidate.parent() != Some(dir) {
         return Err(ApiError::ProviderFailure);
@@ -109,9 +109,33 @@ struct Writer {
     bytes: u64,
 }
 
+/// Creates or replaces `path`; a file it creates is readable by this user only on unix (0600).
+fn private_file(path: &Path) -> io::Result<fs::File> {
+    let mut o = fs::OpenOptions::new();
+    o.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600);
+    }
+    o.open(path)
+}
+
+/// Creates `dir` (and missing parents) private to this user on unix (0700); an existing one is left as is.
+fn private_dir_all(dir: &Path) -> io::Result<()> {
+    let mut b = fs::DirBuilder::new();
+    b.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        b.mode(0o700);
+    }
+    b.create(dir)
+}
+
 impl Writer {
     fn write(&mut self, path: &Path, text: &str) -> ApiResult<()> {
-        fs::write(path, text).map_err(ioe)?;
+        private_file(path).and_then(|mut f| f.write_all(text.as_bytes())).map_err(ioe)?;
         self.files += 1;
         self.bytes += text.len() as u64;
         Ok(())
@@ -190,6 +214,17 @@ pub(crate) fn meeting_markdown(store: &Store, m: &memory::Meeting) -> ApiResult<
             break;
         }
     }
+    // Moments the user marked while recording (device-local, so only this device's meetings have any).
+    let marks = store.list_meeting_markers(m.id).map_err(db)?;
+    if !marks.is_empty() {
+        md.push_str("## Marked moments\n\n");
+        for mark in &marks {
+            let secs = mark.at_cs / 100;
+            let label = mark.label.as_deref().map(|l| format!(" {}", escape_md(l).replace('\n', " "))).unwrap_or_default();
+            md.push_str(&format!("- [{}:{:02}]{}\n", secs / 60, secs % 60, label));
+        }
+        md.push('\n');
+    }
     if lines > 0 {
         md.push_str("## Transcript\n\n");
         md.push_str(&transcript);
@@ -199,7 +234,7 @@ pub(crate) fn meeting_markdown(store: &Store, m: &memory::Meeting) -> ApiResult<
 
 fn write_items(store: &Store, w: &mut Writer, dir: &Path, kind: &str, file: &str) -> ApiResult<usize> {
     let path = inside(dir, file)?;
-    let f = fs::File::create(&path).map_err(ioe)?;
+    let f = private_file(&path).map_err(ioe)?;
     let mut out = BufWriter::new(f);
     let mut after = 0i64;
     let mut rows = 0usize;
@@ -231,9 +266,9 @@ pub fn export_all(store: &Store, root: &Path, now_unix_ms: i64) -> ApiResult<Exp
     fs::create_dir_all(root).map_err(ioe)?;
     let root = root.canonicalize().map_err(ioe)?;
     let folder = inside(&root, &format!("Whimbrel export {}", ymd(now_unix_ms)))?;
-    fs::create_dir_all(&folder).map_err(ioe)?;
+    private_dir_all(&folder).map_err(ioe)?;
     let meetings_dir = inside(&folder, "meetings")?;
-    fs::create_dir_all(&meetings_dir).map_err(ioe)?;
+    private_dir_all(&meetings_dir).map_err(ioe)?;
     let mut w = Writer { files: 0, bytes: 0 };
     let mut report = ExportAllReport { folder: folder.to_string_lossy().into_owned(), ..Default::default() };
 
@@ -351,6 +386,8 @@ mod tests {
                 NewTranscriptSegment { meeting_id: id, start_cs: 6_500, speaker_label: "SPEAKER_01".into(), text: "# not a heading".into() },
             ])
             .unwrap();
+        store.add_meeting_marker(id, 12_500, Some("budget decision\n# not a heading"), 1).unwrap();
+        store.add_meeting_marker(id, 300, None, 2).unwrap();
         store
             .upsert_email_items(&[NewEmailItem {
                 device_id: "d".into(),
@@ -391,6 +428,8 @@ mod tests {
         // A hash inside a line is not a heading and stays as spoken.
         assert!(md.contains("[1:05] SPEAKER_01: # not a heading"), "{md}");
         assert!(md.contains("## Transcript\n\n[0:00] SPEAKER_00: Hello."));
+        // The moments the user marked, in time order, one line each.
+        assert!(md.contains("## Marked moments\n\n- [0:03]\n- [2:05] budget decision \\# not a heading\n"), "{md}");
         assert!(md.contains("attendees: [\"Priya <priya@example.test>\"]"));
         let captures = fs::read_to_string(folder.join("captures.jsonl")).unwrap();
         assert!(captures.contains("\"url\":\"https://example.test/falcon\""));
@@ -400,6 +439,21 @@ mod tests {
         assert!(folder.join("routines.json").exists() && folder.join("conversations.jsonl").exists());
         assert!(!folder.join("topics").exists());
         assert!(report.files >= 7 && report.bytes > 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_export_folder_is_private_to_the_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let store = seeded();
+        let dir = tempfile::tempdir().unwrap();
+        let report = export_all(&store, dir.path(), 1_700_000_000_000).unwrap();
+        let folder = Path::new(&report.folder);
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(folder), 0o700);
+        assert_eq!(mode(&folder.join("meetings")), 0o700);
+        assert_eq!(mode(&folder.join("README.md")), 0o600);
+        assert_eq!(mode(&folder.join("emails.jsonl")), 0o600);
     }
 
     #[test]

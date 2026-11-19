@@ -461,7 +461,8 @@ pub fn host_view(stored: &str, devices: &[DeviceView], own: Option<&str>, labele
     let stored = stored.trim();
     let mut options: Vec<HostOption> = devices
         .iter()
-        .filter(|d| d.status == "approved")
+        // Whimbrel Cloud runs only the routines set to run in the cloud; it is never the device routines run on.
+        .filter(|d| d.status == "approved" && !crate::routines::is_cloud_runner(d))
         .map(|d| HostOption { id: d.public_key.clone(), label: labeler.label(&d.public_key) })
         .collect();
     options.sort_by(|a, b| (Some(a.id.as_str()) != own, &a.label).cmp(&(Some(b.id.as_str()) != own, &b.label)));
@@ -478,7 +479,7 @@ pub fn host_view(stored: &str, devices: &[DeviceView], own: Option<&str>, labele
 /// stray call cannot park routines on a device that does not exist.
 pub fn set_host(settings: &mut SettingsFile, id: &str, devices: &[DeviceView]) -> Result<(), CommandError> {
     let id = id.trim();
-    if !id.is_empty() && !devices.iter().any(|d| d.status == "approved" && d.public_key == id) {
+    if !id.is_empty() && !devices.iter().any(|d| d.status == "approved" && d.public_key == id && !crate::routines::is_cloud_runner(d)) {
         return Err(CommandError::invalid_input(tr("That isn't one of your approved devices.", &[])));
     }
     crate::syncing::settings::edit(settings, |f| f.set_primary_device_id(id));
@@ -534,6 +535,166 @@ pub async fn routines_set_host(state: State<'_, AppState>, id: String) -> Result
         file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
     Ok(host_for(&state, &devices))
+}
+
+// --- Run in the cloud (docs/superpowers/specs/2026-11-15-cloud-routine-runner-design.md) -------------
+//
+// The views below are not in the schema bundle: the UI's types for them are written by hand
+// (`ui/src/automations/cloudRoutineModel.ts`), as for client controls, so their fields stay snake_case.
+
+/// Every routine template, for core's answers about the cloud.
+const ALL_TEMPLATES: [RoutineTemplate; 7] = [
+    RoutineTemplate::DailyBrief,
+    RoutineTemplate::FocusTime,
+    RoutineTemplate::EodRecap,
+    RoutineTemplate::WeeklyDigest,
+    RoutineTemplate::ReplyPriorities,
+    RoutineTemplate::MeetingPrep,
+    RoutineTemplate::AwayFollowUp,
+];
+
+/// What core says about one template and the cloud (the Mac's `whimbrel_routines_cloud_info`), and this
+/// PC's settings for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CloudRoutineView {
+    /// The stored template name (`daily_brief`, ...).
+    pub template: String,
+    /// Whether core lets it run in the cloud (`routines::cloud_eligible`).
+    pub eligible: bool,
+    /// The row types the runner may read for it (`routines::grant_for`).
+    pub grant: Vec<String>,
+    /// Those row types in plain words, as a list (`routines::grant_list`).
+    pub grant_list: String,
+    /// Core's own sentence about the grant (`routines::grant_sentence`).
+    pub grant_sentence: String,
+    /// Core's Google Calendar line for a routine that reads calendar events; empty otherwise.
+    pub google_calendar_limit: String,
+    /// Set to run in the cloud.
+    pub cloud: bool,
+    /// The ready-by time, once chosen (here or on another device).
+    pub ready_by: Option<String>,
+}
+
+/// The Automations tab's "Run in the cloud" inputs.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CloudRoutinesView {
+    pub routines: Vec<CloudRoutineView>,
+    /// The runner's last round (unix ms), from its synced heartbeat.
+    pub runner_last_run_ms: Option<i64>,
+    /// Sync is on here: the runner gets the routine's settings only through sync.
+    pub sync_ready: bool,
+    /// Local-only mode is on, so the runner could use no hosted model.
+    pub local_only: bool,
+    /// A hosted provider's key is saved here with its "Sync to devices" on: the runner has no model of its own.
+    pub has_synced_key: bool,
+    /// The account's devices as last fetched (empty until the first fetch), to tell whether Whimbrel Cloud
+    /// is on the account.
+    pub devices: Vec<DeviceView>,
+    /// The hidden switch (`settings::keys::CLOUD_ROUTINES_ENABLED`): with it off, the tab shows the toggle only
+    /// once a Whimbrel Cloud is on the account, and Settings never offers to add one.
+    pub cloud_ui_enabled: bool,
+}
+
+fn template_name(t: &RoutineTemplate) -> String {
+    serde_json::to_value(t).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+}
+
+pub fn cloud_routine_view(t: RoutineTemplate, file: &SettingsFile) -> CloudRoutineView {
+    let template = template_name(&t);
+    let grant = ::routines::grant_for(&t);
+    CloudRoutineView {
+        eligible: ::routines::cloud_eligible(&t),
+        grant: grant.iter().map(|g| g.to_string()).collect(),
+        grant_list: ::routines::grant_list(&t),
+        grant_sentence: ::routines::grant_sentence(&t),
+        google_calendar_limit: if grant.contains(&"items:calendar_event") { ::routines::GOOGLE_CALENDAR_LIMIT.to_string() } else { String::new() },
+        cloud: crate::syncing::settings::is_cloud(file, &template),
+        ready_by: crate::syncing::settings::ready_by(file, &template),
+        template,
+    }
+}
+
+/// Whether a hosted provider's key is saved here and set to sync, so the runner has a model to use.
+pub fn has_synced_key(file: &SettingsFile, keys: &ApiKeys) -> bool {
+    Provider::HOSTED.iter().any(|p| {
+        keys.has(*p) && crate::syncing::settings::api_key_field(*p).is_some_and(|field| crate::syncing::settings::api_key_sync_enabled(file, field))
+    })
+}
+
+pub fn cloud_view(file: &SettingsFile, keys: &ApiKeys, sync_ready: bool, devices: Vec<DeviceView>) -> CloudRoutinesView {
+    CloudRoutinesView {
+        routines: ALL_TEMPLATES.iter().map(|t| cloud_routine_view(*t, file)).collect(),
+        runner_last_run_ms: crate::syncing::settings::runner_last_run_ms(file),
+        sync_ready,
+        local_only: file.routing().local_only,
+        has_synced_key: has_synced_key(file, keys),
+        devices,
+        cloud_ui_enabled: file.cloud_routines_enabled(),
+    }
+}
+
+fn cloud_for(state: &AppState) -> Result<CloudRoutinesView, CommandError> {
+    let keys = ApiKeys::load(&*state.secrets)?;
+    let (sync_ready, devices) = match &state.sync {
+        Some(sync) => (sync.ready_credentials().is_some(), sync.cached_devices()),
+        None => (false, Vec::new()),
+    };
+    let file = state.settings.lock().unwrap();
+    Ok(cloud_view(&file, &keys, sync_ready, devices))
+}
+
+fn save_settings(file: &SettingsFile) -> Result<(), CommandError> {
+    file.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))
+}
+
+#[tauri::command]
+pub fn routines_cloud(state: State<'_, AppState>) -> Result<CloudRoutinesView, CommandError> {
+    cloud_for(&state)
+}
+
+/// Whether this PC's routine of `template` (a stored name) is on. False when there is no such row.
+pub fn routine_enabled(store: &Store, template: &str) -> Result<bool, CommandError> {
+    Ok(store.list_routines().map_err(store_error)?.iter().any(|r| template_name(&r.template) == template && r.enabled))
+}
+
+/// The cloud flag change, refused in words: a template that cannot run in the cloud, or turning it on for a
+/// routine that is off here (its stamped `enabled=false` would switch the routine off on every device).
+/// Turning it off is always allowed.
+pub fn change_cloud(file: &mut SettingsFile, template: &str, on: bool, routine_enabled: bool, now_ms: i64) -> Result<(), CommandError> {
+    use crate::syncing::settings::{set_cloud, CloudRefusal};
+    match set_cloud(file, template, on, routine_enabled, now_ms) {
+        Ok(()) => Ok(()),
+        Err(CloudRefusal::NotCloud) => Err(CommandError::invalid_input(tr("This routine can't run in the cloud.", &[]))),
+        Err(CloudRefusal::RoutineOff) => Err(CommandError::invalid_input(tr("Turn this routine on first.", &[]))),
+    }
+}
+
+/// "Run in the cloud" on or off. Turning it off is always allowed; the tab keeps it from being turned on
+/// while sync is off, the routine is off, local-only mode is on or no key syncs, and says why. Turning it on
+/// for a routine that is off here is refused here too.
+#[tauri::command]
+pub async fn routine_set_cloud(state: State<'_, AppState>, template: String, on: bool) -> Result<CloudRoutinesView, CommandError> {
+    let name = template.clone();
+    let enabled = state.store()?.call(move |s| routine_enabled(s, &name)).await??;
+    {
+        let mut file = state.settings.lock().unwrap();
+        change_cloud(&mut file, &template, on, enabled, crate::syncing::settings::now_ms())?;
+        save_settings(&file)?;
+    }
+    cloud_for(&state)
+}
+
+/// The time a cloud routine's result should be ready by.
+#[tauri::command]
+pub fn routine_set_ready_by(state: State<'_, AppState>, template: String, ready_by: String) -> Result<CloudRoutinesView, CommandError> {
+    {
+        let mut file = state.settings.lock().unwrap();
+        if !crate::syncing::settings::set_ready_by(&mut file, &template, &ready_by, crate::syncing::settings::now_ms()) {
+            return Err(CommandError::invalid_input(tr("Use a time like 08:30.", &[])));
+        }
+        save_settings(&file)?;
+    }
+    cloud_for(&state)
 }
 
 #[cfg(test)]
@@ -908,5 +1069,96 @@ mod tests {
         assert!(needs_fetch(true, 0), "signed in, launch fetch not landed: fetch now");
         assert!(!needs_fetch(true, 1), "anything cached (even just this PC) waits for the 10-minute refresh");
         assert!(!needs_fetch(false, 0), "not signed in: nothing to fetch");
+    }
+
+    // --- Run in the cloud -------------------------------------------------------------------------------
+
+    fn temp_settings(tag: &str) -> (std::path::PathBuf, SettingsFile) {
+        let dir = std::env::temp_dir().join(format!("whimbrel-cloud-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = SettingsFile::load(&dir.join("settings.json"));
+        (dir, file)
+    }
+
+    #[test]
+    fn only_the_read_only_routines_are_offered_the_cloud_with_cores_words() {
+        let (dir, file) = temp_settings("eligible");
+        let view = cloud_view(&file, &ApiKeys::default(), false, Vec::new());
+        let eligible: Vec<&str> = view.routines.iter().filter(|r| r.eligible).map(|r| r.template.as_str()).collect();
+        assert_eq!(eligible, ["daily_brief", "eod_recap", "weekly_digest", "meeting_prep"]);
+        for t in ["reply_priorities", "focus_time", "away_follow_up"] {
+            let r = view.routines.iter().find(|r| r.template == t).unwrap_or_else(|| panic!("{t} listed"));
+            assert!(!r.eligible && r.grant.is_empty() && r.grant_list.is_empty(), "{t}");
+        }
+        let brief = view.routines.iter().find(|r| r.template == "daily_brief").unwrap();
+        assert_eq!(brief.grant_list, ::routines::grant_list(&RoutineTemplate::DailyBrief));
+        assert_eq!(brief.google_calendar_limit, ::routines::GOOGLE_CALENDAR_LIMIT, "the brief reads calendar events");
+        let recap = view.routines.iter().find(|r| r.template == "eod_recap").unwrap();
+        assert_eq!(recap.google_calendar_limit, "", "the recap reads none");
+        assert!(!brief.cloud && brief.ready_by.is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_hidden_cloud_switch_is_off_unless_set_by_hand_and_never_synced() {
+        let (dir, mut file) = temp_settings("hidden-switch");
+        assert!(!cloud_view(&file, &ApiKeys::default(), true, Vec::new()).cloud_ui_enabled, "off by default");
+        file.set(crate::settings::keys::CLOUD_ROUTINES_ENABLED, Some(true));
+        assert!(cloud_view(&file, &ApiKeys::default(), true, Vec::new()).cloud_ui_enabled);
+        file.set(crate::settings::keys::CLOUD_ROUTINES_ENABLED, Some("yes"));
+        assert!(!cloud_view(&file, &ApiKeys::default(), true, Vec::new()).cloud_ui_enabled, "only a JSON true turns it on");
+        assert!(!crate::syncing::settings::synced_keys().iter().any(|k| k == crate::settings::keys::CLOUD_ROUTINES_ENABLED));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_view_reads_the_flag_ready_by_heartbeat_and_whether_a_key_syncs() {
+        let (dir, mut file) = temp_settings("view");
+        crate::syncing::settings::set_cloud(&mut file, "eod_recap", true, true, 1).unwrap();
+        crate::syncing::settings::set_ready_by(&mut file, "eod_recap", "18:30", 1);
+        let keys = ApiKeys { anthropic: Some("sk-test".into()), ..ApiKeys::default() };
+        let view = cloud_view(&file, &keys, true, Vec::new());
+        let recap = view.routines.iter().find(|r| r.template == "eod_recap").unwrap();
+        assert!(recap.cloud);
+        assert_eq!(recap.ready_by.as_deref(), Some("18:30"));
+        assert!(view.sync_ready && !view.local_only);
+        assert!(!view.has_synced_key, "a key that is saved but not set to sync gives the runner nothing");
+        file.set(&crate::syncing::settings::api_key_switch("apiKey.anthropic"), Some(true));
+        assert!(has_synced_key(&file, &keys));
+        assert!(!has_synced_key(&file, &ApiKeys::default()), "the switch alone, with no key, is not enough");
+        assert_eq!(view.runner_last_run_ms, None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn whimbrel_cloud_is_not_offered_as_the_device_routines_run_on() {
+        let mut runner = device("runner", "approved");
+        runner.platform = Some("cloud".into());
+        let view = host_view("", &[device("me", "approved"), device("mac", "approved"), runner.clone()], Some("me"), &labeler());
+        let ids: Vec<&str> = view.options.iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(ids, ["me", "mac"]);
+        let view = host_view("", &[device("me", "approved"), runner.clone()], Some("me"), &labeler());
+        assert_eq!(view.caption, None, "the runner is not a second device to choose between");
+        let (dir, mut settings) = temp_settings("host");
+        assert!(set_host(&mut settings, "runner", &[device("me", "approved"), runner]).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn turning_cloud_on_for_a_routine_that_is_off_is_refused_and_off_is_always_allowed() {
+        let store = seeded();
+        assert!(routine_enabled(&store, "daily_brief").unwrap(), "seeded on");
+        assert!(!routine_enabled(&store, "eod_recap").unwrap(), "seeded off");
+        assert!(!routine_enabled(&store, "no_such_routine").unwrap());
+        let (dir, mut file) = temp_settings("refuse");
+        let off = routine_enabled(&store, "eod_recap").unwrap();
+        assert_eq!(message(change_cloud(&mut file, "eod_recap", true, off, 1).unwrap_err()), "Turn this routine on first.");
+        assert!(!crate::syncing::settings::is_cloud(&file, "eod_recap"));
+        assert_eq!(file.stamp_of("routine.eod_recap.enabled"), 0, "enabled=false is never stamped over another device's value");
+        assert_eq!(message(change_cloud(&mut file, "reply_priorities", true, true, 1).unwrap_err()), "This routine can't run in the cloud.");
+        change_cloud(&mut file, "daily_brief", true, true, 2).unwrap();
+        change_cloud(&mut file, "daily_brief", false, false, 3).expect("turning it off is always allowed");
+        assert!(!crate::syncing::settings::is_cloud(&file, "daily_brief"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

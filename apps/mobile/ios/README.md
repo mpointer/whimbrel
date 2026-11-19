@@ -102,7 +102,7 @@ and then every 60 s while approved and in the foreground, doubling to 15 min on 
 comes from `POST /v1/auth/google` and is kept only in memory, renewed by re-authenticating
 (the Mac's `SyncState.renewIfDue` rules, mirrored). The count is
 `whimbrel_meetings_recent_grouped(200)`, the Mac Meetings list's call and limit, so copies of
-one call count once. Like the Mac's Meetings list, the count is capped at the latest 200 rows (grouped). While a Mac is recording, its live meeting shows on the Mac but not on the phone until recording stops: meetings sync once recording ends. `core/api/tests/phone_meeting_count.rs` checks the phone's count equals
+one call count once. Like the Mac's Meetings list, the count is capped at the latest 200 rows (grouped). While a Mac is recording, its live meeting shows on the Mac but not on the phone until recording stops: meetings sync once recording ends. `core/phone-tests/tests/phone_meeting_count.rs` checks the phone's count equals
 the Mac's against a local relay. Failures show a generic message; the core's cause goes to
 the log as a private value.
 

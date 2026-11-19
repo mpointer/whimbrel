@@ -72,6 +72,9 @@ private class FakeStore : MeetingSyncStore {
         synchronized(older) { olderReads += 1; if (older.size > 1) older.removeAt(0) else older[0] }.also { note() }
     override fun lastSyncError(): String = "connect failed: secret detail"
     override fun lastPullStats(): String = """[{"peer":"abc123","fetched":5}]"""
+    /** The core's count of other devices without the client-controls marker (null: not measured). */
+    @Volatile var toUpdate: Int? = null
+    override fun devicesStillToUpdate(): Int? = toUpdate.also { note() }
     override fun close() { note(); closed = true }
 
     override fun recentMeetings(limit: Int): List<PhoneMeeting> = emptyList<PhoneMeeting>().also { note() }
@@ -130,6 +133,24 @@ class SyncModelTest {
         val none = model(open = { null }).run { syncNow(); read { it.recentMeetings(5).size } }
         assertNull("no store, no read", none)
         assertNull("not opened yet, no read", model().read { it.recentMeetings(5).size })
+    }
+
+    /** The sync line says "update needed" when another device has not announced client deletes yet; unknown and
+     *  zero show nothing, and a failed round keeps the last count. */
+    @Test
+    fun updateNeededFollowsTheCoreCountAfterAGoodPull() = runTest {
+        store.pullResults += listOf(true, true, false, true)
+        val model = model()
+        model.syncNow()
+        assertFalse("not measured yet", model.updateNeeded.value)
+        store.toUpdate = 1
+        model.syncNow()
+        assertTrue(model.updateNeeded.value)
+        store.toUpdate = 0
+        model.syncNow()
+        assertTrue("a failed round keeps the last count", model.updateNeeded.value)
+        model.syncNow()
+        assertFalse(model.updateNeeded.value)
     }
 
     @Test

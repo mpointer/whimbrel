@@ -75,6 +75,24 @@ pub fn run_with_prompts(
     if meetings.is_empty() {
         return Ok(0);
     }
+    // An excluded client's meetings never feed a suggestion: accepted facts go into the profile,
+    // and the profile goes into every prompt, hosted ones included.
+    let filter = crate::exclusion::context_filter(store);
+    let meetings: Vec<memory::Meeting> = meetings
+        .into_iter()
+        .filter(|m| {
+            let summary = format!(
+                "{}\n{}\n{}",
+                m.summary_tldr.as_deref().unwrap_or_default(),
+                m.summary_decisions.join("\n"),
+                m.summary_action_items.join("\n")
+            );
+            !(filter.excludes_meeting(m.id, &m.title, &m.attendees) || filter.names_client(&summary))
+        })
+        .collect();
+    if meetings.is_empty() {
+        return Ok(0);
+    }
     // A secondary has no schedule to measure a grace from, so it waits after today's first meeting.
     if gate == RunGate::Failover {
         let earliest = meetings.iter().map(|m| m.start_unix_ms).min().unwrap_or(now_unix_ms);
@@ -140,7 +158,7 @@ pub fn run(
             return None;
         }
         // Built per prompt: spend from the previous prompt can put a provider over budget.
-        let chain = build_chain_for(llm::TaskKind::ProfileSuggest, ollama_model, &routing);
+        let chain = build_chain_for(llm::TaskKind::ProfileSuggest, ollama_model, &routing, &crate::exclusion::current_gate(store));
         let chain = crate::budget::apply_budgets(store, chain, false, now_unix_ms).ok()?;
         // Limited Use: each link gets the prompt it may receive.
         let (completion, link) = llm::try_chain(&chain, |link| {

@@ -89,6 +89,16 @@ it("serves the Windows manifest and installer once published", async () => {
   expect(new TextDecoder().decode(await installer.arrayBuffer())).toBe("MZ");
 });
 
+it("serves the Windows on Arm installer, and no other architecture", async () => {
+  await env.UPDATES_BUCKET.put("windows/Whimbrel_0.9.8_arm64-setup.exe", new TextEncoder().encode("MZ"));
+  await env.UPDATES_BUCKET.put("windows/Whimbrel_0.9.8_x86-setup.exe", new TextEncoder().encode("MZ"));
+  const arm = await worker.fetch(new Request("https://example.com/windows/Whimbrel_0.9.8_arm64-setup.exe"), makeEnv());
+  expect(arm.status).toBe(200);
+  expect(arm.headers.get("content-type")).toBe("application/octet-stream");
+  const other = await worker.fetch(new Request("https://example.com/windows/Whimbrel_0.9.8_x86-setup.exe"), makeEnv());
+  expect(other.status).toBe(404);
+});
+
 it("serves nothing else under windows/", async () => {
   await env.UPDATES_BUCKET.put("windows/other.txt", "x");
   const response = await worker.fetch(new Request("https://example.com/windows/other.txt"), makeEnv());

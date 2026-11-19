@@ -1,12 +1,16 @@
 //! Meetings (M3.3): recording, and (in later tasks) the post-meeting pipeline, detection
 //! and calendar triggers. Plan: `docs/superpowers/plans/2026-09-17-m3.3-meetings.md`.
 
+pub mod ask_handoff;
 pub mod benchmark;
 pub mod compress;
 pub mod controller;
 pub mod detect;
 pub mod live;
+pub mod level;
 pub mod live_rows;
+pub mod meeting_bar;
+pub mod pause_clock;
 pub mod perf;
 pub mod pipeline;
 pub mod quality;

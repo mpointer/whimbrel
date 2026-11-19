@@ -17,7 +17,12 @@ use std::path::Path;
 /// comment. A sweep failure is an open failure. Also puts the cached hosted-model
 /// defaults in force (`crate::model_defaults::load`).
 pub fn open(path: &Path, models_dir: &Path) -> rusqlite::Result<memory::Store> {
-    let store = memory::Store::open(path, models_dir)?;
+    startup(memory::Store::open(path, models_dir)?)
+}
+
+/// The shell-launch steps shared by [`open`] and `store_key::open_store`: the one-time
+/// stranded-run sweep, then the cached hosted-model defaults.
+pub(crate) fn startup(store: memory::Store) -> rusqlite::Result<memory::Store> {
     store.release_stale_executing_routine_runs()?;
     // The cached hosted-model defaults go in force for this process's chain builders.
     crate::model_defaults::load(&store);

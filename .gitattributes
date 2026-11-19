@@ -1,0 +1,4 @@
+# Files whose exact bytes are hashed or compared by tests stay LF on every checkout (a Windows
+# checkout with core.autocrlf would otherwise change the SHA-256 recorded in VECTORS.md).
+core/sealed/tests/vectors.json text eol=lf
+core/sealed/VECTORS.md text eol=lf

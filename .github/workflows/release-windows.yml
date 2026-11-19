@@ -2,6 +2,9 @@
 # A `vX.Y.Z` tag builds the NSIS installer on the self-hosted Windows runner, signs it
 # for tauri-plugin-updater, and publishes it plus `windows/latest.json` to the updates
 # bucket. The installer goes up first, so the manifest never points at a missing file.
+# The same job then cross-builds the Windows on Arm installer (apps/windows/scripts/
+# arm64-env.ps1, #814). Its steps may fail without failing the release: latest.json then
+# lists x64 only, and the run says so. An x64 install only ever updates to x64.
 name: release-windows
 
 on:
@@ -27,7 +30,8 @@ jobs:
     # Only the upstream repository has the runner, the signing key and the bucket.
     if: github.repository == 'mpointer/kestrel'
     runs-on: [self-hosted, Windows, X64, kestrel-windows]
-    timeout-minutes: 90
+    # x64 then Arm64, each a full release build.
+    timeout-minutes: 150
     env:
       UPDATES_URL: https://updates.whimbrelapp.com
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -89,26 +93,72 @@ jobs:
           Set-Content -Encoding ascii updater-artifacts.json '{"bundle":{"createUpdaterArtifacts":true}}'
           npm run tauri build -- --config updater-artifacts.json --config src-tauri/tauri.bundle.conf.json
           if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
+      # Windows on Arm, cross-built on this x64 runner (#814): the Arm64 MCP server, Node and
+      # llama.cpp, then the installer. The x64 installer is already built, so restaging
+      # bundle-resources for Arm64 changes nothing it carries.
+      - name: Windows on Arm - stage the MCP server, Node and llama.cpp
+        id: arm_stage
+        continue-on-error: true
+        run: |
+          # The runner uses its own toolchain (CARGO_HOME and RUSTUP_HOME in its .env), not the
+          # signed-in user's, so the Arm64 standard library must be added here. A no-op once present.
+          rustup target add aarch64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "rustup target add aarch64-pc-windows-msvc failed" }
+          . ./apps/windows/scripts/arm64-env.ps1
+          ./apps/windows/scripts/prepare-sidecar.ps1 -ForBundle -Arch arm64
+          if ($LASTEXITCODE -ne 0) { throw "Arm64 MCP server build failed" }
+          ./apps/windows/scripts/prepare-bundle-resources.ps1 -Arch arm64
+          if ($LASTEXITCODE -ne 0) { throw "Arm64 bundle resources failed" }
+      - name: Windows on Arm - build and sign the installer
+        id: arm_build
+        if: steps.arm_stage.outcome == 'success'
+        continue-on-error: true
+        working-directory: apps/windows
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          . ./scripts/arm64-env.ps1
+          npm run tauri build -- --target aarch64-pc-windows-msvc --config updater-artifacts.json --config src-tauri/tauri.bundle.arm64.conf.json
+          if ($LASTEXITCODE -ne 0) { throw "Arm64 tauri build failed" }
       - name: Write latest.json
         run: |
           $name = "Whimbrel_$($env:VERSION)_x64-setup.exe"
           $dir = "$env:CARGO_TARGET_DIR\release\bundle\nsis"
-          $manifest = @{
-            version  = $env:VERSION
-            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-            platforms = @{
-              "windows-x86_64" = @{
-                signature = (Get-Content "$dir\$name.sig" -Raw).Trim()
-                url       = "$env:UPDATES_URL/windows/$name"
-              }
+          $platforms = @{
+            "windows-x86_64" = @{
+              signature = (Get-Content "$dir\$name.sig" -Raw).Trim()
+              url       = "$env:UPDATES_URL/windows/$name"
             }
           }
-          $manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding ascii "$dir\latest.json"
           # Recorded for the release evidence: the hash is of the file the next step uploads.
           $installer = Get-Item "$dir\$name"
           $sha256 = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLower()
           Write-Host "installer $name size=$($installer.Length) bytes sha256=$sha256"
-          @("### Windows installer $env:VERSION", "", "| File | Size (bytes) | SHA-256 |", "|---|---|---|", "| $name | $($installer.Length) | $sha256 |") | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          $rows = @("| $name | $($installer.Length) | $sha256 |")
+          $armName = "Whimbrel_$($env:VERSION)_arm64-setup.exe"
+          $armDir = "$env:CARGO_TARGET_DIR\aarch64-pc-windows-msvc\release\bundle\nsis"
+          if ("${{ steps.arm_build.outcome }}" -eq "success" -and (Test-Path "$armDir\$armName.sig")) {
+            $platforms["windows-aarch64"] = @{
+              signature = (Get-Content "$armDir\$armName.sig" -Raw).Trim()
+              url       = "$env:UPDATES_URL/windows/$armName"
+            }
+            $arm = Get-Item "$armDir\$armName"
+            $armSha = (Get-FileHash -Algorithm SHA256 $arm.FullName).Hash.ToLower()
+            Write-Host "installer $armName size=$($arm.Length) bytes sha256=$armSha"
+            $rows += "| $armName | $($arm.Length) | $armSha |"
+            "ARM_INSTALLER=$armDir\$armName" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+            "ARM_INSTALLER_NAME=$armName" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          } else {
+            Write-Host "::warning::No Windows on Arm installer this run (stage: ${{ steps.arm_stage.outcome }}, build: ${{ steps.arm_build.outcome }}); latest.json lists x64 only."
+          }
+          $manifest = @{
+            version   = $env:VERSION
+            pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = $platforms
+          }
+          $manifest | ConvertTo-Json -Depth 4 | Set-Content -Encoding ascii "$dir\latest.json"
+          @("### Windows installers $env:VERSION", "", "| File | Size (bytes) | SHA-256 |", "|---|---|---|") + $rows | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
           "INSTALLER_NAME=$name" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "BUNDLE_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       # wrangler alone, pinned to server-updates' lock: `npm ci` there also installs the
@@ -120,12 +170,17 @@ jobs:
         run: |
           npx --yes wrangler@4.124.0 r2 object put "kestrel-updates/windows/$env:INSTALLER_NAME" --file "$env:BUNDLE_DIR\$env:INSTALLER_NAME" --remote
           if ($LASTEXITCODE -ne 0) { throw "installer upload failed" }
+          if ($env:ARM_INSTALLER) {
+            npx --yes wrangler@4.124.0 r2 object put "kestrel-updates/windows/$env:ARM_INSTALLER_NAME" --file "$env:ARM_INSTALLER" --remote
+            if ($LASTEXITCODE -ne 0) { throw "Arm64 installer upload failed" }
+          }
           npx --yes wrangler@4.124.0 r2 object put "kestrel-updates/windows/latest.json" --file "$env:BUNDLE_DIR\latest.json" --content-type application/json --remote
           if ($LASTEXITCODE -ne 0) { throw "latest.json upload failed" }
       - name: Published manifest serves this version
         run: |
           $served = Invoke-RestMethod "$env:UPDATES_URL/windows/latest.json" -Headers @{ "User-Agent" = "whimbrel-release" }
           if ($served.version -ne $env:VERSION) { throw "served latest.json is $($served.version), expected $env:VERSION" }
+          if ($env:ARM_INSTALLER -and -not $served.platforms."windows-aarch64") { throw "served latest.json has no windows-aarch64 entry" }
       - name: Remove Secrets.toml
         if: always()
         run: Remove-Item -ErrorAction SilentlyContinue apps/windows/src-tauri/Secrets.toml

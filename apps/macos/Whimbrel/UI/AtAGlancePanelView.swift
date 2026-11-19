@@ -142,7 +142,7 @@ struct AtAGlancePanelView: View {
             preferredProvider: appState.routing.preferredProvider, preferredModel: appState.routing.preferredModel,
             dailyDigestInstructions: appState.promptLibrary.instructions[.dailyDigest] ?? ""
         )
-        CoreMemoryStore.slowLaneQueue.async {
+        UserModelGate.runOnSlowLane {
             let outcome = store.dailyDigest(model: ollamaModel, startUnixMs: startMs, endUnixMs: endMs, routing: routing)
             DispatchQueue.main.async {
                 isGeneratingDigest = false

@@ -51,8 +51,9 @@ pub fn names(profile_name: &str, other_names: &str) -> Vec<String> {
 /// What the watcher needs from outside: the model and the store. Injected so the rules are
 /// tested without either.
 pub trait Hooks {
-    /// Core's `api::live_question::detect` over `window`, judging `window[index]`.
-    fn detect(&mut self, window: &[LiveLine], index: usize) -> Option<LiveQuestionVerdict>;
+    /// Core's `api::live_question::detect` over `window`, judging `window[index]`, in meeting
+    /// `meeting_id` (a meeting of a client excluded from hosted models is judged locally).
+    fn detect(&mut self, meeting_id: i64, window: &[LiveLine], index: usize) -> Option<LiveQuestionVerdict>;
     /// Stores the alert (origin NULL, so it syncs out); `None` when the write failed.
     fn insert(&mut self, alert: &NewLiveAlert) -> Option<i64>;
     fn now_ms(&self) -> i64;
@@ -184,7 +185,7 @@ impl Watcher {
         if candidate.start_cs <= self.high_water_cs {
             return None;
         }
-        let verdict = hooks.detect(window, at)?;
+        let verdict = hooks.detect(self.meeting_id, window, at)?;
         let now = hooks.now_ms();
         if is_duplicate(&verdict.restatement, &self.earlier, now) {
             return None;
@@ -345,7 +346,8 @@ impl Runtime {
     fn draft(&self, job: Alerted) {
         let Some((model, routing)) = self.routing() else { return };
         let Alerted { mut alert, verdict, recent } = job;
-        let answer = match self.slow.call_blocking(move |s| api::live_question::draft(s, &verdict, &recent, &model, &routing)) {
+        let meeting_id = Some(alert.source_meeting_id);
+        let answer = match self.slow.call_blocking(move |s| api::live_question::draft(s, meeting_id, &verdict, &recent, &model, &routing)) {
             Ok(Ok(answer)) => answer,
             Ok(Err(e)) => return tracing::warn!(error = ?e, "live answer draft failed"),
             Err(e) => return tracing::warn!(error = %e, "live answer draft failed"),
@@ -378,10 +380,10 @@ impl<'a> LiveHooks<'a> {
 }
 
 impl Hooks for LiveHooks<'_> {
-    fn detect(&mut self, window: &[LiveLine], index: usize) -> Option<LiveQuestionVerdict> {
+    fn detect(&mut self, meeting_id: i64, window: &[LiveLine], index: usize) -> Option<LiveQuestionVerdict> {
         let (model, routing) = self.routing.clone()?;
         let (lines, names) = (window.to_vec(), self.names.clone());
-        match self.runtime.slow.call_blocking(move |s| api::live_question::detect(s, &lines, index, &names, &model, &routing)) {
+        match self.runtime.slow.call_blocking(move |s| api::live_question::detect(s, Some(meeting_id), &lines, index, &names, &model, &routing)) {
             Ok(Ok(verdict)) => verdict,
             Ok(Err(e)) => {
                 tracing::warn!(error = ?e, "live question detect failed");
@@ -442,7 +444,7 @@ mod tests {
     }
 
     impl Hooks for Fake {
-        fn detect(&mut self, window: &[LiveLine], index: usize) -> Option<LiveQuestionVerdict> {
+        fn detect(&mut self, _meeting_id: i64, window: &[LiveLine], index: usize) -> Option<LiveQuestionVerdict> {
             let text = window[index].text.clone();
             self.asked.push(text.clone());
             text.contains('?').then(|| LiveQuestionVerdict {

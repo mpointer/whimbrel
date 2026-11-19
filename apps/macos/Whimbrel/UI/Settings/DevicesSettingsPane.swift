@@ -5,6 +5,9 @@ struct DevicesSettingsPane: View {
     @EnvironmentObject var appState: AppState
     private let presentationContextProvider = WindowPresentationContextProvider()
     @State private var devicePendingRevocation: SyncDeviceRecord?
+    /// Whimbrel Cloud's own confirmation: its words differ from a person's device.
+    @State private var runnerPendingRemoval: SyncDeviceRecord?
+    @State private var addingRunner = false
     @State private var confirmingAccountDeletion = false
     @State private var waitlistWants: Set<String> = []
     @State private var joinedWaitlist = false
@@ -25,6 +28,9 @@ struct DevicesSettingsPane: View {
             content
 
             StaleSyncLine(sync: appState.contentSyncCoordinator, inset: 0)
+            if case .ready = appState.syncState.status, let bridge = appState.clientControlsBridge() {
+                ClientPendingDevicesLine(bridge: bridge, sync: appState.contentSyncCoordinator) { appState.deviceLabel(for: $0) }
+            }
         }
         .onAppear {
             appState.syncState.startDevicesPolling()
@@ -56,6 +62,25 @@ struct DevicesSettingsPane: View {
         } message: {
             Text("This device will lose access immediately. Every other device on this account will also need to silently reconnect. This can't be undone from here — the device would need to sign in again and be re-approved.")
         }
+        .alert(CloudRoutineCopy.removeRunnerTitle, isPresented: Binding(
+            get: { runnerPendingRemoval != nil },
+            set: { if !$0 { runnerPendingRemoval = nil } }
+        )) {
+            Button("Remove", role: .destructive) {
+                if let device = runnerPendingRemoval {
+                    Task { await appState.syncState.revoke(device) }
+                }
+                runnerPendingRemoval = nil
+            }
+            Button("Cancel", role: .cancel) {
+                runnerPendingRemoval = nil
+            }
+        } message: {
+            Text(CloudRoutineCopy.removeRunnerMessage)
+        }
+        .sheet(isPresented: $addingRunner) {
+            AddCloudRunnerSheet(syncState: appState.syncState)
+        }
         .alert("Delete your sync account?", isPresented: $confirmingAccountDeletion) {
             Button("Delete", role: .destructive) {
                 Task { await appState.syncState.deleteSyncAccount() }
@@ -78,7 +103,11 @@ struct DevicesSettingsPane: View {
         case .signingIn:
             ProgressView("Signing in…").controlSize(.small)
         case .waitingForApproval, .waitingForGroupKey:
-            SyncWaitingView(syncState: appState.syncState)
+            RedesignSwitch(enabled: appState.redesignEnabled) {
+                SyncWaitingRedesignView(syncState: appState.syncState)
+            } old: {
+                SyncWaitingView(syncState: appState.syncState)
+            }
         case .ready:
             deviceList
         case let .deviceLimit(kind, holders):
@@ -238,14 +267,21 @@ struct DevicesSettingsPane: View {
                 uniquingKeysWith: { first, _ in first })
             let collisions = collidingPendingDeviceIDs(appState.syncState.devices.map { ($0.id, $0.status, codes[$0.id] ?? nil) })
             ForEach(appState.syncState.devices) { device in
+                let isRunner = CloudRoutineCopy.isRunner(device)
                 HStack {
                     VStack(alignment: .leading) {
-                        Text(DeviceDisplayName.name(device.name, platform: device.platform) ?? device.platform ?? "Unnamed device")
+                        Text(isRunner ? CloudRoutineCopy.runnerName : DeviceDisplayName.name(device.name, platform: device.platform) ?? device.platform ?? "Unnamed device")
                             .font(.whimbrelBody(.body))
                             .foregroundStyle(Color.whimbrelTextPrimary)
                         Text(device.status == "resetting" ? "Resetting…" : device.status.capitalized)
                             .font(.whimbrelBody(.caption))
                             .foregroundStyle(Color.whimbrelTextSecondary)
+                        if isRunner, device.status == "approved", let ms = appState.settingsSyncCoordinator.cloudRoutines.runnerLastRunMs {
+                            let last = Date(timeIntervalSince1970: Double(ms) / 1000)
+                            Text("Last ran \(last.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.whimbrelBody(.caption))
+                                .foregroundStyle(Color.whimbrelTextSecondary)
+                        }
                         if device.status == "pending" {
                             Text((codes[device.id] ?? nil).map { "Check this matches the code on the new device: \($0)" } ?? "Can't verify this device")
                                 .font(.whimbrelBody(.caption))
@@ -258,7 +294,17 @@ struct DevicesSettingsPane: View {
                         }
                     }
                     Spacer()
-                    if device.status == "pending" {
+                    if isRunner {
+                        // Approved when it was added; it never needs the key sent again. Removable whether or not the
+                        // hidden cloud switch is on.
+                        if CloudRoutineCopy.canRemoveRunner(device) {
+                            Button("Remove") {
+                                runnerPendingRemoval = device
+                            }
+                            .buttonStyle(.whimbrelSecondary)
+                            .tint(Color.whimbrelError)
+                        }
+                    } else if device.status == "pending" {
                         Button("Approve") {
                             Task { await appState.syncState.approve(device) }
                         }
@@ -270,7 +316,7 @@ struct DevicesSettingsPane: View {
                         }
                         .buttonStyle(.whimbrelSecondary)
                     }
-                    if device.status != "revoked" {
+                    if !isRunner, device.status != "revoked" {
                         Button("Revoke") {
                             devicePendingRevocation = device
                         }
@@ -280,6 +326,15 @@ struct DevicesSettingsPane: View {
                 }
                 Divider().overlay(Color.whimbrelBorder)
             }
+        }
+
+        // Author-only phase: hidden unless the cloud switch is set by hand (CloudRoutineCopy.uiFlagKey).
+        if CloudRoutineCopy.showsAddRunner(flag: CloudRoutineCopy.uiFlag()) {
+            Button(CloudRoutineCopy.addRunner) {
+                addingRunner = true
+            }
+            .buttonStyle(.whimbrelSecondary)
+            .accessibilityIdentifier("devices-add-cloud-runner")
         }
 
         if let lastSyncError = appState.settingsSyncCoordinator.lastSyncError {
@@ -305,6 +360,12 @@ struct DevicesSettingsPane: View {
         if let backlog = appState.contentSyncCoordinator.outboxBacklog, let oldest = backlog.oldest,
            SyncTiming.backlogIsStalled(pending: backlog.pending, oldest: oldest, now: Date()) {
             Text("Changes waiting to send: \(backlog.pending), the oldest from \(oldest, format: .dateTime.month().day().hour().minute())")
+                .font(.whimbrelBody(.caption))
+                .foregroundStyle(Color.whimbrelTextSecondary)
+        }
+
+        if let percent = appState.contentSyncCoordinator.kindBackfillPercent {
+            Text("Indexing history: \(percent)%")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
         }
@@ -395,4 +456,108 @@ private struct MobileBetaCard: View {
               let cg = CIContext().createCGImage(output, from: output.extent) else { return nil }
         return NSImage(cgImage: cg, size: output.extent.size)
     }()
+}
+
+/// "Add Whimbrel Cloud": the user pastes the runner's public key (`whimbrel-cloud-runner init` prints it); this Mac
+/// registers the runner and shows, once, the values its host's secret store needs. Nothing here is logged or kept
+/// after the sheet closes.
+private struct AddCloudRunnerSheet: View {
+    @ObservedObject var syncState: SyncState
+    @Environment(\.dismiss) private var dismiss
+    @State private var publicKey = ""
+    @State private var working = false
+    @State private var errorText: String?
+    @State private var provision: RunnerProvision?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            Text(CloudRoutineCopy.runnerName)
+                .font(.whimbrelBody(.body))
+                .foregroundStyle(Color.whimbrelTextPrimary)
+            if let provision {
+                result(provision)
+            } else {
+                form
+            }
+        }
+        .padding(Spacing.lg)
+        .frame(width: 520)
+    }
+
+    private var form: some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            caption(String(localized: "On the host that will run your routines, run whimbrel-cloud-runner init and paste the public key it prints here."))
+            TextField(String(localized: "Public key"), text: $publicKey)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .accessibilityIdentifier("cloud-runner-public-key")
+            if let errorText {
+                Text(errorText)
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelError)
+            }
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(.whimbrelSecondary)
+                Spacer()
+                if working { ProgressView().controlSize(.small) }
+                Button(String(localized: "Add")) {
+                    Task {
+                        working = true
+                        errorText = nil
+                        switch await syncState.registerRunner(publicKey: publicKey) {
+                        case .success(let p): provision = p
+                        case .failure(let e): errorText = e.text
+                        }
+                        working = false
+                    }
+                }
+                .buttonStyle(.whimbrelPrimary)
+                .disabled(working || publicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private func result(_ provision: RunnerProvision) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            caption(CloudRoutineCopy.provisionInstructions)
+            valueRow("RUNNER_PROVISION", provision.provisionBundle)
+            valueRow("RUNNER_APPROVER_PUBLIC_KEY", provision.approverPublicKey)
+            valueRow("RUNNER_WORKER_URL", syncState.workerURL)
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(.whimbrelPrimary)
+            }
+        }
+    }
+
+    private func valueRow(_ name: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: name)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(Color.whimbrelTextPrimary)
+                Text(verbatim: value)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            Spacer()
+            Button(String(localized: "Copy")) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(value, forType: .string)
+            }
+            .buttonStyle(.whimbrelSecondary)
+        }
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(.whimbrelBody(.caption))
+            .foregroundStyle(Color.whimbrelTextSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
 }

@@ -86,6 +86,7 @@ impl Store {
             "DELETE FROM live_transcript_segment WHERE meeting_id = ?1 AND ?3 + start_cs * 10 >= ?2",
             params![meeting_id, keep_ms, live_offset_ms(&parts, origin)],
         )?;
+        Self::delete_markers_past_tx(&tx, meeting_id, keep_ms)?;
         let removed_snapshot_paths = tx
             .prepare(
                 "SELECT file_path FROM meeting_snapshot WHERE meeting_id = ?1 AND captured_unix_ms >= ?2 \

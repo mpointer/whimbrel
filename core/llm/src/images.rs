@@ -217,6 +217,7 @@ pub fn search_images_with(
 
 pub fn search_images(key: &str, query: &str) -> Result<Vec<ImageCandidate>, LlmError> {
     search_images_with(key, query, |url, headers| {
+        crate::request_log::record("brave", url, &serde_json::Value::Null);
         let mut request = agent(true).get(url);
         for (name, value) in headers {
             request = request.set(name, value);
@@ -275,6 +276,7 @@ pub fn parse_google_image(body: &str) -> Result<Vec<u8>, LlmError> {
 pub fn generate_image(provider: Provider, key: &str, prompt: &str) -> Result<Vec<u8>, LlmError> {
     let (url, body) = image_generate_request(provider, prompt)
         .ok_or(LlmError::NotImplemented("image generation"))?;
+    crate::request_log::record(provider.as_str(), &url, &body);
     let request = agent(true).post(&url);
     // Keys go in headers, never the URL.
     let request = match provider {

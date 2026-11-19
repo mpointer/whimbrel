@@ -1,6 +1,25 @@
 // Typed wrappers over the shell's Tauri commands (src-tauri/src/commands).
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { AudioLevel, DeleteEverythingPreview, MeetingMarkerView } from "./generated/types";
+import type {
+  ClientControl,
+  ClientDeleteReceipt,
+  ClientDue,
+  ClientExpiryReceipt,
+  ClientExportDone,
+  ClientInventory,
+  ClientItem,
+  ClientItemRef,
+  ClientPendingDevices,
+  ClientPendingDeviceIds,
+  ClientResult,
+  ClientResummaryOffer,
+  ClientControlChange,
+  ClientControlUpdate,
+  ClientRetentionDecision,
+  ClientReviewFlag,
+} from "./clientControls";
 import type {
   RecapDraft,
   RecapMailto,
@@ -114,8 +133,24 @@ import type {
   TopicNamesView,
   TopicStepsView,
   MeetingAskExchange,
+  LaunchView,
+  LaunchAnswer,
+  ChosenFile,
+  UseKeyResult,
+  SetupScope,
+  SetupBegun,
+  SaveFileResult,
+  EncryptionCardView,
+  SetupRefusal,
+  EncryptOutcome,
+  NoteAction,
+  NoteActionResult,
+  ForeignFilesDeleted,
+  ForeignFilesView,
+  SpeedCheckResult,
 } from "./generated/types";
 import type { SkinDto } from "./skin";
+import type { CloudRoutinesView, RunnerRegistration } from "./automations/cloudRoutineModel";
 
 /** A raw-bytes reply as real bytes. The shell's `Response` can arrive as a plain array of numbers rather than an
  *  ArrayBuffer, and `new Blob([array])` would then hold the numbers' text, which no image decodes. */
@@ -128,6 +163,10 @@ export const getRoutingSettings = () => invoke<RoutingSettings>("get_routing_set
 export const setRoutingSettings = (routing: RoutingSettings) => invoke<void>("set_routing_settings", { routing });
 export const captureStatus = () => invoke<CaptureStatus>("capture_status");
 export const setCaptureEnabled = (enabled: boolean) => invoke<CaptureStatus>("set_capture_enabled", { enabled });
+/** A timed pause: capture reads nothing until this wall-clock time (unix ms), then is back to on. Redesign only. */
+export const capturePauseUntil = (resumeAtUnixMs: number) => invoke<CaptureStatus>("capture_pause_until", { resumeAtUnixMs });
+/** Ends a timed pause early. */
+export const captureResumeNow = () => invoke<CaptureStatus>("capture_resume_now");
 
 // The tray's quick-glance popup (Task 10).
 export const trayStatus = () => invoke<TrayStatus>("tray_status");
@@ -154,6 +193,34 @@ export const setWriteIn = (tag: string) => invoke<LanguageSettings>("set_write_i
 export const libraryRecent = () => invoke<LibraryRow[]>("library_recent");
 export const libraryEpisodes = (includeHidden: boolean) => invoke<LibraryRow[]>("library_episodes", { includeHidden });
 export const librarySearch = (query: string, semantic: boolean) => invoke<LibraryRow[]>("library_search", { query, semantic });
+/** Captures matching a query, from one app and inside a time range (the Home filters). The core types are not in
+ *  the generated schema; they are written here as the shell serializes them (snake_case, from core/memory). */
+export const librarySearchFiltered = (query: string, semantic: boolean, app: string | null, startUnixMs: number | null, endUnixMs: number | null) =>
+  invoke<LibraryRow[]>("library_search_filtered", { query, semantic, app, startUnixMs, endUnixMs });
+export interface CaptureApp {
+  app_bundle_id: string;
+  captures: number;
+}
+export const libraryCaptureApps = (startUnixMs: number, endUnixMs: number, limit: number) =>
+  invoke<CaptureApp[]>("library_capture_apps", { startUnixMs, endUnixMs, limit });
+export interface DayBlockApp {
+  app_bundle_id: string;
+  /** Window titles, at most three. */
+  items: string[];
+  /** Titles left out. */
+  more_items: number;
+}
+export interface DayBlock {
+  start_unix_ms: number;
+  end_unix_ms: number;
+  /** At most four. */
+  apps: DayBlockApp[];
+  /** Apps left out. */
+  more_apps: number;
+}
+/** Memory blocks for `[startUnixMs, endUnixMs)`, cut around the meeting `[start, end]` pairs. */
+export const libraryDayBlocks = (startUnixMs: number, endUnixMs: number, meetings: [number, number][]) =>
+  invoke<DayBlock[]>("library_day_blocks", { startUnixMs, endUnixMs, meetings });
 export const libraryCapture = (id: number) => invoke<CaptureDetail | null>("library_capture", { id });
 export const libraryMeeting = (id: number) => invoke<MeetingDetail | null>("library_meeting", { id });
 export const libraryEpisode = (id: number) => invoke<EpisodeRow | null>("library_episode", { id });
@@ -176,6 +243,8 @@ export const syncDevices = () => invoke<DeviceView[]>("sync_devices");
 export const syncSetDeviceName = (name: string) => invoke<DeviceView[]>("sync_set_device_name", { name });
 export const syncApproveDevice = (id: string) => invoke<DeviceView[]>("sync_approve_device", { id });
 export const syncRevokeDevice = (id: string) => invoke<DeviceView[]>("sync_revoke_device", { id });
+/** "Add Whimbrel Cloud": the outcome, with the values for the runner's host on success (shown once, never kept). */
+export const syncRegisterRunner = (publicKey: string) => invoke<RunnerRegistration>("sync_register_runner", { publicKey });
 
 export const aiSettings = () => invoke<AiSettings>("ai_settings");
 /** A paid provider's monthly budget in dollars; `null` removes it. */
@@ -207,6 +276,59 @@ export const topicNamingStatus = () => invoke<TopicNamingView>("topic_naming_sta
 export const topicSuggestions = () => invoke<TopicSuggestionView[]>("topic_suggestions");
 export const acceptTopicSuggestion = (topicId: number, name: string) => invoke<TopicSeedView>("accept_topic_suggestion", { topicId, name });
 export const dismissTopicSuggestion = (topicId: number) => invoke<void>("dismiss_topic_suggestion", { topicId });
+// Client controls (X6): each resolves to core's envelope, `{ ok: true, data }` or `{ ok: false, error: { kind } }`.
+// The shell supplies the media and vault folders, this PC's device id and the account key.
+/** Everything about a client: linked items, possible matches (offer them unticked), and what is left for the user. */
+export const clientInventory = (key: string) => invoke<ClientResult<ClientInventory>>("client_inventory", { key });
+/** Deletes everything about a client. A ticked item a fresh inventory no longer lists is `selection_changed`
+ *  (reload the review); unfinished background work is `busy` (try again shortly); both touch nothing. Slow; the
+ *  job loops pause while it runs. */
+/** Waits for running background work as long as it takes (until `clientCancelWait(token)`), then deletes.
+ *  `reviewedLinked`: the linked items the review showed; a different set now answers `selection_changed`. */
+export const clientDelete = (selection: {
+  key: string;
+  includePossible: ClientItemRef[];
+  deleteExports: boolean;
+  reviewedLinked: ClientItemRef[];
+  token: number;
+}) => invoke<ClientResult<ClientDeleteReceipt>>("client_delete", { selection });
+/** Ends a delete's wait for background work. False: too late, the delete has started. */
+export const clientCancelWait = (token: number) => invoke<boolean>("client_cancel_wait", { token });
+/** Background ticks running now (what a waiting delete waits for). */
+export const clientJobsRunning = () => invoke<number>("client_jobs_running");
+/** Devices that still need to update before they apply client deletes (null: not known yet). */
+export const clientPendingDevices = () => invoke<ClientPendingDevices>("client_pending_devices");
+/** The sync device ids (public keys) of the devices `clientPendingDevices` counts (null: not known yet). */
+export const clientPendingDeviceIds = () => invoke<ClientPendingDeviceIds>("client_pending_device_ids");
+/** "Remove this device": stops counting a retired device (one of `clientPendingDeviceIds`). Releases nothing. */
+export const clientRetireDevice = (deviceId: string) => invoke<ClientResult<ClientPendingDevices>>("client_retire_device", { deviceId });
+/** Exports everything about a client into a new folder inside a folder the user picks in the shell's own dialog;
+ *  media only when asked for. `data` is null when the pick was cancelled; a network share is `folder_not_allowed`. */
+export const clientExport = (key: string, includePossible: ClientItemRef[], includeMedia: boolean) =>
+  invoke<ClientResult<ClientExportDone | null>>("client_export", { key, includePossible, includeMedia });
+export const clientControlGet = (key: string) => invoke<ClientResult<ClientControl>>("client_control_get", { key });
+/** Changes one setting on the value stored now (read, change and write in one job on the store), so a value another
+ *  device synced since the page loaded is kept. */
+export const clientControlUpdate = (key: string, change: ClientControlChange) =>
+  invoke<ClientResult<ClientControlUpdate>>("client_control_update", { key, change });
+/** Meetings a hosted model summarised, to offer summarising again here, and core's "already left" sentence. */
+export const clientResummaryOffer = (key: string) => invoke<ClientResult<ClientResummaryOffer>>("client_resummary_offer", { key });
+/** Every client's items past its keep period; with `key`, that client's items. Read only. */
+export function clientDueItems(): Promise<ClientResult<ClientDue[]>>;
+export function clientDueItems(key: string): Promise<ClientResult<ClientItem[]>>;
+export function clientDueItems(key?: string) {
+  return invoke("client_due_items", { key: key ?? null });
+}
+/** "Keep these" or "Snooze" for one item, on this PC only. */
+export const clientRetentionDecide = (key: string, item: ClientItemRef, decision: ClientRetentionDecision) =>
+  invoke<ClientResult<null>>("client_retention_decide", { key, item, decision });
+/** The weekly "items ready to review" flag, or null. */
+export const clientReviewFlag = () => invoke<ClientResult<ClientReviewFlag | null>>("client_review_flag");
+/** "Later": puts the review prompt off for a week. */
+export const clientReviewFlagDismiss = () => invoke<ClientResult<null>>("client_review_flag_dismiss");
+/** Deletes confirmed due items on this PC only, for at most `budgetMs`; call again while `data.more`. */
+export const clientExpire = (key: string, items: ClientItemRef[], budgetMs: number) =>
+  invoke<ClientResult<ClientExpiryReceipt>>("client_expire", { key, items, budgetMs });
 // The topic page (topics piece 2): the Topics tab, step actions, the ways in, and Settings → Topics.
 /** Today's Upcoming: the next 7 days' meetings, grouped by day. */
 export const todayUpcoming = () => invoke<UpcomingView>("today_upcoming");
@@ -251,6 +373,11 @@ export const modelDownloadStart = () => invoke<string>("model_download_start");
 export const modelDownloadPoll = (jobId: string) => invoke<DownloadView>("model_download_poll", { jobId });
 export const modelDownloadCancel = (jobId: string) => invoke<boolean>("model_download_cancel", { jobId });
 export const restartApp = () => invoke<void>("restart_app");
+/** Settings > Capture > Delete everything (X4 Task 12): what the confirmation lists. */
+export const deleteEverythingPreview = () => invoke<DeleteEverythingPreview>("delete_everything_preview");
+/** Confirmed: the sync account if chosen, the Google sign-ins, the slide images, then a restart into the delete. The shell checks `confirm` is DELETE. The app exits on success. */
+export const deleteEverythingNow = (args: { confirm: string; alsoDeleteSyncAccount: boolean; slidesLeftAlone: boolean }) =>
+  invoke<void>("delete_everything_now", args);
 export const meetingModelsStatus = () => invoke<MeetingModelsStatus>("meeting_models_status");
 export const meetingModelsDownloadStart = () => invoke<string>("meeting_models_download_start");
 /** "I have meetings in other languages": on adds the multilingual model to the missing list. */
@@ -264,10 +391,25 @@ export const transcriptionBenchmark = () => invoke<TranscriptionQualityStatus>("
 
 export const meetingRecordStart = () => invoke<MeetingRecordingView>("meeting_record_start");
 export const meetingRecordStop = () => invoke<MeetingRecordingView>("meeting_record_stop");
+// Recording pause (redesign only): audio and snapshots stop until resume; the state stays "recording".
+export const meetingRecordPause = () => invoke<MeetingRecordingView>("meeting_record_pause");
+export const meetingRecordResume = () => invoke<MeetingRecordingView>("meeting_record_resume");
+// The level meter's reading (redesign only, polled about four times a second while recording): read, drawn, thrown away.
+// Marked moments (redesign only): the time is centiseconds from the start of the recording on the transcript's clock.
+export const meetingMarkerAdd = (meetingId: number, atCs: number, label: string | null) => invoke<MeetingMarkerView>("meeting_marker_add", { meetingId, atCs, label });
+export const meetingMarkerList = (meetingId: number) => invoke<MeetingMarkerView[]>("meeting_marker_list", { meetingId });
+export const meetingMarkerDelete = (id: number) => invoke<boolean>("meeting_marker_delete", { id });
+// A question typed in the in-meeting window: parked in the shell until the main window takes it (once), or cancelled.
+export const meetingBarAsk = (meetingId: number, text: string) => invoke<void>("meeting_bar_ask", { meetingId, text });
+export const meetingBarTakeAsk = (meetingId: number) => invoke<string | null>("meeting_bar_take_ask", { meetingId });
+export const meetingBarCancelAsk = () => invoke<void>("meeting_bar_cancel_ask");
+export const meetingAudioLevel = () => invoke<AudioLevel>("meeting_audio_level");
 export const todaySchedule = () => invoke<ScheduleView>("today_schedule");
 
 // Skins (core/skins through src-tauri/src/commands/skins.rs). `SkinDto` is typed by hand in skin.ts.
 export const skinsList = () => invoke<SkinDto[]>("skins_list");
+/** The hidden redesign switch (`redesign.enabled` in settings.json, off unless set by hand); see `redesign.ts`. */
+export const redesignEnabledCommand = () => invoke<boolean>("redesign_enabled");
 /** Moves when a sync changed the skins folder (Task 15). */
 export const skinsRevision = () => invoke<number>("skins_revision");
 /** An approved image of one of the user's skins, as raw bytes. */
@@ -471,6 +613,10 @@ export const diskAlertDismiss = () => invoke<void>("disk_alert_dismiss");
 export const routineSetAutoApprove = (id: number, enabled: boolean) => invoke<RoutineView[]>("routine_set_auto_approve", { id, enabled });
 export const routineSetModelPref = (id: number, pref: string) => invoke<RoutineView[]>("routine_set_model_pref", { id, pref });
 export const routineModelOptions = () => invoke<ModelOptionView[]>("routine_model_options");
+// Run in the cloud (src-tauri/src/commands/routines.rs; the shapes are in automations/cloudRoutineModel.ts).
+export const routinesCloud = () => invoke<CloudRoutinesView>("routines_cloud");
+export const routineSetCloud = (template: string, on: boolean) => invoke<CloudRoutinesView>("routine_set_cloud", { template, on });
+export const routineSetReadyBy = (template: string, readyBy: string) => invoke<CloudRoutinesView>("routine_set_ready_by", { template, readyBy });
 
 // Automations -> Approvals (src-tauri/src/commands/approvals.rs).
 export const approvalsList = () => invoke<ApprovalView[]>("approvals_list");
@@ -524,3 +670,54 @@ export const meetingPrepBrief = (key: string) => invoke<NextMeetingView | null>(
 export const meetingChips = (ids: number[]) => invoke<MeetingChipsView[]>("meeting_chips", { ids });
 /** Serves today's cached recap unless `refresh`; otherwise calls a model (slow, costs). */
 export const todayRecap = (refresh: boolean) => invoke<TodayRecap>("today_recap", { refresh });
+
+// The launch through the coordinator (X4 Task 11c, src-tauri/src/commands/launch.rs). These work
+// before the memory database is open. None of them carries a key or the recovery file's text.
+/** Where the launch is, read on every mount (the window may have missed an event). */
+export const launchState = () => invoke<LaunchView>("launch_state");
+/** An answer to the current screen; false when that screen does not offer it. */
+export const launchRespond = (answer: LaunchAnswer) => invoke<boolean>("launch_respond", { answer });
+/** The first window rendered: counts the good launch once. */
+export const launchFirstWindowRendered = () => invoke<boolean>("launch_first_window_rendered");
+/** After a Delete everything: the line the onboarding shows first, once (the shell consumes it); null otherwise. */
+export const launchFreshLibraryNotice = () => invoke<string | null>("launch_fresh_library_notice");
+/** This launch opened a new, empty store because the library went missing: the app's one banner. */
+export const launchLibraryMissing = () => invoke<boolean>("launch_library_missing");
+/** Dismiss on that banner: gone for this launch, even after the window is rebuilt. */
+export const launchDismissLibraryMissing = () => invoke<void>("launch_dismiss_library_missing");
+/** Settings → Capture → Files kept aside: the set-aside `.foreign-N` files beside the memory database. */
+export const foreignFilesList = () => invoke<ForeignFilesView>("foreign_files_list");
+/** Deletes what core finds now (confirmed in the card). */
+export const foreignFilesDelete = (confirmed: number) => invoke<ForeignFilesDeleted>("foreign_files_delete", { confirmed });
+/** Recovery: a Windows open dialog; the file's text stays in the shell. */
+export const launchRecoveryChooseFile = () => invoke<ChosenFile>("launch_recovery_choose_file");
+export const launchRecoveryUnlockFile = (passphrase: string) => invoke<UseKeyResult>("launch_recovery_unlock_file", { passphrase });
+export const launchRecoveryUnlockWords = (words: string) => invoke<UseKeyResult>("launch_recovery_unlock_words", { words });
+/** The recovery setup (onboarding at launch, or the Settings opt-in). Argon2id: about a second. */
+export const setupBegin = (scope: SetupScope, passphrase: string) => invoke<SetupBegun>("setup_begin", { scope, passphrase });
+export const setupSaveFile = (scope: SetupScope) => invoke<SaveFileResult>("setup_save_file", { scope });
+export const setupVerify = (scope: SetupScope, passphrase: string) => invoke<boolean>("setup_verify", { scope, passphrase });
+export const setupStartOver = (scope: SetupScope) => invoke<boolean>("setup_start_over", { scope });
+export const setupContinue = (scope: SetupScope) => invoke<boolean>("setup_continue", { scope });
+export const setupSavedTo = (scope: SetupScope) => invoke<string | null>("setup_saved_to", { scope });
+/** Whether the scope's setup wraps an existing key (Start over then keeps the words); null when not open. */
+export const setupReusesKey = (scope: SetupScope) => invoke<boolean | null>("setup_reuses_key", { scope });
+/** Whether quitting now would waste words the shell made for a fresh key (what closing the window asks). */
+export const setupHasFreshMaterial = (scope: SetupScope) => invoke<boolean>("setup_has_fresh_material", { scope });
+
+// Settings > Capture & Privacy > Database encryption (commands/encryption.rs).
+export const encryptionCard = () => invoke<EncryptionCardView>("encryption_card");
+/** Runs before any key or words exist; null means the setup may start. */
+export const encryptionPrecheckForSetup = () => invoke<SetupRefusal | null>("encryption_precheck_for_setup");
+/** Stores the pending key (never replacing one) and sets "migrate at next launch". Never migrates. */
+export const encryptionEncrypt = () => invoke<EncryptOutcome>("encryption_encrypt");
+export const encryptionNoteAction = (action: NoteAction) => invoke<NoteActionResult>("encryption_note_action", { action });
+export const setFastSearch = (enabled: boolean) => invoke<boolean>("set_fast_search", { enabled });
+/** The local speed check: timings and the kind of PC only. Progress 0..1 arrives on `onProgress`. */
+export function speedCheckRun(onProgress: (overall: number) => void) {
+  const channel = new Channel<number>();
+  channel.onmessage = onProgress;
+  return invoke<SpeedCheckResult>("speed_check_run", { onProgress: channel });
+}
+export const speedCheckCancel = () => invoke<void>("speed_check_cancel");
+export const speedCheckSave = () => invoke<string | null>("speed_check_save");

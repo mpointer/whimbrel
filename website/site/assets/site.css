@@ -232,6 +232,9 @@ input:focus, select:focus { outline: none; border-color: var(--accent); box-shad
 .choice:has(input:checked) { border-color: var(--accent); background: var(--highlight); }
 .choice small { color: var(--text-2); font-size: .78rem; display: block; line-height: 1.1; }
 .choice input { accent-color: var(--accent); }
+/* The Windows on Arm choice and link stay hidden until a release carries an Arm build (site.js). */
+[data-arm-download][hidden] { display: none; }
+.platform-choice [data-arm-download] { grid-column: 1 / -1; }
 .platform-choice .field-error { grid-column: 1 / -1; }
 .checkbox { display: flex; gap: 10px; align-items: flex-start; font-size: .94rem; color: var(--text-2); }
 .checkbox input { margin-top: 5px; accent-color: var(--accent); }

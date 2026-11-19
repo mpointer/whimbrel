@@ -25,6 +25,8 @@ Usage (run on the device whose local DB holds the live set):
   sync-sweep-items.py --db kestrel-sync-<id> --device <device_id> --apply   # SAME snapshot + SQL; resumable
   --cutoff ISO8601_WITH_OFFSET   rows created at or after it are kept (default: snapshot time)
   --local-db PATH                the device's local sqlite (default: the Mac path)
+  --key-stdin                    the local DB is encrypted: its key (64 hex digits) is read from
+                                 stdin; needs the sqlcipher3 module. Or pass a decrypted copy with --local-db.
 """
 import argparse
 import bisect
@@ -60,6 +62,9 @@ def parser():
     ap.add_argument("--cutoff", help="ISO 8601 with offset; rows created at or after it are kept (default: snapshot time)")
     ap.add_argument("--apply", action="store_true", help="delete (default is dry run)")
     ap.add_argument("--sleep", type=float, default=0.5, help="seconds between --apply windows")
+    ap.add_argument("--key-stdin", action="store_true",
+                    help="the local DB is encrypted (X4): read its 64-hex-digit key from stdin "
+                         "(needs the sqlcipher3 module; the key is never taken from argv or a file)")
     return ap
 
 
@@ -82,6 +87,55 @@ def parse(argv=None):
     return a
 
 
+PLAIN_HEADER = b"SQLite format 3\x00"
+# The encrypted store's page size (memory::KEYED_PAGE_SIZE); SQLCipher needs it before the first read.
+KEYED_PAGE_SIZE = 16384
+# memory::KEYED_HMAC_ALGORITHM: SQLCipher's default is SHA-512, the store uses SHA-256.
+KEYED_HMAC_ALGORITHM = "HMAC_SHA256"
+
+
+def read_key(a):
+    """The database key from stdin, read once (64 hex digits, as `PRAGMA key = "x'...'"` takes it)."""
+    if getattr(a, "key_hex", None) is None:
+        k = sys.stdin.readline().strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", k):
+            sys.exit("refusing: --key-stdin expects one line of 64 hex digits on stdin")
+        a.key_hex = k
+    return a.key_hex
+
+
+def open_local(a):
+    """Read-only connection to the device's local DB. A plain file opens with the stdlib; an
+    encrypted one (Whimbrel's encryption at rest) only with --key-stdin and the sqlcipher3 module.
+    Without them, pass a decrypted copy with --local-db."""
+    try:
+        with open(a.local_db, "rb") as f:
+            head = f.read(len(PLAIN_HEADER))
+    except OSError as e:
+        sys.exit(f"refusing: cannot read {a.local_db}: {e}")
+    if head == PLAIN_HEADER:
+        return sqlite3.connect(f"file:{a.local_db}?mode=ro", uri=True)
+    if not a.key_stdin:
+        sys.exit(f"refusing: {a.local_db} is not a plain SQLite file (it is encrypted, or not a database). "
+                 "Pass a decrypted copy with --local-db, or the key on stdin with --key-stdin.")
+    try:
+        import sqlcipher3  # noqa: PLC0415 (only for encrypted local DBs)
+    except ImportError:
+        sys.exit("refusing: --key-stdin needs the sqlcipher3 Python module (pip install sqlcipher3-binary); "
+                 "or pass a decrypted copy with --local-db.")
+    key = read_key(a)
+    c = sqlcipher3.connect(f"file:{a.local_db}?mode=ro", uri=True)
+    c.execute(f"PRAGMA key = \"x'{key}'\"")
+    c.execute(f"PRAGMA cipher_page_size = {KEYED_PAGE_SIZE}")
+    c.execute(f"PRAGMA cipher_hmac_algorithm = {KEYED_HMAC_ALGORITHM}")
+    try:
+        c.execute("SELECT count(*) FROM sqlite_master").fetchone()
+    except Exception:  # noqa: BLE001 (any failure here means the key does not open it)
+        c.close()
+        sys.exit(f"refusing: the key on stdin does not open {a.local_db}")
+    return c
+
+
 def turso(db, sql):
     """Run one statement; return the result rows (list of whitespace-split lines, header dropped)."""
     for attempt in range(5):
@@ -96,7 +150,7 @@ def turso(db, sql):
 
 def snapshot(a):
     """Read-only snapshot of the live set and push cursor."""
-    c = sqlite3.connect(f"file:{a.local_db}?mode=ro", uri=True)
+    c = open_local(a)
     # A device never has a pull cursor for itself, so a local DB with one for --device belongs to
     # another device: its keep set would be wrong and --apply would delete live rows.
     if c.execute("SELECT 1 FROM sync_cursor WHERE peer_device_id = ?", (a.device,)).fetchone():
@@ -176,7 +230,7 @@ def dry_run(a):
     if not tot["delete"]:
         print("nothing to delete; no sample check", flush=True)
         return
-    c = sqlite3.connect(f"file:{a.local_db}?mode=ro", uri=True)
+    c = open_local(a)
     ws = list(windows(keep, cap))
     checked = 0
     while checked < 20:

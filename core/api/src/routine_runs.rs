@@ -2,23 +2,43 @@
 //! (M3.0). The other `whimbrel_routines_*` C functions are single-`Store`-call
 //! pass-throughs and have no twin here — a Rust shell calls `memory::Store` directly.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::TimeZone;
 
-use crate::routing::{build_chain_for_routine, RoutineModelPref, RoutingConfig};
+use crate::routing::{build_chain_for_routine, RoutineModelPref, RoutingConfig, Transport};
+
+/// Tests: the chain every routine of this thread's [`tick`] runs down (a recording transport), in place of the
+/// one built from routing.
+#[cfg(test)]
+pub(crate) type TestChain = Box<dyn Fn(&memory::Store) -> Vec<llm::ChainLink>>;
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_CHAIN: std::cell::RefCell<Option<TestChain>> = const { std::cell::RefCell::new(None) };
+}
 
 /// The routine's chain without over-budget providers; `None` when a spent budget stops the
 /// run. A pinned model that made it to the front of the chain does not fall through.
+/// `transport`, when set, makes each link's client ([`crate::routing::with_transport`]).
 fn routine_chain(
     store: &memory::Store,
     model_pref: &str,
     ollama_model: &str,
     routing: &RoutingConfig,
     now_unix_ms: i64,
+    transport: Option<&Transport>,
 ) -> Option<Vec<llm::ChainLink>> {
+    #[cfg(test)]
+    if let Some(chain) = TEST_CHAIN.with(|c| c.borrow().as_ref().map(|f| f(store))) {
+        return Some(chain);
+    }
     let pref = RoutineModelPref::parse(model_pref);
-    let chain = build_chain_for_routine(&pref, ollama_model, routing);
+    let chain = build_chain_for_routine(&pref, ollama_model, routing, &crate::exclusion::current_gate(store));
+    let chain = match transport {
+        Some(t) => crate::routing::with_transport(store, chain, t),
+        None => chain,
+    };
     let pinned = matches!(&pref, RoutineModelPref::Pinned { provider, .. } if chain.first().is_some_and(|l| l.provider == *provider));
     crate::budget::apply_budgets(store, chain, pinned, now_unix_ms).ok()
 }
@@ -91,7 +111,177 @@ pub fn tick(
     recipient_email: Option<&str>,
     gate: impl Into<RunGate>,
 ) -> rusqlite::Result<Vec<memory::RoutineRun>> {
-    let gate = gate.into();
+    run_due(store, now_unix_ms, ollama_model, routing, today_events, gmail_connected, recipient_email, gate.into(), Scope::Every, None)
+}
+
+/// Which routines the cloud runner owns (spec 2026-11-15-cloud-routine-runner-design.md, Amendment 8),
+/// read from synced settings by the caller.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CloudPolicy {
+    /// The templates flagged to run in the cloud, by their stored name (`daily_brief`, `eod_recap`, ...).
+    /// A template that is not [`routines::cloud_eligible`] is never treated as flagged.
+    pub cloud_templates: Vec<String>,
+    /// Whether the runner's heartbeat is under its grace period old.
+    pub runner_fresh: bool,
+    /// Each template's ready-by time ("HH:MM", from `routine.<template>.readyBy`). Empty means every
+    /// routine keeps its schedule.
+    pub ready_by: HashMap<String, String>,
+}
+
+/// The run time the runner allows for when it starts a routine before its ready-by time. A placeholder
+/// until the author-only phase measures the p95 (plan Task 9).
+pub const READY_BY_P95_MS: i64 = 180_000;
+
+/// The safety margin added to [`READY_BY_P95_MS`]. A placeholder until Task 9 measures.
+pub const READY_BY_MARGIN_MS: i64 = 120_000;
+
+/// The latest local time a device waits until before it stands in for a cloud routine with a ready-by
+/// time: a ready-by whose grace would end after it (or tomorrow) stands in here instead, unless the
+/// ready-by itself is later, when it stands in at the ready-by.
+pub const DEVICE_STAND_IN_CAP_HHMM: &str = "23:30";
+
+impl CloudPolicy {
+    pub(crate) fn flags(&self, t: &memory::RoutineTemplate) -> bool {
+        routines::cloud_eligible(t) && self.cloud_templates.iter().any(|c| *c == template_name(t))
+    }
+
+    /// The ready-by time set for `t`, if any.
+    fn ready_by_for(&self, t: &memory::RoutineTemplate) -> Option<&str> {
+        self.ready_by.get(&template_name(t)).map(String::as_str)
+    }
+}
+
+/// Who is calling [`tick_cloud`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunnerRole {
+    /// The cloud runner: no local model, no connectors.
+    Runner,
+    /// A person's own device.
+    Device,
+}
+
+/// The stored name of `t`, as its serde form.
+fn template_name(t: &memory::RoutineTemplate) -> String {
+    serde_json::to_value(t).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+}
+
+/// The note on a run the runner could not make because the client settings keep it off hosted models
+/// (Amendment 7). Not translated yet: `memory::l10n::text` falls back to this English key.
+pub const LEFT_FOR_YOUR_COMPUTER: &str = "Left for your computer: your client settings keep this routine off hosted AI.";
+
+/// The `output_json` field marking a run as [`LEFT_FOR_YOUR_COMPUTER`]; its value is why.
+pub const LEFT_FOR_COMPUTER_FIELD: &str = "left_for_computer";
+
+/// Whether `run` is the runner's "left for your computer" row: the computer does not count it as
+/// that day's run.
+pub fn is_left_for_computer(run: &memory::RoutineRun) -> bool {
+    run.status == memory::RunStatus::Failed
+        && serde_json::from_str::<serde_json::Value>(&run.output_json).is_ok_and(|j| j.get(LEFT_FOR_COMPUTER_FIELD).is_some())
+}
+
+/// [`tick`] for an account with the cloud runner.
+///
+/// On a `Device`, a routine flagged for the cloud is skipped until `routines::FAILOVER_GRACE_MS`
+/// past its ready-by time (its scheduled time when it has none; with a ready-by, no later than
+/// [`DEVICE_STAND_IN_CAP_HHMM`] and never before the ready-by), fresh runner or stale; after that it
+/// runs here if no run is dated today
+/// (the runner made nothing: spend cap, no provider, provider down, or no runner at all). A run the
+/// runner left for this computer today is not counted as that day's run, so the device takes it back
+/// at once. `gate` applies throughout. Unflagged routines behave as in [`tick`]. `runner_fresh` does
+/// not change the device's rule today; it is kept for the caller's status display and later use.
+///
+/// On the `Runner`, only flagged and eligible templates run. One with a ready-by time is due once
+/// [`routines::ready_by_start_ms`] (ready-by minus [`READY_BY_P95_MS`] and [`READY_BY_MARGIN_MS`]) has
+/// passed today, else at its schedule; the once-a-day check is the same. `gate` is treated as `Full`, and no
+/// email draft is made (`gmail_connected` and `recipient_email` are ignored). The chain is the
+/// runner's own and passes the same exclusion filter and guard as on a device; when the guard
+/// refuses (the request carries an excluded client, or the setting cannot be read) a `Failed` run
+/// noted [`LEFT_FOR_YOUR_COMPUTER`] is stored instead, so the person's computer runs it. Meeting
+/// prep is event-driven and is never run by either tick.
+#[allow(clippy::too_many_arguments)]
+pub fn tick_cloud(
+    store: &memory::Store,
+    now_unix_ms: i64,
+    ollama_model: &str,
+    routing: &RoutingConfig,
+    today_events: &[routines::CalendarEventSummary],
+    gmail_connected: bool,
+    recipient_email: Option<&str>,
+    gate: impl Into<RunGate>,
+    policy: &CloudPolicy,
+    role: RunnerRole,
+) -> rusqlite::Result<Vec<memory::RoutineRun>> {
+    tick_cloud_with_transport(store, now_unix_ms, ollama_model, routing, today_events, gmail_connected, recipient_email, gate, policy, role, None)
+}
+
+/// [`tick_cloud`] with each chain link's client made by `transport` when it is set
+/// ([`crate::routing::with_transport`]): the chain, its budgets and its exclusion gate are the
+/// same. The cloud runner passes its own (`None` in production) so its tests need no network.
+#[allow(clippy::too_many_arguments)]
+pub fn tick_cloud_with_transport(
+    store: &memory::Store,
+    now_unix_ms: i64,
+    ollama_model: &str,
+    routing: &RoutingConfig,
+    today_events: &[routines::CalendarEventSummary],
+    gmail_connected: bool,
+    recipient_email: Option<&str>,
+    gate: impl Into<RunGate>,
+    policy: &CloudPolicy,
+    role: RunnerRole,
+    transport: Option<&Transport>,
+) -> rusqlite::Result<Vec<memory::RoutineRun>> {
+    let (gate, gmail_connected, recipient_email) = match role {
+        RunnerRole::Runner => (RunGate::Full, false, None),
+        RunnerRole::Device => (gate.into(), gmail_connected, recipient_email),
+    };
+    run_due(store, now_unix_ms, ollama_model, routing, today_events, gmail_connected, recipient_email, gate, Scope::Cloud(policy, role), transport)
+}
+
+/// Which routines one tick considers.
+#[derive(Clone, Copy)]
+enum Scope<'a> {
+    /// Every enabled routine ([`tick`]).
+    Every,
+    /// [`tick_cloud`]'s split between the runner and this device.
+    Cloud(&'a CloudPolicy, RunnerRole),
+}
+
+/// On the runner, a chain the exclusion guard refused leaves a "left for your computer" row. Other
+/// failures, and every failure on a device, skip the routine as before (due again next tick).
+fn note_refusal(store: &memory::Store, scope: Scope, routine_id: i64, now_unix_ms: i64, lang: &str, failures: &[llm::ProviderFailureKind]) {
+    if !matches!(scope, Scope::Cloud(_, RunnerRole::Runner)) {
+        return;
+    }
+    let why = if failures.contains(&llm::ProviderFailureKind::ExclusionUnreadable) {
+        "exclusion_unreadable"
+    } else if failures.contains(&llm::ProviderFailureKind::ExcludedClient) {
+        "excluded_client"
+    } else {
+        return;
+    };
+    let _ = store.insert_routine_run(&memory::NewRoutineRun {
+        routine_id,
+        ran_at_unix_ms: now_unix_ms,
+        status: memory::RunStatus::Failed,
+        output_summary: memory::l10n::text(lang, LEFT_FOR_YOUR_COMPUTER, &[]),
+        output_json: serde_json::json!({ LEFT_FOR_COMPUTER_FIELD: why }).to_string(),
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_due(
+    store: &memory::Store,
+    now_unix_ms: i64,
+    ollama_model: &str,
+    routing: &RoutingConfig,
+    today_events: &[routines::CalendarEventSummary],
+    gmail_connected: bool,
+    recipient_email: Option<&str>,
+    gate: RunGate,
+    scope: Scope,
+    transport: Option<&Transport>,
+) -> rusqlite::Result<Vec<memory::RoutineRun>> {
     store.seed_builtin_routines()?;
     // The primary-device gate (docs/superpowers/specs/2026-10-08-primary-device-routines-design.md):
     // a device that is not the one chosen to run routines seeds them, so pulled runs have a routine to
@@ -127,18 +317,79 @@ pub fn tick(
         .unwrap_or_default();
 
     for routine in all_routines.iter().filter(|r| r.enabled) {
-        let last_run_local_date = match store.most_recent_routine_run(routine.id) {
-            Ok(Some(run)) => chrono::Local
+        let Ok(last_run) = store.most_recent_routine_run(routine.id) else {
+            continue;
+        };
+        let failover = gate == RunGate::Failover;
+        let mut last_run_counts = true;
+        // On the runner, a ready-by time moves the start earlier than the schedule.
+        let mut early_start: Option<i64> = None;
+        match scope {
+            Scope::Every => {}
+            Scope::Cloud(policy, RunnerRole::Runner) => {
+                if !policy.flags(&routine.template) {
+                    continue;
+                }
+                early_start = policy.ready_by_for(&routine.template).and_then(|hhmm| {
+                    routines::ready_by_start_ms(hhmm, now_local, READY_BY_P95_MS, READY_BY_MARGIN_MS)
+                });
+            }
+            Scope::Cloud(policy, RunnerRole::Device) => {
+                if policy.flags(&routine.template) {
+                    let left_today = last_run.as_ref().is_some_and(|run| {
+                        is_left_for_computer(run)
+                            && chrono::Local.timestamp_millis_opt(run.ran_at_unix_ms).single().map(|dt| dt.date_naive())
+                                == Some(now_local.date_naive())
+                    });
+                    if left_today {
+                        // The runner handed it back today: not today's run here, and no wait.
+                        last_run_counts = false;
+                    } else {
+                        // Fresh or stale, the runner has until the grace has passed, counted from the
+                        // ready-by time when one is set; after it, a routine with no run today (the runner
+                        // made nothing) runs here. A ready-by whose grace would end after
+                        // DEVICE_STAND_IN_CAP_HHMM is capped there, so a late ready-by still gets a stand-in
+                        // the same day, but never before the ready-by itself.
+                        let ready_by = policy
+                            .ready_by_for(&routine.template)
+                            .and_then(|hhmm| routines::scheduled_start_unix_ms(hhmm, now_local));
+                        let stand_in = match ready_by {
+                            Some(ready) => {
+                                let after_grace = ready + routines::FAILOVER_GRACE_MS;
+                                let capped = routines::scheduled_start_unix_ms(DEVICE_STAND_IN_CAP_HHMM, now_local)
+                                    .map_or(after_grace, |cap| after_grace.min(cap));
+                                Some(ready.max(capped))
+                            }
+                            None => routines::scheduled_start_unix_ms(&routine.schedule_hhmm, now_local)
+                                .map(|start| start + routines::FAILOVER_GRACE_MS),
+                        };
+                        let grace_passed = stand_in.is_some_and(|at| now_unix_ms >= at);
+                        if !grace_passed {
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        let last_run_local_date = last_run.filter(|_| last_run_counts).and_then(|run| {
+            chrono::Local
                 .timestamp_millis_opt(run.ran_at_unix_ms)
                 .single()
-                .map(|dt| dt.date_naive()),
-            Ok(None) => None,
-            Err(_) => continue,
+                .map(|dt| dt.date_naive())
+        });
+        let due = match early_start {
+            // The schedule's time of day is replaced by the early start; the on/off, once-a-day and
+            // weekday checks are `is_due`'s.
+            Some(start) => {
+                let from_midnight = memory::Routine { schedule_hhmm: "00:00".to_string(), ..routine.clone() };
+                now_unix_ms >= start && routines::is_due(&from_midnight, now_local, last_run_local_date)
+            }
+            None => routines::is_due(routine, now_local, last_run_local_date),
         };
-        if !routines::is_due(routine, now_local, last_run_local_date) {
+        if !due {
             continue;
         }
-        if gate == RunGate::Failover && !routines::failover_eligible(routine, now_unix_ms, now_local) {
+        if failover && !routines::failover_eligible(routine, now_unix_ms, now_local) {
             continue;
         }
 
@@ -154,30 +405,43 @@ pub fn tick(
                     continue;
                 }
 
-                let Some(chain) = routine_chain(store, &routine.model_pref, ollama_model, routing, now_unix_ms) else {
+                let Some(chain) = routine_chain(store, &routine.model_pref, ollama_model, routing, now_unix_ms, transport) else {
                     continue;
                 };
-                let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
+                // A chain that can reach a hosted model gets no excluded client's material.
+                let filter = crate::exclusion::filter_for_chain(store, &chain);
+                // Today's events are stored in the run: an excluded client's are left out.
+                let events = crate::exclusion::events_without_excluded(store, today_events, &filter);
+                let tried = llm::try_chain_with_failures(&chain, |entry| {
                     routines::run_daily_brief_with(
                         store,
                         entry.client.as_ref(),
+                        &filter,
                         yesterday_start,
                         yesterday_end,
-                        today_events,
+                        &events,
                         now_unix_ms,
                         &llm::profile::compose_instructions(&routing.daily_digest_instructions, &routing.profile, &routing.output_language),
                         &routing.output_language,
                         llm::limited_use::link_may_receive_google_data(entry, routing.google_data_policy()),
                     )
-                }) else {
-                    continue;
+                });
+                let (outcome, entry) = match tried {
+                    Ok(done) => done,
+                    Err(failures) => {
+                        note_refusal(store, scope, routine.id, now_unix_ms, &routing.output_language, &failures);
+                        continue;
+                    }
                 };
                 crate::util::log_link_usage(store, entry, "routine", outcome.token_usage);
+                let input_refs = outcome.input_refs;
                 let mut new_run = outcome.new_run;
                 new_run.routine_id = routine.id;
                 let Ok(run_id) = store.insert_routine_run(&new_run) else {
                     continue;
                 };
+                // Fix round 1, B3: clean only when built from filtered material.
+                let _ = store.set_routine_run_provenance(run_id, &crate::exclusion::provenance_for(store, &filter, input_refs));
                 completed_runs.push(memory::RoutineRun {
                     id: run_id,
                     routine_id: new_run.routine_id,
@@ -230,13 +494,16 @@ pub fn tick(
                     continue;
                 }
 
-                let Some(chain) = routine_chain(store, &routine.model_pref, ollama_model, routing, now_unix_ms) else {
+                let Some(chain) = routine_chain(store, &routine.model_pref, ollama_model, routing, now_unix_ms, transport) else {
                     continue;
                 };
-                let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
+                // A chain that can reach a hosted model gets no excluded client's material.
+                let filter = crate::exclusion::filter_for_chain(store, &chain);
+                let tried = llm::try_chain_with_failures(&chain, |entry| {
                     routines::run_eod_recap_with(
                         store,
                         entry.client.as_ref(),
+                        &filter,
                         today_start,
                         today_end,
                         now_unix_ms,
@@ -246,15 +513,23 @@ pub fn tick(
                         &routing.output_language,
                         llm::limited_use::link_may_receive_google_data(entry, routing.google_data_policy()),
                     )
-                }) else {
-                    continue;
+                });
+                let (outcome, entry) = match tried {
+                    Ok(done) => done,
+                    Err(failures) => {
+                        note_refusal(store, scope, routine.id, now_unix_ms, &routing.output_language, &failures);
+                        continue;
+                    }
                 };
                 crate::util::log_link_usage(store, entry, "routine", outcome.token_usage);
+                let input_refs = outcome.input_refs;
                 let mut new_run = outcome.new_run;
                 new_run.routine_id = routine.id;
                 let Ok(run_id) = store.insert_routine_run(&new_run) else {
                     continue;
                 };
+                // Fix round 1, B3: clean only when built from filtered material.
+                let _ = store.set_routine_run_provenance(run_id, &crate::exclusion::provenance_for(store, &filter, input_refs));
                 completed_runs.push(memory::RoutineRun {
                     id: run_id,
                     routine_id: routine.id,
@@ -299,13 +574,16 @@ pub fn tick(
                     continue;
                 }
 
-                let Some(chain) = routine_chain(store, &routine.model_pref, ollama_model, routing, now_unix_ms) else {
+                let Some(chain) = routine_chain(store, &routine.model_pref, ollama_model, routing, now_unix_ms, transport) else {
                     continue;
                 };
-                let Some((outcome, entry)) = llm::try_chain(&chain, |entry| {
+                // A chain that can reach a hosted model gets no excluded client's material.
+                let filter = crate::exclusion::filter_for_chain(store, &chain);
+                let tried = llm::try_chain_with_failures(&chain, |entry| {
                     routines::run_weekly_digest_with(
                         store,
                         entry.client.as_ref(),
+                        &filter,
                         week_start,
                         week_end,
                         now_unix_ms,
@@ -314,15 +592,23 @@ pub fn tick(
                         &llm::profile::compose_instructions(&routing.weekly_digest_instructions, &routing.profile, &routing.output_language),
                         llm::limited_use::link_may_receive_google_data(entry, routing.google_data_policy()),
                     )
-                }) else {
-                    continue;
+                });
+                let (outcome, entry) = match tried {
+                    Ok(done) => done,
+                    Err(failures) => {
+                        note_refusal(store, scope, routine.id, now_unix_ms, &routing.output_language, &failures);
+                        continue;
+                    }
                 };
                 crate::util::log_link_usage(store, entry, "routine", outcome.token_usage);
+                let input_refs = outcome.input_refs;
                 let mut new_run = outcome.new_run;
                 new_run.routine_id = routine.id;
                 let Ok(run_id) = store.insert_routine_run(&new_run) else {
                     continue;
                 };
+                // Fix round 1, B3: clean only when built from filtered material.
+                let _ = store.set_routine_run_provenance(run_id, &crate::exclusion::provenance_for(store, &filter, input_refs));
                 completed_runs.push(memory::RoutineRun {
                     id: run_id,
                     routine_id: routine.id,
@@ -360,6 +646,9 @@ pub fn tick(
                 let Ok(run_id) = store.insert_routine_run(&new_run) else {
                     continue;
                 };
+                // Built from every waiting thread, unfiltered: clean only while nothing is excluded.
+                // No recorded inputs: never clean while a client is excluded.
+                let _ = store.set_routine_run_provenance(run_id, memory::topics::exclusion::UNFILTERED_PROVENANCE);
                 completed_runs.push(memory::RoutineRun {
                     id: run_id,
                     routine_id: routine.id,
@@ -623,6 +912,367 @@ mod tests {
         assert!(again.iter().all(|r| r.routine_id != routine.id), "not again the same day");
     }
 
+    fn policy(templates: &[&str], runner_fresh: bool) -> CloudPolicy {
+        CloudPolicy { cloud_templates: templates.iter().map(|t| t.to_string()).collect(), runner_fresh, ..CloudPolicy::default() }
+    }
+
+    fn with_ready_by(mut policy: CloudPolicy, template: &str, hhmm: &str) -> CloudPolicy {
+        policy.ready_by.insert(template.to_string(), hhmm.to_string());
+        policy
+    }
+
+    #[test]
+    fn the_runner_starts_a_flagged_routine_early_enough_to_be_ready_by_the_ready_by_time() {
+        let store = memory::Store::open_in_memory().unwrap();
+        store.seed_builtin_routines().unwrap();
+        // The brief is scheduled at 08:30 but must be ready by 07:00.
+        let cloud = with_ready_by(policy(&["daily_brief"], true), "daily_brief", "07:00");
+        let ready = local_millis_at(2026, 8, 3, 7, 0);
+        let start = ready - READY_BY_P95_MS - READY_BY_MARGIN_MS;
+        assert!(run_cloud(&store, start - 60_000, RunGate::Full, &cloud, RunnerRole::Runner).is_empty(), "not before its start");
+        let ran = run_cloud(&store, start, RunGate::Full, &cloud, RunnerRole::Runner);
+        assert_eq!(ran.len(), 1, "runs at ready-by minus p95 and margin, before its 08:30 schedule");
+        assert_eq!(template_of(&store, &ran[0]), memory::RoutineTemplate::DailyBrief);
+        // The once-a-day check holds: not again at its schedule, nor later that day.
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 8, 30), RunGate::Full, &cloud, RunnerRole::Runner).is_empty());
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 23, 0), RunGate::Full, &cloud, RunnerRole::Runner).is_empty());
+        // A malformed ready-by falls back to the schedule.
+        let store = memory::Store::open_in_memory().unwrap();
+        let bad = with_ready_by(policy(&["daily_brief"], true), "daily_brief", "7am");
+        assert!(run_cloud(&store, start, RunGate::Full, &bad, RunnerRole::Runner).is_empty());
+        assert_eq!(run_cloud(&store, local_millis_at(2026, 8, 3, 8, 30), RunGate::Full, &bad, RunnerRole::Runner).len(), 1);
+    }
+
+    #[test]
+    fn without_ready_by_the_runner_uses_the_schedule() {
+        let store = memory::Store::open_in_memory().unwrap();
+        // A ready-by for another template does not move the brief.
+        let cloud = with_ready_by(policy(&["daily_brief"], true), "eod_recap", "07:00");
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 8, 29), RunGate::Full, &cloud, RunnerRole::Runner).is_empty());
+        assert_eq!(run_cloud(&store, local_millis_at(2026, 8, 3, 8, 30), RunGate::Full, &cloud, RunnerRole::Runner).len(), 1);
+    }
+
+    #[test]
+    fn a_late_ready_by_still_lets_the_device_stand_in_at_23_30_when_nothing_synced() {
+        // Ready by 21:30: ready-by plus the grace is 00:30 tomorrow, so the device stands in at 23:30 today.
+        let cloud = with_ready_by(policy(&["daily_brief"], true), "daily_brief", "21:30");
+        let store = memory::Store::open_in_memory().unwrap();
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 23, 29), RunGate::Full, &cloud, RunnerRole::Device).is_empty());
+        assert_eq!(run_cloud(&store, local_millis_at(2026, 8, 3, 23, 30), RunGate::Full, &cloud, RunnerRole::Device).len(), 1);
+        // A run synced in for today: the device does not stand in.
+        let synced = memory::Store::open_in_memory().unwrap();
+        assert_eq!(run_cloud(&synced, local_millis_at(2026, 8, 3, 21, 0), RunGate::Full, &policy(&["daily_brief"], true), RunnerRole::Runner).len(), 1);
+        assert!(run_cloud(&synced, local_millis_at(2026, 8, 3, 23, 45), RunGate::Full, &cloud, RunnerRole::Device).is_empty());
+    }
+
+    #[test]
+    fn a_ready_by_whose_grace_ends_before_23_30_stands_in_at_ready_by_plus_grace() {
+        let cloud = with_ready_by(policy(&["daily_brief"], true), "daily_brief", "20:00");
+        let store = memory::Store::open_in_memory().unwrap();
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 22, 59), RunGate::Full, &cloud, RunnerRole::Device).is_empty());
+        assert_eq!(run_cloud(&store, local_millis_at(2026, 8, 3, 23, 0), RunGate::Full, &cloud, RunnerRole::Device).len(), 1);
+    }
+
+    #[test]
+    fn the_cap_never_fires_before_ready_by_itself() {
+        // Ready by 23:45 (after the 23:30 cap): the device stands in at 23:45, never before.
+        let cloud = with_ready_by(policy(&["daily_brief"], true), "daily_brief", "23:45");
+        let store = memory::Store::open_in_memory().unwrap();
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 23, 30), RunGate::Full, &cloud, RunnerRole::Device).is_empty());
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 23, 44), RunGate::Full, &cloud, RunnerRole::Device).is_empty());
+        assert_eq!(run_cloud(&store, local_millis_at(2026, 8, 3, 23, 45), RunGate::Full, &cloud, RunnerRole::Device).len(), 1);
+    }
+
+    #[test]
+    fn the_device_grace_counts_from_ready_by() {
+        // Brief at 08:30, ready by 10:00: the device waits until 13:00, not 11:30.
+        let cloud = with_ready_by(policy(&["daily_brief"], true), "daily_brief", "10:00");
+        let store = memory::Store::open_in_memory().unwrap();
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 11, 30), RunGate::Full, &cloud, RunnerRole::Device).is_empty());
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 12, 59), RunGate::Full, &cloud, RunnerRole::Device).is_empty());
+        assert_eq!(run_cloud(&store, local_millis_at(2026, 8, 3, 13, 0), RunGate::Full, &cloud, RunnerRole::Device).len(), 1);
+        // Ready by 07:00 (before the 08:30 schedule): the device may stand in from 10:00.
+        let early = with_ready_by(policy(&["daily_brief"], true), "daily_brief", "07:00");
+        let store = memory::Store::open_in_memory().unwrap();
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 9, 59), RunGate::Full, &early, RunnerRole::Device).is_empty());
+        assert_eq!(run_cloud(&store, local_millis_at(2026, 8, 3, 10, 0), RunGate::Full, &early, RunnerRole::Device).len(), 1);
+    }
+
+    fn run_cloud(store: &memory::Store, ms: i64, gate: RunGate, policy: &CloudPolicy, role: RunnerRole) -> Vec<memory::RoutineRun> {
+        tick_cloud(store, ms, "gemma4:12b", &RoutingConfig::default(), &[], false, None, gate, policy, role).unwrap()
+    }
+
+    fn template_of(store: &memory::Store, run: &memory::RoutineRun) -> memory::RoutineTemplate {
+        store.list_routines().unwrap().into_iter().find(|r| r.id == run.routine_id).unwrap().template
+    }
+
+    #[test]
+    fn device_skips_a_cloud_routine_while_the_runner_is_fresh() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let at = local_millis_at(2026, 8, 3, 9, 0);
+        assert!(run_cloud(&store, at, RunGate::Full, &policy(&["daily_brief"], true), RunnerRole::Device).is_empty());
+        assert!(store.recent_routine_runs_across_all(10).unwrap().is_empty());
+        // Control: the same device runs it when it is not flagged for the cloud.
+        assert_eq!(run_cloud(&store, at, RunGate::Full, &policy(&[], true), RunnerRole::Device).len(), 1);
+    }
+
+    #[test]
+    fn device_runs_it_under_the_failover_rule_when_the_runner_is_stale() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let stale = policy(&["daily_brief"], false);
+        // 08:30 brief: not before the grace period has passed, even on the primary.
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 9, 0), RunGate::Full, &stale, RunnerRole::Device).is_empty());
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 11, 29), RunGate::Full, &stale, RunnerRole::Device).is_empty());
+        let ran = run_cloud(&store, local_millis_at(2026, 8, 3, 11, 30), RunGate::Full, &stale, RunnerRole::Device);
+        assert_eq!(ran.len(), 1);
+        assert_eq!(template_of(&store, &ran[0]), memory::RoutineTemplate::DailyBrief);
+        // Off still runs nothing.
+        let store = memory::Store::open_in_memory().unwrap();
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 12, 0), RunGate::Off, &stale, RunnerRole::Device).is_empty());
+    }
+
+    #[test]
+    fn runner_runs_only_flagged_eligible_templates() {
+        let store = memory::Store::open_in_memory().unwrap();
+        store.seed_builtin_routines().unwrap();
+        for r in store.list_routines().unwrap() {
+            store.set_routine_enabled(r.id, true).unwrap();
+        }
+        // Write routines and reply priorities are flagged too: the runner still never runs them.
+        let flagged = policy(&["daily_brief", "reply_priorities", "focus_time", "away_follow_up"], true);
+        let late = local_millis_at(2026, 8, 3, 23, 0);
+        // The gate is the device's own setting; the runner treats it as Full.
+        let ran = tick_cloud(&store, late, "gemma4:12b", &RoutingConfig::default(), &[], true, Some("me@example.com"), RunGate::Off, &flagged, RunnerRole::Runner)
+            .unwrap();
+        assert_eq!(ran.len(), 1, "{ran:?}");
+        assert_eq!(template_of(&store, &ran[0]), memory::RoutineTemplate::DailyBrief);
+        assert!(store.pending_routine_runs().unwrap().is_empty(), "no draft is parked on the runner");
+        // An eligible template that is not flagged does not run there either.
+        let store = memory::Store::open_in_memory().unwrap();
+        assert!(run_cloud(&store, late, RunGate::Full, &policy(&["eod_recap"], true), RunnerRole::Runner).is_empty());
+        assert!(store.recent_routine_runs_across_all(10).unwrap().is_empty());
+    }
+
+    /// A model transport that keeps every prompt it is sent.
+    struct Recorder(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl llm::LlmClient for Recorder {
+        fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            self.0.lock().unwrap().push(prompt.to_string());
+            Ok(llm::Completion { text: r#"{"summary": "A day.", "open_loops": []}"#.into(), token_usage: llm::TokenUsage::default() })
+        }
+    }
+
+    /// A store with Acme excluded from hosted models and one meeting yesterday that does not name it.
+    fn excluded_client_store() -> (tempfile::TempDir, memory::Store) {
+        use memory::topics::client_controls::ClientControl;
+        let dir = tempfile::tempdir().unwrap();
+        let store = memory::Store::open(&dir.path().join("t.db"), dir.path()).unwrap();
+        let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+        store.set_client_control(&acme.key, &ClientControl { exclude_hosted: true, keep_months: None }).unwrap();
+        let start = local_millis_at(2026, 8, 2, 14, 0);
+        let id = store
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "d".into(),
+                start_unix_ms: start,
+                end_unix_ms: Some(start + 60_000),
+                title: "Team call".into(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Calendar,
+                audio_path: None,
+                status: memory::MeetingStatus::Completed,
+            })
+            .unwrap();
+        assert!(store.set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_OTHER).unwrap());
+        store
+            .insert_transcript_segments(&[memory::NewTranscriptSegment { meeting_id: id, start_cs: 0, speaker_label: "Speaker 1".into(), text: "The Globex review is next week.".into() }])
+            .unwrap();
+        store.update_meeting_summary(id, "Globex review next week.", &[], &[], &[], "anthropic", "m").unwrap();
+        (dir, store)
+    }
+
+    #[test]
+    fn an_excluded_client_request_is_refused_on_the_runner_chain_and_the_run_row_notes_it() {
+        let (_dir, store) = excluded_client_store();
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = sent.clone();
+        // The runner's chain: hosted only, behind the gate production uses.
+        TEST_CHAIN.with(|c| {
+            *c.borrow_mut() = Some(Box::new(move |s: &memory::Store| {
+                vec![llm::guard_hosted(
+                    llm::ChainLink { provider: llm::Provider::Anthropic, model: "claude-test".into(), client: Box::new(Recorder(recorder.clone())) },
+                    crate::exclusion::current_gate(s),
+                )]
+            }))
+        });
+        // The routine's own request names the client.
+        let routing = RoutingConfig { daily_digest_instructions: "Always lead with Acme.".into(), ..RoutingConfig::default() };
+        let cloud = policy(&["daily_brief"], true);
+        let at = local_millis_at(2026, 8, 3, 9, 0);
+        let ran = tick_cloud(&store, at, "gemma4:12b", &routing, &[], false, None, RunGate::Full, &cloud, RunnerRole::Runner);
+        TEST_CHAIN.with(|c| *c.borrow_mut() = None);
+        assert!(ran.unwrap().is_empty(), "nothing was produced");
+        assert!(sent.lock().unwrap().is_empty(), "nothing was sent to the hosted model");
+        let brief = store.list_routines().unwrap().into_iter().find(|r| r.template == memory::RoutineTemplate::DailyBrief).unwrap();
+        let row = store.most_recent_routine_run(brief.id).unwrap().expect("the run row says why");
+        assert_eq!(row.status, memory::RunStatus::Failed);
+        assert_eq!(row.output_summary, LEFT_FOR_YOUR_COMPUTER);
+        assert!(is_left_for_computer(&row));
+        let stored = format!("{} {}", row.output_summary, row.output_json).to_lowercase();
+        assert!(!stored.contains("acme"), "the note never names the client: {stored}");
+        // The runner does not try again the same day.
+        assert!(tick_cloud(&store, at + 60_000, "gemma4:12b", &routing, &[], false, None, RunGate::Full, &cloud, RunnerRole::Runner).unwrap().is_empty());
+        assert_eq!(store.recent_routine_runs(brief.id, 10).unwrap().len(), 1);
+    }
+
+    /// The cloud runner's seam: a substituted transport changes only the client a link talks
+    /// through. The chain still comes from routing and every hosted link stays behind the gate.
+    #[test]
+    fn a_substituted_transport_stays_behind_the_exclusion_gate() {
+        let (_dir, store) = excluded_client_store();
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = sent.clone();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_by = seen.clone();
+        let transport = move |provider: llm::Provider, model: &str| -> Box<dyn llm::LlmClient> {
+            seen_by.lock().unwrap().push((provider, model.to_string()));
+            Box::new(Recorder(recorder.clone()))
+        };
+        let routing = RoutingConfig {
+            preferred_provider: "anthropic".into(),
+            anthropic_key: Some("k".into()),
+            use_local_model: false,
+            daily_digest_instructions: "Always lead with Acme.".into(),
+            ..RoutingConfig::default()
+        };
+        let cloud = policy(&["daily_brief"], true);
+        let at = local_millis_at(2026, 8, 3, 9, 0);
+        let ran = tick_cloud_with_transport(&store, at, "", &routing, &[], false, None, RunGate::Full, &cloud, RunnerRole::Runner, Some(&transport))
+            .unwrap();
+        assert!(ran.is_empty());
+        assert!(sent.lock().unwrap().is_empty(), "the gate refused before the transport");
+        assert_eq!(seen.lock().unwrap().iter().map(|(p, _)| *p).collect::<Vec<_>>(), vec![llm::Provider::Anthropic], "the chain is routing's");
+        let brief = store.list_routines().unwrap().into_iter().find(|r| r.template == memory::RoutineTemplate::DailyBrief).unwrap();
+        assert!(is_left_for_computer(&store.most_recent_routine_run(brief.id).unwrap().unwrap()));
+
+        // The same request without the client's name goes through the substituted transport.
+        let (_dir, store) = excluded_client_store();
+        let routing = RoutingConfig { daily_digest_instructions: String::new(), ..routing };
+        let ran = tick_cloud_with_transport(&store, at, "", &routing, &[], false, None, RunGate::Full, &cloud, RunnerRole::Runner, Some(&transport))
+            .unwrap();
+        assert_eq!(ran.len(), 1);
+        assert_eq!(sent.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_computer_picks_up_a_routine_the_runner_left_for_it() {
+        let (_dir, store) = excluded_client_store();
+        store.seed_builtin_routines().unwrap();
+        let brief = store.list_routines().unwrap().into_iter().find(|r| r.template == memory::RoutineTemplate::DailyBrief).unwrap();
+        let at = local_millis_at(2026, 8, 3, 9, 0);
+        // The runner's row, as it arrives by sync.
+        store
+            .insert_routine_run(&memory::NewRoutineRun {
+                routine_id: brief.id,
+                ran_at_unix_ms: at,
+                status: memory::RunStatus::Failed,
+                output_summary: LEFT_FOR_YOUR_COMPUTER.into(),
+                output_json: serde_json::json!({ LEFT_FOR_COMPUTER_FIELD: "excluded_client" }).to_string(),
+            })
+            .unwrap();
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = sent.clone();
+        // The computer's chain: a model on this computer.
+        TEST_CHAIN.with(|c| {
+            *c.borrow_mut() = Some(Box::new(move |_: &memory::Store| {
+                vec![llm::ChainLink { provider: llm::Provider::Ollama, model: "gemma-test".into(), client: Box::new(Recorder(recorder.clone())) }]
+            }))
+        });
+        let ran = run_cloud(&store, at + 5 * 60_000, RunGate::Full, &policy(&["daily_brief"], true), RunnerRole::Device);
+        let again = run_cloud(&store, at + 10 * 60_000, RunGate::Full, &policy(&["daily_brief"], true), RunnerRole::Device);
+        TEST_CHAIN.with(|c| *c.borrow_mut() = None);
+        assert_eq!(ran.len(), 1, "a fresh runner does not stop the computer from taking it back");
+        assert_eq!(ran[0].status, memory::RunStatus::Success);
+        assert_eq!(sent.lock().unwrap().len(), 1);
+        assert!(again.is_empty(), "once a day");
+    }
+
+    /// Fix round 1, I1: only a row left today hands the routine back.
+    #[test]
+    fn an_earlier_days_left_row_does_not_override_a_fresh_runner() {
+        let store = memory::Store::open_in_memory().unwrap();
+        store.seed_builtin_routines().unwrap();
+        let brief = store.list_routines().unwrap().into_iter().find(|r| r.template == memory::RoutineTemplate::DailyBrief).unwrap();
+        store
+            .insert_routine_run(&memory::NewRoutineRun {
+                routine_id: brief.id,
+                ran_at_unix_ms: local_millis_at(2026, 8, 3, 9, 0),
+                status: memory::RunStatus::Failed,
+                output_summary: LEFT_FOR_YOUR_COMPUTER.into(),
+                output_json: serde_json::json!({ LEFT_FOR_COMPUTER_FIELD: "excluded_client" }).to_string(),
+            })
+            .unwrap();
+        let fresh = policy(&["daily_brief"], true);
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 4, 9, 0), RunGate::Full, &fresh, RunnerRole::Device).is_empty());
+        assert_eq!(store.recent_routine_runs(brief.id, 10).unwrap().len(), 1);
+    }
+
+    /// Fix round 1, I2: the runner made nothing (spend cap, no provider, provider down): the computer runs
+    /// it once the grace has passed.
+    #[test]
+    fn device_runs_a_cloud_routine_after_the_grace_when_a_fresh_runner_produced_nothing() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let ran = run_cloud(&store, local_millis_at(2026, 8, 3, 11, 30), RunGate::Full, &policy(&["daily_brief"], true), RunnerRole::Device);
+        assert_eq!(ran.len(), 1);
+        assert_eq!(template_of(&store, &ran[0]), memory::RoutineTemplate::DailyBrief);
+    }
+
+    #[test]
+    fn device_still_skips_a_cloud_routine_before_the_grace_while_the_runner_is_fresh() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let fresh = policy(&["daily_brief"], true);
+        for (h, m) in [(8, 30), (9, 0), (11, 29)] {
+            assert!(run_cloud(&store, local_millis_at(2026, 8, 3, h, m), RunGate::Full, &fresh, RunnerRole::Device).is_empty());
+        }
+        assert!(store.recent_routine_runs_across_all(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_late_runner_run_after_the_device_already_ran_does_not_run_twice() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let cloud = policy(&["daily_brief"], true);
+        assert_eq!(run_cloud(&store, local_millis_at(2026, 8, 3, 11, 30), RunGate::Full, &cloud, RunnerRole::Device).len(), 1);
+        // The runner comes back late the same day: the device's run (synced) counts as today's.
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 12, 0), RunGate::Full, &cloud, RunnerRole::Runner).is_empty());
+        assert!(run_cloud(&store, local_millis_at(2026, 8, 3, 13, 0), RunGate::Full, &cloud, RunnerRole::Device).is_empty());
+        let brief = store.list_routines().unwrap().into_iter().find(|r| r.template == memory::RoutineTemplate::DailyBrief).unwrap();
+        assert_eq!(store.recent_routine_runs(brief.id, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn stale_runner_cloud_flagged_eod_recap_runs_on_the_device_after_the_grace() {
+        let store = memory::Store::open_in_memory().unwrap();
+        store.seed_builtin_routines().unwrap();
+        for r in store.list_routines().unwrap() {
+            store.set_routine_enabled(r.id, r.template == memory::RoutineTemplate::EodRecap).unwrap();
+        }
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorder = sent.clone();
+        TEST_CHAIN.with(|c| {
+            *c.borrow_mut() = Some(Box::new(move |_: &memory::Store| {
+                vec![llm::ChainLink { provider: llm::Provider::Ollama, model: "gemma-test".into(), client: Box::new(Recorder(recorder.clone())) }]
+            }))
+        });
+        let stale = policy(&["eod_recap"], false);
+        // 17:30 recap: the grace ends at 20:30.
+        let before = run_cloud(&store, local_millis_at(2026, 8, 3, 20, 29), RunGate::Full, &stale, RunnerRole::Device);
+        let after = run_cloud(&store, local_millis_at(2026, 8, 3, 20, 30), RunGate::Full, &stale, RunnerRole::Device);
+        TEST_CHAIN.with(|c| *c.borrow_mut() = None);
+        assert!(before.is_empty());
+        assert_eq!(after.len(), 1, "{after:?}");
+        assert_eq!(template_of(&store, &after[0]), memory::RoutineTemplate::EodRecap);
+    }
+
     /// A routine pinned to a provider with a spent budget stops; one whose pinned provider
     /// has no key (so the pin isn't the chain's first link) or that isn't pinned falls through.
     #[test]
@@ -646,7 +1296,7 @@ mod tests {
         store.set_provider_budgets(&[("anthropic".into(), 2500)]).unwrap();
         let routing = RoutingConfig { anthropic_key: Some("k".into()), openai_key: Some("k".into()), ..RoutingConfig::default() };
         let providers = |pref: &str, routing: &RoutingConfig| {
-            routine_chain(&store, pref, "gemma4:12b", routing, now).map(|c| c.iter().map(|l| l.provider).collect::<Vec<_>>())
+            routine_chain(&store, pref, "gemma4:12b", routing, now, None).map(|c| c.iter().map(|l| l.provider).collect::<Vec<_>>())
         };
         assert_eq!(providers("anthropic/claude-haiku-4-5", &routing), None, "pinned: no fallthrough");
         let unpinned = providers("default", &routing).unwrap();

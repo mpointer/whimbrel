@@ -56,8 +56,9 @@ final class CoreMemoryStore {
     /// One pull-only content-sync round (`whimbrel_sync_content_pull_only`). Blocks for
     /// up to the core's 30 s timeout; never call on the main thread.
     func syncContentPullOnly(tursoURL: String, tursoToken: String, groupKeyBase64: String, deviceId: String, captureWindowDays: Int32) -> Bool {
-        // The phone keeps no recordings, so the files of meetings forgotten elsewhere are only drained,
-        // or the core's list would grow for as long as the app runs.
+        // The phone keeps no recordings or slide images, so the files of meetings forgotten elsewhere (one at
+        // a time, or in a client delete) are only drained, or the core's list would grow for as long as the
+        // app runs. Client-delete tombstones of other kinds remove rows only, never files.
         defer { whimbrel_core_free_string(whimbrel_sync_take_forgotten_meeting_files()) }
         return tursoURL.withCString { url in
             tursoToken.withCString { token in
@@ -104,6 +105,15 @@ final class CoreMemoryStore {
         guard let json = whimbrel_meetings_recent_grouped(handle, limit) else { return nil }
         defer { whimbrel_core_free_string(json) }
         return (try? JSONSerialization.jsonObject(with: Data(String(cString: json).utf8)) as? [Any])?.count
+    }
+
+    /// Other devices that have not announced client deletes yet, as the last pull-only round counted them
+    /// (`{"pending_devices": n | null}`); nil when not measured yet or unreadable.
+    func clientPendingDevices() -> Int? {
+        guard let json = whimbrel_client_pending_devices_json(handle) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        struct Pending: Decodable { let pending_devices: Int? }
+        return (try? JSONDecoder().decode(Pending.self, from: Data(String(cString: json).utf8)))?.pending_devices
     }
 
     /// CoreBridge.swift's `lastSyncContentError`: why the last content sync failed.

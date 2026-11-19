@@ -42,6 +42,22 @@ pub struct SpawnSpec {
     pub models: PathBuf,
     /// The local model for the one digest call it can make. Never a cloud model.
     pub ollama_model: String,
+    /// The database key (X4), written to the server's stdin when the file is encrypted;
+    /// never in its arguments or environment. `Debug` shows it redacted.
+    pub key: Option<std::sync::Arc<crate::db_key::KeyBytes>>,
+}
+
+/// The key the server gets on stdin, from the database file's state: an encrypted file
+/// needs it (and refuses to start without one), a plain file gets nothing.
+pub fn stdin_key(
+    file: std::io::Result<memory::DbFileState>,
+    key: Option<&crate::db_key::KeyBytes>,
+) -> Result<Option<&crate::db_key::KeyBytes>, String> {
+    match (file, key) {
+        (Ok(memory::DbFileState::NotPlain), Some(key)) => Ok(Some(key)),
+        (Ok(memory::DbFileState::NotPlain), None) => Err("the database is encrypted and Whimbrel has no key for it".into()),
+        _ => Ok(None),
+    }
 }
 
 /// A started process.
@@ -183,20 +199,32 @@ impl Child for RealChild {
     }
 }
 
+/// Writes the 32 key bytes to `child`'s piped stdin and closes it (dropping the pipe is the
+/// server's end of input). A child that already exited makes this fail.
+fn hand_key(child: &mut std::process::Child, key: &crate::db_key::KeyBytes) -> Result<(), String> {
+    use std::io::Write;
+    let mut stdin = child.stdin.take().ok_or_else(|| "no stdin pipe".to_string())?;
+    stdin.write_all(key.as_bytes()).and_then(|()| stdin.flush()).map_err(|e| e.to_string())
+}
+
+/// The server's command line: the database and models paths, and the local model in the
+/// environment. Never the key (it goes over stdin).
+fn command(spec: &SpawnSpec) -> std::process::Command {
+    let mut cmd = std::process::Command::new(&spec.exe);
+    cmd.arg("--db").arg(&spec.db).arg("--models").arg(&spec.models).env("WHIMBREL_OLLAMA_MODEL", &spec.ollama_model);
+    cmd
+}
+
 impl Spawner for RealSpawner {
     fn spawn(&self, spec: &SpawnSpec) -> Result<Box<dyn Child>, String> {
         use std::io::{BufRead, BufReader};
         use std::os::windows::process::CommandExt;
-        use std::process::{Command, Stdio};
+        use std::process::Stdio;
 
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        let mut child = Command::new(&spec.exe)
-            .arg("--db")
-            .arg(&spec.db)
-            .arg("--models")
-            .arg(&spec.models)
-            .env("WHIMBREL_OLLAMA_MODEL", &spec.ollama_model)
-            .stdin(Stdio::null())
+        let key = stdin_key(memory::db_file_state(&spec.db), spec.key.as_deref())?;
+        let mut child = command(spec)
+            .stdin(if key.is_some() { Stdio::piped() } else { Stdio::null() })
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .creation_flags(CREATE_NO_WINDOW)
@@ -207,6 +235,14 @@ impl Spawner for RealSpawner {
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!("could not guard it with the job object: {e}"));
+        }
+        // The 32 key bytes, then close stdin; the server reads exactly 32 and opens.
+        if let Some(key) = key {
+            if let Err(e) = hand_key(&mut child, key) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("could not hand the server its key: {e}"));
+            }
         }
         let last_line = std::sync::Arc::new(Mutex::new(None));
         if let Some(stderr) = child.stderr.take() {
@@ -288,7 +324,7 @@ mod tests {
             spawned,
             child,
             specs,
-            spec: SpawnSpec { exe: dir.join(EXE_NAME), db, models: dir.join("models"), ollama_model: "gemma4:latest".into() },
+            spec: SpawnSpec { exe: dir.join(EXE_NAME), db, models: dir.join("models"), ollama_model: "gemma4:latest".into(), key: None },
         }
     }
 
@@ -411,6 +447,72 @@ mod tests {
     }
 
     #[test]
+    fn the_key_reaches_the_childs_stdin_whole_and_the_pipe_closes() {
+        use std::process::{Command, Stdio};
+        let dir = std::env::temp_dir().join(format!("whimbrel-mcp-pipe-{}-{}", std::process::id(), rand_suffix()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("got.bin");
+        // A stand-in that copies all of stdin (until the pipe closes) to a file.
+        let script = format!(
+            "$i=[Console]::OpenStandardInput(); $m=New-Object IO.MemoryStream; $i.CopyTo($m); [IO.File]::WriteAllBytes('{}', $m.ToArray())",
+            out.display()
+        );
+        let mut child = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let key = crate::db_key::KeyBytes::new([0x5A; 32]);
+        hand_key(&mut child, &key).unwrap();
+        // CopyTo returns only at end of input, so the child exiting proves the pipe closed.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(child.try_wait().unwrap().is_some(), "the child never saw end of input");
+        assert_eq!(std::fs::read(&out).unwrap(), key.as_bytes().to_vec(), "exactly the 32 key bytes");
+
+        // A child that exits without reading: a clean error, no panic.
+        let mut gone = Command::new("cmd").args(["/c", "exit 0"]).stdin(Stdio::piped()).stdout(Stdio::null()).spawn().unwrap();
+        let _ = gone.wait();
+        assert!(hand_key(&mut gone, &key).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn mcp_server_gets_key_on_stdin_not_argv() {
+        use crate::db_key::KeyBytes;
+        use memory::DbFileState;
+        let key = std::sync::Arc::new(KeyBytes::new([0xA5; 32]));
+        let spec = SpawnSpec {
+            exe: "whimbrel-mcp-server.exe".into(),
+            db: "C:/data/kestrel.sqlite".into(),
+            models: "C:/data/models".into(),
+            ollama_model: "gemma4:latest".into(),
+            key: Some(key.clone()),
+        };
+        let cmd = command(&spec);
+        let hex: String = key.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let raw = String::from_utf8_lossy(key.as_bytes()).into_owned();
+        let mut seen: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        seen.extend(cmd.get_envs().flat_map(|(k, v)| [k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned()).unwrap_or_default()]));
+        for s in &seen {
+            assert!(!s.to_lowercase().contains(&hex) && !s.contains(&raw), "key in argv or env: {s}");
+        }
+        assert!(!format!("{spec:?}").contains(&hex) && format!("{spec:?}").contains("redacted"));
+
+        // The key goes on stdin for an encrypted file only.
+        assert_eq!(stdin_key(Ok(DbFileState::NotPlain), Some(&key)).unwrap(), Some(&*key));
+        assert!(stdin_key(Ok(DbFileState::NotPlain), None).is_err(), "an encrypted file and no key: don't start");
+        for file in [DbFileState::Plain, DbFileState::Missing, DbFileState::Empty, DbFileState::Damaged] {
+            assert_eq!(stdin_key(Ok(file), Some(&key)).unwrap(), None, "{file:?}: stdin stays null");
+        }
+        assert_eq!(stdin_key(Err(std::io::Error::other("x")), Some(&key)).unwrap(), None);
+    }
+
+    #[test]
     fn the_real_spawner_starts_a_process_guards_it_and_reports_its_exit() {
         // cmd.exe stands in for the server: handed `--db ...` it exits straight away, which
         // exercises spawning, the job assignment and noticing an exit (any exit of a server is a failure).
@@ -420,7 +522,7 @@ mod tests {
         let db = dir.join("core-memory.sqlite");
         std::fs::write(&db, b"").unwrap();
         let server = McpServer::new(Box::new(RealSpawner::new().unwrap()));
-        let spec = SpawnSpec { exe: cmd, db, models: dir.join("models"), ollama_model: "gemma4:latest".into() };
+        let spec = SpawnSpec { exe: cmd, db, models: dir.join("models"), ollama_model: "gemma4:latest".into(), key: None };
         server.start(&spec);
         // 60 s, not 10: a loaded CI runner (FEYNMAN, 2026-11-14) took longer than 10 s to start cmd.exe,
         // assign it to the job and see it exit. The loop ends at the exit, so a passing run stays fast.
@@ -444,7 +546,7 @@ mod tests {
         let db = dir.join("core-memory.sqlite");
         std::fs::write(&db, b"").unwrap();
         let server = McpServer::new(Box::new(RealSpawner::new().unwrap()));
-        let spec = SpawnSpec { exe: dir.join("nope.exe"), db, models: dir.join("models"), ollama_model: "m".into() };
+        let spec = SpawnSpec { exe: dir.join("nope.exe"), db, models: dir.join("models"), ollama_model: "m".into(), key: None };
         assert!(matches!(server.start(&spec), Status::Failed(why) if why.starts_with("The MCP server did not start:")));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -502,7 +604,7 @@ Connection: close
         };
 
         let server = McpServer::new(Box::new(RealSpawner::new().unwrap()));
-        let spec = SpawnSpec { exe, db, models: dir.join("models"), ollama_model: "gemma4:latest".into() };
+        let spec = SpawnSpec { exe, db, models: dir.join("models"), ollama_model: "gemma4:latest".into(), key: None };
         assert_eq!(server.start(&spec), Status::Running);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         while TcpStream::connect("127.0.0.1:4319").is_err() {

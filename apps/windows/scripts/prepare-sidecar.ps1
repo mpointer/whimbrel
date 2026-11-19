@@ -34,9 +34,9 @@ try {
     $env:RUSTFLAGS = if ($Arch -eq 'arm64') { '-C target-feature=+crt-static,+fp16' } else { '-C target-feature=+crt-static' }
     # --target-dir wins over the environment, and says which directory is meant.
     if ($Arch -eq 'arm64') {
-        cargo build --release -p mcp-server --bin whimbrel-mcp-server --target-dir $targetDir --target $triple
+        cargo build --release -p mcp-server --features sqlcipher --bin whimbrel-mcp-server --target-dir $targetDir --target $triple
     } else {
-        cargo build --release -p mcp-server --bin whimbrel-mcp-server --target-dir $targetDir
+        cargo build --release -p mcp-server --features sqlcipher --bin whimbrel-mcp-server --target-dir $targetDir
     }
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 } finally {

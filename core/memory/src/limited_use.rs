@@ -65,7 +65,7 @@ pub(crate) fn ensure_answer_provenance_table(conn: &rusqlite::Connection) -> rus
 
 /// The key an answer's provenance is stored under: a hash of its text without the
 /// whitespace a shell may trim.
-fn answer_key(text: &str) -> String {
+pub(crate) fn answer_key(text: &str) -> String {
     use sha2::{Digest, Sha256};
     hex::encode(Sha256::digest(text.trim().as_bytes()))
 }

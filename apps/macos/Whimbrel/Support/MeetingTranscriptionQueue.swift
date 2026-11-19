@@ -129,8 +129,16 @@ final class MeetingTranscriptionQueue {
                 DispatchQueue.main.async { [onStage] in onStage(meetingId, nil) }
                 return
             }
-            summarize(meetingId, notes, text)
+            summarize(meetingId, Self.notesWithLiveDraft(store: store, meetingId: meetingId, notes: notes), text)
         }
+    }
+
+    /// `notes` plus what was typed on the Today screen while recording (`meeting_note_draft.personal_notes`),
+    /// combined by `LiveNotesMerge`. Every job reaches the summary and the stored notes through here,
+    /// so a stop, a quit recovered at launch, a later part, transcribe again and summarize again all see it.
+    /// Call on `accessQueue`.
+    static func notesWithLiveDraft(store: CoreMemoryStore, meetingId: Int64, notes: String) -> String {
+        LiveNotesMerge.combined(library: notes, draft: store.getMeetingNoteDraft(meetingId: meetingId)?.personalNotes)
     }
 
     /// A completed meeting with a part whose audio is on disk but has no transcript.
@@ -191,9 +199,12 @@ final class MeetingTranscriptionQueue {
             }
         }
 
+        // The Library editor text plus the Today draft as saved by now. The Today editor saves a pending edit when it goes
+        // away, so a part with no audio, read at once, can miss the last second of typing; a part with audio cannot.
+        let jobNotes = CoreMemoryStore.accessQueue.sync { Self.notesWithLiveDraft(store: store, meetingId: id, notes: job.notes) }
         let (finish, onePart): (Bool, Bool) = CoreMemoryStore.accessQueue.sync {
             // A failure leaves the part's existing segments and `transcribed` untouched.
-            let notes = job.notes.isEmpty ? nil : job.notes
+            let notes = jobNotes.isEmpty ? nil : jobNotes
             store.setMeetingNotes(meetingId: id, notes: notes)
             if let result {
                 let (url, lines, used, _) = result
@@ -239,13 +250,13 @@ final class MeetingTranscriptionQueue {
             // and a model asked to anyway invents a meeting (10/30 "Quick Debrief").
             let text = store.meetingTranscriptText(meetingId: id) ?? ""
             let blank = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            guard !blank(text) || !blank(job.notes)
+            guard !blank(text) || !blank(jobNotes)
                     || !store.listMeetingSnapshots(meetingId: id).isEmpty else { return nil }
             return text
         }
 
         if let transcript {
-            summarize(id, job.notes, transcript)
+            summarize(id, jobNotes, transcript)
         } else {
             DispatchQueue.main.async { [onStage] in onStage(id, nil) }
         }

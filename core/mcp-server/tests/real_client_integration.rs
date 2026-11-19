@@ -90,8 +90,10 @@ async fn spawn_real_server() -> (String, String, i64, String) {
         .unwrap();
     store
         .cache_daily_digest(
-            "2026-08-02",
-            r#"{"summary":"integration test digest","open_loops":[],"token_usage":{"input_tokens":null,"output_tokens":null}}"#,
+            // The MCP server's own key (the Windows Today recap keeps the bare day).
+            "mcp:2026-08-02",
+            // Cached under the exclusion state it is read under (nothing excluded: "open").
+            r#"{"input_refs":[],"digest":{"summary":"integration test digest","open_loops":[],"token_usage":{"input_tokens":null,"output_tokens":null}}}"#,
             1_234,
         )
         .unwrap();

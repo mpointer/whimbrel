@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use crate::l10n::tr;
 
 /// The fallback id of Mac rows captured before sync identities existed.
-pub const LEGACY_SPIKE_DEVICE: &str = "spike-device";
+pub const LEGACY_SPIKE_DEVICE: &str = memory::LEGACY_SPIKE_DEVICE;
 
 #[derive(Debug, Clone, Default)]
 pub struct DeviceLabeler {

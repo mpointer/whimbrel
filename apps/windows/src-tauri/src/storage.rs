@@ -7,6 +7,8 @@
 //! writes captures straight into the store, so there is no capture queue file to measure or trim.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Condvar, Mutex};
+use std::time::Duration;
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -139,7 +141,7 @@ pub fn low_disks(folders: &[&Path], free: impl Fn(&Path) -> Option<i64>, thresho
 #[serde(rename_all = "camelCase")]
 pub struct CompactView {
     pub ran: bool,
-    /// `"ran"`, `"not_worth_it"` or `"not_enough_disk"`.
+    /// `"ran"`, `"not_worth_it"`, `"not_enough_disk"` or `"recording"` (a recording is starting or running).
     pub reason: &'static str,
     /// For `"not_enough_disk"`: the free space the rewrite needs.
     pub need_bytes: Option<i64>,
@@ -150,8 +152,55 @@ pub struct CompactView {
     pub space_pending: bool,
 }
 
+/// Compactions running in this process (one database per process). A `VACUUM` holds the
+/// database's write lock for its whole length, about a minute on a few GB, so a recording start
+/// waits for it to end ([`wait_for_compaction`]) instead of failing on that lock (issue 850 review, I1).
+static COMPACTING: Mutex<usize> = Mutex::new(0);
+static COMPACTION_ENDED: Condvar = Condvar::new();
+
+/// Counts one running compaction until dropped.
+struct Compacting;
+
+impl Drop for Compacting {
+    fn drop(&mut self) {
+        let mut n = COMPACTING.lock().unwrap_or_else(|e| e.into_inner());
+        *n = n.saturating_sub(1);
+        COMPACTION_ENDED.notify_all();
+    }
+}
+
+/// [`compact`], unless `recording()` says a recording is starting or running: then nothing runs
+/// and the view says `"recording"` (the Mac's `compactAllowed: !micActive && !systemAudioActive`).
+/// The check and the start of the count happen under one lock, and a recording start checks the
+/// count only after it has marked itself as starting, so the two never miss each other.
+pub fn compact_unless_recording(s: &memory::Store, volume_free_bytes: i64, forced: bool, recording: &dyn Fn() -> bool) -> Result<CompactView, String> {
+    let running = {
+        let mut n = COMPACTING.lock().unwrap_or_else(|e| e.into_inner());
+        if recording() {
+            None
+        } else {
+            *n += 1;
+            Some(Compacting)
+        }
+    };
+    let Some(_running) = running else {
+        let bytes = s.db_space().map_err(|e| e.to_string())?.file_bytes();
+        tracing::info!("compaction skipped: a recording is starting or running");
+        return Ok(CompactView { ran: false, reason: "recording", need_bytes: None, file_bytes_before: bytes, file_bytes_after: bytes, space_pending: false });
+    };
+    compact(s, volume_free_bytes, forced)
+}
+
+/// Waits, up to `max`, until no compaction is running. `true` if none is running now.
+pub fn wait_for_compaction(max: Duration) -> bool {
+    let n = COMPACTING.lock().unwrap_or_else(|e| e.into_inner());
+    let (n, _) = COMPACTION_ENDED.wait_timeout_while(n, max, |n| *n > 0).unwrap_or_else(|e| e.into_inner());
+    *n == 0
+}
+
 /// Compacts when it pays off (or when `forced`, the user asked) and the disk can hold the rewrite.
-/// Holds the store for the whole `VACUUM`, so it runs on the store's own lane.
+/// Holds the store for the whole `VACUUM`, so it runs on the store's own lane. Scheduled and
+/// manual compactions go through [`compact_unless_recording`].
 pub fn compact(s: &memory::Store, volume_free_bytes: i64, forced: bool) -> Result<CompactView, String> {
     let before = s.db_space().map_err(|e| e.to_string())?;
     let view = |ran, reason, need_bytes, after: i64, space_pending| CompactView { ran, reason, need_bytes, file_bytes_before: before.file_bytes(), file_bytes_after: after, space_pending };
@@ -292,6 +341,45 @@ pub fn delete_old_captures(s: &memory::Store, days: u32, recordings: &Path) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue 850 review, I1: no compaction while a recording starts or runs, and the store's
+    /// count of running compactions is back to where it was afterwards.
+    #[test]
+    fn a_recording_skips_the_compaction_and_leaves_nothing_counted() {
+        let store = memory::Store::open_in_memory().unwrap();
+        let view = compact_unless_recording(&store, i64::MAX, true, &|| true).unwrap();
+        assert!(!view.ran);
+        assert_eq!(view.reason, "recording");
+        let view = compact_unless_recording(&store, i64::MAX, true, &|| false).unwrap();
+        assert_eq!(view.reason, "ran", "forced, nothing recording: it runs");
+        assert!(wait_for_compaction(Duration::from_secs(5)), "the finished compaction is no longer counted");
+    }
+
+    /// A recording start that finds a compaction running waits for it to end, not for the cap.
+    #[test]
+    fn waiting_for_a_compaction_ends_when_it_does() {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (counted, is_counted) = std::sync::mpsc::channel::<()>();
+        let compaction = std::thread::spawn(move || {
+            let store = memory::Store::open_in_memory().unwrap();
+            compact_unless_recording(&store, i64::MAX, true, &|| {
+                counted.send(()).unwrap();
+                held.recv().unwrap();
+                false
+            })
+        });
+        is_counted.recv().unwrap();
+        // The closure runs under the count's lock, so release it from another thread and wait.
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            release.send(()).unwrap();
+        });
+        let t = std::time::Instant::now();
+        assert!(wait_for_compaction(Duration::from_secs(60)));
+        assert!(t.elapsed() < Duration::from_secs(30), "ended with the compaction, not the cap");
+        releaser.join().unwrap();
+        assert_eq!(compaction.join().unwrap().unwrap().reason, "ran");
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("whimbrel-storage-{name}-{}", std::process::id()));

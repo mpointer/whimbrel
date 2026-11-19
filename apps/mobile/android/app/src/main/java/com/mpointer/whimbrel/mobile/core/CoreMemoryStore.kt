@@ -23,7 +23,14 @@ interface MeetingSyncStore : PhoneReadStore, AutoCloseable {
 
     /** A new phone pulls newest first (#572): older meetings are still on their way. Persisted, so true after a relaunch too. */
     fun olderHistoryLoading(): Boolean = false
+
+    /** Other devices that have not announced client deletes yet, as the last pull-only round counted them; null when
+     *  not measured yet. The phone never starts a delete: this only feeds the sync line's "update needed". */
+    fun devicesStillToUpdate(): Int? = null
 }
+
+@kotlinx.serialization.Serializable
+private data class PendingDevices(@Suppress("PropertyName") val pending_devices: Int? = null)
 
 class CoreMemoryStore(private val store: CoreStore, private val native: CoreNative) : MeetingSyncStore {
     override fun pullOnly(c: SyncCredentials, captureWindowDays: Int): Boolean {
@@ -38,6 +45,12 @@ class CoreMemoryStore(private val store: CoreStore, private val native: CoreNati
     override fun moreToPull(): Boolean = native.syncContentMoreToPull()
     override fun lastPullStats(): String? = native.syncContentLastPullStats()
     override fun olderHistoryLoading(): Boolean = native.syncContentOlderHistoryLoading(store.handle)
+
+    /** `{"pending_devices": n | null}` from `whimbrel_client_pending_devices_json`. */
+    override fun devicesStillToUpdate(): Int? =
+        native.clientPendingDevicesJson(store.handle)?.let { json ->
+            runCatching { readJson.decodeFromString<PendingDevices>(json).pending_devices }.getOrNull()
+        }
 
     private val h get() = store.handle
 

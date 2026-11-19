@@ -3,7 +3,7 @@
 // (docs/superpowers/specs/2026-11-04-lead-email-preferences-design.md).
 
 export type ProductEmails = "opted_in" | "opted_out";
-export type PreferenceSource = "signup_form" | "preferences_page" | "one_click_unsubscribe";
+export type PreferenceSource = "signup_form" | "preferences_page" | "one_click_unsubscribe" | "resend_unsubscribe";
 export const LANGUAGES = ["en", "es", "fr"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
@@ -144,6 +144,26 @@ export async function syncContact(
   } catch (err) {
     console.error(`contacts: sync failed: ${err}`);
     return false;
+  }
+}
+
+/** Whether Resend says this address has left product mail: the topic set to opt_out, or the
+ * contact unsubscribed from everything (a broadcast's unsubscribe link or preference page).
+ * null when Resend can't say (no contact, an error): the caller changes nothing. */
+export async function unsubscribedInResend(apiKey: string, topicId: string, email: string, fetcher: typeof fetch): Promise<boolean | null> {
+  const headers = { authorization: `Bearer ${apiKey}` };
+  const base = `https://api.resend.com/contacts/${encodeURIComponent(email)}`;
+  try {
+    const contact = await fetcher(base, { headers });
+    if (!contact.ok) return null;
+    if ((await contact.json<{ unsubscribed?: boolean }>()).unsubscribed === true) return true;
+    const topics = await fetcher(`${base}/topics`, { headers });
+    if (!topics.ok) return null;
+    const list = (await topics.json<{ data?: { id: string; subscription: string }[] }>()).data ?? [];
+    return list.find((t) => t.id === topicId)?.subscription === "opt_out";
+  } catch (err) {
+    console.error(`contacts: reading Resend's answer failed: ${err}`);
+    return null;
   }
 }
 

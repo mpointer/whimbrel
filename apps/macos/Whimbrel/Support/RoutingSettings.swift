@@ -765,6 +765,9 @@ final class RoutingSettings: ObservableObject {
         typesafeKey: String? = nil
     ) -> CoreRoutingConfig {
         let whimbrel = whimbrelCredentialsProvider()
+        let streamedModel = Self.streamedOllamaModel(
+            preferredProvider: preferredProvider, preferredModel: preferredModel, ollamaDefaultModel: ollamaDefaultModel
+        )
         return CoreRoutingConfig(
             anthropicKey: KeychainService.load(for: .anthropic),
             openaiKey: KeychainService.load(for: .openai),
@@ -787,11 +790,12 @@ final class RoutingSettings: ObservableObject {
             outputLanguage: outputLanguageProvider(),
             whimbrelIdToken: whimbrel?.idToken,
             whimbrelDeviceKey: whimbrel?.deviceKey,
+            // One streamed Ollama model for both gates: client exclusion (`ollama_model`: cloud is
+            // hosted) and Limited Use (`streamed_ollama_model`).
+            ollamaModel: streamedModel,
             googleAiBillingConfirmed: googleAiBillingConfirmed,
             remoteOllamaGoogleData: remoteOllamaGoogleData,
-            streamedOllamaModel: Self.streamedOllamaModel(
-                preferredProvider: preferredProvider, preferredModel: preferredModel, ollamaDefaultModel: ollamaDefaultModel
-            ),
+            streamedOllamaModel: streamedModel,
             streamedOllamaBaseUrl: Self.streamedOllamaBaseUrl
         )
     }

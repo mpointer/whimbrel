@@ -25,11 +25,16 @@ settings:
     # support, so this is simpler than teaching the build script to cross-compile and
     # lipo two Rust builds together.
     ARCHS: arm64
+packages:
+  WhimbrelUI:
+    path: WhimbrelUI
 targets:
   Whimbrel:
     type: application
     platform: macOS
     deploymentTarget: "14.0"
+    dependencies:
+      - package: WhimbrelUI
     sources:
       - path: Whimbrel
       - path: ../../mcp-servers/google-calendar/dist
@@ -149,8 +154,12 @@ targets:
           elif [ -n "$CARGO_DIR" ] && [ "$CARGO_DIR" != "$PWD/target" ]; then
             ln -sfn "$CARGO_DIR" target
           fi
-          cargo build --release -p ffi
-          cargo build --release -p mcp-server --bin whimbrel-mcp-server
+          # X4 encryption at rest: the Mac links SQLCipher (vendored OpenSSL) in place of
+          # plain SQLite, in the core library and in the MCP server it starts. Mac only: the
+          # iOS xcframework (apps/mobile/ios/scripts/build-ffi-xcframework.sh) and Android
+          # stay on plain SQLite.
+          cargo build --release -p ffi --features sqlcipher
+          cargo build --release -p mcp-server --bin whimbrel-mcp-server --features sqlcipher
           "$SRCROOT/../../scripts/bundle-llama-server.sh"
         basedOnDependencyAnalysis: false
     postbuildScripts:
@@ -210,7 +219,7 @@ targets:
         # library name (core/ffi) — unrelated to the app's own product name.
         OTHER_LDFLAGS: -lwhimbrel_core -lc++
         INFOPLIST_FILE: Whimbrel/Info.plist
-        MARKETING_VERSION: "0.9.72"
+        MARKETING_VERSION: "0.9.80"
         CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   WhimbrelTests:

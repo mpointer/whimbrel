@@ -97,7 +97,23 @@ pub fn check_calendar_title(
     let Some(key) = routing.typesafe_key.as_deref().filter(|_| !routing.sensitive) else {
         return;
     };
-    retitle_if_mismatched(store, meeting_id, topic, &summary.tldr, &summary.decisions, &TypeSafeClient::new(key));
+    check_calendar_title_with(store, meeting_id, summary, topic, &TypeSafeClient::new(key, crate::exclusion::current_gate(store)));
+}
+
+/// TypeSafe is hosted: an excluded client's meeting is never checked (classify first); any
+/// other is checked with `matcher`. Returns whether the title changed.
+pub(crate) fn check_calendar_title_with(
+    store: &memory::Store,
+    meeting_id: i64,
+    summary: &llm::MeetingSummary,
+    topic: &str,
+    matcher: &dyn TitleMatcher,
+) -> bool {
+    let summary_text = format!("{topic}\n{}\n{}", summary.tldr, summary.decisions.join("\n"));
+    if crate::summary::meeting_is_excluded(store, meeting_id, &[&summary_text]) {
+        return false;
+    }
+    retitle_if_mismatched(store, meeting_id, topic, &summary.tldr, &summary.decisions, matcher)
 }
 
 #[cfg(test)]

@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Additive: memory keeps the default `bundled` SQLite; this switches rusqlite to vendored
+# SQLCipher (bundled OpenSSL). Phones build without it and `open_keyed` returns Err.
+sqlcipher = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
+# Benchmark-only pragma hooks (can turn HMAC / secure_delete off). Never enable in a product build.
+bench-hooks = []
+
 [dependencies]
 regex = "1"
 chrono = "0.4"
@@ -24,8 +31,12 @@ rand = "0.8"
 hex = "0.4"
 subtle = "2"
 sha2 = "0.10"
+# DbKey wipes its bytes on drop (already in the lockfile via other crates).
+zeroize = "1"
 # Skin image chunks on the wire (skin_sync.rs).
 base64 = "0.22"
+# Word folding for client-name matching and word fingerprints (words.rs), shared with llm::guard.
+icu_normalizer = { version = "2.2.0", default-features = false, features = ["compiled_data"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 candle-core = { version = "0.11", features = ["accelerate"] }
@@ -35,5 +46,19 @@ candle-nn = { version = "0.11", features = ["accelerate"] }
 candle-core = "0.11"
 candle-nn = "0.11"
 
+# fs_atomic::move_no_replace (renamex_np / renameat2; MoveFileExW without replace on Windows).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tempfile = "3"
+# Only the bench harness uses it: the seeded synthetic corpus generator.
+eval = { path = "../eval" }
+
+[[bench]]
+name = "encryption_cost"
+harness = false
+required-features = ["bench-hooks"]

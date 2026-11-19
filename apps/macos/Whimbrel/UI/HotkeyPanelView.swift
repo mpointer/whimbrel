@@ -20,6 +20,7 @@ struct HotkeyPanelView: View {
                     .foregroundStyle(Color.whimbrelTextPrimary)
                     .focused($fieldFocused)
                     .onSubmit { submit() }
+                    .onChange(of: question) { _, text in model.questionChanged(text) }
                 Button(action: close) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(Color.whimbrelTextSecondary)
@@ -81,7 +82,7 @@ struct HotkeyPanelView: View {
                 case .notPermitted:
                     Button("Open System Settings") { NSWorkspace.shared.open(PermissionKind.accessibility.systemSettingsURL) }
                         .buttonStyle(.whimbrelSecondary)
-                case .localModelMissing:
+                case .localModelMissing, .clientNeedsLocalModel:
                     Button("Install a local model") { openAIProviders() }
                         .buttonStyle(.whimbrelSecondary)
                 case .excluded, .unreadable:

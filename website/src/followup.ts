@@ -1,7 +1,7 @@
 // The personal next-day note (design §4) and the hourly cron that sends it and keeps the
 // Resend contacts in step with the stored answers.
 import { downloadLinks, send, type Email, type MailEnv } from "./email";
-import { language, markSynced, syncContact, type Language, type LeadRow } from "./preferences";
+import { language, markSynced, setPreference, syncContact, unsubscribedInResend, type Language, type LeadRow } from "./preferences";
 
 export interface CronEnv extends MailEnv {
   EMAIL_FROM?: string;
@@ -144,8 +144,12 @@ ${p("Mike<br>Whimbrel")}
   return { from, to: lead.email, replyTo, subject: c.subject, text, html };
 }
 
-/** The hourly cron: follow-ups due, then Resend contacts out of step. */
-export async function runScheduled(env: CronEnv, nowMs: number, fetcher: typeof fetch = fetch): Promise<{ followups: number; synced: number }> {
+/** The hourly cron: follow-ups due, unsubscribes made in Resend, then Resend contacts out of step. */
+export async function runScheduled(
+  env: CronEnv,
+  nowMs: number,
+  fetcher: typeof fetch = fetch,
+): Promise<{ followups: number; unsubscribed: number; synced: number }> {
   const origin = `https://${env.CANONICAL_HOST ?? "whimbrelapp.com"}`;
   const hoursAgo = (h: number) => new Date(nowMs - h * 3600_000).toISOString();
   let followups = 0;
@@ -164,6 +168,22 @@ export async function runScheduled(env: CronEnv, nowMs: number, fetcher: typeof 
       followups++;
     }
   }
+  // An opted-in lead who unsubscribed through Resend (a broadcast's link) is opted out here
+  // too. Only leads whose answer already reached Resend: a newer answer not yet pushed wins.
+  let unsubscribed = 0;
+  if (env.RESEND_API_KEY && env.RESEND_PRODUCT_TOPIC_ID) {
+    const inStep = await env.DB.prepare(
+      `SELECT * FROM leads WHERE product_emails = 'opted_in' AND resend_synced_at IS NOT NULL AND resend_synced_at >= product_emails_set_at
+       ORDER BY created_at LIMIT ${BATCH}`,
+    ).all<LeadRow>();
+    const now = new Date(nowMs).toISOString();
+    for (const lead of inStep.results) {
+      if ((await unsubscribedInResend(env.RESEND_API_KEY, env.RESEND_PRODUCT_TOPIC_ID, lead.email, fetcher)) !== true) continue;
+      if (!(await setPreference(env.DB, lead.id, "opted_out", "resend_unsubscribe", {}, now))) continue;
+      await markSynced(env.DB, lead.id, now); // Resend already says so: nothing to push back
+      unsubscribed++;
+    }
+  }
   let synced = 0;
   if (env.RESEND_API_KEY && env.RESEND_PRODUCT_TOPIC_ID) {
     const stale = await env.DB.prepare(
@@ -175,5 +195,5 @@ export async function runScheduled(env: CronEnv, nowMs: number, fetcher: typeof 
       synced++;
     }
   }
-  return { followups, synced };
+  return { followups, unsubscribed, synced };
 }

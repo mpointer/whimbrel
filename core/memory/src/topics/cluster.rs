@@ -737,7 +737,13 @@ pub(crate) fn run_cluster(
     batch: usize,
     idea_batch: usize,
 ) -> rusqlite::Result<bool> {
-    let tx = store.conn.unchecked_transaction()?;
+    // Take the write lock up front (BEGIN IMMEDIATE): a deferred transaction that reads and
+    // then writes fails at once with "database is locked" when another connection (the
+    // app's other lanes, the MCP server) committed in between; busy_timeout can't retry it.
+    let tx = rusqlite::Transaction::new_unchecked(
+        &store.conn,
+        rusqlite::TransactionBehavior::Immediate,
+    )?;
     let sweeping = assign_seeds(&tx, store.own_device_id().as_deref(), batch)?;
     let todo: Vec<(i64, i64)> = {
         let mut stmt = tx.prepare(
@@ -797,6 +803,22 @@ mod tests {
 
     fn run(s: &Store, batch: usize) {
         while run_topic_cluster_job(s, batch).unwrap() {}
+    }
+
+    /// Another connection holding the write lock while the job starts: the job waits for it
+    /// instead of failing with "database is locked".
+    #[test]
+    fn cluster_job_waits_for_another_writer_instead_of_failing() {
+        let f = build(true);
+        let other = rusqlite::Connection::open(f.store.conn.path().unwrap()).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS lock_probe (x); INSERT INTO lock_probe VALUES (1);").unwrap();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            other.execute_batch("COMMIT").unwrap();
+        });
+        let ran = run_topic_cluster_job(&f.store, 50);
+        writer.join().unwrap();
+        ran.unwrap();
     }
 
     fn mail(s: &Store, ext: &str, subject: &str) -> i64 {

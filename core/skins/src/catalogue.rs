@@ -3,6 +3,7 @@
 //! drift from them. Ports `SkinCatalogue.swift`, except that icons are the shared table's symbols per
 //! role.
 
+use crate::elements::ELEMENT_KEYS;
 use crate::contrast::{MIN_RATIO, REQUIRED_PAIRS};
 use crate::format::*;
 use crate::icons::icon_table;
@@ -19,6 +20,27 @@ fn names<E: Serialize>(values: &[E]) -> Vec<Value> {
 }
 
 pub fn catalogue() -> Value {
+    catalogue_for(false)
+}
+
+/// The catalogue, with the five Home element choices added under `today` when `redesign` is on. With
+/// it off this is exactly `catalogue()`.
+pub fn catalogue_for(redesign: bool) -> Value {
+    let mut c = base_catalogue();
+    if redesign {
+        let mut options = Map::new();
+        for (key, values) in ELEMENT_KEYS {
+            options.insert(key.into(), json!(values));
+        }
+        c["today"] = json!({
+            "options": options,
+            "rule": "set today.options to any of these keys; a key left out keeps the old archetype's choice, an unknown value is ignored",
+        });
+    }
+    c
+}
+
+fn base_catalogue() -> Value {
     let mut weights: Vec<&str> = Weight::ALL.iter().map(|w| w.name()).collect();
     weights.sort_unstable();
     let mut icon_values = Map::new();

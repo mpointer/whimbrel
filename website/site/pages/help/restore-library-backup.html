@@ -1,0 +1,37 @@
+<!--
+{
+  "title": "Restoring a library backup",
+  "description": "How to put a backup of your Whimbrel library back on your Mac safely: quit Whimbrel, set the current files aside, then add the backup.",
+  "priority": 0.3,
+  "crumbs": [{ "name": "Restoring a library backup", "path": "/help/restore-library-backup/" }]
+}
+-->
+{{{crumbs}}}
+<section class="page-hero">
+  <div class="narrow prose">
+    <h1>Restoring a library backup</h1>
+    <p class="muted">For Whimbrel on a Mac.</p>
+
+    <div class="callout"><p><strong>Before you start:</strong> your library is one file, <code>core-memory.sqlite</code>, in Whimbrel's data folder. Restoring means putting a backup copy of that file in its place. Move files aside instead of deleting them, and keep them until you are sure the backup opened.</p></div>
+
+    <h2>Steps</h2>
+    <ol>
+      <li><strong>Open the data folder.</strong> In Whimbrel, open Settings, then Capture &amp; Privacy, then Your data, and click Show in Finder. Keep that Finder window open.</li>
+      <li><strong>Quit Whimbrel</strong> and wait until it has closed. Never change these files while Whimbrel is open.</li>
+      <li><strong>Move the current library out of the folder.</strong> Move <code>core-memory.sqlite</code> and, if they are there, <code>core-memory.sqlite-wal</code>, <code>core-memory.sqlite-shm</code> and <code>core-memory.sqlite-journal</code> to another folder, for example on your Desktop. Do not delete them yet. Leave every other file in the data folder as it is.</li>
+      <li><strong>Put the backup in.</strong> Copy your backup of <code>core-memory.sqlite</code> into the data folder under that exact name. If your backup also holds a <code>-wal</code> or <code>-shm</code> file saved at the same time as it, copy those too, named <code>core-memory.sqlite-wal</code> and <code>core-memory.sqlite-shm</code>: they belong to that copy. Never leave the ones you moved out beside it: a <code>-wal</code> file from another copy can damage the backup.</li>
+      <li><strong>Open Whimbrel.</strong></li>
+    </ol>
+
+    <h2>What Whimbrel does next</h2>
+    <ul>
+      <li><strong>An encrypted backup made with this Mac's current key</strong> opens as usual.</li>
+      <li><strong>An encrypted backup made with an earlier key</strong> shows the recovery screen. Unlock it with the recovery file and its passphrase, or with your 24 recovery words, for that earlier key.</li>
+      <li><strong>A backup from before you turned on encryption</strong> is an unencrypted file. Whimbrel opens it. If this Mac's library was encrypted before, Whimbrel may encrypt the backup again at that launch, with a progress screen; otherwise the encryption card in Settings offers to encrypt it.</li>
+    </ul>
+    <p>A recovery key unlocks a library file. It cannot bring back a library whose file is gone, so you need the backup file itself.</p>
+
+    <h2>If it does not open</h2>
+    <p>Keep the files you moved aside and the backup, and write to <a href="mailto:{{site.contactEmail}}">{{site.contactEmail}}</a>. Do not delete anything until the library you want opens.</p>
+  </div>
+</section>

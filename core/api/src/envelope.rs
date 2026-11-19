@@ -22,6 +22,8 @@ pub enum ApiError {
     /// Every provider the call could use is over its monthly budget, or the one provider
     /// it is pinned to is (`crate::budget`).
     BudgetSpent(crate::budget::BudgetSpent),
+    /// The thing asked about does not exist (for example a client that is not a live seed).
+    NotFound,
 }
 
 impl From<crate::budget::BudgetSpent> for ApiError {
@@ -136,6 +138,7 @@ pub fn envelope_json<T: Serialize>(result: &ApiResult<T>) -> Option<String> {
         Err(ApiError::SpendCap(err)) => Some(spend_cap_error_envelope(err)),
         Err(ApiError::ProviderFailure) => Some(provider_failure_envelope()),
         Err(ApiError::BudgetSpent(err)) => Some(budget_spent_error_envelope(err)),
+        Err(ApiError::NotFound) => Some(r#"{"ok":false,"error":{"kind":"not_found"}}"#.to_string()),
     }
 }
 

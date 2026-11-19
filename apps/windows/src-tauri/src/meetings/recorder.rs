@@ -112,6 +112,17 @@ pub trait ActiveAudio: Send {
     fn degraded(&self) -> Option<String>;
     /// The stamp its files are named with, for the retention sweep's exclusion list.
     fn stamp(&self) -> Option<String>;
+    /// Starts or ends a recording pause: while paused no audio is captured. The files stay open
+    /// and the gap is written as silence on resume. Nothing to do for a recording that cannot pause.
+    fn set_paused(&self, _paused: bool, _now_unix_ms: i64) {}
+    /// Resume was asked for and audio has not arrived yet.
+    fn resuming(&self, _now_unix_ms: i64) -> bool {
+        false
+    }
+    /// The level meter's levels, 0 to 1: (system audio, microphone). The first call starts keeping them.
+    fn levels(&self, _now_unix_ms: i64) -> (f32, f32) {
+        (0.0, 0.0)
+    }
 }
 
 /// Starts a recording whose files are named with `stamp`, for `meeting`.
@@ -268,11 +279,29 @@ impl ActiveAudio for WasapiRecording {
     }
 
     fn degraded(&self) -> Option<String> {
-        self.live.degraded()
+        // A resume whose microphone stayed silent past the limit reads as the microphone problem, not as a healthy recording.
+        // The stream keeps retrying through the existing stall logic (8 s without a packet reopens it, twice, then gives up).
+        self.live.degraded().or_else(|| {
+            let now = chrono::Utc::now().timestamp_millis();
+            self.live.resume_stalled(now).then(|| audio::gave_up_reason(Source::Microphone))
+        })
     }
 
     fn stamp(&self) -> Option<String> {
         Some(self.stamp.clone())
+    }
+
+    fn set_paused(&self, paused: bool, now_unix_ms: i64) {
+        self.live.set_paused(paused, now_unix_ms);
+    }
+
+    fn resuming(&self, now_unix_ms: i64) -> bool {
+        self.live.resuming(now_unix_ms)
+    }
+
+    fn levels(&self, now_unix_ms: i64) -> (f32, f32) {
+        self.live.want_level();
+        self.live.levels(now_unix_ms)
     }
 }
 

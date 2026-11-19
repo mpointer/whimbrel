@@ -30,7 +30,7 @@ import {
   type SkinPalette,
 } from "./skin";
 import { APPEARANCE_KEY, cssVariable } from "./theme";
-import { THEMES, TOKENS, themeById } from "./themes";
+import { DEFAULT_THEME, THEMES, TOKENS, parseTheme, themeById } from "./themes";
 import { fakeWindow } from "./testWindow";
 
 const tokensCss = (await import("./tokens.css?raw")).default;
@@ -208,7 +208,7 @@ describe("applying a skin", () => {
   });
 
   it("applies every bundled skin in both modes without a gap", () => {
-    expect(bundledManifests.map((m) => m.id).sort()).toEqual(["almanac", "game-day", "high-contrast", "hypermodern", "reference", "retro-terminal", "whimbrel"]);
+    expect(bundledManifests.map((m) => m.id).sort()).toEqual(["almanac", "game-day", "high-contrast", "hypermodern", "reference", "retro-terminal", "thread", "whimbrel"]);
     for (const manifest of bundledManifests) {
       const dto = dtoFor(manifest);
       expect(dto.palettes.length, manifest.id).toBeGreaterThan(0);
@@ -222,6 +222,41 @@ describe("applying a skin", () => {
         }
       }
     }
+  });
+});
+
+describe("the Thread skin, bundled as data behind the hidden redesign flag", () => {
+  const thread = bundledManifests.find((m) => m.id === "thread")!;
+  const paletteText = (
+    Object.values(import.meta.glob("../../../../skins/palettes/thread.json", { query: "?raw", import: "default", eager: true })) as string[]
+  )[0];
+
+  it("is a skin in the existing format, on the Standard layout, in the system face", () => {
+    expect(thread.name).toBe("Thread");
+    expect(thread.palettes).toEqual(["thread"]);
+    expect(thread.today).toEqual({ archetype: "standard", options: { nextMeeting: "card", timeline: "line", labels: "plain", ask: "field", actions: "buttons" } });
+    expect(thread.motion).toBe("subtle");
+    expect(thread.shape).toEqual({ radius: 8, border: "solid", borderWidth: 1, density: "regular" });
+    expect(thread.typography.caps).toBe("none");
+    for (const face of [thread.typography.display, thread.typography.body, thread.typography.numerals, thread.typography.label]) expect(face.split("/")[0]).toBe("SF Pro");
+    expect(Object.keys(thread).sort()).toEqual(Object.keys(WHIMBREL.skin).sort());
+  });
+
+  it("keeps Whimbrel's icons and every language's strings", () => {
+    const whimbrel = bundledManifests.find((m) => m.id === "whimbrel")!;
+    expect(thread.icons).toEqual(whimbrel.icons);
+    expect(thread.voice).toEqual(whimbrel.voice);
+    expect(thread.voiceLocalized).toEqual(whimbrel.voiceLocalized);
+  });
+
+  it("has a palette that the theme parser takes with zero repairs, light and dark", () => {
+    const reports: string[] = [];
+    const theme = parseTheme(paletteText, DEFAULT_THEME, (m) => reports.push(m));
+    expect(reports).toEqual([]);
+    expect(theme?.id).toBe("thread");
+    const file = JSON.parse(paletteText) as { light: Record<string, string>; dark: Record<string, string> };
+    expect(theme?.light).toEqual(Object.fromEntries(Object.entries(file.light).map(([k, v]) => [k, v.toLowerCase()])));
+    expect(theme?.dark).toEqual(Object.fromEntries(Object.entries(file.dark).map(([k, v]) => [k, v.toLowerCase()])));
   });
 });
 

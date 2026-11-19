@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the main window, the tray's quick-glance popup, the meeting alert, the question alert, the budget alert, the still-in-a-meeting prompt and the hotkey panel.",
+  "description": "Permissions for the main window, the tray's quick-glance popup, the meeting alert, the question alert, the budget alert, the still-in-a-meeting prompt, the in-meeting window and the hotkey panel.",
   "windows": [
     "main",
     "popup",
@@ -10,6 +10,7 @@
     "budget-alert",
     "disk-alert",
     "still-here",
+    "meeting-bar",
     "hotkey-panel"
   ],
   "permissions": [

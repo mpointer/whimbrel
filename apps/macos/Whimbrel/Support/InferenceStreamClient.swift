@@ -31,6 +31,19 @@ enum InferenceEvent: Decodable, Equatable {
         case cancelled
         case failed(classification: String, message: String)
 
+        /// The exclusion gate held the stream back before any request: it involves a client excluded from
+        /// hosted models. Retry it with a local model (Task 10).
+        var isExcludedClientRefusal: Bool {
+            if case .failed("excluded_client", _) = self { return true }
+            return false
+        }
+
+        /// The exclusion setting could not be read: no hosted stream goes until it can (not retried).
+        var isExclusionUnreadable: Bool {
+            if case .failed("exclusion_unreadable", _) = self { return true }
+            return false
+        }
+
         private enum CodingKeys: String, CodingKey {
             case kind, `class`, message
         }

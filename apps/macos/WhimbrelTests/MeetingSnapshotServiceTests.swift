@@ -323,6 +323,26 @@ final class MeetingSnapshotServiceTests: XCTestCase {
                                                       ("Call with Sam Lee | Microsoft Teams", 500_000)]), 1)
     }
 
+    /// A scheduled Teams meeting's window is titled with the event subject, not "Meeting with …".
+    func testTeamsPicksAScheduledMeetingWindowByItsSubject() {
+        let teams = "com.microsoft.teams2"
+        XCTAssertEqual(choose(teams, [("Chat | Jane Doe | Microsoft Teams", 2_000_000),
+                                      ("O'Brien Holdings quarterly review | Microsoft Teams", 1_000_000)]), 1)
+        XCTAssertEqual(choose("com.microsoft.teams", [("Weekly sync | Microsoft Teams", 1_000_000)]), 0,
+                       "a lone meeting window, main window closed")
+        XCTAssertEqual(choose(teams, [("Calendar | Calendar | Microsoft Teams", 2_000_000),
+                                      ("Standup", 300_000), ("Design review | Microsoft Teams", 900_000)]), 2,
+                       "the largest non-main window")
+    }
+
+    func testTeamsNeverPicksItsMainOrAnUntitledWindow() {
+        let teams = "com.microsoft.teams2"
+        XCTAssertNil(choose(teams, [("Activity | Microsoft Teams", 2_000_000), (nil, 500_000), ("  ", 400_000)]))
+        XCTAssertNil(choose(teams, [("Microsoft Teams", 2_000_000)]))
+        XCTAssertTrue(WindowFrameSource.isTeamsMainWindow("Chat | Jane Doe | Microsoft Teams"))
+        XCTAssertFalse(WindowFrameSource.isTeamsMainWindow("Chat with suppliers | Microsoft Teams"))
+    }
+
     func testTwoNonMatchingWindowsCaptureNothing() {
         XCTAssertNil(choose(zoom, [("Zoom Workplace", 2_000_000), ("Settings", 100_000)]))
         XCTAssertNil(choose("com.microsoft.teams2", [("Chat | Jane Doe | Microsoft Teams", 2_000_000),

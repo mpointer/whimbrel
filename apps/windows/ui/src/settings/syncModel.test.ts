@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { DeviceView, PlanView } from "../generated/types";
-import { collidingPendingIds, contentLine, deviceActions, deviceTitle, offersManage, offersUpgrade, planLine, primaryAction, settingsLine } from "./syncModel";
+import { collidingPendingIds, contentLine, deviceActions, deviceTitle, indexingLine, offersManage, offersUpgrade, pendingUpdateLine, planLine, primaryAction, settingsLine } from "./syncModel";
+
+describe("pendingUpdateLine", () => {
+  it("says how many devices still need to update, and nothing for none or not known", () => {
+    expect(pendingUpdateLine(null)).toBeNull();
+    expect(pendingUpdateLine(0)).toBeNull();
+    expect(pendingUpdateLine(1)).toBe("1 device still needs to update before it applies client deletes.");
+    expect(pendingUpdateLine(4)).toBe("4 devices still need to update before they apply client deletes.");
+  });
+});
 
 describe("contentLine", () => {
   const ready = { state: "ready" as const, message: null, deviceId: "k", deviceLimit: false, planUnknown: false };
@@ -102,5 +111,40 @@ describe("the plan (Cloud v1)", () => {
     expect([offersUpgrade(view(cloud)), offersManage(view(cloud))]).toEqual([false, true]);
     expect([offersUpgrade(view({ ...free, billing: false })), offersManage(view({ ...cloud, billing: false }))]).toEqual([false, false]);
     expect([offersUpgrade(view(null)), offersManage(view(null))]).toEqual([false, false]);
+  });
+});
+
+describe("Whimbrel Cloud in the device list", () => {
+  const runner: DeviceView = {
+    id: "r",
+    publicKey: "RUNNER",
+    name: "Whimbrel Cloud",
+    platform: "cloud",
+    status: "approved",
+    thisDevice: false,
+    enrolledAtUnixMs: 0,
+    comparisonCode: null,
+  };
+
+  it("is named Whimbrel Cloud and offers only Remove, never Re-send Key or Revoke", () => {
+    expect(deviceTitle({ ...runner, name: null })).toBe("Whimbrel Cloud");
+    expect(deviceActions(runner)).toEqual(["removeRunner"]);
+    expect(deviceActions({ ...runner, status: "revoked" })).toEqual([]);
+  });
+
+  it("leaves a person's devices as they were", () => {
+    expect(deviceActions({ ...runner, platform: "windows" })).toEqual(["resendKey", "revoke"]);
+    expect(deviceActions({ ...runner, platform: "macos", status: "pending" })).toEqual(["approve", "revoke"]);
+  });
+});
+
+describe("indexingLine", () => {
+  const ready = { state: "ready" as const, message: null, deviceId: "k", deviceLimit: false, planUnknown: false };
+  it("shows the percentage only while the indexing runs", () => {
+    expect(indexingLine({ ...ready, kindBackfillPercent: 61 })).toBe("Indexing history: 61%");
+    expect(indexingLine({ ...ready, kindBackfillPercent: 0 })).toBe("Indexing history: 0%");
+    expect(indexingLine(ready)).toBeNull();
+    expect(indexingLine({ ...ready, kindBackfillPercent: null })).toBeNull();
+    expect(indexingLine({ ...ready, state: "waitingForApproval", kindBackfillPercent: 61 })).toBeNull();
   });
 });

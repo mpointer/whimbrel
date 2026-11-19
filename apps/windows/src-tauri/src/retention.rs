@@ -27,6 +27,8 @@ use crate::l10n::tr;
 /// The Mac's schedule: a first run shortly after launch, then daily.
 pub const FIRST_RUN_AFTER: Duration = Duration::from_secs(30);
 pub const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+/// How soon a sweep put off by a client delete is tried again.
+const PAUSED_RETRY: Duration = Duration::from_secs(60);
 
 /// The Mac's defaults, in days.
 pub const DEFAULT_CAPTURE_DAYS: u32 = 30;
@@ -115,6 +117,7 @@ fn scan_orphans(s: &memory::Store, recordings: &Path, live: &[String]) -> Result
 pub fn sweep(store: &StoreHandle, recordings: PathBuf, settings: RetentionSettings, live: Vec<String>) -> Result<RetentionRun, CommandError> {
     let policy = settings.policy();
     let (dir, now) = (recordings.clone(), now_ms());
+    let sweep_dir = recordings.clone();
     let result = store
         .call_blocking(move |s| api::retention::apply(s, &policy, now, &dir).map_err(|e| e.to_string()))?
         .map_err(CommandError::store)?;
@@ -123,6 +126,8 @@ pub fn sweep(store: &StoreHandle, recordings: PathBuf, settings: RetentionSettin
         .call_blocking(move |s| scan_orphans(s, &recordings, &live))?
         .map_err(CommandError::store)?;
     let orphans_deleted = api::retention::delete_orphans(&orphans.orphaned);
+    // Paused-spans markers whose meeting the sweep just deleted (core removes audio and transcript only).
+    crate::meetings::pipeline::remove_stray_paused_spans(&sweep_dir, std::time::Duration::from_secs(24 * 3_600));
 
     let run = RetentionRun {
         captures_deleted: result.capture_items_deleted,
@@ -165,8 +170,15 @@ pub fn start(
     let spawned = std::thread::Builder::new().name("whimbrel-retention".into()).spawn(move || {
         std::thread::sleep(FIRST_RUN_AFTER);
         loop {
-            if let Err(e) = loops.run_scheduled() {
-                tracing::warn!(error = %e, "retention sweep failed");
+            {
+                // Put off while a client delete runs (`api::client_controls`); held only for the sweep.
+                let Some(_ticket) = api::client_controls::job_ticket() else {
+                    std::thread::sleep(PAUSED_RETRY);
+                    continue;
+                };
+                if let Err(e) = loops.run_scheduled() {
+                    tracing::warn!(error = %e, "retention sweep failed");
+                }
             }
             std::thread::sleep(EVERY);
         }
@@ -247,9 +259,12 @@ impl Retention {
         let run = sweep(&self.store, self.recordings.clone(), settings, live)?;
         *self.last_run.lock().unwrap() = Some(run);
         // Deletes leave free pages inside the file; give them back to the disk when there are
-        // enough to be worth holding the store for (`api::storage::decide`).
+        // enough to be worth holding the store for (`api::storage::decide`). Never while a
+        // recording starts or runs: its writes would wait on the VACUUM (issue 850 review, I1).
         let free = crate::storage::volume_free_bytes(&self.recordings).unwrap_or(0);
-        match self.store.call_blocking(move |s| crate::storage::compact(s, free, false)) {
+        let meetings = self.meetings.clone();
+        let recording = move || meetings.as_ref().is_some_and(|m| m.is_starting_or_recording());
+        match self.store.call_blocking(move |s| crate::storage::compact_unless_recording(s, free, false, &recording)) {
             Ok(Ok(_)) => {}
             Ok(Err(e)) => tracing::warn!(error = %e, "compacting after retention failed"),
             Err(e) => tracing::warn!(error = %e, "compacting after retention failed"),

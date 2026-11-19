@@ -102,6 +102,126 @@ pub fn failover_eligible(routine: &Routine, now_unix_ms: i64, now_local: DateTim
         .is_some_and(|start| now_unix_ms >= start + FAILOVER_GRACE_MS)
 }
 
+/// Whether `t` may run on the cloud runner: only the read-only templates. Reply priorities ranks
+/// Gmail threads (Limited Use data, and the runner has no connectors); focus time and the away
+/// follow-up draft write actions.
+pub fn cloud_eligible(t: &memory::RoutineTemplate) -> bool {
+    matches!(
+        t,
+        memory::RoutineTemplate::DailyBrief
+            | memory::RoutineTemplate::EodRecap
+            | memory::RoutineTemplate::WeeklyDigest
+            | memory::RoutineTemplate::MeetingPrep
+    )
+}
+
+/// The rows every cloud routine needs to apply client exclusions on the runner: the seed topic
+/// (the client's names, aliases and its exclude-from-hosted setting) and the verdicts that file an
+/// item under it. Tombstones and markers are always pulled and are not listed.
+const EXCLUSION_ROWS: [&str; 2] = [memory::OUTBOX_ROW_TYPE_TOPIC_SEED, memory::OUTBOX_ROW_TYPE_TOPIC_VERDICT];
+
+/// No grant lists captures: a capture is a client's only through its screen-activity episode, and
+/// episodes do not sync, so the runner could not leave an excluded client's capture out of a hosted
+/// prompt. The runner pulls exactly these lists.
+const DAILY_BRIEF_GRANT: &[&str] = &[
+    "meeting",
+    "items:calendar_event",
+    "items:transcript",
+    "routine_run",
+    EXCLUSION_ROWS[0],
+    EXCLUSION_ROWS[1],
+];
+/// The EOD recap and weekly digest read the same window material as the brief, without today's
+/// calendar (the brief's "what's on today" line is the only reader of it).
+const RECAP_GRANT: &[&str] =
+    &["meeting", "items:transcript", "routine_run", EXCLUSION_ROWS[0], EXCLUSION_ROWS[1]];
+/// Meeting prep: the upcoming event, the earlier meetings with its attendees and their lines
+/// (`Store::gather_prep_context`), and the briefs already written.
+const MEETING_PREP_GRANT: &[&str] = &[
+    "meeting",
+    "items:calendar_event",
+    "items:transcript",
+    "meeting_prep",
+    "routine_run",
+    EXCLUSION_ROWS[0],
+    EXCLUSION_ROWS[1],
+];
+
+/// The pull allowlist (`sync_engine::PullOptions::row_type_allowlist` syntax: a row type, or
+/// `items:<kind>`) the runner needs to run `t`. Empty for a template that is not
+/// [`cloud_eligible`].
+pub fn grant_for(t: &memory::RoutineTemplate) -> &'static [&'static str] {
+    match t {
+        memory::RoutineTemplate::DailyBrief => DAILY_BRIEF_GRANT,
+        memory::RoutineTemplate::EodRecap | memory::RoutineTemplate::WeeklyDigest => RECAP_GRANT,
+        memory::RoutineTemplate::MeetingPrep => MEETING_PREP_GRANT,
+        memory::RoutineTemplate::FocusTime
+        | memory::RoutineTemplate::ReplyPriorities
+        | memory::RoutineTemplate::AwayFollowUp => &[],
+    }
+}
+
+/// A grant entry in plain words; the two client rows share one phrase.
+fn grant_words(entry: &str) -> &'static str {
+    match entry {
+        "meeting" => "meetings",
+        "items:calendar_event" => "calendar events",
+        "items:transcript" => "transcripts",
+        "meeting_prep" => "meeting briefs",
+        "routine_run" => "past routine results",
+        _ => "client settings",
+    }
+}
+
+/// What `t`'s grant reads, as a plain-words list ("meetings, transcripts and client settings"), for
+/// the toggle's "can read your <list>". Empty for a template that is not [`cloud_eligible`].
+pub fn grant_list(t: &memory::RoutineTemplate) -> String {
+    let mut words: Vec<&str> = Vec::new();
+    for entry in grant_for(t) {
+        let w = grant_words(entry);
+        if !words.contains(&w) {
+            words.push(w);
+        }
+    }
+    let Some((last, rest)) = words.split_last() else {
+        return String::new();
+    };
+    if rest.is_empty() {
+        (*last).to_string()
+    } else {
+        format!("{} and {}", rest.join(", "), last)
+    }
+}
+
+/// What the cloud toggle for `t` says it reads, in plain words. Empty for a template that is not
+/// [`cloud_eligible`].
+pub fn grant_sentence(t: &memory::RoutineTemplate) -> String {
+    let list = grant_list(t);
+    if list.is_empty() {
+        return String::new();
+    }
+    let sentence = format!("Reads your {list} for this routine only, and deletes them when the run ends.");
+    if grant_for(t).contains(&"items:calendar_event") {
+        format!("{sentence} {GOOGLE_CALENDAR_LIMIT}")
+    } else {
+        sentence
+    }
+}
+
+/// What [`grant_sentence`] adds for a routine that reads calendar events: the runner applies only events
+/// whose source is known and is not the Google Calendar connection (Limited Use, until Google
+/// verification). A Google calendar added to the computer's own Calendar app syncs as that app's events,
+/// so the runner does read those, and the sentence says so.
+pub const GOOGLE_CALENDAR_LIMIT: &str =
+    "Events from your Google Calendar connection are not read by the cloud. Calendars added to your computer's Calendar app are.";
+
+/// When the runner should start so a run is ready by `ready_by_hhmm` on `now_local`'s date: that
+/// time minus the run's p95 duration and a safety margin (negative values count as zero). `None`
+/// for a malformed time or one that does not exist locally that day.
+pub fn ready_by_start_ms(ready_by_hhmm: &str, now_local: DateTime<Local>, p95_run_ms: i64, margin_ms: i64) -> Option<i64> {
+    scheduled_start_unix_ms(ready_by_hhmm, now_local).map(|ready| ready - p95_run_ms.max(0) - margin_ms.max(0))
+}
+
 fn parse_hhmm(s: &str) -> Option<(u32, u32)> {
     let t = NaiveTime::parse_from_str(s, "%H:%M").ok()?;
     Some((t.hour(), t.minute()))
@@ -114,6 +234,10 @@ use serde::Serialize;
 /// `whimbrel_routines_tick`'s `today_events_json` parameter.
 #[derive(Debug, Clone, Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct CalendarEventSummary {
+    /// The event's calendar id, when the shell sends it: client exclusion leaves a client's
+    /// event out of the brief by it, whatever its title or start (X6 fix round 3, R9).
+    #[serde(default)]
+    pub id: Option<String>,
     pub title: String,
     pub start_unix_ms: i64,
 }
@@ -133,6 +257,9 @@ struct DailyBriefOutput {
 pub struct RoutineRunOutcome {
     pub new_run: memory::NewRoutineRun,
     pub token_usage: llm::TokenUsage,
+    /// What the run was built from ([`memory::topics::exclusion::input_ref`]): the retrieved items
+    /// and today's events. An event with no calendar id records an input that is never clean.
+    pub input_refs: Vec<String>,
 }
 
 /// FR-RTN-2's own example: yesterday's timeline digest + today's calendar → one
@@ -142,6 +269,7 @@ pub struct RoutineRunOutcome {
 pub fn run_daily_brief(
     store: &memory::Store,
     llm_client: &dyn llm::LlmClient,
+    filter: &llm::ContextFilter,
     yesterday_start_unix_ms: i64,
     yesterday_end_unix_ms: i64,
     today_events: &[CalendarEventSummary],
@@ -149,7 +277,7 @@ pub fn run_daily_brief(
     custom_instructions: &str,
     lang: &str,
 ) -> Result<RoutineRunOutcome, llm::LlmError> {
-    run_daily_brief_with(store, llm_client, yesterday_start_unix_ms, yesterday_end_unix_ms, today_events, ran_at_unix_ms, custom_instructions, lang, false)
+    run_daily_brief_with(store, llm_client, filter, yesterday_start_unix_ms, yesterday_end_unix_ms, today_events, ran_at_unix_ms, custom_instructions, lang, false)
 }
 
 /// [`run_daily_brief`] with Limited Use stated: `allow_google_data` is whether `llm_client`'s link
@@ -159,6 +287,7 @@ pub fn run_daily_brief(
 pub fn run_daily_brief_with(
     store: &memory::Store,
     llm_client: &dyn llm::LlmClient,
+    filter: &llm::ContextFilter,
     yesterday_start_unix_ms: i64,
     yesterday_end_unix_ms: i64,
     today_events: &[CalendarEventSummary],
@@ -175,6 +304,7 @@ pub fn run_daily_brief_with(
         yesterday_end_unix_ms,
         20,
         true,
+        filter,
     );
     let items = llm::limited_use::filter_context_in(store, &items, allow_google_data);
     let digest = llm::generate_daily_digest_from_context_in(
@@ -199,8 +329,14 @@ pub fn run_daily_brief_with(
         today_events: today_events.to_vec(),
     };
     let output_json = serde_json::to_string(&output).unwrap_or_else(|_| "{}".to_string());
+    let input_refs = items
+        .iter()
+        .map(llm::exclusion::input_ref_of)
+        .chain(today_events.iter().map(|e| memory::topics::exclusion::input_ref("event", e.id.as_deref().unwrap_or_default())))
+        .collect();
 
     Ok(RoutineRunOutcome {
+        input_refs,
         new_run: memory::NewRoutineRun {
             routine_id: 0,
             ran_at_unix_ms,
@@ -246,11 +382,14 @@ pub struct EodRecapOutcome {
     pub new_run: memory::NewRoutineRun,
     pub token_usage: llm::TokenUsage,
     pub email_draft: Option<memory::NewPendingRoutineRun>,
+    /// What the run was built from ([`memory::topics::exclusion::input_ref`]).
+    pub input_refs: Vec<String>,
 }
 
 pub fn run_eod_recap(
     store: &memory::Store,
     llm_client: &dyn llm::LlmClient,
+    filter: &llm::ContextFilter,
     today_start_unix_ms: i64,
     today_end_unix_ms: i64,
     ran_at_unix_ms: i64,
@@ -259,7 +398,7 @@ pub fn run_eod_recap(
     custom_instructions: &str,
     lang: &str,
 ) -> Result<EodRecapOutcome, llm::LlmError> {
-    run_eod_recap_with(store, llm_client, today_start_unix_ms, today_end_unix_ms, ran_at_unix_ms, gmail_connected, recipient_email, custom_instructions, lang, false)
+    run_eod_recap_with(store, llm_client, filter, today_start_unix_ms, today_end_unix_ms, ran_at_unix_ms, gmail_connected, recipient_email, custom_instructions, lang, false)
 }
 
 /// [`run_eod_recap`] with Limited Use stated: `allow_google_data` is whether `llm_client`'s link
@@ -269,6 +408,7 @@ pub fn run_eod_recap(
 pub fn run_eod_recap_with(
     store: &memory::Store,
     llm_client: &dyn llm::LlmClient,
+    filter: &llm::ContextFilter,
     today_start_unix_ms: i64,
     today_end_unix_ms: i64,
     ran_at_unix_ms: i64,
@@ -286,6 +426,7 @@ pub fn run_eod_recap_with(
         today_end_unix_ms,
         20,
         true,
+        filter,
     );
     let items = llm::limited_use::filter_context_in(store, &items, allow_google_data);
     let digest = llm::generate_daily_digest_from_context_in(
@@ -323,6 +464,7 @@ pub fn run_eod_recap_with(
     };
 
     Ok(EodRecapOutcome {
+        input_refs: items.iter().map(llm::exclusion::input_ref_of).collect(),
         new_run,
         token_usage: digest.token_usage,
         email_draft,
@@ -356,6 +498,7 @@ fn recap_email_body(digest: &llm::DailyDigest) -> String {
 pub fn run_weekly_digest(
     store: &memory::Store,
     llm_client: &dyn llm::LlmClient,
+    filter: &llm::ContextFilter,
     week_start_unix_ms: i64,
     week_end_unix_ms: i64,
     ran_at_unix_ms: i64,
@@ -363,7 +506,7 @@ pub fn run_weekly_digest(
     recipient_email: Option<&str>,
     custom_instructions: &str,
 ) -> Result<EodRecapOutcome, llm::LlmError> {
-    run_weekly_digest_with(store, llm_client, week_start_unix_ms, week_end_unix_ms, ran_at_unix_ms, gmail_connected, recipient_email, custom_instructions, false)
+    run_weekly_digest_with(store, llm_client, filter, week_start_unix_ms, week_end_unix_ms, ran_at_unix_ms, gmail_connected, recipient_email, custom_instructions, false)
 }
 
 /// [`run_weekly_digest`] with Limited Use stated: `allow_google_data` is whether `llm_client`'s link
@@ -373,6 +516,7 @@ pub fn run_weekly_digest(
 pub fn run_weekly_digest_with(
     store: &memory::Store,
     llm_client: &dyn llm::LlmClient,
+    filter: &llm::ContextFilter,
     week_start_unix_ms: i64,
     week_end_unix_ms: i64,
     ran_at_unix_ms: i64,
@@ -389,6 +533,7 @@ pub fn run_weekly_digest_with(
         week_end_unix_ms,
         60,
         true,
+        filter,
     );
     let items = llm::limited_use::filter_context_in(store, &items, allow_google_data);
     let digest = llm::generate_weekly_digest_from_context(
@@ -426,6 +571,7 @@ pub fn run_weekly_digest_with(
     };
 
     Ok(EodRecapOutcome {
+        input_refs: items.iter().map(llm::exclusion::input_ref_of).collect(),
         new_run,
         token_usage: digest.token_usage,
         email_draft,
@@ -489,6 +635,108 @@ mod tests {
 
     fn local_at(h: u32, mi: u32) -> DateTime<Local> {
         Local.with_ymd_and_hms(2026, 8, 3, h, mi, 0).unwrap()
+    }
+
+    #[test]
+    fn reply_priorities_and_write_routines_are_never_cloud_eligible() {
+        use memory::RoutineTemplate::*;
+        for t in [ReplyPriorities, FocusTime, AwayFollowUp] {
+            assert!(!cloud_eligible(&t), "{t:?} must never run in the cloud");
+            assert!(grant_for(&t).is_empty(), "{t:?} is granted nothing");
+            assert!(grant_sentence(&t).is_empty());
+        }
+        for t in [DailyBrief, EodRecap, WeeklyDigest, MeetingPrep] {
+            assert!(cloud_eligible(&t), "{t:?} is read-only");
+        }
+    }
+
+    #[test]
+    fn grant_for_daily_brief_lists_exactly_the_needed_types_and_grant_sentence_names_them_in_plain_words() {
+        let t = memory::RoutineTemplate::DailyBrief;
+        let mut granted = grant_for(&t).to_vec();
+        granted.sort();
+        let mut want = vec![
+            "meeting",
+            "items:calendar_event",
+            "items:transcript",
+            "routine_run",
+            memory::OUTBOX_ROW_TYPE_TOPIC_SEED,
+            memory::OUTBOX_ROW_TYPE_TOPIC_VERDICT,
+        ];
+        want.sort();
+        assert_eq!(granted, want);
+        let sentence = grant_sentence(&t);
+        for words in ["meetings", "calendar events", "transcripts", "past routine results", "client settings"] {
+            assert!(sentence.contains(words), "{sentence:?} names {words}");
+        }
+        assert!(!sentence.contains("captures"), "{sentence:?}: the cloud never reads captures");
+        for raw in ["items:", "routine_run", "topic_"] {
+            assert!(!sentence.contains(raw), "{sentence:?} is plain words, not {raw}");
+        }
+    }
+
+    /// The cloud never reads captures (a capture is a client's only through its episode, which does not
+    /// sync), and never Google Calendar events; the sentence says the calendar limit wherever it reads
+    /// calendar events.
+    #[test]
+    fn no_grant_reads_captures_and_calendar_grants_name_the_google_limit() {
+        use memory::RoutineTemplate::*;
+        for t in [DailyBrief, EodRecap, WeeklyDigest, MeetingPrep] {
+            assert!(!grant_for(&t).iter().any(|e| e.contains("capture")), "{t:?}");
+            let sentence = grant_sentence(&t);
+            assert!(!sentence.contains("capture"), "{sentence:?}");
+            let reads_calendar = grant_for(&t).contains(&"items:calendar_event");
+            assert_eq!(sentence.contains(GOOGLE_CALENDAR_LIMIT), reads_calendar, "{t:?}: {sentence:?}");
+        }
+        assert!(grant_sentence(&DailyBrief).contains(GOOGLE_CALENDAR_LIMIT));
+        assert!(grant_sentence(&MeetingPrep).contains(GOOGLE_CALENDAR_LIMIT));
+        // The words themselves: true for a Google calendar added to the computer's Calendar app too.
+        assert_eq!(
+            GOOGLE_CALENDAR_LIMIT,
+            "Events from your Google Calendar connection are not read by the cloud. Calendars added to your computer's Calendar app are."
+        );
+    }
+
+    /// The toggle's "can read your <list>" takes the plain-words list on its own; the sentence is built
+    /// from the same list, so the two never say different things.
+    #[test]
+    fn grant_list_is_the_plain_words_list_the_sentence_is_built_from() {
+        use memory::RoutineTemplate::*;
+        assert_eq!(grant_list(&DailyBrief), "meetings, calendar events, transcripts, past routine results and client settings");
+        assert_eq!(grant_list(&EodRecap), "meetings, transcripts, past routine results and client settings");
+        for t in [DailyBrief, EodRecap, WeeklyDigest, MeetingPrep] {
+            assert!(grant_sentence(&t).starts_with(&format!("Reads your {} for this routine only", grant_list(&t))), "{t:?}");
+        }
+        for t in [ReplyPriorities, FocusTime, AwayFollowUp] {
+            assert!(grant_list(&t).is_empty(), "{t:?}");
+        }
+    }
+
+    #[test]
+    fn every_grant_includes_the_rows_needed_for_client_exclusions() {
+        use memory::RoutineTemplate::*;
+        for t in [DailyBrief, EodRecap, WeeklyDigest, MeetingPrep] {
+            let g = grant_for(&t);
+            // The seed topic carries the client's names and its exclude-from-hosted setting; the verdict
+            // carries which item is filed under it.
+            assert!(g.contains(&memory::OUTBOX_ROW_TYPE_TOPIC_SEED), "{t:?}: {g:?}");
+            assert!(g.contains(&memory::OUTBOX_ROW_TYPE_TOPIC_VERDICT), "{t:?}: {g:?}");
+            assert!(!g.iter().any(|e| e.contains("email") || e.contains("thread")), "{t:?} is granted no mail: {g:?}");
+        }
+    }
+
+    #[test]
+    fn ready_by_start_subtracts_p95_and_margin_and_is_none_for_a_bad_time() {
+        let now = local_at(6, 0);
+        let ready = Local.with_ymd_and_hms(2026, 8, 3, 7, 30, 0).unwrap().timestamp_millis();
+        let p95 = 4 * 60_000;
+        let margin = 10 * 60_000;
+        assert_eq!(ready_by_start_ms("07:30", now, p95, margin), Some(ready - p95 - margin));
+        assert_eq!(ready_by_start_ms("7.30", now, p95, margin), None);
+        assert_eq!(ready_by_start_ms("25:00", now, p95, margin), None);
+        assert_eq!(ready_by_start_ms("", now, p95, margin), None);
+        // A negative estimate never moves the start past the ready-by time.
+        assert_eq!(ready_by_start_ms("07:30", now, -5, -5), Some(ready));
     }
 
     #[test]
@@ -590,8 +838,8 @@ mod tests {
         let prompt = |allow: Option<bool>| {
             let client = PromptRecorder(Default::default());
             match allow {
-                Some(allow) => run_daily_brief_with(&store, &client, 0, 2_000, &[], 50_000, "", "", allow).unwrap(),
-                None => run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "", "").unwrap(),
+                Some(allow) => run_daily_brief_with(&store, &client, &llm::ContextFilter::none(), 0, 2_000, &[], 50_000, "", "", allow).unwrap(),
+                None => run_daily_brief(&store, &client, &llm::ContextFilter::none(), 0, 2_000, &[], 50_000, "", "").unwrap(),
             };
             let joined = client.0.borrow().join("\n");
             joined
@@ -660,7 +908,7 @@ mod tests {
             last_prompt: std::cell::RefCell::new(String::new()),
         };
 
-        run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "", "").unwrap();
+        run_daily_brief(&store, &client, &llm::ContextFilter::none(), 0, 2_000, &[], 50_000, "", "").unwrap();
 
         let prompt = client.last_prompt.borrow();
         assert!(
@@ -688,12 +936,13 @@ mod tests {
             response: r#"{"summary":"Shipped the routines scheduler.","open_loops":["Follow up on Task 5"]}"#,
         };
         let today_events = vec![CalendarEventSummary {
+            id: None,
             title: "Standup".to_string(),
             start_unix_ms: 100_000,
         }];
 
         let outcome =
-            run_daily_brief(&store, &client, 0, 2_000, &today_events, 50_000, "", "").unwrap();
+            run_daily_brief(&store, &client, &llm::ContextFilter::none(), 0, 2_000, &today_events, 50_000, "", "").unwrap();
 
         assert_eq!(outcome.new_run.routine_id, 0); // caller fills in the real routine_id before persisting -- see Task 4
         assert_eq!(outcome.new_run.ran_at_unix_ms, 50_000);
@@ -712,10 +961,10 @@ mod tests {
     fn persisted_strings_render_english_for_empty_lang() {
         let store = memory::Store::open_in_memory().unwrap();
         let client = StubLlmClient { response: "unused" };
-        let none = run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "", "").unwrap();
+        let none = run_daily_brief(&store, &client, &llm::ContextFilter::none(), 0, 2_000, &[], 50_000, "", "").unwrap();
         assert_eq!(none.new_run.output_summary, "No activity captured today. No events on today's calendar.");
-        let events = [("Standup", 1), ("{titles}", 2)].map(|(t, s)| CalendarEventSummary { title: t.to_string(), start_unix_ms: s });
-        let with = run_daily_brief(&store, &client, 0, 2_000, &events, 50_000, "", "").unwrap();
+        let events = [("Standup", 1), ("{titles}", 2)].map(|(t, s)| CalendarEventSummary { id: None, title: t.to_string(), start_unix_ms: s });
+        let with = run_daily_brief(&store, &client, &llm::ContextFilter::none(), 0, 2_000, &events, 50_000, "", "").unwrap();
         assert_eq!(with.new_run.output_summary, "No activity captured today. Today: Standup, {titles}.");
         assert_eq!(
             run_reply_priorities(&store, 9_000, "").output_summary,
@@ -732,7 +981,7 @@ mod tests {
     fn run_daily_brief_handles_no_events_today_and_no_activity_yesterday() {
         let store = memory::Store::open_in_memory().unwrap();
         let client = StubLlmClient { response: "unused" }; // generate_daily_digest_from_context short-circuits on empty items, never calls this
-        let outcome = run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "", "").unwrap();
+        let outcome = run_daily_brief(&store, &client, &llm::ContextFilter::none(), 0, 2_000, &[], 50_000, "", "").unwrap();
         assert_eq!(outcome.new_run.status, memory::RunStatus::Success);
         assert!(outcome
             .new_run
@@ -768,6 +1017,7 @@ mod tests {
         run_daily_brief(
             &store,
             &client,
+            &llm::ContextFilter::none(),
             0,
             2_000,
             &[],
@@ -805,7 +1055,7 @@ mod tests {
             last_prompt: std::cell::RefCell::new(String::new()),
         };
 
-        run_daily_brief(&store, &client, 0, 2_000, &[], 50_000, "", "").unwrap();
+        run_daily_brief(&store, &client, &llm::ContextFilter::none(), 0, 2_000, &[], 50_000, "", "").unwrap();
 
         let prompt = client.last_prompt.borrow();
         assert!(
@@ -948,7 +1198,7 @@ mod tests {
             response: r#"{"summary":"Wrapped up the EOD recap template.","open_loops":[]}"#,
         };
 
-        let outcome = run_eod_recap(&store, &client, 0, 2_000, 50_000, false, None, "", "").unwrap();
+        let outcome = run_eod_recap(&store, &client, &llm::ContextFilter::none(), 0, 2_000, 50_000, false, None, "", "").unwrap();
 
         assert_eq!(outcome.new_run.status, memory::RunStatus::Success);
         assert!(outcome
@@ -980,6 +1230,7 @@ mod tests {
         let outcome = run_eod_recap(
             &store,
             &client,
+            &llm::ContextFilter::none(),
             0,
             2_000,
             50_000,
@@ -1028,6 +1279,7 @@ mod tests {
         let outcome = run_eod_recap(
             &store,
             &client,
+            &llm::ContextFilter::none(),
             0,
             2_000,
             50_000,
@@ -1075,6 +1327,7 @@ mod tests {
         run_eod_recap(
             &store,
             &client,
+            &llm::ContextFilter::none(),
             0,
             2_000,
             50_000,
@@ -1111,6 +1364,7 @@ mod tests {
         let outcome = run_weekly_digest(
             &store,
             &client,
+            &llm::ContextFilter::none(),
             0,
             7 * 24 * 60 * 60 * 1000,
             50_000,
@@ -1147,6 +1401,7 @@ mod tests {
         let outcome = run_weekly_digest(
             &store,
             &client,
+            &llm::ContextFilter::none(),
             0,
             7 * 24 * 60 * 60 * 1000,
             50_000,

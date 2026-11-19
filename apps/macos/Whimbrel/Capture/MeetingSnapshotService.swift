@@ -318,22 +318,44 @@ struct WindowFrameSource: SnapshotFrameSource {
     /// - Zoom: "Zoom Meeting" (also "Zoom Meeting 40-Minutes") and "Zoom Webinar". The hub is
     ///   "Zoom" / "Zoom Workplace"; while the user shares, the meeting window is hidden.
     /// - Teams (new and classic): ad-hoc "Meeting with …", "Meeting in …", "Call with …",
-    ///   "Meet now". The main window is "<Section> | … | Microsoft Teams". A scheduled
-    ///   meeting's window carries the event subject, so it matches nothing and is not captured.
+    ///   "Meet now". A scheduled meeting's window carries the event subject instead, so Teams
+    ///   also takes any window that is not its main window (`isTeamsMainWindow`).
     /// - FaceTime, Webex: no pattern; the one-window rule applies.
     static let meetingWindowTitlePrefixes: [String: [String]] = {
         let teams = ["Meeting with ", "Meeting in ", "Call with ", "Meet now"]
         return [zoomBundleID: ["Zoom Meeting", "Zoom Webinar"], "com.microsoft.teams2": teams, "com.microsoft.teams": teams]
     }()
 
+    /// The first part of a Teams main-window title ("Chat | Jane Doe | Microsoft Teams",
+    /// "Calendar | Microsoft Teams"): the app's own sections. A meeting window starts with its
+    /// subject or the people in it. English names only; another UI language falls back to the
+    /// title prefixes above.
+    static let teamsSections: Set<String> = [
+        "Activity", "Chat", "Teams", "Calendar", "Calls", "Files", "OneDrive", "Apps", "Help", "Search",
+        "Communities", "Copilot", "Assignments", "Approvals", "Planner", "Shifts", "Viva Engage",
+        "Settings", "Notifications", "People", "Meet", "Microsoft Teams",
+    ]
+
+    /// Whether a Teams window is its main window (or untitled), not a meeting.
+    static func isTeamsMainWindow(_ title: String?) -> Bool {
+        guard let title, !title.trimmingCharacters(in: .whitespaces).isEmpty else { return true }
+        let first = title.components(separatedBy: " | ").first?.trimmingCharacters(in: .whitespaces) ?? title
+        return teamsSections.contains(first)
+    }
+
     /// The meeting window among an app's on-screen windows: the largest whose title matches the
-    /// app's meeting pattern. An app with no known pattern may use its only window (R15); an app
-    /// with patterns never does, since a lone non-matching window is its hub or main window
-    /// (e.g. the Zoom hub while the user shares). Otherwise none: capture nothing rather than guess.
+    /// app's meeting pattern; for Teams, else the largest window that is not its main window (a
+    /// scheduled meeting is titled with its subject). An app with no known pattern may use its
+    /// only window (R15); Zoom never does, since a lone non-matching window is its hub (e.g.
+    /// while the user shares). Otherwise none: capture nothing rather than guess.
     static func chooseWindow(bundleID: String, windows: [(title: String?, area: CGFloat)]) -> Int? {
         let prefixes = meetingWindowTitlePrefixes[bundleID] ?? []
+        let largest = { (indices: [Int]) in indices.max(by: { windows[$0].area < windows[$1].area }) }
         let matching = windows.indices.filter { i in prefixes.contains { windows[i].title?.hasPrefix($0) == true } }
-        if let best = matching.max(by: { windows[$0].area < windows[$1].area }) { return best }
+        if let best = largest(matching) { return best }
+        if bundleID.hasPrefix("com.microsoft.teams") {
+            return largest(windows.indices.filter { !isTeamsMainWindow(windows[$0].title) })
+        }
         return prefixes.isEmpty && windows.count == 1 ? 0 : nil
     }
 

@@ -169,6 +169,16 @@ final class SkinLoaderTests: XCTestCase {
         XCTAssertEqual(skin.archetype, .standard)
     }
 
+    func test_bundled_thread_json_loads_without_repairs() throws {
+        let (skin, repairs) = try XCTUnwrap(SkinLoader.parse(try load("thread.json"), base: base))
+        XCTAssertEqual(repairs, [])
+        XCTAssertEqual(skin.id, "thread")
+        XCTAssertEqual(skin.paletteIds, ["thread"])
+        XCTAssertEqual(skin.archetype, .standard)
+        XCTAssertEqual(skin.shape.radius, 8, "the file carries the Windows card value; the Mac's corners are applied in code")
+        XCTAssertNotNil(skin.voice.localized["es"], "Thread keeps Whimbrel's translated strings")
+    }
+
     func test_bundled_whimbrel_json_equals_SkinDefaults_whimbrel() throws {
         var (skin, repairs) = try XCTUnwrap(SkinLoader.parse(try load("whimbrel.json"), base: base))
         XCTAssertEqual(repairs, [])

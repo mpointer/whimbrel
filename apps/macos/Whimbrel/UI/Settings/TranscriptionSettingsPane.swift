@@ -12,7 +12,9 @@ struct TranscriptionSettingsPane: View {
     @State private var showModelSetup = false
 
     var body: some View {
-        content.sheet(isPresented: $showModelSetup) { ModelSetupView() }
+        content.sheet(isPresented: $showModelSetup) {
+            RedesignSwitch(enabled: appState.redesignEnabled) { ModelSetupRedesignView() } old: { ModelSetupView() }
+        }
     }
 
     private var content: some View {

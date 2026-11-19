@@ -53,6 +53,9 @@ final class McpServerProcessManager: ObservableObject {
     private let log = Logger(subsystem: "com.mpointer.kestrel", category: "mcp-server-process")
     private var process: Process?
     private var terminationObserver: NSObjectProtocol?
+    /// The database key the server needs when the store is encrypted (X4); nil while it is
+    /// plain. Sent on the child's stdin at launch, never in argv or the environment.
+    var databaseKey: () -> Data? = { CoreMemoryStore.databaseKey }
 
     init() {
         enabled = UserDefaults.standard.bool(forKey: Self.enabledDefaultsKey)
@@ -101,7 +104,7 @@ final class McpServerProcessManager: ObservableObject {
             }
         }
         do {
-            try task.run()
+            try Self.launch(task, sendingKey: databaseKey())
             process = task
             isRunning = true
             lastError = nil
@@ -110,6 +113,29 @@ final class McpServerProcessManager: ObservableObject {
             log.error("Failed to start whimbrel-mcp-server: \(error.localizedDescription, privacy: .public)")
         }
     }
+
+    enum LaunchError: Error {
+        case keyNotThirtyTwoBytes
+    }
+
+    /// Runs `task` with a fresh stdin pipe carrying `key` (32 bytes, X4 design 3.2), then
+    /// closes it, so the child reads the key and then end of input; without a key the child
+    /// sees end of input at once (`whimbrel-mcp-server` only reads stdin for an encrypted
+    /// database). The key is written into the pipe before the child exists: 32 bytes fit in
+    /// the pipe buffer, and with the read end still open here the write can never raise
+    /// SIGPIPE, even if the child exits at once. Never put the key in `arguments` or
+    /// `environment`.
+    nonisolated static func launch(_ task: Process, sendingKey key: Data?) throws {
+        if let key, key.count != 32 { throw LaunchError.keyNotThirtyTwoBytes }
+        let stdin = Pipe()
+        task.standardInput = stdin
+        defer { try? stdin.fileHandleForWriting.close() }
+        if let key { try stdin.fileHandleForWriting.write(contentsOf: key) }
+        try task.run()
+    }
+
+    /// The running server's process id (a restart waits for it to exit, X4).
+    var processIdentifier: Int32? { process?.processIdentifier }
 
     func stop() {
         guard let process else { return }

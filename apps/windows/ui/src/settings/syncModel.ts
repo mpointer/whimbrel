@@ -1,5 +1,7 @@
 import type { DeviceView, PlanView, SyncState, SyncView } from "../generated/types";
 import { t } from "../l10n";
+import { pendingCountLine } from "../topics/clientControlsModel";
+import { isRunner, runnerName } from "../automations/cloudRoutineModel";
 
 export type SyncAction = "signIn" | "cancel" | "checkAgain" | "none";
 
@@ -48,6 +50,20 @@ export function contentLine(view: SyncView, locale: string): string | null {
   return t("Content synced at {time}. It syncs every minute.", { time });
 }
 
+/** "Indexing history: 61%" while the one-time history indexing runs; null when it is not running (not started, finished, or nothing to count). */
+export function indexingLine(view: SyncView): string | null {
+  if (view.state !== "ready" || view.kindBackfillPercent == null) return null;
+  return t("Indexing history: {percent}%", { percent: view.kindBackfillPercent });
+}
+
+/**
+ * The line under the sync status when other devices still need to update before they apply client deletes
+ * (`client_pending_devices`, spec 13.3). Null for none, and for not known yet (never said as 0).
+ */
+export function pendingUpdateLine(n: number | null): string | null {
+  return pendingCountLine(n);
+}
+
 /** The settings-sync line (the Profile, for now) under a Ready status; null until its first round. */
 export function settingsLine(view: SyncView, locale: string): string | null {
   if (view.state !== "ready") return null;
@@ -57,12 +73,14 @@ export function settingsLine(view: SyncView, locale: string): string | null {
   return t("Your profile synced at {time}.", { time });
 }
 
-export type DeviceAction = "approve" | "resendKey" | "revoke";
+export type DeviceAction = "approve" | "resendKey" | "revoke" | "removeRunner";
 
 /** What this PC can do to a device in the list. It can't approve or revoke itself
- *  here; revoking this PC is done from another device. */
+ *  here; revoking this PC is done from another device. Whimbrel Cloud was approved when it was added and never
+ *  needs the key sent again: it has only Remove, with its own words. */
 export function deviceActions(device: DeviceView): DeviceAction[] {
   if (device.thisDevice || device.status === "revoked") return [];
+  if (isRunner(device)) return ["removeRunner"];
   const hand = device.status === "pending" ? "approve" : "resendKey";
   return [hand, "revoke"];
 }
@@ -77,7 +95,15 @@ export function collidingPendingIds(devices: DeviceView[]): Set<string> {
   return new Set([...byCode.values()].filter((ids) => ids.length > 1).flat());
 }
 
+/** A device still to update, named from the account's device list by its sync id (its public key), or by a short id. */
+export function pendingDeviceName(id: string, devices: DeviceView[]): string {
+  const d = devices.find((x) => x.publicKey === id);
+  if (d) return deviceTitle(d);
+  return t("Device {id}", { id: id.slice(0, 6) });
+}
+
 export function deviceTitle(device: DeviceView): string {
+  if (isRunner(device)) return runnerName();
   const name = device.name?.trim();
   if (name) return name;
   return device.thisDevice ? t("This PC (unnamed)") : t("Unnamed device");

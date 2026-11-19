@@ -4,6 +4,7 @@ import Combine
 import Foundation
 import os
 import UserNotifications
+import WhimbrelUI
 
 /// The last summary failure per meeting, until a summary succeeds or it is cleared.
 struct SummaryFailures: Equatable {
@@ -28,6 +29,12 @@ struct SummaryFailures: Equatable {
 @MainActor
 final class AppState: ObservableObject {
     @Published private(set) var activityCaptureEnabled = false
+    /// Redesign flag only: when a timed pause of capture ends, device-local and never synced. Nil unless a timed
+    /// pause is in effect; with the flag off it is never set or read (docs/ui-redesign/screens/home.md).
+    @Published private(set) var captureResumeAt: Date? = RedesignFlag.isOn()
+        ? UserDefaults.standard.object(forKey: AppState.captureResumeAtKey) as? Date : nil
+    private var capturePauseTimer: Timer?
+    static let captureResumeAtKey = "com.mpointer.whimbrel.capture.resumeAt"
     /// Set while a meeting is actively being recorded — the row id to complete when the
     /// meeting ends, and its title for display. All 3 trigger paths (manual
     /// `startManualMeeting()`, calendar/detected via `startCapture(for:)`) produce a real
@@ -168,6 +175,8 @@ final class AppState: ObservableObject {
     /// Flags rather than events, so a request made before Library is on screen still
     /// lands when it appears.
     @Published var pendingLibrarySearch = false
+    /// Redesign flag only: Home's search chips carried into Library search (`requestLibrarySearch(query:filter:)`).
+    @Published var pendingLibraryFilter: (query: String, filter: LibraryCaptureFilter)?
     /// A Settings section to show the next time Settings is shown (or now, if it is open).
     @Published var pendingSettingsSection: SettingsSection?
     /// Set to show Settings → Storage's Free up space sheet (the low-disk notice and line).
@@ -208,8 +217,36 @@ final class AppState: ObservableObject {
             replacesOllama: LocalModel.replacesOllama(routing),
             whimbrelCredentials: syncState.whimbrelCredentials,
             loadKey: { KeychainService.load(for: $0) })
-        return WindowAskRouting(config: config, stream: stream,
-                                localModelAvailable: !routing.ollamaModels.isEmpty || LocalModel.isInstalled)
+        // An Ollama cloud model runs on Ollama's servers: it never counts as a model on this Mac.
+        let onThisMac = routing.ollamaModels.filter { !isOllamaCloudModel($0) }
+        var result = WindowAskRouting(config: config, stream: stream,
+                                      localModelAvailable: !onThisMac.isEmpty || LocalModel.isInstalled)
+        result.local = localOnlyRoute(onThisMac: onThisMac, localOnly: localOnly)
+        return result
+    }
+
+    /// The route for a hotkey-panel request core keeps on this Mac (it carries a client excluded from hosted
+    /// models): an installed Ollama model that is not a cloud one, else the bundled model. Nil in local-only mode
+    /// (the settings route is local already) and when there is no model on this Mac.
+    private func localOnlyRoute(onThisMac: [String], localOnly: Bool) -> WindowAskRouting.Local? {
+        guard !localOnly else { return nil }
+        let preferred = routing.ollamaDefaultModel
+        let ollamaModel = onThisMac.contains(preferred) ? preferred : onThisMac.first
+        let model: String
+        let stream: AskStreamRoute
+        if let ollamaModel {
+            model = ollamaModel
+            stream = AskStreamRoute(provider: .ollama, apiKey: nil, baseURLOverride: nil)
+        } else if LocalModel.isInstalled {
+            model = "local"
+            stream = AskStreamRoute(provider: .local, apiKey: nil, baseURLOverride: nil)
+        } else {
+            return nil
+        }
+        var config = routing.routingConfig(preferredProvider: .ollama, preferredModel: model,
+                                           customInstructions: promptLibrary.instructions[.ask] ?? "")
+        config.ollamaModel = model
+        return WindowAskRouting.Local(config: config, stream: stream)
     }
 
     func showPrepBrief(key: String) {
@@ -295,6 +332,12 @@ final class AppState: ObservableObject {
         openTimeline?()
         selectedTab = .library
         pendingLibrarySearch = true
+    }
+
+    /// Home's search with the Apps and Dates chips: Library opens in keyword search with the filter applied.
+    func requestLibrarySearch(query: String, filter: LibraryCaptureFilter) {
+        pendingLibraryFilter = (query, filter)
+        requestLibrarySearch()
     }
 
     func requestNewConversation(prompt: String? = nil) {
@@ -550,7 +593,7 @@ final class AppState: ObservableObject {
     nonisolated static func liveTranscriptionWanted(transcript: Bool, alerts: Bool, names: [String]) -> Bool {
         transcript || (alerts && !names.isEmpty)
     }
-    let recordingNoticeSettings = RecordingNoticeSettings()
+    let recordingNoticeSettings = RecordingNoticeSettings(redesign: RedesignFlag.isOn())
     /// Nil until Task 7b's real Zoom chat poster: the notice is a reminder until then.
     let recordingNoticeChat: ZoomChatPosting? = nil
     /// "Ask if I'm still recording after N hours" and its panel
@@ -568,6 +611,38 @@ final class AppState: ObservableObject {
     /// same 5 s poll. `silenceWarning` is the inline banner's text; nil while sound is arriving.
     private var silenceWatch: SilenceWatch?
     @Published private(set) var silenceWarning: String?
+    /// The pause of the recording (redesign flag only; nothing calls `pauseRecording()` with the flag off).
+    /// Nil when nothing records. This is not work memory's capture pause (`captureResumeAt`).
+    @Published private(set) var recordingPause: RecordingPauseModel?
+    /// Why the recording is in a problem state after a resume that could not start capture again.
+    @Published private(set) var recordingProblem: String?
+    var recordingPaused: Bool { recordingPause?.isPaused ?? false }
+    /// Moments marked in the live meeting, oldest first (redesign flag only). Local to this device.
+    @Published private(set) var liveMarks: [CoreMeetingMarker] = []
+    /// The notes line being written, kept by the live meeting screen so Mark this moment can use it as the label.
+    var liveNotesLastLine: String = ""
+    /// True while the live meeting screen is drawn, so the shell does not draw its recording bar a second time.
+    @Published var liveScreenShowing = false
+    /// A question typed in the in-meeting window, for the meeting's own ask on the live screen to take.
+    @Published private(set) var liveAskHandoff = LiveAskHandoff()
+    var isStartingMeetingNow: Bool { isStartingMeeting }
+    /// The in-meeting window's ask: the answer opens in the main window.
+    func askLiveMeeting(_ text: String) {
+        openTimeline?()
+        selectedTab = .today
+        NSApp.activate(ignoringOtherApps: true)
+        // Held until the live screen's ask bar takes it: the main window may be closed, on another section or not mounted yet.
+        liveAskHandoff.hold(text, now: Date())
+    }
+
+    /// The ask bar takes the held question (once).
+    func takeLiveAsk() -> String? { liveAskHandoff.isHolding ? liveAskHandoff.take() : nil }
+
+    /// The window gives up waiting; the question stays in its field.
+    @discardableResult
+    func giveUpLiveAsk() -> Bool { liveAskHandoff.isHolding ? liveAskHandoff.giveUp() : false }
+    /// The small always-on-top window (redesign flag only; never created with the flag off).
+    lazy var meetingBar = MeetingBarController(appState: self)
     /// "Meeting snapshots": slide images from the meeting window (on by default).
     let snapshotSettings = SnapshotSettings()
     /// Storage retention: the media folder (audio and snapshots) and the media ages.
@@ -587,6 +662,17 @@ final class AppState: ObservableObject {
         for id in [activeMeetingId, processingMeetingId, pendingSplitSummary] { if let id { ids.insert(id) } }
         return ids
     }
+    /// A meeting is being recorded or starting now (the encryption launch and its Settings
+    /// pre-check never migrate while this is true).
+    /// A paused meeting is still a recording here: `RecordingPauseRules.holdsRecording`.
+    var isRecordingNow: Bool {
+        RecordingPauseRules.holdsRecording(
+            hasActiveMeeting: activeMeetingId != nil, isStarting: isStartingMeeting,
+            micActive: audio.micActive, systemAudioActive: audio.systemAudioActive, paused: recordingPaused)
+    }
+    /// Settings: the encryption card's "Export everything…" asks the Your data card to run
+    /// its export (same panel, same status line).
+    @Published var pendingYourDataExport = false
     /// Meetings whose summary `regenerateMeetingSummary` is rewriting.
     private var regeneratingSummaryIds: Set<Int64> = []
     private var mountObserver: NSObjectProtocol?
@@ -611,15 +697,41 @@ final class AppState: ObservableObject {
         micURL: { [weak self] in self?.audio.micAudioFileURL }
     )
     /// Shared handle onto the Rust-backed memory store (NFR-PRT-1), used by the
-    /// timeline view and the core self-test alike.
-    let coreStore = CoreMemoryStore(
-        path: SpikePaths.database,
-        modelsDir: EmbeddingModelLocator.modelsDirectoryPath().map(URL.init(fileURLWithPath:))
-    )
+    /// timeline view and the core self-test alike. Opened by the launch (`AppLaunch`, X4),
+    /// plain or keyed, before this object exists; nil when the plain open failed and the
+    /// user chose "Continue without the memory database" on the launch's error screen.
+    let coreStore: CoreMemoryStore?
+    /// The launch's plan started the MCP server (X4): the "Enable MCP Server" toggle starts
+    /// the process only when this is true.
+    private let mcpAllowedByLaunch: Bool
+    /// No store (the user chose "Continue without the memory database"): no recording,
+    /// background capture, meeting detection or sync starts (`RecordingStartGate`).
+    let recordingGate: RecordingStartGate
+    /// A refused start, shown in the main window (`RecordingRefusalAlert`).
+    let recordingRefusal = RecordingRefusal()
+    /// The Start and capture controls' state (disabled with a caption without a store).
+    var recordingControls: RecordingControls { RecordingControls(storeOpen: recordingGate.storeOpen) }
+    /// The hidden redesign switch (`RedesignFlag`), read where a window is built; false unless set by hand.
+    var redesignEnabled: Bool { RedesignFlag.isOn() }
     /// A second connection for calls that hold the store across an LLM request (the slow
     /// lane). Used only on `CoreMemoryStore.slowLaneQueue`, so Ollama never blocks
     /// `accessQueue` and the UI reads behind it.
     let slowStore: CoreMemoryStore?
+    /// A third connection for long maintenance that is not a screen action and never waits on a
+    /// model: content sync rounds, screen-text ingest, the job, episode-segment and transcript
+    /// backfill steps, and retention. Used only on `CoreMemoryStore.backgroundQueue`, so none of
+    /// it holds `accessQueue` (the Today, Topics and Meetings screens, recording start). Opened like
+    /// `slowStore`: same key, same embedder. Every path that needs sole access to the database
+    /// (`StorageCompaction`) takes this queue too; the encryption migration and Delete everything
+    /// run after the process exits, which closes all four connections.
+    let backgroundStore: CoreMemoryStore?
+    /// A fourth connection for background jobs that call a model (thread and episode summaries,
+    /// topic steps and naming, routines, profile suggestions, conversation titles). Used only on
+    /// `CoreMemoryStore.backgroundModelQueue`, so a question the user types, which runs on `slowStore`,
+    /// never queues behind them. Opened like `slowStore`; closed with the process like the others
+    /// (`StorageCompaction` takes its queue too). Nil when it could not be opened: those jobs then
+    /// use the slow lane as before (`backgroundModelLane`).
+    let backgroundModelStore: CoreMemoryStore?
     let syncState = SyncState()
     /// Constructed in `init()` (not as property initializers) so they can receive
     /// `coreStore`: their connected-account registries live in the core's
@@ -666,7 +778,13 @@ final class AppState: ObservableObject {
     /// Meetings the quit path completed without transcribing; launch transcribes each once.
     private static let pendingLaunchTranscriptionKey = "com.mpointer.kestrel.pendingLaunchTranscription"
 
-    init() {
+    init(launched: LaunchedStore) {
+        coreStore = launched.store
+        mcpAllowedByLaunch = launched.mcpAllowed
+        recordingGate = RecordingStartGate(storeOpen: launched.store != nil)
+        // The MCP server gets the key the main store opened with (nil for plain) on its stdin.
+        let launchKey = launched.key
+        mcpServerProcess.databaseKey = { launchKey }
         // Themes and skins: install the bundled and user ones (skin palettes are themes, from
         // skins/palettes/ and each user skin's palettes/) and apply the stored appearance before
         // the first window draws.
@@ -681,6 +799,30 @@ final class AppState: ObservableObject {
         if coreStore != nil, slowStore == nil {
             Logger(subsystem: "com.mpointer.kestrel", category: "core-bridge").error("Could not open the slow-lane store; summaries, digests, routines and asks are unavailable.")
         }
+        backgroundStore = coreStore.flatMap { primary in
+            CoreMemoryStore.accessQueue.sync { CoreMemoryStore(secondaryTo: primary, path: SpikePaths.database) }
+        }
+        if coreStore != nil, backgroundStore == nil {
+            // Not fatal: every background step falls back to `accessQueue` and the main store.
+            Logger(subsystem: "com.mpointer.kestrel", category: "core-bridge").error("Could not open the background store; background jobs share the main queue.")
+        }
+        backgroundModelStore = coreStore.flatMap { primary in
+            CoreMemoryStore.accessQueue.sync { CoreMemoryStore(secondaryTo: primary, path: SpikePaths.database) }
+        }
+        if coreStore != nil, backgroundModelStore == nil {
+            // Not fatal: background model jobs fall back to the slow lane, as before this lane existed.
+            Logger(subsystem: "com.mpointer.kestrel", category: "core-bridge").error("Could not open the background model store; background model jobs share the slow lane.")
+        }
+        // A user write (starting a recording above all) must wait out a background write rather than
+        // fail after SQLite's default 5 s. Set before any of the four is used.
+        let lanes = (main: coreStore, slow: slowStore, background: backgroundStore, model: backgroundModelStore)
+        CoreMemoryStore.accessQueue.sync { _ = lanes.main?.setBusyTimeout() }
+        CoreMemoryStore.slowLaneQueue.sync { _ = lanes.slow?.setBusyTimeout() }
+        CoreMemoryStore.backgroundQueue.sync { _ = lanes.background?.setBusyTimeout() }
+        CoreMemoryStore.backgroundModelQueue.sync { _ = lanes.model?.setBusyTimeout() }
+        // After Delete everything: re-add the Google accounts it kept (Task 15), before the
+        // connector states read their accounts. Nothing happens without the kept list.
+        KeptGoogleAccounts.restore(in: SpikePaths.root, store: coreStore)
         calendarConnectorState = CalendarConnectorState(coreStore: coreStore)
         gmailConnectorState = GmailConnectorState(coreStore: coreStore)
         outlook365ConnectorState = Outlook365ConnectorState(coreStore: coreStore)
@@ -721,11 +863,25 @@ final class AppState: ObservableObject {
                     .error("This Mac's device id isn't set on the store; Forget meeting won't reach other devices.")
             }
         }
+        let background = backgroundStore
+        CoreMemoryStore.backgroundQueue.async {
+            if let background, !background.setDeviceId(ownDeviceId) {
+                Logger(subsystem: "com.mpointer.kestrel", category: "sync")
+                    .error("This Mac's device id isn't set on the background store.")
+            }
+        }
         let slow = slowStore
         CoreMemoryStore.slowLaneQueue.async {
             if let slow, !slow.setDeviceId(ownDeviceId) {
                 Logger(subsystem: "com.mpointer.kestrel", category: "sync")
                     .error("This Mac's device id isn't set on the slow-lane store.")
+            }
+        }
+        let backgroundModel = backgroundModelStore
+        CoreMemoryStore.backgroundModelQueue.async {
+            if let backgroundModel, !backgroundModel.setDeviceId(ownDeviceId) {
+                Logger(subsystem: "com.mpointer.kestrel", category: "sync")
+                    .error("This Mac's device id isn't set on the background model store.")
             }
         }
         for key in ["com.mpointer.kestrel.transcriptionModelPath",
@@ -737,14 +893,23 @@ final class AppState: ObservableObject {
         }
         AccessQueueWaitProbe.start()
         settingsSyncCoordinator = SettingsSyncCoordinator(routing: routing, retention: retention, promptLibrary: promptLibrary, profile: profile, routineHost: routineHost, syncState: syncState, coreStore: coreStore)
-        contentSyncCoordinator = ContentSyncCoordinator(coreStore: coreStore, syncState: syncState, deviceId: deviceId)
+        contentSyncCoordinator = ContentSyncCoordinator(coreStore: coreStore, backgroundStore: backgroundStore, syncState: syncState, deviceId: deviceId)
         SkinSync.connect(store: coreStore, skins: .shared)
-        syncState.resetPushCursor = { [store = coreStore] in
+        // On the same lane as the sync rounds: a round saves the push cursor as it sends, and a reset
+        // that landed in the middle of one would be overwritten with the old high-water mark.
+        let resetLane: (store: CoreMemoryStore, queue: DispatchQueue)? =
+            backgroundStore.map { ($0, CoreMemoryStore.backgroundQueue) } ?? coreStore.map { ($0, CoreMemoryStore.accessQueue) }
+        syncState.resetPushCursor = {
             await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-                CoreMemoryStore.accessQueue.async {
-                    continuation.resume(returning: store?.resetSyncPushCursor() ?? false)
+                guard let resetLane else { continuation.resume(returning: false); return }
+                resetLane.queue.async {
+                    continuation.resume(returning: resetLane.store.resetSyncPushCursor())
                 }
             }
+        }
+        recordingGate.notify = { [weak self] message in
+            self?.recordingRefusal.show(message)
+            self?.postRecordingNotice(message)
         }
         reconcileOrphanedRecordingMeetings()
         startModelDefaults()
@@ -798,6 +963,8 @@ final class AppState: ObservableObject {
                     self.liveQuestionWatcher?.flush()
                     self.liveQuestionWatcher = nil
                 }
+                // Flag on: the recording pause and the level start with a live meeting row, and end with it.
+                if id != nil { self.recordingDidStart() } else if self.recordingPause != nil { self.finishRecordingPause(audioPath: nil) }
                 if let id, self.liveTranscriptionWanted {
                     self.liveTranscript.start(meetingId: id)
                 } else {
@@ -880,8 +1047,8 @@ final class AppState: ObservableObject {
         calendar.start()
         googleCalendarPolling.start(calendarConnectorState: calendarConnectorState, coreStore: coreStore)
         gmailPolling.start(gmailConnectorState: gmailConnectorState, coreStore: coreStore, deviceId: deviceId)
-        meetingTrigger.start(meetingsProvider: { [weak self] in self?.allUpcomingMeetings ?? [] })
-        retentionScheduler.start(retention: retention, media: mediaSettings, deviceId: deviceId, store: coreStore, audio: audio,
+        if recordingGate.allowsMeetingDetection { meetingTrigger.start(meetingsProvider: { [weak self] in self?.allUpcomingMeetings ?? [] }) }
+        retentionScheduler.start(retention: retention, media: mediaSettings, deviceId: deviceId, store: coreStore, backgroundStore: backgroundStore, audio: audio,
                                  runner: mediaRetention)
         // A drive mounting may be the media folder (or hold stored media) coming back.
         mountObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -894,10 +1061,13 @@ final class AppState: ObservableObject {
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.pollCheckIn() }
+            MainActor.assumeIsolated {
+                self?.pollCheckIn()
+                self?.applyCapturePause(.wokeFromSleep)
+            }
         }
         routineScheduler.start(
-            store: coreStore, slowStore: slowStore, meetingsProvider: { [weak self] in self?.allUpcomingMeetings ?? [] },
+            store: coreStore, slowStore: backgroundModelLane?.store, modelQueue: backgroundModelLane?.queue ?? CoreMemoryStore.slowLaneQueue, meetingsProvider: { [weak self] in self?.allUpcomingMeetings ?? [] },
             prepMeetingsProvider: { [weak self] in self?.allMeetingsWithSynced ?? [] }, routing: routing,
             promptLibrary: promptLibrary, meetingPrepLeadMinutes: { [weak self] in self?.meetingPrepSettings.leadMinutes ?? 30 },
             calendarConnectorState: calendarConnectorState, gmailConnectorState: gmailConnectorState,
@@ -906,6 +1076,15 @@ final class AppState: ObservableObject {
                 guard let self else { return .full }
                 let approved = Set(self.syncState.devices.filter { $0.status == "approved" }.map(\.publicKey))
                 return RoutineHost.gate(primaryId: self.routineHost.primaryDeviceId, ownId: self.deviceId, approvedDeviceIds: approved)
+            },
+            cloudPolicy: { [weak self] in
+                guard let cloud = self?.settingsSyncCoordinator.cloudRoutines else { return .none }
+                let now = Int64(Date().timeIntervalSince1970 * 1000)
+                return RoutineCloudPolicy(
+                    templates: cloud.cloudTemplates,
+                    runnerFresh: CoreMemoryStore.cloudRunnerFresh(lastRunUnixMs: cloud.runnerLastRunMs, nowUnixMs: now),
+                    readyBy: cloud.readyBy
+                )
             }
         )
         // A "Prep ready" for briefs another device prepared, once each sync lands.
@@ -927,7 +1106,7 @@ final class AppState: ObservableObject {
             }
         }
         updateChecker.start()
-        settingsSyncCoordinator.observeSyncState()
+        if recordingGate.allowsSync { settingsSyncCoordinator.observeSyncState() }
         let clickHandler = NotificationClickHandler(
             open: { [weak self] link in self?.open(link, activateIfUnresolved: true) },
             openPrep: { [weak self] key in self?.showPrepBrief(key: key) },
@@ -950,7 +1129,7 @@ final class AppState: ObservableObject {
                 }
             }
         }
-        contentSyncCoordinator.observeSyncState()
+        if recordingGate.allowsSync { contentSyncCoordinator.observeSyncState() }
         syncState.onSyncReset = { [weak self] in self?.contentSyncCoordinator.forgetSyncHistory() }
         scheduleJobsBatchStep()
         scheduleEpisodeSegmentStep()
@@ -987,9 +1166,11 @@ final class AppState: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] granted in
                 guard let self, granted else { return }
-                if self.activityCaptureEnabled {
+                // A timed pause that has not ended keeps capture off, including at launch.
+                if self.applyCapturePause(.appStarted) { return }
+                if self.activityCaptureEnabled, self.recordingGate.allowsBackgroundCapture {
                     self.screenText.start()
-                } else {
+                } else if !self.activityCaptureEnabled {
                     self.resumeActivityCapture(accessibilityGranted: granted)
                 }
             }
@@ -1023,7 +1204,7 @@ final class AppState: ObservableObject {
         meetingTrigger.$heuristicDetectionEnabled
             .sink { [weak self] enabled in
                 guard let self else { return }
-                if enabled {
+                if enabled, self.recordingGate.allowsMeetingDetection {
                     self.meetingHeuristicDetector.start()
                 } else {
                     self.meetingHeuristicDetector.stop()
@@ -1043,7 +1224,9 @@ final class AppState: ObservableObject {
             .sink { [weak self] enabled in
                 guard let self else { return }
                 if enabled {
-                    self.mcpServerProcess.start()
+                    // Only once the launch's plan reached StartMcpServer (X4): the server
+                    // must never see a database the launch has not finished with.
+                    if self.mcpAllowedByLaunch { self.mcpServerProcess.start() }
                 } else {
                     self.mcpServerProcess.stop()
                 }
@@ -1275,7 +1458,10 @@ final class AppState: ObservableObject {
         let storage = makeSnapshotStorage()
         let appBundleID = activeMeetingBundleID, provider = activeCallLink?.provider
         MediaMover.queue.async {
-            let dir: String? = CoreMemoryStore.accessQueue.sync {
+            let (dir, splitTodayNotes): (String?, String?) = CoreMemoryStore.accessQueue.sync {
+                // What was typed on Today since the split lives in the split-off row's draft, which
+                // goes with the row: read it first and carry it into the notes of the joined recording.
+                let splitNotes = store.getMeetingNoteDraft(meetingId: splitId)?.personalNotes
                 switch MeetingSplit.absorb(store: store, into: earlier.id, from: splitId,
                                            makeFolder: { try storage.makeMeetingFolder(start: $0, title: $1) }) {
                 case nil:
@@ -1283,12 +1469,15 @@ final class AppState: ObservableObject {
                 case .some:
                     MeetingSplit.discard(store: store, meetingId: splitId)
                 }
-                return store.meetingSnapshotsInfo(meetingId: earlier.id)?.dir
+                return (store.meetingSnapshotsInfo(meetingId: earlier.id)?.dir, splitNotes)
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 MeetingLifecycle.postMeetingsChanged([earlier.id, splitId])
                 guard self.activeMeetingId == earlier.id else { return }
+                if let carried = splitTodayNotes {
+                    self.meetingNotes = LiveNotesMerge.combined(library: self.meetingNotes, draft: carried)
+                }
                 let existingFolder = dir
                     .map { URL(fileURLWithPath: $0, isDirectory: true) }
                     .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
@@ -1345,6 +1534,7 @@ final class AppState: ObservableObject {
     }
 
     var statusSummary: String {
+        if recordingPaused, let activeMeetingTitle { return "Recording paused — \(activeMeetingTitle)" }
         var parts: [String] = []
         if audio.systemAudioActive { parts.append("system audio") }
         if audio.micActive { parts.append("mic") }
@@ -1389,6 +1579,15 @@ final class AppState: ObservableObject {
     }
 
     func toggleActivityCapture() {
+        if redesignEnabled {
+            // With a timed pause in effect the toggle means "resume now"; the model decides the rest.
+            switch CapturePauseModel.state(captureOn: activityCaptureEnabled, resumeAt: captureResumeAt) {
+            case .on: applyCapturePause(.turnOff)
+            case .paused: applyCapturePause(.resumeNow)
+            case .off: applyCapturePause(.turnOn)
+            }
+            return
+        }
         if activityCaptureEnabled {
             pauseActivityCapture()
         } else {
@@ -1399,7 +1598,8 @@ final class AppState: ObservableObject {
     /// FR-CAP-13: activity capture is independent of meeting state in both
     /// directions -- this never touches `activeMeetingId`/audio.
     private func resumeActivityCapture(accessibilityGranted: Bool? = nil) {
-        guard !activityCaptureEnabled else { return }
+        // Without a store the captured text could never be stored (orphan files).
+        guard !activityCaptureEnabled, recordingGate.allowsBackgroundCapture else { return }
         activityCaptureEnabled = true
         if accessibilityGranted ?? permissions.accessibilityGranted {
             screenText.start()
@@ -1409,6 +1609,57 @@ final class AppState: ObservableObject {
     private func pauseActivityCapture() {
         activityCaptureEnabled = false
         screenText.stop()
+    }
+
+    // MARK: Timed pause (redesign flag only)
+
+    /// "Pause for 15 minutes", "Pause for 1 hour", "Pause until tomorrow". Does nothing with the flag off or capture off.
+    func pauseCapture(_ choice: CapturePauseChoice) { applyCapturePause(.pause(choice)) }
+
+    func resumeCaptureNow() { applyCapturePause(.resumeNow) }
+
+    /// Delete everything turns capture off for good and drops any stored pause time.
+    func captureDidDeleteEverything() {
+        guard redesignEnabled else { return }
+        applyCapturePause(.deleteEverything)
+    }
+
+    /// Runs one event through `CapturePauseModel` and does what it says. Returns true while a timed
+    /// pause is still in effect. Everything that gates capture today (Accessibility, the recording gate,
+    /// no-store mode) still gates it: a resume goes through `resumeActivityCapture`.
+    @discardableResult
+    private func applyCapturePause(_ event: CapturePauseEvent, now: Date = Date()) -> Bool {
+        guard redesignEnabled else { return false }
+        let state = CapturePauseModel.state(captureOn: activityCaptureEnabled, resumeAt: captureResumeAt)
+        let result = CapturePauseModel.next(state: state, resumeAt: captureResumeAt, now: now, event: event)
+        switch result.action {
+        case .start: resumeActivityCapture()
+        case .stop: pauseActivityCapture()
+        case .none: break
+        }
+        if captureResumeAt != result.resumeAt {
+            captureResumeAt = result.resumeAt
+            if let at = result.resumeAt {
+                UserDefaults.standard.set(at, forKey: Self.captureResumeAtKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.captureResumeAtKey)
+            }
+        }
+        scheduleCapturePauseTimer()
+        return result.state == .paused
+    }
+
+    /// A timer wakes the check; the check compares the wall clock, so sleep cannot stretch or lose a pause.
+    private func scheduleCapturePauseTimer() {
+        capturePauseTimer?.invalidate()
+        capturePauseTimer = nil
+        guard let at = captureResumeAt else { return }
+        let timer = Timer(timeInterval: CapturePauseModel.secondsUntil(at, now: Date()) + 0.5, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyCapturePause(.timeReached) }
+        }
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        capturePauseTimer = timer
     }
 
     /// FR-MTG-5: the single entry point for ending the active meeting — used by both
@@ -1433,6 +1684,7 @@ final class AppState: ObservableObject {
     /// match it (no row), so retention's orphan sweep is what eventually removes it.
     private func stopRowlessRecording() {
         captureGeneration += 1
+        finishRecordingPause(audioPath: audio.systemAudioFileURL?.path ?? audio.micAudioFileURL?.path)
         audio.stop()
         meetingEndDetector.stop()
         stopCheckIn()
@@ -1456,6 +1708,7 @@ final class AppState: ObservableObject {
     /// without a `QualifyingMeeting`, since a manual meeting has no calendar event or
     /// detected-app context to build one from.
     func startManualMeeting() {
+        guard recordingGate.allow(.manual) else { return }
         guard activeMeetingId == nil, !isStartingMeeting, hasRoomToRecord() else { return }
         permissions.request(.notifications) // no-op once answered
         // Set immediately (synchronously, before the async insertMeeting round-trip
@@ -1482,14 +1735,23 @@ final class AppState: ObservableObject {
             finishStartingManualCapture(insertedMeetingId: nil, partIndex: nil, start: startDate, trigger: newMeeting.trigger, generation: thisGeneration)
             return
         }
+        // Quitting waits for this insert (`AppTerminationGuard`), so it is not dropped with the queue.
+        PendingRecordingStarts.shared.begin()
         CoreMemoryStore.accessQueue.async {
             let insertedId = store.insertMeeting(newMeeting)
             // Manual meetings have no continue key, so they never continue.
             let partIndex = insertedId.flatMap { store.beginMeetingPart(meetingId: $0, startUnixMs: startMs, continueKey: nil) }
+            PendingRecordingStarts.shared.end()
             DispatchQueue.main.async { [weak self] in
                 self?.finishStartingManualCapture(insertedMeetingId: insertedId, partIndex: partIndex, start: startDate, trigger: newMeeting.trigger, generation: thisGeneration)
             }
         }
+    }
+
+    /// The meeting row could not be written, so nothing starts: the refusal shows in the window and
+    /// as a notification, as for a start with no store.
+    private func refuseStartWithoutRow() {
+        recordingGate.notify(EncryptionCopy.recordingNotSaved)
     }
 
     /// Mirrors `finishStartingCapture(for:insertedMeetingId:generation:)`'s exact
@@ -1501,6 +1763,11 @@ final class AppState: ObservableObject {
         isStartingMeeting = false
         guard generation == captureGeneration else {
             completeAbandonedStart(meetingId: insertedMeetingId, partIndex: partIndex)
+            return
+        }
+        // No row, no recording: say so instead of recording on with nothing to save it under.
+        guard case .proceed = RecordingStartInsert.outcome(insertedMeetingId: insertedMeetingId) else {
+            refuseStartWithoutRow()
             return
         }
         activeMeetingId = insertedMeetingId
@@ -1552,7 +1819,9 @@ final class AppState: ObservableObject {
 
     private func refreshMenuBarElapsed() {
         guard let startedAt = activeMeetingStartedAt else { return }
-        let text = ElapsedLabel.text(Date().timeIntervalSince(startedAt))
+        // Recorded time: a paused stretch does not count (the pause exists only with the redesign flag).
+        let now = Date()
+        let text = ElapsedLabel.text(now.timeIntervalSince(startedAt) - (recordingPause?.pausedSeconds(now: now) ?? 0))
         if text != menuBarElapsed { menuBarElapsed = text }
     }
 
@@ -1612,6 +1881,11 @@ final class AppState: ObservableObject {
     }
 
     private func pollSilence() {
+        // Held while paused; the silence clock starts over on resume (`resumeRecording`).
+        guard RecordingPauseRules.checksRun(paused: recordingPaused) else {
+            if silenceWarning != nil { silenceWarning = nil }
+            return
+        }
         guard var watch = silenceWatch else { return }
         let mic = SilenceWatch.decibels(fromPeak: audio.micPeak.take())
         let system = SilenceWatch.decibels(fromPeak: audio.systemPeak.take())
@@ -1634,8 +1908,162 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: Recording pause (redesign flag only)
+
+    /// Pause or Resume, for the bar, the floating window, the menu and the shortcut.
+    func toggleRecordingPause() {
+        if recordingPaused { resumeRecording() } else { pauseRecording() }
+    }
+
+    /// Whether Pause is offered now: the redesign flag is on and a meeting is recording, not stopping or starting.
+    var canPauseRecording: Bool {
+        redesignEnabled && activeMeetingId != nil && !isStartingMeeting && recordingPause?.state == .recording && processingMeetingId != activeMeetingId
+    }
+
+    func pauseRecording() {
+        guard canPauseRecording, var model = recordingPause else { return }
+        let now = Date()
+        guard model.apply(.pause, now: now) == .stopCapture else { return }
+        recordingPause = model
+        refreshMenuBarElapsed()
+        audio.pauseRecording()
+        meetingSnapshotService?.stop()
+        meetingEndDetector.setHeld(true)
+        silenceWarning = nil
+        silenceWatch = SilenceWatch()
+        // An hourly prompt that was counting down is answered by the pause: it asks again in the hour, in its paused words.
+        if activeCheckIn?.promptShownAt != nil {
+            activeCheckIn?.keepRecording(now: now)
+            recordingCheckInPanel.hide()
+        }
+        if stillInMeeting?.promptShownAt != nil { answerStillInMeeting(keep: true) }
+        storePausedSpans()
+    }
+
+    func resumeRecording() {
+        guard recordingPaused, !isResumingRecording else { return }
+        isResumingRecording = true
+        Task { @MainActor in
+            let outcome = await audio.resumeRecording()
+            isResumingRecording = false
+            guard var model = recordingPause, model.isPaused else { return }
+            let now = Date()
+            switch outcome {
+            case .notPaused:
+                return
+            case .resumed:
+                model.apply(.resume, now: now)
+                recordingPause = model
+                refreshMenuBarElapsed()
+                recordingProblem = nil
+                if snapshotSettings.enabled { meetingSnapshotService?.start() }
+                restartSilenceClocks(at: now)
+            case .failed(let reason):
+                model.apply(.resumeFailed, now: now)
+                recordingPause = model
+                refreshMenuBarElapsed()
+                recordingProblem = reason
+                if snapshotSettings.enabled { meetingSnapshotService?.start() }
+                restartSilenceClocks(at: now)
+            }
+            storePausedSpans()
+        }
+    }
+
+    @Published private(set) var isResumingRecording = false
+
+    /// After a resume the held checks start from now: the silence meter and warning, the end detector's silence
+    /// rule, "Still in a meeting?" and the hourly check-in.
+    private func restartSilenceClocks(at now: Date) {
+        meetingEndDetector.setHeld(false)
+        silenceWatch = SilenceWatch()
+        silenceWarning = nil
+        _ = audio.micPeak.take(); _ = audio.systemPeak.take()
+        if stillInMeeting != nil { stillInMeeting = (promptShownAt: nil, keptAt: now, polledAt: now) }
+        activeCheckIn?.keepRecording(now: now)
+        recordingCheckInPanel.hide()
+    }
+
+    /// The paused stretches are stored beside the recording's audio so the transcript can leave out text from them.
+    private func storePausedSpans(closingAt now: Date? = nil) {
+        guard let model = recordingPause, let path = audio.systemAudioFileURL?.path ?? audio.micAudioFileURL?.path else { return }
+        RecordingPausedSpans.write(now.map { model.spans(closingAt: $0) } ?? model.spans, forAudioPath: path)
+    }
+
+    /// Stop, quit, update and delete everything from a paused or recording meeting: the pause is closed and its
+    /// spans kept. Safe when nothing is paused.
+    private func finishRecordingPause(audioPath: String?) {
+        guard var model = recordingPause else { return }
+        let now = Date()
+        model.apply(.stop, now: now)
+        if let audioPath, !model.spans.isEmpty { RecordingPausedSpans.write(model.spans, forAudioPath: audioPath) }
+        recordingPause = nil
+        recordingProblem = nil
+        isResumingRecording = false
+        meetingEndDetector.setHeld(false)
+        audio.stopLevelSampling()
+        meetingBar.hide()
+        liveMarks = []
+    }
+
+    /// Called when a meeting's row goes live (flag on): the pause model and the level sampling start.
+    private func recordingDidStart() {
+        guard redesignEnabled, recordingPause == nil else { return }
+        let start = audio.recordingStartedAt ?? Date()
+        recordingPause = RecordingPauseModel(startedAt: start)
+        recordingProblem = nil
+        liveMarks = []
+        liveNotesLastLine = ""
+        audio.startLevelSampling()
+        meetingBar.show()
+    }
+
+    /// Mark this moment: stores the time on the meeting-absolute clock (the one transcript seek and alerts use, which
+    /// includes paused time, not the recorded time on screen) and, if a notes line is being written, that line.
+    func markMoment() {
+        guard redesignEnabled, let model = recordingPause, model.state != .stopped, let id = activeMeetingId, let store = coreStore else { return }
+        let now = Date()
+        let clockCs = Int64(model.clockSeconds(now: now) * 100)
+        let line = liveNotesLastLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label: String? = line.isEmpty ? nil : String(line.prefix(200))
+        let createdMs = Int64(now.timeIntervalSince1970 * 1000)
+        CoreMemoryStore.accessQueue.async { [weak self] in
+            let offset = LiveQuestionWatcher.partOffsetCs(store.meetingParts(meetingId: id) ?? [])
+            guard store.addMeetingMarker(meetingId: id, atCs: offset + clockCs, label: label, createdUnixMs: createdMs) != nil else { return }
+            let all = store.meetingMarkers(meetingId: id) ?? []
+            DispatchQueue.main.async { if self?.activeMeetingId == id { self?.liveMarks = all } }
+        }
+    }
+
+    func removeMarker(_ markerId: Int64) {
+        guard let store = coreStore else { return }
+        liveMarks.removeAll { $0.id == markerId }
+        CoreMemoryStore.accessQueue.async { store.deleteMeetingMarker(id: markerId) }
+    }
+
+    /// The hourly check-in while paused: its own words, Resume and Stop, and it never ends the recording.
+    private func pollCheckInWhilePaused() {
+        guard var checkIn = activeCheckIn else { return }
+        let action = checkIn.poll(now: Date())
+        activeCheckIn = checkIn
+        switch action {
+        case .none:
+            break
+        case .showPrompt:
+            recordingCheckInPanel.showPaused(
+                onResume: { [weak self] in self?.resumeRecording() },
+                onStop: { [weak self] in self?.endActiveMeetingIfNeeded(reason: .checkInStop) })
+            postRecordingNotice(String(localized: "This recording is still paused."))
+        case .stop:
+            // The countdown ran out. A pause is never ended by the app: the panel stays, and it asks again in an hour.
+            if RecordingPauseRules.checkInMayEnd(paused: true) { endActiveMeetingIfNeeded(reason: .checkInTimeout) }
+            else { activeCheckIn?.keepRecording(now: Date()) }
+        }
+    }
+
     private func pollCheckIn() {
         pollSilence()
+        if recordingPaused { return pollCheckInWhilePaused() }
         // Both due: "Still in a meeting?" shows and the hourly check-in waits (it is time-based,
         // so it only defers). An hourly prompt already showing goes first.
         if activeCheckIn?.promptShownAt == nil, pollStillInMeeting() { return }
@@ -1772,6 +2200,9 @@ final class AppState: ObservableObject {
     /// last stored speech once the full transcript is stored, before naming and the summary.
     private func endMeeting(reason: MeetingEndDetector.EndReason?, autoTrim: Bool = false) {
         captureGeneration += 1
+        // A paused meeting stops cleanly without resuming first: close the pause, keep its span for the transcript.
+        let pausedAudioPath = audio.systemAudioFileURL?.path ?? audio.micAudioFileURL?.path
+        finishRecordingPause(audioPath: pausedAudioPath)
         audio.stop()
         meetingEndDetector.stop()
         stopCheckIn()
@@ -1835,6 +2266,7 @@ final class AppState: ObservableObject {
         var audioPath: String?
         if active != nil {
             captureGeneration += 1
+            finishRecordingPause(audioPath: audio.systemAudioFileURL?.path ?? audio.micAudioFileURL?.path)
             audio.stop()
             meetingEndDetector.stop()
             stopCheckIn()
@@ -2120,7 +2552,9 @@ final class AppState: ObservableObject {
                     let routingConfig = self.routing.routingConfig(preferredProvider: self.routing.preferredProvider, preferredModel: self.routing.preferredModel)
                     let instructions = self.promptLibrary.instructions[.meetingSummary] ?? ""
                     let slow = self.slowStore
+                    let gateToken = UserModelGate.shared.enter()
                     CoreMemoryStore.slowLaneQueue.async { [weak self] in
+                        defer { UserModelGate.shared.leave(gateToken) }
                         let slides = slow?.meetingSlidesText(meetingId: meetingId) ?? ""
                         let outcome = slow?.summarizeMeeting(meetingId: meetingId, notes: notes, transcript: transcript, slides: slides, model: ollamaModel, routing: routingConfig.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: instructions)
                         DispatchQueue.main.async {
@@ -2139,6 +2573,8 @@ final class AppState: ObservableObject {
                     return (slow, self.routing.ollamaDefaultModel, routing, self.speakerNamesSettings.rememberVoices)
                 }
                 guard let naming else { return }
+                let gateToken = UserModelGate.shared.enter()
+                defer { UserModelGate.shared.leave(gateToken) }
                 let named = CoreMemoryStore.slowLaneQueue.sync {
                     naming.store.assignMeetingSpeakers(meetingId: meetingId, voices: voices, model: naming.model, routing: naming.routing, remember: naming.remember)
                 }
@@ -2263,8 +2699,10 @@ final class AppState: ObservableObject {
             meetingId: meetingId, meetingTitle: activeMeetingTitle ?? String(localized: "Meeting"), names: names,
             detect: { [weak self] lines, index in
                 guard let (slow, model, routing) = self?.liveQuestionModel() else { return nil }
+                let gateToken = UserModelGate.shared.enter()
+                defer { UserModelGate.shared.leave(gateToken) }
                 return await AppState.run(on: CoreMemoryStore.slowLaneQueue) {
-                    switch slow.detectLiveQuestion(lines: lines, index: index, names: names, model: model, routing: routing) {
+                    switch slow.detectLiveQuestion(lines: lines, index: index, names: names, model: model, routing: routing, meetingId: meetingId) {
                     case .success(let verdict): return verdict
                     case .failure(let error): log.error("live question detect failed: \(String(describing: error), privacy: .public)")
                     case nil: log.error("live question detect: invalid arguments")
@@ -2274,8 +2712,10 @@ final class AppState: ObservableObject {
             },
             draft: { [weak self] verdict, recent in
                 guard let (slow, model, routing) = self?.liveQuestionModel() else { return nil }
+                let gateToken = UserModelGate.shared.enter()
+                defer { UserModelGate.shared.leave(gateToken) }
                 return await AppState.run(on: CoreMemoryStore.slowLaneQueue) {
-                    switch slow.draftLiveAnswer(verdict: verdict, recent: recent, model: model, routing: routing) {
+                    switch slow.draftLiveAnswer(verdict: verdict, recent: recent, model: model, routing: routing, meetingId: meetingId) {
                     case .success(let answer): return answer
                     case .failure(let error): log.error("live question draft failed: \(String(describing: error), privacy: .public)")
                     case nil: log.error("live question draft: invalid arguments")
@@ -2420,15 +2860,36 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Where background maintenance runs: the background store on `backgroundQueue`; the main store on
+    /// `accessQueue` (as before this lane existed) when the background connection could not be opened.
+    private var backgroundLane: (store: CoreMemoryStore, queue: DispatchQueue)? {
+        if let backgroundStore { return (backgroundStore, CoreMemoryStore.backgroundQueue) }
+        return coreStore.map { ($0, CoreMemoryStore.accessQueue) }
+    }
+
+    /// Where a background model job runs: its own connection on `backgroundModelQueue`, or the slow
+    /// lane when that connection could not be opened. Never the user's question's lane when avoidable.
+    var backgroundModelLane: (store: CoreMemoryStore, queue: DispatchQueue)? {
+        let lane = BackgroundModelLane.choose(dedicatedOpened: backgroundModelStore != nil)
+        switch lane {
+        case .dedicated: return backgroundModelStore.map { ($0, lane.queue) }
+        case .slowFallback: return slowStore.map { ($0, lane.queue) }
+        }
+    }
+
     private func scheduleJobsBatchStep() {
-        guard let store = coreStore else { return }
+        guard let lane = backgroundLane else { return }
+        let store = lane.store
         // Read on the main thread and capture -- `routing`/`promptLibrary` (@Published)
         // aren't safe to read from the background queue below, same precedent as
         // `transcriptionQueue`'s summary, which reads `routing.ollamaDefaultModel` on main.
         let ollamaModel = routing.ollamaDefaultModel
         let threadSummaryInstructions = promptLibrary.instructions[.threadSummary] ?? ""
-        let slow = slowStore
-        CoreMemoryStore.accessQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        let modelLane = backgroundModelLane
+        let slow = modelLane?.store
+        // No lane means no store at all, so nothing runs; the queue is then never the user's question lane.
+        let modelQueue = modelLane?.queue ?? CoreMemoryStore.backgroundModelQueue
+        lane.queue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard PowerIdleGate.isEligibleForBackgroundWork() else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
                     self?.scheduleJobsBatchStep()
@@ -2436,13 +2897,14 @@ final class AppState: ObservableObject {
                 return
             }
             let processed = store.runJobsBatch(maxJobs: 1)
-            CoreMemoryStore.slowLaneQueue.async { [weak self] in
+            modelQueue.async { [weak self] in
                 // "Use local model" off keeps Ollama idle; read on main right before the call
-                // (the slow lane never waits on main, so this cannot deadlock).
+                // (the model lane never waits on main, so this cannot deadlock). A question the
+                // user is waiting on goes first: no new request starts while one is queued.
                 let localAllowed: Bool = DispatchQueue.main.sync { [weak self] in
                     self.map { RoutingSettings.localSummariesAllowed(useLocalModel: $0.routing.useLocalModel, localOnlyMode: $0.routing.localOnlyMode) } ?? false
                 }
-                let threadsSummarized = localAllowed
+                let threadsSummarized = localAllowed && BackgroundModelLane.start(userBusy: UserModelGate.shared.isBusy()) == .run
                     ? (slow?.runThreadSummarizeBatch(model: ollamaModel, maxJobs: 1, customInstructions: threadSummaryInstructions) ?? 0)
                     : 0
                 guard processed > 0 || threadsSummarized > 0 else {
@@ -2467,17 +2929,23 @@ final class AppState: ObservableObject {
     /// moments -- rare for a laptop used unplugged, and rare during genuinely focused
     /// work -- so real activity went unsegmented for hours while the few windows that DID
     /// open were disproportionately populated by low-value content (e.g. the lock screen,
-    /// itself an idle-triggering event). Segmenting is cheap SQL grouping on
-    /// `accessQueue`; the summary is a local Ollama call that can take minutes, so it runs
-    /// on the slow lane, where it can't hold up UI reads.
+    /// itself an idle-triggering event). Segmenting is SQL grouping on the background lane
+    /// (`backgroundLane`: `backgroundQueue`, or `accessQueue` when the background connection
+    /// could not be opened); the summary is a local Ollama call that can take minutes, so it
+    /// runs on the background model lane (`backgroundModelLane`), where it can't hold up UI reads
+    /// or a question the user types, and it starts only while no user request is queued.
     private func scheduleEpisodeSegmentStep() {
-        guard let store = coreStore else { return }
+        guard let lane = backgroundLane else { return }
+        let store = lane.store
         let ollamaModel = routing.ollamaDefaultModel
         let episodeSummaryInstructions = promptLibrary.instructions[.episodeSummary] ?? ""
-        let slow = slowStore
-        CoreMemoryStore.accessQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        let modelLane = backgroundModelLane
+        let slow = modelLane?.store
+        // No lane means no store at all, so nothing runs; the queue is then never the user's question lane.
+        let modelQueue = modelLane?.queue ?? CoreMemoryStore.backgroundModelQueue
+        lane.queue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             let segmented = PowerIdleGate.recordingPausesBackgroundWork() ? 0 : store.runEpisodeSegmentBatch(maxJobs: 1)
-            CoreMemoryStore.slowLaneQueue.async { [weak self] in
+            modelQueue.async { [weak self] in
                 // Segmenting stays always-on (#52); the Ollama summary waits for the same
                 // AC-power + idle gate as thread summaries, as on Windows, so a backlog
                 // doesn't load the summary model while the user is working.
@@ -2487,6 +2955,7 @@ final class AppState: ObservableObject {
                     self.map { RoutingSettings.localSummariesAllowed(useLocalModel: $0.routing.useLocalModel, localOnlyMode: $0.routing.localOnlyMode) } ?? false
                 }
                 let summarized = PowerIdleGate.isEligibleForBackgroundWork() && localAllowed
+                    && BackgroundModelLane.start(userBusy: UserModelGate.shared.isBusy()) == .run
                     ? (slow?.runEpisodeSummarizeBatch(model: ollamaModel, maxJobs: 1, customInstructions: episodeSummaryInstructions) ?? 0)
                     : 0
                 guard segmented > 0 || summarized > 0 else {
@@ -2506,11 +2975,11 @@ final class AppState: ObservableObject {
     /// `PowerIdleGate`: it is a ~1s HTTPS request, not an Ollama job, so new mail must be
     /// ranked within minutes even on battery or while the user works. The opt-in/Local-only
     /// gate is re-read on the main queue right before each call, so a toggle-off takes
-    /// effect on the very next call. Nothing on main waits on the slow lane (never call
-    /// `slowLaneQueue.sync` from main), so this `main.sync` cannot deadlock.
+    /// effect on the very next call. Nothing on main waits on a model lane (never call
+    /// `.sync` on one from main), so this `main.sync` cannot deadlock.
     private func scheduleReplyPriorityStep() {
-        guard let slow = slowStore else { return }
-        CoreMemoryStore.slowLaneQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        guard let (slow, modelQueue) = backgroundModelLane else { return }
+        modelQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             let key: String? = DispatchQueue.main.sync { [weak self] in
                 self?.replyPriority.activeKey(localOnly: self?.routing.localOnlyMode ?? true)
             }
@@ -2530,11 +2999,11 @@ final class AppState: ObservableObject {
     }
 
     /// Topics: the alias/index batch always runs (free, local); TypeSafe judging runs after
-    /// it only when the switch is on and Start was pressed. Same slow lane and main.sync
+    /// it only when the switch is on and Start was pressed. Same background model lane and main.sync
     /// key read as `scheduleReplyPriorityStep`.
     private func scheduleTopicsStep() {
-        guard let slow = slowStore else { return }
-        CoreMemoryStore.slowLaneQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        guard let (slow, modelQueue) = backgroundModelLane else { return }
+        modelQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             let more = slow.runTopicsBatch()
             let key: String? = DispatchQueue.main.sync { [weak self] in
                 self?.topicSort.activeKey(localOnly: self?.routing.localOnlyMode ?? true)
@@ -2575,8 +3044,8 @@ final class AppState: ObservableObject {
     /// waits for the next tick. The vault settings live in UserDefaults (see `VaultSettings`),
     /// so the slow lane reads them directly.
     private func scheduleTopicVaultStep(after delay: Double = 300) {
-        guard let slow = slowStore else { return }
-        CoreMemoryStore.slowLaneQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+        guard let (slow, modelQueue) = backgroundModelLane else { return }
+        modelQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
             // A computer that was off publishes only after it has pulled what the others did
             // meanwhile: its build is the newest, so a stale page would win on every device.
             // `lastSyncedAt` is set by this launch's first good round. The vault is local only.
@@ -2608,10 +3077,15 @@ final class AppState: ObservableObject {
     /// and Local-only mode is off; until then nothing runs, so the queue the estimate covers
     /// is left for TypeSafe. Inputs are read in one `main.sync`, as in `scheduleTopicsStep`.
     private func scheduleTopicStepsStep(after delay: Double = 0.1) {
-        guard let slow = slowStore else { return }
-        CoreMemoryStore.slowLaneQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+        guard let (slow, modelQueue) = backgroundModelLane else { return }
+        modelQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard PowerIdleGate.isEligibleForBackgroundWork() else {
                 DispatchQueue.main.async { self?.scheduleTopicStepsStep(after: 60) }
+                return
+            }
+            // A question the user is waiting on goes first: start no new model request meanwhile.
+            if case .retryLater(let seconds) = BackgroundModelLane.start(userBusy: UserModelGate.shared.isBusy()) {
+                DispatchQueue.main.async { self?.scheduleTopicStepsStep(after: seconds) }
                 return
             }
             typealias Inputs = (routing: CoreRoutingConfig, model: String, key: String?, wait: Bool)
@@ -2655,15 +3129,24 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Names suggested topics with the user's AI model (10 per run), under the AC + idle gate,
+    /// Names suggested topics with the user's AI model (a few per run), under the AC + idle gate,
     /// through the routing and spend limits of other background model tasks. Core tries a
     /// placeholder-named topic at most once a day after a failure, so an idle poll is cheap.
     /// Inputs are read in one `main.sync`, as in `scheduleTopicStepsStep`.
+    /// Topics named per run. Small, because the user-question gate is read once per run: a local model
+    /// can take minutes a name, and a question typed mid-run waits for the rest of it.
+    private static let topicNamingBatchLimit = 3
+
     private func scheduleTopicNamingStep(after delay: Double = 120) {
-        guard let slow = slowStore else { return }
-        CoreMemoryStore.slowLaneQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+        guard let (slow, modelQueue) = backgroundModelLane else { return }
+        modelQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard PowerIdleGate.isEligibleForBackgroundWork() else {
                 DispatchQueue.main.async { self?.scheduleTopicNamingStep(after: 60) }
+                return
+            }
+            // A question the user is waiting on goes first: start no new model request meanwhile.
+            if case .retryLater(let seconds) = BackgroundModelLane.start(userBusy: UserModelGate.shared.isBusy()) {
+                DispatchQueue.main.async { self?.scheduleTopicNamingStep(after: seconds) }
                 return
             }
             typealias Inputs = (routing: CoreRoutingConfig, model: String)
@@ -2676,9 +3159,9 @@ final class AppState: ObservableObject {
             }
             guard let inputs else { return }
             // Only names a model wrote earn the fast cadence: placeholders from a failing model do not.
-            let named = slow.runTopicNamingBatch(routing: inputs.routing, ollamaModel: inputs.model, limit: 10)?.modelNamed ?? 0
+            let named = slow.runTopicNamingBatch(routing: inputs.routing, ollamaModel: inputs.model, limit: Self.topicNamingBatchLimit)?.modelNamed ?? 0
             DispatchQueue.main.async { [weak self] in
-                self?.scheduleTopicNamingStep(after: named > 0 ? 5 : 300)
+                self?.scheduleTopicNamingStep(after: named > 0 ? 2 : 300)
             }
         }
     }
@@ -2693,9 +3176,10 @@ final class AppState: ObservableObject {
     /// database at all, silently, indefinitely (confirmed: three weeks of a real user's
     /// capture_item rows with zero ingested past the last manual/Timeline trigger).
     private func scheduleScreenTextIngestStep() {
-        guard let store = coreStore else { return }
+        guard let lane = backgroundLane else { return }
+        let store = lane.store
         let deviceId = deviceId
-        CoreMemoryStore.accessQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        lane.queue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             let outcome = CoreSelfTest.ingestNewScreenTextLines(into: store, deviceId: deviceId)
             guard outcome.hasMoreWork else {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
@@ -2710,15 +3194,15 @@ final class AppState: ObservableObject {
     }
 
     /// Drives LB0-6's transcript-segment backfill to completion in the background, a
-    /// few meetings per turn on `CoreMemoryStore.accessQueue` with a short pause
-    /// between turns -- same throttled-loop shape as `scheduleJobsBatchStep()`,
-    /// so real capture-event dispatch queued on the same serial queue still gets its
-    /// normal turn between steps. Stops rescheduling once the batch returns 0 (caught
+    /// few meetings per turn on the background lane with a short pause between turns --
+    /// same throttled-loop shape as `scheduleJobsBatchStep()`, so other background work
+    /// queued on that lane still gets its turn between steps. Stops rescheduling once the batch returns 0 (caught
     /// up) or a negative value (shouldn't happen outside a null handle, but treated
     /// the same as "stop" rather than looping on an error).
     private func scheduleTranscriptBackfillStep() {
-        guard let store = coreStore else { return }
-        CoreMemoryStore.accessQueue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        guard let lane = backgroundLane else { return }
+        let store = lane.store
+        lane.queue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             let processed = store.backfillTranscriptSegments(maxMeetings: 5)
             guard processed > 0 else { return }
             DispatchQueue.main.async { [weak self] in
@@ -2743,6 +3227,32 @@ final class AppState: ObservableObject {
         }
         // The post-meeting trigger: moves the finished recording to the media folder.
         mediaRetention.run(mode: .daily)
+    }
+
+    /// Whether this Mac has a real device identity. Without one (`ensureLocalDeviceIdentity` failed and the
+    /// legacy fallback id is in use) core refuses a client delete, and the page offers none.
+    var hasClientDeviceIdentity: Bool {
+        !deviceId.isEmpty && deviceId != "spike-device"
+    }
+
+    /// The client controls' core calls; nil until the store opens.
+    func clientControlsBridge() -> CoreClientControlsBridge? {
+        guard let coreStore else { return nil }
+        return CoreClientControlsBridge(store: coreStore, slow: slowStore, deviceId: deviceId) { [weak self] ids in
+            self?.resummarizeMeetings(ids)
+        }
+    }
+
+    /// Summarises these meetings again through the usual pipeline (routing defaults). Core keeps an excluded
+    /// client's meeting on this Mac: made by a local model, or not made.
+    func resummarizeMeetings(_ ids: [Int64]) {
+        guard let store = coreStore, let queue = transcriptionQueue else { return }
+        for id in ids {
+            CoreMemoryStore.accessQueue.async {
+                let notes = store.getMeeting(id: id)?.notes ?? ""
+                DispatchQueue.main.async { queue.summarizeExisting(meetingId: id, notes: notes) }
+            }
+        }
     }
 
     /// FR-MTG-5 follow-on: regenerates a meeting's summary against its full transcript
@@ -2774,12 +3284,16 @@ final class AppState: ObservableObject {
             return
         }
         regeneratingSummaryIds.insert(meetingId)
+        let gateToken = UserModelGate.shared.enter()
         CoreMemoryStore.slowLaneQueue.async { [weak self] in
+            defer { UserModelGate.shared.leave(gateToken) }
             let slides = slow.meetingSlidesText(meetingId: meetingId)
             // The stored segments with speaker names (as the first summary used); the caller's text without them.
             let named = slow.meetingTranscriptText(meetingId: meetingId) ?? ""
             let text = named.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? transcript : named
-            let outcome = slow.summarizeMeeting(meetingId: meetingId, notes: notes, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions)
+            // Regenerate also sees what was typed on Today (a meeting stored before that was merged in).
+            let withToday = LiveNotesMerge.combined(library: notes, draft: slow.getMeetingNoteDraft(meetingId: meetingId)?.personalNotes)
+            let outcome = slow.summarizeMeeting(meetingId: meetingId, notes: withToday, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions)
             DispatchQueue.main.async {
                 self?.regeneratingSummaryIds.remove(meetingId)
                 self?.recordSummaryOutcome(outcome, meetingId: meetingId)
@@ -2805,11 +3319,15 @@ final class AppState: ObservableObject {
             return
         }
         regeneratingSummaryIds.insert(meetingId)
+        let gateToken = UserModelGate.shared.enter()
         CoreMemoryStore.slowLaneQueue.async { [weak self] in
+            defer { UserModelGate.shared.leave(gateToken) }
             let slides = slow.meetingSlidesText(meetingId: meetingId)
             let named = slow.meetingTranscriptText(meetingId: meetingId) ?? ""
             let text = named.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? transcript : named
-            let outcome = slow.summarizeMeetingPreferred(meetingId: meetingId, notes: notes, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions)
+            // Regenerate also sees what was typed on Today (a meeting stored before that was merged in).
+            let withToday = LiveNotesMerge.combined(library: notes, draft: slow.getMeetingNoteDraft(meetingId: meetingId)?.personalNotes)
+            let outcome = slow.summarizeMeetingPreferred(meetingId: meetingId, notes: withToday, transcript: text, slides: slides, model: ollamaModel, routing: routing.withTypesafeKey(self?.freshTitleCheckKey()), customInstructions: customInstructions)
             DispatchQueue.main.async {
                 self?.regeneratingSummaryIds.remove(meetingId)
                 // Only a success is recorded: a failure is shown by the notice's own line, with its reason.
@@ -2827,6 +3345,7 @@ final class AppState: ObservableObject {
     /// of activity capture's state (FR-MTG-14). Only `.away` overrides the row's trigger;
     /// otherwise it follows the meeting's source (calendar or detected).
     func startCapture(for meeting: QualifyingMeeting, trigger: CoreMeetingTrigger = .calendar) {
+        guard recordingGate.allow(RecordingStartGate.Source(trigger: trigger)) else { return }
         guard activeMeetingId == nil, !isStartingMeeting, hasRoomToRecord() else { return }
         // The first thing Whimbrel may need to warn about, so this is when it asks. No-op once answered.
         permissions.request(.notifications)
@@ -2865,6 +3384,7 @@ final class AppState: ObservableObject {
             finishStartingCapture(for: meeting, insertedMeetingId: nil, partIndex: nil, partStartMs: partStartMs, generation: thisGeneration)
             return
         }
+        PendingRecordingStarts.shared.begin()
         CoreMemoryStore.accessQueue.async {
             // A restart of the same meeting within the window continues it (reads only here).
             var previous = MeetingContinuation.findPrevious(key: continueKey, nowUnixMs: partStartMs, store: store)
@@ -2875,10 +3395,16 @@ final class AppState: ObservableObject {
                 inheritedEvent = calendarFallback.event
             }
             if let previous {
+                // Not ended here: the pending start continues in `continueCapture`, which ends it
+                // (or here, when the app state is gone, so quitting never waits for it).
                 DispatchQueue.main.async { [weak self] in
-                    self?.continueCapture(for: meeting, previous: previous, calendarEvent: inheritedEvent,
-                                          partStartMs: partStartMs, newMeeting: newMeeting, continueKey: continueKey,
-                                          generation: thisGeneration)
+                    guard let self else {
+                        PendingRecordingStarts.shared.end()
+                        return
+                    }
+                    self.continueCapture(for: meeting, previous: previous, calendarEvent: inheritedEvent,
+                                         partStartMs: partStartMs, newMeeting: newMeeting, continueKey: continueKey,
+                                         generation: thisGeneration)
                 }
                 return
             }
@@ -2886,6 +3412,7 @@ final class AppState: ObservableObject {
             if let insertedId, meeting.source == .googleCalendar { store.setMeetingCalendarSource(meetingId: insertedId, source: "google") }
             if let insertedId, !meeting.attendeeDetails.isEmpty { store.setMeetingAttendeeDetails(meetingId: insertedId, attendees: meeting.attendeeDetails) }
             let partIndex = insertedId.flatMap { store.beginMeetingPart(meetingId: $0, startUnixMs: partStartMs, continueKey: continueKey) }
+            PendingRecordingStarts.shared.end()
             DispatchQueue.main.async { [weak self] in
                 self?.finishStartingCapture(for: meeting, insertedMeetingId: insertedId, partIndex: partIndex, partStartMs: partStartMs, generation: thisGeneration)
             }
@@ -2905,6 +3432,7 @@ final class AppState: ObservableObject {
                                  newMeeting: CoreNewMeeting, continueKey: String?, generation: Int) {
         guard generation == captureGeneration, let store = coreStore else {
             isStartingMeeting = false
+            PendingRecordingStarts.shared.end()
             return
         }
         let id = previous.meeting.id
@@ -2917,11 +3445,13 @@ final class AppState: ObservableObject {
                 if let insertedId, meeting.source == .googleCalendar { store.setMeetingCalendarSource(meetingId: insertedId, source: "google") }
                 if let insertedId, !meeting.attendeeDetails.isEmpty { store.setMeetingAttendeeDetails(meetingId: insertedId, attendees: meeting.attendeeDetails) }
                 let newPart = insertedId.flatMap { store.beginMeetingPart(meetingId: $0, startUnixMs: partStartMs, continueKey: continueKey) }
+                PendingRecordingStarts.shared.end()
                 DispatchQueue.main.async { [weak self] in
                     self?.finishStartingCapture(for: meeting, insertedMeetingId: insertedId, partIndex: newPart, partStartMs: partStartMs, generation: generation)
                 }
                 return
             }
+            PendingRecordingStarts.shared.end()
             DispatchQueue.main.async { [weak self] in
                 self?.finishStartingCapture(for: meeting, insertedMeetingId: id, partIndex: partIndex,
                                             continuing: previous, calendarEvent: calendarEvent, partStartMs: partStartMs, generation: generation)
@@ -2964,6 +3494,13 @@ final class AppState: ObservableObject {
             } else {
                 completeAbandonedStart(meetingId: insertedMeetingId, partIndex: partIndex)
             }
+            return
+        }
+        // No row, no recording (audio was started ahead of the insert to lose no speech): stop it and
+        // refuse, instead of recording on with nothing to save it under.
+        guard case .proceed = RecordingStartInsert.outcome(insertedMeetingId: insertedMeetingId) else {
+            stopRowlessRecording()
+            refuseStartWithoutRow()
             return
         }
         if let previous, let store = coreStore {
@@ -3180,7 +3717,7 @@ extension AppState {
         }
         var isMicInUse: Bool { MeetingHeuristicDetector.isMicrophoneInUse() }
         var isRecording: Bool {
-            app.activeMeetingId != nil || app.isStartingMeeting || app.audio.micActive || app.audio.systemAudioActive
+            app.isRecordingNow
         }
         var profileName: String { app.profile.name }
 
@@ -3375,4 +3912,17 @@ extension AppState {
         guard let own else { return false }
         return await Task.detached(priority: .utility) { own.refreshModelDefaults() }.value
     }
+}
+
+
+/// What Home's Apps and Dates chips narrow a Library search to. A bound of 0 means none; an app with no
+/// bounds searches the last 30 days (the core's rule). `appName` and `dateLabel` are for the line that shows it.
+struct LibraryCaptureFilter: Equatable {
+    var appId: String?
+    var startUnixMs: Int64 = 0
+    var endUnixMs: Int64 = 0
+    /// A person from recent meetings: meetings they attended, and captures whose text mentions the name.
+    var person: String?
+    var appName: String?
+    var dateLabel: String?
 }

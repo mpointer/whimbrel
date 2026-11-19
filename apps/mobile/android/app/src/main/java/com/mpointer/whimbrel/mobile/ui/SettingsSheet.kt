@@ -63,6 +63,7 @@ fun SettingsSheet(sync: SyncModel, reminders: ReminderCoordinator, themes: Theme
     val selectedId by themes.selectedId.collectAsState()
     val syncLine = rememberSyncLine(sync)
     val olderLoading by sync.olderHistoryLoading.collectAsState()
+    val updateNeeded by sync.updateNeeded.collectAsState()
     val count by sync.meetingCount.collectAsState()
     val countLine = ReadLogic.meetingCountLine(count, ResourceReadStrings(LocalContext.current))
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -73,6 +74,7 @@ fun SettingsSheet(sync: SyncModel, reminders: ReminderCoordinator, themes: Theme
             Heading(stringResource(R.string.settings_sync))
             Text(syncLine, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (olderLoading) Text(stringResource(R.string.sync_older_history_loading), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (updateNeeded) Text(stringResource(R.string.sync_update_needed), color = MaterialTheme.colorScheme.onSurfaceVariant)
             countLine?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Button(onClick = { scope.launch { sync.syncNow(manual = true) } }, enabled = !syncing) { Text(stringResource(R.string.settings_sync_now)) }
             RemindersSection(reminders)

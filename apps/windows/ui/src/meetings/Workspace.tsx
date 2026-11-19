@@ -28,6 +28,8 @@ import { ActionItems } from "./ActionItems";
 import { elapsedLabel } from "./recordingModel";
 import { meetingTitleLabel } from "./sentinels";
 import { RecordingNoticeCard } from "./RecordingNoticeCard";
+import { useNoStore } from "../launch/noStore";
+import { RecordingOffCaption } from "../launch/NoStoreBanner";
 import { LiveAlertsSection } from "./LiveAlertsSection";
 import { LiveTranscriptPane } from "./LiveTranscriptPane";
 import { MeetingAskBar } from "./MeetingAskBar";
@@ -49,7 +51,7 @@ function message(e: unknown): string {
  *  is what the shell has (set by the workspace's load, and by each save), and a value equal to
  *  it doesn't save. Nor does a new `save` alone, so a summary that changes underneath (a
  *  transcription run finishing) never re-saves stale text over it. */
-function useAutosave(
+export function useAutosave(
   value: string | null,
   save: (value: string) => Promise<unknown>,
   onError: (message: string) => void,
@@ -71,6 +73,7 @@ function useAutosave(
 
 export function Workspace({ meetingId, onChanged, onOpenSettings }: { meetingId: number; onChanged: () => void; onOpenSettings?: () => void }) {
   const [view, setView] = useState<WorkspaceView | null>(null);
+  const noStore = useNoStore();
   const [notes, setNotes] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [items, setItems] = useState<ActionItemView[]>([]);
@@ -248,9 +251,10 @@ export function Workspace({ meetingId, onChanged, onOpenSettings }: { meetingId:
 
       {view.phase === "before" && (
         <div className="toolbar">
-          <button className="mode mode--active" disabled={busy || view.readOnly} onClick={() => act(meetingRecordStart)}>
+          <button className="mode mode--active" disabled={busy || view.readOnly || noStore} onClick={() => act(meetingRecordStart)}>
             {t("Start recording")}
           </button>
+          {noStore && <RecordingOffCaption />}
         </div>
       )}
 

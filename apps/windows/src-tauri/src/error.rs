@@ -62,6 +62,10 @@ pub enum ProviderFailureReason {
     Other { provider: String, status: Option<u16> },
     /// The provider answered that the chosen model does not exist, and no default answered for it.
     ModelUnavailable { provider: String, model: String },
+    /// The request involves a client excluded from hosted models, so it was not sent.
+    ExcludedClient,
+    /// The exclusion setting could not be read, so no hosted request is sent until it can.
+    ExclusionUnreadable,
 }
 
 impl From<llm::ProviderFailureKind> for ProviderFailureReason {
@@ -78,6 +82,8 @@ impl From<llm::ProviderFailureKind> for ProviderFailureReason {
             K::CreditExhausted => Self::CreditExhausted,
             K::Other { provider, status } => Self::Other { provider: provider.as_str().into(), status },
             K::ModelUnavailable { provider, model } => Self::ModelUnavailable { provider: provider.as_str().into(), model },
+            K::ExcludedClient => Self::ExcludedClient,
+            K::ExclusionUnreadable => Self::ExclusionUnreadable,
         }
     }
 }
@@ -118,6 +124,9 @@ impl ProviderFailureReason {
             Self::Unauthorized { provider } => tr("{provider} rejected the API key. Check it in Settings → AI.", &[("provider", &name(provider))]),
             Self::RateLimited { provider } => tr("{provider} is busy or out of credit. Try again shortly.", &[("provider", &name(provider))]),
             Self::CreditExhausted => tr("Whimbrel AI credit is used up. Add credit in Settings.", &[]),
+            // English only for now: not in the translation catalogs yet.
+            Self::ExcludedClient => llm::guard::REFUSED_MESSAGE.to_string(),
+            Self::ExclusionUnreadable => llm::guard::UNREADABLE_MESSAGE.to_string(),
             Self::ModelUnavailable { provider, model } => tr(
                 "{provider} doesn't offer the model {model} to your key. Choose another in Settings → AI.",
                 &[("provider", &name(provider)), ("model", model)],
@@ -136,6 +145,11 @@ impl CommandError {
     /// A provider failure with no reason known.
     pub fn provider_failure() -> Self {
         CommandError::ProviderFailure { reason: None }
+    }
+
+    /// The exclusion gate held the request back, so it was not sent. Never names the client.
+    pub fn refused(refusal: &llm::GateRefusal) -> Self {
+        CommandError::ProviderFailure { reason: Some(refusal.failure_kind().into()) }
     }
 
     pub fn store(message: impl Into<String>) -> Self {
@@ -196,6 +210,8 @@ impl From<api::ApiError> for CommandError {
             },
             // Take-once: core leaves the walk's reason right before it returns this.
             api::ApiError::ProviderFailure => CommandError::ProviderFailure { reason: api::last_provider_failure().map(Into::into) },
+            // Uncompiled on macOS: the Windows shell has not built this edit.
+            api::ApiError::NotFound => CommandError::invalid_input("Not found."),
             api::ApiError::BudgetSpent(spent) => CommandError::BudgetSpent {
                 provider: spent.provider.as_str().to_string(),
                 spent_cents: spent.spent_cents,

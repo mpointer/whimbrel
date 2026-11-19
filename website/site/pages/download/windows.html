@@ -25,6 +25,7 @@
         <span class="version" data-version="windows"></span>
       </div>
       <p class="fine muted">First time here? You'll be asked to register before the download starts.</p>
+      <p class="fine" data-arm-download hidden>A PC with an Arm processor (such as Snapdragon)? <a href="/api/download/windows-arm">Download for Windows on Arm</a>. It runs natively, so transcription is faster than the regular build under emulation.</p>
     </div>
     {{> app-mock}}
   </div>
@@ -35,7 +36,7 @@
     <div>
       <h2>System requirements</h2>
       <ul class="checklist">
-        <li><strong>Windows 11, 64-bit (x64)</strong>Windows on ARM is not supported yet.</li>
+        <li><strong>Windows 11, 64-bit (x64 or Arm)</strong>On an Arm PC, use the Windows on Arm download. It doesn't yet tell apart the other speakers in a call.</li>
         <li><strong>Microsoft Edge WebView2</strong>Already included with Windows 11.</li>
         <li><strong>Disk space</strong>Room for the app, the on-device speech model, and your growing history.</li>
         <li><strong>Optional: Ollama</strong>To run language models fully on your PC.</li>
@@ -44,7 +45,7 @@
     <div>
       <h2>Install in two minutes</h2>
       <ol class="install-steps">
-        <li>Run the downloaded <code>Whimbrel_x.y.z_x64-setup.exe</code>.</li>
+        <li>Run the downloaded <code>Whimbrel_x.y.z_x64-setup.exe</code> (<code>_arm64-setup.exe</code> on Windows on Arm).</li>
         <li>If SmartScreen appears, choose <strong>More info</strong> → <strong>Run anyway</strong> (see below why).</li>
         <li>The installer finishes without needing administrator rights.</li>
         <li>Whimbrel starts in the system tray. Open it to finish setup.</li>

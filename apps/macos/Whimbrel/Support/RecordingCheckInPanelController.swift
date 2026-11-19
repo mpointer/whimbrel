@@ -11,6 +11,9 @@ final class RecordingCheckInPanelController: ObservableObject {
     @Published fileprivate(set) var secondsRemaining: Int?
     /// True for "Still in a meeting?" (`StillInMeeting`), false for the hourly "Still recording?".
     @Published fileprivate(set) var asksStillInMeeting = false
+    /// True for the paused wording: "This recording is still paused." with Resume and Stop, no countdown.
+    @Published fileprivate(set) var isPausedPrompt = false
+    private var onResume: (() -> Void)?
 
     private static let panelSize = NSSize(width: 380, height: 120)
     private static let screenMargin: CGFloat = 16
@@ -23,6 +26,7 @@ final class RecordingCheckInPanelController: ObservableObject {
 
     func show(deadline: Date, stillInMeeting: Bool = false, onKeep: @escaping () -> Void, onStop: @escaping () -> Void) {
         asksStillInMeeting = stillInMeeting
+        isPausedPrompt = false
         self.deadline = deadline
         self.onKeep = onKeep
         self.onStop = onStop
@@ -40,7 +44,31 @@ final class RecordingCheckInPanelController: ObservableObject {
         panel.orderFrontRegardless()
     }
 
+    /// The hourly check-in while the recording is paused. It does not count down and nothing here ends the recording.
+    func showPaused(onResume: @escaping () -> Void, onStop: @escaping () -> Void) {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        deadline = nil
+        asksStillInMeeting = false
+        isPausedPrompt = true
+        self.onResume = onResume
+        self.onKeep = nil
+        self.onStop = onStop
+        secondsRemaining = 0
+        let panel = ensurePanel()
+        positionPanel(panel)
+        panel.orderFrontRegardless()
+    }
+
+    func resumeTapped() {
+        let action = onResume
+        hide()
+        action?()
+    }
+
     func hide() {
+        isPausedPrompt = false
+        onResume = nil
         countdownTimer?.invalidate()
         countdownTimer = nil
         deadline = nil

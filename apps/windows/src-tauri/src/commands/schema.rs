@@ -1,7 +1,7 @@
 //! The JSON Schema bundle the UI's TypeScript types are generated from (plan
 //! Decision 11): schemars 1, pinned to draft-07 for `json-schema-to-typescript`.
 //!
-//! `cargo run --bin gen-schema` writes it to `ui/src/generated/schema.json`, and
+//! `cargo run --example gen-schema` writes it to `ui/src/generated/schema.json`, and
 //! `npm run gen:types` turns that into `types.ts`. The test below fails when a DTO
 //! changes without regenerating, so a shape change breaks the build, not the runtime.
 
@@ -55,6 +55,8 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::schedule::ScheduleEvent>();
     generator.subschema_for::<crate::tray::TrayStatus>();
     generator.subschema_for::<crate::meetings::controller::MeetingRecordingView>();
+    generator.subschema_for::<crate::meetings::controller::AudioLevel>();
+    generator.subschema_for::<super::meetings::MeetingMarkerView>();
     generator.subschema_for::<crate::meetings::pipeline::Processing>();
     generator.subschema_for::<crate::meetings::pipeline::PipelineFailure>();
     generator.subschema_for::<super::workspace::WorkspaceView>();
@@ -73,6 +75,23 @@ pub fn schema_bundle() -> Value {
     generator.subschema_for::<super::ai::ProviderBudgetView>();
     generator.subschema_for::<super::workspace::TrimInfo>();
     generator.subschema_for::<super::workspace::ActionItemView>();
+    generator.subschema_for::<super::launch::LaunchView>();
+    generator.subschema_for::<super::launch::LaunchAnswer>();
+    generator.subschema_for::<super::launch::ChosenFile>();
+    generator.subschema_for::<super::launch::UseKeyResult>();
+    generator.subschema_for::<super::launch::SetupScope>();
+    generator.subschema_for::<super::launch::SetupBegun>();
+    generator.subschema_for::<super::launch::SaveFileResult>();
+    generator.subschema_for::<super::encryption::EncryptionSkip>();
+    generator.subschema_for::<super::encryption::EncryptionCardView>();
+    generator.subschema_for::<super::encryption::NoteAction>();
+    generator.subschema_for::<super::encryption::NoteActionResult>();
+    generator.subschema_for::<super::encryption::SetupRefusal>();
+    generator.subschema_for::<super::encryption::EncryptOutcome>();
+    generator.subschema_for::<super::delete_everything::DeleteEverythingPreview>();
+    generator.subschema_for::<super::foreign_files::ForeignFilesView>();
+    generator.subschema_for::<super::foreign_files::ForeignFilesDeleted>();
+    generator.subschema_for::<super::encryption::SpeedCheckResult>();
     generator.subschema_for::<super::recap::RecapSummaryInput>();
     generator.subschema_for::<super::recap::RecapRecipient>();
     generator.subschema_for::<super::recap::RecapDraft>();
@@ -144,7 +163,7 @@ pub fn schema_bundle() -> Value {
     json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
         "title": "WhimbrelDtos",
-        "description": "Generated from apps/windows/src-tauri's command DTOs. Do not edit; run `cargo run --bin gen-schema`.",
+        "description": "Generated from apps/windows/src-tauri's command DTOs. Do not edit; run `cargo run --example gen-schema`.",
         "type": "object",
         "additionalProperties": false,
         "definitions": definitions,
@@ -187,7 +206,7 @@ mod tests {
         let committed = std::fs::read_to_string(&path).unwrap_or_default();
         assert!(
             committed.replace("\r\n", "\n") == schema_bundle_text(),
-            "{} is stale: run `cargo run --bin gen-schema` then `npm run gen:types` in apps/windows/ui",
+            "{} is stale: run `cargo run --example gen-schema` then `npm run gen:types` in apps/windows/ui",
             path.display()
         );
     }

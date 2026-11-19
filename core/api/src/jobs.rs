@@ -2,8 +2,12 @@
 //! dependency): episode summaries (docs/superpowers/specs/2026-08-12-l2-episodes-design.md)
 //! and incremental thread summaries (docs/superpowers/specs/2026-08-14-thread-distillation-design.md).
 //! Moved from `core/ffi::whimbrel_episodes_run_summarize_batch` /
-//! `whimbrel_threads_run_summarize_batch` (M3.0). Both run against a local Ollama
-//! `model` only — these are unattended jobs, never routed to a hosted provider.
+//! `whimbrel_threads_run_summarize_batch` (M3.0). Both run against the Ollama `model` only —
+//! these are unattended jobs, never routed to a hosted provider. An Ollama cloud model is
+//! hosted, though (`llm::is_ollama_cloud_model`): with one, the client is behind the exclusion
+//! gate, and an excluded client's episode or thread is not summarised at all (spec 7.1: made on
+//! this computer, or not made). The TypeSafe priority scorer is hosted: an excluded client's
+//! thread is never scored.
 
 use crate::util::now_unix_ms;
 
@@ -18,14 +22,41 @@ pub fn run_episode_summarize_batch(
     custom_instructions: &str,
     output_language: &str,
 ) -> rusqlite::Result<usize> {
+    let client = ollama_client(store, ollama_model);
+    let hosted = llm::is_ollama_cloud_model(ollama_model);
+    run_episode_summarize_batch_with(store, client.as_ref(), hosted, max_jobs, custom_instructions, output_language)
+}
+
+/// [`run_episode_summarize_batch`] through `client`; `hosted`: it runs in Ollama's cloud.
+pub(crate) fn run_episode_summarize_batch_with(
+    store: &memory::Store,
+    client: &dyn llm::LlmClient,
+    hosted: bool,
+    max_jobs: usize,
+    custom_instructions: &str,
+    output_language: &str,
+) -> rusqlite::Result<usize> {
     if memory::background_gate::recording_pauses_background_work() {
         return Ok(0);
     }
     let custom_instructions = custom_instructions.trim();
     let jobs = store.claim_episode_summarize_jobs(max_jobs, now_unix_ms())?;
-    let client = llm::OllamaClient::new(ollama_model);
     let mut processed = 0;
     for job in jobs {
+        // Read again for each job (cached until anything changes): a client excluded during the
+        // batch is never sent for the rest of it (fix round 4, M1).
+        let filter = filter_if_hosted(store, hosted);
+        // An unreadable setting: nothing is sent, and the job waits (never ends on it).
+        if filter.is_closed() {
+            let _ = store.retry_episode_summarize_job_after_transport_error(job.job_id, now_unix_ms());
+            continue;
+        }
+        if excluded_episode(&filter, &job) {
+            // Not made: a hosted model may not see it, and there is none here to make it.
+            let _ = store.fail_episode_summarize_job(job.job_id, NOT_MADE, job.episode_id, now_unix_ms());
+            processed += 1;
+            continue;
+        }
         // No model for episodes with nothing to summarize: their captures are gone
         // (retention, dedupe), or it was one glance.
         match skip_reason(&job.items, output_language) {
@@ -45,7 +76,7 @@ pub fn run_episode_summarize_batch(
         // the batch-start time (fine for the one-shot eligibility check) would shorten
         // the intended backoff for later jobs in the same batch.
         let now = now_unix_ms();
-        match llm::summarize_episode_in(&client, &job.items, custom_instructions, output_language) {
+        match llm::summarize_episode_in(client, &job.items, custom_instructions, output_language) {
             Ok(summary) => {
                 let refs_json =
                     serde_json::to_string(&summary.refs).unwrap_or_else(|_| "[]".to_string());
@@ -80,6 +111,60 @@ pub fn run_episode_summarize_batch(
         processed += 1;
     }
     Ok(processed)
+}
+
+/// Attempts that end a summarize or priority job at once: the item is not made, not retried.
+const NOT_MADE: i64 = i64::MAX - 1;
+
+/// The Ollama client for an unattended job; an Ollama cloud model is behind the exclusion gate.
+fn ollama_client(store: &memory::Store, ollama_model: &str) -> Box<dyn llm::LlmClient> {
+    let client = Box::new(llm::OllamaClient::new(ollama_model));
+    if llm::is_ollama_cloud_model(ollama_model) {
+        Box::new(llm::GuardedClient::new(client, crate::exclusion::current_gate(store)))
+    } else {
+        client
+    }
+}
+
+/// The exclusion filter when `ollama_model` runs in Ollama's cloud; open on this computer.
+#[cfg(test)]
+fn hosted_filter(store: &memory::Store, ollama_model: &str) -> llm::ContextFilter {
+    filter_if_hosted(store, llm::is_ollama_cloud_model(ollama_model))
+}
+
+/// The exclusion filter for a model that is `hosted`; open on this computer.
+fn filter_if_hosted(store: &memory::Store, hosted: bool) -> llm::ContextFilter {
+    if hosted {
+        crate::exclusion::context_filter(store)
+    } else {
+        llm::ContextFilter::none()
+    }
+}
+
+/// Whether an episode job is an excluded client's: filed under one, or a capture names one.
+fn excluded_episode(filter: &llm::ContextFilter, job: &memory::EpisodeSummarizeJob) -> bool {
+    if !filter.is_active() {
+        return false;
+    }
+    filter.material().is_none_or(|m| m.episodes.contains(&job.episode_id))
+        || job.items.iter().any(|c| !filter.keeps(&llm::ContextItem::Capture(c.clone())))
+}
+
+/// Whether a thread is an excluded client's: filed under one, or its text or senders name one
+/// or carry a client contact's address.
+fn excluded_thread(filter: &llm::ContextFilter, thread_id: i64, prior: Option<&str>, messages: &[memory::ThreadEmailMessage]) -> bool {
+    if !filter.is_active() {
+        return false;
+    }
+    let Some(m) = filter.material() else { return true };
+    m.threads.contains(&thread_id)
+        || messages.iter().any(|msg| m.items.contains(&msg.item_id))
+        || prior.is_some_and(|p| filter.names_client(p))
+        || messages.iter().any(|msg| {
+            filter.names_client(&msg.body_text)
+                || filter.names_client(&msg.from)
+                || llm::exclusion::attendee_is_client(m, &msg.from)
+        })
 }
 
 /// A glance: at most one capture, spanning under this long.
@@ -142,14 +227,40 @@ pub fn run_thread_summarize_batch_with(
     if !llm::limited_use::provider_may_receive_google_data(llm::Provider::Ollama, ollama_model, None, policy) {
         return Ok(0);
     }
+    let client = ollama_client(store, ollama_model);
+    let hosted = llm::is_ollama_cloud_model(ollama_model);
+    run_thread_summarize_batch_through(store, client.as_ref(), hosted, max_jobs, custom_instructions, output_language)
+}
+
+/// [`run_thread_summarize_batch_with`] through `client` (Limited Use already decided);
+/// `hosted`: it runs in Ollama's cloud, so each job also passes the exclusion filter.
+pub(crate) fn run_thread_summarize_batch_through(
+    store: &memory::Store,
+    client: &dyn llm::LlmClient,
+    hosted: bool,
+    max_jobs: usize,
+    custom_instructions: &str,
+    output_language: &str,
+) -> rusqlite::Result<usize> {
     let custom_instructions = custom_instructions.trim();
     let jobs = store.claim_thread_summarize_jobs(max_jobs, now_unix_ms())?;
-    let client = llm::OllamaClient::new(ollama_model);
     let mut processed = 0;
     for job in jobs {
         let now = now_unix_ms();
+        // Read again for each job (fix round 4, M1): a client excluded during the batch is never
+        // sent for the rest of it.
+        let filter = filter_if_hosted(store, hosted);
+        if filter.is_closed() {
+            let _ = store.retry_thread_summarize_job_after_transport_error(job.job_id, now);
+            continue;
+        }
+        if excluded_thread(&filter, job.thread_id, job.prior_summary.as_deref(), &job.new_messages) {
+            let _ = store.fail_thread_summarize_job(job.job_id, NOT_MADE, job.thread_id, now);
+            processed += 1;
+            continue;
+        }
         match llm::summarize_thread_incrementally_in(
-            &client,
+            client,
             job.prior_summary.as_deref(),
             &job.new_messages,
             custom_instructions,
@@ -215,6 +326,9 @@ fn classify_priority_error(e: &llm::LlmError) -> PriorityFailure {
         llm::LlmError::Http { status: 429, .. } => PriorityFailure::RetryAfterMs(5 * 60_000),
         llm::LlmError::Http { status, .. } if *status >= 500 => PriorityFailure::RetryAfterMs(30_000),
         llm::LlmError::Network(_) => PriorityFailure::RetryAfterMs(30_000),
+        // The exclusion setting couldn't be read: nothing was sent; try again later. A
+        // thread naming an excluded client never will be sent, so it may fail.
+        llm::LlmError::Refused(r) if r.reason == llm::guard::REASON_UNREADABLE => PriorityFailure::RetryAfterMs(5 * 60_000),
         _ => PriorityFailure::CountAttempt,
     }
 }
@@ -283,6 +397,20 @@ fn run_thread_priority_batch_if(
     let mut jobs = store.claim_thread_priority_jobs(max_jobs, now_unix_ms())?.into_iter();
     while let Some(job) = jobs.next() {
         let now = now_unix_ms();
+        // TypeSafe is hosted: an excluded client's thread is never scored (classify first). Read
+        // again for each job (fix round 4, M1): a client excluded during the batch is never sent.
+        let filter = crate::exclusion::context_filter(store);
+        // An unreadable setting: nothing is sent, and the job waits (never ends on it).
+        if filter.is_closed() {
+            store.retry_thread_priority_job_later(job.job_id, 5 * 60_000, now)?;
+            continue;
+        }
+        let message = memory::ThreadEmailMessage { item_id: -1, from: job.sender.clone(), ts_unix_ms: 0, body_text: format!("{}\n{}", job.subject, job.latest_message) };
+        if excluded_thread(&filter, job.thread_id, None, std::slice::from_ref(&message)) {
+            store.fail_thread_priority_job(job.job_id, NOT_MADE, now)?;
+            outcome.processed += 1;
+            continue;
+        }
         match score_catching_panics(scorer, &build_priority_input(&job)) {
             Ok(judgments) => {
                 store.complete_thread_priority_job(job.job_id, job.thread_id, job.message_count, &judgments, now)?;
@@ -442,6 +570,185 @@ mod tests {
         store.claim_thread_priority_jobs(100, i64::MAX / 2).unwrap().iter().map(|j| format!("pending:{}", j.thread_id)).collect()
     }
 
+    /// TypeSafe is hosted: a thread naming an excluded client is never scored, and its job ends
+    /// without a call; an Ollama cloud model's episode and thread summaries leave the client out.
+    #[test]
+    fn unattended_jobs_never_send_excluded_text() {
+        let store = store_with_waiting_threads(2, "Please confirm by Friday.");
+        let acme = store.create_seed_topic("Ben Lawrick", &[], None).unwrap();
+        store
+            .set_client_control(&acme.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+        let scorer = FakeScorer::new(vec![]);
+        // Limited Use holds every Gmail thread from TypeSafe today (nothing sent, nothing ended).
+        assert_eq!(run_thread_priority_batch(&store, &scorer, 5).unwrap().processed, 0);
+        // Once TypeSafe may read Gmail, the exclusion gate still keeps the client's threads.
+        let outcome = run_thread_priority_batch_if(&store, &scorer, 5, true).unwrap();
+        assert!(scorer.inputs.borrow().is_empty(), "no thread from the client was sent");
+        assert_eq!(outcome.processed, 2);
+        assert!(job_statuses(&store).is_empty(), "the jobs are finished, not left to stall");
+
+        // An Ollama cloud model is hosted: its client is behind the gate, and a thread or
+        // episode of the client is not summarised at all.
+        assert!(!hosted_filter(&store, "gemma4:12b").is_active());
+        let filter = hosted_filter(&store, "gpt-oss:120b-cloud");
+        assert!(filter.is_active());
+        let msg = |from: &str, body: &str| memory::ThreadEmailMessage { item_id: 1, from: from.into(), ts_unix_ms: 1, body_text: body.into() };
+        assert!(excluded_thread(&filter, 99, None, &[msg("x@y.com", "lunch with Ben Lawrick")]));
+        assert!(!excluded_thread(&filter, 99, None, &[msg("x@y.com", "lunch on Friday")]));
+        assert!(matches!(
+            ollama_client(&store, "gpt-oss:120b-cloud").complete("notes from Ben Lawrick"),
+            Err(llm::LlmError::Refused(_))
+        ));
+    }
+
+    /// Runs `hook` once, at its first score: a client excluded while the batch runs.
+    struct ExcludingScorer<'a> {
+        inner: FakeScorer,
+        hook: RefCell<Option<Box<dyn FnOnce() + 'a>>>,
+    }
+
+    impl PriorityScorer for ExcludingScorer<'_> {
+        fn score(&self, input: &PriorityInput) -> Result<PriorityJudgments, llm::LlmError> {
+            if let Some(hook) = self.hook.borrow_mut().take() {
+                hook();
+            }
+            self.inner.score(input)
+        }
+    }
+
+    fn exclude(store: &memory::Store, key: &str) {
+        store
+            .set_client_control(key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+    }
+
+    /// Fix round 4, M1: the TypeSafe batch reads the setting for each thread. A client excluded
+    /// while the first thread is scored is never sent for the rest of the batch. Control: the
+    /// first thread, scored before, was sent.
+    #[test]
+    fn a_client_excluded_during_a_priority_batch_is_not_sent_for_the_rest() {
+        let store = store_with_waiting_threads(2, "Please confirm by Friday.");
+        let ben = store.create_seed_topic("Ben Lawrick", &[], None).unwrap();
+        let scorer = ExcludingScorer {
+            inner: FakeScorer::new(vec![Ok(judgments()), Ok(judgments())]),
+            hook: RefCell::new(Some(Box::new(|| exclude(&store, &ben.key)))),
+        };
+        let outcome = run_thread_priority_batch_if(&store, &scorer, 5, true).unwrap();
+        assert_eq!(scorer.inner.inputs.borrow().len(), 1, "only the thread scored before the exclusion");
+        assert_eq!(outcome.processed, 2, "the other job ends, not left to stall");
+    }
+
+    /// Runs `hook` once, at its first call, and records every prompt.
+    struct HookedClient<'a> {
+        prompts: RefCell<Vec<String>>,
+        hook: RefCell<Option<Box<dyn FnOnce() + 'a>>>,
+    }
+
+    impl llm::LlmClient for HookedClient<'_> {
+        fn complete(&self, prompt: &str) -> Result<llm::Completion, llm::LlmError> {
+            if let Some(hook) = self.hook.borrow_mut().take() {
+                hook();
+            }
+            self.prompts.borrow_mut().push(prompt.to_string());
+            Ok(llm::Completion { text: "A summary.".into(), token_usage: llm::TokenUsage::default() })
+        }
+    }
+
+    /// X6 final review, Major 7: an Ollama cloud model never gets an excluded client's episode, even one whose
+    /// captures never name the client (filed under it), and the job ends instead of stalling. Control: the same
+    /// episode with nothing excluded is sent. Fails if the batch's `excluded_episode` check is dropped.
+    #[test]
+    fn an_excluded_clients_episode_is_never_sent_to_a_cloud_model() {
+        for excluded in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let store = memory::Store::open(&dir.path().join("m.db"), dir.path()).unwrap();
+            // Two captures in one app (not a glance), then another app, which closes the episode.
+            for (ts, app, text) in [
+                (1_000, "com.apple.Numbers", "zebracanary pricing sheet"),
+                (61_000, "com.apple.Numbers", "zebracanary pricing totals"),
+                (121_000, "com.apple.Notes", "groceries"),
+            ] {
+                store
+                    .insert_capture_item(&memory::NewCaptureItem {
+                        device_id: "d".into(),
+                        ts_unix_ms: ts,
+                        app_bundle_id: app.into(),
+                        window_title: "Sheet".into(),
+                        url: None,
+                        text: text.into(),
+                        hash: ts,
+                        source: "ax".into(),
+                    })
+                    .unwrap();
+            }
+            store.run_jobs_batch(10, 121_000 + 600_001).unwrap(); // segments the captures into episodes
+            let c = rusqlite::Connection::open(dir.path().join("m.db")).unwrap();
+            let episode: i64 =
+                c.query_row("SELECT id FROM episodes WHERE app_bundle_id = 'com.apple.Numbers'", [], |r| r.get(0)).unwrap();
+            let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+            c.execute("INSERT INTO topic_source (kind, ref_id, ts_unix_ms, indexed_at_unix_ms) VALUES ('episode', ?1, 1, 1)", [episode])
+                .unwrap();
+            c.execute(
+                "INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'seed')",
+                [acme.topic_id, c.last_insert_rowid()],
+            )
+            .unwrap();
+            if excluded {
+                exclude(&store, &acme.key);
+            }
+            let client = HookedClient { prompts: RefCell::new(Vec::new()), hook: RefCell::new(None) };
+            run_episode_summarize_batch_with(&store, &client, true, 5, "", "").unwrap();
+            if excluded {
+                assert!(client.prompts.borrow().is_empty(), "the excluded client's episode was sent");
+                let left = store.claim_episode_summarize_jobs(5, i64::MAX / 2).unwrap();
+                assert!(!left.iter().any(|j| j.episode_id == episode), "the job ended");
+            } else {
+                assert_eq!(client.prompts.borrow().len(), 1, "control: sent with nothing excluded");
+            }
+        }
+    }
+
+    /// Fix round 4, M1: a thread summary batch on an Ollama cloud model reads the setting for each
+    /// thread. Control: the first thread, summarised before the exclusion, was sent.
+    #[test]
+    fn a_client_excluded_during_a_thread_summary_batch_is_not_sent_for_the_rest() {
+        let store = store_with_waiting_threads(2, "Please confirm by Friday.");
+        let ben = store.create_seed_topic("Ben Lawrick", &[], None).unwrap();
+        let client = HookedClient { prompts: RefCell::new(Vec::new()), hook: RefCell::new(Some(Box::new(|| exclude(&store, &ben.key)))) };
+        let processed = run_thread_summarize_batch_through(&store, &client, true, 5, "", "").unwrap();
+        assert_eq!(processed, 2, "both jobs end");
+        assert_eq!(client.prompts.borrow().len(), 1, "only the thread summarised before the exclusion");
+    }
+
+    /// Fix round 1, M1: an unreadable setting never ends a job: nothing is sent, the job waits.
+    #[test]
+    fn an_unreadable_setting_never_ends_a_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m.db");
+        let store = memory::Store::open(&path, dir.path()).unwrap();
+        store
+            .upsert_email_items(&[memory::NewEmailItem {
+                device_id: "dev-1".into(),
+                external_id: "msg-0".into(),
+                ts_unix_ms: 1000,
+                from: "\"Ben\" <ben@example.com>".into(),
+                to: "me@example.com".into(),
+                subject: "Subject".into(),
+                body_text: "Please confirm.".into(),
+                gmail_thread_id: "thread-0".into(),
+                account_email: "me@example.com".into(),
+                ..Default::default()
+            }])
+            .unwrap();
+        store.run_jobs_batch(10, 5_000).unwrap();
+        rusqlite::Connection::open(&path).unwrap().execute("DROP TABLE client_control", []).unwrap();
+        let scorer = FakeScorer::new(vec![]);
+        run_thread_priority_batch_if(&store, &scorer, 5, true).unwrap();
+        assert!(scorer.inputs.borrow().is_empty());
+        assert_eq!(job_statuses(&store).len(), 1, "still pending, not failed");
+    }
+
     #[test]
     fn a_successful_score_is_stored_and_the_job_is_done() {
         let store = store_with_waiting_threads(1, "Please confirm by Friday.");
@@ -498,6 +805,24 @@ mod tests {
 
         assert_eq!((outcome.processed, outcome.auth_rejected), (0, false));
         // Not claimable now (30 s backoff), and still pending with zero attempts afterwards.
+        assert!(store.claim_thread_priority_jobs(1, 5_000).unwrap().is_empty());
+        let later = store.claim_thread_priority_jobs(1, i64::MAX / 2).unwrap();
+        assert_eq!(later.len(), 1);
+        assert_eq!(later[0].attempts, 0);
+    }
+
+    /// The exclusion setting couldn't be read: the job was never sent, so it waits and
+    /// keeps its attempts. One naming an excluded client counts an attempt (it may fail).
+    #[test]
+    fn a_refusal_for_an_unreadable_setting_retries_without_using_attempts() {
+        let refused = |reason| llm::LlmError::Refused(llm::GateRefusal { reason });
+        assert_eq!(classify_priority_error(&refused(llm::guard::REASON_UNREADABLE)), PriorityFailure::RetryAfterMs(300_000));
+        assert_eq!(classify_priority_error(&refused(llm::guard::REASON_EXCLUDED)), PriorityFailure::CountAttempt);
+
+        let store = store_with_waiting_threads(1, "hi");
+        let scorer = FakeScorer::new(vec![Err(refused(llm::guard::REASON_UNREADABLE))]);
+        let outcome = run_thread_priority_batch_if(&store, &scorer, 1, true).unwrap();
+        assert_eq!((outcome.processed, outcome.auth_rejected), (0, false));
         assert!(store.claim_thread_priority_jobs(1, 5_000).unwrap().is_empty());
         let later = store.claim_thread_priority_jobs(1, i64::MAX / 2).unwrap();
         assert_eq!(later.len(), 1);

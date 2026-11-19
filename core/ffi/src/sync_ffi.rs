@@ -388,7 +388,11 @@ pub extern "C" fn whimbrel_sync_content(
 
     let store = unsafe { &(*handle).0 };
     let group_key = sync::GroupKey::from_bytes(group_key_bytes);
-    sync_engine::sync_content(&turso_url, &turso_token, &group_key, store, &device_id).is_ok()
+    let ok = sync_engine::sync_content(&turso_url, &turso_token, &group_key, store, &device_id).is_ok();
+    // A peer's client setting or client delete may have arrived (a failed round may have applied part of
+    // a pull): the streaming gate is read again either way.
+    api::client_controls::after_sync_round(store);
+    ok
 }
 
 /// Pull-only content sync for a peer with nothing to push (the iPhone in M4.0): applies
@@ -427,9 +431,12 @@ pub extern "C" fn whimbrel_sync_content_pull_only(
     let options = sync_engine::PullOptions {
         capture_window_ms: (capture_window_days > 0)
             .then(|| i64::from(capture_window_days) * 24 * 60 * 60 * 1000),
+        ..Default::default()
     };
-    sync_engine::sync_content_pull_only(&turso_url, &turso_token, &group_key, store, &device_id, &options)
-        .is_ok()
+    let ok = sync_engine::sync_content_pull_only(&turso_url, &turso_token, &group_key, store, &device_id, &options)
+        .is_ok();
+    api::client_controls::after_sync_round(store);
+    ok
 }
 
 /// Why the most recent `whimbrel_sync_content` or `whimbrel_sync_content_pull_only` failed,
@@ -485,8 +492,25 @@ pub extern "C" fn whimbrel_sync_outbox_backlog(handle: *mut StoreHandle) -> *mut
     store.outbox_backlog().ok().and_then(|b| serde_json::to_string(&b).ok()).map_or(ptr::null_mut(), json_to_c_string)
 }
 
+/// How far the one-time `kind_tag` backfill has got, as 0 to 99 for "Indexing history: N%" in Settings; -1 when
+/// nothing should show (it has not run, it finished, or there is nothing to count) and for a NULL handle or a
+/// store error. Read from the store, so it is right after a relaunch.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_kind_backfill_percent(handle: *mut StoreHandle) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let store = unsafe { &(*handle).0 };
+    sync_engine::kind_backfill_percent(store).map_or(-1, i32::from)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn kind_backfill_percent_is_minus_one_for_a_null_handle() {
+        assert_eq!(whimbrel_sync_kind_backfill_percent(std::ptr::null_mut()), -1);
+    }
+
     #[test]
     fn outbox_backlog_is_null_for_a_null_handle() {
         assert!(whimbrel_sync_outbox_backlog(std::ptr::null_mut()).is_null());

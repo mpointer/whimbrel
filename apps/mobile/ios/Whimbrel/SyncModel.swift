@@ -30,6 +30,13 @@ protocol MeetingSyncStore: AnyObject {
     func olderHistoryLoading() -> Bool
     func groupedMeetingCount() -> Int?
     func lastSyncError() -> String?
+    /// Other devices that have not announced client deletes yet (`whimbrel_client_pending_devices_json`,
+    /// stored by the pull-only round); nil when not measured yet.
+    func devicesStillToUpdate() -> Int?
+}
+
+extension MeetingSyncStore {
+    func devicesStillToUpdate() -> Int? { nil }
 }
 
 extension CoreMemoryStore: MeetingSyncStore {
@@ -44,6 +51,7 @@ extension CoreMemoryStore: MeetingSyncStore {
     func moreToPull() -> Bool { whimbrel_sync_content_more_to_pull() }
     func olderHistoryLoading() -> Bool { whimbrel_sync_content_older_history_loading(handle) }
     func lastSyncError() -> String? { Self.lastSyncContentError() }
+    func devicesStillToUpdate() -> Int? { clientPendingDevices() }
 }
 
 /// The core's settings calls. They use no store handle, so a round trip never holds the
@@ -74,6 +82,10 @@ final class SyncModel: ObservableObject {
     @Published private(set) var readRevision = 0
     /// Older history is still being pulled (#572); the sync line says so under it.
     @Published private(set) var olderHistoryLoading = false
+    /// Other devices that still need an update before they apply client deletes (nil: not known yet).
+    /// The phone never starts a delete; it only says so under the sync line.
+    @Published private(set) var devicesStillToUpdate: Int?
+    var updateNeeded: Bool { (devicesStillToUpdate ?? 0) > 0 }
 
     /// Screen captures older than this aren't pulled (the user's M4.0 decision).
     static let captureWindowDays: Int32 = 30
@@ -160,6 +172,7 @@ final class SyncModel: ObservableObject {
         consecutiveFailures = 0
         moreToPull = false
         olderHistoryLoading = false
+        devicesStillToUpdate = nil
         readRevision += 1
         cleanup()
     }
@@ -214,6 +227,7 @@ final class SyncModel: ObservableObject {
             lastSyncedAt = Date()
             readRevision += 1
             meetingCount = await run(store) { $0.groupedMeetingCount() } ?? meetingCount
+            devicesStillToUpdate = await run(store) { $0.devicesStillToUpdate() }
             // Keys and routing for Ask: off the store queue and the main actor (a network round
             // trip). Never fails the round.
             if let puller = settingsPuller {

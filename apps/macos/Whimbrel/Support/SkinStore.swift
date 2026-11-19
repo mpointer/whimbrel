@@ -165,3 +165,35 @@ final class SkinStore: ObservableObject {
         Bundle.main.url(forResource: "skins", withExtension: nil)
     }
 }
+
+/// The hidden redesign switch: the Thread skin and, as each is migrated, the new screens. Off unless set by hand:
+/// `defaults write com.mpointer.kestrel com.mpointer.whimbrel.redesign.enabled -bool true`. There is no UI for it,
+/// it is never synced, and nothing in the app changes while it is off. Windows has the same switch as
+/// `redesign.enabled` in settings.json. The Thread skin ships as `skins/thread.json`; this is the one place that
+/// decides who sees it (the gallery list, `SkinGallery.orderedCards`), never the loader or the store, and turning the
+/// switch on does not change anyone's selected skin.
+enum RedesignFlag {
+    static let key = "com.mpointer.whimbrel.redesign.enabled"
+
+    /// Bundled skins that exist only behind the switch (core/skins `REDESIGN_SKIN_IDS`).
+    static let skinIds: Set<String> = ["thread"]
+
+    static func isOn(_ defaults: UserDefaults = .standard) -> Bool { defaults.bool(forKey: key) }
+
+    /// `skins` as a list shows them: without the redesign skins unless `redesign` is on.
+    static func visible(_ skins: [Skin], redesign: Bool) -> [Skin] {
+        redesign ? skins : skins.filter { !skinIds.contains($0.id) }
+    }
+}
+
+private struct RedesignEnabledKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// The hidden redesign switch (`RedesignFlag`); false unless `AppState.redesignEnabled` puts it in the environment.
+    var redesignEnabled: Bool {
+        get { self[RedesignEnabledKey.self] }
+        set { self[RedesignEnabledKey.self] = newValue }
+    }
+}

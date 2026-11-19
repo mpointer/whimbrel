@@ -13,6 +13,6 @@ export default {
   },
   // Hourly (wrangler.jsonc triggers): next-day follow-ups and Resend contact sync.
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(runScheduled(env, controller.scheduledTime).then((r) => console.log(`cron: ${r.followups} follow-ups, ${r.synced} contacts synced`)));
+    ctx.waitUntil(runScheduled(env, controller.scheduledTime).then((r) => console.log(`cron: ${r.followups} follow-ups, ${r.unsubscribed} unsubscribed in Resend, ${r.synced} contacts synced`)));
   },
 } satisfies ExportedHandler<Env>;

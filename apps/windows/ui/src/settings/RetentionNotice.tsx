@@ -3,6 +3,8 @@ import { retentionPreview, retentionRunNow, retentionSettings } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { RetentionPreview, RetentionSettings } from "../generated/types";
 import { t } from "../l10n";
+import { useRedesign } from "../redesign";
+import { WBanner, WButton } from "../system";
 import { noticeLines, nothingToDelete } from "./retentionModel";
 
 function message(e: unknown): string {
@@ -16,6 +18,7 @@ function message(e: unknown): string {
  * windows first — saving there counts as an answer too, so the notice goes away.
  */
 export function RetentionNotice({ onChangeSettings }: { onChangeSettings: () => void }) {
+  const redesign = useRedesign();
   const [state, setState] = useState<{ settings: RetentionSettings; preview: RetentionPreview } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +40,12 @@ export function RetentionNotice({ onChangeSettings }: { onChangeSettings: () => 
   // A failed count would otherwise hide the notice and leave the sweep waiting for an
   // answer nobody can see, so say so instead.
   if (!state) {
+    if (redesign)
+      return error ? (
+        <WBanner label={t("Before Whimbrel deletes anything")} tone="warning">
+          <p role="alert">{t("Whimbrel could not work out what its daily cleanup would delete: {error}", { error })}</p>
+        </WBanner>
+      ) : null;
     return error ? (
       <section className="card notice">
         <p role="alert">{t("Whimbrel could not work out what its daily cleanup would delete: {error}", { error })}</p>
@@ -44,6 +53,47 @@ export function RetentionNotice({ onChangeSettings }: { onChangeSettings: () => 
     ) : null;
   }
   const lines = noticeLines(state.settings, state.preview);
+  const keepCurrent = () => {
+    setBusy(true);
+    setError(null);
+    retentionRunNow()
+      .then(() => setState(null))
+      .catch((e: unknown) => setError(message(e)))
+      .finally(() => setBusy(false));
+  };
+
+  if (redesign)
+    return (
+      <WBanner
+        label={t("Before Whimbrel deletes anything")}
+        title={t("Before Whimbrel deletes anything")}
+        actions={
+          <>
+            <WButton disabled={busy} onClick={onChangeSettings}>
+              {t("Change settings…")}
+            </WButton>
+            <WButton variant="primary" disabled={busy} onClick={keepCurrent}>
+              {t("Keep current settings")}
+            </WButton>
+          </>
+        }
+      >
+        <p>
+          {t(
+            "Whimbrel keeps data for a while and then deletes it, once a day. The daily sweep is waiting for your answer; here is what it would remove under the current settings.",
+          )}
+        </p>
+        <ul>
+          {lines.map((line) => (
+            <li key={line.label}>
+              {t("{label}:", { label: line.label })} <strong>{line.count}</strong>
+            </li>
+          ))}
+        </ul>
+        {nothingToDelete(state.preview) && <p className="w-flow-secondary">{t("Nothing has aged out yet, so this first sweep removes nothing.")}</p>}
+        {error && <p role="alert">{error}</p>}
+      </WBanner>
+    );
 
   return (
     <section className="card notice" aria-labelledby="retention-notice-heading" role="region">

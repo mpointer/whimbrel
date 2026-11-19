@@ -45,6 +45,9 @@ final class MeetingEndDetector {
     private var isAudioActive: (() -> Bool)?
     private var onEnded: ((EndReason) -> Void)?
     private var suppressMaxDuration: () -> Bool = { false }
+    /// Held while the recording is paused: the silence rules cannot fire, and their clock starts over on
+    /// resume. Nothing about a pause ends a meeting. The caps and the call going away still apply.
+    private(set) var isHeld = false
 
     /// Starts watching a just-begun recording session. `scheduledEndUnixMs` is the
     /// calendar event's own end time in unix milliseconds (nil for a detected/
@@ -80,6 +83,15 @@ final class MeetingEndDetector {
     /// Between `start` and `stop`.
     var isRunning: Bool { pollTimer != nil }
 
+    /// Holds or releases the silence rules (a recording pause). Releasing starts their clock over.
+    func setHeld(_ held: Bool) {
+        isHeld = held
+        silenceStartedAt = nil
+    }
+
+    /// What the silence rules see: while held, sound is always there.
+    nonisolated static func effectiveAudioActive(held: Bool, active: Bool) -> Bool { held || active }
+
     func stop() {
         pollTimer?.invalidate()
         pollTimer = nil
@@ -93,6 +105,7 @@ final class MeetingEndDetector {
         isAudioActive = nil
         onEnded = nil
         suppressMaxDuration = { false }
+        isHeld = false
     }
 
     private func poll() {
@@ -116,7 +129,7 @@ final class MeetingEndDetector {
             appRunning: appBundleID.map { MeetingHeuristicDetector.isAppRunning(bundleID: $0) } ?? true,
             isOnMeetTab: isOnMeetTab,
             scheduledEndUnixMs: scheduledEndUnixMs,
-            audioActive: isAudioActive?() ?? false,
+            audioActive: Self.effectiveAudioActive(held: isHeld, active: isAudioActive?() ?? false),
             captureSessionActive: captureSessionActive,
             state: &state
         )

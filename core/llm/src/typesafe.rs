@@ -19,9 +19,11 @@ pub trait PriorityScorer {
     fn score(&self, input: &PriorityInput) -> Result<PriorityJudgments, LlmError>;
 }
 
+/// TypeSafe is hosted: every request passes `gate` first (`crate::guard`).
 pub struct TypeSafeClient {
     base_url: String,
     api_key: String,
+    gate: std::sync::Arc<dyn crate::guard::HostedGate>,
 }
 
 const TYPESAFE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -30,12 +32,30 @@ const TYPESAFE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 const TITLE_MATCH_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 impl TypeSafeClient {
-    pub fn new(api_key: impl Into<String>) -> Self {
-        Self::with_base_url("https://api.typesafe.ai", api_key)
+    pub fn new(api_key: impl Into<String>, gate: std::sync::Arc<dyn crate::guard::HostedGate>) -> Self {
+        Self::with_base_url("https://api.typesafe.ai", api_key, gate)
     }
 
-    pub fn with_base_url(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
-        Self { base_url: base_url.into(), api_key: api_key.into() }
+    pub fn with_base_url(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        gate: std::sync::Arc<dyn crate::guard::HostedGate>,
+    ) -> Self {
+        Self { base_url: base_url.into(), api_key: api_key.into(), gate }
+    }
+}
+
+/// Every string in `body`, each checked on its own (the JSON text would hide a name
+/// behind escapes).
+fn check_strings(gate: &dyn crate::guard::HostedGate, body: &Value) -> Result<(), LlmError> {
+    match body {
+        Value::String(s) => gate.check(s).map_err(LlmError::Refused),
+        Value::Array(items) => items.iter().try_for_each(|v| check_strings(gate, v)),
+        Value::Object(map) => map.iter().try_for_each(|(k, v)| {
+            gate.check(k).map_err(LlmError::Refused)?;
+            check_strings(gate, v)
+        }),
+        _ => Ok(()),
     }
 }
 
@@ -116,12 +136,15 @@ impl TypeSafeClient {
     }
 
     fn post_with_read_timeout(&self, body: Value, read_timeout: std::time::Duration) -> Result<Value, LlmError> {
+        check_strings(self.gate.as_ref(), &body)?;
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(TYPESAFE_CONNECT_TIMEOUT)
             .timeout_read(read_timeout)
             .build();
+        let url = format!("{}/v1/systemone", self.base_url);
+        crate::request_log::record("typesafe", &url, &body);
         let response = agent
-            .post(&format!("{}/v1/systemone", self.base_url))
+            .post(&url)
             .set("Authorization", &format!("Bearer {}", self.api_key))
             .send_json(body)
             .map_err(ureq_error_to_llm)?;
@@ -513,10 +536,27 @@ mod tests {
         (url, handle)
     }
 
+    fn open_gate() -> std::sync::Arc<dyn crate::guard::HostedGate> {
+        std::sync::Arc::new(crate::guard::NoExclusions)
+    }
+
+    /// A request naming an excluded client is refused before any connection: the base
+    /// URL has nothing listening, so a request that went out would fail as `Network`.
+    #[test]
+    fn a_request_naming_an_excluded_client_is_never_sent() {
+        let gate: std::sync::Arc<dyn crate::guard::HostedGate> =
+            std::sync::Arc::new(crate::guard::ExclusionSet::new(vec!["AlphaSights".into()]));
+        let client = TypeSafeClient::with_base_url("http://127.0.0.1:9", "k", gate);
+        assert!(matches!(client.score(&input()), Err(LlmError::Refused(_))));
+        let mut titled = title_input();
+        titled.attendees.push("Someone at alphasights".into());
+        assert!(matches!(client.probability(&titled), Err(LlmError::Refused(_))));
+    }
+
     #[test]
     fn score_posts_the_bearer_key_and_parses_the_answers() {
         let (url, handle) = serve_once("200 OK", sample_body().to_string());
-        let client = TypeSafeClient::with_base_url(url, "secret-key");
+        let client = TypeSafeClient::with_base_url(url, "secret-key", open_gate());
         let j = client.score(&input()).unwrap();
         assert_eq!(j.asks_reply, 0.99);
         let request = handle.join().unwrap();
@@ -527,7 +567,7 @@ mod tests {
     #[test]
     fn a_rejected_key_surfaces_as_an_http_401() {
         let (url, handle) = serve_once("401 Unauthorized", "{\"error\":\"bad key\"}".to_string());
-        let client = TypeSafeClient::with_base_url(url, "wrong");
+        let client = TypeSafeClient::with_base_url(url, "wrong", open_gate());
         assert!(matches!(client.score(&input()), Err(LlmError::Http { status: 401, .. })));
         handle.join().unwrap();
     }
@@ -576,7 +616,7 @@ mod tests {
     fn title_match_posts_to_the_same_endpoint_and_returns_the_probability() {
         let body = json!({"answers": {"summary_is_this_event": {"type": "noul", "noul": 0.05}}});
         let (url, handle) = serve_once("200 OK", body.to_string());
-        let client = TypeSafeClient::with_base_url(url, "secret-key");
+        let client = TypeSafeClient::with_base_url(url, "secret-key", open_gate());
         assert_eq!(client.probability(&title_input()).unwrap(), 0.05);
         let request = handle.join().unwrap();
         assert!(request.starts_with("POST /v1/systemone"), "{request}");
@@ -646,7 +686,7 @@ mod tests {
     #[test]
     fn topic_judge_401_surfaces_as_http_401() {
         let (url, handle) = serve_once("401 Unauthorized", "{\"error\":\"bad key\"}".to_string());
-        let client = TypeSafeClient::with_base_url(url, "wrong");
+        let client = TypeSafeClient::with_base_url(url, "wrong", open_gate());
         assert!(matches!(client.judge(&topic_input(false)), Err(LlmError::Http { status: 401, .. })));
         handle.join().unwrap();
     }
@@ -739,7 +779,7 @@ mod tests {
     #[test]
     fn step_judge_401_surfaces_as_http_401() {
         let (url, handle) = serve_once("401 Unauthorized", "{\"error\":\"bad key\"}".to_string());
-        let client = TypeSafeClient::with_base_url(url, "wrong");
+        let client = TypeSafeClient::with_base_url(url, "wrong", open_gate());
         assert!(matches!(
             client.judge_steps(&step_input()),
             Err(LlmError::Http { status: 401, .. })
@@ -752,7 +792,7 @@ mod tests {
     #[ignore]
     fn live_typesafe_scores_an_obvious_ask() {
         let key = std::env::var("TYPESAFE_API_KEY").expect("TYPESAFE_API_KEY");
-        let j = TypeSafeClient::new(key).score(&input()).unwrap();
+        let j = TypeSafeClient::new(key, open_gate()).score(&input()).unwrap();
         assert!(j.asks_reply > 0.5, "{j:?}");
     }
 }

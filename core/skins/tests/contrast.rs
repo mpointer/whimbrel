@@ -696,3 +696,83 @@ fn repair_matches_the_golden_file() {
         );
     }
 }
+
+// --- redesign element pairs (opt-in)
+
+use skins::elements::ElementChoices;
+use skins::repair::{element_pairs, redesign_pairs, repair_for};
+
+#[test]
+fn repair_with_the_redesign_off_is_the_old_repair_for_every_skin_and_palette() {
+    for palette in bundled_palettes() {
+        for archetype in Archetype::ALL {
+            let pairs = archetype_pairs(archetype);
+            let (old, old_changed) = repair(&palette, &pairs);
+            let (new, new_changed) = repair_for(&palette, &pairs, None);
+            assert_eq!(old, new, "{} {archetype:?}", palette.id);
+            assert_eq!(old_changed, new_changed);
+        }
+        let all = all_pairs();
+        assert_eq!(repair(&palette, &all), repair_for(&palette, &all, None));
+    }
+    // The pinned counts do not move.
+    assert_eq!(all_pairs().len(), 84);
+}
+
+#[test]
+fn element_pairs_use_the_existing_tokens() {
+    let d = ElementChoices::default();
+    assert!(element_pairs(&d).is_empty());
+    let names = |c: ElementChoices| -> Vec<String> {
+        element_pairs(&c).iter().map(|p| format!("{} on {}", p.text.name(), p.name)).collect()
+    };
+    use skins::elements::{Actions, Labels, NextMeeting};
+    assert_eq!(
+        names(ElementChoices { next_meeting: NextMeeting::Scoreboard, ..d }),
+        ["textOnAccent on accentPrimary"]
+    );
+    assert_eq!(names(ElementChoices { actions: Actions::Links, ..d }), ["link on backgroundPage"]);
+    assert_eq!(
+        names(ElementChoices { labels: Labels::Bracketed, ..d }),
+        [
+            "textPrimary on backgroundCard",
+            "textPrimary on backgroundPage",
+            "textSecondary on backgroundCard",
+            "textSecondary on backgroundPage"
+        ]
+    );
+}
+
+#[test]
+fn with_the_redesign_on_every_element_pair_reaches_4_5_on_every_palette() {
+    let variants = ElementChoices::every_variant();
+    let own = redesign_pairs(&variants);
+    for palette in bundled_palettes() {
+        let (fixed, _) = repair_for(&palette, &archetype_pairs(Archetype::Standard), Some(&variants));
+        for (name, v) in [("light", &fixed.light), ("dark", &fixed.dark)] {
+            for c in &variants {
+                let failures = pair_failures(v, &element_pairs(c));
+                assert!(failures.is_empty(), "{} {name} {c:?}: {failures:?}", palette.id);
+            }
+            let failures = pair_failures(v, &own);
+            assert!(failures.is_empty(), "{} {name}: {failures:?}", palette.id);
+        }
+    }
+}
+
+#[test]
+fn every_bundled_skin_passes_its_own_element_pairs_after_repair() {
+    let skins = load_bundled(&repo().join("skins"));
+    let palettes = bundled_palettes();
+    assert!(!skins.is_empty());
+    for skin in skins {
+        let choices = ElementChoices::from_options(&skin.today.options, skin.today.archetype);
+        for pid in &skin.palettes {
+            let Some(palette) = palettes.iter().find(|p| &p.id == pid) else { continue };
+            let (fixed, _) = repair_for(palette, &archetype_pairs(Archetype::Standard), Some(&[choices]));
+            for v in [&fixed.light, &fixed.dark] {
+                assert!(pair_failures(v, &element_pairs(&choices)).is_empty(), "{} on {pid}", skin.id);
+            }
+        }
+    }
+}

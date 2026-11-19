@@ -10,7 +10,8 @@
 //! - **Timestamps** live in the settings file (`SettingsFile::stamp_of`). A field never edited on
 //!   this PC is 0, so on a first sync the account's value wins and this PC's can't overwrite it.
 //! - **Only the keys [`synced_keys`] lists** (plus the routine fields and hidden-episode marks, which
-//!   live in the store) ever leave this PC. Device-local and Windows-only keys are never gathered, and
+//!   live in the store, and Whimbrel Cloud's routine fields and this PC's time zone, see
+//!   [`cloud_values`]) ever leave this PC. Device-local and Windows-only keys are never gathered, and
 //!   a pulled key not on the list is ignored and not stamped.
 
 use std::collections::{BTreeMap, HashMap};
@@ -319,6 +320,11 @@ pub fn apply_field(file: &mut SettingsFile, field: &PulledField) -> bool {
     if field.is_deleted {
         return false;
     }
+    // `cloud.*` (the runner's heartbeat, and keys a later version may add), the routines' cloud
+    // fields and the account's time zone. An unknown `cloud.*` key is not applied and is never an error.
+    if owns_cloud_key(&field.field_key) {
+        return apply_cloud(file, field);
+    }
     if let Some(kind) = kind_of(&field.field_key) {
         return apply_flat(file, &field.field_key, kind, &field.value);
     }
@@ -378,15 +384,23 @@ pub fn apply_pulled(file: &mut SettingsFile, pulled: &HashMap<String, api::sync_
 
 // --- Routines and hidden episodes, which live in the store ------------------------------------------
 
-/// The routines that can fail over (the Mac's `RoutineSyncFields.templates`): only their on/off, time
-/// and model sync, so a device standing in for the primary runs them the same way.
+/// The routines whose on/off, time and model sync (the Mac's `RoutineSyncFields.templates`): the two
+/// that can fail over, so a device standing in for the primary runs them the same way, and the ones
+/// that may run in the cloud, whose runner reads them. Focus Time writes to the calendar and stays on
+/// this PC.
 fn routine_name(template: RoutineTemplate) -> Option<&'static str> {
     match template {
         RoutineTemplate::DailyBrief => Some("daily_brief"),
         RoutineTemplate::ReplyPriorities => Some("reply_priorities"),
+        RoutineTemplate::EodRecap => Some("eod_recap"),
+        RoutineTemplate::WeeklyDigest => Some("weekly_digest"),
+        RoutineTemplate::MeetingPrep => Some("meeting_prep"),
         _ => None,
     }
 }
+
+/// [`routine_name`]'s templates, by name.
+const SYNCED_ROUTINES: [&str; 5] = ["daily_brief", "reply_priorities", "eod_recap", "weekly_digest", "meeting_prep"];
 
 const ROUTINE_FIELDS: [&str; 3] = ["enabled", "schedule", "model_pref"];
 
@@ -397,7 +411,246 @@ pub fn routine_key(template: RoutineTemplate, field: &str) -> Option<String> {
 
 fn parse_routine_key(key: &str) -> Option<(&str, &str)> {
     let (template, field) = key.strip_prefix("routine.")?.split_once('.')?;
-    (["daily_brief", "reply_priorities"].contains(&template) && ROUTINE_FIELDS.contains(&field)).then_some((template, field))
+    (SYNCED_ROUTINES.contains(&template) && ROUTINE_FIELDS.contains(&field)).then_some((template, field))
+}
+
+// --- Whimbrel Cloud: which routines run in the cloud, the runner's heartbeat, the time zone ------------
+//
+// docs/superpowers/specs/2026-11-15-cloud-routine-runner-design.md, the Mac's `CloudRoutineSettings`. The
+// four cloud routines sync `routine.<template>.cloud` ("true"/"false"), `.cloudGrant` (a JSON array of
+// core's `routines::grant_for` entries while in the cloud, `[]` otherwise; informational, the runner
+// enforces its own copy) and `.readyBy` ("HH:MM", only once chosen). This PC pushes `profile.timeZone`
+// when its zone changes, keeps the runner's `cloud.runner.lastRun` without ever pushing it, and ignores
+// other `cloud.*` keys. These live in the settings file under their synced names, outside `encoded()`.
+
+/// The templates core lets run in the cloud (`routines::cloud_eligible`); Reply Priorities is not one.
+pub const CLOUD_TEMPLATES: [&str; 4] = ["daily_brief", "eod_recap", "weekly_digest", "meeting_prep"];
+
+/// The runner's heartbeat: written only by the runner, never pushed from here.
+pub const HEARTBEAT_KEY: &str = api::runner_config::HEARTBEAT_KEY;
+
+/// The account's IANA time zone, which the runner schedules by.
+pub const TIME_ZONE_KEY: &str = api::runner_config::TIME_ZONE_KEY;
+
+/// The zone this PC last pushed (on this PC only, never synced).
+const PUSHED_TIME_ZONE: &str = "sync.pushedTimeZone";
+
+/// A cloud routine's synced field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudField {
+    Cloud,
+    CloudGrant,
+    ReadyBy,
+}
+
+impl CloudField {
+    fn as_str(self) -> &'static str {
+        match self {
+            CloudField::Cloud => "cloud",
+            CloudField::CloudGrant => "cloudGrant",
+            CloudField::ReadyBy => "readyBy",
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "cloud" => Some(CloudField::Cloud),
+            "cloudGrant" => Some(CloudField::CloudGrant),
+            "readyBy" => Some(CloudField::ReadyBy),
+            _ => None,
+        }
+    }
+}
+
+/// `routine.<template>.cloud|cloudGrant|readyBy`.
+pub fn cloud_key(template: &str, field: CloudField) -> String {
+    format!("routine.{template}.{}", field.as_str())
+}
+
+fn parse_cloud_key(key: &str) -> Option<(&str, CloudField)> {
+    let (template, field) = key.strip_prefix("routine.")?.split_once('.')?;
+    let field = CloudField::parse(field)?;
+    CLOUD_TEMPLATES.contains(&template).then_some((template, field))
+}
+
+/// Whether a pulled key is Whimbrel Cloud's: any `cloud.*`, the time zone, or a cloud routine field.
+pub fn owns_cloud_key(key: &str) -> bool {
+    key.starts_with("cloud.") || key == TIME_ZONE_KEY || parse_cloud_key(key).is_some()
+}
+
+/// Exactly `HH:MM` on a 24-hour clock, as the Mac and the runner read a ready-by time.
+fn exact_hhmm(text: &str) -> bool {
+    crate::routines::valid_schedule(text).as_deref() == Some(text)
+}
+
+/// Whether `template` is set to run in the cloud (off unless someone turned it on).
+pub fn is_cloud(file: &SettingsFile, template: &str) -> bool {
+    CLOUD_TEMPLATES.contains(&template) && file.get::<bool>(&cloud_key(template, CloudField::Cloud)).unwrap_or(false)
+}
+
+/// The templates set to run in the cloud, for the routine tick.
+pub fn cloud_templates(file: &SettingsFile) -> Vec<String> {
+    CLOUD_TEMPLATES.iter().filter(|t| is_cloud(file, t)).map(|t| t.to_string()).collect()
+}
+
+/// `template`'s ready-by time, once chosen (here or on another device).
+pub fn ready_by(file: &SettingsFile, template: &str) -> Option<String> {
+    file.get::<String>(&cloud_key(template, CloudField::ReadyBy)).filter(|at| exact_hhmm(at))
+}
+
+/// The runner's last round (unix ms), as its heartbeat said; `None` until one is pulled.
+pub fn runner_last_run_ms(file: &SettingsFile) -> Option<i64> {
+    file.get::<i64>(HEARTBEAT_KEY).filter(|ms| *ms > 0)
+}
+
+/// Why "Run in the cloud" was not changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudRefusal {
+    /// The template cannot run in the cloud.
+    NotCloud,
+    /// Turning it on for a routine that is off on this PC: its stamped `enabled=false` would beat another
+    /// device's `true` and switch the routine off everywhere, so the runner would never run it.
+    RoutineOff,
+}
+
+/// A person's choice in the Automations tab; `routine_enabled` is whether this PC's routine row is on. The grant
+/// is stamped with it, so the two always travel together. Turning it on also stamps this routine's on/off, time
+/// and model: the runner reads them from sync, and a field never edited here goes out at timestamp 0 and loses
+/// to any other device's value, so the PC that hands the routine to the cloud stamps its own values now. That
+/// is only done for a routine that is on here, so it never stamps `enabled=false` over another device's value:
+/// turning it on for a routine that is off is refused. Turning it off is always allowed.
+pub fn set_cloud(file: &mut SettingsFile, template: &str, on: bool, routine_enabled: bool, now_ms: i64) -> Result<(), CloudRefusal> {
+    if !CLOUD_TEMPLATES.contains(&template) {
+        return Err(CloudRefusal::NotCloud);
+    }
+    if on && !routine_enabled {
+        return Err(CloudRefusal::RoutineOff);
+    }
+    file.set(&cloud_key(template, CloudField::Cloud), Some(on));
+    file.set_stamp(&cloud_key(template, CloudField::Cloud), now_ms);
+    file.set_stamp(&cloud_key(template, CloudField::CloudGrant), now_ms);
+    if on && routine_enabled {
+        for field in ROUTINE_FIELDS {
+            file.set_stamp(&format!("routine.{template}.{field}"), now_ms);
+        }
+    }
+    Ok(())
+}
+
+/// A ready-by time chosen here, in the canonical `HH:MM`. False for a time that does not parse or a template
+/// that cannot run in the cloud.
+pub fn set_ready_by(file: &mut SettingsFile, template: &str, hhmm: &str, now_ms: i64) -> bool {
+    let Some(at) = crate::routines::valid_schedule(hhmm) else { return false };
+    if !CLOUD_TEMPLATES.contains(&template) {
+        return false;
+    }
+    file.set(&cloud_key(template, CloudField::ReadyBy), Some(at));
+    file.set_stamp(&cloud_key(template, CloudField::ReadyBy), now_ms);
+    true
+}
+
+/// The row types the runner reads for `template` (core's `routines::grant_for`); empty for an unknown name.
+fn grant_of(template: &str) -> &'static [&'static str] {
+    serde_json::from_value::<RoutineTemplate>(serde_json::Value::String(template.to_string()))
+        .map(|t| ::routines::grant_for(&t))
+        .unwrap_or(&[])
+}
+
+/// The cloud fields to push (the Mac's `RoutineSyncFields.cloudValues`): each cloud routine's flag and grant,
+/// and its ready-by time once chosen. Never the heartbeat.
+pub fn cloud_values(file: &SettingsFile) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for template in CLOUD_TEMPLATES {
+        let on = is_cloud(file, template);
+        out.insert(cloud_key(template, CloudField::Cloud), flag(on));
+        let grant: &[&str] = if on { grant_of(template) } else { &[] };
+        out.insert(cloud_key(template, CloudField::CloudGrant), serde_json::to_string(grant).unwrap_or_else(|_| "[]".into()));
+        if let Some(at) = ready_by(file, template) {
+            out.insert(cloud_key(template, CloudField::ReadyBy), at);
+        }
+    }
+    out
+}
+
+/// Records `zone` as this PC's. Its timestamp moves only when the zone differs from the one last pushed from
+/// here, so two devices in different zones do not take turns overwriting each other: the one whose zone changed
+/// last wins. True when something changed (the caller saves).
+pub fn note_time_zone(file: &mut SettingsFile, zone: &str, now_ms: i64) -> bool {
+    let zone = zone.trim();
+    if zone.is_empty() || file.get::<String>(PUSHED_TIME_ZONE).as_deref() == Some(zone) {
+        return false;
+    }
+    file.set(PUSHED_TIME_ZONE, Some(zone));
+    file.set_stamp(TIME_ZONE_KEY, now_ms);
+    true
+}
+
+/// This PC's IANA time zone ("Europe/Paris"), from Windows' own calendar, or `None` if Windows can't say.
+/// Only an IANA-looking id is pushed (`Europe/Paris`, `UTC`). A Windows display name ("Eastern Standard
+/// Time") or an empty one would make the runner stop with an unknown time zone before its heartbeat, which
+/// would stop every cloud routine on the account.
+pub fn system_time_zone() -> Option<String> {
+    let calendar = windows::Globalization::Calendar::new().ok()?;
+    let zone = calendar.GetTimeZone().ok()?.to_string();
+    iana_zone(&zone)
+}
+
+/// `zone` trimmed, if it looks like an IANA id: it contains a `/`, or is `UTC`, `GMT` or `Etc/UTC`, and has no
+/// spaces. `None` otherwise, so nothing is pushed and any earlier value stays.
+pub fn iana_zone(zone: &str) -> Option<String> {
+    let zone = zone.trim();
+    let looks_iana = (zone.contains('/') || matches!(zone, "UTC" | "GMT"))
+        && !zone.contains(char::is_whitespace)
+        && !zone.starts_with('/')
+        && !zone.ends_with('/');
+    looks_iana.then(|| zone.to_string())
+}
+
+/// Applies one pulled Whimbrel Cloud field. False (not applied, so not stamped) for an unknown `cloud.*` key or
+/// a value that does not parse. Another device's time zone and grant are accepted and stamped only: this PC
+/// pushes its own zone when it changes, and the grant is core's list for the template.
+fn apply_cloud(file: &mut SettingsFile, field: &PulledField) -> bool {
+    let value = field.value.as_str();
+    if field.field_key == HEARTBEAT_KEY {
+        return match value.trim().parse::<i64>() {
+            Ok(ms) if ms > 0 => {
+                file.set(HEARTBEAT_KEY, Some(ms));
+                true
+            }
+            _ => false,
+        };
+    }
+    if field.field_key == TIME_ZONE_KEY {
+        return !value.trim().is_empty();
+    }
+    match parse_cloud_key(&field.field_key) {
+        Some((template, CloudField::Cloud)) => match parse_flag(value) {
+            Some(on) => {
+                file.set(&cloud_key(template, CloudField::Cloud), Some(on));
+                true
+            }
+            None => false,
+        },
+        Some((template, CloudField::ReadyBy)) if exact_hhmm(value) => {
+            file.set(&cloud_key(template, CloudField::ReadyBy), Some(value));
+            true
+        }
+        Some((_, CloudField::ReadyBy)) => false,
+        Some((_, CloudField::CloudGrant)) => serde_json::from_str::<Vec<String>>(value).is_ok(),
+        None => false,
+    }
+}
+
+/// What the routine tick needs about the cloud (core's `CloudPolicy`): the templates set to run there, their
+/// ready-by times (the stored ones, as the runner reads them, never a display default) and whether the
+/// runner's heartbeat is fresh at `now_unix_ms`.
+pub fn cloud_policy(file: &SettingsFile, now_unix_ms: i64) -> api::routine_runs::CloudPolicy {
+    let ready: HashMap<String, String> = CLOUD_TEMPLATES.iter().filter_map(|t| ready_by(file, t).map(|at| (t.to_string(), at))).collect();
+    let runner_fresh = runner_last_run_ms(file).is_some_and(|ms| {
+        let heartbeat = SettingsField { value: ms.to_string(), updated_at_unix_ms: ms, is_deleted: false };
+        api::runner_config::runner_fresh(&HashMap::from([(HEARTBEAT_KEY.to_string(), heartbeat)]), now_unix_ms, ::routines::FAILOVER_GRACE_MS)
+    });
+    api::routine_runs::CloudPolicy { cloud_templates: cloud_templates(file), runner_fresh, ready_by: ready }
 }
 
 /// The routine fields to push, read from this PC's routine rows. A template with no row pushes
@@ -488,12 +741,16 @@ impl StoreSide for crate::store_actor::StoreHandle {
 }
 
 /// What this PC pushes: [`gather`] plus the routine fields (stamped in the settings file, as on the
-/// Mac), the hidden marks and the API keys.
+/// Mac), the cloud routine fields and this PC's time zone, the hidden marks and the API keys.
 pub fn gather_all(file: &SettingsFile, store: &StoreLocal, secrets: &dyn SecretStore) -> LocalSettings {
     let mut local = gather(file);
-    for (key, value) in routine_values(&store.routines) {
+    for (key, value) in routine_values(&store.routines).into_iter().chain(cloud_values(file)) {
         let updated_at_unix_ms = file.stamp_of(&key);
         local.fields.insert(key, LocalField { value, updated_at_unix_ms });
+    }
+    // Never `cloud.runner.lastRun`: only the runner writes its heartbeat.
+    if let Some(zone) = file.get::<String>(PUSHED_TIME_ZONE) {
+        local.fields.insert(TIME_ZONE_KEY.to_string(), LocalField { value: zone, updated_at_unix_ms: file.stamp_of(TIME_ZONE_KEY) });
     }
     local.hidden_episode_marks = store.hidden_marks.clone();
     local.api_keys = api_key_states(file, secrets);
@@ -506,8 +763,24 @@ pub fn run_round<F>(settings: &Mutex<SettingsFile>, store: &dyn StoreSide, secre
 where
     F: FnOnce(&LocalSettings) -> Result<Iteration, String>,
 {
+    run_round_in(settings, store, secrets, system_time_zone().as_deref(), iterate)
+}
+
+/// [`run_round`] with this PC's time zone given (`None`: Windows couldn't say, so the last one pushed stays).
+pub fn run_round_in<F>(settings: &Mutex<SettingsFile>, store: &dyn StoreSide, secrets: &dyn SecretStore, zone: Option<&str>, iterate: F) -> Result<usize, String>
+where
+    F: FnOnce(&LocalSettings) -> Result<Iteration, String>,
+{
     let store_local = store.gather()?;
-    let local = gather_all(&settings.lock().unwrap(), &store_local, secrets);
+    let local = {
+        let mut file = settings.lock().unwrap();
+        if zone.and_then(iana_zone).is_some_and(|z| note_time_zone(&mut file, &z, now_ms())) {
+            if let Err(e) = file.save() {
+                tracing::warn!(error = %e, "could not save this PC's time zone for sync");
+            }
+        }
+        gather_all(&file, &store_local, secrets)
+    };
     let iteration = iterate(&local)?;
     if iteration.pulled.is_empty() {
         return Ok(0);
@@ -751,6 +1024,7 @@ mod tests {
         assert!(!apply_field(&mut f, &pulled("prompts.someFutureSurface", "Be brief", 5)));
         assert!(!apply_field(&mut f, &pulled("apiKey.anthropic", "sk-x", 5)), "API keys aren't synced yet");
         assert!(!apply_field(&mut f, &pulled(keys::CAPTURE_ENABLED, "false", 5)), "a device-local key never applies");
+        assert!(!apply_field(&mut f, &pulled(keys::CAPTURE_RESUME_AT, "1800000000000", 5)), "a timed pause never applies from another device");
         assert_eq!(f.get::<String>("prompts.someFutureSurface"), None, "an unknown key isn't written into the file");
     }
 
@@ -758,6 +1032,7 @@ mod tests {
     fn device_local_keys_are_never_gathered() {
         let (_d, mut f) = file();
         f.set(keys::CAPTURE_ENABLED, Some(false));
+        f.set_capture_resume_at(Some(1_800_000_000_000));
         f.set(keys::APP_LANGUAGE, Some("fr"));
         f.set(keys::LIVE_TRANSCRIPT_ENABLED, Some(false));
         f.set_topic_sort_enabled(true);
@@ -773,6 +1048,8 @@ mod tests {
         assert_eq!(sorted(local.fields.keys().cloned().collect()), sorted(synced_keys()));
         for local_only in [
             keys::CAPTURE_ENABLED,
+            keys::CAPTURE_RESUME_AT,
+            keys::MEETING_BAR_POSITION,
             keys::APP_LANGUAGE,
             keys::OPENROUTER_PRICES,
             keys::RETENTION_CONVERSATION_DAYS,
@@ -876,7 +1153,8 @@ mod tests {
         let path = dir.path().join("settings.json");
         let settings = Mutex::new(SettingsFile::load(&path));
         let result = run_round(&settings, &FakeStore::default(), &MemorySecrets::default(), |local| {
-            assert_eq!(local.fields.len(), synced_keys().len());
+            // Plus the cloud routine fields and this PC's time zone, which live outside `synced_keys`.
+            assert_eq!(local.fields.keys().filter(|k| !owns_cloud_key(k)).count(), synced_keys().len());
             Ok(Iteration { pushed_count: local.fields.len(), pulled: HashMap::from([(keys::PROFILE_NAME.to_string(), remote("Mike", 10))]) })
         });
         assert_eq!(result, Ok(1));
@@ -963,21 +1241,192 @@ mod tests {
     }
 
     #[test]
-    fn only_the_failover_routines_push_their_fields() {
+    fn the_cloud_routines_and_reply_priorities_push_their_fields_but_not_focus_time() {
         let mut brief = routine(1, RoutineTemplate::DailyBrief);
         brief.enabled = true;
         brief.schedule_hhmm = "07:30".into();
         brief.model_pref = "anthropic/claude-sonnet-5".into();
-        let values = routine_values(&[brief, routine(2, RoutineTemplate::FocusTime), routine(3, RoutineTemplate::EodRecap)]);
+        let mut recap = routine(3, RoutineTemplate::EodRecap);
+        recap.schedule_hhmm = "17:30".into();
+        let values = routine_values(&[brief, routine(2, RoutineTemplate::FocusTime), recap]);
         assert_eq!(
             values,
             BTreeMap::from([
                 ("routine.daily_brief.enabled".to_string(), "true".to_string()),
                 ("routine.daily_brief.model_pref".to_string(), "anthropic/claude-sonnet-5".to_string()),
                 ("routine.daily_brief.schedule".to_string(), "07:30".to_string()),
+                ("routine.eod_recap.enabled".to_string(), "false".to_string()),
+                ("routine.eod_recap.model_pref".to_string(), "default".to_string()),
+                ("routine.eod_recap.schedule".to_string(), "17:30".to_string()),
             ]),
-            "no Reply Priorities row, so nothing for it; focus time and the recap stay on this PC"
+            "no Reply Priorities row, so nothing for it; focus time stays on this PC"
         );
+        let all = [
+            routine(1, RoutineTemplate::DailyBrief),
+            routine(2, RoutineTemplate::FocusTime),
+            routine(3, RoutineTemplate::EodRecap),
+            routine(4, RoutineTemplate::WeeklyDigest),
+            routine(5, RoutineTemplate::ReplyPriorities),
+            routine(6, RoutineTemplate::MeetingPrep),
+        ];
+        let templates: std::collections::BTreeSet<String> =
+            routine_values(&all).keys().map(|k| k.split('.').nth(1).unwrap().to_string()).collect();
+        assert_eq!(templates.into_iter().collect::<Vec<_>>(), ["daily_brief", "eod_recap", "meeting_prep", "reply_priorities", "weekly_digest"]);
+    }
+
+    #[test]
+    fn the_new_routine_fields_parse_and_focus_time_and_unknown_ones_do_not() {
+        let rows = [routine(4, RoutineTemplate::EodRecap), routine(5, RoutineTemplate::WeeklyDigest), routine(6, RoutineTemplate::MeetingPrep)];
+        assert_eq!(routine_change("routine.eod_recap.enabled", "true", &rows), Some(RoutineChange::Enabled { id: 4, on: true }));
+        assert_eq!(routine_change("routine.weekly_digest.schedule", "16:00", &rows), Some(RoutineChange::Schedule { id: 5, hhmm: "16:00".into() }));
+        assert_eq!(routine_change("routine.meeting_prep.enabled", "false", &rows), Some(RoutineChange::Enabled { id: 6, on: false }));
+        assert_eq!(routine_change("routine.focus_time.enabled", "true", &rows), None, "focus time stays on this PC");
+        assert_eq!(routine_change("routine.someday_digest.enabled", "true", &rows), None, "an unknown template key is ignored");
+        assert_eq!(routine_change("routine.eod_recap.cloud", "true", &rows), None, "a cloud field is not a routine-row field");
+        assert_eq!(routine_key(RoutineTemplate::WeeklyDigest, "schedule").as_deref(), Some("routine.weekly_digest.schedule"));
+        assert_eq!(routine_key(RoutineTemplate::FocusTime, "schedule"), None);
+    }
+
+    // --- Whimbrel Cloud ------------------------------------------------------------------------------
+
+    #[test]
+    fn cloud_cloud_grant_and_ready_by_round_trip_for_eod_recap_and_meeting_prep() {
+        let (_d, mut a) = file();
+        assert_eq!(set_cloud(&mut a, "eod_recap", true, true, 100), Ok(()));
+        assert_eq!(set_cloud(&mut a, "meeting_prep", true, true, 100), Ok(()));
+        assert!(set_ready_by(&mut a, "eod_recap", "18:45", 100));
+        let pushed = cloud_values(&a);
+        assert_eq!(pushed["routine.eod_recap.cloud"], "true");
+        assert_eq!(pushed["routine.meeting_prep.cloud"], "true");
+        assert_eq!(pushed["routine.daily_brief.cloud"], "false");
+        assert_eq!(pushed["routine.daily_brief.cloudGrant"], "[]", "no grant while off");
+        let grant: Vec<String> = serde_json::from_str(&pushed["routine.eod_recap.cloudGrant"]).unwrap();
+        assert_eq!(grant, ::routines::grant_for(&RoutineTemplate::EodRecap).to_vec(), "core's grant while on");
+        assert_eq!(pushed["routine.eod_recap.readyBy"], "18:45");
+        assert!(!pushed.contains_key("routine.meeting_prep.readyBy"), "pushed only once chosen");
+
+        let (_d2, mut b) = file();
+        for (key, value) in &pushed {
+            assert!(apply_field(&mut b, &pulled(key, value, 5)), "{key} should apply");
+        }
+        assert!(is_cloud(&b, "eod_recap") && is_cloud(&b, "meeting_prep") && !is_cloud(&b, "daily_brief"));
+        assert_eq!(ready_by(&b, "eod_recap").as_deref(), Some("18:45"));
+        assert_eq!(cloud_values(&b), pushed);
+    }
+
+    #[test]
+    fn bad_cloud_values_and_non_cloud_templates_are_refused() {
+        let (_d, mut f) = file();
+        for (key, bad) in [
+            ("routine.eod_recap.cloud", "yes"),
+            ("routine.eod_recap.readyBy", "7:00"),
+            ("routine.eod_recap.readyBy", "25:00"),
+            ("routine.eod_recap.readyBy", " 07:00"),
+            ("routine.eod_recap.cloudGrant", "meeting"),
+            ("routine.reply_priorities.cloud", "true"),
+            ("routine.focus_time.cloud", "true"),
+        ] {
+            assert!(!apply_field(&mut f, &pulled(key, bad, 5)), "{key} = {bad:?} should be refused");
+        }
+        assert!(cloud_templates(&f).is_empty());
+        assert_eq!(set_cloud(&mut f, "reply_priorities", true, true, 9), Err(CloudRefusal::NotCloud), "Reply Priorities never runs in the cloud");
+        assert!(!set_ready_by(&mut f, "daily_brief", "noon", 9));
+        assert!(!set_ready_by(&mut f, "focus_time", "09:00", 9));
+        assert_eq!(f.stamp_of("routine.reply_priorities.cloud"), 0);
+        let mut tomb = pulled("routine.daily_brief.cloud", "true", 5);
+        tomb.is_deleted = true;
+        assert!(!apply_field(&mut f, &tomb), "a deleted field is ignored");
+    }
+
+    #[test]
+    fn unknown_cloud_pulled_keys_are_tolerated_and_the_runners_last_run_is_kept_but_never_pushed() {
+        let (_d, f) = file();
+        let pulled_fields = HashMap::from([
+            (HEARTBEAT_KEY.to_string(), remote("1793789914162", 1_793_789_914_162)),
+            ("cloud.someFutureKey".to_string(), remote("whatever", 20)),
+            ("routine.daily_brief.cloudGrant".to_string(), remote(r#"["meeting"]"#, 21)),
+            (TIME_ZONE_KEY.to_string(), remote("America/Los_Angeles", 22)),
+        ]);
+        // No zone known here yet, so the account's (newer) one is taken.
+        let (f, result, sent) = pull_once_in(f, None, pulled_fields);
+        assert_eq!(result, Ok(3), "the heartbeat, the grant and the zone; the unknown cloud key is not an error");
+        assert_eq!(runner_last_run_ms(&f), Some(1_793_789_914_162));
+        assert_eq!(f.stamp_of("cloud.someFutureKey"), 0, "an unknown key is not stamped");
+        assert_eq!(f.get::<String>("cloud.someFutureKey"), None, "nor written into the file");
+        assert_eq!(f.stamp_of(TIME_ZONE_KEY), 22, "another device's newer zone is accepted");
+        assert!(!sent.fields.contains_key(HEARTBEAT_KEY), "only the runner writes its heartbeat");
+        assert!(!sent.fields.contains_key(PUSHED_TIME_ZONE), "the last pushed zone stays on this PC");
+        let (_f, _, sent) = pull_once_in(f, Some("America/New_York"), HashMap::new());
+        assert!(!sent.fields.contains_key(HEARTBEAT_KEY), "not even after one was pulled");
+        assert_eq!(sent.fields[TIME_ZONE_KEY].value, "America/New_York", "this PC pushes its own zone");
+    }
+
+    #[test]
+    fn the_time_zone_is_stamped_only_when_this_pcs_zone_changes() {
+        let (_d, mut f) = file();
+        assert!(note_time_zone(&mut f, "Europe/Paris", 100));
+        assert_eq!(f.stamp_of(TIME_ZONE_KEY), 100);
+        assert!(!note_time_zone(&mut f, "Europe/Paris", 200), "the same zone again");
+        assert_eq!(f.stamp_of(TIME_ZONE_KEY), 100, "so two devices in different zones don't take turns");
+        // Another device's newer zone lands here: stamped with its time, not pushed over.
+        assert!(apply_field(&mut f, &pulled(TIME_ZONE_KEY, "Asia/Tokyo", 300)));
+        f.set_stamp(TIME_ZONE_KEY, 300);
+        assert!(!note_time_zone(&mut f, "Europe/Paris", 400), "this PC did not move");
+        assert_eq!(f.stamp_of(TIME_ZONE_KEY), 300);
+        assert!(note_time_zone(&mut f, "America/New_York", 500), "this PC moved");
+        assert_eq!(f.stamp_of(TIME_ZONE_KEY), 500);
+        assert!(!note_time_zone(&mut f, "  ", 600), "an empty zone is not one");
+        let local = gather_all(&f, &StoreLocal::default(), &MemorySecrets::default());
+        assert_eq!(local.fields[TIME_ZONE_KEY], LocalField { value: "America/New_York".into(), updated_at_unix_ms: 500 });
+    }
+
+    #[test]
+    fn existing_settings_go_out_unstamped_so_an_upgrade_flips_nothing() {
+        let (_d, f) = file();
+        let store = StoreLocal { routines: vec![routine(1, RoutineTemplate::EodRecap), routine(2, RoutineTemplate::MeetingPrep)], ..StoreLocal::default() };
+        let local = gather_all(&f, &store, &MemorySecrets::default());
+        for (key, field) in &local.fields {
+            if key.starts_with("routine.") {
+                assert_eq!(field.updated_at_unix_ms, 0, "{key} was never edited here, so the account's value wins");
+            }
+        }
+        assert_eq!(local.fields["routine.eod_recap.cloud"].value, "false");
+        assert!(!local.fields.contains_key(TIME_ZONE_KEY), "no zone known yet");
+        // The account's older or equal copy of a never-edited field doesn't apply either.
+        let (_d2, f2) = file();
+        let (f2, result, _) = pull_once_in(f2, None, HashMap::from([("routine.eod_recap.cloud".to_string(), remote("true", 0))]));
+        assert_eq!(result, Ok(0));
+        assert!(!is_cloud(&f2, "eod_recap"));
+    }
+
+    #[test]
+    fn turning_cloud_on_stamps_the_routines_own_fields_for_the_runner_and_off_does_not() {
+        let (_d, mut f) = file();
+        assert_eq!(set_cloud(&mut f, "daily_brief", true, true, 1_000), Ok(()));
+        for field in ["cloud", "cloudGrant", "enabled", "schedule", "model_pref"] {
+            assert_eq!(f.stamp_of(&format!("routine.daily_brief.{field}")), 1_000, "{field}");
+        }
+        assert_eq!(f.stamp_of("routine.eod_recap.enabled"), 0, "only that routine's");
+        assert_eq!(set_cloud(&mut f, "daily_brief", false, true, 2_000), Ok(()));
+        assert_eq!(f.stamp_of("routine.daily_brief.cloud"), 2_000);
+        assert_eq!(f.stamp_of("routine.daily_brief.cloudGrant"), 2_000, "the grant travels with the flag");
+        assert_eq!(f.stamp_of("routine.daily_brief.enabled"), 1_000, "turning it off stamps nothing else");
+    }
+
+    #[test]
+    fn the_cloud_policy_carries_the_flags_the_stored_ready_by_times_and_the_heartbeat() {
+        let (_d, mut f) = file();
+        let now = 1_800_000_000_000;
+        assert_eq!(cloud_policy(&f, now), api::routine_runs::CloudPolicy::default(), "nothing flagged: the old tick");
+        set_cloud(&mut f, "daily_brief", true, true, 1).unwrap();
+        set_ready_by(&mut f, "daily_brief", "07:00", 1);
+        set_ready_by(&mut f, "eod_recap", "19:00", 1);
+        assert!(apply_field(&mut f, &pulled(HEARTBEAT_KEY, &(now - 60_000).to_string(), now - 60_000)));
+        let policy = cloud_policy(&f, now);
+        assert_eq!(policy.cloud_templates, ["daily_brief"]);
+        assert!(policy.runner_fresh, "a heartbeat a minute old");
+        assert_eq!(policy.ready_by, HashMap::from([("daily_brief".to_string(), "07:00".to_string()), ("eod_recap".to_string(), "19:00".to_string())]));
+        assert!(!cloud_policy(&f, now + ::routines::FAILOVER_GRACE_MS).runner_fresh, "stale after the grace");
     }
 
     #[test]
@@ -1073,6 +1522,17 @@ mod tests {
         (settings.into_inner().unwrap(), result, sent.unwrap())
     }
 
+    /// [`pull_once`] with this PC's time zone given rather than read from Windows.
+    fn pull_once_in(f: SettingsFile, zone: Option<&str>, pulled: HashMap<String, SettingsField>) -> (SettingsFile, Result<usize, String>, LocalSettings) {
+        let settings = Mutex::new(f);
+        let mut sent = None;
+        let result = run_round_in(&settings, &FakeStore::default(), &MemorySecrets::default(), zone, |local| {
+            sent = Some(local.clone());
+            Ok(Iteration { pushed_count: 0, pulled })
+        });
+        (settings.into_inner().unwrap(), result, sent.unwrap())
+    }
+
     #[test]
     fn with_the_switch_off_a_key_is_neither_read_nor_changed() {
         let (_d, f) = file();
@@ -1149,5 +1609,47 @@ mod tests {
         let (f, result, _) = pull_once(f, &MemorySecrets::default(), HashMap::from([(api_key_switch(ANTHROPIC), remote("true", 300))]));
         assert_eq!(result, Ok(1));
         assert!(api_key_sync_enabled(&f, ANTHROPIC));
+    }
+
+    #[test]
+    fn cloud_cannot_be_turned_on_for_a_routine_that_is_off_here_and_stamps_nothing() {
+        let (_d, mut f) = file();
+        assert_eq!(set_cloud(&mut f, "eod_recap", true, false, 1_000), Err(CloudRefusal::RoutineOff));
+        assert!(!is_cloud(&f, "eod_recap"));
+        for field in ["cloud", "cloudGrant", "enabled", "schedule", "model_pref"] {
+            assert_eq!(f.stamp_of(&format!("routine.eod_recap.{field}")), 0, "{field}: enabled=false never beats another device's value");
+        }
+    }
+
+    #[test]
+    fn turning_cloud_off_is_always_allowed_and_never_stamps_enabled() {
+        let (_d, mut f) = file();
+        set_cloud(&mut f, "eod_recap", true, true, 1_000).unwrap();
+        assert_eq!(set_cloud(&mut f, "eod_recap", false, false, 2_000), Ok(()), "the routine was switched off since");
+        assert!(!is_cloud(&f, "eod_recap"));
+        assert_eq!(f.stamp_of("routine.eod_recap.cloud"), 2_000);
+        assert_eq!(f.stamp_of("routine.eod_recap.enabled"), 1_000, "not restamped by turning cloud off");
+    }
+
+    #[test]
+    fn only_an_iana_looking_time_zone_is_pushed() {
+        for good in ["America/New_York", " Europe/Paris ", "UTC", "GMT", "Etc/UTC", "America/Argentina/Buenos_Aires"] {
+            assert_eq!(iana_zone(good).as_deref(), Some(good.trim()), "{good:?}");
+        }
+        for bad in ["", "  ", "Eastern Standard Time", "Pacific Standard Time", "W. Europe Standard Time", "EST", "/", "America/", "Etc/ UTC"] {
+            assert_eq!(iana_zone(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_windows_display_name_is_never_pushed_and_the_earlier_zone_stays() {
+        let (_d, mut f) = file();
+        assert!(note_time_zone(&mut f, "America/New_York", 100));
+        let (f, _, sent) = pull_once_in(f, Some("Eastern Standard Time"), HashMap::new());
+        assert_eq!(sent.fields[TIME_ZONE_KEY], LocalField { value: "America/New_York".into(), updated_at_unix_ms: 100 });
+        let (_d2, fresh) = file();
+        let (_f, _, sent) = pull_once_in(fresh, Some("Eastern Standard Time"), HashMap::new());
+        assert!(!sent.fields.contains_key(TIME_ZONE_KEY), "nothing pushed rather than a zone the runner cannot read");
+        drop(f);
     }
 }

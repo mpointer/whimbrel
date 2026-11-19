@@ -4,10 +4,10 @@
 //! thread, and starting (a row write that can queue behind sync) or stopping (waiting for
 //! the WAVs to finalize) there froze the window.
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::error::CommandError;
-use crate::meetings::controller::{MeetingController, MeetingRecordingView};
+use crate::meetings::controller::{AudioLevel, MeetingController, MeetingRecordingView};
 use crate::state::AppState;
 use crate::l10n::tr;
 
@@ -34,11 +34,106 @@ pub async fn meeting_record_stop(app: AppHandle) -> Result<MeetingRecordingView,
     off_main(app, |m| m.stop()).await
 }
 
+/// Recording pause (redesign only; nothing calls it with the switch off): audio and snapshots stop
+/// until resume, and the recording stays a recording.
+#[tauri::command]
+pub async fn meeting_record_pause(app: AppHandle) -> Result<MeetingRecordingView, CommandError> {
+    // A "Still in a meeting?" left up is answered by pausing.
+    crate::meetings::still_here::hide(&app);
+    off_main(app, |m| m.pause()).await
+}
+
+/// Ends a recording pause: the streams reopen and the gap is written as silence.
+#[tauri::command]
+pub async fn meeting_record_resume(app: AppHandle) -> Result<MeetingRecordingView, CommandError> {
+    // The "This recording is still paused." prompt goes when Resume is pressed anywhere.
+    crate::meetings::still_here::hide(&app);
+    off_main(app, |m| m.resume()).await
+}
+
+/// The level meter's reading (redesign only; nothing calls it with the switch off, so nothing is sampled
+/// then). A brief read of two atomics: read, drawn and thrown away.
+#[tauri::command]
+pub fn meeting_audio_level(state: tauri::State<'_, AppState>) -> Result<AudioLevel, CommandError> {
+    Ok(state.meetings()?.audio_level())
+}
+
+/// A question typed in the in-meeting window (redesign only): parked until the main window takes it, which is brought forward.
+#[tauri::command]
+pub fn meeting_bar_ask(app: AppHandle, meeting_id: i64, text: String) {
+    crate::meetings::ask_handoff::park(meeting_id, text, chrono::Utc::now().timestamp_millis());
+    crate::app::show_main_window(&app);
+    let _ = app.emit("meeting-bar-ask-pending", meeting_id);
+}
+
+/// The live screen takes the parked question for its meeting, once, and acknowledges it to the window.
+#[tauri::command]
+pub fn meeting_bar_take_ask(app: AppHandle, meeting_id: i64) -> Option<String> {
+    let text = crate::meetings::ask_handoff::take(meeting_id, chrono::Utc::now().timestamp_millis());
+    if text.is_some() {
+        let _ = app.emit("meeting-bar-ask-taken", meeting_id);
+    }
+    text
+}
+
+/// The window gave up waiting and keeps the text in its box.
+#[tauri::command]
+pub fn meeting_bar_cancel_ask() {
+    crate::meetings::ask_handoff::cancel();
+}
+
 #[tauri::command]
 pub async fn meeting_recording_status(app: AppHandle) -> Result<MeetingRecordingView, CommandError> {
     tauri::async_runtime::spawn_blocking(move || Ok(app.state::<AppState>().meetings()?.status()))
         .await
         .map_err(|e| CommandError::store(tr("The meeting command failed: {error}", &[("error", &e.to_string())])))?
+}
+
+/// A moment marked while a meeting recorded ("Mark this moment"), kept on this PC with its meeting.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingMarkerView {
+    pub id: i64,
+    pub meeting_id: i64,
+    /// Centiseconds from the start of the recording on the clock live transcript lines use; includes paused time.
+    pub at_cs: i64,
+    /// The note line being written when it was marked, if any.
+    pub label: Option<String>,
+    pub created_unix_ms: i64,
+}
+
+fn marker_view(m: memory::meeting_marker::MeetingMarker) -> MeetingMarkerView {
+    MeetingMarkerView { id: m.id, meeting_id: m.meeting_id, at_cs: m.at_cs, label: m.label, created_unix_ms: m.created_unix_ms }
+}
+
+/// Marks a moment (redesign only; nothing calls it with the switch off).
+#[tauri::command]
+pub async fn meeting_marker_add(state: tauri::State<'_, AppState>, meeting_id: i64, at_cs: i64, label: Option<String>) -> Result<MeetingMarkerView, CommandError> {
+    let created = chrono::Utc::now().timestamp_millis();
+    state
+        .store()?
+        .call(move |s| {
+            let id = s.add_meeting_marker(meeting_id, at_cs, label.as_deref(), created).map_err(|e| e.to_string())?;
+            let marker = s.list_meeting_markers(meeting_id).map_err(|e| e.to_string())?.into_iter().find(|m| m.id == id);
+            marker.map(marker_view).ok_or_else(|| "the marker was not saved".to_string())
+        })
+        .await?
+        .map_err(CommandError::store)
+}
+
+/// A meeting's marked moments, earliest first.
+#[tauri::command]
+pub async fn meeting_marker_list(state: tauri::State<'_, AppState>, meeting_id: i64) -> Result<Vec<MeetingMarkerView>, CommandError> {
+    state
+        .store()?
+        .call(move |s| s.list_meeting_markers(meeting_id).map(|all| all.into_iter().map(marker_view).collect::<Vec<_>>()).map_err(|e| e.to_string()))
+        .await?
+        .map_err(CommandError::store)
+}
+
+#[tauri::command]
+pub async fn meeting_marker_delete(state: tauri::State<'_, AppState>, id: i64) -> Result<bool, CommandError> {
+    state.store()?.call(move |s| s.delete_meeting_marker(id).map_err(|e| e.to_string())).await?.map_err(CommandError::store)
 }
 
 /// Settings → Meetings: how calls are detected and started.
@@ -144,7 +239,7 @@ pub struct RecordingNoticeSettings {
 #[tauri::command]
 pub fn recording_notice_settings(state: tauri::State<'_, AppState>) -> RecordingNoticeSettings {
     let file = state.settings.lock().unwrap();
-    RecordingNoticeSettings { enabled: file.recording_notice_enabled(), text: file.recording_notice_text() }
+    RecordingNoticeSettings { enabled: file.recording_notice_on(), text: file.recording_notice_text() }
 }
 
 #[tauri::command]
@@ -173,6 +268,24 @@ mod settings_tests {
         file.set_recording_notice(true, "   ");
         assert_eq!(file.recording_notice_text(), "", "blank goes back to the default");
         assert!(file.get::<String>(crate::settings::keys::RECORDING_NOTICE_TEXT).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn with_the_redesign_on_an_absent_notice_setting_means_on_and_a_stored_choice_wins() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-recording-notice-default-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut file = SettingsFile::load(&dir.join("settings.json"));
+        assert!(!file.recording_notice_on(), "switch off, nothing stored: off, as today");
+        file.set(crate::settings::keys::REDESIGN_ENABLED, Some(true));
+        assert!(file.recording_notice_on(), "switch on, nothing stored: on");
+        assert!(!file.recording_notice_enabled(), "the stored-only reading is unchanged");
+        file.set_recording_notice(false, "");
+        assert!(!file.recording_notice_on(), "a stored off wins with the switch on");
+        file.set_recording_notice(true, "");
+        file.set(crate::settings::keys::REDESIGN_ENABLED, Some(false));
+        assert!(file.recording_notice_on(), "a stored on wins with the switch off");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

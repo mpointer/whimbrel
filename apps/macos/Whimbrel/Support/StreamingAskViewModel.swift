@@ -31,6 +31,12 @@ final class StreamingAskViewModel: ObservableObject {
     /// under it, and `CoreMemoryStore.noteModelAnswer` compares it with the request.
     @Published private(set) var answeredModel: String?
 
+    /// Why the last run failed when the exclusion gate held it back (nothing was sent); nil otherwise. A
+    /// surface answers an `.excludedClient` refusal again on this Mac (core's blocking path keeps it local, or
+    /// refuses when there is no local model); `.unreadable` is not retried.
+    enum ExclusionRefusal: Equatable { case excludedClient, unreadable }
+    @Published private(set) var exclusionRefusal: ExclusionRefusal?
+
     private var activeRunId: String?
     private var pollTask: Task<Void, Never>?
 
@@ -46,6 +52,7 @@ final class StreamingAskViewModel: ObservableObject {
     /// events can never be applied under the new run's display state.
     func start(prompt: String, model: String, provider: InferenceStreamClient.Provider = .ollama, apiKey: String? = nil, baseURLOverride: String? = nil) {
         releaseCurrentRun()
+        exclusionRefusal = nil
         streamedText = ""
         answeredModel = nil
         usage = InferenceEvent.TokenUsage()
@@ -127,7 +134,16 @@ final class StreamingAskViewModel: ObservableObject {
             case .cancelled:
                 phase = .cancelled
             case .failed(_, let message):
-                phase = .failed(message: message)
+                // The gate's refusals get their own words, never "couldn't reach the provider".
+                if outcome.isExcludedClientRefusal {
+                    exclusionRefusal = .excludedClient
+                    phase = .failed(message: CoreLLMError.excludedClientMessage)
+                } else if outcome.isExclusionUnreadable {
+                    exclusionRefusal = .unreadable
+                    phase = .failed(message: CoreLLMError.exclusionUnreadableMessage)
+                } else {
+                    phase = .failed(message: message)
+                }
             }
         }
     }

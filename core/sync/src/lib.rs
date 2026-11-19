@@ -216,6 +216,29 @@ pub fn entity_tag(group_key: &GroupKey, device_id: &str, identity: &str) -> Stri
     base64::engine::general_purpose::STANDARD.encode(&digest[..16])
 }
 
+/// An opaque keyed tag for an item kind, so the relay can filter rows by kind
+/// at the query without ever reading the kind. Same construction and encoding
+/// as `entity_tag` (HKDF subkey of the group key, HMAC-SHA256 truncated to 16
+/// bytes, base64), but with its own HKDF label and the input
+/// `u32_be(len(kind)) || kind` only (no device id: every device must derive the
+/// same tag for a kind). A group-key change gives new tags.
+pub fn kind_tag(group_key: &GroupKey, kind: &str) -> String {
+    use base64::Engine;
+    use hkdf::hmac::{Hmac, Mac};
+
+    let ikm = Zeroizing::new(group_key.to_bytes());
+    let mut k_tag = Zeroizing::new([0u8; 32]);
+    Hkdf::<Sha256>::new(None, &*ikm)
+        .expand(b"whimbrel sync kind_tag v1", &mut *k_tag)
+        .expect("32 bytes is a valid HKDF-SHA256 output length");
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&*k_tag)
+        .expect("HMAC-SHA256 accepts a key of any length");
+    mac.update(&(kind.len() as u32).to_be_bytes());
+    mac.update(kind.as_bytes());
+    let digest = mac.finalize().into_bytes();
+    base64::engine::general_purpose::STANDARD.encode(&digest[..16])
+}
+
 /// Encrypts arbitrary payload bytes (a serialized `capture_item`, `meeting`,
 /// `transcript_segment`, or `summary` row) under the group key. `aad`
 /// (additional authenticated data — e.g. `account_id || device_id ||
@@ -320,6 +343,39 @@ mod tests {
             crate::entity_tag(&key, "ab", "c"),
             crate::entity_tag(&key, "a", "bc")
         );
+    }
+
+    #[test]
+    fn kind_tag_is_stable_for_a_group_and_kind() {
+        let key = crate::GroupKey::from_bytes([7; 32]);
+        assert_eq!(
+            crate::kind_tag(&key, "calendar_event"),
+            crate::kind_tag(&key, "calendar_event")
+        );
+        assert_eq!(crate::kind_tag(&key, "calendar_event").len(), 24);
+    }
+
+    #[test]
+    fn kind_tag_differs_across_kinds_and_groups() {
+        let key = crate::GroupKey::from_bytes([7; 32]);
+        let other = crate::GroupKey::from_bytes([8; 32]);
+        assert_ne!(
+            crate::kind_tag(&key, "calendar_event"),
+            crate::kind_tag(&key, "email")
+        );
+        assert_ne!(
+            crate::kind_tag(&key, "calendar_event"),
+            crate::kind_tag(&other, "calendar_event")
+        );
+    }
+
+    #[test]
+    fn kind_tag_does_not_contain_the_kind() {
+        let key = crate::GroupKey::from_bytes([7; 32]);
+        let tag = crate::kind_tag(&key, "calendar_event");
+        assert!(!tag.contains("calendar_event"));
+        // A different HKDF label from entity_tag, so the tags never coincide.
+        assert_ne!(tag, crate::entity_tag(&key, "", "calendar_event"));
     }
 
     #[test]

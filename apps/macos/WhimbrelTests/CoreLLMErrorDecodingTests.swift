@@ -48,6 +48,41 @@ final class CoreLLMErrorDecodingTests: XCTestCase {
         XCTAssertEqual(other, .providerFailure)
     }
 
+    func testExclusionRefusalsDecodeAsTheirOwnKinds() {
+        let refused = decode(#"{"kind":"provider_failure","reason":{"kind":"excluded_client"}}"#, as: CoreLLMError.self)
+        XCTAssertEqual(refused, .providerFailureBecause(.excludedClient))
+        XCTAssertEqual(refused?.isExclusionRefusal, true)
+        let unreadable = decode(#"{"kind":"provider_failure","reason":{"kind":"exclusion_unreadable"}}"#, as: CoreLLMError.self)
+        XCTAssertEqual(unreadable, .providerFailureBecause(.exclusionUnreadable))
+        XCTAssertEqual(unreadable?.isExclusionRefusal, true)
+        XCTAssertEqual(CoreLLMError.providerFailure.isExclusionRefusal, false)
+    }
+
+    func testClientControlShapesDecode() {
+        let receipt = #"{"ok":true,"data":{"date_unix_ms":5,"counts":[["email",2]],"not_sent":[],"local_only":[["conversation",1]],"client":"removed_here_only","left_for_you":["copies_on_other_devices",{"files_not_removed":["/a"]},{"expired_here_only":3},{"export_folders":[]},{"media_folder":"/m"}],"pending_devices":null,"failed":[],"failed_stages":["no_device_id"],"complete":false,"retry_helps":false}}"#
+        let r = try? ClientResult<ClientDeleteReceipt>.decode(receipt).get()
+        XCTAssertEqual(r?.counts, [ClientKindCount(kind: .email, count: 2)])
+        XCTAssertEqual(r?.client, .removedHereOnly)
+        XCTAssertNil(r?.pendingDevices)
+        XCTAssertEqual(r?.failedStages, [.noDeviceId])
+        XCTAssertEqual(r?.leftForYou, [.copiesOnOtherDevices, .filesNotRemoved(["/a"]), .expiredHereOnly(3), .exportFolders([]), .mediaFolder("/m")])
+        XCTAssertNil(r?.rollbackCopyRemoved, "an older core does not send it")
+        // X4 Task 12: the delete removed the encryption upgrade's unencrypted copy; the receipt file says so.
+        let withCopy = receipt.replacingOccurrences(of: #""retry_helps":false"#, with: #""retry_helps":false,"rollback_copy_removed":true"#)
+        let removed = try? ClientResult<ClientDeleteReceipt>.decode(withCopy).get()
+        XCTAssertEqual(removed?.rollbackCopyRemoved, true)
+        if let removed {
+            XCTAssertTrue(ClientReceiptFile.text(removed).contains(ClientCopy.rollbackCopyRemoved))
+            XCTAssertFalse(ClientReceiptFile.text(r!).contains(ClientCopy.rollbackCopyRemoved))
+        }
+        XCTAssertEqual(ClientResult<ClientDeleteReceipt>.decode(#"{"ok":false,"error":{"kind":"no_device_id"}}"#), .failure(.noDeviceId))
+        XCTAssertEqual(ClientResult<ClientDeleteReceipt>.decode(#"{"ok":false,"error":{"kind":"selection_changed"}}"#), .failure(.selectionChanged))
+        XCTAssertEqual(ClientResult<ClientDeleteReceipt>.decode(#"{"ok":false,"error":{"kind":"busy"}}"#), .failure(.busy))
+        XCTAssertEqual(ClientResult<ClientExportDone>.decode(#"{"ok":false,"error":{"kind":"folder_not_allowed"}}"#), .failure(.folderNotAllowed))
+        let inv = #"{"ok":true,"data":{"linked":[{"kind":"capture","id":"i:9","also_client":null,"date_unix_ms":1,"removed":false}],"possible":[],"possible_truncated":false,"counts":[["capture",1]],"left_for_you":["mailbox_originals"]}}"#
+        XCTAssertEqual((try? ClientResult<ClientInventory>.decode(inv).get())?.linked.first?.ref, ClientItemRef(kind: .capture, id: "i:9"))
+    }
+
     func testUnrecognizedKindFallsBackToProviderFailure() {
         let json = #"{"kind":"something_a_future_build_might_add"}"#
         let error = decode(json, as: CoreLLMError.self)
