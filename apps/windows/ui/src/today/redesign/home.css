@@ -1,0 +1,208 @@
+/* Home in the Thread look. Layout only: colors, fonts and shape come from the selected skin through the system
+   components and the skin variables, with the --w-* tokens as the fallback. */
+.th-home {
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xl);
+}
+.th-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xxs);
+}
+.th-date {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.th-title {
+  margin: 0;
+  font-family: var(--sx-font-title);
+  font-size: var(--w-text-page-title-size);
+  line-height: var(--w-text-page-title-line);
+  font-weight: var(--w-text-page-title-weight);
+}
+.th-ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xs);
+}
+.th-filter-summary {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.th-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--w-space-sm);
+}
+.th-chip {
+  position: relative;
+}
+.th-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + var(--w-space-xs));
+  left: 0;
+  min-width: 14rem;
+  max-height: 18rem;
+  overflow: auto;
+  padding: var(--w-space-sm);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-surface);
+  background: var(--color-background-card);
+  box-shadow: var(--w-shadow-3);
+}
+.th-menu .w-menu-item {
+  color: var(--color-text-primary);
+  font-weight: 400;
+}
+.th-menu .w-menu-item[aria-checked="true"] {
+  font-weight: 700;
+  background: var(--color-selection);
+}
+.th-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--w-space-sm);
+  padding: var(--w-space-sm) var(--w-space-md) 0;
+  border-top: var(--sx-line);
+  margin-top: var(--w-space-xs);
+}
+.th-range label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xxs);
+  font-size: var(--w-text-secondary-size);
+  color: var(--color-text-secondary);
+}
+.th-range input {
+  min-height: var(--w-target);
+  font: inherit;
+  color: var(--color-text-primary);
+  background: var(--color-background-page);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-control);
+  padding: 0 var(--w-space-sm);
+}
+.th-quiet {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+.th-timeline,
+.th-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-md);
+}
+.th-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w-space-md);
+}
+.th-capture-note {
+  margin: 0;
+  padding: var(--w-space-xs) 0 var(--w-space-md);
+  color: var(--color-text-secondary);
+}
+.th-block {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm);
+}
+.th-block > .w-memory {
+  flex: 1;
+  min-width: 0;
+}
+.th-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--w-space-md);
+}
+.th-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.th-list > li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-xxs);
+  padding: var(--w-space-sm) 0;
+  border-top: var(--sx-line);
+}
+.th-list-title {
+  font-weight: 600;
+}
+.th-list-meta {
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+/* A meeting card's actions, small and always visible (never hover only). */
+.th-home .w-meeting .w-button {
+  min-height: 2rem;
+}
+@media (max-width: 40rem) {
+  .th-home {
+    gap: var(--w-space-lg);
+  }
+}
+
+/* Yesterday and Last week: collapsed rows at the bottom of the line. */
+.th-earlier {
+  outline-offset: 2px;
+}
+.th-earlier-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm);
+  width: 100%;
+  min-height: var(--w-target);
+  padding: var(--w-space-xs) var(--w-space-md);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-card);
+  background: var(--color-background-card);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* The chevron points right while the row is collapsed and down once it is open. */
+.th-earlier-head[aria-expanded="false"] .w-icon {
+  transform: rotate(-90deg);
+}
+.th-earlier-note {
+  color: var(--color-text-secondary);
+}
+.th-earlier-list {
+  list-style: none;
+  margin: var(--w-space-sm) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+}
+.th-timeline:focus,
+.th-earlier:focus {
+  outline: none;
+}
+.th-timeline:focus-visible,
+.th-earlier:focus-visible {
+  outline: 2px solid var(--w-color-focus);
+}
+
+/* The reused "This week" list: a topic chip keeps its own width in the column. */
+.th-section .schedule-main > * {
+  align-self: flex-start;
+}

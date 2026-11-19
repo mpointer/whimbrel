@@ -13,6 +13,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Chain-link failures (routing::note_link_failure); the Windows shell writes tracing to its log file.
 tracing = "0.1"
+# Folds accents and case for the exclusion match (src/guard.rs). Already in the build through
+# url/idna; pinned to the version Cargo.lock resolves.
+icu_normalizer = { version = "2.2.0", default-features = false, features = ["compiled_data"] }
 ureq = { version = "2", features = ["json"] }
 base64 = "0.22"
 # Streaming inference (core/llm/src/streaming.rs, docs/adr/0002) — additive alongside

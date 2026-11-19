@@ -19,7 +19,8 @@ const ROUTES: { path: RegExp; contentType: string }[] = [
   { path: /^\/version\.json$/, contentType: "application/json" },
   { path: /^\/Whimbrel-[\w.-]+\.zip$/, contentType: "application/zip" },
   { path: /^\/windows\/latest\.json$/, contentType: "application/json" },
-  { path: /^\/windows\/Whimbrel_[\w.-]+_x64-setup\.exe$/, contentType: "application/octet-stream" },
+  // The x64 installer and the Windows on Arm one (release-windows.yml publishes both).
+  { path: /^\/windows\/Whimbrel_[\w.-]+_(x64|arm64)-setup\.exe$/, contentType: "application/octet-stream" },
   // Default AI model per provider, read daily by every app (core's built-in table is the fallback).
   { path: /^\/models\/defaults\.json$/, contentType: "application/json" },
 ];

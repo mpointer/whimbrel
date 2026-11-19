@@ -7,6 +7,8 @@ import SwiftUI
 struct RoutinesSettingsPane: View {
     @EnvironmentObject var appState: AppState
     @State private var routines: [CoreRoutine] = []
+    /// Each routine's recent runs (its own and synced ones), for the cloud routines' "Updated" and "Late" lines.
+    @State private var runs: [Int64: [CloudRunStamp]] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
@@ -74,11 +76,26 @@ struct RoutinesSettingsPane: View {
                     if Self.callsAModel(routine) {
                         modelPicker(for: routine)
                     }
+
+                    if let info = CloudRoutineInfo.load(routine.template), CloudRoutineCopy.showsToggle(info),
+                       CloudRoutineCopy.showsCloudSection(flag: CloudRoutineCopy.uiFlag(), devices: appState.syncState.devices,
+                                                          on: appState.settingsSyncCoordinator.cloudRoutines.isCloud(routine.template)) {
+                        let devices = appState.syncState.devices
+                        CloudRoutineSection(
+                            routine: routine, info: info, cloud: appState.settingsSyncCoordinator.cloudRoutines,
+                            routing: appState.routing, runs: runs[routine.id] ?? [],
+                            // An empty list has not loaded yet: say nothing about the runner.
+                            runnerMissing: CloudRoutineCopy.runnerMissing(devices: devices),
+                            syncReady: { if case .ready = appState.syncState.status { return true } else { return false } }()
+                        )
+                    }
                 }
                 Divider().overlay(Color.whimbrelBorder)
             }
         }
         .onAppear { refresh() }
+        // A result the runner (or another device) made shows once it syncs.
+        .onReceive(appState.contentSyncCoordinator.$lastSyncedAt.dropFirst()) { _ in refresh() }
     }
 
     /// Which model chain this routine's runs use (core `routine.model_pref`): the chain
@@ -147,7 +164,8 @@ struct RoutinesSettingsPane: View {
     /// Which device runs routines. Empty = every device runs its own (the default). Finished runs from
     /// the chosen device sync to the others and show in the Routines history.
     private var runsOnPicker: some View {
-        let approved = appState.syncState.devices.filter { $0.status == "approved" }
+        // Whimbrel Cloud runs only the routines set to run in the cloud; it is never the device routines run on.
+        let approved = appState.syncState.devices.filter { $0.status == "approved" && !CloudRoutineCopy.isRunner($0) }
         let choice = appState.routineHost.primaryDeviceId
         return VStack(alignment: .leading, spacing: Spacing.xs) {
             Picker("Routines run on", selection: Binding(
@@ -182,7 +200,13 @@ struct RoutinesSettingsPane: View {
         guard let store = appState.coreStore else { return }
         CoreMemoryStore.accessQueue.async {
             let fetched = store.listRoutines() ?? []
-            DispatchQueue.main.async { routines = fetched }
+            let recent = store.recentRoutineRuns(limit: 200) ?? []
+            let byRoutine = Dictionary(grouping: recent, by: \.routineId)
+                .mapValues { $0.map { CloudRunStamp(ranAtUnixMs: $0.ranAtUnixMs, status: $0.status) } }
+            DispatchQueue.main.async {
+                routines = fetched
+                runs = byRoutine
+            }
         }
     }
 
@@ -231,5 +255,89 @@ struct RoutinesSettingsPane: View {
     private static func performsWriteActions(_ routine: CoreRoutine) -> Bool {
         routine.template == "focus_time" || routine.template == "eod_recap"
             || routine.template == "weekly_digest"
+    }
+}
+
+/// "Run in the cloud" for one routine core lets run there: the toggle with its grant and limits, the ready-by time,
+/// and how fresh the last result is.
+private struct CloudRoutineSection: View {
+    let routine: CoreRoutine
+    let info: CloudRoutineInfo
+    @ObservedObject var cloud: CloudRoutineSettings
+    @ObservedObject var routing: RoutingSettings
+    let runs: [CloudRunStamp]
+    let runnerMissing: Bool
+    let syncReady: Bool
+
+    var body: some View {
+        let on = cloud.isCloud(routine.template)
+        let blocked = blockedReason
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            Toggle(CloudRoutineCopy.toggleLabel, isOn: Binding(
+                get: { on },
+                set: { cloud.setCloud($0, for: routine.template, routineEnabled: routine.enabled) }
+            ))
+            .toggleStyle(.switch)
+            // Turning it off is always allowed; turning it on needs a key the runner can use.
+            .disabled(!on && blocked != nil)
+            .accessibilityIdentifier("routine-cloud-\(routine.template)")
+            caption(CloudRoutineCopy.toggleCopy(info))
+            caption(CloudRoutineCopy.disclosure)
+            if let note = CloudRoutineCopy.statusNote(on: on, blockedReason: blocked, runnerMissing: runnerMissing, template: routine.template) {
+                caption(note)
+            }
+            if on {
+                // Only the daily routines are ever late, so only they have a ready-by time.
+                if CloudRoutineCopy.canBeLate(template: routine.template, enabled: true) { readyByRow }
+                SwiftUI.TimelineView(.periodic(from: .now, by: 60)) { context in
+                    let calendar = Calendar.current
+                    let late = CloudRoutineCopy.canBeLate(template: routine.template, enabled: routine.enabled)
+                    let freshness = CloudRoutineCopy.freshness(runs: runs, readyBy: late ? readyBy : "", now: context.date, calendar: calendar)
+                    if let label = CloudRoutineCopy.label(freshness, now: context.date, calendar: calendar) {
+                        caption(label)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The chosen ready-by time, else an hour after the routine's own time.
+    private var readyBy: String {
+        cloud.readyBy[routine.template] ?? CloudRoutineCopy.defaultReadyBy(schedule: routine.scheduleHhmm) ?? routine.scheduleHhmm
+    }
+
+    private var readyByRow: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            HStack {
+                Text(CloudRoutineCopy.readyByLabel)
+                    .font(.whimbrelBody(.caption))
+                    .foregroundStyle(Color.whimbrelTextSecondary)
+                DatePicker("", selection: Binding(
+                    get: { CloudRoutineCopy.readyByTime(readyBy, on: Date(), calendar: .current) ?? Date() },
+                    set: { date in
+                        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+                        cloud.setReadyBy(String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0), for: routine.template)
+                    }
+                ), displayedComponents: .hourAndMinute)
+                .labelsHidden()
+                .frame(width: 100)
+                .accessibilityIdentifier("routine-ready-by-\(routine.template)")
+            }
+            caption(CloudRoutineCopy.readyByNote)
+        }
+    }
+
+    /// Why the toggle cannot be turned on: the runner has no model of its own, only a synced provider key.
+    private var blockedReason: String? {
+        let synced = (routing.anthropicKeySyncEnabled && routing.hasAnthropicKey) || (routing.openaiKeySyncEnabled && routing.hasOpenAIKey)
+            || (routing.googleKeySyncEnabled && routing.hasGoogleKey) || (routing.openrouterKeySyncEnabled && routing.hasOpenRouterKey)
+        return CloudRoutineCopy.blockedReason(syncReady: syncReady, routineEnabled: routine.enabled, localOnly: routing.localOnlyMode, hasSyncedKey: synced)
+    }
+
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(.whimbrelBody(.caption))
+            .foregroundStyle(Color.whimbrelTextSecondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

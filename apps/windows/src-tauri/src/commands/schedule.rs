@@ -228,7 +228,7 @@ pub async fn meeting_record_start_event(app: AppHandle, event_id: String) -> Res
         let now = chrono::Utc::now().timestamp_millis();
         let local = state.calendar.as_ref().and_then(|c| c.upcoming(now).into_iter().find(|e| e.id == event_id));
         let started = match local {
-            Some(event) => state.meetings()?.start_calendar(event.title, event.attendees, event.attendee_details, Some(event.start_unix_ms), state.detected.candidate_pid()),
+            Some(event) => state.meetings()?.start_calendar(event.title, event.attendees, event.attendee_details, Some(event.start_unix_ms), state.detected.candidate_pid(), Some(event.id)),
             // A meeting only another device has (synced, #792) is never a calendar recording here: it
             // starts as a manual one, with the event's title and invitees.
             None => {

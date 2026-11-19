@@ -75,6 +75,49 @@ pub extern "C" fn whimbrel_sync_worker_revoke_device(base_url: *const c_char, id
     outcome(client.revoke_device(&id_token, &pk, &target).map(|()| serde_json::json!({ "ok": true })))
 }
 
+/// Registers the cloud runner as a device of this account (`api::sync_ops::runner::register_runner`):
+/// this device (`device_secret_key_base64`, its own persisted secret key) approves it with the account's
+/// group key and the user's Google `id_token`. `runner_public_key_base64` is what
+/// `whimbrel-cloud-runner init` printed. Success is
+/// `{"provision_bundle": <base64>, "approver_public_key": <base64>}`: the two values the runner's host
+/// needs besides its own secret key and the Worker URL (`RUNNER_PROVISION`, `RUNNER_APPROVER_PUBLIC_KEY`).
+/// The bundle carries the group key wrapped to the runner and is shown once; the caller must not log or
+/// store it. A runner key that is not 32 bytes of base64 is `{"error":{"kind":"malformed_response"}}`
+/// with no request made; NULL on a NULL argument or a secret or group key that does not decode.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_sync_worker_register_runner(
+    base_url: *const c_char,
+    id_token: *const c_char,
+    device_secret_key_base64: *const c_char,
+    runner_public_key_base64: *const c_char,
+    name: *const c_char,
+    group_key_base64: *const c_char,
+) -> *mut c_char {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let decode32 = |p: *const c_char| -> Option<[u8; 32]> { STANDARD.decode(cstr_to_string(p)?.trim()).ok()?.try_into().ok() };
+    let (Some(client), Some(id_token), Some(secret), Some(runner_key), Some(name), Some(group_key)) = (
+        client(base_url),
+        cstr_to_string(id_token),
+        decode32(device_secret_key_base64),
+        cstr_to_string(runner_public_key_base64),
+        cstr_to_string(name),
+        decode32(group_key_base64),
+    ) else {
+        return ptr::null_mut();
+    };
+    let Ok(runner_key) = STANDARD.decode(runner_key.trim()) else {
+        return outcome::<()>(Err(WorkerError::MalformedResponse));
+    };
+    let sender = sync::DeviceKeypair::from_bytes(secret);
+    let group_key = sync::GroupKey::from_bytes(group_key);
+    outcome(api::sync_ops::runner::register_runner(&client, &id_token, &runner_key, name.trim(), &sender, &group_key).map(|bundle| {
+        serde_json::json!({
+            "provision_bundle": STANDARD.encode(&bundle),
+            "approver_public_key": STANDARD.encode(sender.public_key_bytes()),
+        })
+    }))
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_sync_worker_set_device_name(base_url: *const c_char, id_token: *const c_char, device_public_key: *const c_char, name: *const c_char) -> *mut c_char {
     let (Some(client), Some(id_token), Some(pk), Some(name)) =
@@ -230,6 +273,79 @@ mod tests {
         let s = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
         crate::whimbrel_core_free_string(ptr);
         s
+    }
+
+    /// A fake Worker that answers one request with 200 and `body`.
+    fn worker_once(body: &'static str) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else { return };
+            let mut raw = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&raw);
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let len: usize = text
+                        .lines()
+                        .find_map(|l| l.strip_prefix("Content-Length: ").or_else(|| l.strip_prefix("content-length: ")))
+                        .and_then(|v| v.trim().parse().ok())
+                        .unwrap_or(0);
+                    if raw.len() >= end + 4 + len {
+                        break;
+                    }
+                }
+            }
+            let _ = stream.write_all(
+                format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes(),
+            );
+        });
+        url
+    }
+
+    #[test]
+    fn register_runner_returns_a_bundle_the_runner_opens_and_this_devices_public_key() {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let approver = sync::DeviceKeypair::generate();
+        let runner = sync::DeviceKeypair::generate();
+        let group = sync::GroupKey::generate();
+        let url = CString::new(worker_once(r#"{"status":"approved","deviceId":"d1"}"#)).unwrap();
+        let id = CString::new("idt").unwrap();
+        let secret = CString::new(STANDARD.encode(approver.to_secret_bytes())).unwrap();
+        let runner_pk = CString::new(STANDARD.encode(runner.public_key_bytes())).unwrap();
+        let name = CString::new("Whimbrel Cloud").unwrap();
+        let gk = CString::new(STANDARD.encode(group.to_bytes())).unwrap();
+
+        let v: serde_json::Value = serde_json::from_str(&take(whimbrel_sync_worker_register_runner(
+            url.as_ptr(), id.as_ptr(), secret.as_ptr(), runner_pk.as_ptr(), name.as_ptr(), gk.as_ptr(),
+        )))
+        .unwrap();
+        assert_eq!(v["approver_public_key"], STANDARD.encode(approver.public_key_bytes()));
+        let bundle = STANDARD.decode(v["provision_bundle"].as_str().unwrap()).unwrap();
+        let (got, _token) = api::sync_ops::runner::open_provision_bundle(&bundle, &runner, &approver.public_key_bytes()).unwrap();
+        assert_eq!(got.to_bytes(), group.to_bytes());
+
+        // A pasted key that is not a key: an error the shell can show, and no request.
+        let unreachable = CString::new("http://127.0.0.1:1").unwrap();
+        for bad in ["not base64!", "c2hvcnQ="] {
+            let bad = CString::new(bad).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&take(whimbrel_sync_worker_register_runner(
+                unreachable.as_ptr(), id.as_ptr(), secret.as_ptr(), bad.as_ptr(), name.as_ptr(), gk.as_ptr(),
+            )))
+            .unwrap();
+            assert_eq!(v["error"]["kind"], "malformed_response");
+        }
+        // NULL arguments and keys of ours that do not decode.
+        assert!(whimbrel_sync_worker_register_runner(unreachable.as_ptr(), id.as_ptr(), ptr::null(), runner_pk.as_ptr(), name.as_ptr(), gk.as_ptr()).is_null());
+        let short = CString::new("c2hvcnQ=").unwrap();
+        assert!(whimbrel_sync_worker_register_runner(unreachable.as_ptr(), id.as_ptr(), secret.as_ptr(), runner_pk.as_ptr(), name.as_ptr(), short.as_ptr()).is_null());
+        assert!(whimbrel_sync_worker_register_runner(ptr::null(), id.as_ptr(), secret.as_ptr(), runner_pk.as_ptr(), name.as_ptr(), gk.as_ptr()).is_null());
     }
 
     #[test]

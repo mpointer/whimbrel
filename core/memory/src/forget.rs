@@ -17,8 +17,8 @@ use crate::sync_outbox::{self, NewOutboxOperation, OutboxOperationKind};
 use crate::{
     json_to_sql_error, now_unix_ms, DeletedMeetingFiles, Store, OUTBOX_CONNECTOR,
     OUTBOX_ROW_TYPE_ITEMS, OUTBOX_ROW_TYPE_LIVE_ALERT, OUTBOX_ROW_TYPE_MEETING,
-    OUTBOX_ROW_TYPE_MEETING_FORGOTTEN, OUTBOX_ROW_TYPE_MEETING_SPEAKER,
-    OUTBOX_ROW_TYPE_PROFILE_SUGGESTION,
+    OUTBOX_ROW_TYPE_MEETING_FORGOTTEN, OUTBOX_ROW_TYPE_MEETING_SPEAKER, OUTBOX_ROW_TYPE_PERSON,
+    OUTBOX_ROW_TYPE_PROFILE_SUGGESTION, OUTBOX_ROW_TYPE_ROUTINE_RUN,
 };
 
 /// A `meeting_forgotten` row on the wire, and the identity `forgotten_meeting` keeps.
@@ -72,6 +72,11 @@ pub(crate) fn prune_pushed_rows(conn: &Connection, meeting_id: i64) -> rusqlite:
     Ok(())
 }
 
+/// `s` as an SQL string literal.
+fn sql_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
 pub(crate) fn ensure_forget_tables(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS forgotten_meeting (
@@ -115,6 +120,16 @@ impl Store {
     /// Returns its files to remove, `None` if no such meeting. With no identity to name (no device id set,
     /// or a meeting pulled from a build that didn't send its source id) it is only deleted here.
     pub fn forget_meeting(&self, id: i64) -> rusqlite::Result<Option<DeletedMeetingFiles>> {
+        Ok(self.forget_meeting_reporting(id)?.map(|(files, _)| files))
+    }
+
+    /// [`Self::forget_meeting`], also saying whether the tombstone went: `Queued`, `NoDeviceId` (this device has
+    /// no sync id, so it is only deleted here) or `LocalOnly` (a meeting pulled with no identity to name, so
+    /// other devices are not told). The client delete's receipt reports it.
+    pub fn forget_meeting_reporting(
+        &self,
+        id: i64,
+    ) -> rusqlite::Result<Option<(DeletedMeetingFiles, crate::TombstoneOutcome)>> {
         let Some((device_id, start_unix_ms)) = self
             .conn
             .query_row(
@@ -153,7 +168,141 @@ impl Store {
             }),
             None => None,
         };
-        self.forget_tx(Some(id), identity.as_ref(), own.as_deref())
+        let outcome = match (&identity, &own) {
+            (_, None) => crate::TombstoneOutcome::NoDeviceId,
+            (None, Some(_)) => crate::TombstoneOutcome::LocalOnly,
+            (Some(_), Some(_)) => crate::TombstoneOutcome::Queued,
+        };
+        Ok(self.forget_tx(Some(id), identity.as_ref(), own.as_deref())?.map(|f| (f, outcome)))
+    }
+
+    /// Deletes meeting `id` on this device only, for a keep-for-N-months expiry (spec 4.3: retention stays per
+    /// device): the same rows a forget removes here, but no tombstone, no `forgotten_meeting` record and no
+    /// relay row recorded for deletion; its `pushed_meeting_row` records go, as retention's do. Delivered ops
+    /// of it lose their local row (the payload holds its text). With `sync_on`, a meeting this device has not
+    /// sent yet (own row past the push cursor, or any op about it not yet sent) is refused with
+    /// [`crate::client_forget::UnsentOps`] and nothing changes; without sync, unsent ops are dropped. A meeting
+    /// still recording is refused the same way. Returns its files, `None` when there is no such meeting.
+    pub fn expire_meeting_here(&self, id: i64, sync_on: bool) -> rusqlite::Result<Option<DeletedMeetingFiles>> {
+        use crate::client_forget::{drop_unsent_where, take_delivered_in, unsent_ops, Reach};
+        let reach = Reach::ThisDevice { sync_on };
+        let Some((device_id, local_seq, status)) = self
+            .conn
+            .query_row(
+                "SELECT device_id, local_seq, status FROM meeting WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?, r.get::<_, String>(2)?)),
+            )
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        if status == "recording" {
+            return Err(unsent_ops());
+        }
+        let files = self.meeting_files(id)?;
+        let own = self.own_device_id();
+        let tx = self.conn.unchecked_transaction()?;
+        if self.expiry_must_check_push(sync_on, &device_id)? {
+            let cursor: i64 =
+                tx.query_row("SELECT last_pushed_seq FROM sync_push_cursor WHERE id = 1", [], |r| r.get(0))?;
+            if local_seq.is_some_and(|s| s > cursor) {
+                return Err(unsent_ops());
+            }
+        }
+        let at = now_unix_ms();
+        let idt = id.to_string();
+        // The ops about the meeting, by row type: unsent ones refused (or dropped), delivered ones' local rows go.
+        let own_speakers = format!(":{id}:");
+        let origin: Option<(String, i64)> = tx
+            .query_row(
+                "SELECT peer_device_id, source_meeting_id FROM sync_meeting_map WHERE local_meeting_id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let speakers = origin.as_ref().map_or(own_speakers.clone(), |(d, s)| format!("{d}:{s}:"));
+        let by_type: [(&str, &str); 5] = [
+            (OUTBOX_ROW_TYPE_MEETING, "aggregate_id = ?1"),
+            (
+                OUTBOX_ROW_TYPE_ITEMS,
+                "aggregate_id IN (SELECT CAST(id AS TEXT) FROM items WHERE thread_id = CAST(?1 AS INTEGER) AND kind = 'transcript')",
+            ),
+            (
+                OUTBOX_ROW_TYPE_LIVE_ALERT,
+                "aggregate_id IN (SELECT CAST(id AS TEXT) FROM live_alert WHERE meeting_id = CAST(?1 AS INTEGER))",
+            ),
+            (
+                OUTBOX_ROW_TYPE_PROFILE_SUGGESTION,
+                "aggregate_id IN (SELECT CAST(id AS TEXT) FROM profile_suggestion WHERE source_meeting_id = CAST(?1 AS INTEGER))",
+            ),
+            (
+                OUTBOX_ROW_TYPE_MEETING_SPEAKER,
+                "aggregate_id IN (SELECT ?3 || speaker_id FROM meeting_speaker WHERE meeting_id = CAST(?1 AS INTEGER) \
+                 UNION SELECT ?4 || speaker_id FROM meeting_speaker WHERE meeting_id = CAST(?1 AS INTEGER))",
+            ),
+        ];
+        for (row_type, condition) in by_type {
+            // `?3`/`?4` are bound by substitution: the prefixes are this device's own text, quoted.
+            let condition = condition
+                .replace("?3", &sql_quote(&own_speakers))
+                .replace("?4", &sql_quote(&speakers));
+            drop_unsent_where(&tx, reach, row_type, &condition, &idt)?;
+            take_delivered_in(&tx, reach, row_type, &condition, &idt, at)?;
+        }
+        // Steps and step reads filed from it by source key (a pulled step may have no local source_id).
+        let step_key = match &origin {
+            Some((d, s)) => Some(format!("meeting:{d}:{s}")),
+            None => own.as_ref().map(|o| format!("meeting:{o}:{id}")),
+        };
+        if let Some(key) = &step_key {
+            for row_type in [crate::OUTBOX_ROW_TYPE_TOPIC_STEP, crate::OUTBOX_ROW_TYPE_TOPIC_EXTRACTION] {
+                let condition = "json_extract(payload_json, '$.source_key') = ?1";
+                drop_unsent_where(&tx, reach, row_type, condition, key)?;
+                take_delivered_in(&tx, reach, row_type, condition, key, at)?;
+            }
+        }
+        // Follow-ups and the runs they drafted; people only this meeting's speakers were.
+        let runs: Vec<String> = tx
+            .prepare("SELECT CAST(routine_run_id AS TEXT) FROM meeting_followup WHERE meeting_id = ?1 AND routine_run_id IS NOT NULL")?
+            .query_map([id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        for run in runs {
+            drop_unsent_where(&tx, reach, OUTBOX_ROW_TYPE_ROUTINE_RUN, "aggregate_id = ?1", &run)?;
+            take_delivered_in(&tx, reach, OUTBOX_ROW_TYPE_ROUTINE_RUN, "aggregate_id = ?1", &run, at)?;
+            tx.execute("DELETE FROM routine_run WHERE id = CAST(?1 AS INTEGER)", [&run])?;
+        }
+        let people: Vec<String> = tx
+            .prepare("SELECT DISTINCT person_key FROM meeting_speaker WHERE meeting_id = ?1 AND person_key IS NOT NULL")?
+            .query_map([id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        tx.execute("DELETE FROM meeting_followup WHERE meeting_id = ?1", [id])?;
+        tx.execute("DELETE FROM kv_meta WHERE key = ?1", [format!("title_check:{id}")])?;
+        if let Some(key) = &step_key {
+            let (d, s) = key.trim_start_matches("meeting:").rsplit_once(':').unwrap_or_default();
+            if let Ok(s) = s.parse::<i64>() {
+                crate::topics::steps::delete_meeting_steps(&tx, d, s)?;
+            }
+        }
+        Self::delete_meeting_rows_tx(&tx, id)?;
+        for p in people {
+            let used: bool = tx.query_row(
+                "SELECT EXISTS (SELECT 1 FROM meeting_speaker WHERE person_key = ?1) \
+                 OR EXISTS (SELECT 1 FROM meeting_speaker_pending WHERE person_key = ?1)",
+                [&p],
+                |r| r.get(0),
+            )?;
+            if !used {
+                drop_unsent_where(&tx, reach, OUTBOX_ROW_TYPE_PERSON, "aggregate_id = ?1", &p)?;
+                take_delivered_in(&tx, reach, OUTBOX_ROW_TYPE_PERSON, "aggregate_id = ?1", &p, at)?;
+                tx.execute("DELETE FROM person WHERE person_key = ?1", [&p])?;
+            }
+        }
+        // As retention: no tombstone follows, so nothing will delete these server rows from here.
+        prune_pushed_rows(&tx, id)?;
+        tx.execute("DELETE FROM sync_meeting_map WHERE local_meeting_id = ?1", params![id])?;
+        tx.commit()?;
+        Ok(files)
     }
 
     /// Applies a peer's tombstone: deletes the local meeting it names, if any, and records it as forgotten
@@ -163,6 +312,17 @@ impl Store {
         &self,
         t: &MeetingForgotten,
     ) -> rusqlite::Result<Option<DeletedMeetingFiles>> {
+        // As on the deleting device: deleted text overwritten, index pages cleaned later in the round
+        // (`run_owed_client_cleanup`; X6 final review, Major 4).
+        let secure_before = self.set_secure_delete(true).ok();
+        let r = self.apply_meeting_forgotten_inner(t);
+        if let Some(before) = secure_before {
+            let _ = self.set_secure_delete(before);
+        }
+        r
+    }
+
+    fn apply_meeting_forgotten_inner(&self, t: &MeetingForgotten) -> rusqlite::Result<Option<DeletedMeetingFiles>> {
         let epoch = t.origin_epoch.as_deref().unwrap_or("");
         let local = if self.own_device_id().as_deref() == Some(t.origin_device_id.as_str()) {
             let own_epoch = self.sync_entity_epoch()?;
@@ -365,7 +525,69 @@ impl Store {
                     speaker_prefix,
                 ],
             )?;
+            // The delivered rows' payloads hold its text. The meeting's, its transcript items', live alerts' and
+            // speakers' relay rows were snapshotted above; its profile suggestions' and its follow-up runs' are
+            // recorded for deletion here.
+            let at = now_unix_ms();
+            crate::client_forget::take_delivered(
+                &tx,
+                OUTBOX_ROW_TYPE_PROFILE_SUGGESTION,
+                "aggregate_id IN (SELECT CAST(id AS TEXT) FROM profile_suggestion WHERE source_meeting_id = CAST(?1 AS INTEGER))",
+                &id.to_string(),
+                at,
+            )?;
+            let runs: Vec<String> = tx
+                .prepare("SELECT CAST(routine_run_id AS TEXT) FROM meeting_followup WHERE meeting_id = ?1 AND routine_run_id IS NOT NULL")?
+                .query_map([id], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            for run in runs {
+                crate::client_forget::cancel_unsent(&tx, OUTBOX_ROW_TYPE_ROUTINE_RUN, &run)?;
+                crate::client_forget::take_delivered_aggregate(&tx, OUTBOX_ROW_TYPE_ROUTINE_RUN, &run, at)?;
+                tx.execute("DELETE FROM routine_run WHERE id = CAST(?1 AS INTEGER)", [&run])?;
+            }
+            tx.execute(
+                "DELETE FROM sync_outbox WHERE +state = 'delivered' AND ( \
+                 (row_type = ?2 AND aggregate_id = CAST(?1 AS TEXT)) \
+                 OR (row_type = ?3 AND aggregate_id IN (SELECT CAST(id AS TEXT) FROM items WHERE thread_id = ?1 AND kind = 'transcript')) \
+                 OR (row_type = ?4 AND aggregate_id IN (SELECT CAST(id AS TEXT) FROM live_alert WHERE meeting_id = ?1)) \
+                 OR (row_type = ?5 AND aggregate_id IN (SELECT ?6 || speaker_id FROM meeting_speaker WHERE meeting_id = ?1 \
+                                                        UNION SELECT ?7 || speaker_id FROM meeting_speaker WHERE meeting_id = ?1)))",
+                params![
+                    id,
+                    OUTBOX_ROW_TYPE_MEETING,
+                    OUTBOX_ROW_TYPE_ITEMS,
+                    OUTBOX_ROW_TYPE_LIVE_ALERT,
+                    OUTBOX_ROW_TYPE_MEETING_SPEAKER,
+                    own_speaker_prefix,
+                    speaker_prefix,
+                ],
+            )?;
+            // The people its speakers were: kept unless no other meeting names them (below).
+            let people: Vec<String> = tx
+                .prepare("SELECT DISTINCT person_key FROM meeting_speaker WHERE meeting_id = ?1 AND person_key IS NOT NULL")?
+                .query_map([id], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            tx.execute("DELETE FROM meeting_followup WHERE meeting_id = ?1", [id])?;
+            tx.execute("DELETE FROM kv_meta WHERE key = ?1", [format!("title_check:{id}")])?;
             Self::delete_meeting_rows_tx(&tx, id)?;
+            // A person only this meeting's speakers were: their name goes too (voice prints went with the
+            // speakers). Another device's copy stays until that device forgets it: `person` has no tombstone.
+            for p in people {
+                let used: bool = tx.query_row(
+                    "SELECT EXISTS (SELECT 1 FROM meeting_speaker WHERE person_key = ?1) \
+                     OR EXISTS (SELECT 1 FROM meeting_speaker_pending WHERE person_key = ?1)",
+                    [&p],
+                    |r| r.get(0),
+                )?;
+                if !used {
+                    tx.execute(
+                        "DELETE FROM sync_outbox WHERE row_type = ?1 AND aggregate_id = ?2 AND state IN ('pending', 'blocked')",
+                        params![OUTBOX_ROW_TYPE_PERSON, p],
+                    )?;
+                    crate::client_forget::take_delivered_aggregate(&tx, OUTBOX_ROW_TYPE_PERSON, &p, at)?;
+                    tx.execute("DELETE FROM person WHERE person_key = ?1", [&p])?;
+                }
+            }
         }
         // Even when the meeting row is already gone, its map entry must not outlive the forget.
         if let Some(id) = local {
@@ -418,6 +640,11 @@ impl Store {
                     now_unix_ms(),
                 )?;
             }
+        }
+        // A peer's forget applied here (a meeting removed, nothing to send): the index clean-up is owed, recorded
+        // in this transaction so the returned file list never depends on a later write (14a review, Minor 5).
+        if files.is_some() && identity.is_some() && enqueue_as.is_none() {
+            crate::client_forget::owe_client_cleanup(&tx)?;
         }
         tx.commit()?;
         Ok(files)
@@ -545,6 +772,9 @@ mod tests {
         assert_eq!(files.transcript_path, None, "a peer wrote that path");
         assert!(files.transcript_paths.is_empty() && files.audio_paths.is_empty());
         assert!(store.get_meeting(local).unwrap().is_none());
+        // The index clean-up is owed with it (written in the forget's own transaction), and runs once.
+        assert!(store.run_owed_client_cleanup().unwrap());
+        assert!(!store.run_owed_client_cleanup().unwrap());
     }
 
     #[test]
@@ -1211,5 +1441,154 @@ mod tests {
             1,
             "another meeting's record stays"
         );
+    }
+
+    /// Forgetting a meeting (here or by a peer's tombstone) takes the people only it knew, its follow-ups and
+    /// the runs they drafted; a person another meeting knows stays.
+    /// A keep-for-N-months expiry deletes the meeting here only (spec 4.3): the rows a forget removes here
+    /// go, but nothing is queued, recorded as forgotten or recorded for relay deletion.
+    #[test]
+    fn an_expiry_deletes_the_meeting_here_only() {
+        let store = Store::open_in_memory().unwrap();
+        store.set_own_device_id("dev-a");
+        let gone = meeting(&store, "dev-a", 1_000);
+        let kept = meeting(&store, "dev-a", 2_000);
+        segments(&store, gone);
+        store.conn.execute("UPDATE meeting SET status = 'completed'", []).unwrap();
+        store.upsert_person("only", "Pat", None).unwrap();
+        store
+            .conn
+            .execute_batch(&format!(
+                "INSERT INTO meeting_speaker (meeting_id, speaker_id, person_key, updated_at_unix_ms) VALUES ({gone}, 0, 'only', 1);
+                 INSERT INTO routine (id, name, template, schedule_hhmm, created_at_unix_ms) VALUES (1, 'r', 't', '09:00', 1);
+                 INSERT INTO routine_run (id, routine_id, ran_at_unix_ms, status, output_summary, output_json) VALUES (7, 1, 1, 'ok', 'draft', '{{}}');
+                 INSERT INTO meeting_followup (meeting_id, text, routine_run_id, created_at_unix_ms) VALUES ({gone}, 'reply', 7, 1);
+                 INSERT INTO pushed_meeting_row (meeting_id, local_seq, row_type) VALUES ({gone}, 3, 'meeting');"
+            ))
+            .unwrap();
+        let count = |sql: &str| -> i64 { store.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        // Not pushed yet: with sync on, the expiry waits and changes nothing.
+        let err = store.expire_meeting_here(gone, true).unwrap_err();
+        assert!(crate::client_forget::is_unsent_ops(&err));
+        assert_eq!(count("SELECT COUNT(*) FROM meeting"), 2);
+        store.set_sync_push_cursor(i64::MAX).unwrap();
+        store
+            .conn
+            .execute("UPDATE sync_outbox SET state = 'delivered', delivered_at_unix_ms = 5, remote_receipt = 'sync_row:x'", [])
+            .unwrap();
+        for (seq, m) in [(901, gone), (902, kept)] {
+            store
+                .conn
+                .execute(
+                    "INSERT INTO sync_outbox (operation_id, device_id, local_seq, row_type, aggregate_type, aggregate_id, \
+                     operation_kind, payload_json, connector, state, next_attempt_at_unix_ms, created_at_unix_ms, \
+                     updated_at_unix_ms, delivered_at_unix_ms, remote_receipt) \
+                     VALUES (?1, 'dev-a', ?2, 'meeting', 'meeting', ?3, 'upsert', '{}', 'c', 'delivered', 0, 0, 0, 5, 'sync_row:x')",
+                    params![format!("op{seq}"), seq, m.to_string()],
+                )
+                .unwrap();
+        }
+
+        assert!(store.expire_meeting_here(gone, true).unwrap().is_some());
+        assert_eq!(count(&format!("SELECT COUNT(*) FROM meeting WHERE id = {gone}")), 0);
+        assert_eq!(count(&format!("SELECT COUNT(*) FROM meeting WHERE id = {kept}")), 1);
+        assert_eq!(count(&format!("SELECT COUNT(*) FROM transcript_segment WHERE meeting_id = {gone}")), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM person WHERE person_key = 'only'"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM meeting_followup"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM routine_run"), 0);
+        for table in ["forgotten_meeting", "meeting_server_cleanup", "pushed_meeting_row", "client_relay_cleanup"] {
+            assert_eq!(count(&format!("SELECT COUNT(*) FROM {table}")), 0, "{table}");
+        }
+        assert_eq!(count("SELECT COUNT(*) FROM sync_outbox WHERE operation_kind = 'tombstone'"), 0);
+        let op = |m: i64| count(&format!("SELECT COUNT(*) FROM sync_outbox WHERE row_type = 'meeting' AND aggregate_id = '{m}'"));
+        assert_eq!(op(gone), 0, "the expired meeting's delivered op goes here");
+        assert!(op(kept) >= 1, "the kept meeting's op stays");
+        assert!(store.expire_meeting_here(gone, true).unwrap().is_none(), "a re-run finds it gone");
+    }
+
+    #[test]
+    fn forgetting_takes_its_only_people_followups_and_their_runs() {
+        let store = Store::open_in_memory().unwrap();
+        store.set_own_device_id("dev-a");
+        let gone = meeting(&store, "dev-a", 1_000);
+        let kept = meeting(&store, "dev-a", 2_000);
+        store.upsert_person("only", "Pat", None).unwrap();
+        store.upsert_person("both", "Sam", None).unwrap();
+        for (m, s, p) in [(gone, 0, "only"), (gone, 1, "both"), (kept, 0, "both")] {
+            store
+                .conn
+                .execute(
+                    "INSERT INTO meeting_speaker (meeting_id, speaker_id, person_key, updated_at_unix_ms) VALUES (?1, ?2, ?3, 1)",
+                    params![m, s, p],
+                )
+                .unwrap();
+        }
+        store
+            .conn
+            .execute_batch(&format!(
+                "INSERT INTO routine (id, name, template, schedule_hhmm, created_at_unix_ms) VALUES (1, 'r', 't', '09:00', 1);
+                 INSERT INTO routine_run (id, routine_id, ran_at_unix_ms, status, output_summary, output_json) VALUES (7, 1, 1, 'ok', 'draft', '{{}}');
+                 INSERT INTO meeting_followup (meeting_id, text, routine_run_id, created_at_unix_ms) VALUES ({gone}, 'reply', 7, 1);"
+            ))
+            .unwrap();
+        store.forget_meeting(gone).unwrap().unwrap();
+        let count = |sql: &str| -> i64 { store.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM person WHERE person_key = 'only'"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM person WHERE person_key = 'both'"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM meeting_followup"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM routine_run"), 0);
+    }
+
+    /// A peer applying the tombstone does the same widened clean-up for its copy of the meeting: the person
+    /// only it knew, its follow-up and drafted run, and the delivered speaker op it sent under the origin's
+    /// prefix (`<origin>:<source id>:<speaker>`).
+    #[test]
+    fn a_peer_applying_the_tombstone_takes_the_same_rows() {
+        let a = Store::open_in_memory().unwrap();
+        a.set_own_device_id("dev-a");
+        let b = Store::open_in_memory().unwrap();
+        b.set_own_device_id("dev-b");
+        let source = meeting(&a, "dev-a", 1_000);
+        // B's copy, pulled from A.
+        let copy = meeting(&b, "dev-a", 1_000);
+        b.conn
+            .execute(
+                "INSERT INTO sync_meeting_map (peer_device_id, source_meeting_id, local_meeting_id, origin_epoch) VALUES ('dev-a', ?1, ?2, '')",
+                params![source, copy],
+            )
+            .unwrap();
+        b.upsert_person("only", "Pat", None).unwrap();
+        b.conn
+            .execute_batch(&format!(
+                "INSERT INTO meeting_speaker (meeting_id, speaker_id, person_key, updated_at_unix_ms) VALUES ({copy}, 0, 'only', 1);
+                 INSERT INTO routine (id, name, template, schedule_hhmm, created_at_unix_ms) VALUES (1, 'r', 't', '09:00', 1);
+                 INSERT INTO routine_run (id, routine_id, ran_at_unix_ms, status, output_summary, output_json) VALUES (7, 1, 1, 'ok', 'draft', '{{}}');
+                 INSERT INTO meeting_followup (meeting_id, text, routine_run_id, created_at_unix_ms) VALUES ({copy}, 'reply', 7, 1);
+                 UPDATE sync_outbox SET state = 'delivered', delivered_at_unix_ms = 5, remote_receipt = 'sync_row:x';"
+            ))
+            .unwrap();
+        // B's own speaker op about A's meeting, delivered, named under the origin's prefix.
+        b.conn
+            .execute(
+                "INSERT INTO sync_outbox (operation_id, device_id, local_seq, row_type, aggregate_type, aggregate_id, \
+                 operation_kind, payload_json, state, connector, next_attempt_at_unix_ms, created_at_unix_ms, updated_at_unix_ms, \
+                 delivered_at_unix_ms, remote_receipt) \
+                 VALUES ('op-spk', 'dev-b', 900, ?1, ?1, ?2, 'upsert', '{\"person_key\":\"only\"}', 'delivered', 'c', 0, 1, 1, 5, 'sync_row:x')",
+                params![OUTBOX_ROW_TYPE_MEETING_SPEAKER, format!("dev-a:{source}:0")],
+            )
+            .unwrap();
+        let tombstone = MeetingForgotten {
+            origin_device_id: "dev-a".into(),
+            origin_epoch: None,
+            source_meeting_id: source,
+            forgotten_at_unix_ms: 9,
+            source_start_unix_ms: Some(1_000),
+        };
+        assert!(b.apply_meeting_forgotten(&tombstone).unwrap().is_some());
+        let count = |sql: &str| -> i64 { b.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM person"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM meeting_followup"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM routine_run"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM sync_outbox WHERE row_type IN ('meeting_speaker', 'person')"), 0);
     }
 }

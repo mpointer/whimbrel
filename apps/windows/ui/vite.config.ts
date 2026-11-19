@@ -3,13 +3,15 @@ import react from "@vitejs/plugin-react";
 
 // Tauri serves the dev build from a fixed port (tauri.conf.json `devUrl`) and loads
 // the production build from `dist/` inside WebView2 (current Chromium).
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   clearScreen: false,
   // themes/ at the repo root is shared with the Mac app and imported by themes.ts, so the dev server
   // (and Vitest) may read outside this folder. Paths here are relative to it: ../../.. is the repo.
   server: { port: 5173, strictPort: true, fs: { allow: ["../../.."] } },
-  build: { target: "es2022", outDir: "dist" },
+  // The design-system gallery (gallery.html) is debug only: the default build has one entry, index.html, so none of it
+  // is in a release. `vite build --mode gallery --outDir dist-gallery` builds the gallery alone, for screenshots.
+  build: { target: "es2022", outDir: "dist", ...(mode === "gallery" ? { rollupOptions: { input: "gallery.html" } } : {}) },
   // colors.test.ts reads tokens.css and app.css as text; by default Vitest blanks CSS imports.
   // e2e/*.spec.ts belong to Playwright (npm run test:matrix); e2e/*.test.ts are ordinary unit tests.
   // In CI two runner instances share one PC, and a test starved of CPU took 10.8 s (the default
@@ -19,4 +21,4 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}", "e2e/**/*.test.ts"],
     ...(process.env.CI ? { testTimeout: 30_000, hookTimeout: 30_000 } : {}),
   },
-});
+}));

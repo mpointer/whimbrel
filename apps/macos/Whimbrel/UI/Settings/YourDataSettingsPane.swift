@@ -28,6 +28,12 @@ struct YourDataSettingsPane: View {
     @State private var confirmingDelete = false
     @State private var deleteTyped = ""
     @State private var deleteFailure: String?
+    /// The set-aside `.foreign-*` files beside the database (Task 13c item 3); the row shows
+    /// only while there are some.
+    @State private var foreignFiles: [CoreForeignFiles.File] = []
+    @State private var confirmingForeignDelete = false
+    @State private var deletingForeign = false
+    @State private var foreignDeleteMessage: String?
     @AppStorage(YourData.deleteLeftoversKey) private var deleteLeftovers = ""
     @AppStorage(VaultSettings.enabledKey) private var vaultEnabled = false
     @AppStorage(VaultSettings.pathKey) private var vaultPath = ""
@@ -50,6 +56,18 @@ struct YourDataSettingsPane: View {
         }
         .onAppear(perform: refresh)
         .sheet(isPresented: $confirmingDelete) { deleteSheet }
+        .alert(EncryptionCopy.foreignFilesConfirmTitle, isPresented: $confirmingForeignDelete) {
+            Button(EncryptionCopy.foreignFilesConfirm, role: .destructive) { deleteForeignFiles() }
+            Button(EncryptionCopy.cancel, role: .cancel) {}
+        } message: {
+            Text(YourData.foreignFilesConfirmBody(foreignFiles))
+        }
+        // X4: "Export everything…" on the encryption card runs this card's export.
+        .onChange(of: appState.pendingYourDataExport) { _, wanted in
+            guard wanted else { return }
+            appState.pendingYourDataExport = false
+            exportEverything()
+        }
     }
 
     // MARK: On this Mac
@@ -80,12 +98,52 @@ struct YourDataSettingsPane: View {
                     .font(.whimbrelBody(.caption))
                     .foregroundStyle(Color.whimbrelTextSecondary)
                 Spacer()
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([SpikePaths.root]) }
+                // Opens the data folder itself (the help page "Restoring a library backup" relies on it).
+                Button("Show in Finder") { NSWorkspace.shared.open(SpikePaths.root) }
                     .buttonStyle(.whimbrelSecondary)
             }
             Text("Recordings and slide images: \(appState.mediaSettings.folderURL.path), \(YourData.formatBytes(mediaBytes))")
                 .font(.whimbrelBody(.caption))
                 .foregroundStyle(Color.whimbrelTextSecondary)
+            foreignFilesRow
+        }
+    }
+
+    /// Shown only while set-aside files exist. Never deletes by itself: the button asks first.
+    @ViewBuilder
+    private var foreignFilesRow: some View {
+        if let summary = YourData.foreignFilesSummary(foreignFiles) {
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                HStack {
+                    Text(summary).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextPrimary)
+                    Spacer()
+                    Button(EncryptionCopy.foreignFilesDeleteAction) { confirmingForeignDelete = true }
+                        .buttonStyle(.whimbrelSecondary)
+                        .disabled(deletingForeign)
+                }
+                Text(EncryptionCopy.foreignFilesHelp).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        if let foreignDeleteMessage {
+            Text(foreignDeleteMessage).font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelError)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Lists afresh in core at confirm time (never the list on screen), then shows what is left.
+    private func deleteForeignFiles() {
+        deletingForeign = true
+        let db = LaunchEnvironment.dbPath(in: SpikePaths.root)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = CoreForeignFiles.deleteAll(dbPath: db)
+            let left = CoreForeignFiles.list(dbPath: db)
+            DispatchQueue.main.async {
+                deletingForeign = false
+                foreignDeleteMessage = YourData.foreignFilesDeleteMessage(result)
+                foreignFiles = left
+            }
         }
     }
 
@@ -236,6 +294,12 @@ struct YourDataSettingsPane: View {
     }
 
     private func refresh() {
+        // The set-aside files are read from disk, with or without an open store.
+        let db = LaunchEnvironment.dbPath(in: SpikePaths.root)
+        DispatchQueue.global(qos: .utility).async {
+            let files = CoreForeignFiles.list(dbPath: db)
+            DispatchQueue.main.async { foreignFiles = files }
+        }
         guard let store = appState.coreStore else { return }
         let media = mediaEntries()
         CoreMemoryStore.accessQueue.async {
@@ -252,6 +316,7 @@ struct YourDataSettingsPane: View {
         }
     }
 
+    /// Also run for the encryption card's "Export everything…" (`pendingYourDataExport`).
     private func exportEverything() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -282,7 +347,9 @@ struct YourDataSettingsPane: View {
     private var deleteSheet: some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             Text("Delete everything on this Mac?").font(.whimbrelDisplay()).foregroundStyle(Color.whimbrelTextPrimary)
-            Text("This removes the database and the data folder (\(YourData.formatBytes(dataFolderBytes))), and this Mac's recordings and slide images in \(appState.mediaSettings.folderURL.path) (\(YourData.formatBytes(mediaBytes))), then restarts Whimbrel as new. Settings, keys and downloaded models stay.")
+            Text(YourData.deleteSheetBody(dataFolder: YourData.formatBytes(dataFolderBytes),
+                                          mediaFolder: appState.mediaSettings.folderURL.path,
+                                          media: YourData.formatBytes(mediaBytes)))
                 .font(.whimbrelBody(.body))
                 .fixedSize(horizontal: false, vertical: true)
             if case .ready = appState.syncState.status {
@@ -321,22 +388,60 @@ struct YourDataSettingsPane: View {
     private func deleteEverything() async {
         deleting = true
         defer { deleting = false }
+        // Task 15: the connected Google accounts stay connected. Their list goes to a file the
+        // delete keeps; the new library re-adds them. First of all, so a list that cannot be
+        // written stops the delete before anything (the sync account included) is touched
+        // (Mike 2026-11-17, as Windows). Without an open store the connector states show no
+        // account: the list is rebuilt from the Keychain, and an earlier list is left as is. With
+        // a store open, a leftover list the restore could not remove is replaced or removed
+        // (its accounts are already in the store).
+        // Outlook 365 accounts are not kept: they must be connected again afterwards.
+        let kept: [String: KeptGoogleAccounts.Connector]? = appState.coreStore == nil ? nil : [
+            "calendar": .init(emails: appState.calendarConnectorState.accounts.map(\.email),
+                              defaultEmail: appState.calendarConnectorState.defaultEmail),
+            "gmail": .init(emails: appState.gmailConnectorState.accounts.map(\.email),
+                           defaultEmail: appState.gmailConnectorState.defaultEmail),
+        ]
+        let keep = KeptGoogleAccounts.keepForDelete(kept, in: SpikePaths.root)
+        if keep == .failed {
+            deleteFailure = YourData.googleAccountsNotKeptFailure
+            return
+        }
+        // Nothing will be deleted after all: the list this run wrote goes again. (With a store
+        // open it may have replaced a leftover list whose accounts the restore already added.)
+        let dropKept = {
+            if keep == .wrote { try? FileManager.default.removeItem(at: SpikePaths.root.appendingPathComponent(KeptGoogleAccounts.fileName)) }
+        }
         // The account goes first: if the server refuses, nothing on this Mac is touched yet.
         if alsoDeleteSyncAccount, case .ready = appState.syncState.status {
             await appState.syncState.deleteSyncAccount()
             if case .ready = appState.syncState.status {
+                dropKept()
                 deleteFailure = appState.syncState.actionError
                     ?? String(localized: "The sync account could not be deleted. Nothing was removed; try again.")
                 return
             }
         }
-        if appState.activityCaptureEnabled { appState.toggleActivityCapture() }
+        if appState.redesignEnabled {
+            appState.captureDidDeleteEverything()
+        } else if appState.activityCaptureEnabled {
+            appState.toggleActivityCapture()
+        }
         appState.endActiveMeetingIfNeeded()
-        let entries = YourData.entriesToDelete(in: SpikePaths.root) + mediaEntries()
+        // The note carries the data folder only; recordings and slides go now, in the app.
+        let entries = YourData.entriesToDelete(in: SpikePaths.root)
         do {
             try YourData.scheduleDelete(entries, in: SpikePaths.root)
-            YourData.relaunch()
+            let media = YourData.deleteMediaNow(audio: appState.mediaSettings.audioURL(deviceId: appState.deviceId),
+                                                snapshots: appState.mediaSettings.snapshotsURL)
+            // Shown in the Your data pane after the restart (the launch adds its own leftovers).
+            deleteLeftovers = YourData.mediaDeleteMessage(media) ?? ""
+            // The delete runs at the next launch: only once this process and the MCP server
+            // (which holds the database open) have exited.
+            AppRestart.relaunchAfterExit(waitingAlsoFor: appState.mcpServerProcess.processIdentifier,
+                                         messages: YourData.restartMessages)
         } catch {
+            dropKept()
             deleteFailure = String(localized: "Could not start the deletion: \(error.localizedDescription). Quit Whimbrel and remove the data folder by hand.")
         }
     }

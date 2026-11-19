@@ -1,5 +1,5 @@
 // Generated from apps/windows/src-tauri's command DTOs by `npm run gen:types`.
-// Do not edit. Change the Rust type, run `cargo run --bin gen-schema`, then `npm run gen:types`.
+// Do not edit. Change the Rust type, run `cargo run --example gen-schema`, then `npm run gen:types`.
 
 /**
  * What a pending action would do, in the user's terms.
@@ -36,6 +36,11 @@ export type Provider = ("ollama" | "anthropic" | "openai" | "google") | "openrou
 export type PromptSurface =
   "ask" | "meetingSummary" | "dailyDigest" | "weeklyDigest" | "episodeSummary" | "threadSummary";
 /**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "CardBadge".
+ */
+export type CardBadge = ("encrypted" | "notEncrypted") | "needsAttention";
+/**
  * What the UI hears about one question, over a Tauri `Channel`.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -65,6 +70,7 @@ export type ChatEvent =
       citations: ContextItemRef[];
       conversationId?: number | null;
       kind: "completed";
+      leftOut?: number | null;
       narrowed: boolean;
     }
   | {
@@ -79,6 +85,17 @@ export type ChatEvent =
       conversationId: number;
       kind: "titled";
       title: string;
+    }
+  | {
+      kind: "waiting";
+    }
+  | {
+      kind: "routed_locally";
+    }
+  | {
+      excludedClient: boolean;
+      kind: "answered_by";
+      model: string;
     };
 /**
  * A citation pointing back to one retrieved context item, tagged with which table
@@ -225,7 +242,36 @@ export type ProviderFailureReason =
       kind: "model_unavailable";
       model: string;
       provider: string;
+    }
+  | {
+      kind: "excluded_client";
+    }
+  | {
+      kind: "exclusion_unreadable";
     };
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ChosenFile".
+ */
+export type ChosenFile =
+  | {
+      kind: "chosen";
+      name: string;
+    }
+  | {
+      kind: "cancelled";
+    }
+  | {
+      kind: "unreadable";
+    }
+  | {
+      kind: "refused";
+    };
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "DamageReasonView".
+ */
+export type DamageReasonView = ("damaged" | "noAccess") | "openElsewhere";
 /**
  * Where the question and window text will go (core's `window_ask::Destination`).
  *
@@ -244,6 +290,126 @@ export type DestinationView =
       provider: string;
     };
 /**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "EncryptOutcome".
+ */
+export type EncryptOutcome = ("twoKeysFound" | "failed") | "atNextLaunch" | "notReady";
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "NoteAction".
+ */
+export type NoteAction = "retryAfterFailedBefore" | "resetEncryptionStatus" | "deletePlainBackup";
+/**
+ * A coordinator note, typed (no diagnostic text reaches the webview).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "NoteView".
+ */
+export type NoteView =
+  | {
+      kind: "keyStoreUnavailable";
+    }
+  | {
+      attempts: number;
+      kind: "failedBefore";
+    }
+  | {
+      kind: "migrationSkipped";
+      skip?: EncryptionSkip | null;
+      stateUnreadable: boolean;
+    }
+  | {
+      kind: "migrationFailed";
+    }
+  | {
+      kind: "encryptionAvailable";
+    }
+  | {
+      kind: "plainBackupKept";
+    }
+  | {
+      kind: "libraryMissing";
+    }
+  | {
+      kind: "restoredCopy";
+      movedAside: number;
+      warning?: string | null;
+    }
+  | {
+      failure: KeyFailureView;
+      kind: "pendingKeyNotPromoted";
+    }
+  | {
+      failure: KeyFailureView;
+      kind: "pendingKeyNotDeleted";
+    }
+  | {
+      failure: KeyFailureView;
+      kind: "recoveredKeyNotStored";
+    }
+  | {
+      kind: "recoveredKeyStoreUnverified";
+    }
+  | {
+      kind: "memoryDatabaseUnavailable";
+    };
+/**
+ * Why a migration did not start (core's `SkipReason`), for the notes.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "EncryptionSkip".
+ */
+export type EncryptionSkip =
+  | {
+      reason: "recording";
+    }
+  | {
+      free_bytes: number;
+      need_bytes: number;
+      reason: "low_disk";
+    }
+  | {
+      message: string;
+      reason: "free_space_unknown";
+    }
+  | {
+      reason: "open_elsewhere";
+    }
+  | {
+      reason: "not_plain";
+    }
+  | {
+      phase: string;
+      reason: "interrupted_run";
+    }
+  | {
+      reason: "plain_backup_exists";
+    }
+  | {
+      attempts: number;
+      last?: string | null;
+      reason: "failed_before";
+    }
+  | {
+      message: string;
+      reason: "unreadable";
+    }
+  | {
+      reason: "open_in_this_process";
+    };
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "KeyFailureView".
+ */
+export type KeyFailureView =
+  | "keychainUnavailable"
+  | "differentKeyStored"
+  | "noPreviousSlot"
+  | "pendingDiffers"
+  | "unverified"
+  | "keyChangedMeanwhile"
+  | "other";
+/**
  * Why an app is excluded, so the panel can say so.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -251,6 +417,26 @@ export type DestinationView =
  */
 export type ExcludeReasonView =
   ("password_manager" | "private_window") | "own_app" | "system" | "user";
+/**
+ * A file action's end when it did not finish.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "FileActionView".
+ */
+export type FileActionView =
+  | {
+      result: "done";
+    }
+  | {
+      result: "refused";
+    }
+  | {
+      movedAside: number;
+      result: "partlyDone";
+    }
+  | {
+      result: "failed";
+    };
 /**
  * What was read, without the text.
  *
@@ -279,6 +465,131 @@ export type WindowReadView =
  * via the `definition` "KeyCheckStatus".
  */
 export type KeyCheckStatus = ("valid" | "other") | "refused" | "unreachable";
+/**
+ * The webview's answers (`launch_respond`). A restored key is not one of them: it is made in
+ * Rust by the unlock commands.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LaunchAnswer".
+ */
+export type LaunchAnswer =
+  "retry" | "quit" | "restoreRollbackCopy" | "resetEncryptionStatus" | "continueWithoutStore";
+/**
+ * Why the launch stopped on its error screen (no diagnostic text).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LaunchErrorView".
+ */
+export type LaunchErrorView =
+  | {
+      kind: "decisionUnavailable";
+    }
+  | {
+      kind: "tooManyDecisions";
+    }
+  | {
+      code: number;
+      kind: "stepOutOfOrder";
+    }
+  | {
+      kind: "plainOpenFailed";
+    }
+  | {
+      kind: "keyedOpenFailed";
+      open: string;
+    }
+  | {
+      kind: "onboardingKeyMismatch";
+    }
+  | {
+      kind: "freshKeyRefused";
+    }
+  | {
+      kind: "keyMissing";
+      source: string;
+    }
+  | {
+      kind: "databaseMissingForRecoveredKey";
+    };
+/**
+ * A blocking screen drawn from its type (brief 3.3.6).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LaunchScreenView".
+ */
+export type LaunchScreenView =
+  | {
+      kind: "keyStorageUnavailable";
+    }
+  | {
+      kind: "migrationInterrupted";
+    }
+  | {
+      kind: "damaged";
+      reason: DamageReasonView;
+    }
+  | {
+      backupPresent: boolean;
+      encryptedCopyPresent: boolean;
+      kind: "encryptedFileMissing";
+    }
+  | {
+      error: LaunchErrorView;
+      kind: "error";
+    }
+  | {
+      kind: "keyUnavailable";
+    }
+  | {
+      kind: "recovery";
+      reason: RecoveryReasonView;
+    };
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "RecoveryReasonView".
+ */
+export type RecoveryReasonView = "needsKey" | "keyRejected";
+/**
+ * Where the launch is (brief 4.2 `launch_state`).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LaunchStageView".
+ */
+export type LaunchStageView =
+  | {
+      kind: "starting";
+    }
+  | {
+      kind: "onboarding";
+      reusesKey: boolean;
+    }
+  | {
+      kind: "migrating";
+      overall: number;
+    }
+  | {
+      kind: "recovery";
+      reason: RecoveryReasonView;
+    }
+  | {
+      kind: "keyUnavailable";
+      stillUnavailable: boolean;
+    }
+  | {
+      kind: "screen";
+      lastAction?: LastActionView | null;
+      offers: LaunchAnswer[];
+      screen: LaunchScreenView;
+    }
+  | {
+      kind: "opened";
+    }
+  | {
+      kind: "openedWithoutStore";
+    }
+  | {
+      kind: "quitting";
+    };
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "LibraryRow".
@@ -310,6 +621,11 @@ export type Stage = "transcribing" | "summarizing" | "identifying_speakers";
  */
 export type RecordingState = "idle" | "starting" | "recording";
 /**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "NoteActionResult".
+ */
+export type NoteActionResult = ("done" | "failed") | "partlyDone" | "refused";
+/**
  * The Quality picker, as the UI sees it (core's `transcribe::engine::Quality`).
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -330,12 +646,92 @@ export type RoutineKind =
  */
 export type RunOutcome = ("success" | "failed" | "rejected") | "pending";
 /**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SaveFileResult".
+ */
+export type SaveFileResult =
+  | {
+      kind: "saved";
+      path: string;
+      sameDiskAsDatabase: boolean;
+    }
+  | {
+      kind: "cancelled";
+    }
+  | {
+      kind: "failed";
+    }
+  | {
+      kind: "refused";
+    };
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SetupBegun".
+ */
+export type SetupBegun =
+  | {
+      kind: "made";
+      words: string[];
+    }
+  | {
+      kind: "passphraseTooShort";
+    }
+  | {
+      kind: "alreadyMade";
+    }
+  | {
+      kind: "keyExists";
+    }
+  | {
+      kind: "failed";
+    }
+  | {
+      kind: "refused";
+    };
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SetupRefusal".
+ */
+export type SetupRefusal =
+  | ("twoKeysFound" | "recording" | "lowDisk" | "openElsewhere" | "failedBefore" | "other")
+  | "keychainUnavailable"
+  | "notAvailable";
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SetupScope".
+ */
+export type SetupScope = "launch" | "settings";
+/**
  * What a `SkinLine` reports, for the callers that act on it.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "SkinLineKind".
  */
 export type SkinLineKind = "note" | "placed" | "local_only";
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SpeedCheckResult".
+ */
+export type SpeedCheckResult =
+  | {
+      kind: "done";
+      report: SpeedCheckView;
+    }
+  | {
+      kind: "recording";
+    }
+  | {
+      kind: "draining";
+    }
+  | {
+      kind: "cancelled";
+    }
+  | {
+      kind: "noStore";
+    }
+  | {
+      kind: "failed";
+    };
 /**
  * What the user does to a step: core's `StepAction`, with a schema.
  *
@@ -455,6 +851,15 @@ export type UpdateCheck =
       state: "failed";
     };
 /**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "UseKeyResult".
+ */
+export type UseKeyResult =
+  | ("wrongPassphrase" | "notARecoveryFile" | "badWords" | "noFileChosen")
+  | "opened"
+  | "keyRejected"
+  | "failed";
+/**
  * `window_ask`'s answer. The answer itself arrives on the channel as `ChatEvent`s.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -485,7 +890,7 @@ export type WindowAskReply =
 export type WorkspacePhase = "before" | "during" | "after" | "cancelled";
 
 /**
- * Generated from apps/windows/src-tauri's command DTOs. Do not edit; run `cargo run --bin gen-schema`.
+ * Generated from apps/windows/src-tauri's command DTOs. Do not edit; run `cargo run --example gen-schema`.
  */
 export interface WhimbrelDtos {}
 /**
@@ -829,6 +1234,22 @@ export interface ApproveResult {
   message?: string | null;
 }
 /**
+ * The audio level meter's reading, 0 to 1 for each source. Read, drawn and thrown away.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "AudioLevel".
+ */
+export interface AudioLevel {
+  /**
+   * The microphone.
+   */
+  mic: number;
+  /**
+   * What the meeting app and the PC play.
+   */
+  system: number;
+}
+/**
  * Today's Daily Brief as the recap: the routine's own summary, from this PC or a synced device
  * (docs/superpowers/plans/2026-10-17-today-recap-daily-brief-windows.md).
  *
@@ -1014,6 +1435,10 @@ export interface CaptureStatus {
    */
   paused?: string | null;
   /**
+   * When a timed pause ends (unix ms). Set only while one runs; `enabled` stays true during it.
+   */
+  resumeAtUnixMs?: number | null;
+  /**
    * False if the service could not start (see `last_error`).
    */
   running: boolean;
@@ -1091,7 +1516,7 @@ export interface CompactView {
   needBytes?: number | null;
   ran: boolean;
   /**
-   * `"ran"`, `"not_worth_it"` or `"not_enough_disk"`.
+   * `"ran"`, `"not_worth_it"`, `"not_enough_disk"` or `"recording"` (a recording is starting or running).
    */
   reason: string;
   /**
@@ -1158,6 +1583,51 @@ export interface ExchangeView {
   query: string;
 }
 /**
+ * What the confirmation shows.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "DeleteEverythingPreview".
+ */
+export interface DeleteEverythingPreview {
+  dataBytes: number;
+  /**
+   * The data folder; everything in it goes, the logs too, except the models and the settings file.
+   */
+  dataFolder: string;
+  /**
+   * The meeting being recorded or processed, which Delete everything ends first, if any.
+   */
+  endsMeeting?: string | null;
+  /**
+   * The connected Google accounts (Calendar and Gmail), which stay connected; `None` when they
+   * can't be listed (the app runs without its database, or the database couldn't list them).
+   */
+  googleAccounts?: string[] | null;
+  snapshotsBytes: number;
+  /**
+   * The slide-image folder, when it is outside the data folder and holds meetings Whimbrel made.
+   */
+  snapshotsFolder?: string | null;
+  /**
+   * Why the slide-image folder is left alone, if it is (a link, or a user folder).
+   */
+  snapshotsRefused?: string | null;
+  /**
+   * The memory database is open: an unlisted `google_accounts` means the list failed, not
+   * that Whimbrel runs without its database.
+   */
+  storeOpen: boolean;
+  /**
+   * Sync is on: the dialog offers to delete the sync account too.
+   */
+  syncOn: boolean;
+  /**
+   * A sync sign-in is stored in Credential Manager (on or not, Ready or not). It stays unless
+   * the sync account is deleted too.
+   */
+  syncSignedIn: boolean;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "DeviceCount".
  */
@@ -1206,6 +1676,50 @@ export interface DownloadView {
   fraction: number;
   jobId: string;
   status: string;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "EncryptionCardView".
+ */
+export interface EncryptionCardView {
+  badge: CardBadge;
+  /**
+   * The deferred backup cleanup runs: every note button is off meanwhile.
+   */
+  cleanupRunning: boolean;
+  fastSearch: FastSearchView;
+  notes: NoteRow[];
+  /**
+   * Encrypt finished in Settings and the migration waits for the next launch.
+   */
+  pendingNextLaunch: boolean;
+  /**
+   * `<db>.plain.bak` exists and the `PlainBackupKept` note is not showing.
+   */
+  plainBackupPresent: boolean;
+  /**
+   * Faster search and the speed check (hidden without the memory database).
+   */
+  showsStoreTools: boolean;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "FastSearchView".
+ */
+export interface FastSearchView {
+  available: boolean;
+  enabled: boolean;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "NoteRow".
+ */
+export interface NoteRow {
+  /**
+   * The note's only button, if it has one.
+   */
+  action?: NoteAction | null;
+  note: NoteView;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1295,6 +1809,30 @@ export interface Footprint {
    */
   recordings: number;
   total: number;
+}
+/**
+ * What a delete did, from core's fresh listing at that moment.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ForeignFilesDeleted".
+ */
+export interface ForeignFilesDeleted {
+  /**
+   * Names that matched but could not be removed.
+   */
+  failed: string[];
+  removed: number;
+  removedBytes: number;
+}
+/**
+ * What the card shows: nothing at all while `count` is 0.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "ForeignFilesView".
+ */
+export interface ForeignFilesView {
+  bytes: number;
+  count: number;
 }
 /**
  * What each Free up space row would free at `days`, for the dialog. `None` hides a row.
@@ -1555,6 +2093,36 @@ export interface LanguageSettings {
    */
   writeIn: string;
   writeInOptions: string[];
+}
+/**
+ * The previous press on the encrypted-file-missing screen, when it did not finish.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LastActionView".
+ */
+export interface LastActionView {
+  /**
+   * `restore` or `reset`.
+   */
+  action: string;
+  outcome: FileActionView;
+}
+/**
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "LaunchView".
+ */
+export interface LaunchView {
+  /**
+   * The launch is working (not waiting for the user, not finished).
+   */
+  busy: boolean;
+  /**
+   * Moves on every screen shown, even the same screen again (a Retry that changed
+   * nothing): the webview re-enables its buttons when it changes.
+   */
+  generation: number;
+  stage: LaunchStageView;
+  waitingForUser: boolean;
 }
 /**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1821,6 +2389,25 @@ export interface MeetingDetail {
   tsUnixMs: number;
 }
 /**
+ * A moment marked while a meeting recorded ("Mark this moment"), kept on this PC with its meeting.
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "MeetingMarkerView".
+ */
+export interface MeetingMarkerView {
+  /**
+   * Centiseconds from the start of the recording on the clock live transcript lines use; includes paused time.
+   */
+  atCs: number;
+  createdUnixMs: number;
+  id: number;
+  /**
+   * The note line being written when it was marked, if any.
+   */
+  label?: string | null;
+  meetingId: number;
+}
+/**
  * Which meeting models are on disk.
  *
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
@@ -1855,9 +2442,25 @@ export interface MeetingRecordingView {
   failure?: PipelineFailure | null;
   meetingId?: number | null;
   /**
+   * The recording is paused; the state stays `recording`, so a paused meeting is still a recording.
+   */
+  paused: boolean;
+  /**
+   * When the running pause began, while paused.
+   */
+  pausedSinceUnixMs?: number | null;
+  /**
+   * Time spent paused so far, a running pause included. Recorded time is wall time minus this.
+   */
+  pausedTotalMs: number;
+  /**
    * The meeting being transcribed or summarized right now, if any (M3.3 Task 4).
    */
   processing?: Processing | null;
+  /**
+   * Resume was asked for and audio has not arrived yet.
+   */
+  resuming: boolean;
   startedUnixMs?: number | null;
   state: RecordingState;
 }
@@ -2537,6 +3140,25 @@ export interface SnapshotsView {
   snapshots: SnapshotView[];
 }
 /**
+ * The report as the card shows it (timings and hardware class only).
+ *
+ * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
+ * via the `definition` "SpeedCheckView".
+ */
+export interface SpeedCheckView {
+  cpuArch: string;
+  encrypted: boolean;
+  keywordP50Ms?: number | null;
+  keywordP95Ms?: number | null;
+  openMs?: number | null;
+  os: string;
+  ramGib?: number | null;
+  semanticP50Ms?: number | null;
+  semanticP95Ms?: number | null;
+  semanticUnavailable: boolean;
+  tooLittleData: boolean;
+}
+/**
  * This interface was referenced by `WhimbrelDtos`'s JSON-Schema
  * via the `definition` "StarterPromptView".
  */
@@ -2641,6 +3263,10 @@ export interface SyncView {
    * Stopped at the free plan's device limit: Settings offers Cloud here.
    */
   deviceLimit: boolean;
+  /**
+   * How far the one-time history indexing (the `kind_tag` backfill) has got, 0 to 99, for "Indexing history: N%". `None` when it is not running: not started, finished, or nothing to count.
+   */
+  kindBackfillPercent?: number | null;
   message?: string | null;
   /**
    * The account's plan, as last read (Cloud v1); `None` until a read succeeds.
@@ -3026,9 +3652,21 @@ export interface TrayStatus {
    */
   line: string;
   /**
+   * When that recording pause began.
+   */
+  pausedSinceUnixMs?: number | null;
+  /**
+   * The recording meeting is paused (recording pause, not capture pause).
+   */
+  recordingPaused: boolean;
+  /**
    * When the recording meeting started, if one is recording.
    */
   recordingStartedUnixMs?: number | null;
+  /**
+   * When a timed capture pause ends, if one is running.
+   */
+  resumeAtUnixMs?: number | null;
 }
 /**
  * Whether "Trim recording…" is offered for a meeting, and its length on the transcript clock.

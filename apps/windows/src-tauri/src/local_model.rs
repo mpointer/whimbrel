@@ -108,7 +108,7 @@ mod tests {
         let path = |k| PathBuf::from(std::env::var(k).unwrap());
         api::local_model::configure(Some((path("WHIMBREL_LLAMA_SERVER"), path("WHIMBREL_LOCAL_MODEL"))));
         let deltas = std::cell::Cell::new(0usize);
-        let end = api::inference::start("Reply with the single word: ready", api::local_model::MODEL_ID, "local", None, None).map(|run| {
+        let end = api::inference::start("Reply with the single word: ready", api::local_model::MODEL_ID, "local", None, None, api::exclusion::published_gate()).map(|run| {
             let end = crate::chat::forward(
                 &run.run_id,
                 api::inference::poll,

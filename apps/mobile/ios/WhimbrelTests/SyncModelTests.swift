@@ -33,6 +33,9 @@ final class FakeStore: MeetingSyncStore, PhoneReadStore {
         return older.count > 1 ? older.removeFirst() : older[0]
     }
     func lastSyncError() -> String? { "connect failed: secret detail" }
+    /// What the core's count of devices without the client-controls marker reads (nil: not measured).
+    var devicesToUpdate: Int?
+    func devicesStillToUpdate() -> Int? { devicesToUpdate }
 
     // PhoneReadStore: scripted, and records the thread each read ran on.
     var meetings: [PhoneMeeting] = []
@@ -105,6 +108,23 @@ final class SyncModelTests: XCTestCase {
         XCTAssertEqual(store.readsOnMainThread, [false], "reads never run on the main thread")
         let none = await makeModel(store: .some(nil)).read { $0.recentMeetings(limit: 5).count }
         XCTAssertNil(none, "no store, no read")
+    }
+
+    /// The sync line says "update needed" when another device has not announced client deletes yet; unknown
+    /// (never measured) and zero show nothing.
+    func testUpdateNeededFollowsTheCoreCountAfterAGoodPull() async {
+        let model = makeModel()
+        store.pullResults = [true, true, false, true]
+        await model.syncNow()
+        XCTAssertFalse(model.updateNeeded, "not measured yet")
+        store.devicesToUpdate = 1
+        await model.syncNow()
+        XCTAssertTrue(model.updateNeeded)
+        store.devicesToUpdate = 0
+        await model.syncNow()
+        XCTAssertTrue(model.updateNeeded, "a failed round keeps the last count")
+        await model.syncNow()
+        XCTAssertFalse(model.updateNeeded)
     }
 
     func testReadRevisionIncrementsAfterASuccessfulPullOnly() async {

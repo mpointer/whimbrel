@@ -63,7 +63,7 @@ pub extern "C" fn whimbrel_topics_run_judge_batch(
     let (Some(store), Some(key)) = (store(handle), cstr_to_string(api_key)) else {
         return -1;
     };
-    let client = llm::typesafe::TypeSafeClient::new(key);
+    let client = llm::typesafe::TypeSafeClient::new(key, api::exclusion::current_gate(store));
     match api::topic_judge::run_topic_judge_batch(store, &client, max as usize, usd_per_million) {
         Ok(o) if o.auth_rejected => -2,
         Ok(o) if o.not_started => -5,
@@ -420,7 +420,7 @@ pub extern "C" fn whimbrel_topics_run_steps_batch(
         api::topic_steps::run_local_steps_batch_with(store, &chain, routing.google_data_policy(), max as usize)
     } else {
         let key = key.unwrap_or_default();
-        let client = llm::typesafe::TypeSafeClient::new(key);
+        let client = llm::typesafe::TypeSafeClient::new(key, api::exclusion::current_gate(store));
         api::topic_steps::run_topic_steps_batch(store, &client, true, max as usize, usd_per_million)
     };
     match r {

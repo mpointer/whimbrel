@@ -87,17 +87,34 @@ final class ScreenTextCaptureService: NSObject, ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + debounceInterval, execute: work)
     }
 
+    /// The most one accessibility request may wait for the frontmost app, in seconds. This runs on the main
+    /// thread: without a limit, an app that stops answering (seen Nov 19 2026 with a test copy of Whimbrel)
+    /// froze Whimbrel with it. Matches `FocusedWindowReader.messagingTimeout`.
+    static let messagingTimeout: Float = 1.0
+
+    /// Whether the frontmost app's text is read at all: never another copy of Whimbrel (a test or debug
+    /// build has the same bundle id), whose windows are Whimbrel's own.
+    static func capturesText(of bundleId: String, ownBundleId: String? = Bundle.main.bundleIdentifier) -> Bool {
+        bundleId != ownBundleId
+    }
+
     private func captureFrontmostWindow() {
         guard isRunning,
               let app = NSWorkspace.shared.frontmostApplication,
               let bundleId = app.bundleIdentifier,
+              Self.capturesText(of: bundleId),
               !CaptureExclusions.shared.isExcluded(bundleId) else { return }
 
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        // A limit on the app element applies to the elements read from it (the window and the walker's
+        // children); the system-wide element sets the default for any other.
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Self.messagingTimeout)
+        AXUIElementSetMessagingTimeout(appElement, Self.messagingTimeout)
         var focusedWindowRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindowRef) == .success,
               let focusedWindowRef else { return }
         let windowElement = focusedWindowRef as! AXUIElement
+        AXUIElementSetMessagingTimeout(windowElement, Self.messagingTimeout)
 
         var titleRef: CFTypeRef?
         AXUIElementCopyAttributeValue(windowElement, kAXTitleAttribute as CFString, &titleRef)

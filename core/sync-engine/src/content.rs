@@ -13,7 +13,6 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use libsql::{params, params::Params, Connection, Value};
 use memory::{AppliedTranscriptSegment, Store, SyncableRow};
-#[cfg(not(test))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use sync::GroupKey;
 
@@ -59,6 +58,22 @@ pub(crate) const ROW_TYPE_TOPIC_PAGE_CAPABILITY: &str = "topic_page_capability";
 /// `topic_page_capability` still drop this row type, so it waits for `topic_snapshot_capability`.
 pub(crate) const ROW_TYPE_TOPIC_PAGE_SNAPSHOT: &str = memory::OUTBOX_ROW_TYPE_TOPIC_PAGE_SNAPSHOT;
 pub(crate) const ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY: &str = "topic_snapshot_capability";
+/// Client controls (docs/superpowers/specs/2026-11-12-client-controls-design.md 4.3, 13.3): a client
+/// item's tombstone and a seed topic's purge. Both are sent at once; an older build skips them and
+/// reads them again on its first pull once updated (`catch_up_tombstones`). Devices on the relay
+/// without `client_controls_capability` (desktops, and phones from the build that announces it) are
+/// the receipt's "N devices still need to update".
+pub(crate) const ROW_TYPE_CLIENT_ITEM_FORGOTTEN: &str = memory::OUTBOX_ROW_TYPE_CLIENT_ITEM_FORGOTTEN;
+pub(crate) const ROW_TYPE_TOPIC_SEED_PURGED: &str = memory::OUTBOX_ROW_TYPE_TOPIC_SEED_PURGED;
+pub(crate) const ROW_TYPE_CLIENT_CONTROLS_CAPABILITY: &str = "client_controls_capability";
+/// Written at `local_seq` 0 under a retired device's id by a desktop whose user chose "Remove this device":
+/// every device then leaves it out of the devices-to-update count. Read by that count only; the marker gates
+/// (`all_peers_have_marker`) still count the device, and nothing is ever deleted for it.
+pub(crate) const ROW_TYPE_DEVICE_RETIRED: &str = "device_retired";
+/// The `kind_tag` backfill's advisory claim (`kind_backfill`): written at `local_seq` 0 under the claiming
+/// device's own id, its `created_at_unix_ms` refreshed every step. Like every marker it is never pulled (pulls
+/// read `local_seq > cursor`, cursor from 0) and no query reads it by `row_type` alone.
+pub(crate) const ROW_TYPE_KIND_BACKFILL_CLAIM: &str = "kind_backfill_claim";
 
 /// The relay bytes of image chunks one pass moves from (or to) one peer, so a skin with large images
 /// spreads over several rounds instead of holding the store or overrunning `SYNC_TIMEOUT`. Counted on
@@ -133,6 +148,7 @@ pub async fn ensure_content_schema(conn: &Connection) -> Result<(), SyncEngineEr
             ciphertext TEXT NOT NULL,
             created_at_unix_ms INTEGER NOT NULL,
             entity_tag TEXT,
+            kind_tag TEXT,
             PRIMARY KEY (device_id, local_seq, row_type)
         );
         CREATE INDEX IF NOT EXISTS idx_sync_row_created ON sync_row(created_at_unix_ms);",
@@ -142,6 +158,9 @@ pub async fn ensure_content_schema(conn: &Connection) -> Result<(), SyncEngineEr
     // ponytail: one process-wide flag, so an account switch to an unmigrated DB pushes untagged until restart; key it by URL if that matters
     if !ENTITY_TAG_COLUMN_SEEN.get() && ensure_entity_tag_column(conn).await {
         ENTITY_TAG_COLUMN_SEEN.set();
+    }
+    if !KIND_TAG_COLUMN_SEEN.get() && ensure_kind_tag_column(conn).await {
+        KIND_TAG_COLUMN_SEEN.set();
     }
     Ok(())
 }
@@ -178,6 +197,7 @@ impl Latch {
 thread_local! {
     static COLUMN_SEEN_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static INDEX_SEEN_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static KIND_COLUMN_SEEN_CELL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Set once this process has confirmed `sync_row.entity_tag`. `push_content` runs after
@@ -186,6 +206,12 @@ thread_local! {
 pub(crate) static ENTITY_TAG_COLUMN_SEEN: Latch = Latch(AtomicBool::new(false));
 #[cfg(test)]
 pub(crate) static ENTITY_TAG_COLUMN_SEEN: Latch = Latch(&COLUMN_SEEN_CELL);
+
+/// Set once this process has confirmed `sync_row.kind_tag`; independent of `entity_tag`.
+#[cfg(not(test))]
+pub(crate) static KIND_TAG_COLUMN_SEEN: Latch = Latch(AtomicBool::new(false));
+#[cfg(test)]
+pub(crate) static KIND_TAG_COLUMN_SEEN: Latch = Latch(&KIND_COLUMN_SEEN_CELL);
 
 /// Set once this process has seen the ops index on the relay.
 #[cfg(not(test))]
@@ -225,25 +251,40 @@ pub(crate) async fn compaction_index_ready(conn: &Connection) -> bool {
 /// success. Any other failure returns `false` (pushes stay untagged) and never fails the sync.
 /// Never creates `idx_sync_row_entity`; only the ops SQL does.
 pub(crate) async fn ensure_entity_tag_column(conn: &Connection) -> bool {
+    ensure_sync_row_column(conn, "entity_tag").await
+}
+
+/// The `kind_tag` twin of `ensure_entity_tag_column`: same race rules, same best effort.
+pub(crate) async fn ensure_kind_tag_column(conn: &Connection) -> bool {
+    ensure_sync_row_column(conn, "kind_tag").await
+}
+
+#[cfg(test)]
+async fn add_entity_tag_column(conn: &Connection) -> bool {
+    add_sync_row_column(conn, "entity_tag").await
+}
+
+/// `column` is one of our own constant names, never user input.
+async fn ensure_sync_row_column(conn: &Connection, column: &str) -> bool {
     if let Ok(mut rows) = conn.query("PRAGMA table_info(sync_row)", ()).await {
         while let Ok(Some(row)) = rows.next().await {
-            if row.get::<String>(1).is_ok_and(|name| name == "entity_tag") {
+            if row.get::<String>(1).is_ok_and(|name| name == column) {
                 return true;
             }
         }
     }
-    add_entity_tag_column(conn).await
+    add_sync_row_column(conn, column).await
 }
 
-async fn add_entity_tag_column(conn: &Connection) -> bool {
+async fn add_sync_row_column(conn: &Connection, column: &str) -> bool {
     match conn
-        .execute("ALTER TABLE sync_row ADD COLUMN entity_tag TEXT", ())
+        .execute(&format!("ALTER TABLE sync_row ADD COLUMN {column} TEXT"), ())
         .await
     {
         Ok(_) => true,
         Err(e) if e.to_string().contains("duplicate column name") => true,
         Err(e) => {
-            eprintln!("[sync] entity_tag column not added: {e}");
+            eprintln!("[sync] {column} column not added: {e}");
             false
         }
     }
@@ -347,6 +388,30 @@ pub(crate) fn entity_identity(row: &SyncableRow) -> Option<String> {
     }
 }
 
+/// The `kind_tag` for a pushed row: only `items` rows have a kind.
+pub(crate) fn kind_tag_for(group_key: &GroupKey, row: &SyncableRow) -> Option<String> {
+    match row {
+        SyncableRow::Item { item, .. } => Some(sync::kind_tag(group_key, &item.kind)),
+        _ => None,
+    }
+}
+
+/// The backfill twin of `kind_tag_for`: an `items` row's decrypted payload, decoded exactly as the pull decodes it
+/// (`ItemPayload`), tagged by its `item.kind`. `None` when the payload does not decode (the pull skips such a row).
+pub(crate) fn item_payload_kind_tag(group_key: &GroupKey, plaintext: &[u8]) -> Option<String> {
+    let payload = serde_json::from_slice::<ItemPayload>(plaintext).ok()?;
+    Some(sync::kind_tag(group_key, &payload.item.kind))
+}
+
+/// The outbox twin of `kind_tag_for`: an `items` op's payload is the item, so it names its kind.
+pub(crate) fn outbox_kind_tag(group_key: &GroupKey, op: &memory::ClaimedOutboxOperation) -> Option<String> {
+    if op.row_type != ROW_TYPE_ITEMS {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(&op.payload_json).ok()?;
+    Some(sync::kind_tag(group_key, value.get("kind")?.as_str()?))
+}
+
 /// The outbox twin of `entity_identity`: each tagged type already enqueues its
 /// stable id as `aggregate_id`.
 pub(crate) fn outbox_entity_identity(op: &memory::ClaimedOutboxOperation) -> Option<String> {
@@ -366,6 +431,9 @@ pub(crate) fn outbox_entity_identity(op: &memory::ClaimedOutboxOperation) -> Opt
         | ROW_TYPE_TOPIC_ROLE
         | ROW_TYPE_TOPIC_NAMES
         | ROW_TYPE_TOPIC_PAGE_SNAPSHOT => Some(format!("{}:{}", op.row_type, op.aggregate_id)),
+        // Client deletes (`client_item_forgotten`, `topic_seed_purged`) stay untagged, never compacted, like
+        // `meeting_forgotten`: a seed row sent after its purge (a lease from a timed-out pass) must not
+        // compact the purge away.
         _ => None,
     }
 }
@@ -406,7 +474,164 @@ async fn push_items_capability_marker(
     // Topic page rows wait the same way for this one.
     push_marker(conn, group_key, device_id, ROW_TYPE_TOPIC_PAGE_CAPABILITY).await?;
     // Snapshot rows wait the same way for this one.
-    push_marker(conn, group_key, device_id, ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY).await
+    push_marker(conn, group_key, device_id, ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY).await?;
+    // Client-delete tombstones and seed purges wait for this one.
+    push_marker(conn, group_key, device_id, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY).await
+}
+
+/// The markers a pull-only device (the phone) announces: every row type the shared pull applies for it. Not
+/// skins: the phone leaves them out at the query, and the marker would make peers re-push every skin. Once
+/// the phone has any row on the relay, desktops count it as a peer in `all_peers_have_marker`, so it must
+/// announce every gating marker it honours, or desktops would hold their topic rows for good. A new
+/// `all_peers_have_marker` gate for a row type the phone applies must add its marker here in the same
+/// release, or every paired phone (and any retired one, for good) holds those rows back.
+pub(crate) const PULL_ONLY_MARKERS: [&str; 5] = [
+    ROW_TYPE_ITEMS_CAPABILITY,
+    ROW_TYPE_TOPICS_CAPABILITY,
+    ROW_TYPE_TOPIC_PAGE_CAPABILITY,
+    ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY,
+    ROW_TYPE_CLIENT_CONTROLS_CAPABILITY,
+];
+
+/// The pull-only round's only write: [`PULL_ONLY_MARKERS`] at `local_seq` 0, in one statement, so a peer
+/// never sees the phone with some of them and not others. Idempotent. Best effort: a failure is logged and
+/// the pull goes on (the next round tries again).
+pub(crate) async fn announce_pull_only_markers(conn: &Connection, group_key: &GroupKey, device_id: &str) {
+    if device_id.is_empty() {
+        return;
+    }
+    let now = now_unix_ms();
+    let ciphertexts: Vec<String> = PULL_ONLY_MARKERS
+        .iter()
+        .map(|m| STANDARD.encode(sync::encrypt_payload(group_key, b"1", &content_row_aad(device_id, 0, m))))
+        .collect();
+    let values = vec!["(?, 0, ?, ?, ?)"; PULL_ONLY_MARKERS.len()].join(", ");
+    let sql = format!(
+        "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) VALUES {values} \
+         ON CONFLICT (device_id, local_seq, row_type) DO NOTHING"
+    );
+    let mut args: Vec<libsql::Value> = Vec::new();
+    for (marker, ciphertext) in PULL_ONLY_MARKERS.iter().zip(&ciphertexts) {
+        args.push(device_id.into());
+        args.push((*marker).into());
+        args.push(ciphertext.as_str().into());
+        args.push(now.into());
+    }
+    if let Err(e) = conn.execute(&sql, args).await {
+        eprintln!("[sync] pull-only markers not announced: {e}");
+    }
+}
+
+/// Stores which other devices have not announced `client_controls_capability`, and how many (the "update
+/// needed" line), leaving out devices removed with "Remove this device". On a desktop the outbox pass does
+/// this; the phone runs none, so its pull-only round does. Best effort: a failed read or write keeps the last
+/// count and never fails the round.
+pub(crate) async fn record_pending_tombstone_devices(conn: &Connection, store: &Store, device_id: &str) {
+    match pending_update_device_ids(conn, device_id).await {
+        Ok(ids) => {
+            if let Err(e) = store.set_pending_tombstone_device_ids(&ids) {
+                eprintln!("[sync] devices-to-update count not stored: {e}");
+            }
+        }
+        Err(e) => eprintln!("[sync] devices-to-update count not read: {e}"),
+    }
+}
+
+/// [`record_pending_tombstone_devices`] for a desktop's outbox pass, which also sends every client's settings
+/// again when a device that still needed to update no longer does: its older build applied the seed records
+/// but dropped their control fields, and nothing else would send them again (Nov 19 2026: a PC updated from
+/// 0.9.72 never learned an exclusion set on the Mac before its update). Runs before the pass claims rows, so
+/// the records go out in the same pass. Best effort, like the count.
+pub(crate) async fn record_pending_devices_and_resend_controls(conn: &Connection, store: &Store, device_id: &str) {
+    let before = store.pending_tombstone_device_ids().ok().flatten();
+    match pending_update_device_ids(conn, device_id).await {
+        Ok(ids) => {
+            if before.is_some_and(|before| before.iter().any(|d| !ids.contains(d))) {
+                if let Err(e) = store.requeue_client_control_seeds() {
+                    eprintln!("[sync] client settings not sent again to an updated device: {e}");
+                }
+            }
+            if let Err(e) = store.set_pending_tombstone_device_ids(&ids) {
+                eprintln!("[sync] devices-to-update count not stored: {e}");
+            }
+        }
+        Err(e) => eprintln!("[sync] devices-to-update count not read: {e}"),
+    }
+}
+
+/// The OTHER devices in `sync_row` that have not announced `client_controls_capability` and were not removed
+/// ([`ROW_TYPE_DEVICE_RETIRED`]).
+pub(crate) async fn pending_update_device_ids(conn: &Connection, own_device_id: &str) -> Result<Vec<String>, SyncEngineError> {
+    let mut out = Vec::new();
+    for peer in distinct_peer_device_ids(conn, own_device_id).await? {
+        if peer_has_marker(conn, &peer, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY).await?
+            || peer_has_marker(conn, &peer, ROW_TYPE_DEVICE_RETIRED).await?
+        {
+            continue;
+        }
+        out.push(peer);
+    }
+    Ok(out)
+}
+
+pub(crate) async fn peer_has_marker(conn: &Connection, peer: &str, marker: &str) -> Result<bool, SyncEngineError> {
+    if let Some(answer) = round_peers::has_marker(conn, peer, marker).await? {
+        return Ok(answer);
+    }
+    let mut rows = conn
+        .query(PEER_MARKER_SQL, params![peer, marker])
+        .await
+        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    Ok(rows.next().await.map_err(|e| SyncEngineError::Query(e.to_string()))?.is_some())
+}
+
+/// Publishes the removals queued by "Remove this device" ([`memory::Store::queue_retired_device`]): a
+/// [`ROW_TYPE_DEVICE_RETIRED`] marker at `local_seq` 0 under each removed device's id. Desktop rounds only (a
+/// phone's pull-only round never calls this, so a phone cannot remove a device). A device that has announced
+/// the client marker since, or has no rows on the relay any more, is only taken off the queue: a marker would
+/// make a device with no rows a peer of every gate. Additive and idempotent; it deletes nothing. Best effort:
+/// what fails stays queued for the next round.
+pub(crate) async fn publish_retired_devices(conn: &Connection, group_key: &GroupKey, store: &Store, own_device_id: &str) {
+    let queue = match store.retired_device_queue() {
+        Ok(q) => q,
+        Err(e) => {
+            eprintln!("[sync] removed devices not read: {e}");
+            return;
+        }
+    };
+    let mut done = Vec::new();
+    for id in queue {
+        if id == own_device_id {
+            done.push(id);
+            continue;
+        }
+        let publish = async {
+            if peer_has_marker(conn, &id, ROW_TYPE_CLIENT_CONTROLS_CAPABILITY).await? || !peer_has_rows(conn, &id).await? {
+                return Ok::<(), SyncEngineError>(());
+            }
+            push_marker(conn, group_key, &id, ROW_TYPE_DEVICE_RETIRED).await?;
+            // This round's later gates (the outbox's update count) see the new marker.
+            round_peers::forget_markers();
+            Ok(())
+        };
+        match publish.await {
+            Ok(()) => done.push(id),
+            Err(e) => eprintln!("[sync] a removed device was not published: {e}"),
+        }
+    }
+    if !done.is_empty() {
+        if let Err(e) = store.clear_retired_devices(&done) {
+            eprintln!("[sync] removed devices not cleared: {e}");
+        }
+    }
+}
+
+async fn peer_has_rows(conn: &Connection, peer: &str) -> Result<bool, SyncEngineError> {
+    let mut rows = conn
+        .query("SELECT 1 FROM sync_row WHERE device_id = ?1 LIMIT 1", params![peer])
+        .await
+        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    Ok(rows.next().await.map_err(|e| SyncEngineError::Query(e.to_string()))?.is_some())
 }
 
 /// One capability marker at `local_seq` 0, idempotent (see `push_items_capability_marker`).
@@ -416,12 +641,40 @@ pub(crate) async fn push_marker(
     device_id: &str,
     marker: &str,
 ) -> Result<(), SyncEngineError> {
+    write_marker(conn, group_key, device_id, marker, false).await
+}
+
+/// [`push_marker`], but an existing marker's `created_at_unix_ms` is moved to now: a claim that says "still alive"
+/// ([`ROW_TYPE_KIND_BACKFILL_CLAIM`]).
+pub(crate) async fn refresh_marker(
+    conn: &Connection,
+    group_key: &GroupKey,
+    device_id: &str,
+    marker: &str,
+) -> Result<(), SyncEngineError> {
+    write_marker(conn, group_key, device_id, marker, true).await
+}
+
+async fn write_marker(
+    conn: &Connection,
+    group_key: &GroupKey,
+    device_id: &str,
+    marker: &str,
+    refresh: bool,
+) -> Result<(), SyncEngineError> {
     let aad = content_row_aad(device_id, 0, marker);
     let ciphertext = sync::encrypt_payload(group_key, b"1", &aad);
+    let on_conflict = if refresh {
+        "DO UPDATE SET created_at_unix_ms = excluded.created_at_unix_ms"
+    } else {
+        "DO NOTHING"
+    };
     conn.execute(
-        "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) \
-         VALUES (?1, 0, ?2, ?3, ?4) \
-         ON CONFLICT (device_id, local_seq, row_type) DO NOTHING",
+        &format!(
+            "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) \
+             VALUES (?1, 0, ?2, ?3, ?4) \
+             ON CONFLICT (device_id, local_seq, row_type) {on_conflict}"
+        ),
         params![
             device_id,
             marker,
@@ -458,20 +711,27 @@ pub(crate) async fn all_peers_have_marker(
     marker: &str,
 ) -> Result<bool, SyncEngineError> {
     for peer in distinct_peer_device_ids(conn, own_device_id).await? {
-        let mut rows = conn
-            .query(PEER_MARKER_SQL, params![peer, marker])
-            .await
-            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-        let has_marker = rows
-            .next()
-            .await
-            .map_err(|e| SyncEngineError::Query(e.to_string()))?
-            .is_some();
-        if !has_marker {
+        if !peer_has_marker(conn, &peer, marker).await? {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+/// The OTHER devices in `sync_row` that have not announced `marker` (removed devices too: a marker gate counts
+/// every device with rows).
+pub(crate) async fn peers_without_marker(
+    conn: &Connection,
+    own_device_id: &str,
+    marker: &str,
+) -> Result<Vec<String>, SyncEngineError> {
+    let mut out = Vec::new();
+    for peer in distinct_peer_device_ids(conn, own_device_id).await? {
+        if !peer_has_marker(conn, &peer, marker).await? {
+            out.push(peer);
+        }
+    }
+    Ok(out)
 }
 
 /// The smallest `device_id` after `?1`, by primary-key seek. Turso bills rows read, and the
@@ -479,6 +739,109 @@ pub(crate) async fn all_peers_have_marker(
 /// several times per sync round; this reads one row per device.
 const NEXT_PEER_SQL: &str =
     "SELECT device_id FROM sync_row WHERE device_id > ?1 ORDER BY device_id LIMIT 1";
+
+/// One desktop round's view of the peers and their `local_seq` 0 markers. The gates in push, pull and the
+/// outbox each walked the peers and looked up markers one query at a time: about 45 sequential relay
+/// round trips a round, which alone outlasted `SYNC_TIMEOUT` once the relay answered in ~0.5 s (Nov 18
+/// 2026). Inside a round (`begin`..`end`, set by `sync_content`) the peers are walked once and every
+/// peer's markers are read in one primary-key query. Outside a round nothing is cached, so tests and
+/// other callers read the relay exactly as before. Thread-local: a round runs on the thread that
+/// `block_on`s it. A marker a peer adds during the round is seen next round.
+pub(crate) mod round_peers {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::{HashMap, HashSet};
+
+    #[derive(Default)]
+    struct Snapshot {
+        own: String,
+        peers: Option<Vec<String>>,
+        markers: Option<HashMap<String, HashSet<String>>>,
+    }
+
+    thread_local! {
+        static ROUND: RefCell<Option<Snapshot>> = const { RefCell::new(None) };
+    }
+
+    /// Starts caching for this thread's round.
+    pub(crate) fn begin(own_device_id: &str) {
+        ROUND.with(|r| *r.borrow_mut() = Some(Snapshot { own: own_device_id.to_string(), ..Default::default() }));
+    }
+
+    /// Ends the round: nothing is cached after this.
+    pub(crate) fn end() {
+        ROUND.with(|r| *r.borrow_mut() = None);
+    }
+
+    /// Drops the markers read so far (this round just published one, e.g. a removed device's marker).
+    pub(crate) fn forget_markers() {
+        ROUND.with(|r| {
+            if let Some(s) = r.borrow_mut().as_mut() {
+                s.markers = None;
+            }
+        });
+    }
+
+    pub(super) fn peers(own_device_id: &str) -> Option<Vec<String>> {
+        ROUND.with(|r| r.borrow().as_ref().filter(|s| s.own == own_device_id).and_then(|s| s.peers.clone()))
+    }
+
+    pub(super) fn set_peers(own_device_id: &str, ids: &[String]) {
+        ROUND.with(|r| {
+            if let Some(s) = r.borrow_mut().as_mut().filter(|s| s.own == own_device_id) {
+                s.peers = Some(ids.to_vec());
+            }
+        });
+    }
+
+    /// `Some(answer)` from the round's snapshot (read on first use), `None` outside a round or for a device
+    /// the snapshot does not cover.
+    pub(super) async fn has_marker(conn: &Connection, peer: &str, marker: &str) -> Result<Option<bool>, SyncEngineError> {
+        let Some((own, loaded)) = ROUND.with(|r| r.borrow().as_ref().map(|s| (s.own.clone(), s.markers.is_some()))) else {
+            return Ok(None);
+        };
+        if !loaded {
+            let peers = distinct_peer_device_ids(conn, &own).await?;
+            let markers = read_markers(conn, &peers).await?;
+            ROUND.with(|r| {
+                if let Some(s) = r.borrow_mut().as_mut() {
+                    s.markers = Some(markers);
+                }
+            });
+        }
+        Ok(ROUND.with(|r| {
+            r.borrow()
+                .as_ref()
+                .and_then(|s| s.markers.as_ref())
+                .and_then(|m| m.get(peer))
+                .map(|set| set.contains(marker))
+        }))
+    }
+
+    /// Every `local_seq` 0 row type of `peers`, in one query (a primary-key seek per device).
+    async fn read_markers(conn: &Connection, peers: &[String]) -> Result<HashMap<String, HashSet<String>>, SyncEngineError> {
+        let mut out: HashMap<String, HashSet<String>> = peers.iter().map(|p| (p.clone(), HashSet::new())).collect();
+        if peers.is_empty() {
+            return Ok(out);
+        }
+        let placeholders: Vec<String> = (1..=peers.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "SELECT device_id, row_type FROM sync_row WHERE local_seq = 0 AND device_id IN ({})",
+            placeholders.join(", ")
+        );
+        let args: Vec<libsql::Value> = peers.iter().map(|p| libsql::Value::Text(p.clone())).collect();
+        let mut rows = conn
+            .query(&sql, libsql::params::Params::Positional(args))
+            .await
+            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+        while let Some(row) = rows.next().await.map_err(|e| SyncEngineError::Query(e.to_string()))? {
+            let device: String = row.get(0).map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            let row_type: String = row.get(1).map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            out.entry(device).or_default().insert(row_type);
+        }
+        Ok(out)
+    }
+}
 
 /// A peer's `items_capability` marker, always written at `local_seq` 0
 /// (`push_items_capability_marker`): a primary-key point lookup.
@@ -501,19 +864,24 @@ const MAX_ROWS_PER_PUSH_PASS: usize = 500;
 /// caps a chunk's distinct tags at 50, the most `compact_entity_tags` takes.
 const PUSH_CHUNK_ROWS: usize = 50;
 
-/// One multi-row INSERT of a chunk of encoded `(local_seq, row_type, ciphertext, tag)`
-/// rows. `with_tag` adds the `entity_tag` column (NULL for untagged rows).
+/// One encoded row to insert: `(local_seq, row_type, ciphertext, entity_tag, kind_tag)`.
+pub(crate) type PushRow<'a> = (i64, &'a str, String, Option<String>, Option<String>);
+
+/// One multi-row INSERT of a chunk of encoded rows. `with_entity` / `with_kind` add those
+/// columns (NULL for untagged rows); each is independent, as a relay may have either, both
+/// or neither.
 async fn insert_push_chunk(
     conn: &Connection,
     device_id: &str,
     now: i64,
-    rows: &[(i64, &'static str, String, Option<String>)],
-    with_tag: bool,
+    rows: &[PushRow<'_>],
+    with_entity: bool,
+    with_kind: bool,
 ) -> Result<u64, libsql::Error> {
-    let width = if with_tag { 6 } else { 5 };
+    let width = 5 + usize::from(with_entity) + usize::from(with_kind);
     let mut placeholders = Vec::with_capacity(rows.len());
     let mut values: Vec<Value> = Vec::with_capacity(rows.len() * width);
-    for (i, (local_seq, row_type, ciphertext, tag)) in rows.iter().enumerate() {
+    for (i, (local_seq, row_type, ciphertext, entity, kind)) in rows.iter().enumerate() {
         let p = i * width;
         let slots: Vec<String> = (p + 1..=p + width).map(|n| format!("?{n}")).collect();
         placeholders.push(format!("({})", slots.join(", ")));
@@ -524,21 +892,54 @@ async fn insert_push_chunk(
             Value::Text(ciphertext.clone()),
             Value::Integer(now),
         ]);
-        if with_tag {
-            values.push(tag.clone().map_or(Value::Null, Value::Text));
+        if with_entity {
+            values.push(entity.clone().map_or(Value::Null, Value::Text));
+        }
+        if with_kind {
+            values.push(kind.clone().map_or(Value::Null, Value::Text));
         }
     }
-    let columns = if with_tag {
-        "device_id, local_seq, row_type, ciphertext, created_at_unix_ms, entity_tag"
-    } else {
-        "device_id, local_seq, row_type, ciphertext, created_at_unix_ms"
-    };
+    let mut columns = String::from("device_id, local_seq, row_type, ciphertext, created_at_unix_ms");
+    if with_entity {
+        columns.push_str(", entity_tag");
+    }
+    if with_kind {
+        columns.push_str(", kind_tag");
+    }
     let sql = format!(
         "INSERT INTO sync_row ({columns}) VALUES {} \
          ON CONFLICT (device_id, local_seq, row_type) DO NOTHING",
         placeholders.join(", ")
     );
     conn.execute(&sql, Params::Positional(values)).await
+}
+
+/// `insert_push_chunk` that survives a relay missing either tag column: each missing column
+/// is dropped from `with_entity` / `with_kind` (so the caller stops asking for it) and the
+/// INSERT retried, ending untagged at worst. Any other error is returned.
+pub(crate) async fn insert_with_tag_fallback(
+    conn: &Connection,
+    device_id: &str,
+    now: i64,
+    rows: &[PushRow<'_>],
+    with_entity: &mut bool,
+    with_kind: &mut bool,
+) -> Result<u64, libsql::Error> {
+    loop {
+        match insert_push_chunk(conn, device_id, now, rows, *with_entity, *with_kind).await {
+            Err(e) if *with_entity && is_missing_entity_tag_column(&e.to_string()) => {
+                #[cfg(test)]
+                FAILED_TAGGED_INSERTS.with(|c| c.set(c.get() + 1));
+                *with_entity = false;
+            }
+            Err(e) if *with_kind && is_missing_kind_tag_column(&e.to_string()) => {
+                #[cfg(test)]
+                FAILED_TAGGED_INSERTS.with(|c| c.set(c.get() + 1));
+                *with_kind = false;
+            }
+            other => return other,
+        }
+    }
 }
 
 fn row_local_seq(row: &SyncableRow) -> i64 {
@@ -618,31 +1019,35 @@ pub async fn push_content(
         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
     let cutover_ready = all_peers_items_capable(conn, device_id).await?;
 
-    // `meeting` has no `items` representation, so it is pushed in its own format on
-    // both sides of the cutover.
-    let mut rows = store
-        .unpushed_meeting_rows(device_id, last_pushed)
+    // The epoch is created on first use, which writes: do that before the read snapshot below,
+    // which must not write. An unreadable epoch never fails a round (the rows go untagged).
+    let _ = store.sync_entity_epoch();
+    // One snapshot for every read of unpushed rows. The cursor is the highest `local_seq` sent,
+    // so a row that commits after a higher one was read (the app's other connection writes while
+    // this one syncs) would be skipped for good. Rows commit in `local_seq` order (a `local_seq`
+    // is taken and its row written in one transaction), so a single snapshot always holds a
+    // prefix of them. No network call happens inside it.
+    let rows = store
+        .with_read_snapshot(|s| {
+            // `meeting` has no `items` representation, so it is pushed in its own format on
+            // both sides of the cutover.
+            let mut rows = s.unpushed_meeting_rows(device_id, last_pushed)?;
+            if cutover_ready {
+                rows.extend(s.unpushed_item_rows(device_id, last_pushed)?);
+            } else {
+                // Pre-cutover: push capture_item/transcript_segment in the old format instead
+                // of items. unpushed_rows() also re-selects meeting rows, so drop those here
+                // to avoid double-pushing what unpushed_meeting_rows already added above.
+                let legacy_rows = s.unpushed_rows(device_id, last_pushed)?;
+                rows.extend(
+                    legacy_rows
+                        .into_iter()
+                        .filter(|r| !matches!(r, SyncableRow::Meeting { .. })),
+                );
+            }
+            Ok(rows)
+        })
         .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-    if cutover_ready {
-        rows.extend(
-            store
-                .unpushed_item_rows(device_id, last_pushed)
-                .map_err(|e| SyncEngineError::Query(e.to_string()))?,
-        );
-    } else {
-        // Pre-cutover: push capture_item/transcript_segment in the old format instead
-        // of items. unpushed_rows() also re-selects meeting rows, so drop those here
-        // to avoid double-pushing what unpushed_meeting_rows already added above.
-        let legacy_rows = store
-            .unpushed_rows(device_id, last_pushed)
-            .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-        rows.extend(
-            legacy_rows
-                .into_iter()
-                .filter(|r| !matches!(r, SyncableRow::Meeting { .. })),
-        );
-    }
-
     let rows = plan_push_pass(rows, MAX_ROWS_PER_PUSH_PASS);
     let mut highest = last_pushed;
     // Known missing (ensure_content_schema ran this round and could not confirm it): push
@@ -656,6 +1061,8 @@ pub async fn push_content(
     } else {
         None
     };
+    // Same for `kind_tag`, which is independent of `entity_tag`: it needs no epoch.
+    let mut kind_on = KIND_TAG_COLUMN_SEEN.get();
     let mut compaction = CompactionBudget::default();
     for chunk in rows.chunks(PUSH_CHUNK_ROWS) {
         let now = now_unix_ms();
@@ -679,25 +1086,24 @@ pub async fn push_content(
                     tags.push(t.clone());
                 }
             }
-            encoded.push((local_seq, row_type, STANDARD.encode(&ciphertext), tag));
+            let kind = kind_on.then(|| kind_tag_for(group_key, row)).flatten();
+            encoded.push((local_seq, row_type, STANDARD.encode(&ciphertext), tag, kind));
             chunk_highest = chunk_highest.max(local_seq);
         }
-        let inserted = if tags.is_empty() {
-            insert_push_chunk(conn, device_id, now, &encoded, false).await
-        } else {
-            match insert_push_chunk(conn, device_id, now, &encoded, true).await {
-                Err(e) if is_missing_entity_tag_column(&e.to_string()) => {
-                    // A relay that predates `entity_tag`: push untagged, compact nothing, and
-                    // stop tagging for the rest of this call (as the outbox does).
-                    #[cfg(test)]
-                    FAILED_TAGGED_INSERTS.with(|c| c.set(c.get() + 1));
-                    tags.clear();
-                    epoch = None;
-                    insert_push_chunk(conn, device_id, now, &encoded, false).await
-                }
-                other => other,
-            }
-        };
+        let mut with_entity = !tags.is_empty();
+        let mut with_kind = kind_on && encoded.iter().any(|r| r.4.is_some());
+        let (asked_entity, asked_kind) = (with_entity, with_kind);
+        let inserted =
+            insert_with_tag_fallback(conn, device_id, now, &encoded, &mut with_entity, &mut with_kind).await;
+        if asked_entity && !with_entity {
+            // A relay that predates `entity_tag`: compact nothing, and stop tagging for the
+            // rest of this call (as the outbox does).
+            tags.clear();
+            epoch = None;
+        }
+        if asked_kind && !with_kind {
+            kind_on = false;
+        }
         inserted.map_err(|e| SyncEngineError::Query(e.to_string()))?;
         // So forgetting the meeting can delete these rows (deletion sync).
         store
@@ -725,10 +1131,20 @@ struct RowEnvelope {
     ciphertext_base64: String,
 }
 
-async fn distinct_peer_device_ids(
+pub(crate) async fn distinct_peer_device_ids(
     conn: &Connection,
     own_device_id: &str,
 ) -> Result<Vec<String>, SyncEngineError> {
+    if let Some(ids) = round_peers::peers(own_device_id) {
+        return Ok(ids);
+    }
+    let ids = hop_peer_device_ids(conn, own_device_id).await?;
+    round_peers::set_peers(own_device_id, &ids);
+    Ok(ids)
+}
+
+/// [`distinct_peer_device_ids`] read from the relay, without the round snapshot.
+async fn hop_peer_device_ids(conn: &Connection, own_device_id: &str) -> Result<Vec<String>, SyncEngineError> {
     // Hop from device to device with `NEXT_PEER_SQL`. The own device is skipped by moving
     // the cursor past it, never by a `!=` filter, which would read all of its rows.
     let mut ids = Vec::new();
@@ -1030,6 +1446,17 @@ pub(crate) fn is_missing_entity_tag_column(error: &str) -> bool {
     error.contains("no column named entity_tag")
 }
 
+/// The `kind_tag` twin of `is_missing_entity_tag_column`.
+pub(crate) fn is_missing_kind_tag_column(error: &str) -> bool {
+    error.contains("no column named kind_tag")
+}
+
+/// True when a SELECT failed because the relay's `sync_row` predates `kind_tag`
+/// ("no such column: kind_tag").
+pub(crate) fn is_no_such_kind_tag_column(error: &str) -> bool {
+    error.contains("no such column: kind_tag")
+}
+
 const FETCH_ROWS_NO_SKINS_SQL: &str =
     "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 AND row_type NOT IN ('skin', 'skin_image_chunk') ORDER BY local_seq ASC LIMIT ?3";
 const FETCH_ROWS_SQL: &str =
@@ -1059,24 +1486,66 @@ fn gap_page_rows(pace: Pace, budget: std::time::Duration) -> i64 {
     ((pace.rows as f64 * share).ceil() as i64).clamp(1, pace.rows.max(1))
 }
 
-/// Up to `limit` of the peer's rows with `gap_lo < local_seq < gap_hi`, highest first.
+/// Up to `limit` of the peer's rows with `gap_lo < local_seq < gap_hi`, highest first. With the runner's
+/// kind tags ([`RowFilter::query_kind_tags`]) the range is `window_lo < local_seq < gap_hi` and other kinds'
+/// tagged `items` rows are left out; on a relay without `kind_tag` it falls back to the plain allowlist
+/// over the whole gap. Returns the rows and whether the kind filter (and its window) applied.
+#[allow(clippy::too_many_arguments)]
 async fn fetch_gap_rows(
     conn: &Connection,
     peer_device_id: &str,
     gap_lo: i64,
+    window_lo: i64,
     gap_hi: i64,
     limit: i64,
     skip_skins: bool,
-) -> Result<Vec<RowEnvelope>, SyncEngineError> {
-    let sql = if skip_skins {
-        FETCH_GAP_ROWS_NO_SKINS_SQL
-    } else {
-        FETCH_GAP_ROWS_SQL
-    };
-    let rows = conn
-        .query(sql, params![peer_device_id, gap_hi, gap_lo, limit])
-        .await
-        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    filter: &RowFilter,
+) -> Result<(Vec<RowEnvelope>, bool), SyncEngineError> {
+    if let (Some(types), Some(tags)) = (filter.row_types.as_deref(), filter.query_kind_tags()) {
+        let mut values = vec![
+            Value::Text(peer_device_id.to_string()),
+            Value::Integer(gap_hi),
+            Value::Integer(window_lo),
+            Value::Integer(limit),
+        ];
+        values.extend(types.iter().map(|t| Value::Text(t.clone())));
+        values.extend(tags.iter().map(|t| Value::Text(t.clone())));
+        match query_envelopes(conn, &fetch_allowed_gap_rows_sql(types.len(), tags.len()), values).await {
+            Ok(envelopes) => return Ok((envelopes, true)),
+            Err(e) if filter.kind_tag_column_missing(&e) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    let rows = match filter.row_types.as_deref() {
+        Some(types) => {
+            let mut values = vec![
+                Value::Text(peer_device_id.to_string()),
+                Value::Integer(gap_hi),
+                Value::Integer(gap_lo),
+                Value::Integer(limit),
+            ];
+            values.extend(types.iter().map(|t| Value::Text(t.clone())));
+            conn.query(&fetch_allowed_gap_rows_sql(types.len(), 0), Params::Positional(values))
+                .await
+        }
+        None => {
+            let sql = if skip_skins {
+                FETCH_GAP_ROWS_NO_SKINS_SQL
+            } else {
+                FETCH_GAP_ROWS_SQL
+            };
+            conn.query(sql, params![peer_device_id, gap_hi, gap_lo, limit])
+                .await
+        }
+    }
+    .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    Ok((read_envelopes(rows).await?, false))
+}
+
+/// One kind-filtered page: the query and its rows, so a missing `kind_tag` column is caught wherever
+/// the relay reports it.
+async fn query_envelopes(conn: &Connection, sql: &str, values: Vec<Value>) -> Result<Vec<RowEnvelope>, SyncEngineError> {
+    let rows = conn.query(sql, Params::Positional(values)).await.map_err(query_err)?;
     read_envelopes(rows).await
 }
 
@@ -1103,24 +1572,104 @@ async fn peer_top_seq(
 }
 
 /// `skip_skins` leaves out skin rows at the query, so a puller that never applies them (the phone)
-/// never downloads their images.
+/// never downloads their images. An allowlist (`filter.row_types`) takes only those types instead. With
+/// the runner's kind tags the range is `since < local_seq <= window_hi` and other kinds' tagged `items`
+/// rows are left out; on a relay without `kind_tag` it falls back to the plain allowlist, unbounded.
+/// Returns the rows and whether the kind filter (and its window) applied.
 async fn fetch_rows_since(
     conn: &Connection,
     peer_device_id: &str,
     since_local_seq: i64,
+    window_hi: i64,
     limit: i64,
     skip_skins: bool,
-) -> Result<Vec<RowEnvelope>, SyncEngineError> {
-    let sql = if skip_skins {
-        FETCH_ROWS_NO_SKINS_SQL
-    } else {
-        FETCH_ROWS_SQL
+    filter: &RowFilter,
+) -> Result<(Vec<RowEnvelope>, bool), SyncEngineError> {
+    if let (Some(types), Some(tags)) = (filter.row_types.as_deref(), filter.query_kind_tags()) {
+        let mut values = vec![
+            Value::Text(peer_device_id.to_string()),
+            Value::Integer(since_local_seq),
+            Value::Integer(limit),
+        ];
+        values.extend(types.iter().map(|t| Value::Text(t.clone())));
+        values.push(Value::Integer(window_hi));
+        values.extend(tags.iter().map(|t| Value::Text(t.clone())));
+        match query_envelopes(conn, &fetch_allowed_rows_sql(types.len(), tags.len()), values).await {
+            Ok(envelopes) => return Ok((envelopes, true)),
+            Err(e) if filter.kind_tag_column_missing(&e) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    let rows = match filter.row_types.as_deref() {
+        Some(types) => {
+            let mut values = vec![
+                Value::Text(peer_device_id.to_string()),
+                Value::Integer(since_local_seq),
+                Value::Integer(limit),
+            ];
+            values.extend(types.iter().map(|t| Value::Text(t.clone())));
+            conn.query(&fetch_allowed_rows_sql(types.len(), 0), Params::Positional(values))
+                .await
+        }
+        None => {
+            let sql = if skip_skins {
+                FETCH_ROWS_NO_SKINS_SQL
+            } else {
+                FETCH_ROWS_SQL
+            };
+            conn.query(sql, params![peer_device_id, since_local_seq, limit])
+                .await
+        }
+    }
+    .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+    Ok((read_envelopes(rows).await?, false))
+}
+
+/// `FETCH_ROWS_SQL` for an allowlist of `type_count` row types, `?4..`. With `tag_count` kind tags
+/// (the runner), also `local_seq <= ?(4 + type_count)` and only `items` rows that are untagged or carry
+/// one of the tags, `?(5 + type_count)..`. Without tags the SQL is exactly the plain allowlist's.
+fn fetch_allowed_rows_sql(type_count: usize, tag_count: usize) -> String {
+    let kind_filter = match tag_count {
+        0 => String::new(),
+        n => format!(
+            " AND local_seq <= ?{} {}",
+            4 + type_count,
+            kind_tag_condition(5 + type_count, n)
+        ),
     };
-    let rows = conn
-        .query(sql, params![peer_device_id, since_local_seq, limit])
-        .await
-        .map_err(|e| SyncEngineError::Query(e.to_string()))?;
-    read_envelopes(rows).await
+    format!(
+        "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 \
+         AND row_type IN ({}){kind_filter} ORDER BY local_seq ASC LIMIT ?3",
+        numbered_placeholders(4, type_count)
+    )
+}
+
+/// `FETCH_GAP_ROWS_SQL` for an allowlist of `type_count` row types, `?5..`. With `tag_count` kind tags,
+/// also the kind condition of [`fetch_allowed_rows_sql`], `?(5 + type_count)..` (the window is `?3`).
+fn fetch_allowed_gap_rows_sql(type_count: usize, tag_count: usize) -> String {
+    let kind_filter = match tag_count {
+        0 => String::new(),
+        n => format!(" {}", kind_tag_condition(5 + type_count, n)),
+    };
+    format!(
+        "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq < ?2 \
+         AND local_seq > ?3 AND row_type IN ({}){kind_filter} ORDER BY local_seq DESC LIMIT ?4",
+        numbered_placeholders(5, type_count)
+    )
+}
+
+/// Every row but an `items` row tagged with a kind not asked for. An untagged row (old client, old row,
+/// failed ALTER) is always taken and filtered after decrypting, as before tags.
+fn kind_tag_condition(first: usize, count: usize) -> String {
+    format!(
+        "AND (row_type != '{ROW_TYPE_ITEMS}' OR kind_tag IS NULL OR kind_tag IN ({}))",
+        numbered_placeholders(first, count)
+    )
+}
+
+/// `?first, ?first+1, ...`, `count` of them.
+fn numbered_placeholders(first: usize, count: usize) -> String {
+    (first..first + count).map(|i| format!("?{i}")).collect::<Vec<_>>().join(", ")
 }
 
 async fn read_envelopes(mut rows: libsql::Rows) -> Result<Vec<RowEnvelope>, SyncEngineError> {
@@ -1199,10 +1748,18 @@ fn apply_parent_row(
     row_type: &str,
     plaintext: &[u8],
 ) -> Result<(), SyncEngineError> {
+    // A build from before the tombstone row types skipped them as unknown (tests simulate it).
+    if old_build_puller() && TOMBSTONE_ROW_TYPES.contains(&row_type) {
+        return Ok(());
+    }
     let local_id = match row_type {
         ROW_TYPE_CAPTURE_ITEM => {
             let item: memory::AppliedCaptureItem =
                 serde_json::from_slice(plaintext).map_err(|_| SyncEngineError::Crypto)?;
+            let (kind, id) = memory::client_forget::pulled_capture_identity(peer_device_id, local_seq);
+            if client_forgotten(store, kind, &id)? {
+                return Ok(());
+            }
             store
                 .apply_synced_capture_item(peer_device_id, local_seq, &item)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?
@@ -1308,6 +1865,9 @@ fn apply_parent_row(
                 // Applying it here with thread_id = None would orphan it permanently.
                 return Ok(());
             }
+            if forgotten_item(store, peer_device_id, local_seq, &payload.item)? {
+                return Ok(());
+            }
             store
                 .apply_synced_item(peer_device_id, local_seq, None, &payload.item)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?
@@ -1360,6 +1920,13 @@ fn apply_parent_row(
             let Ok(row) = serde_json::from_slice::<memory::prep::MeetingPrepRow>(plaintext) else {
                 return Ok(());
             };
+            // The brief of a calendar event a client delete forgot.
+            if store
+                .is_meeting_prep_forgotten(&row.event_id)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?
+            {
+                return Ok(());
+            }
             store
                 .apply_synced_meeting_prep(&row)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
@@ -1529,6 +2096,11 @@ fn apply_parent_row(
             else {
                 return Ok(());
             };
+            if forgotten_seed(store, verdict.topic_key.as_deref())?
+                || forgotten_source(store, &verdict.source_key)?
+            {
+                return Ok(());
+            }
             store
                 .apply_synced_topic_verdict(&verdict)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
@@ -1541,6 +2113,16 @@ fn apply_parent_row(
             else {
                 return Ok(());
             };
+            if client_forgotten(
+                store,
+                memory::ClientItemKind::Step.as_str(),
+                &memory::client_forget::topic_key_opaque_id(&step.key),
+            )?
+                || forgotten_seed(store, Some(&step.topic_key))?
+                || forgotten_source(store, &step.source_key)?
+            {
+                return Ok(());
+            }
             store
                 .apply_synced_topic_step(&step)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
@@ -1552,6 +2134,16 @@ fn apply_parent_row(
             else {
                 return Ok(());
             };
+            if client_forgotten(
+                store,
+                memory::ClientItemKind::Extraction.as_str(),
+                &memory::client_forget::topic_key_opaque_id(&extraction.source_key),
+            )?
+                || forgotten_seed(store, extraction.topic_key.as_deref())?
+                || forgotten_source(store, &extraction.source_key)?
+            {
+                return Ok(());
+            }
             store
                 .apply_synced_topic_extraction(&extraction)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
@@ -1563,6 +2155,9 @@ fn apply_parent_row(
             else {
                 return Ok(());
             };
+            if forgotten_seed(store, Some(&role.topic_key))? {
+                return Ok(());
+            }
             store
                 .apply_synced_topic_role(&role)
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
@@ -1586,6 +2181,9 @@ fn apply_parent_row(
             else {
                 return Ok(());
             };
+            if forgotten_seed(store, Some(&snap.topic_key))? {
+                return Ok(());
+            }
             store
                 .apply_synced_topic_page_snapshot(&snap, now_unix_ms())
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?;
@@ -1604,6 +2202,33 @@ fn apply_parent_row(
                 .map_err(|e| SyncEngineError::Query(e.to_string()))?
             {
                 push_forgotten_meeting_files(files);
+            }
+            return Ok(());
+        }
+        ROW_TYPE_CLIENT_ITEM_FORGOTTEN => {
+            // A client delete: removes this device's copy and remembers its id, so a late copy is dropped.
+            // Kept on the relay forever (untagged, never compacted), so a device joining later learns it too.
+            // No client item owns a file on a peer (a meeting's files go through `meeting_forgotten`).
+            let Ok(forgotten) = serde_json::from_slice::<memory::ClientItemForgotten>(plaintext)
+            else {
+                return Ok(());
+            };
+            store
+                .apply_client_item_forgotten(&forgotten)
+                .map_err(|e| SyncEngineError::Query(e.to_string()))?;
+            return Ok(());
+        }
+        ROW_TYPE_TOPIC_SEED_PURGED => {
+            // A deleted client's seed: hard-deleted here with its topic content, whatever version is here.
+            let Ok(seed) =
+                serde_json::from_slice::<memory::topics::seeds::TopicSeedPayload>(plaintext)
+            else {
+                return Ok(());
+            };
+            if seed.purged {
+                store
+                    .apply_synced_topic_seed(&seed)
+                    .map_err(|e| SyncEngineError::Query(e.to_string()))?;
             }
             return Ok(());
         }
@@ -1643,6 +2268,42 @@ fn forgotten_child(
         && store
             .is_meeting_forgotten(origin_device_id, origin_epoch, source_id)
             .map_err(|e| q(&e))?)
+}
+
+/// Whether a client delete forgot `kind`/`id` (see `memory::client_forget`): a late copy is dropped.
+fn client_forgotten(store: &Store, kind: &str, id: &str) -> Result<bool, SyncEngineError> {
+    store
+        .is_client_item_forgotten(kind, id)
+        .map_err(|e| SyncEngineError::Query(e.to_string()))
+}
+
+/// A pulled `items` row of a client item a delete forgot (a capture, calendar event or email).
+fn forgotten_item(
+    store: &Store,
+    origin_device_id: &str,
+    local_seq: i64,
+    item: &memory::AppliedItem,
+) -> Result<bool, SyncEngineError> {
+    match memory::client_forget::pulled_item_identity(origin_device_id, local_seq, item) {
+        Some((kind, id)) => client_forgotten(store, kind, &id),
+        None => Ok(false),
+    }
+}
+
+/// A topic row of a seed topic a client delete purged.
+fn forgotten_seed(store: &Store, topic_key: Option<&str>) -> Result<bool, SyncEngineError> {
+    match topic_key {
+        Some(key) => client_forgotten(store, memory::client_forget::FORGOTTEN_SEED_KIND, key),
+        None => Ok(false),
+    }
+}
+
+/// A topic row about a source a client delete forgot (an email, by its `email:{gmail id}` key).
+fn forgotten_source(store: &Store, source_key: &str) -> Result<bool, SyncEngineError> {
+    match source_key.strip_prefix("email:") {
+        Some(id) => client_forgotten(store, memory::ClientItemKind::Email.as_str(), id),
+        None => Ok(false),
+    }
 }
 
 /// Files of meetings a pulled tombstone deleted here, for the app to remove (sync-engine knows no recordings
@@ -1781,6 +2442,331 @@ pub(crate) async fn delete_forgotten_meeting_rows(
     }
 }
 
+/// The row types that delete something everywhere. A build that did not know one skipped its rows and moved
+/// its cursor past them for good, so a build that knows them reads them all again once ([`catch_up_tombstones`]).
+const TOMBSTONE_ROW_TYPES: [&str; 3] = [
+    ROW_TYPE_MEETING_FORGOTTEN,
+    ROW_TYPE_CLIENT_ITEM_FORGOTTEN,
+    ROW_TYPE_TOPIC_SEED_PURGED,
+];
+
+/// The set of [`TOMBSTONE_ROW_TYPES`] this build knows; bump it when one is added, so every device reads them
+/// all again once.
+const TOMBSTONE_TYPES_VERSION: &str = "1";
+
+/// kv: the [`TOMBSTONE_TYPES_VERSION`] this database has caught up to, with every peer done.
+const TOMBSTONE_CATCH_UP_KEY: &str = "sync_tombstone_types_caught_up";
+
+/// kv per peer: how far the catch-up has read that peer's rows (`local_seq`), or `done`.
+fn catch_up_peer_key(peer: &str) -> String {
+    format!("sync_tombstone_catch_up:{TOMBSTONE_TYPES_VERSION}:{peer}")
+}
+
+/// One page of a peer's tombstone rows in `(?2, ?3]` of `local_seq`: a seek on the primary key's
+/// `(device_id, local_seq)` prefix, filtered to the three types. The window bounds what one query reads, so a peer
+/// with millions of other rows between two tombstones still moves forward query by query. Over pages and windows
+/// it reads every row of the peer, once per database per tombstone-types version.
+const CATCH_UP_SQL: &str = "SELECT local_seq, row_type, ciphertext FROM sync_row \
+     WHERE device_id = ?1 AND local_seq > ?2 AND local_seq <= ?3 AND row_type IN (?4, ?5, ?6) ORDER BY local_seq LIMIT ?7";
+
+/// A peer's highest `local_seq`: where its catch-up is done.
+const CATCH_UP_END_SQL: &str = "SELECT MAX(local_seq) FROM sync_row WHERE device_id = ?1";
+
+const CATCH_UP_PAGE: i64 = 500;
+
+/// How many `local_seq` values one catch-up query spans.
+const CATCH_UP_SPAN: i64 = 20_000;
+
+/// How many `local_seq` values one kind-filtered pull query spans (the runner). Without a window, a peer with
+/// few rows of the kinds asked for makes one query scan its whole remaining range before it fills LIMIT
+/// (no index covers `kind_tag`). A window bounds the rows one query reads; a short window moves the cursor
+/// (or the gap's top) to its end, and the pass goes on to the next window while its budget lasts.
+/// 50k comes from a local SQLite measurement, not Turso: tune it from the relay's rows-read and per-query latency.
+const FILTERED_PULL_SPAN: i64 = 50_000;
+
+/// The most one round spends catching up, well inside `SYNC_TIMEOUT`; the rest resumes next round. Checked after
+/// every row, and progress is saved row by row, so a round that runs out mid-page keeps what it did (X6 final
+/// review, Major 12).
+const CATCH_UP_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A hard stop past the budget for a relay read that never returns (one bounded query or row): what was saved
+/// before it stays. Kept small: the catch-up runs before the round's live ranges, inside `SYNC_TIMEOUT`.
+const CATCH_UP_BACKSTOP_SLACK: std::time::Duration = std::time::Duration::from_secs(3);
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: this thread pulls as a build from before the tombstone row types (it skips them, no catch-up).
+    pub(crate) static OLD_BUILD_PULLER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests: the catch-up fails for this peer.
+    pub(crate) static CATCH_UP_FAILS_FOR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// Tests: the catch-up budget, and a delay per row (a slow relay).
+    pub(crate) static CATCH_UP_TEST_PACE: std::cell::Cell<Option<(std::time::Duration, std::time::Duration)>> =
+        const { std::cell::Cell::new(None) };
+    /// Tests: the span of one filtered pull query.
+    pub(crate) static FILTERED_PULL_TEST_SPAN: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+    /// Tests: the span of one catch-up query.
+    pub(crate) static CATCH_UP_TEST_SPAN: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Whether this puller predates the tombstone row types (only ever true in tests).
+fn old_build_puller() -> bool {
+    #[cfg(test)]
+    return OLD_BUILD_PULLER.with(|c| c.get());
+    #[cfg(not(test))]
+    false
+}
+
+/// The catch-up budget and the delay per row (none outside tests).
+fn catch_up_pace() -> (std::time::Duration, Option<std::time::Duration>) {
+    #[cfg(test)]
+    if let Some((budget, delay)) = CATCH_UP_TEST_PACE.with(|c| c.get()) {
+        return (budget, Some(delay));
+    }
+    (CATCH_UP_BUDGET, None)
+}
+
+fn filtered_pull_span() -> i64 {
+    #[cfg(test)]
+    if let Some(span) = FILTERED_PULL_TEST_SPAN.with(|c| c.get()) {
+        return span.max(1);
+    }
+    FILTERED_PULL_SPAN
+}
+
+fn catch_up_span() -> i64 {
+    #[cfg(test)]
+    if let Some(span) = CATCH_UP_TEST_SPAN.with(|c| c.get()) {
+        return span;
+    }
+    CATCH_UP_SPAN
+}
+
+/// Reads every tombstone row from every peer once per database and [`TOMBSTONE_TYPES_VERSION`], so a device
+/// that pulled them on an older build (which skipped them and moved its cursor past) applies them now. Leaves
+/// cursors alone; progress is saved per peer after every row, so a long catch-up spreads over rounds within
+/// [`CATCH_UP_BUDGET`] and always moves forward. Never fails the pull: a failure is logged and that peer resumes
+/// next round. The database is marked caught up only once every peer is done.
+async fn catch_up_tombstones(conn: &Connection, group_key: &GroupKey, store: &Store, own_device_id: &str) {
+    if old_build_puller()
+        || store.get_meta(TOMBSTONE_CATCH_UP_KEY).ok().flatten().as_deref() == Some(TOMBSTONE_TYPES_VERSION)
+    {
+        return;
+    }
+    let (budget, delay) = catch_up_pace();
+    let deadline = std::time::Instant::now() + budget;
+    let all = async {
+        let mut all_done = true;
+        for peer in distinct_peer_device_ids(conn, own_device_id).await? {
+            match catch_up_peer(conn, group_key, store, &peer, deadline, delay).await {
+                Ok(true) => {}
+                // Out of time: the rest resumes next round, from what was saved.
+                Ok(false) => {
+                    all_done = false;
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("[sync] tombstone catch-up for a peer resumes next round: {e}");
+                    all_done = false;
+                }
+            }
+        }
+        Ok::<bool, SyncEngineError>(all_done)
+    };
+    match tokio::time::timeout(budget + CATCH_UP_BACKSTOP_SLACK, all).await {
+        Ok(Ok(true)) => {
+            if let Err(e) = store.set_meta(TOMBSTONE_CATCH_UP_KEY, TOMBSTONE_TYPES_VERSION) {
+                eprintln!("[sync] tombstone catch-up not recorded: {e}");
+            }
+        }
+        Ok(Ok(false)) => eprintln!("[sync] tombstone catch-up resumes next round"),
+        Ok(Err(e)) => eprintln!("[sync] tombstone catch-up resumes next round: {e}"),
+        Err(_) => eprintln!("[sync] tombstone catch-up resumes next round: a relay read took too long"),
+    }
+}
+
+/// One peer's catch-up, window by window from its saved progress, which is saved after every row handled (or
+/// skipped) and at the end of every window. `Ok(true)`: done; `Ok(false)`: `deadline` passed first (at least one
+/// row or window is always handled, so every round moves forward).
+async fn catch_up_peer(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    peer: &str,
+    deadline: std::time::Instant,
+    delay: Option<std::time::Duration>,
+) -> Result<bool, SyncEngineError> {
+    let q = |e: &dyn std::fmt::Display| SyncEngineError::Query(e.to_string());
+    #[cfg(test)]
+    if CATCH_UP_FAILS_FOR.with(|c| c.borrow().as_deref() == Some(peer)) {
+        return Err(SyncEngineError::Query("injected".into()));
+    }
+    let key = catch_up_peer_key(peer);
+    let mut after = match store.get_meta(&key).map_err(|e| q(&e))?.as_deref() {
+        Some("done") => return Ok(true),
+        Some(seq) => seq.parse::<i64>().unwrap_or(0),
+        None => 0,
+    };
+    let end: i64 = {
+        let mut rows = conn.query(CATCH_UP_END_SQL, params![peer]).await.map_err(|e| q(&e))?;
+        match rows.next().await.map_err(|e| q(&e))? {
+            Some(row) => row.get::<Option<i64>>(0).map_err(|e| q(&e))?.unwrap_or(0),
+            None => 0,
+        }
+    };
+    let span = catch_up_span().max(1);
+    loop {
+        if after >= end {
+            store.set_meta(&key, "done").map_err(|e| q(&e))?;
+            return Ok(true);
+        }
+        let window_end = after.saturating_add(span).min(end);
+        let mut rows = conn
+            .query(
+                CATCH_UP_SQL,
+                params![
+                    peer,
+                    after,
+                    window_end,
+                    TOMBSTONE_ROW_TYPES[0],
+                    TOMBSTONE_ROW_TYPES[1],
+                    TOMBSTONE_ROW_TYPES[2],
+                    CATCH_UP_PAGE
+                ],
+            )
+            .await
+            .map_err(|e| q(&e))?;
+        let mut page = 0;
+        while let Some(row) = rows.next().await.map_err(|e| q(&e))? {
+            page += 1;
+            let local_seq: i64 = row.get(0).map_err(|e| q(&e))?;
+            let row_type: String = row.get(1).map_err(|e| q(&e))?;
+            let ciphertext: String = row.get(2).map_err(|e| q(&e))?;
+            if let Some(d) = delay {
+                tokio::time::sleep(d).await;
+            }
+            let plaintext = STANDARD.decode(&ciphertext).ok().and_then(|c| {
+                let aad = content_row_aad(peer, local_seq, &row_type);
+                sync::decrypt_payload(group_key, &c, &aad).ok()
+            });
+            if let Some(plaintext) = plaintext {
+                if !replay_would_reach_a_newer_meeting(store, &row_type, &plaintext)? {
+                    apply_parent_row(store, peer, local_seq, &row_type, &plaintext)?;
+                }
+            }
+            // Handled (or skipped for good): saved at once, so a round cut short keeps it.
+            after = local_seq;
+            store.set_meta(&key, &after.to_string()).map_err(|e| q(&e))?;
+            if std::time::Instant::now() >= deadline {
+                return Ok(false);
+            }
+        }
+        if page < CATCH_UP_PAGE {
+            // The window is read to its end.
+            after = window_end;
+            store.set_meta(&key, &after.to_string()).map_err(|e| q(&e))?;
+        }
+        if after < end && std::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+    }
+}
+
+/// A replayed `meeting_forgotten` without an origin epoch (from a build before epochs) matches any meeting
+/// with that origin and id, and a long-delayed replay could reach a meeting a re-created database later
+/// reused the id for. Such a tombstone applies on replay only when it names the start of the meeting mapped
+/// here; otherwise it is skipped (the meeting it meant was never here, or is a different one).
+fn replay_would_reach_a_newer_meeting(
+    store: &Store,
+    row_type: &str,
+    plaintext: &[u8],
+) -> Result<bool, SyncEngineError> {
+    if row_type != ROW_TYPE_MEETING_FORGOTTEN {
+        return Ok(false);
+    }
+    let Ok(t) = serde_json::from_slice::<memory::MeetingForgotten>(plaintext) else {
+        return Ok(false);
+    };
+    if t.origin_epoch.is_some() || store.own_device_id().as_deref() == Some(t.origin_device_id.as_str()) {
+        return Ok(false);
+    }
+    let q = |e: &dyn std::fmt::Display| SyncEngineError::Query(e.to_string());
+    let Some(local) = store
+        .resolve_sync_meeting_map(&t.origin_device_id, t.source_meeting_id)
+        .map_err(|e| q(&e))?
+    else {
+        return Ok(false);
+    };
+    let start = store.get_meeting(local).map_err(|e| q(&e))?.map(|m| m.start_unix_ms);
+    Ok(t.source_start_unix_ms.is_none() || start != t.source_start_unix_ms)
+}
+
+/// Rewrites the raw calendar identities a client delete left in `client_relay_cleanup` into this device's
+/// entity tags (the relay's own form, keyed by the group key), so no raw calendar id outlives one round. Runs
+/// at the start of every round, whether or not the tagged rows can be deleted yet. Best effort.
+pub fn seal_client_cleanup(store: &Store, group_key: &GroupKey, own_device_id: &str) {
+    let sealed = store
+        .sync_entity_epoch()
+        .and_then(|epoch| store.seal_client_relay_cleanup(|identity| tag_for(group_key, own_device_id, &epoch, identity)));
+    if let Err(e) = sealed {
+        eprintln!("[sync] client cleanup targets not sealed this round: {e}");
+    }
+}
+
+/// This device's relay row of a forgotten item by primary key, created within the forget's bounds (an
+/// earlier database's row at a reused `local_seq` is older; nothing later is one of the forgotten rows).
+const CLIENT_SEQ_DELETE_SQL: &str = "DELETE FROM sync_row WHERE device_id = ?1 AND local_seq = ?2 \
+     AND row_type = ?3 AND created_at_unix_ms BETWEEN ?4 AND ?5";
+
+/// This device's tagged relay rows of a forgotten calendar event created up to the forget: a seek on the ops
+/// index. A row re-filed under the same identity after the forget survives.
+const CLIENT_TAG_DELETE_SQL: &str =
+    "DELETE FROM sync_row WHERE device_id = ?1 AND entity_tag = ?2 AND created_at_unix_ms <= ?3";
+
+/// Deletes this device's own relay rows of items a client delete forgot (its own delete, or a peer's tombstone
+/// naming its rows): rows it sent through the outbox and its own captures by primary key, its own calendar
+/// events by sealed entity tag once the ops index exists. Only `device_id = own` rows, each bounded by the
+/// forget time. Best effort and time-boxed like `delete_forgotten_meeting_rows`: what is left stays recorded
+/// for the next round.
+pub(crate) async fn delete_forgotten_client_rows(conn: &Connection, store: &Store, own_device_id: &str) {
+    let delete_all = async {
+        let targets = store
+            .client_relay_cleanup(FORGOTTEN_ROWS_PER_ROUND)
+            .map_err(|e| e.to_string())?;
+        let tags_ready = ENTITY_TAG_COLUMN_SEEN.get() && compaction_index_ready(conn).await;
+        for (target, not_before, not_after) in targets {
+            if let Some(rest) = target.strip_prefix("seq:") {
+                let (row_type, seq) = rest.rsplit_once(':').ok_or("unreadable cleanup target")?;
+                let seq: i64 = seq.parse().map_err(|_| "unreadable cleanup target")?;
+                conn.execute(
+                    CLIENT_SEQ_DELETE_SQL,
+                    params![own_device_id, seq, row_type, not_before, not_after],
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            } else if let Some(tag) = target.strip_prefix("tag:") {
+                if !tags_ready {
+                    continue;
+                }
+                conn.execute(CLIENT_TAG_DELETE_SQL, params![own_device_id, tag, not_after])
+                    .await
+                    .map_err(|e| e.to_string())?;
+            } else {
+                // `raw:`: sealed at the start of the next round.
+                continue;
+            }
+            store
+                .clear_client_relay_cleanup(std::slice::from_ref(&target))
+                .map_err(|e| e.to_string())?;
+        }
+        Ok::<(), String>(())
+    };
+    match tokio::time::timeout(FORGOTTEN_CLEANUP_TIMEOUT, delete_all).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => eprintln!("[sync] forgotten client rows kept for the next round: {e}"),
+        Err(_) => eprintln!("[sync] forgotten client rows kept for the next round: no reply within {FORGOTTEN_CLEANUP_TIMEOUT:?}"),
+    }
+}
+
 /// Discovers every peer device with rows in `sync_row` and applies everything new
 /// since this device's own `sync_cursor` for that peer, per the two-pass FK
 /// resolution this task's module doc describes.
@@ -1819,6 +2805,173 @@ pub struct PullOptions {
     /// transcripts, calendar events and every other row type are never windowed.
     /// `None` applies everything.
     pub capture_window_ms: Option<i64>,
+    /// Pull only these row types (the cloud runner's grant); `None` pulls every type. An entry is a row
+    /// type (`meeting`, `routine_run`, `items`, ...) or one kind of `items` row (`items:capture`,
+    /// `items:calendar_event`, `items:transcript`), which also takes that kind's legacy row type
+    /// (`capture_item`, `transcript_segment`). A transcript grant without `meeting` applies only the
+    /// meetings its applied lines belong to (fetched by key), never the rest: meeting rows are still read
+    /// (a line names its meeting only inside the ciphertext), but only their key is kept. Tombstones
+    /// (`meeting_forgotten`, `client_item_forgotten`, `topic_seed_purged`) and marker rows are always
+    /// pulled. The row type is filtered at the query, and so is the item kind of a row tagged with one
+    /// (`kind_tag`); an untagged row's kind is checked after decrypting, as is every row's; a row left out
+    /// still moves the cursor past it, so this is for a store that is never pulled without it (the
+    /// runner's per-run store).
+    pub row_type_allowlist: Option<Vec<String>>,
+    /// Skip `items` rows of every kind, and legacy `capture_item` rows, whose own `ts_unix_ms` is older
+    /// than now minus this many ms (dated by the item, so a future calendar event is always kept).
+    /// A meeting is dated by its start: one started before the window is applied only as the parent of an
+    /// applied transcript line. Tombstones are never windowed. `None` applies everything.
+    pub item_window_ms: Option<i64>,
+    /// Apply a `calendar_event` item only when its stored source is known and is not Google Calendar (the
+    /// cloud runner: Google Calendar text stays off it until Google verification). An event with no
+    /// source is treated as Google's. A row left out still moves the cursor past it. `false` (the
+    /// default) applies every calendar event.
+    pub non_google_calendar_only: bool,
+}
+
+/// The row types an allowlist always takes: what deletes something, and the markers.
+const ALWAYS_PULLED_ROW_TYPES: [&str; 9] = [
+    ROW_TYPE_MEETING_FORGOTTEN,
+    ROW_TYPE_CLIENT_ITEM_FORGOTTEN,
+    ROW_TYPE_TOPIC_SEED_PURGED,
+    ROW_TYPE_DEVICE_RETIRED,
+    ROW_TYPE_ITEMS_CAPABILITY,
+    ROW_TYPE_TOPICS_CAPABILITY,
+    ROW_TYPE_TOPIC_PAGE_CAPABILITY,
+    ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY,
+    ROW_TYPE_CLIENT_CONTROLS_CAPABILITY,
+];
+
+/// What one pull round takes, from [`PullOptions`]: the row types asked for at the query (`None`: all),
+/// the `items` kinds applied (`None`: all), and the two time cutoffs.
+#[derive(Debug, Default)]
+struct RowFilter {
+    row_types: Option<Vec<String>>,
+    item_kinds: Option<Vec<String>>,
+    /// The `kind_tag`s of `item_kinds` when it restricts kinds (the runner), so the relay query leaves
+    /// out other kinds' tagged rows; `None` when every kind is wanted.
+    kind_tags: Option<Vec<String>>,
+    /// This round found the relay's `sync_row` has no `kind_tag`: the rest of it queries without tags.
+    no_kind_tag_column: AtomicBool,
+    capture_cutoff: Option<i64>,
+    item_cutoff: Option<i64>,
+    /// `meeting` is pulled only as the parent of a granted transcript (it was not granted itself): a meeting
+    /// row is not applied, only remembered by key ([`remember_parent_meeting`]), and fetched by that key
+    /// when an applied transcript line needs it.
+    meetings_as_parents_only: bool,
+    non_google_calendar_only: bool,
+}
+
+impl RowFilter {
+    fn new(options: &PullOptions, skip_skins: bool, now_unix_ms: i64, group_key: &GroupKey) -> Self {
+        let mut filter = RowFilter {
+            capture_cutoff: options.capture_window_ms.map(|w| now_unix_ms - w),
+            item_cutoff: options.item_window_ms.map(|w| now_unix_ms - w),
+            non_google_calendar_only: options.non_google_calendar_only,
+            ..Default::default()
+        };
+        let Some(allowlist) = &options.row_type_allowlist else {
+            return filter;
+        };
+        let mut types: Vec<String> = Vec::new();
+        let mut kinds: Vec<String> = Vec::new();
+        let mut every_kind = false;
+        let explicit_meeting = allowlist.iter().any(|e| e == ROW_TYPE_MEETING);
+        let add = |t: &str, types: &mut Vec<String>| {
+            if !types.iter().any(|have| have == t) {
+                types.push(t.to_string());
+            }
+        };
+        for entry in allowlist {
+            match entry.strip_prefix("items:") {
+                Some(kind) => {
+                    add(ROW_TYPE_ITEMS, &mut types);
+                    if !kinds.iter().any(|k| k == kind) {
+                        kinds.push(kind.to_string());
+                    }
+                    match kind {
+                        "capture" => add(ROW_TYPE_CAPTURE_ITEM, &mut types),
+                        "transcript" => {
+                            add(ROW_TYPE_TRANSCRIPT_SEGMENT, &mut types);
+                            add(ROW_TYPE_MEETING, &mut types);
+                        }
+                        _ => {}
+                    }
+                }
+                None => {
+                    every_kind |= entry == ROW_TYPE_ITEMS;
+                    add(entry, &mut types);
+                    if entry == ROW_TYPE_TRANSCRIPT_SEGMENT || entry == ROW_TYPE_ITEMS {
+                        add(ROW_TYPE_MEETING, &mut types);
+                    }
+                }
+            }
+        }
+        for t in ALWAYS_PULLED_ROW_TYPES {
+            add(t, &mut types);
+        }
+        if skip_skins {
+            types.retain(|t| t != ROW_TYPE_SKIN && t != ROW_TYPE_SKIN_IMAGE_CHUNK);
+        }
+        filter.meetings_as_parents_only = !explicit_meeting && types.iter().any(|t| t == ROW_TYPE_MEETING);
+        filter.row_types = Some(types);
+        filter.kind_tags = (!every_kind && !kinds.is_empty())
+            .then(|| kinds.iter().map(|kind| sync::kind_tag(group_key, kind)).collect());
+        filter.item_kinds = (!every_kind).then_some(kinds);
+        filter
+    }
+
+    /// The kind tags to put in the relay query: none without a kind restriction, or once this pull has
+    /// found the relay without the column (the filter lives for one round). Never decided by `KIND_TAG_COLUMN_SEEN` (the runner's relay
+    /// may not have it whatever this process saw); a query that finds no column falls back instead.
+    fn query_kind_tags(&self) -> Option<&[String]> {
+        if self.no_kind_tag_column.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.kind_tags.as_deref()
+    }
+
+    /// Whether a kind-filtered query failed only because the relay has no `kind_tag`; if so, the rest of
+    /// this round queries without tags (the post-decrypt kind check still filters).
+    fn kind_tag_column_missing(&self, error: &SyncEngineError) -> bool {
+        let missing = is_no_such_kind_tag_column(&error.to_string());
+        if missing && !self.no_kind_tag_column.swap(true, Ordering::Relaxed) {
+            eprintln!("[sync] the relay has no kind_tag column: this round fetches every item kind");
+        }
+        missing
+    }
+
+    fn kind_allowed(&self, kind: &str) -> bool {
+        self.item_kinds.as_ref().is_none_or(|kinds| kinds.iter().any(|k| k == kind))
+    }
+
+    /// A calendar event this pull leaves out for its source (see `PullOptions::non_google_calendar_only`).
+    fn drops_calendar_source(&self, kind: &str, source: Option<&str>) -> bool {
+        self.non_google_calendar_only
+            && kind == "calendar_event"
+            && source.map(str::trim).is_none_or(|s| s.is_empty() || s == "google_calendar")
+    }
+
+    /// An `items` row of `kind` dated `ts_unix_ms` is outside a window.
+    fn outside_item_window(&self, kind: &str, ts_unix_ms: i64) -> bool {
+        let before = |cutoff: Option<i64>| cutoff.is_some_and(|c| ts_unix_ms < c);
+        before(self.item_cutoff) || (kind == "capture" && before(self.capture_cutoff))
+    }
+
+    /// Whether a legacy `capture_item` row has to be decoded for its date.
+    fn windows_captures(&self) -> bool {
+        self.capture_cutoff.is_some() || self.item_cutoff.is_some()
+    }
+
+    /// Whether a meeting row is held back from applying: pulled only as a parent, or (with an item window)
+    /// started before it. Never with `Default` options.
+    fn holds_meetings(&self) -> bool {
+        self.meetings_as_parents_only || self.item_cutoff.is_some()
+    }
+
+    fn meeting_held(&self, start_unix_ms: i64) -> bool {
+        self.meetings_as_parents_only || self.item_cutoff.is_some_and(|c| start_unix_ms < c)
+    }
 }
 
 /// [`pull_content_with_options`] for a pull-only peer (the phone, which has no skins): skin rows are
@@ -1846,6 +2999,99 @@ pub(crate) async fn pull_content_without_skins(
     )
     .await
     .map(|more| MORE_TO_PULL.store(more, std::sync::atomic::Ordering::Relaxed))
+}
+
+/// One pull round of the cloud runner: as the phone's (no skins, newest first), at the catch-up pace,
+/// since its store starts empty every run. Returns whether rows are still waiting (an open gap), and
+/// how many rows the round applied and fetched.
+pub(crate) async fn runner_pull_round(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    own_device_id: &str,
+    options: &PullOptions,
+) -> Result<(bool, usize, usize), SyncEngineError> {
+    let mut stats = Vec::new();
+    let result = pull_round_mode(conn, group_key, store, own_device_id, CATCH_UP_PACE, options, true, true, &mut stats).await;
+    if let (Ok(json), Ok(mut last)) = (serde_json::to_string(&stats), LAST_PULL_STATS.lock()) {
+        *last = json;
+    }
+    let applied = stats.iter().map(|s| s.applied).sum();
+    let fetched = stats.iter().map(|s| s.fetched + s.gap_fetched).sum();
+    result.map(|more| (more, applied, fetched))
+}
+
+/// Whether every other device on the relay has announced the topics capability. A sender holds its client
+/// settings and filings (`topic_seed`, `topic_verdict`) back while any device lacks it, so until then a pull
+/// that read every row can still be missing an exclusion: the cloud runner must not treat "no client
+/// settings read" as "nothing excluded".
+pub(crate) async fn client_settings_published(conn: &Connection, own_device_id: &str) -> Result<bool, SyncEngineError> {
+    Ok(peers_without_marker(conn, own_device_id, ROW_TYPE_TOPICS_CAPABILITY).await?.is_empty())
+}
+
+/// The cloud runner's own earlier results: the `row_types` rows (of `routine_run` and `meeting_prep`) this
+/// device sent in earlier runs, read back into its new store as a peer's would be. Its store starts empty
+/// each run and a pull reads only other devices, so without them a second run the same day (a retry, or
+/// a later job for meeting prep) would not see today's brief or a meeting's brief and would write it
+/// again. A row that does not decrypt or apply is skipped. Returns how many applied.
+pub(crate) async fn read_own_results(
+    conn: &Connection,
+    group_key: &GroupKey,
+    store: &Store,
+    own_device_id: &str,
+    row_types: &[&str],
+) -> Result<usize, SyncEngineError> {
+    let row_types: Vec<&str> = row_types.iter().copied().filter(|t| [ROW_TYPE_ROUTINE_RUN, ROW_TYPE_MEETING_PREP].contains(t)).collect();
+    if row_types.is_empty() {
+        return Ok(0);
+    }
+    let placeholders = (0..row_types.len()).map(|i| format!("?{}", i + 2)).collect::<Vec<_>>().join(", ");
+    let sql = format!("SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND row_type IN ({placeholders}) ORDER BY local_seq");
+    let mut values = vec![Value::Text(own_device_id.to_string())];
+    values.extend(row_types.iter().map(|t| Value::Text(t.to_string())));
+    let rows = conn.query(&sql, Params::Positional(values)).await.map_err(query_err)?;
+    let mut applied = 0;
+    for env in read_envelopes(rows).await? {
+        let Some(plaintext) = decrypt_row(group_key, own_device_id, &env) else { continue };
+        if apply_parent_row(store, own_device_id, env.local_seq, &env.row_type, &plaintext).is_ok() {
+            applied += 1;
+        }
+    }
+    Ok(applied)
+}
+
+/// For the cloud runner's store, which is new every run: no cursor of it has moved past a tombstone, so its
+/// live ranges read every tombstone row from the start, as any first pull does. The once-per-database
+/// catch-up exists for a device whose cursor an older build moved past tombstones; redone from zero every run
+/// (the store is in memory) it spends most of each round and, on a large account, never finishes inside the
+/// pull budget. A pull that does not read every row is still reported incomplete, so nothing runs on rows
+/// a delete removed. Call only on a store that has never pulled.
+pub(crate) fn mark_new_store_tombstones_read(store: &Store) -> Result<(), SyncEngineError> {
+    store.set_meta(TOMBSTONE_CATCH_UP_KEY, TOMBSTONE_TYPES_VERSION).map_err(query_err)
+}
+
+/// Whether this database has read every peer's tombstones once ([`catch_up_tombstones`]). A desktop or
+/// phone store that starts empty is not, until its catch-up finishes; the runner's new store is marked done
+/// ([`mark_new_store_tombstones_read`]).
+pub(crate) fn tombstones_caught_up(store: &Store) -> bool {
+    old_build_puller()
+        || store.get_meta(TOMBSTONE_CATCH_UP_KEY).ok().flatten().as_deref() == Some(TOMBSTONE_TYPES_VERSION)
+}
+
+/// Whether any peer's rows still wait on a dependency (a transcript line whose meeting was not yet read).
+pub(crate) async fn any_pending_dependency(conn: &Connection, store: &Store, own_device_id: &str) -> Result<bool, SyncEngineError> {
+    for peer in distinct_peer_device_ids(conn, own_device_id).await? {
+        if !store.list_sync_pending_dependencies(&peer).map_err(query_err)?.is_empty() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The highest `local_seq` this device has on the relay (0 with none): the runner's per-run store
+/// numbers its rows above it.
+pub(crate) async fn own_top_seq(conn: &Connection, own_device_id: &str) -> Result<i64, SyncEngineError> {
+    Ok(peer_top_seq(conn, own_device_id).await?.unwrap_or(0))
 }
 
 /// [`pull_content`] with [`PullOptions`] (the phone's capture window).
@@ -1889,6 +3135,10 @@ struct PeerPullStats {
     applied: usize,
     already_applied: usize,
     skipped_window: usize,
+    /// `items` rows of a kind the allowlist leaves out (the runner). Left out of the JSON when 0, so a
+    /// phone's or desktop's stats read as before.
+    #[serde(skip_serializing_if = "is_zero")]
+    skipped_allowlist: usize,
     deferred: usize,
     pending_before: usize,
     pending_after: usize,
@@ -1922,6 +3172,10 @@ pub fn last_pull_stats_json() -> String {
         .lock()
         .map(|s| s.clone())
         .unwrap_or_default()
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 fn peer_tag(peer: &str) -> String {
@@ -2033,6 +3287,8 @@ async fn pull_round_mode(
     all_stats: &mut Vec<PeerPullStats>,
 ) -> Result<bool, SyncEngineError> {
     let mut more = false;
+    // Before the live ranges, so an update applies the tombstones its older build skipped in this round.
+    catch_up_tombstones(conn, group_key, store, own_device_id).await;
     let round_started = std::time::Instant::now();
     // Capture window (the phone's storage budget). Decided AFTER decrypting, on the
     // item's own `ts_unix_ms`: the remote row's `created_at_unix_ms` is push time, not
@@ -2044,7 +3300,7 @@ async fn pull_round_mode(
     // ponytail: the ciphertext of a skipped row is still downloaded; dropping it at the
     // query (CASE on created_at for legacy capture_item rows) is the upgrade if relay
     // bandwidth on the phone matters.
-    let capture_cutoff = options.capture_window_ms.map(|w| now_unix_ms() - w);
+    let filter = RowFilter::new(options, skip_skins, now_unix_ms(), group_key);
     restore_own_provider_spend(conn, group_key, store, own_device_id).await?;
     let peers = distinct_peer_device_ids(conn, own_device_id).await?;
     let first_stats = all_stats.len();
@@ -2107,42 +3363,72 @@ async fn pull_round_mode(
         // not a page it can't apply, which costs rows read and data for nothing.
         let spent = pace.round_budget.is_some() && budget.is_zero();
         let rows = if spent { 1 } else { pace.rows };
-        let fetch_started = std::time::Instant::now();
-        let envelopes = fetch_rows_since(conn, peer, cursor, rows, skip_skins).await?;
-        stats.fetch_ms = fetch_started.elapsed().as_millis() as u64;
-        let full_page = envelopes.len() as i64 >= rows;
-        more |= spent || full_page;
-        stats.fetched = envelopes.len();
-        stats.fetched_through = envelopes.last().map_or(cursor, |e| e.local_seq);
-        let apply_started = std::time::Instant::now();
-        // A full page means this peer is behind: on a desktop its items are stored without
-        // embeddings, which the reindex sweep adds later, so a backlog applies at row speed
-        // instead of ~0.5 s a row. A caught-up peer still embeds each row as it arrives. A
-        // pull-only phone (`skip_skins`) keeps embedding as before.
-        let defer = full_page && !skip_skins;
-        stats.deferred_embedding = defer;
-        let was_deferring = store.set_defer_embedding(defer);
-        let page = apply_page(
-            conn,
-            group_key,
-            store,
-            peer,
-            &envelopes,
-            budget,
-            capture_cutoff,
-            stats,
-        )
-        .await;
-        store.set_defer_embedding(was_deferring);
-        let page = page?;
-        stats.apply_ms = apply_started.elapsed().as_millis() as u64;
-        more |= page.stopped;
-        // The highest local_seq this pass handled (applied, skipped, or deferred to the
-        // dependency pass): where the cursor goes, since the pass can stop early.
-        let processed_through = page
-            .handled
-            .checked_sub(1)
-            .map_or(cursor, |last| envelopes[last].local_seq);
+        // The runner's kind filter reads the live range in windows of `local_seq` up to the peer's top as
+        // read here ([`FILTERED_PULL_SPAN`]). Without it (every phone and desktop pull) this loop runs once,
+        // exactly as before.
+        let windowed_top = match filter.query_kind_tags() {
+            Some(_) => peer_top_seq(conn, peer).await?,
+            None => None,
+        };
+        let pass_started = std::time::Instant::now();
+        let mut from = cursor;
+        let (full_page, processed_through) = loop {
+            let window_hi = windowed_top.map(|top| from.saturating_add(filtered_pull_span()).min(top));
+            let fetch_started = std::time::Instant::now();
+            let (envelopes, windowed) =
+                fetch_rows_since(conn, peer, from, window_hi.unwrap_or(i64::MAX), rows, skip_skins, &filter).await?;
+            stats.fetch_ms += fetch_started.elapsed().as_millis() as u64;
+            let full_page = envelopes.len() as i64 >= rows;
+            more |= spent || full_page;
+            stats.fetched += envelopes.len();
+            stats.fetched_through = envelopes.last().map_or(from, |e| e.local_seq);
+            let apply_started = std::time::Instant::now();
+            // A full page means this peer is behind: on a desktop its items are stored without
+            // embeddings, which the reindex sweep adds later, so a backlog applies at row speed
+            // instead of ~0.5 s a row. A caught-up peer still embeds each row as it arrives. A
+            // pull-only phone (`skip_skins`) keeps embedding as before.
+            let defer = full_page && !skip_skins;
+            stats.deferred_embedding |= defer;
+            // The first page has the whole budget, as without windows; a later window what is left.
+            let page_budget = if from == cursor {
+                budget
+            } else {
+                budget.saturating_sub(pass_started.elapsed())
+            };
+            let page = with_defer_embedding(
+                store,
+                defer,
+                apply_page(conn, group_key, store, peer, &envelopes, page_budget, &filter, stats),
+            )
+            .await;
+            let page = page?;
+            stats.apply_ms += apply_started.elapsed().as_millis() as u64;
+            more |= page.stopped;
+            // The highest local_seq this pass handled (applied, skipped, or deferred to the
+            // dependency pass): where the cursor goes, since the pass can stop early.
+            let handled_through = page
+                .handled
+                .checked_sub(1)
+                .map_or(from, |last| envelopes[last].local_seq);
+            // A short window handled to its end: every row up to the window's end was read (the query
+            // left out only rows the kind check would skip), so the cursor moves to it, as an unfiltered
+            // pull's would over the skipped rows.
+            let window_read = windowed && !full_page && page.handled == envelopes.len();
+            match (window_hi, windowed_top) {
+                (Some(hi), Some(top)) if window_read && hi > from => {
+                    store.set_sync_cursor(peer, hi).map_err(query_err)?;
+                    from = hi;
+                    if hi < top {
+                        if pass_started.elapsed() < budget {
+                            continue;
+                        }
+                        more = true;
+                    }
+                    break (false, hi);
+                }
+                _ => break (full_page, handled_through),
+            }
+        };
 
         // Advance to the highest row this pass handled: every fetched row, unless the time
         // budget stopped it early, in which case the rest are fetched again next pass.
@@ -2237,7 +3523,7 @@ async fn pull_round_mode(
             pace,
             round_started,
             skip_skins,
-            capture_cutoff,
+            &filter,
             &mut all_stats[first_stats..],
         )
         .await?;
@@ -2259,6 +3545,11 @@ async fn pull_round_mode(
         }
         more |= store.older_sync_history_loading().map_err(query_err)?;
     }
+    // A peer's client deletes applied this round (or in an earlier round whose clean-up failed): the full-text
+    // index pages are merged once, as on the deleting device (X6 final review, Major 4). Never fails the pull.
+    if let Err(e) = store.run_owed_client_cleanup() {
+        eprintln!("[sync] index clean-up after a peer's delete resumes next round: {e}");
+    }
     Ok(more)
 }
 
@@ -2278,7 +3569,7 @@ async fn pull_gaps(
     pace: Pace,
     round_started: std::time::Instant,
     skip_skins: bool,
-    capture_cutoff: Option<i64>,
+    filter: &RowFilter,
     peer_stats: &mut [PeerPullStats],
 ) -> Result<(), SyncEngineError> {
     let gaps_started = std::time::Instant::now();
@@ -2295,28 +3586,54 @@ async fn pull_gaps(
             .min(total.saturating_sub(gaps_started.elapsed()));
         // Under a second left: fetch only the one row it still handles, as a spent round does,
         // not a page it can't apply.
-        let rows = gap_page_rows(pace, budget);
-        let envelopes = fetch_gap_rows(conn, peer, gap_lo, gap_hi, rows, skip_skins).await?;
-        stats.gap_fetched = envelopes.len();
-        // The fetch is part of the gap's budget.
-        let budget = budget.saturating_sub(peer_started.elapsed());
-        let page = apply_page(
-            conn,
-            group_key,
-            store,
-            peer,
-            &envelopes,
-            budget,
-            capture_cutoff,
-            stats,
-        )
-        .await?;
-        if page.handled == envelopes.len() && (envelopes.len() as i64) < rows {
-            store.close_sync_gap(peer).map_err(query_err)?;
-        } else if let Some(last) = page.handled.checked_sub(1) {
-            store
-                .set_sync_gap_hi(peer, envelopes[last].local_seq)
-                .map_err(query_err)?;
+        let mut rows = gap_page_rows(pace, budget);
+        let mut gap_hi = gap_hi;
+        // Without the runner's kind filter this loop runs once, exactly as before. With it, each page
+        // reads one window of `local_seq` below the gap's top ([`FILTERED_PULL_SPAN`]); a short window
+        // handled to its end lowers the gap's top to the window's floor and the next window follows while
+        // the gap's budget lasts.
+        loop {
+            let window_lo = match filter.query_kind_tags() {
+                Some(_) => gap_lo.max(gap_hi.saturating_sub(filtered_pull_span()).saturating_sub(1)),
+                None => gap_lo,
+            };
+            let (envelopes, windowed) =
+                fetch_gap_rows(conn, peer, gap_lo, window_lo, gap_hi, rows, skip_skins, filter).await?;
+            stats.gap_fetched += envelopes.len();
+            // The fetch is part of the gap's budget.
+            let page_budget = budget.saturating_sub(peer_started.elapsed());
+            let page = apply_page(
+                conn,
+                group_key,
+                store,
+                peer,
+                &envelopes,
+                page_budget,
+                filter,
+                stats,
+            )
+            .await?;
+            let floor = if windowed { window_lo } else { gap_lo };
+            if page.handled == envelopes.len() && (envelopes.len() as i64) < rows {
+                if floor == gap_lo {
+                    store.close_sync_gap(peer).map_err(query_err)?;
+                    break;
+                }
+                // Every row of the window is read: what is left is at or below its floor.
+                gap_hi = floor + 1;
+                store.set_sync_gap_hi(peer, gap_hi).map_err(query_err)?;
+                let left = budget.saturating_sub(peer_started.elapsed());
+                if left.is_zero() {
+                    break;
+                }
+                rows = gap_page_rows(pace, left);
+                continue;
+            } else if let Some(last) = page.handled.checked_sub(1) {
+                store
+                    .set_sync_gap_hi(peer, envelopes[last].local_seq)
+                    .map_err(query_err)?;
+            }
+            break;
         }
         let gap = store.sync_gap(peer).map_err(query_err)?;
         stats.gap_lo = gap.map(|(lo, _)| lo);
@@ -2339,6 +3656,24 @@ struct PageOutcome {
     stopped: bool,
 }
 
+/// Runs `fut` with `store`'s embedding deferred as `defer`, then puts the previous setting back,
+/// however it ends: also when the future is dropped at an `.await` (the round's timeout cancels
+/// it, for example during a pause in [`apply_page`]). Left on, the connection would store every
+/// later row without an embedding, and the reindex sweep would not be revived to add them.
+async fn with_defer_embedding<T>(store: &Store, defer: bool, fut: impl std::future::Future<Output = T>) -> T {
+    struct Restore<'a> {
+        store: &'a Store,
+        was: bool,
+    }
+    impl Drop for Restore<'_> {
+        fn drop(&mut self) {
+            self.store.set_defer_embedding(self.was);
+        }
+    }
+    let _restore = Restore { store, was: store.set_defer_embedding(defer) };
+    fut.await
+}
+
 /// Applies a page of one peer's rows in page order (ascending for the live range, descending
 /// for a gap page), then resolves the transcript rows it deferred. Stops once `budget` is
 /// spent, having handled at least one row.
@@ -2350,10 +3685,9 @@ async fn apply_page(
     peer: &str,
     envelopes: &[RowEnvelope],
     budget: std::time::Duration,
-    capture_cutoff: Option<i64>,
+    filter: &RowFilter,
     stats: &mut PeerPullStats,
 ) -> Result<PageOutcome, SyncEngineError> {
-    let outside_window = |ts_unix_ms: i64| capture_cutoff.is_some_and(|cutoff| ts_unix_ms < cutoff);
     let started = std::time::Instant::now();
     let mut chunk_bytes = 0usize;
     let mut handled = 0usize;
@@ -2366,12 +3700,22 @@ async fn apply_page(
     // can't be known without decrypting it, so unlike the previous version both
     // envelope shapes are now decrypted here rather than lazily in the second pass.
     let mut segments: Vec<(RowEnvelope, PendingSegment)> = Vec::new();
+    // Rows apply one autocommit write each, back to back (at row speed when embedding is
+    // deferred): pause now and then, with no transaction open, so another connection's write (a
+    // recording start above all) is not starved (#850 review, I2). The pauses count against the
+    // budget. Not one transaction per chunk: some apply paths open their own transaction
+    // (`apply_synced_topic_seed`), which fails inside an outer one.
+    let mut yielder = memory::WriteYield::new();
     for env in envelopes {
         // The pace's time budget: stop once it's spent, having handled at least one row.
         if handled > 0 && started.elapsed() >= budget {
             stopped = true;
             stats.budget_stopped = true;
             break;
+        }
+        if yielder.due() {
+            tokio::time::sleep(memory::RETENTION_BATCH_PAUSE).await;
+            yielder.paused();
         }
         if env.row_type == ROW_TYPE_SKIN_IMAGE_CHUNK {
             // The image budget: the rest of a large image follows next round (the skin stays held).
@@ -2431,7 +3775,14 @@ async fn apply_page(
                 stats.undecodable += 1;
                 continue;
             };
-            if decoded.item.kind == "capture" && outside_window(decoded.item.ts_unix_ms) {
+            // Not granted (the runner's allowlist names item kinds): handled, never applied.
+            if !filter.kind_allowed(&decoded.item.kind)
+                || filter.drops_calendar_source(&decoded.item.kind, decoded.item.source.as_deref())
+            {
+                stats.skipped_allowlist += 1;
+                continue;
+            }
+            if filter.outside_item_window(&decoded.item.kind, decoded.item.ts_unix_ms) {
                 stats.skipped_window += 1;
                 continue;
             }
@@ -2448,6 +3799,10 @@ async fn apply_page(
                         item: decoded.item,
                     },
                 ));
+            } else if forgotten_item(store, peer, env.local_seq, &decoded.item)? {
+                // A client delete forgot it (here or on a peer): dropped, counted as handled like a
+                // forgotten meeting's late row.
+                stats.applied += 1;
             } else {
                 let local_id = store
                     .apply_synced_item(peer, env.local_seq, None, &decoded.item)
@@ -2478,10 +3833,27 @@ async fn apply_page(
             tracing::warn!(peer = %peer_tag(peer), local_seq = env.local_seq, row_type = %env.row_type, "pulled row couldn't be decrypted");
             continue;
         };
+        // The runner: a meeting it was not granted, or one started before its window, is not applied. It is
+        // remembered by key, so a granted in-window transcript line still fetches it ([`resolve_segments`]).
+        if env.row_type == ROW_TYPE_MEETING && filter.holds_meetings() {
+            if let Ok(payload) = serde_json::from_slice::<MeetingPayload>(&plaintext) {
+                if filter.meeting_held(payload.meeting.start_unix_ms) {
+                    if let Some(source_id) = payload.source_meeting_id {
+                        remember_parent_meeting(store, peer, source_id, env.local_seq)?;
+                    }
+                    if filter.meetings_as_parents_only {
+                        stats.skipped_allowlist += 1;
+                    } else {
+                        stats.skipped_window += 1;
+                    }
+                    continue;
+                }
+            }
+        }
         if env.row_type == ROW_TYPE_CAPTURE_ITEM
-            && capture_cutoff.is_some()
+            && filter.windows_captures()
             && serde_json::from_slice::<memory::AppliedCaptureItem>(&plaintext)
-                .is_ok_and(|item| outside_window(item.ts_unix_ms))
+                .is_ok_and(|item| filter.outside_item_window("capture", item.ts_unix_ms))
         {
             stats.skipped_window += 1;
             continue;
@@ -2565,6 +3937,27 @@ fn decode_pending_segment(
     }
 }
 
+/// kv: the `local_seq` of the newest meeting row of `peer`'s meeting `source_id` that a runner pull held back
+/// (ids only, never content).
+fn held_meeting_key(peer: &str, source_id: i64) -> String {
+    format!("sync_held_meeting:{peer}:{source_id}")
+}
+
+/// Remembers a held-back meeting row by key, keeping the newest (highest `local_seq`) seen.
+fn remember_parent_meeting(store: &Store, peer: &str, source_id: i64, local_seq: i64) -> Result<(), SyncEngineError> {
+    if remembered_parent_meeting(store, peer, source_id)?.is_some_and(|seen| seen >= local_seq) {
+        return Ok(());
+    }
+    store.set_meta(&held_meeting_key(peer, source_id), &local_seq.to_string()).map_err(query_err)
+}
+
+fn remembered_parent_meeting(store: &Store, peer: &str, source_id: i64) -> Result<Option<i64>, SyncEngineError> {
+    Ok(store
+        .get_meta(&held_meeting_key(peer, source_id))
+        .map_err(query_err)?
+        .and_then(|seq| seq.parse().ok()))
+}
+
 /// Resolves each segment's parent meeting and applies it, or records it in
 /// `sync_pending_dependency` for a later round. A meeting that isn't applied locally but
 /// whose exact `meeting_local_seq` is known is fetched by key first (batched): it may never
@@ -2626,10 +4019,16 @@ async fn resolve_segments(
         if *forgotten {
             continue;
         }
-        if let Some(seq) = fallback_local_seq {
-            if resolve(source_meeting_id, fallback_local_seq)?.is_none()
-                && !missing_meetings.iter().any(|(s, _)| *s == seq)
-            {
+        if resolve(source_meeting_id, fallback_local_seq)?.is_some() {
+            continue;
+        }
+        // The legacy seq the line carries, and a meeting row the runner held back for this line's meeting.
+        let held = match source_meeting_id {
+            Some(source_id) => remembered_parent_meeting(store, peer, source_id)?,
+            None => None,
+        };
+        for seq in [fallback_local_seq, held].into_iter().flatten() {
+            if !missing_meetings.iter().any(|(s, _)| *s == seq) {
                 missing_meetings.push((seq, ROW_TYPE_MEETING.to_string()));
             }
         }
@@ -2648,7 +4047,14 @@ async fn resolve_segments(
         }
     }
 
+    // The transcript lines apply one write each, back to back: pause now and then, as the
+    // page's own loop does (`apply_page`; #850 review, I2).
+    let mut yielder = memory::WriteYield::new();
     for ((env, pending), forgotten) in segments.iter().zip(forgotten) {
+        if yielder.due() {
+            tokio::time::sleep(memory::RETENTION_BATCH_PAUSE).await;
+            yielder.paused();
+        }
         let (source_meeting_id, fallback_local_seq) = fallback(pending);
         if forgotten {
             store
@@ -3090,6 +4496,39 @@ pub(crate) mod tests {
             .await
             .unwrap()
             .contains(&"dev-own".to_string()));
+    }
+
+    /// Inside a round the peers and their markers are read once and answer every gate the same way; outside
+    /// a round (and after `end`) every call reads the relay, as before.
+    #[tokio::test]
+    async fn a_round_reads_the_peers_and_markers_once_and_answers_every_gate_from_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("remote.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        for device in ["dev-own", "dev-a", "dev-b"] {
+            seed_rows(&conn, device, 2).await;
+        }
+        seed_peer_capability_marker(&conn, "dev-a").await;
+
+        round_peers::begin("dev-own");
+        assert!(!all_peers_items_capable(&conn, "dev-own").await.unwrap(), "dev-b has no marker");
+        assert_eq!(
+            peers_without_marker(&conn, "dev-own", ROW_TYPE_ITEMS_CAPABILITY).await.unwrap(),
+            ["dev-b"]
+        );
+        // Changes on the relay during the round are seen next round, not this one.
+        seed_peer_capability_marker(&conn, "dev-b").await;
+        seed_rows(&conn, "dev-c", 1).await;
+        assert!(!all_peers_items_capable(&conn, "dev-own").await.unwrap());
+        assert_eq!(distinct_peer_device_ids(&conn, "dev-own").await.unwrap(), ["dev-a", "dev-b"]);
+        // Forgetting the markers (a marker this round published) reads them again.
+        round_peers::forget_markers();
+        assert!(all_peers_items_capable(&conn, "dev-own").await.unwrap());
+        round_peers::end();
+
+        // Outside a round: the relay as it is now.
+        assert_eq!(distinct_peer_device_ids(&conn, "dev-own").await.unwrap(), ["dev-a", "dev-b", "dev-c"]);
+        assert!(!all_peers_items_capable(&conn, "dev-own").await.unwrap(), "dev-c has no marker");
     }
 
     #[tokio::test]
@@ -4309,6 +5748,172 @@ pub(crate) mod tests {
         assert!(!is_missing_entity_tag_column(
             "CHECK constraint failed: entity_tag"
         ));
+    }
+
+    async fn has_column(conn: &Connection, column: &str) -> bool {
+        let mut rows = conn.query("PRAGMA table_info(sync_row)", ()).await.unwrap();
+        while let Some(row) = rows.next().await.unwrap() {
+            if row.get::<String>(1).unwrap() == column {
+                return true;
+            }
+        }
+        false
+    }
+
+    async fn kind_tag_of(conn: &Connection, filter: &str) -> Option<String> {
+        let mut rows = conn
+            .query(&format!("SELECT kind_tag FROM sync_row WHERE {filter}"), ())
+            .await
+            .unwrap();
+        rows.next().await.unwrap().unwrap().get::<Option<String>>(0).unwrap()
+    }
+
+    fn push_fixture_store() -> Store {
+        let store = Store::open_in_memory().unwrap();
+        store.insert_capture_item(&sample_new_capture_item("a capture")).unwrap();
+        store
+            .upsert_calendar_event_items(&[memory::NewCalendarEventItem {
+                device_id: "dev-a".to_string(),
+                source: "google_calendar".to_string(),
+                external_id: "evt-1".to_string(),
+                ts_unix_ms: 5000,
+                title: "Planning".to_string(),
+                actors: vec![],
+            }])
+            .unwrap();
+        completed_meeting(&store, "dev-a");
+        store
+    }
+
+    #[tokio::test]
+    async fn a_fresh_relay_has_the_kind_tag_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        assert!(has_column(&conn, "kind_tag").await);
+        assert!(KIND_TAG_COLUMN_SEEN.get());
+    }
+
+    #[tokio::test]
+    async fn ensure_kind_tag_column_upgrades_an_entity_tag_relay_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        assert!(ensure_entity_tag_column(&conn).await);
+        assert!(!has_column(&conn, "kind_tag").await);
+        assert!(ensure_kind_tag_column(&conn).await);
+        assert!(has_column(&conn, "kind_tag").await);
+        assert!(ensure_kind_tag_column(&conn).await, "a second call is a no-op");
+    }
+
+    #[tokio::test]
+    async fn pushed_items_carry_their_kind_tag_and_other_rows_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        ensure_content_schema(&conn).await.unwrap();
+        let key = GroupKey::generate();
+        let store = push_fixture_store();
+
+        push_content(&conn, &key, &store, "dev-a").await.unwrap();
+
+        let by_kind = |kind: &str| {
+            let tag = sync::kind_tag(&key, kind);
+            format!("SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag = '{tag}'")
+        };
+        assert_eq!(single_i64(&conn, &by_kind("calendar_event")).await, 1);
+        assert_eq!(single_i64(&conn, &by_kind("capture")).await, 1);
+        assert_eq!(meeting_rows(&conn, "dev-a").await, 1);
+        assert_eq!(
+            kind_tag_of(&conn, "row_type = 'meeting'").await,
+            None,
+            "a meeting row stays NULL"
+        );
+        assert_eq!(
+            single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE kind_tag IS NOT NULL AND row_type != 'items'").await,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn kind_tag_for_tags_only_item_rows() {
+        // libsql before rusqlite, as in outbox.rs.
+        let dir = tempfile::tempdir().unwrap();
+        let _conn = local_connection(&dir.path().join("relay.db")).await;
+        let key = GroupKey::generate();
+        let store = push_fixture_store();
+        let rows = store.unpushed_item_rows("dev-a", 0).unwrap();
+        assert!(!rows.is_empty());
+        for row in &rows {
+            let SyncableRow::Item { item, .. } = row else { panic!("item rows only") };
+            assert_eq!(kind_tag_for(&key, row), Some(sync::kind_tag(&key, &item.kind)));
+        }
+        let meetings = store.unpushed_meeting_rows("dev-a", 0).unwrap();
+        assert!(!meetings.is_empty());
+        assert!(meetings.iter().all(|r| kind_tag_for(&key, r).is_none()));
+    }
+
+    /// The column is independent of `entity_tag`: a relay with only `kind_tag` is tagged by kind.
+    #[tokio::test]
+    async fn a_relay_with_only_kind_tag_is_tagged_by_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        conn.execute("ALTER TABLE sync_row ADD COLUMN kind_tag TEXT", ()).await.unwrap();
+        ENTITY_TAG_COLUMN_SEEN.set();
+        KIND_TAG_COLUMN_SEEN.set();
+        let key = GroupKey::generate();
+        let store = push_fixture_store();
+        FAILED_TAGGED_INSERTS.with(|c| c.set(0));
+
+        push_content(&conn, &key, &store, "dev-a").await.unwrap();
+
+        assert_eq!(
+            kind_tag_of(&conn, "row_type = 'items' AND local_seq = (SELECT MIN(local_seq) FROM sync_row WHERE row_type = 'items')")
+                .await
+                .map(|t| t.len()),
+            Some(24)
+        );
+        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE kind_tag IS NOT NULL").await, 2);
+        assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 1, "one entity_tag miss, then kind-only");
+    }
+
+    /// Account-switch case: the latch says yes but this relay has no column.
+    #[tokio::test]
+    async fn a_relay_without_kind_tag_still_takes_the_push_untagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        KIND_TAG_COLUMN_SEEN.set();
+        let store = push_fixture_store();
+        FAILED_TAGGED_INSERTS.with(|c| c.set(0));
+
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+
+        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 2);
+        assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 1);
+    }
+
+    /// The ALTER could not run (latch never set): untagged, and no doomed INSERT.
+    #[tokio::test]
+    async fn a_failed_kind_tag_alter_pushes_untagged_without_a_doomed_insert() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = local_connection(&dir.path().join("relay.db")).await;
+        conn.execute(OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        KIND_TAG_COLUMN_SEEN.reset();
+        let store = push_fixture_store();
+        FAILED_TAGGED_INSERTS.with(|c| c.set(0));
+
+        push_content(&conn, &GroupKey::generate(), &store, "dev-a").await.unwrap();
+
+        assert_eq!(single_i64(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await, 2);
+        assert_eq!(FAILED_TAGGED_INSERTS.with(|c| c.get()), 0);
+    }
+
+    #[test]
+    fn missing_kind_tag_column_is_recognized() {
+        assert!(is_missing_kind_tag_column("table sync_row has no column named kind_tag"));
+        assert!(!is_missing_kind_tag_column("table sync_row has no column named entity_tag"));
+        assert!(!is_missing_kind_tag_column("database is locked"));
     }
 
     /// A relay as ops leaves it: the column plus the out-of-band index.
@@ -6009,6 +7614,7 @@ pub(crate) mod tests {
         let store = Store::open_in_memory().unwrap();
         let options = PullOptions {
             capture_window_ms: Some(7 * DAY_MS),
+            ..Default::default()
         };
         let budget = NORMAL_PACE;
         let mut stats = Vec::new();
@@ -6080,6 +7686,7 @@ pub(crate) mod tests {
         let store = Store::open_in_memory().unwrap();
         let options = PullOptions {
             capture_window_ms: Some(7 * DAY_MS),
+            ..Default::default()
         };
         pull_content_with_options(&conn, &group_key, &store, "dev-b", &options)
             .await
@@ -6190,6 +7797,7 @@ pub(crate) mod tests {
         let store = Store::open_in_memory().unwrap();
         let options = PullOptions {
             capture_window_ms: Some(7 * DAY_MS),
+            ..Default::default()
         };
         pull_content_with_options(&conn, &group_key, &store, "dev-b", &options)
             .await
@@ -6226,6 +7834,7 @@ pub(crate) mod tests {
         let store = Store::open_in_memory().unwrap();
         let options = PullOptions {
             capture_window_ms: Some(7 * DAY_MS),
+            ..Default::default()
         };
         pull_content_with_options(&conn, &group_key, &store, "dev-b", &options)
             .await
@@ -6314,6 +7923,7 @@ pub(crate) mod tests {
         let store = Store::open_in_memory().unwrap();
         let options = PullOptions {
             capture_window_ms: Some(7 * DAY_MS),
+            ..Default::default()
         };
         pull_content_with_options(&conn, &group_key, &store, "dev-b", &options)
             .await
@@ -7946,12 +9556,18 @@ mod relay_query_tests {
             FETCH_ROWS_SQL,
             FETCH_ROWS_NO_SKINS_SQL,
             OWN_PROVIDER_SPEND_SQL,
+            CATCH_UP_SQL,
+            CATCH_UP_END_SQL,
+            CLIENT_SEQ_DELETE_SQL,
+            CLIENT_TAG_DELETE_SQL,
         ] {
             assert_seeks(&conn, sql).await;
         }
         assert_seeks(&conn, &compaction_delete_sql(3)).await;
         assert_seeks(&conn, &forgotten_rows_delete_sql(3)).await;
         assert_seeks(&conn, FORGOTTEN_MEETING_TAG_DELETE_SQL).await;
+        assert_seeks(&conn, &fetch_allowed_rows_sql(3, 0)).await;
+        assert_seeks(&conn, &fetch_allowed_gap_rows_sql(3, 0)).await;
         assert_seeks(&conn, "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq IN (?2, ?3)").await;
     }
 
@@ -7961,5 +9577,1225 @@ mod relay_query_tests {
     async fn the_old_full_scan_would_be_caught() {
         let (_dir, conn) = relay().await;
         assert_seeks(&conn, "SELECT row_type, COUNT(*) FROM sync_row GROUP BY 1").await;
+    }
+}
+
+/// Client deletes: a pulled row of a forgotten item is dropped at apply.
+#[cfg(test)]
+mod client_delete_tests {
+    use super::*;
+
+    fn capture_row(text: &str) -> Vec<u8> {
+        serde_json::to_vec(&memory::AppliedCaptureItem {
+            ts_unix_ms: 1_000,
+            app_bundle_id: "com.apple.Safari".into(),
+            window_title: "w".into(),
+            url: None,
+            text: text.into(),
+            hash: 1,
+            source: Some("ax".into()),
+        })
+        .unwrap()
+    }
+
+    /// A legacy `capture_item` row (from a peer still pushing the pre-cutover format) of a forgotten capture.
+    #[tokio::test]
+    async fn a_forgotten_legacy_capture_row_is_dropped() {
+        // libsql configures SQLite first in every test process, so it must open before the store does.
+        let dir = tempfile::tempdir().unwrap();
+        let _relay = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let store = Store::open_in_memory().unwrap();
+        store
+            .apply_client_item_forgotten(&memory::ClientItemForgotten {
+                kind: "capture".into(),
+                opaque_id: "dev-x:5".into(),
+                forgotten_at_unix_ms: 1,
+            })
+            .unwrap();
+        apply_parent_row(&store, "dev-x", 5, ROW_TYPE_CAPTURE_ITEM, &capture_row("forgotten")).unwrap();
+        apply_parent_row(&store, "dev-x", 6, ROW_TYPE_CAPTURE_ITEM, &capture_row("kept")).unwrap();
+        let bodies: Vec<String> = store
+            .export_items_page("capture", 0, 10)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.body_text)
+            .collect();
+        assert_eq!(bodies, vec!["kept".to_string()]);
+        assert_eq!(store.resolve_sync_row_map("dev-x", 5, ROW_TYPE_CAPTURE_ITEM).unwrap(), None);
+    }
+
+    /// A meeting brief pulled for a calendar event a client delete forgot is dropped.
+    #[tokio::test]
+    async fn a_forgotten_events_meeting_prep_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let _relay = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let store = Store::open_in_memory().unwrap();
+        // As in production: the item is one occurrence, `{event id}#{start secs}`; the brief `{event id}@{start ms}`.
+        let uid = "kickoff-1@zorblax.com";
+        let occurrence = format!("{uid}#2");
+        store
+            .upsert_calendar_event_items(&[memory::NewCalendarEventItem {
+                device_id: "dev-x".into(),
+                source: "google_calendar".into(),
+                external_id: occurrence.clone(),
+                ts_unix_ms: 2_000,
+                title: "t".into(),
+                actors: vec![],
+            }])
+            .unwrap();
+        store
+            .apply_client_item_forgotten(&memory::ClientItemForgotten {
+                kind: "calendar_event".into(),
+                opaque_id: memory::client_forget::hashed(&format!("google_calendar:{occurrence}")),
+                forgotten_at_unix_ms: 1,
+            })
+            .unwrap();
+        let prep = |event_id: &str| {
+            serde_json::to_vec(&memory::prep::MeetingPrepRow {
+                event_id: event_id.into(),
+                title: "t".into(),
+                start_unix_ms: 2_000,
+                generated_at_unix_ms: 1,
+                brief_json: "{}".into(),
+                provider: "p".into(),
+                model: "m".into(),
+            })
+            .unwrap()
+        };
+        apply_parent_row(&store, "dev-x", 7, ROW_TYPE_MEETING_PREP, &prep(&format!("{uid}@2000"))).unwrap();
+        apply_parent_row(&store, "dev-x", 8, ROW_TYPE_MEETING_PREP, &prep("other@2000")).unwrap();
+        assert!(store.get_meeting_prep(&format!("{uid}@2000")).unwrap().is_none());
+        assert!(store.get_meeting_prep("other@2000").unwrap().is_some());
+    }
+}
+
+#[cfg(test)]
+mod pull_only_marker_guard {
+    use super::*;
+
+    /// Every marker a desktop gates rows on (`all_peers_have_marker`, `all_peers_items_capable`) must be one the
+    /// phone announces: an updated phone is a peer, and a gate it never satisfies holds those rows back on every
+    /// paired desktop (for good, once a phone is retired). A new gate fails here until it is added to
+    /// `PULL_ONLY_MARKERS` (when the phone applies those rows) or listed below with the reason it is not.
+    #[test]
+    fn every_gating_marker_is_announced_by_the_phone() {
+        let known: &[(&str, &str)] = &[
+            ("ROW_TYPE_ITEMS_CAPABILITY", ROW_TYPE_ITEMS_CAPABILITY),
+            ("ROW_TYPE_TOPICS_CAPABILITY", ROW_TYPE_TOPICS_CAPABILITY),
+            ("ROW_TYPE_TOPIC_PAGE_CAPABILITY", ROW_TYPE_TOPIC_PAGE_CAPABILITY),
+            ("ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY", ROW_TYPE_TOPIC_SNAPSHOT_CAPABILITY),
+            ("ROW_TYPE_CLIENT_CONTROLS_CAPABILITY", ROW_TYPE_CLIENT_CONTROLS_CAPABILITY),
+        ];
+        let mut gated: Vec<String> = Vec::new();
+        // The needles are built at run time, so this test's own text never matches them (X6 final review,
+        // Minor 14: a literal here made the items gate found whatever the code did).
+        let call = |name: &str| format!("{name}{}", "(");
+        // A call (`conn,`), never the definition (`conn:`).
+        let items_gate = format!("{}{}", call("all_peers_items_capable"), "conn,");
+        for source in [include_str!("outbox.rs"), include_str!("content.rs")] {
+            for gate in ["all_peers_have_marker", "peers_without_marker"] {
+                for piece in source.split(call(gate).as_str()).skip(1) {
+                    let args: Vec<&str> = piece.split(')').next().unwrap_or("").split(',').map(str::trim).collect();
+                    // The definition's parameters, or a test's string literal, are not a gate in the code.
+                    if let Some(marker) = args.get(2).filter(|a| a.starts_with("ROW_TYPE_")) {
+                        gated.push(marker.to_string());
+                    }
+                }
+            }
+            if source.contains(items_gate.as_str()) {
+                gated.push("ROW_TYPE_ITEMS_CAPABILITY".into());
+            }
+        }
+        assert!(gated.len() >= 4, "the scan found the gates: {gated:?}");
+        for expected in ["ROW_TYPE_ITEMS_CAPABILITY", "ROW_TYPE_TOPICS_CAPABILITY"] {
+            assert!(gated.iter().any(|g| g == expected), "the scan found the {expected} gate in the code: {gated:?}");
+        }
+        for name in gated {
+            let value = known.iter().find(|(n, _)| *n == name).map(|(_, v)| *v).unwrap_or_else(|| {
+                panic!("a new gating marker {name}: add it to PULL_ONLY_MARKERS if the phone applies those rows, or the phone holds them back")
+            });
+            assert!(PULL_ONLY_MARKERS.contains(&value), "{name} gates rows but the phone does not announce it");
+        }
+    }
+}
+
+/// The cloud runner's round (`crate::runner_pull_with_connection` / `crate::runner_dispatch_with_connection`): a
+/// fresh scratch store each run, an allowlisted, windowed pull, and only its own results sent.
+#[cfg(test)]
+mod runner_round_tests {
+    use super::*;
+
+    const PEER: &str = "dev-a";
+    const RUNNER: &str = "runner-1";
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+    async fn relay() -> (tempfile::TempDir, Connection, GroupKey) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let conn = db.connect().unwrap();
+        ensure_content_schema(&conn).await.unwrap();
+        (dir, conn, GroupKey::generate())
+    }
+
+    async fn seed(conn: &Connection, key: &GroupKey, seq: i64, row_type: &str, json: &str) {
+        let aad = content_row_aad(PEER, seq, row_type);
+        let ciphertext = sync::encrypt_payload(key, json.as_bytes(), &aad);
+        conn.execute(
+            "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) VALUES (?1, ?2, ?3, ?4, 0)",
+            params![PEER, seq, row_type, STANDARD.encode(&ciphertext).as_str()],
+        )
+        .await
+        .unwrap();
+    }
+
+    fn item_json(kind: &str, ts_unix_ms: i64, body: &str, source_meeting_id: Option<i64>) -> String {
+        let calendar = kind == "calendar_event";
+        serde_json::to_string(&ItemPayload {
+            source_meeting_id,
+            meeting_local_seq: None,
+            item: memory::AppliedItem {
+                kind: kind.to_string(),
+                source: calendar.then(|| "google_calendar".to_string()),
+                ts_unix_ms,
+                actors: Some("[\"Me\"]".to_string()),
+                title: calendar.then(|| body.to_string()),
+                body_text: body.to_string(),
+                refs: None,
+                flags: None,
+                hash: None,
+                external_id: calendar.then(|| format!("{body}#1")),
+                app_bundle_id: (kind == "capture").then(|| "com.a".to_string()),
+                url: None,
+            },
+        })
+        .unwrap()
+    }
+
+    fn meeting_json(source_id: i64, title: &str) -> String {
+        serde_json::to_string(&MeetingPayload {
+            source_meeting_id: Some(source_id),
+            origin_epoch: Some("e1".to_string()),
+            meeting: memory::AppliedMeeting {
+                attendee_details: vec![],
+                start_unix_ms: 1000,
+                end_unix_ms: Some(2000),
+                title: title.to_string(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Detected,
+                status: memory::MeetingStatus::Completed,
+                transcript_path: None,
+                notes: None,
+                summary_tldr: None,
+                summary_decisions: vec![],
+                summary_action_items: vec![],
+                summary_open_questions: vec![],
+                summary_provider: None,
+                summary_model: None,
+                keep_media: None,
+                trimmed_keep_ms: None,
+            },
+        })
+        .unwrap()
+    }
+
+    fn run_json(source_run_id: i64, summary: &str) -> String {
+        serde_json::to_string(&memory::AppliedRoutineRun {
+            source_run_id,
+            template: "daily_brief".into(),
+            ran_at_unix_ms: 9_000,
+            status: memory::RunStatus::Success,
+            output_summary: summary.into(),
+            output_json: "{}".into(),
+        })
+        .unwrap()
+    }
+
+    fn forgotten_capture_json(seq: i64) -> String {
+        let (kind, opaque_id) = memory::client_forget::pulled_capture_identity(PEER, seq);
+        serde_json::to_string(&memory::ClientItemForgotten {
+            kind: kind.to_string(),
+            opaque_id,
+            forgotten_at_unix_ms: 1,
+        })
+        .unwrap()
+    }
+
+    fn allow(types: &[&str]) -> PullOptions {
+        PullOptions {
+            row_type_allowlist: Some(types.iter().map(|t| t.to_string()).collect()),
+            ..Default::default()
+        }
+    }
+
+    fn runner_store() -> Store {
+        let store = Store::open_in_memory().unwrap();
+        store.set_own_device_id(RUNNER);
+        store
+    }
+
+    async fn pull(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions) {
+        crate::runner_pull_with_connection(conn, key, store, RUNNER, opts).await.unwrap();
+    }
+
+    fn bodies(store: &Store, kind: &str) -> Vec<String> {
+        store.export_items_page(kind, 0, 100).unwrap().into_iter().map(|r| r.body_text).collect()
+    }
+
+    fn titles(store: &Store) -> Vec<String> {
+        store.recent_meetings(100).unwrap().into_iter().map(|m| m.title).collect()
+    }
+
+    async fn relay_rows(conn: &Connection, device: &str) -> Vec<(i64, String)> {
+        let mut rows = conn
+            .query(
+                "SELECT local_seq, row_type FROM sync_row WHERE device_id = ?1 ORDER BY local_seq, row_type",
+                params![device],
+            )
+            .await
+            .unwrap();
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            out.push((row.get(0).unwrap(), row.get(1).unwrap()));
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn runner_round_pulls_only_allowlisted_row_types() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_json(7, "Standup")).await;
+        seed(&conn, &key, 2, ROW_TYPE_ROUTINE_RUN, &run_json(4, "a brief")).await;
+        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &item_json("capture", now, "a capture", None)).await;
+        seed(&conn, &key, 4, ROW_TYPE_ITEMS, &item_json("calendar_event", now, "planning", None)).await;
+
+        let runs_only = runner_store();
+        pull(&conn, &key, &runs_only, &allow(&[ROW_TYPE_ROUTINE_RUN])).await;
+        let runs = runs_only.recent_routine_runs_across_all(10).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert!(titles(&runs_only).is_empty(), "meeting not granted");
+        assert!(bodies(&runs_only, "capture").is_empty(), "items not granted");
+        assert!(bodies(&runs_only, "calendar_event").is_empty(), "items not granted");
+
+        // An item kind grant takes that kind of `items` row only.
+        let events_only = runner_store();
+        pull(&conn, &key, &events_only, &allow(&["items:calendar_event"])).await;
+        assert_eq!(bodies(&events_only, "calendar_event"), vec!["planning".to_string()]);
+        assert!(bodies(&events_only, "capture").is_empty(), "capture kind not granted");
+        assert!(events_only.recent_routine_runs_across_all(10).unwrap().is_empty());
+        assert!(titles(&events_only).is_empty());
+
+        // No allowlist: everything, as today.
+        let all = runner_store();
+        pull(&conn, &key, &all, &PullOptions::default()).await;
+        assert_eq!(titles(&all), vec!["Standup".to_string()]);
+        assert_eq!(bodies(&all, "capture"), vec!["a capture".to_string()]);
+        assert_eq!(all.recent_routine_runs_across_all(10).unwrap().len(), 1);
+    }
+
+    /// Run a round, then the tombstone arrives, then a second round on the same store: the tombstone
+    /// comes through the allowlisted pull itself (the once-per-database catch-up has already run).
+    #[tokio::test]
+    async fn tombstones_are_applied_even_when_not_allowlisted() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_ITEMS, &item_json("capture", now, "forget me", None)).await;
+        seed(&conn, &key, 2, ROW_TYPE_MEETING, &meeting_json(7, "Doomed")).await;
+        let store = runner_store();
+        let opts = allow(&["items:capture", ROW_TYPE_MEETING]);
+        pull(&conn, &key, &store, &opts).await;
+        assert_eq!(bodies(&store, "capture"), vec!["forget me".to_string()]);
+        assert_eq!(titles(&store), vec!["Doomed".to_string()]);
+
+        seed(&conn, &key, 3, ROW_TYPE_CLIENT_ITEM_FORGOTTEN, &forgotten_capture_json(1)).await;
+        let meeting_forgotten = serde_json::to_string(&memory::MeetingForgotten {
+            origin_device_id: PEER.to_string(),
+            origin_epoch: Some("e1".to_string()),
+            source_meeting_id: 7,
+            forgotten_at_unix_ms: 1,
+            source_start_unix_ms: Some(1000),
+        })
+        .unwrap();
+        seed(&conn, &key, 4, ROW_TYPE_MEETING_FORGOTTEN, &meeting_forgotten).await;
+        pull(&conn, &key, &store, &opts).await;
+        assert!(bodies(&store, "capture").is_empty(), "the client delete applied");
+        assert!(titles(&store).is_empty(), "the meeting forget applied");
+    }
+
+    /// The transcript rows carry no `meeting_local_seq`, so only the allowlist can bring the meeting.
+    #[tokio::test]
+    async fn an_allowed_transcript_pulls_its_meeting() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_json(7, "Design review")).await;
+        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("transcript", now, "first line", Some(7))).await;
+        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &item_json("transcript", now, "second line", Some(7))).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &allow(&["items:transcript"])).await;
+        assert_eq!(titles(&store), vec!["Design review".to_string()]);
+        let mut lines = bodies(&store, "transcript");
+        lines.sort();
+        assert_eq!(lines, vec!["first line".to_string(), "second line".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn the_five_pull_only_markers_are_announced() {
+        let (_dir, conn, key) = relay().await;
+        seed(&conn, &key, 1, ROW_TYPE_ROUTINE_RUN, &run_json(4, "a brief")).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &allow(&[ROW_TYPE_ROUTINE_RUN])).await;
+        let mut announced: Vec<String> = relay_rows(&conn, RUNNER).await.into_iter().map(|(seq, t)| {
+            assert_eq!(seq, 0, "the pull writes markers only");
+            t
+        }).collect();
+        announced.sort();
+        let mut expected: Vec<String> = PULL_ONLY_MARKERS.iter().map(|m| m.to_string()).collect();
+        expected.sort();
+        assert_eq!(announced, expected);
+    }
+
+    #[tokio::test]
+    async fn a_routine_run_in_the_outbox_is_dispatched_and_no_content_is_back_filled() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_json(7, "Standup")).await;
+        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("capture", now, "a capture", None)).await;
+        seed(&conn, &key, 3, ROW_TYPE_ROUTINE_RUN, &run_json(4, "peer brief")).await;
+        let store = runner_store();
+        store.seed_builtin_routines().unwrap();
+        pull(&conn, &key, &store, &PullOptions::default()).await;
+        assert_eq!(titles(&store), vec!["Standup".to_string()]);
+        let brief = store
+            .list_routines()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.template == memory::RoutineTemplate::DailyBrief)
+            .unwrap();
+        store
+            .insert_routine_run(&memory::NewRoutineRun {
+                routine_id: brief.id,
+                ran_at_unix_ms: now,
+                status: memory::RunStatus::Success,
+                output_summary: "cloud brief".into(),
+                output_json: "{}".into(),
+            })
+            .unwrap();
+
+        crate::runner_dispatch_with_connection(&conn, &key, &store, RUNNER).await.unwrap();
+
+        let content: Vec<String> = relay_rows(&conn, RUNNER)
+            .await
+            .into_iter()
+            .filter(|(seq, _)| *seq != 0)
+            .map(|(_, t)| t)
+            .collect();
+        assert_eq!(content, vec![ROW_TYPE_ROUTINE_RUN.to_string()], "only the run is sent, nothing pulled is re-pushed");
+
+        let desktop = Store::open_in_memory().unwrap();
+        pull_content(&conn, &key, &desktop, "desktop").await.unwrap();
+        let summaries: Vec<String> = desktop
+            .recent_routine_runs_across_all(10)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.output_summary)
+            .collect();
+        assert!(summaries.contains(&"cloud brief".to_string()), "{summaries:?}");
+    }
+
+    /// Each run's store is new, so its `local_seq` counter starts over: the second run's result must still
+    /// land above the first run's row (the relay insert ignores a key it already has) and reach a peer.
+    #[tokio::test]
+    async fn a_second_runner_store_sends_above_the_first_runs_rows() {
+        let (_dir, conn, key) = relay().await;
+        let desktop = Store::open_in_memory().unwrap();
+        for (run, summary) in [(1, "monday brief"), (2, "tuesday brief")] {
+            let store = runner_store();
+            store.seed_builtin_routines().unwrap();
+            pull(&conn, &key, &store, &allow(&[ROW_TYPE_ROUTINE_RUN])).await;
+            let brief = store
+                .list_routines()
+                .unwrap()
+                .into_iter()
+                .find(|r| r.template == memory::RoutineTemplate::DailyBrief)
+                .unwrap();
+            store
+                .insert_routine_run(&memory::NewRoutineRun {
+                    routine_id: brief.id,
+                    ran_at_unix_ms: run * 1_000,
+                    status: memory::RunStatus::Success,
+                    output_summary: summary.into(),
+                    output_json: "{}".into(),
+                })
+                .unwrap();
+            crate::runner_dispatch_with_connection(&conn, &key, &store, RUNNER).await.unwrap();
+            pull_content(&conn, &key, &desktop, "desktop").await.unwrap();
+        }
+        let runs = relay_rows(&conn, RUNNER).await.into_iter().filter(|(_, t)| t == ROW_TYPE_ROUTINE_RUN).count();
+        assert_eq!(runs, 2, "both runs are on the relay");
+        let mut summaries: Vec<String> = desktop
+            .recent_routine_runs_across_all(10)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.output_summary)
+            .collect();
+        summaries.sort();
+        assert_eq!(summaries, vec!["monday brief".to_string(), "tuesday brief".to_string()]);
+    }
+
+    /// Peer runs the pull applies take ids in the runner's store too, so its own run's id can sit above the
+    /// relay top it was floored at: the next run must still not reuse it.
+    #[tokio::test]
+    async fn a_runner_run_id_never_repeats_when_peer_runs_were_pulled() {
+        let (_dir, conn, key) = relay().await;
+        seed(&conn, &key, 1, ROW_TYPE_ROUTINE_RUN, &run_json(1, "peer one")).await;
+        seed(&conn, &key, 2, ROW_TYPE_ROUTINE_RUN, &run_json(2, "peer two")).await;
+        let desktop = Store::open_in_memory().unwrap();
+        for (grant, summary) in [(vec![ROW_TYPE_ROUTINE_RUN], "first runner brief"), (vec![], "second runner brief")] {
+            let store = runner_store();
+            store.seed_builtin_routines().unwrap();
+            pull(&conn, &key, &store, &allow(&grant)).await;
+            let brief = store
+                .list_routines()
+                .unwrap()
+                .into_iter()
+                .find(|r| r.template == memory::RoutineTemplate::DailyBrief)
+                .unwrap();
+            store
+                .insert_routine_run(&memory::NewRoutineRun {
+                    routine_id: brief.id,
+                    ran_at_unix_ms: 5_000,
+                    status: memory::RunStatus::Success,
+                    output_summary: summary.into(),
+                    output_json: "{}".into(),
+                })
+                .unwrap();
+            crate::runner_dispatch_with_connection(&conn, &key, &store, RUNNER).await.unwrap();
+        }
+        pull_content(&conn, &key, &desktop, "desktop").await.unwrap();
+        let mut summaries: Vec<String> = desktop
+            .recent_routine_runs_across_all(10)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.origin_device_id.as_deref() == Some(RUNNER))
+            .map(|r| r.output_summary)
+            .collect();
+        summaries.sort();
+        assert_eq!(summaries, vec!["first runner brief".to_string(), "second runner brief".to_string()]);
+    }
+
+    /// The runner's store is new every run, so the once-per-database tombstone catch-up is not redone from
+    /// zero (a slow or failing catch-up used to fail every run of a large account): a tombstone comes through
+    /// the live ranges, and a catch-up that would fail does not matter.
+    #[tokio::test]
+    async fn a_new_runner_store_skips_the_tombstone_catch_up_and_still_applies_tombstones() {
+        let (_dir, conn, key) = relay().await;
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_json(7, "Doomed")).await;
+        let meeting_forgotten = serde_json::to_string(&memory::MeetingForgotten {
+            origin_device_id: PEER.to_string(),
+            origin_epoch: Some("e1".to_string()),
+            source_meeting_id: 7,
+            forgotten_at_unix_ms: 1,
+            source_start_unix_ms: Some(1000),
+        })
+        .unwrap();
+        seed(&conn, &key, 2, ROW_TYPE_MEETING_FORGOTTEN, &meeting_forgotten).await;
+        let store = runner_store();
+        CATCH_UP_FAILS_FOR.with(|c| *c.borrow_mut() = Some(PEER.to_string()));
+        let report = crate::runner_pull_with_connection(&conn, &key, &store, RUNNER, &allow(&[ROW_TYPE_MEETING])).await;
+        CATCH_UP_FAILS_FOR.with(|c| *c.borrow_mut() = None);
+        let report = report.expect("the pull no longer depends on the catch-up");
+        assert!(report.complete, "every row was read");
+        assert!(titles(&store).is_empty(), "the live range applied the forget");
+        assert!(tombstones_caught_up(&store));
+    }
+
+    /// The runner's store is new each run: its own earlier runs and briefs come back with the pull, so a
+    /// second run the same day sees them. Only the granted types.
+    #[tokio::test]
+    async fn the_runner_reads_back_its_own_earlier_results() {
+        let (_dir, conn, key) = relay().await;
+        let first = runner_store();
+        pull(&conn, &key, &first, &allow(&[ROW_TYPE_ROUTINE_RUN])).await;
+        first.seed_builtin_routines().unwrap();
+        let brief = first.list_routines().unwrap().into_iter().find(|r| r.template == memory::RoutineTemplate::DailyBrief).unwrap();
+        first
+            .insert_routine_run(&memory::NewRoutineRun {
+                routine_id: brief.id,
+                ran_at_unix_ms: 5_000,
+                status: memory::RunStatus::Success,
+                output_summary: "the runner's brief".into(),
+                output_json: "{}".into(),
+            })
+            .unwrap();
+        crate::runner_dispatch_with_connection(&conn, &key, &first, RUNNER).await.unwrap();
+
+        let second = runner_store();
+        let report = crate::runner_pull_with_connection(&conn, &key, &second, RUNNER, &allow(&[ROW_TYPE_ROUTINE_RUN])).await.unwrap();
+        assert_eq!(report.rows_applied, 1);
+        let runs = second.recent_routine_runs_across_all(10).unwrap();
+        assert_eq!(runs.iter().map(|r| r.output_summary.as_str()).collect::<Vec<_>>(), vec!["the runner's brief"]);
+        assert_eq!(runs[0].origin_device_id.as_deref(), Some(RUNNER));
+
+        let not_granted = runner_store();
+        pull(&conn, &key, &not_granted, &allow(&[ROW_TYPE_MEETING])).await;
+        assert!(not_granted.recent_routine_runs_across_all(10).unwrap().is_empty());
+    }
+
+    fn calendar_json(title: &str, source: Option<&str>) -> String {
+        let mut payload: ItemPayload = serde_json::from_str(&item_json("calendar_event", now_unix_ms() + DAY_MS / 2, title, None)).unwrap();
+        payload.item.source = source.map(str::to_string);
+        serde_json::to_string(&payload).unwrap()
+    }
+
+    fn calendar_titles(store: &Store) -> Vec<String> {
+        let mut titles: Vec<String> = store.export_items_page("calendar_event", 0, 100).unwrap().into_iter().map(|r| r.body_text).collect();
+        titles.sort();
+        titles
+    }
+
+    /// The cloud runner (`non_google_calendar_only`) never applies a Google Calendar event, nor one whose
+    /// source is not stored (treated as Google); other calendars still come through. Off by default.
+    #[tokio::test]
+    async fn a_sourceless_calendar_event_is_treated_as_google_and_left_out() {
+        let (_dir, conn, key) = relay().await;
+        seed(&conn, &key, 1, ROW_TYPE_ITEMS, &calendar_json("google event", Some("google_calendar"))).await;
+        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &calendar_json("sourceless event", None)).await;
+        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &calendar_json("empty source event", Some(""))).await;
+        seed(&conn, &key, 4, ROW_TYPE_ITEMS, &calendar_json("apple event", Some("apple_calendar"))).await;
+        let runner = runner_store();
+        let options = PullOptions { non_google_calendar_only: true, ..allow(&["items:calendar_event"]) };
+        pull(&conn, &key, &runner, &options).await;
+        assert_eq!(calendar_titles(&runner), vec!["apple event".to_string()]);
+
+        let as_today = runner_store();
+        pull(&conn, &key, &as_today, &allow(&["items:calendar_event"])).await;
+        assert_eq!(calendar_titles(&as_today).len(), 4, "off by default: every calendar event, as today");
+    }
+
+    /// A device without the topics capability makes every sender hold its client settings back: the report
+    /// says so until every device on the relay has announced it.
+    #[tokio::test]
+    async fn the_report_says_whether_client_settings_are_being_held_back() {
+        let (_dir, conn, key) = relay().await;
+        seed(&conn, &key, 1, ROW_TYPE_ROUTINE_RUN, &run_json(1, "a brief")).await;
+        let report = crate::runner_pull_with_connection(&conn, &key, &runner_store(), RUNNER, &allow(&[ROW_TYPE_ROUTINE_RUN])).await.unwrap();
+        assert!(report.complete);
+        assert!(!report.exclusion_rows_published, "the peer has not announced the topics capability");
+        push_marker(&conn, &key, PEER, ROW_TYPE_TOPICS_CAPABILITY).await.unwrap();
+        let report = crate::runner_pull_with_connection(&conn, &key, &runner_store(), RUNNER, &allow(&[ROW_TYPE_ROUTINE_RUN])).await.unwrap();
+        assert!(report.exclusion_rows_published);
+    }
+
+    /// The runner keys "every exclusion row was read" off a drained pull: it says so, and counts the rows.
+    #[tokio::test]
+    async fn a_drained_runner_pull_reports_complete_with_the_rows_it_applied() {
+        let (_dir, conn, key) = relay().await;
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_json(7, "Standup")).await;
+        seed(&conn, &key, 2, ROW_TYPE_ROUTINE_RUN, &run_json(4, "a brief")).await;
+        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &item_json("capture", now_unix_ms(), "not granted", None)).await;
+        let store = runner_store();
+        let report = crate::runner_pull_with_connection(&conn, &key, &store, RUNNER, &allow(&[ROW_TYPE_MEETING, ROW_TYPE_ROUTINE_RUN]))
+            .await
+            .unwrap();
+        assert!(report.complete);
+        assert_eq!(report.rows_applied, 2, "the capture was left out");
+        assert!(report.rounds >= 1, "{report:?}");
+        assert!(report.rows_fetched >= report.rows_applied, "fetched counts every row read: {report:?}");
+    }
+
+    /// A pull whose budget ends with rows still waiting succeeds (the newest rows are in) but is not
+    /// complete: an older client setting may be among the rows not read.
+    #[tokio::test]
+    async fn a_runner_pull_cut_short_by_its_budget_reports_incomplete() {
+        let (_dir, conn, key) = relay().await;
+        let rows = CATCH_UP_PACE.rows as i64 + 5;
+        for seq in 1..=rows {
+            seed(&conn, &key, seq, ROW_TYPE_ROUTINE_RUN, &run_json(seq, "a brief")).await;
+        }
+        let store = runner_store();
+        let report = crate::runner_pull_phased(
+            &conn,
+            &key,
+            &store,
+            RUNNER,
+            &allow(&[ROW_TYPE_ROUTINE_RUN]),
+            std::time::Duration::ZERO,
+            &std::sync::Mutex::new("connect"),
+        )
+        .await
+        .unwrap();
+        assert!(!report.complete);
+        assert!(report.rows_applied > 0 && (report.rows_applied as i64) < rows, "{}", report.rows_applied);
+    }
+
+    fn meeting_at(source_id: i64, title: &str, start_unix_ms: i64) -> String {
+        let mut payload: MeetingPayload = serde_json::from_str(&meeting_json(source_id, title)).unwrap();
+        payload.meeting.start_unix_ms = start_unix_ms;
+        payload.meeting.end_unix_ms = Some(start_unix_ms + 60_000);
+        serde_json::to_string(&payload).unwrap()
+    }
+
+    fn windowed(types: &[&str]) -> PullOptions {
+        PullOptions { item_window_ms: Some(DAY_MS), ..allow(types) }
+    }
+
+    #[tokio::test]
+    async fn a_transcript_grant_does_not_pull_meetings_older_than_the_window_that_have_no_in_window_transcript() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Old, no lines", now - 30 * DAY_MS)).await;
+        seed(&conn, &key, 2, ROW_TYPE_MEETING, &meeting_at(8, "Old, old lines", now - 20 * DAY_MS)).await;
+        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &item_json("transcript", now - 20 * DAY_MS, "stale line", Some(8))).await;
+        seed(&conn, &key, 4, ROW_TYPE_MEETING, &meeting_at(9, "Recent, no lines", now - DAY_MS / 2)).await;
+        seed(&conn, &key, 5, ROW_TYPE_MEETING, &meeting_at(10, "Today", now - 60_000)).await;
+        seed(&conn, &key, 6, ROW_TYPE_ITEMS, &item_json("transcript", now, "fresh line", Some(10))).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &windowed(&["items:transcript"])).await;
+        assert_eq!(titles(&store), vec!["Today".to_string()], "only the meeting an applied line needs");
+        assert_eq!(bodies(&store, "transcript"), vec!["fresh line".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn an_in_window_transcript_still_gets_its_older_started_parent_meeting() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Started last week", now - 7 * DAY_MS)).await;
+        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("transcript", now, "still talking", Some(7))).await;
+        for grant in [vec!["items:transcript"], vec![ROW_TYPE_MEETING, "items:transcript"]] {
+            let store = runner_store();
+            pull(&conn, &key, &store, &windowed(&grant)).await;
+            assert_eq!(titles(&store), vec!["Started last week".to_string()], "{grant:?}");
+            assert_eq!(bodies(&store, "transcript"), vec!["still talking".to_string()], "{grant:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_explicit_meeting_grant_respects_the_window() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Last week", now - 7 * DAY_MS)).await;
+        seed(&conn, &key, 2, ROW_TYPE_MEETING, &meeting_at(8, "This morning", now - DAY_MS / 4)).await;
+        let store = runner_store();
+        pull(&conn, &key, &store, &windowed(&[ROW_TYPE_MEETING])).await;
+        assert_eq!(titles(&store), vec!["This morning".to_string()]);
+        // Without a window, an explicit grant takes every meeting.
+        let unwindowed = runner_store();
+        pull(&conn, &key, &unwindowed, &allow(&[ROW_TYPE_MEETING])).await;
+        assert_eq!(titles(&unwindowed).len(), 2);
+    }
+
+    #[tokio::test]
+    async fn default_options_still_pull_every_meeting() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_MEETING, &meeting_at(7, "Years ago", 1_000)).await;
+        seed(&conn, &key, 2, ROW_TYPE_MEETING, &meeting_at(8, "Last month", now - 30 * DAY_MS)).await;
+        seed(&conn, &key, 3, ROW_TYPE_MEETING, &meeting_at(9, "Today", now)).await;
+        let phone = Store::open_in_memory().unwrap();
+        crate::pull_only_with_connection(&conn, &key, &phone, "phone", &PullOptions::default()).await.unwrap();
+        let desktop = Store::open_in_memory().unwrap();
+        pull_content(&conn, &key, &desktop, "desktop").await.unwrap();
+        let runner = runner_store();
+        pull(&conn, &key, &runner, &PullOptions::default()).await;
+        for store in [&phone, &desktop, &runner] {
+            let mut got = titles(store);
+            got.sort();
+            assert_eq!(got, vec!["Last month".to_string(), "Today".to_string(), "Years ago".to_string()]);
+        }
+    }
+
+    #[tokio::test]
+    async fn the_window_excludes_older_items() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_ITEMS, &item_json("capture", now - 3 * DAY_MS, "old capture", None)).await;
+        // A future event pushed long ago is still inside the window: it is dated by its own time.
+        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("calendar_event", now + DAY_MS, "tomorrow", None)).await;
+        seed(&conn, &key, 3, ROW_TYPE_ITEMS, &item_json("calendar_event", now - 3 * DAY_MS, "last week", None)).await;
+        seed(&conn, &key, 4, ROW_TYPE_ITEMS, &item_json("capture", now - DAY_MS / 2, "recent capture", None)).await;
+        let store = runner_store();
+        let opts = PullOptions {
+            item_window_ms: Some(DAY_MS),
+            ..allow(&["items:capture", "items:calendar_event"])
+        };
+        pull(&conn, &key, &store, &opts).await;
+        assert_eq!(bodies(&store, "capture"), vec!["recent capture".to_string()]);
+        assert_eq!(bodies(&store, "calendar_event"), vec!["tomorrow".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_client_delete_tombstone_removes_pulled_rows_and_leaves_no_fts_residue_after_the_round() {
+        let (_dir, conn, key) = relay().await;
+        let now = now_unix_ms();
+        seed(&conn, &key, 1, ROW_TYPE_ITEMS, &item_json("capture", now, "quuxlerberg contract notes", None)).await;
+        seed(&conn, &key, 2, ROW_TYPE_ITEMS, &item_json("capture", now, "lunch order", None)).await;
+        let store = runner_store();
+        let opts = allow(&["items:capture"]);
+        pull(&conn, &key, &store, &opts).await;
+        assert!(store.fts_pages_naming("quuxlerberg").unwrap() > 0, "the test needs the term indexed");
+
+        seed(&conn, &key, 3, ROW_TYPE_CLIENT_ITEM_FORGOTTEN, &forgotten_capture_json(1)).await;
+        pull(&conn, &key, &store, &opts).await;
+        assert_eq!(bodies(&store, "capture"), vec!["lunch order".to_string()]);
+        assert_eq!(store.fts_pages_naming("quuxlerberg").unwrap(), 0, "no residue in the full-text index");
+    }
+}
+
+/// The runner's filtered pull (kind tags): an allowlist that names item kinds skips other kinds' tagged
+/// `items` rows at the relay query, fetches untagged ones, and applies exactly what an unfiltered pull does.
+#[cfg(test)]
+mod filtered_pull_tests {
+    use super::*;
+
+    const RUNNER: &str = "runner-1";
+
+    async fn relay() -> (tempfile::TempDir, Connection, GroupKey) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let conn = db.connect().unwrap();
+        ensure_content_schema(&conn).await.unwrap();
+        (dir, conn, GroupKey::generate())
+    }
+
+    /// One encrypted row of `device`, with `kind_tag` = the tag of `tag_kind` (or NULL).
+    async fn seed(conn: &Connection, key: &GroupKey, device: &str, seq: i64, row_type: &str, json: &str, tag_kind: Option<&str>) {
+        let aad = content_row_aad(device, seq, row_type);
+        let ciphertext = STANDARD.encode(sync::encrypt_payload(key, json.as_bytes(), &aad));
+        let tag = tag_kind.map(|k| sync::kind_tag(key, k));
+        conn.execute(
+            "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms, kind_tag) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+            params![device, seq, row_type, ciphertext.as_str(), tag],
+        )
+        .await
+        .unwrap();
+    }
+
+    fn item_json(kind: &str, body: &str) -> String {
+        let calendar = kind == "calendar_event";
+        serde_json::to_string(&ItemPayload {
+            source_meeting_id: None,
+            meeting_local_seq: None,
+            item: memory::AppliedItem {
+                kind: kind.to_string(),
+                source: calendar.then(|| "outlook".to_string()),
+                ts_unix_ms: now_unix_ms(),
+                actors: Some("[\"Me\"]".to_string()),
+                title: calendar.then(|| body.to_string()),
+                body_text: body.to_string(),
+                refs: None,
+                flags: None,
+                hash: None,
+                external_id: calendar.then(|| format!("{body}#1")),
+                app_bundle_id: (kind == "capture").then(|| "com.a".to_string()),
+                url: None,
+            },
+        })
+        .unwrap()
+    }
+
+    fn allow(types: &[&str]) -> PullOptions {
+        PullOptions { row_type_allowlist: Some(types.iter().map(|t| t.to_string()).collect()), ..Default::default() }
+    }
+
+    fn runner_store() -> Store {
+        let store = Store::open_in_memory().unwrap();
+        store.set_own_device_id(RUNNER);
+        store
+    }
+
+    async fn pull(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions) -> crate::RunnerPullReport {
+        crate::runner_pull_with_connection(conn, key, store, RUNNER, opts).await.unwrap()
+    }
+
+    fn bodies(store: &Store, kind: &str) -> Vec<String> {
+        let mut out: Vec<String> =
+            store.export_items_page(kind, 0, 100_000).unwrap().into_iter().map(|r| r.body_text).collect();
+        out.sort();
+        out
+    }
+
+    async fn count(conn: &Connection, sql: &str) -> usize {
+        let mut rows = conn.query(sql, ()).await.unwrap();
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap() as usize
+    }
+
+    /// Three devices; per device: tagged events, captures and transcripts, untagged events and captures,
+    /// and a routine run (not granted).
+    async fn seed_mixed_relay(conn: &Connection, key: &GroupKey) {
+        for device in ["dev-a", "dev-b", "dev-c"] {
+            let mut seq = 0;
+            let mut next = || {
+                seq += 1;
+                seq
+            };
+            for i in 0..4 {
+                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("capture", &format!("{device} cap {i}")), Some("capture")).await;
+                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("{device} ev {i}")), Some("calendar_event")).await;
+                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("transcript", &format!("{device} line {i}")), Some("transcript")).await;
+                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("{device} old ev {i}")), None).await;
+                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("capture", &format!("{device} old cap {i}")), None).await;
+                seed(conn, key, device, next(), ROW_TYPE_ITEMS, &item_json("capture", &format!("{device} cap2 {i}")), Some("capture")).await;
+            }
+        }
+    }
+
+    /// (a) + (c): only granted-kind tagged rows and untagged rows are fetched, and the applied set equals the
+    /// same pull's without tags, at the default span and at spans small enough to put every row on a window
+    /// edge.
+    #[tokio::test]
+    async fn filtered_pull_fetches_only_granted_and_untagged_items_and_applies_what_unfiltered_does() {
+        for span in [None, Some(1), Some(2), Some(5)] {
+            let (_dir, conn, key) = relay().await;
+            seed_mixed_relay(&conn, &key).await;
+            let opts = allow(&["items:calendar_event"]);
+            let total_items = count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items'").await;
+            let wanted = count(
+                &conn,
+                &format!(
+                    "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND (kind_tag IS NULL OR kind_tag = '{}')",
+                    sync::kind_tag(&key, "calendar_event")
+                ),
+            )
+            .await;
+
+            let filtered = runner_store();
+            let report = pull_with_span(&conn, &key, &filtered, &opts, span).await;
+            assert!(report.complete, "span {span:?}");
+            assert_eq!(report.rows_fetched, wanted, "span {span:?}: tagged events and untagged items only");
+
+            conn.execute("UPDATE sync_row SET kind_tag = NULL", ()).await.unwrap();
+            let unfiltered = runner_store();
+            let base = pull_with_span(&conn, &key, &unfiltered, &opts, span).await;
+            assert!(base.complete);
+            assert_eq!(base.rows_fetched, total_items);
+
+            assert_eq!(bodies(&filtered, "calendar_event"), bodies(&unfiltered, "calendar_event"), "span {span:?}");
+            assert_eq!(bodies(&filtered, "calendar_event").len(), 24, "every event, tagged or not");
+            for kind in ["capture", "transcript"] {
+                assert!(bodies(&filtered, kind).is_empty());
+                assert!(bodies(&unfiltered, kind).is_empty());
+            }
+            assert_eq!(report.rows_applied, base.rows_applied, "span {span:?}");
+            for device in ["dev-a", "dev-b", "dev-c"] {
+                assert_eq!(filtered.sync_gap(device).unwrap(), None);
+                assert_eq!(filtered.get_sync_cursor(device).unwrap(), 24, "span {span:?}: at the peer's top");
+            }
+        }
+    }
+
+    async fn pull_with_span(conn: &Connection, key: &GroupKey, store: &Store, opts: &PullOptions, span: Option<i64>) -> crate::RunnerPullReport {
+        FILTERED_PULL_TEST_SPAN.with(|c| c.set(span));
+        let report = pull(conn, key, store, opts).await;
+        FILTERED_PULL_TEST_SPAN.with(|c| c.set(None));
+        report
+    }
+
+    /// The live range (oldest first, no gap): windows move the cursor over left-out rows to each peer's top,
+    /// within a round while its budget lasts (a spent budget reports more and goes on next round), and later
+    /// rows pushed above it are read the same way.
+    #[tokio::test]
+    async fn filtered_pull_live_range_windows_reach_the_top_and_match_unfiltered() {
+        let spent = Pace { rows: MAX_ROWS_PER_PULL_PASS, peer_budget: std::time::Duration::ZERO, round_budget: None };
+        for (span, pace) in [(None, NORMAL_PACE), (Some(1), NORMAL_PACE), (Some(2), NORMAL_PACE), (Some(5), NORMAL_PACE), (Some(2), spent)] {
+            let (_dir, conn, key) = relay().await;
+            seed_mixed_relay(&conn, &key).await;
+            let opts = allow(&["items:calendar_event"]);
+            let rounds = |store: Store| {
+                let (conn, key, opts) = (&conn, &key, &opts);
+                async move {
+                    FILTERED_PULL_TEST_SPAN.with(|c| c.set(span));
+                    let mut fetched = 0;
+                    for _ in 0..50 {
+                        let mut stats = Vec::new();
+                        let more = pull_round(conn, key, &store, RUNNER, pace, opts, true, &mut stats).await.unwrap();
+                        fetched += stats.iter().map(|s| s.fetched + s.gap_fetched).sum::<usize>();
+                        if !more {
+                            break;
+                        }
+                    }
+                    FILTERED_PULL_TEST_SPAN.with(|c| c.set(None));
+                    (store, fetched)
+                }
+            };
+            let (filtered, fetched) = rounds(runner_store()).await;
+            assert_eq!(fetched, 3 * 12, "span {span:?}: tagged events and untagged items only");
+            for device in ["dev-a", "dev-b", "dev-c"] {
+                assert_eq!(filtered.get_sync_cursor(device).unwrap(), 24, "span {span:?}");
+            }
+            // Rows pushed later, above the cursor: an unwanted tail, then one event.
+            for seq in 25..=30 {
+                seed(&conn, &key, "dev-a", seq, ROW_TYPE_ITEMS, &item_json("capture", &format!("late cap {seq}")), Some("capture")).await;
+            }
+            seed(&conn, &key, "dev-a", 31, ROW_TYPE_ITEMS, &item_json("calendar_event", "late ev"), Some("calendar_event")).await;
+            seed(&conn, &key, "dev-a", 32, ROW_TYPE_ITEMS, &item_json("capture", "late cap 32"), Some("capture")).await;
+            let (filtered, fetched) = rounds(filtered).await;
+            assert_eq!(fetched, 1, "span {span:?}: only the late event");
+            assert_eq!(filtered.get_sync_cursor("dev-a").unwrap(), 32, "span {span:?}");
+
+            conn.execute("UPDATE sync_row SET kind_tag = NULL", ()).await.unwrap();
+            let (unfiltered, _) = rounds(runner_store()).await;
+            assert_eq!(bodies(&filtered, "calendar_event"), bodies(&unfiltered, "calendar_event"), "span {span:?}");
+            assert_eq!(bodies(&filtered, "calendar_event").len(), 25);
+            assert!(bodies(&filtered, "capture").is_empty());
+        }
+    }
+
+    /// (c) Untagged rows of any kind are fetched and filtered after decrypting, tagged ones of other kinds
+    /// never reach the runner.
+    #[tokio::test]
+    async fn filtered_pull_applies_tagged_and_untagged_rows_of_a_granted_kind() {
+        let (_dir, conn, key) = relay().await;
+        seed(&conn, &key, "dev-a", 1, ROW_TYPE_ITEMS, &item_json("calendar_event", "tagged"), Some("calendar_event")).await;
+        seed(&conn, &key, "dev-a", 2, ROW_TYPE_ITEMS, &item_json("calendar_event", "untagged"), None).await;
+        seed(&conn, &key, "dev-a", 3, ROW_TYPE_ITEMS, &item_json("capture", "old capture"), None).await;
+        seed(&conn, &key, "dev-a", 4, ROW_TYPE_ITEMS, &item_json("capture", "new capture"), Some("capture")).await;
+        let store = runner_store();
+        let report = pull(&conn, &key, &store, &allow(&["items:calendar_event"])).await;
+        assert!(report.complete);
+        assert_eq!(bodies(&store, "calendar_event"), vec!["tagged".to_string(), "untagged".to_string()]);
+        assert!(bodies(&store, "capture").is_empty());
+        assert_eq!(report.rows_fetched, 3, "the tagged capture is never fetched");
+    }
+
+    /// (b) Every kind the repo pushes as an `items` row (capture, calendar event, transcript line) is
+    /// tagged on push and comes back through a pull granted that kind alone.
+    #[tokio::test]
+    async fn filtered_pull_round_trips_every_pushed_kind() {
+        let (_dir, conn, key) = relay().await;
+        let pusher = Store::open_in_memory().unwrap();
+        pusher
+            .insert_capture_item(&memory::NewCaptureItem {
+                device_id: "dev-a".to_string(),
+                ts_unix_ms: now_unix_ms(),
+                app_bundle_id: "com.a".to_string(),
+                window_title: "Local".to_string(),
+                url: None,
+                text: "a capture".to_string(),
+                hash: 9,
+                source: "screen".to_string(),
+            })
+            .unwrap();
+        pusher
+            .upsert_calendar_event_items(&[memory::NewCalendarEventItem {
+                device_id: "dev-a".to_string(),
+                source: "outlook".to_string(),
+                external_id: "evt-1".to_string(),
+                ts_unix_ms: now_unix_ms(),
+                title: "Planning".to_string(),
+                actors: vec![],
+            }])
+            .unwrap();
+        let meeting_id = pusher
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "dev-a".to_string(),
+                start_unix_ms: now_unix_ms(),
+                end_unix_ms: None,
+                title: "Standup".to_string(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Calendar,
+                audio_path: None,
+                status: memory::MeetingStatus::Recording,
+            })
+            .unwrap();
+        pusher
+            .insert_transcript_segments(&[memory::NewTranscriptSegment {
+                meeting_id,
+                start_cs: 0,
+                speaker_label: "Me".to_string(),
+                text: "a transcript line".to_string(),
+            }])
+            .unwrap();
+        pusher.complete_meeting(meeting_id, now_unix_ms(), None).unwrap();
+        push_content(&conn, &key, &pusher, "dev-a").await.unwrap();
+        let kinds = ["capture", "calendar_event", "transcript"];
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM sync_row WHERE row_type = 'items' AND kind_tag IS NULL").await,
+            0,
+            "every pushed item is tagged"
+        );
+        let mut fetched = Vec::new();
+        for kind in kinds {
+            let store = runner_store();
+            let report = pull(&conn, &key, &store, &allow(&[&format!("items:{kind}")])).await;
+            assert!(report.complete, "{kind}");
+            assert_eq!(bodies(&store, kind).len(), 1, "{kind} round-trips");
+            for other in kinds.iter().filter(|k| **k != kind) {
+                assert!(bodies(&store, other).is_empty(), "{kind} pull applied {other}");
+            }
+            fetched.push(report.rows_fetched);
+        }
+        // The same pulls with every tag cleared fetch exactly the two other kinds' items more.
+        conn.execute("UPDATE sync_row SET kind_tag = NULL", ()).await.unwrap();
+        for (kind, filtered) in kinds.iter().zip(fetched) {
+            let store = runner_store();
+            let report = pull(&conn, &key, &store, &allow(&[&format!("items:{kind}")])).await;
+            assert_eq!(bodies(&store, kind).len(), 1, "{kind}");
+            assert_eq!(filtered + 2, report.rows_fetched, "{kind}: the other kinds' items are not fetched");
+        }
+    }
+
+    /// (d) One granted row per 5,000 tagged rows of another kind: the pull ends at the peer's top with the
+    /// gap closed, every granted row applied, and well under 1% of the rows fetched. At the default span
+    /// and at a span that takes many windows.
+    #[tokio::test]
+    async fn filtered_pull_of_a_sparse_kind_finishes_and_fetches_almost_nothing() {
+        for span in [None, Some(3_000)] {
+            let (_dir, conn, key) = relay().await;
+            const STRIDE: i64 = 5_001;
+            const WANTED: i64 = 10;
+            // The top row is an unwanted one, so "the cursor is at the top" is not just "at the last wanted row".
+            let top = STRIDE * WANTED;
+            // Unwanted rows: junk ciphertext (counted undecodable if ever fetched), tagged as captures.
+            conn.execute(
+                "WITH RECURSIVE s(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM s WHERE n < ?1) \
+                 INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms, kind_tag) \
+                 SELECT 'dev-a', n, 'items', 'junk', 0, ?2 FROM s WHERE n % ?3 != 1",
+                params![top, sync::kind_tag(&key, "capture"), STRIDE],
+            )
+            .await
+            .unwrap();
+            for i in 0..WANTED {
+                let seq = i * STRIDE + 1;
+                seed(&conn, &key, "dev-a", seq, ROW_TYPE_ITEMS, &item_json("calendar_event", &format!("ev {seq}")), Some("calendar_event")).await;
+            }
+            let rows = count(&conn, "SELECT COUNT(*) FROM sync_row").await;
+            assert_eq!(rows as i64, top);
+
+            let store = runner_store();
+            let started = std::time::Instant::now();
+            let report = pull_with_span(&conn, &key, &store, &allow(&["items:calendar_event"]), span).await;
+            eprintln!("sparse fixture span {span:?}: {} rows, fetched {}, rounds {}, {:?}", rows, report.rows_fetched, report.rounds, started.elapsed());
+            assert!(report.complete, "span {span:?}");
+            assert_eq!(store.get_sync_cursor("dev-a").unwrap(), top, "span {span:?}: the cursor is at the peer's top");
+            assert_eq!(store.sync_gap("dev-a").unwrap(), None, "span {span:?}: the gap is pulled");
+            assert!(report.rows_fetched * 100 < rows, "span {span:?}: fetched {} of {rows}", report.rows_fetched);
+            let applied = bodies(&store, "calendar_event");
+            assert_eq!(applied.len() as i64, WANTED, "span {span:?}");
+            assert!(applied.contains(&"ev 1".to_string()), "the lowest granted row is applied");
+        }
+    }
+
+    /// (e) A relay whose `sync_row` predates `kind_tag` (and whose column cannot be added this run) pulls
+    /// unfiltered, without an error, and applies the same rows.
+    #[tokio::test]
+    async fn filtered_pull_on_a_relay_without_kind_tag_pulls_unfiltered() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute(super::tests::OLD_SYNC_ROW_DDL, ()).await.unwrap();
+        // This process believes the column is there, so ensure_content_schema does not add it: the pull
+        // itself must cope.
+        KIND_TAG_COLUMN_SEEN.set();
+        let key = GroupKey::generate();
+        let rows = [("calendar_event", "ev 1"), ("capture", "cap 1"), ("calendar_event", "ev 2"), ("transcript", "line")];
+        for (i, (kind, body)) in rows.iter().enumerate() {
+            let seq = i as i64 + 1;
+            let aad = content_row_aad("dev-a", seq, ROW_TYPE_ITEMS);
+            let ciphertext = STANDARD.encode(sync::encrypt_payload(&key, item_json(kind, body).as_bytes(), &aad));
+            conn.execute(
+                "INSERT INTO sync_row (device_id, local_seq, row_type, ciphertext, created_at_unix_ms) VALUES ('dev-a', ?1, 'items', ?2, 0)",
+                params![seq, ciphertext.as_str()],
+            )
+            .await
+            .unwrap();
+        }
+        for span in [None, Some(1)] {
+            let store = runner_store();
+            let report = pull_with_span(&conn, &key, &store, &allow(&["items:calendar_event"]), span).await;
+            assert!(report.complete);
+            assert_eq!(report.rows_fetched, 4, "unfiltered: every items row");
+            assert_eq!(bodies(&store, "calendar_event"), vec!["ev 1".to_string(), "ev 2".to_string()]);
+            assert_eq!(store.get_sync_cursor("dev-a").unwrap(), 4);
+            assert_eq!(store.sync_gap("dev-a").unwrap(), None);
+        }
+        let mut cols = conn.query("SELECT COUNT(*) FROM pragma_table_info('sync_row') WHERE name = 'kind_tag'", ()).await.unwrap();
+        assert_eq!(cols.next().await.unwrap().unwrap().get::<i64>(0).unwrap(), 0, "the pull did not add the column");
+        KIND_TAG_COLUMN_SEEN.reset();
+    }
+
+    #[test]
+    fn no_such_kind_tag_column_is_recognized() {
+        assert!(is_no_such_kind_tag_column("SQLite failure: `no such column: kind_tag`"));
+        assert!(!is_no_such_kind_tag_column("no such column: entity_tag"));
+        assert!(!is_no_such_kind_tag_column("table sync_row has no column named kind_tag"));
+        assert!(!is_no_such_kind_tag_column("database is locked"));
+    }
+
+    /// Kind tags only when the allowlist restricts item kinds: never for a phone or desktop pull.
+    #[test]
+    fn filtered_pull_tags_only_a_kind_restricted_allowlist() {
+        let key = GroupKey::generate();
+        let tags = |opts: &PullOptions| RowFilter::new(opts, true, 0, &key).kind_tags;
+        assert_eq!(tags(&PullOptions::default()), None);
+        assert_eq!(tags(&allow(&[ROW_TYPE_ROUTINE_RUN])), None);
+        assert_eq!(tags(&allow(&[ROW_TYPE_ITEMS])), None);
+        assert_eq!(tags(&allow(&["items:calendar_event", ROW_TYPE_ITEMS])), None, "every kind");
+        assert_eq!(tags(&allow(&["items:calendar_event"])), Some(vec![sync::kind_tag(&key, "calendar_event")]));
+        assert_eq!(
+            tags(&allow(&["items:capture", "items:transcript", "items:capture"])),
+            Some(vec![sync::kind_tag(&key, "capture"), sync::kind_tag(&key, "transcript")])
+        );
+    }
+
+    /// Without tags the allowlist SQL is unchanged; with them it still seeks the primary key.
+    #[tokio::test]
+    async fn filtered_pull_sql_is_unchanged_without_tags_and_seeks_with_them() {
+        assert_eq!(
+            fetch_allowed_rows_sql(2, 0),
+            "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq > ?2 \
+             AND row_type IN (?4, ?5) ORDER BY local_seq ASC LIMIT ?3"
+        );
+        assert_eq!(
+            fetch_allowed_gap_rows_sql(2, 0),
+            "SELECT local_seq, row_type, ciphertext FROM sync_row WHERE device_id = ?1 AND local_seq < ?2 \
+             AND local_seq > ?3 AND row_type IN (?5, ?6) ORDER BY local_seq DESC LIMIT ?4"
+        );
+        let (_dir, conn, _key) = relay().await;
+        for sql in [fetch_allowed_rows_sql(3, 2), fetch_allowed_gap_rows_sql(3, 2)] {
+            let mut rows = conn.query(&format!("EXPLAIN QUERY PLAN {sql}"), ()).await.unwrap();
+            while let Some(row) = rows.next().await.unwrap() {
+                let detail: String = row.get(3).unwrap();
+                assert!(!detail.starts_with("SCAN"), "{detail}\nin: {sql}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod defer_embedding_guard_tests {
+    use super::*;
+
+    /// libsql's local backend must run `sqlite3_config` before any rusqlite connection
+    /// initialises SQLite in this process, so each test opens a relay first (as the others do).
+    async fn store_after_a_relay(dir: &tempfile::TempDir) -> Store {
+        let db = libsql::Builder::new_local(dir.path().join("relay.db")).build().await.unwrap();
+        drop(db.connect().unwrap());
+        Store::open_in_memory().unwrap()
+    }
+
+    /// The round runs under a timeout that drops its future at any `.await`, such as a pause in
+    /// `apply_page` (#850 review round 1, Important 1). Dropped there, the defer setting must still
+    /// go back: left on, the connection stores every later row without an embedding.
+    #[tokio::test]
+    async fn a_page_dropped_mid_await_puts_the_defer_setting_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_after_a_relay(&dir).await;
+        assert!(!store.set_defer_embedding(false), "off to begin with");
+        let cancelled = tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            with_defer_embedding(&store, true, std::future::pending::<()>()),
+        )
+        .await;
+        assert!(cancelled.is_err(), "the page future was dropped mid-await");
+        assert!(!store.set_defer_embedding(false), "the setting is back to off after the drop");
+    }
+
+    #[tokio::test]
+    async fn a_page_that_finishes_puts_the_defer_setting_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_after_a_relay(&dir).await;
+        let seen = with_defer_embedding(&store, true, async { store.set_defer_embedding(true) }).await;
+        assert!(seen, "deferred while the page ran");
+        assert!(!store.set_defer_embedding(false), "back to off after");
     }
 }

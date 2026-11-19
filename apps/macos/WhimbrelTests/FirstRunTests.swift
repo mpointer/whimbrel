@@ -10,6 +10,27 @@ final class FirstRunTests: XCTestCase {
         XCTAssertFalse(FirstRun.shouldShow(done: false, microphoneGranted: false, screenGranted: true), "an existing install")
     }
 
+    /// Task 13c fix (A): after Delete everything the permissions sheet returns, even though
+    /// the OS grants stay; finishing it marks it done again.
+    func test_delete_everything_brings_the_first_run_sheet_back() throws {
+        let name = "first-run-13c.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("first-run-13c-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        FirstRun.markDone(defaults)
+        XCTAssertFalse(FirstRun.shouldShow(defaults: defaults, microphoneGranted: true, screenGranted: true))
+        YourData.DeleteEverythingSteps.live(root: root, keys: DbKeyStore(service: "first-run-13c.\(UUID().uuidString)"),
+                                            defaults: defaults).clearLaunchFlags()
+        XCTAssertTrue(FirstRun.shouldShow(defaults: defaults, microphoneGranted: true, screenGranted: true),
+                      "shown after Delete everything although the permissions are still granted")
+        XCTAssertTrue(FirstRun.shouldShow(defaults: defaults, microphoneGranted: false, screenGranted: false))
+        FirstRun.markDone(defaults)
+        XCTAssertFalse(FirstRun.shouldShow(defaults: defaults, microphoneGranted: true, screenGranted: true), "once")
+        XCTAssertFalse(FirstRun.shouldShow(defaults: defaults, microphoneGranted: false, screenGranted: false))
+    }
+
     func test_first_run_asks_for_two_permissions_only() {
         XCTAssertEqual(PermissionKind.firstRun, [.microphone, .screenRecording])
     }

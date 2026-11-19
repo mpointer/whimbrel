@@ -249,7 +249,7 @@ struct FieldTodayLayout: TodayArchetypeView {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if event.showsStart {
-                    Button("Start") { actions.startMeeting(event.event) }.buttonStyle(.whimbrelPrimary)
+                    Button("Start") { actions.startMeeting(event.event) }.buttonStyle(.whimbrelPrimary).recordingControl()
                 }
             }
         }
@@ -324,7 +324,7 @@ struct FieldTodayLayout: TodayArchetypeView {
         .frame(width: slot.labelWidth, alignment: .leading)
         switch marker.action {
         case let .start(event)?:
-            Button { actions.startMeeting(event) } label: { body }
+            Button { actions.startMeeting(event) } label: { body }.recordingControl()
                 .buttonStyle(.plain)
                 .accessibilityLabel(marker.accessibilityLabel)
         case let .open(id)?:
@@ -377,7 +377,7 @@ struct FieldTodayLayout: TodayArchetypeView {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if event.showsStart {
-                Button("Start") { actions.startMeeting(event.event) }.buttonStyle(.whimbrelPrimary)
+                Button("Start") { actions.startMeeting(event.event) }.buttonStyle(.whimbrelPrimary).recordingControl()
             }
         }
     }

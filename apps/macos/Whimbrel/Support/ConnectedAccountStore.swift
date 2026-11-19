@@ -68,6 +68,18 @@ final class ConnectedAccountStore {
         return added
     }
 
+    /// `makeDefault(_:)` for the same init-time callers as `addDuringInit` (the kept Google
+    /// accounts restore after Delete everything, `KeptGoogleAccounts.restore`).
+    func makeDefaultDuringInit(_ email: String) {
+        guard let store else { return }
+        let connectorId = self.connectorId
+        let snapshot = CoreMemoryStore.accessQueue.sync { () -> CoreConnectorAccounts? in
+            _ = store.setDefaultConnectorAccount(connector: connectorId, email: email)
+            return store.connectorAccounts(connector: connectorId)
+        }
+        apply(snapshot)
+    }
+
     /// Adds `email` if it isn't already connected (default automatically if it's the
     /// first account). Returns `false` (no-op) if `email` is already present.
     @discardableResult

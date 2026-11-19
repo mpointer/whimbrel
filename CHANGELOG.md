@@ -2,6 +2,40 @@
 
 Notable changes to Whimbrel. Releases ship to Mac and Windows at the same time.
 
+## [0.9.80] - 2026-11-19
+
+### All devices
+- Client controls. A client's page (Mac, Windows, and phones through sync) has four new controls:
+  - **Delete this client** shows what will be removed (linked items, possible matches left unticked, and what is left for you to check), asks you to type the client's name, then gives a receipt. The delete reaches your other devices; a phone applies deletes but can't start one. Settings → Sync shows how many devices still need to update, with "Remove this device".
+  - **Keep for N months** deletes the client's material after that time. Each device asks before deleting its own copies.
+  - **Export** saves the client's material to a folder you pick, and says what it leaves out.
+  - **Exclude from hosted models** keeps material that names the client out of anything sent to an AI service off your device. A request that involves the client runs on a local model or is refused. Matching uses the client's name, aliases and email addresses, not a model, and is whole-word.
+  Copies Whimbrel made from the client's material (routine results, profile suggestions, meeting briefs) can stay on other devices; the receipt says so. New strings are machine-translated and still need review.
+- Building and sorting topics no longer fails with "database is locked" when another part of Whimbrel writes at the same moment; it now waits its turn.
+- Delete this client's review is easier to read: each possible match shows the line that names the client, repeated screen captures are grouped by app and day, linked items say what they are, and the name field stays in view. If background work is running, the delete waits for it (with Cancel) instead of failing.
+- A device that updates later now gets every client's settings, including Exclude from hosted models, set while it was on an older build.
+- Sync no longer fails every round when the sync service answers slowly. Updates that cannot go out in one round go in the next, and the round still counts as working.
+
+### Mac and Windows
+- The memory database can now be encrypted on your computer. A copy of the file (a backup, a synced folder, another account on the same computer) can't be read without its key, which Whimbrel keeps in the Keychain on the Mac and in Credential Manager on Windows. New installs are encrypted from the first launch. An existing install stays as it is until you choose Settings → Capture & Privacy → "Encrypt the database", which offers Export everything first and encrypts at the next launch.
+  - Encrypting asks you to create a recovery key: a recovery file with a passphrase, plus 24 words. Keep them somewhere other than this computer. If the key is lost (a new computer or a reset Keychain), a recovery screen opens the database with either one. Whimbrel never deletes or replaces a database it can't open.
+  - Only the memory database is encrypted. Audio and other files are not. Phones are unchanged.
+  - "Faster search (uses more memory)" gives search up to 1 GB more memory on a computer with at least 16 GB. "Check encryption speed" times search on your own data and keeps the report on your computer.
+  - Delete everything also removes the database keys. API keys and sign-ins are kept.
+- Background work (sync, email and topic indexing, retention) runs on its own database connection, so screens and Ask no longer wait behind it.
+- Ask shows the model that actually answered, and never waits behind background model work.
+- Excluding a client no longer makes Whimbrel rescan its whole library every few seconds; new items are checked as they arrive.
+
+### Mac
+- A meeting summary a model refused now says why, instead of only "No summary yet".
+- A scheduled Teams meeting is recorded from the right window.
+- Hiding or showing the sidebar no longer crashes the app while the "Sync hasn't worked" warning shows.
+- Screen text capture can no longer freeze Whimbrel when the app in front stops responding.
+
+### Windows
+- Releases now include a native Windows on Arm installer (`Whimbrel_x.y.z_arm64-setup.exe`) beside the x64 one, and the update manifest lists it, so an Arm install updates to Arm builds. It runs without emulation; speaker separation isn't in the Arm build yet. The download page offers it ("Download for Windows on Arm") once a release carries it.
+- The installers no longer include Whimbrel's developer tools, so the download and the install are smaller.
+
 ## [0.9.72] - 2026-11-14
 
 ### All devices

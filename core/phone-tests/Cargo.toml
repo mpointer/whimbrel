@@ -1,0 +1,25 @@
+[package]
+name = "phone-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Tests only; nothing depends on this crate. Its tests use a local libsql file as the sync
+# relay (as sync-engine's own tests do), which needs libsql's `core` feature. That feature
+# bundles libsql's own SQLite. As a dev-dependency of api it shadowed SQLCipher in api's
+# test binaries, so `cargo test -p api --features sqlcipher` could not open an encrypted
+# store (BuiltWithoutSqlcipher). Here libsql `core` is a dev-dependency of a crate that no
+# shipped crate depends on and that has no `sqlcipher` feature, so `cargo test -p api` and a
+# build of any shipped crate never compile it. A `cargo test --workspace` run still unifies
+# it into every test binary: run the encrypted suites per package (`-p`).
+
+[dev-dependencies]
+api = { path = "../api" }
+memory = { path = "../memory" }
+sync = { path = "../sync" }
+sync-engine = { path = "../sync-engine" }
+rusqlite = "0.32"
+libsql = { version = "0.9", default-features = false, features = ["core"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tempfile = "3"

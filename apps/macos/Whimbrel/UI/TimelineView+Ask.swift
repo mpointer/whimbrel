@@ -175,6 +175,7 @@ extension TimelineView {
                 .onChange(of: streamingAsk.phase) { _, phase in
                     handleStreamingAskPhaseChange(phase)
                 }
+                .onDisappear { releaseAskGate() }
                 .onChange(of: isAsking) { _, _ in
                     withAnimation { scrollProxy.scrollTo(Self.askScrollBottomAnchorID, anchor: .bottom) }
                 }
@@ -227,8 +228,18 @@ extension TimelineView {
                         }
                     }
                 }
+                if let leftOut = ClientCopy.leftOut(exchange.leftOut) {
+                    Text(verbatim: leftOut)
+                        .font(.whimbrelBody(.caption2))
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                }
                 if let modelLabel = exchange.modelLabel, !modelLabel.isEmpty {
                     Text(modelLabel)
+                        .font(.whimbrelBody(.caption2))
+                        .foregroundStyle(Color.whimbrelTextSecondary)
+                }
+                if exchange.answeredLocally {
+                    Text(verbatim: AskLocalRouteCopy.answered)
                         .font(.whimbrelBody(.caption2))
                         .foregroundStyle(Color.whimbrelTextSecondary)
                 }
@@ -248,7 +259,7 @@ extension TimelineView {
     }
 
     var askingIndicatorBubble: some View {
-        ProgressView("Asking \(inFlightModelLabel)…")
+        ProgressView(AskLocalRouteCopy.spinnerTitle(routedLocally: askRoutedLocally, waitingForLane: askWaitingForLane, modelConfirmed: askModelConfirmed, modelLabel: inFlightModelLabel))
             .font(.whimbrelBody(.callout))
             .whimbrelCard()
             .frame(maxWidth: 380, alignment: .leading)
@@ -263,7 +274,7 @@ extension TimelineView {
     var streamingAnswerBubble: some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             if streamingAsk.streamedText.isEmpty {
-                ProgressView("Asking \(inFlightModelLabel)…")
+                ProgressView(AskLocalRouteCopy.spinnerTitle(routedLocally: askRoutedLocally, waitingForLane: askWaitingForLane, modelConfirmed: askModelConfirmed, modelLabel: inFlightModelLabel))
                     .font(.whimbrelBody(.callout))
             } else {
                 Text(streamingAsk.streamedText)
@@ -290,16 +301,35 @@ extension TimelineView {
         refresh()
     }
 
+    /// Every change of `isAsking` goes through here, so the user gate (`UserModelGate`) is held from the
+    /// moment a question is in flight (including the first one in a new conversation, which starts with
+    /// the view already built) until every exit: answer, error, cancel, or the streaming to blocking fallback.
+    /// Entering twice or leaving twice for one question changes nothing (one token per question).
+    func setAsking(_ asking: Bool) {
+        isAsking = asking
+        if asking {
+            if askGateToken == nil { askGateToken = UserModelGate.shared.enter() }
+        } else {
+            releaseAskGate()
+            askWaitingForLane = false
+        }
+    }
+
+    func releaseAskGate() {
+        UserModelGate.shared.leave(askGateToken)
+        askGateToken = nil
+    }
+
     func askIfNeeded(store: CoreMemoryStore) {
         guard !query.isEmpty, !isBusy else { return }
         // Whimbrel AI needs a live sync ID token: when it may answer and the cached one has
         // 5 minutes or less left, refresh it first. Busy meanwhile, so a second send waits.
         let syncState = appState.syncState
         if selectedProvider == .whimbrel || appState.routing.preferredProvider == .whimbrel, syncState.whimbrelCredentialsNeedRefresh {
-            isAsking = true
+            setAsking(true)
             Task { @MainActor in
                 await syncState.refreshWhimbrelCredentials()
-                isAsking = false
+                setAsking(false)
                 askNow(store: store)
             }
             return
@@ -346,7 +376,10 @@ extension TimelineView {
         }
         query = ""
         inFlightModelLabel = effective.modelLabel
-        isAsking = true
+        askRoutedLocally = false
+        askModelConfirmed = false
+        askWaitingForLane = false
+        setAsking(true)
         // A hosted route with no key (or any route in local-only mode but Ollama's) falls
         // to blocking, whose chain builder already handles a missing key by falling back
         // rather than failing.
@@ -432,14 +465,29 @@ extension TimelineView {
     ) {
         // The ask holds a store across a model call, so it runs on the slow lane.
         guard let store = appState.slowStore else {
-            isAsking = false
+            setAsking(false)
             return
         }
+        // Still waiting for the lane after a moment (a digest or an earlier question holds it): say so,
+        // not "Asking <model>…".
+        let laneStart = LaneStartFlag()
+        DispatchQueue.main.asyncAfter(deadline: .now() + AskLocalRouteCopy.waitingShownAfter) {
+            if isAsking, !laneStart.isSet { askWaitingForLane = true }
+        }
         CoreMemoryStore.slowLaneQueue.async {
-            let contextItems = fetchContextItems(store: store, query: capturedQuery)
-            let outcome = store.askQuestion(capturedQuery, model: capturedOllamaModel, contextLimit: 5, history: history, routing: routing)
+            laneStart.set()
+            DispatchQueue.main.async { askWaitingForLane = false }
+            // First thing on this lane's own connection (never `accessQueue`: with an excluded client the
+            // check can rescan). Until it says the question is not excluded, the spinner names no model.
+            let namesExcluded = store.askNamesExcludedClient(capturedQuery, history: history)
             DispatchQueue.main.async {
-                isAsking = false
+                if namesExcluded { askRoutedLocally = true } else { askModelConfirmed = true }
+            }
+            let contextItems = fetchContextItems(store: store, query: capturedQuery)
+            let detailed = store.askQuestionDetailed(capturedQuery, model: capturedOllamaModel, contextLimit: 5, history: history, routing: routing)
+            let outcome = detailed.map { result in result.map(\.chatAnswer) }
+            DispatchQueue.main.async {
+                setAsking(false)
                 guard let outcome else {
                     // Genuinely invalid usage (null handle, malformed args) -- shouldn't
                     // happen in practice; matches the prior fully-silent behavior for
@@ -454,7 +502,18 @@ extension TimelineView {
                 // new one) while this question was in flight, this answer no longer
                 // belongs on screen here -- it's still correctly persisted to its own
                 // conversation by persistExchange below regardless of this check.
-                let exchange = ChatExchange(query: capturedQuery, result: outcome, contextItems: contextItems, modelLabel: inFlightModelLabel)
+                // The model core says answered (a question naming an excluded client is rerouted after the
+                // picker was read), not the picker's.
+                var answeredBy: CoreAnsweredBy?
+                var exclusion: CoreExclusionOutcome?
+                if case .success(let d)? = detailed { answeredBy = d.answeredBy; exclusion = d.exclusion }
+                let exchange = ChatExchange(
+                    query: capturedQuery,
+                    result: outcome,
+                    contextItems: contextItems,
+                    modelLabel: answeredModelLabel(requested: inFlightModelLabel, answeredBy: answeredBy),
+                    answeredLocally: answeredLocallyForExclusion(namesExcludedClient: namesExcluded, outcome: exclusion)
+                )
                 if activeConversationId == capturedActiveConversationId {
                     exchanges.append(exchange)
                 }
@@ -511,22 +570,28 @@ extension TimelineView {
                     )
                 }
                 guard let prepared else {
-                    isAsking = false
+                    setAsking(false)
                     return
                 }
                 switch prepared {
+                case .failure(.providerFailureBecause(.excludedClient)):
+                    // The question carries a client excluded from hosted models: core's blocking path answers
+                    // it with a model on this Mac, or refuses (with its own message) when there is none.
+                    fallbackToBlocking()
                 case .failure(let error) where error.fallsBackToGovernedAsk(alreadyFellBack: false):
                     // The streamed provider's budget is spent: answer through the governed
                     // chain, which skips it. askBlocking clears isAsking, and shows the
                     // budget-spent message itself if every provider is spent.
                     fallbackToBlocking()
                 case .failure(let error):
-                    isAsking = false
+                    setAsking(false)
                     query = capturedQuery
                     if activeConversationId == capturedActiveConversationId {
                         exchanges.append(ChatExchange(query: capturedQuery, result: .failure(error), contextItems: contextItems))
                     }
                 case .success(let data):
+                    // Prepared for the picked model: the question names no excluded client.
+                    askModelConfirmed = true
                     pendingStreamAsk = PendingStreamAsk(
                         prepareId: data.prepareId,
                         query: capturedQuery,
@@ -536,6 +601,7 @@ extension TimelineView {
                         ollamaModel: capturedOllamaModel,
                         answerModel: streamModel,
                         streamProvider: streamProvider,
+                        leftOut: data.exclusion?.leftOut ?? 0,
                         titleGenEffective: titleGenEffective,
                         fallbackToBlocking: fallbackToBlocking
                     )
@@ -552,7 +618,7 @@ extension TimelineView {
         guard let pending = pendingStreamAsk else { return }
         switch phase {
         case .completed:
-            isAsking = false
+            setAsking(false)
             pendingStreamAsk = nil
             finalizeStreamingAnswer(pending: pending, finalText: streamingAsk.streamedText)
         case .cancelled:
@@ -560,20 +626,30 @@ extension TimelineView {
             // and restart with a different model": the question goes back into the
             // composer so the user can pick a different model and resubmit.
             appState.coreStore?.discardAsk(prepareId: pending.prepareId)
-            isAsking = false
+            setAsking(false)
             pendingStreamAsk = nil
             query = pending.query
         case .failed(let message) where pending.streamProvider == .whimbrel && message.hasPrefix("HTTP 402"):
             // The Whimbrel AI credit is used up (a 402 from Whimbrel's server). Say so, and
             // don't retry through the chain, which would only meet the same 402.
             pendingStreamAsk = nil
-            isAsking = false
+            setAsking(false)
             appState.coreStore?.discardAsk(prepareId: pending.prepareId)
             query = pending.query
             if activeConversationId == pending.activeConversationId {
                 exchanges.append(ChatExchange(query: pending.query, result: .failure(.providerFailureBecause(.creditExhausted)), contextItems: pending.contextItems))
             }
+        case .failed where streamingAsk.exclusionRefusal == .unreadable:
+            // Nothing was sent, and nothing hosted goes until the setting reads: say so, no fallback.
+            pendingStreamAsk = nil
+            setAsking(false)
+            appState.coreStore?.discardAsk(prepareId: pending.prepareId)
+            query = pending.query
+            if activeConversationId == pending.activeConversationId {
+                exchanges.append(ChatExchange(query: pending.query, result: .failure(.providerFailureBecause(.exclusionUnreadable)), contextItems: pending.contextItems))
+            }
         case .failed:
+            // An excluded-client refusal also lands here with no output: the blocking path keeps it on this Mac.
             pendingStreamAsk = nil
             if streamingAsk.streamedText.isEmpty {
                 // Never emitted any output -- safe to retry transparently via the
@@ -586,7 +662,7 @@ extension TimelineView {
                 appState.coreStore?.discardAsk(prepareId: pending.prepareId)
                 pending.fallbackToBlocking()
             } else {
-                isAsking = false
+                setAsking(false)
                 // Output was already emitted -- never silently fall back once that's
                 // true (same rule StreamingRunSupervisor enforces server-side, docs/
                 // adr/0002). Surface it instead of pretending nothing happened. This
@@ -630,7 +706,7 @@ extension TimelineView {
             ) ?? []
             DispatchQueue.main.async {
                 let answer = CoreChatAnswer(text: finalText, citations: citations)
-                let exchange = ChatExchange(query: pending.query, result: .success(answer), contextItems: pending.contextItems, modelLabel: modelLabel)
+                let exchange = ChatExchange(query: pending.query, result: .success(answer), contextItems: pending.contextItems, modelLabel: modelLabel, leftOut: pending.leftOut)
                 if activeConversationId == pending.activeConversationId {
                     exchanges.append(exchange)
                 }
@@ -675,7 +751,8 @@ extension TimelineView {
         titleGenEffective: (provider: RoutingSettings.Provider, modelLabel: String)
     ) {
         guard let store = appState.coreStore else { return }
-        let slow = appState.slowStore
+        // The title is a background model call: it must not hold the lane the user's next question uses.
+        let titleLane = appState.backgroundModelLane
         let citationsJson = (try? JSONEncoder().encode(citations.map(\.saved))).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         CoreMemoryStore.accessQueue.async {
             let conversationId: Int64?
@@ -700,11 +777,27 @@ extension TimelineView {
                 }
                 refreshConversationList()
             }
-            if isFirstMessageInConversation, let slow {
-                CoreMemoryStore.slowLaneQueue.async {
-                    generateConversationTitle(store: slow, conversationId: conversationId, query: query, answer: answer, ollamaModel: capturedOllamaModel, effective: titleGenEffective)
-                }
+            if isFirstMessageInConversation, let titleLane {
+                scheduleConversationTitle(lane: titleLane, conversationId: conversationId, query: query, answer: answer, ollamaModel: capturedOllamaModel, effective: titleGenEffective, attemptsLeft: 8)
             }
+        }
+    }
+
+    /// Runs `generateConversationTitle` on the background model lane, but only while no user request is
+    /// queued: otherwise it tries again later (a few times; the placeholder title stays if it never runs).
+    func scheduleConversationTitle(
+        lane: (store: CoreMemoryStore, queue: DispatchQueue), conversationId: Int64, query: String, answer: String,
+        ollamaModel: String, effective: (provider: RoutingSettings.Provider, modelLabel: String), attemptsLeft: Int
+    ) {
+        lane.queue.async {
+            if case .retryLater(let seconds) = BackgroundModelLane.start(userBusy: UserModelGate.shared.isBusy()) {
+                guard attemptsLeft > 0 else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+                    scheduleConversationTitle(lane: lane, conversationId: conversationId, query: query, answer: answer, ollamaModel: ollamaModel, effective: effective, attemptsLeft: attemptsLeft - 1)
+                }
+                return
+            }
+            generateConversationTitle(store: lane.store, conversationId: conversationId, query: query, answer: answer, ollamaModel: ollamaModel, effective: effective)
         }
     }
 

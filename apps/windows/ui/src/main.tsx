@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./tokens.css";
 import "./app.css";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { App } from "./App";
+import { LaunchGate } from "./launch/LaunchGate";
 import { languageSettings } from "./api";
 import { L10nProvider, setLanguage, useLanguage } from "./l10n";
 import { AlertView } from "./alert/AlertView";
@@ -11,9 +11,11 @@ import { BudgetAlertView } from "./alert/BudgetAlertView";
 import { DiskAlertView } from "./alert/DiskAlertView";
 import { QuestionAlertView } from "./alert/QuestionAlertView";
 import { StillHereView } from "./alert/StillHereView";
+import { MeetingBarView } from "./meetingBar/MeetingBarView";
 import { HotkeyPanel } from "./hotkeyPanel/HotkeyPanel";
 import { PopupView } from "./popup/PopupView";
 import { startSkin } from "./skin";
+import { primeRedesign } from "./redesign";
 
 // Before the first render, so no window paints in the wrong skin. Every window runs it: the
 // popup and the alert share this bundle, and hear about a change through storage.
@@ -38,23 +40,30 @@ function Root() {
       <DiskAlertView />
     ) : label === "still-here" ? (
       <StillHereView />
+    ) : label === "meeting-bar" ? (
+      <MeetingBarView />
     ) : label === "hotkey-panel" ? (
       <HotkeyPanel />
     ) : (
-      <App />
+      // The main window: the launch's screens until the memory database is open, then the app.
+      <LaunchGate />
     );
   return <L10nProvider lang={lang}>{view}</L10nProvider>;
 }
 
 // The language first, so nothing paints in the wrong one. The popup and the alert are created fresh
-// each time they open, so they pick up a change made in Settings without being told.
-languageSettings()
-  .then((s) => s && setLanguage(s.uiLanguage))
-  .catch(() => {})
-  .finally(() =>
-    createRoot(document.getElementById("root")!).render(
-      <StrictMode>
-        <Root />
-      </StrictMode>,
-    ),
-  );
+// each time they open, so they pick up a change made in Settings without being told. The hidden redesign
+// switch is asked in the same wait, so the first render already knows which look to draw (it is false for
+// anything but a real true, and for a shell that does not answer).
+Promise.all([
+  languageSettings()
+    .then((s) => s && setLanguage(s.uiLanguage))
+    .catch(() => {}),
+  primeRedesign(),
+]).finally(() =>
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <Root />
+    </StrictMode>,
+  ),
+);

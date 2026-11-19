@@ -38,4 +38,94 @@ final class AskHelpersBridgeTests: XCTestCase {
         let saved = SavedCitation(item: CoreContextItemRef(kind: .snapshot, id: 7), label: "slide", text: "Roadmap", open: nil)
         XCTAssertNil(ContextDisplayItem.saved(saved).thumbnailPath)
     }
+
+    // MARK: Ask label for a question rerouted for an excluded client
+
+    func testAnsweredLabelIsTheModelCoreSaysAnswered() {
+        let local = CoreAnsweredBy(provider: "ollama", model: "gemma4:12b", local: true)
+        XCTAssertEqual(answeredModelLabel(requested: "gemini-flash-lite-latest", answeredBy: local), "gemma4:12b")
+        XCTAssertEqual(answeredModelLabel(requested: "gemini-flash-lite-latest", answeredBy: nil), "gemini-flash-lite-latest")
+        let blank = CoreAnsweredBy(provider: "ollama", model: "  ", local: true)
+        XCTAssertEqual(answeredModelLabel(requested: "picked", answeredBy: blank), "picked")
+    }
+
+    func testDetailedAnswerDecodesTheAnsweringModelAndExclusion() throws {
+        let json = #"{"text":"Hi","citations":[],"token_usage":{},"exclusion":{"kind":"local_only"},"answered_by":{"provider":"ollama","model":"gemma4:12b","local":true}}"#
+        let d = try JSONDecoder().decode(CoreDetailedAnswer.self, from: Data(json.utf8))
+        XCTAssertEqual(d.chatAnswer.text, "Hi")
+        XCTAssertEqual(d.exclusion, .localOnly)
+        XCTAssertEqual(d.answeredBy, CoreAnsweredBy(provider: "ollama", model: "gemma4:12b", local: true))
+        // A core that does not report them still decodes.
+        let bare = try JSONDecoder().decode(CoreDetailedAnswer.self, from: Data(#"{"text":"Hi","citations":[]}"#.utf8))
+        XCTAssertNil(bare.answeredBy)
+        XCTAssertNil(bare.exclusion)
+    }
+
+    func testAnsweredLocallyNoteNeedsANamedClientAndALocalAnswer() {
+        XCTAssertTrue(answeredLocallyForExclusion(namesExcludedClient: true, outcome: .localOnly))
+        XCTAssertFalse(answeredLocallyForExclusion(namesExcludedClient: false, outcome: .localOnly))
+        XCTAssertFalse(answeredLocallyForExclusion(namesExcludedClient: true, outcome: .allowed))
+        XCTAssertFalse(answeredLocallyForExclusion(namesExcludedClient: true, outcome: nil))
+    }
+
+    func testSpinnerTitleSaysLocalWhenRoutedLocallyAndNeverNamesAClient() {
+        XCTAssertEqual(AskLocalRouteCopy.spinnerTitle(routedLocally: false, modelConfirmed: true, modelLabel: "gemini-flash-lite-latest"), "Asking gemini-flash-lite-latest…")
+        let local = AskLocalRouteCopy.spinnerTitle(routedLocally: true, modelConfirmed: false, modelLabel: "gemini-flash-lite-latest")
+        XCTAssertTrue(local.hasPrefix("Answering on this Mac"))
+        XCTAssertFalse(local.contains("gemini"))
+        XCTAssertTrue(AskLocalRouteCopy.answered.hasPrefix("Answered locally"))
+    }
+
+    func testSpinnerNamesNoModelUntilTheQuestionIsKnownNotToBeRoutedLocally() {
+        let before = AskLocalRouteCopy.spinnerTitle(routedLocally: false, modelConfirmed: false, modelLabel: "gemini-flash-lite-latest")
+        XCTAssertEqual(before, "Asking…")
+        XCTAssertFalse(before.contains("gemini"))
+        let waiting = AskLocalRouteCopy.spinnerTitle(routedLocally: false, waitingForLane: true, modelConfirmed: false, modelLabel: "gemini-flash-lite-latest")
+        XCTAssertEqual(waiting, "Waiting for background work…")
+        XCTAssertFalse(waiting.contains("gemini"))
+        // The local note wins: it says where the answer is made.
+        XCTAssertTrue(AskLocalRouteCopy.spinnerTitle(routedLocally: true, waitingForLane: true, modelConfirmed: false, modelLabel: "m").hasPrefix("Answering on this Mac"))
+    }
+
+    func testUserModelGateCountsQueuedAndRunningRequests() {
+        let gate = UserModelGate()
+        let now = Date()
+        XCTAssertFalse(gate.isBusy(now: now))
+        let a = gate.enter(now: now)
+        let b = gate.enter(now: now)
+        XCTAssertTrue(gate.isBusy(now: now))
+        gate.leave(a)
+        XCTAssertTrue(gate.isBusy(now: now), "one request is still waiting")
+        gate.leave(a)
+        gate.leave(nil)
+        XCTAssertTrue(gate.isBusy(now: now), "a repeated leave frees nothing else")
+        gate.leave(b)
+        XCTAssertFalse(gate.isBusy(now: now))
+    }
+
+    func testUserModelGateIgnoresAStaleEntry() {
+        let gate = UserModelGate()
+        let start = Date()
+        _ = gate.enter(now: start)
+        XCTAssertTrue(gate.isBusy(now: start.addingTimeInterval(UserModelGate.maxHold - 1)))
+        XCTAssertFalse(gate.isBusy(now: start.addingTimeInterval(UserModelGate.maxHold + 1)), "a view that vanished must not stall background work for good")
+    }
+
+    func testBackgroundModelJobWaitsWhileAUserRequestIsBusy() {
+        XCTAssertEqual(BackgroundModelLane.start(userBusy: false), .run)
+        XCTAssertEqual(BackgroundModelLane.start(userBusy: true), .retryLater(seconds: UserModelGate.retryDelay))
+    }
+
+    func testBackgroundModelLaneFallsBackToTheSlowLaneOnlyWithoutItsOwnConnection() {
+        XCTAssertTrue(BackgroundModelLane.choose(dedicatedOpened: true).queue === CoreMemoryStore.backgroundModelQueue)
+        XCTAssertTrue(BackgroundModelLane.choose(dedicatedOpened: false).queue === CoreMemoryStore.slowLaneQueue)
+        XCTAssertFalse(CoreMemoryStore.backgroundModelQueue === CoreMemoryStore.slowLaneQueue)
+    }
+
+    func testLaneStartFlagIsSetOnce() {
+        let flag = LaneStartFlag()
+        XCTAssertFalse(flag.isSet)
+        flag.set()
+        XCTAssertTrue(flag.isSet)
+    }
 }

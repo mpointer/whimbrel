@@ -52,6 +52,30 @@ struct OnboardingView: View {
     }
 }
 
+/// The one-shot "this launch follows Delete everything" marker (X4 Task 13c item 1, Mike's
+/// decision 2026-11-16). Delete everything's completion leaves it (`YourData.runPendingDelete`,
+/// next to the launch flags it clears); the first onboarding screen reads and removes it and
+/// then says `EncryptionCopy.deletedLibraryLine`. On the Mac that first screen is the recovery-key
+/// setup in the launch window (`LaunchUIPresenter.runOnboarding`): it comes before
+/// `FirstRunView`. Delete everything also brings that permissions sheet back once
+/// (`FirstRun.resetAfterDeleteEverything`), but the line shows only on the setup screen, so
+/// it is said exactly once. A launch that opens without onboarding consumes it too, so it can never show later. A
+/// normal new install has no marker. A flag only: no user data.
+enum FreshLibraryMarker {
+    static let key = "onboarding.afterDeleteEverything"
+
+    static func mark(_ defaults: UserDefaults) {
+        defaults.set(true, forKey: key)
+    }
+
+    /// True once after `mark`; removes the marker.
+    static func consume(_ defaults: UserDefaults) -> Bool {
+        let present = defaults.bool(forKey: key)
+        defaults.removeObject(forKey: key)
+        return present
+    }
+}
+
 /// FR-ONB-1 for a new Mac: the two permissions a first meeting needs, once, and nothing else.
 struct FirstRunView: View {
     @EnvironmentObject var permissions: PermissionsManager

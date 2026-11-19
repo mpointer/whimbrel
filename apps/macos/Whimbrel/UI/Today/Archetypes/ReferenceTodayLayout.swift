@@ -141,7 +141,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
                 if let relative = event.relative { SkinText(relative, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
                 if !event.attendees.isEmpty { SkinText(event.attendees, role: .label, lines: 2).foregroundStyle(Color.whimbrelTextSecondary) }
                 ReferencePrepLine(prep: event.prep)
-                if event.showsStart { ReferenceLink(String(localized: "Start"), role: .primary) { actions.startMeeting(event.event) } }
+                if event.showsStart { ReferenceLink(String(localized: "Start"), role: .primary) { actions.startMeeting(event.event) }.recordingControl() }
             }
             .padding(Spacing.sm)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -224,7 +224,7 @@ struct ReferenceTodayLayout: TodayArchetypeView {
             if let relative = event.relative { SkinText(relative, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             if !event.attendees.isEmpty { SkinText(event.attendees, role: .label).foregroundStyle(Color.whimbrelTextSecondary) }
             if case let .ready(prep) = event.prep { TodayPrepChips(prep: prep, actions: actions) }
-            if event.showsStart { ReferenceLink(String(localized: "Start"), role: .primary) { actions.startMeeting(event.event) } }
+            if event.showsStart { ReferenceLink(String(localized: "Start"), role: .primary) { actions.startMeeting(event.event) }.recordingControl() }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

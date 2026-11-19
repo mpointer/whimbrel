@@ -200,6 +200,8 @@ struct MeetingDetailContentView: View {
     @State private var regenerateError: String?
     /// The stored notice that Whimbrel AI was meant to write this summary (loaded from core).
     @State private var storedSummaryFallback: CoreSummaryFallback?
+    /// A summary would be refused now: the meeting names an excluded client and no local model is on.
+    @State private var summaryRefusedForExclusion = false
     @State private var showRecapSheet = false
     @State private var recapSent: CoreRecapSent?
     @State private var resummarizeError: String?
@@ -340,6 +342,20 @@ struct MeetingDetailContentView: View {
         guard meeting.summaryTldr != nil || regeneratedSummary != nil else { return nil }
         let fallback = regeneratedSummary != nil ? regeneratedSummary?.fallback : storedSummaryFallback
         return fallback?.used == currentProvider ? fallback : nil
+    }
+
+    /// Core's check, run again whenever the page loads or the local-model setting changes, so the
+    /// note clears itself once a local model is on.
+    private func loadSummaryRefusal() {
+        // On the slow lane: the check reads the whole transcript, and the screens' queue must stay free (#850).
+        guard let store = appState.slowStore else { return }
+        let meetingId = meeting.id
+        let model = appState.routing.ollamaDefaultModel
+        let routing = appState.routing.routingConfig(preferredProvider: appState.routing.preferredProvider, preferredModel: appState.routing.preferredModel)
+        CoreMemoryStore.slowLaneQueue.async {
+            let refused = store.summaryRefusedForExclusion(meetingId: meetingId, model: model, routing: routing)
+            DispatchQueue.main.async { if summaryRefusedForExclusion != refused { summaryRefusedForExclusion = refused } }
+        }
     }
 
     private func loadStoredSummaryFallback() {
@@ -536,6 +552,7 @@ struct MeetingDetailContentView: View {
             loadSegments()
             loadLiveAlerts()
             loadStoredSummaryFallback()
+            loadSummaryRefusal()
             loadRecapSent()
             let defaults = appState.routing.defaultSelection()
             selectedProvider = defaults.provider
@@ -548,6 +565,7 @@ struct MeetingDetailContentView: View {
         // are also written programmatically by `ProviderModelPicker.clampSelectedModelIfNeeded()`
         // (on appear and after every hosted-model-list fetch), so clearing on their
         // change would sometimes wipe a still-relevant error the user hasn't acted on.
+        .onChange(of: appState.routing.useLocalModel) { _, _ in loadSummaryRefusal() }
         .onChange(of: selectedProvider) { _, _ in
             regenerateError = nil
             appState.clearSummaryFailure(meetingId: meeting.id)
@@ -570,6 +588,7 @@ struct MeetingDetailContentView: View {
             loadSegments()
             loadParts(reloadTranscript: true)
             loadStoredSummaryFallback()
+            loadSummaryRefusal()
         }
         // A split (or a summary after it) changed this meeting's parts, segments or snapshots.
         .onReceive(NotificationCenter.default.publisher(for: MeetingLifecycle.meetingsDidChange)) { note in
@@ -577,6 +596,7 @@ struct MeetingDetailContentView: View {
             loadSegments()
             loadParts(reloadTranscript: true)
             loadStoredSummaryFallback()
+            loadSummaryRefusal()
             Task { await snapshotsModel.reload() }
         }
         .sheet(isPresented: $showRecapSheet) {
@@ -843,7 +863,11 @@ struct MeetingDetailContentView: View {
     /// than hiding the editor, so an empty summary never takes decisions/action items/
     /// open questions down with it -- see Important #1 in the final review.
     private var summaryPlaceholderText: String {
-        appState.processingMeetingId == meeting.id ? String(localized: "Transcribing meeting audio — summary will follow.") : String(localized: "No summary yet.")
+        switch MeetingDetailLogic.summaryPlaceholder(processing: appState.processingMeetingId == meeting.id, refusedForExclusion: summaryRefusedForExclusion) {
+        case .transcribing: return String(localized: "Transcribing meeting audio — summary will follow.")
+        case .refusedForExclusion: return String(localized: "Not summarised: this meeting names a client excluded from hosted models, and no local model is set up. In Settings > AI & Routing, turn on Use local model or download a small local model, then choose Regenerate.")
+        case .none: return String(localized: "No summary yet.")
+        }
     }
 
     private var completedWithoutTranscriptText: String {
@@ -1537,6 +1561,14 @@ struct MeetingDetailContentView: View {
 /// Pure helpers for the "— rejoined HH:MM —" dividers of a continued meeting's transcript.
 /// The label matches core's `meeting_transcript_text` (local time, from the part's start).
 enum MeetingDetailLogic {
+    enum SummaryPlaceholder: Equatable { case transcribing, refusedForExclusion, none }
+
+    /// What the empty summary box says: transcribing wins, then core's exclusion refusal, else "No summary yet.".
+    static func summaryPlaceholder(processing: Bool, refusedForExclusion: Bool) -> SummaryPlaceholder {
+        if processing { return .transcribing }
+        return refusedForExclusion ? .refusedForExclusion : .none
+    }
+
     private static let dividerPrefix = "\u{2014} rejoined "
     private static let dividerSuffix = " \u{2014}"
 

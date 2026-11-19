@@ -14,6 +14,7 @@ use memory::{Meeting, MeetingStatus, MeetingTrigger, NewMeeting};
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use super::pause_clock::{PauseClock, PausedSpans};
 use super::pipeline::{Pipeline, PipelineFailure, Processing};
 use super::live::Accumulated;
 use super::pipeline::{started_at, stamp_of};
@@ -105,6 +106,11 @@ impl<R> Lifecycle<R> {
     pub fn phase(&self) -> &Phase<R> {
         &self.phase
     }
+
+    /// The phase, for the one change that keeps it: a recording pause.
+    pub fn phase_mut(&mut self) -> &mut Phase<R> {
+        &mut self.phase
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -128,6 +134,33 @@ pub struct MeetingRecordingView {
     pub processing: Option<Processing>,
     /// The last meeting whose transcript or summary failed.
     pub failure: Option<PipelineFailure>,
+    /// The recording is paused; the state stays `recording`, so a paused meeting is still a recording.
+    pub paused: bool,
+    /// When the running pause began, while paused.
+    pub paused_since_unix_ms: Option<i64>,
+    /// Time spent paused so far, a running pause included. Recorded time is wall time minus this.
+    pub paused_total_ms: i64,
+    /// Resume was asked for and audio has not arrived yet.
+    pub resuming: bool,
+}
+
+/// The audio level meter's reading, 0 to 1 for each source. Read, drawn and thrown away.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioLevel {
+    /// What the meeting app and the PC play.
+    pub system: f64,
+    /// The microphone.
+    pub mic: f64,
+}
+
+/// What the status says about a recording pause.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct PauseView {
+    paused: bool,
+    since: Option<i64>,
+    total_ms: i64,
+    resuming: bool,
 }
 
 /// Rows this device left `recording` (the app quit or crashed mid-meeting). Pure.
@@ -157,9 +190,23 @@ pub fn stranded_completion(audio_path: Option<&str>, recordings: &Path, now_unix
 pub struct Active {
     audio: Box<dyn ActiveAudio>,
     snapshots: Option<SnapshotHandle>,
+    /// The recording's pauses.
+    clock: PauseClock,
+    /// The paused stretches on the transcript's clock, kept beside the recording for the transcriber.
+    spans: PausedSpans,
+    /// When the audio started (the recorder's own clock zero, to within a few ms).
+    t0_unix_ms: i64,
 }
 
 impl Active {
+    /// Starts or ends a recording pause on the audio and the snapshots together.
+    fn set_paused(&self, paused: bool, now_unix_ms: i64) {
+        self.audio.set_paused(paused, now_unix_ms);
+        if let Some(snapshots) = &self.snapshots {
+            snapshots.set_paused(paused);
+        }
+    }
+
     fn stop(self) -> Stopped {
         if let Some(snapshots) = &self.snapshots {
             snapshots.stop();
@@ -284,6 +331,7 @@ impl MeetingController {
         attendee_details: Vec<memory::speaker_names::Attendee>,
         start_unix_ms: Option<i64>,
         root_pid: Option<u32>,
+        event_id: Option<String>,
     ) -> Result<MeetingRecordingView, CommandError> {
         let target = root_pid.map_or(AudioTarget::Endpoint, AudioTarget::Process);
         let started = self.start(MeetingTrigger::Calendar, title, attendees, target, start_unix_ms)?;
@@ -292,6 +340,14 @@ impl MeetingController {
             let stored = self.store.call_blocking(move |s| s.set_meeting_attendee_details(meeting_id, &attendee_details).map_err(|e| e.to_string()));
             if let Err(e) | Ok(Err(e)) = stored.map_err(|e| e.to_string()) {
                 tracing::warn!(meeting_id, error = %e, "could not store the invitees' emails");
+            }
+        }
+        // The calendar event it was recorded from: the durable link client exclusion follows
+        // whatever the meeting's title or start become (X6). A failure leaves the time overlap.
+        if let (Some(meeting_id), Some(event_id)) = (started.meeting_id, event_id.filter(|e| !e.is_empty())) {
+            let stored = self.store.call_blocking(move |s| s.set_meeting_calendar_event(meeting_id, &event_id).map_err(|e| e.to_string()));
+            if let Err(e) | Ok(Err(e)) = stored.map_err(|e| e.to_string()) {
+                tracing::warn!(meeting_id, error = %e, "could not store the meeting's calendar event");
             }
         }
         Ok(started)
@@ -332,7 +388,16 @@ impl MeetingController {
             audio_path: Some(expected.to_string_lossy().into_owned()),
             status: MeetingStatus::Recording,
         };
-        let inserted = self.store.call_blocking(move |s| s.insert_meeting(&row).map_err(|e| e.to_string()));
+        // A compaction holds the write lock for its whole VACUUM. This start is already marked
+        // as starting, so no new one begins; wait for one already running rather than fail on
+        // its lock (issue 850 review, I1). The insert below still retries if the cap runs out.
+        let waited = std::time::Instant::now();
+        if !crate::storage::wait_for_compaction(RECORDING_WAITS_FOR_COMPACTION) {
+            tracing::warn!("a compaction is still running; starting the recording anyway");
+        } else if waited.elapsed() > std::time::Duration::from_secs(1) {
+            tracing::info!(ms = waited.elapsed().as_millis() as u64, "recording start waited for a compaction");
+        }
+        let inserted = self.store.call_blocking(move |s| insert_recording_row(s, &row));
         let meeting_id = match inserted {
             Ok(Ok(id)) => id,
             Ok(Err(e)) => {
@@ -345,13 +410,14 @@ impl MeetingController {
             }
         };
 
+        let audio_t0 = now_ms();
         let audio = (self.start_audio)(target, &stamp, &AudioMeeting { meeting_id, title: snapshot_title.clone() });
         let root_pid = match target {
             AudioTarget::Process(pid) => Some(pid),
             AudioTarget::Endpoint => None,
         };
         let snapshots = (self.start_snapshots)(SnapshotMeeting { meeting_id, start_unix_ms: started, title: snapshot_title, root_pid });
-        let finished = self.lifecycle.lock().unwrap().finish_start(generation, meeting_id, now, Active { audio, snapshots });
+        let finished = self.lifecycle.lock().unwrap().finish_start(generation, meeting_id, now, Active { audio, snapshots, clock: PauseClock::new(), spans: PausedSpans::default(), t0_unix_ms: audio_t0 });
         if let Err(active) = finished {
             tracing::info!(meeting_id, "a stop arrived while the meeting was starting; completing it");
             let stopped = active.stop();
@@ -392,12 +458,19 @@ impl MeetingController {
 
     pub fn status(&self) -> MeetingRecordingView {
         let (processing, failure) = (self.pipeline.processing(), self.pipeline.failure());
-        let recording = match self.lifecycle.lock().unwrap().phase() {
-            Phase::Idle => (RecordingState::Idle, None, None, None),
-            Phase::Starting { .. } => (RecordingState::Starting, None, None, None),
-            Phase::Recording { meeting_id, started_unix_ms, audio: active, .. } => {
-                (RecordingState::Recording, Some(*meeting_id), Some(*started_unix_ms), active.audio.degraded())
-            }
+        let now = now_ms();
+        let (recording, pause) = match self.lifecycle.lock().unwrap().phase() {
+            Phase::Idle => ((RecordingState::Idle, None, None, None), PauseView::default()),
+            Phase::Starting { .. } => ((RecordingState::Starting, None, None, None), PauseView::default()),
+            Phase::Recording { meeting_id, started_unix_ms, audio: active, .. } => (
+                (RecordingState::Recording, Some(*meeting_id), Some(*started_unix_ms), active.audio.degraded()),
+                PauseView {
+                    paused: active.clock.is_paused(),
+                    since: active.clock.since(),
+                    total_ms: active.clock.paused_total(now),
+                    resuming: !active.clock.is_paused() && active.audio.resuming(now),
+                },
+            ),
         };
         MeetingRecordingView {
             state: recording.0,
@@ -406,11 +479,108 @@ impl MeetingController {
             degraded: recording.3,
             processing,
             failure,
+            paused: pause.paused,
+            paused_since_unix_ms: pause.since,
+            paused_total_ms: pause.total_ms,
+            resuming: pause.resuming,
         }
+    }
+
+    /// Recording pause: audio and snapshots stop until [`resume`](Self::resume). The recording
+    /// keeps running as far as everything else is concerned. Pausing a paused recording changes
+    /// nothing; with no recording it is an error.
+    pub fn pause(&self) -> Result<MeetingRecordingView, CommandError> {
+        let now = now_ms();
+        let (paused, spans) = {
+            let mut lifecycle = self.lifecycle.lock().unwrap();
+            match lifecycle.phase_mut() {
+                Phase::Recording { audio: active, .. } => {
+                    let began = active.clock.pause(now);
+                    if began {
+                        active.set_paused(true, now);
+                        active.spans.open((now - active.t0_unix_ms) / 10);
+                    }
+                    (began, active.audio.stamp().map(|stamp| (stamp, active.spans.to_text())))
+                }
+                _ => return Err(CommandError::invalid_input(tr("No meeting is recording.", &[]))),
+            }
+        };
+        if paused {
+            self.keep_spans(spans);
+            tracing::info!("meeting recording paused");
+        }
+        Ok(self.status())
+    }
+
+    /// Ends a recording pause: the streams reopen and the gap is written as silence. Resuming a
+    /// recording that is not paused changes nothing; with no recording it is an error. The quiet
+    /// check-in's clock starts over (`still_here::keep`).
+    pub fn resume(&self) -> Result<MeetingRecordingView, CommandError> {
+        let now = now_ms();
+        let (resumed, spans) = {
+            let mut lifecycle = self.lifecycle.lock().unwrap();
+            match lifecycle.phase_mut() {
+                Phase::Recording { audio: active, .. } => {
+                    let ended = active.clock.resume(now);
+                    if ended {
+                        active.set_paused(false, now);
+                        active.spans.close((now - active.t0_unix_ms) / 10);
+                    }
+                    (ended, active.audio.stamp().map(|stamp| (stamp, active.spans.to_text())))
+                }
+                _ => return Err(CommandError::invalid_input(tr("No meeting is recording.", &[]))),
+            }
+        };
+        if resumed {
+            self.keep_spans(spans);
+            super::still_here::keep(now);
+            tracing::info!("meeting recording resumed");
+        }
+        Ok(self.status())
+    }
+
+    /// Writes the paused stretches beside the recording, so the transcriber can drop anything it hears
+    /// in them even after a quit. A failure costs only that protection.
+    fn keep_spans(&self, spans: Option<(String, String)>) {
+        let Some((stamp, text)) = spans else { return };
+        let path = super::pipeline::paused_spans_marker_in(&self.recordings, &stamp);
+        if let Err(e) = std::fs::write(&path, text) {
+            tracing::warn!(path = %path.display(), error = %e, "could not note the paused stretches beside the recording");
+        }
+    }
+
+    /// The level meter's reading: zero with nothing recording and while paused (no packet arrives, and
+    /// the reading must not linger). The first call after a recording starts turns sampling on.
+    pub fn audio_level(&self) -> AudioLevel {
+        match self.lifecycle.lock().unwrap().phase() {
+            Phase::Recording { audio: active, .. } if !active.clock.is_paused() => {
+                let (system, mic) = active.audio.levels(now_ms());
+                AudioLevel { system: system as f64, mic: mic as f64 }
+            }
+            _ => AudioLevel::default(),
+        }
+    }
+
+    /// When the running pause began, while paused.
+    pub fn paused_since(&self) -> Option<i64> {
+        match self.lifecycle.lock().unwrap().phase() {
+            Phase::Recording { audio: active, .. } => active.clock.since(),
+            _ => None,
+        }
+    }
+
+    /// The recording is paused (a paused recording is still [`is_recording`](Self::is_recording)).
+    pub fn is_paused(&self) -> bool {
+        matches!(self.lifecycle.lock().unwrap().phase(), Phase::Recording { audio: active, .. } if active.clock.is_paused())
     }
 
     pub fn is_recording(&self) -> bool {
         matches!(self.lifecycle.lock().unwrap().phase(), Phase::Recording { .. })
+    }
+
+    /// A recording is starting or running: no compaction may begin (`storage::compact_unless_recording`).
+    pub fn is_starting_or_recording(&self) -> bool {
+        !matches!(self.lifecycle.lock().unwrap().phase(), Phase::Idle)
     }
 
     /// The file stamp of the recording in progress, so a retention sweep can leave its
@@ -431,11 +601,58 @@ impl MeetingController {
     }
 }
 
+/// Each attempt's wait for another connection's lock while starting a recording. Shorter than the
+/// lanes' [`BUSY_TIMEOUT`](crate::store_actor::BUSY_TIMEOUT): the user pressed Start and is waiting.
+const RECORDING_START_BUSY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long a start keeps retrying after a busy error, the Mac's `whimbrel_memory_insert_meeting`
+/// budget (issue 850): with the per-attempt wait, a start answers within about 15 s.
+const RECORDING_START_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
+/// How long a start waits for a compaction already running when it was pressed: past a minute-long
+/// VACUUM of a few GB, with room for a slow disk.
+const RECORDING_WAITS_FOR_COMPACTION: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// The insert that starts a recording, which must not fail on a lock another lane holds briefly
+/// (a sync round, a capture write, the retention sweep): it waits up to
+/// [`RECORDING_START_BUSY_WAIT`] an attempt and retries busy errors for [`RECORDING_START_RETRY`],
+/// then puts the connection's busy timeout back as it was, 0 included (as the Mac FFI does); only
+/// an unreadable one becomes the lanes' [`BUSY_TIMEOUT`](crate::store_actor::BUSY_TIMEOUT).
+/// Any other error returns at once.
+fn insert_recording_row(s: &memory::Store, row: &NewMeeting) -> Result<i64, String> {
+    let usual = s.busy_timeout_ms().ok().map(|ms| std::time::Duration::from_millis(ms.max(0) as u64));
+    let _ = s.set_busy_timeout(RECORDING_START_BUSY_WAIT);
+    let inserted = memory::retry_when_busy(RECORDING_START_RETRY, || s.insert_meeting(row));
+    let _ = s.set_busy_timeout(usual.unwrap_or(crate::store_actor::BUSY_TIMEOUT));
+    inserted.map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn a_recording_start_inserts_its_row_and_puts_the_busy_timeout_back() {
+        let store = memory::Store::open_in_memory().unwrap();
+        store.set_busy_timeout(crate::store_actor::BUSY_TIMEOUT).unwrap();
+        let row = NewMeeting {
+            device_id: "this-pc".into(),
+            start_unix_ms: 1_000,
+            end_unix_ms: None,
+            title: "Standup".into(),
+            attendees: Vec::new(),
+            trigger: MeetingTrigger::Manual,
+            audio_path: None,
+            status: MeetingStatus::Recording,
+        };
+        let id = insert_recording_row(&store, &row.clone()).unwrap();
+        assert!(store.get_meeting(id).unwrap().is_some());
+        assert_eq!(store.busy_timeout_ms().unwrap(), 30_000);
+        // Issue 850 review, M8: a timeout of 0 comes back as 0, as the Mac FFI restores it.
+        store.set_busy_timeout(std::time::Duration::ZERO).unwrap();
+        insert_recording_row(&store, &row).unwrap();
+        assert_eq!(store.busy_timeout_ms().unwrap(), 0);
+    }
 
     // ---- Lifecycle ----
 
@@ -510,6 +727,32 @@ mod tests {
         fn stamp(&self) -> Option<String> {
             Some("S".into())
         }
+        fn set_paused(&self, paused: bool, _now: i64) {
+            PAUSES.with(|log| log.borrow_mut().push(paused));
+        }
+        fn resuming(&self, _now: i64) -> bool {
+            RESUMING.with(|flag| flag.get())
+        }
+        fn levels(&self, _now: i64) -> (f32, f32) {
+            (0.5, 0.25)
+        }
+    }
+
+    // What a test's controller was told about pauses, per test thread (each controller call runs on
+    // the test's own thread), so the fake needs no new field.
+    thread_local! {
+        static PAUSES: std::cell::RefCell<Vec<bool>> = const { std::cell::RefCell::new(Vec::new()) };
+        static RESUMING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    fn pauses() -> Vec<bool> {
+        PAUSES.with(|log| log.borrow().clone())
+    }
+
+    /// A test thread may be shared (`--test-threads=1`): start from a clean log.
+    fn reset_pauses() {
+        PAUSES.with(|log| log.borrow_mut().clear());
+        RESUMING.with(|flag| flag.set(false));
     }
 
     fn controller(files: RecordingFiles) -> (MeetingController, StoreHandle) {
@@ -745,5 +988,160 @@ mod tests {
             .call_blocking(move |s| [ids.0, ids.1, ids.2].map(|id| s.get_meeting(id).unwrap().unwrap().status))
             .unwrap();
         assert_eq!(statuses, [MeetingStatus::Completed, MeetingStatus::Recording, MeetingStatus::Completed]);
+    }
+    // ---- Recording pause ----
+
+    #[test]
+    fn a_paused_recording_is_still_a_recording_for_everything_that_asks() {
+        reset_pauses();
+        let (c, _) = controller(RecordingFiles::default());
+        c.start_manual().unwrap();
+        let view = c.pause().unwrap();
+        assert_eq!(view.state, RecordingState::Recording, "the state never becomes anything a check would read as idle");
+        assert!(view.paused && view.paused_since_unix_ms.is_some());
+        assert!(c.is_paused() && c.is_recording() && c.is_starting_or_recording());
+        assert!(c.start_manual().is_err(), "a second meeting cannot start during a pause");
+        assert_eq!(c.recording_stamp().as_deref(), Some("S"), "the retention sweep still leaves its files alone");
+        assert_eq!(pauses(), vec![true], "the audio and snapshots were told once");
+    }
+
+    #[test]
+    fn resume_ends_the_pause_banks_its_time_and_says_resuming_until_audio_arrives() {
+        reset_pauses();
+        RESUMING.with(|flag| flag.set(true));
+        let (c, _) = controller(RecordingFiles::default());
+        c.start_manual().unwrap();
+        c.pause().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let view = c.resume().unwrap();
+        assert!(!view.paused && view.paused_since_unix_ms.is_none());
+        assert!(view.paused_total_ms >= 20, "the pause stays in the total");
+        assert!(view.resuming, "the audio side says audio has not arrived");
+        RESUMING.with(|flag| flag.set(false));
+        assert!(!c.status().resuming);
+        assert_eq!(c.status().paused_total_ms, view.paused_total_ms, "the total holds still once resumed");
+        assert_eq!(pauses(), vec![true, false]);
+    }
+
+    #[test]
+    fn a_paused_recording_does_not_say_resuming() {
+        reset_pauses();
+        RESUMING.with(|flag| flag.set(true));
+        let (c, _) = controller(RecordingFiles::default());
+        c.start_manual().unwrap();
+        assert!(!c.pause().unwrap().resuming);
+        RESUMING.with(|flag| flag.set(false));
+    }
+
+    #[test]
+    fn pausing_twice_or_resuming_when_running_changes_nothing() {
+        reset_pauses();
+        let (c, _) = controller(RecordingFiles::default());
+        c.start_manual().unwrap();
+        assert!(!c.resume().unwrap().paused);
+        let first = c.pause().unwrap().paused_since_unix_ms;
+        assert_eq!(c.pause().unwrap().paused_since_unix_ms, first, "the first pause start stands");
+        assert_eq!(pauses(), vec![true], "the second pause was not passed on");
+    }
+
+    #[test]
+    fn pause_and_resume_need_a_recording() {
+        reset_pauses();
+        let (c, _) = controller(RecordingFiles::default());
+        assert!(c.pause().is_err());
+        assert!(c.resume().is_err());
+        assert!(!c.is_paused());
+    }
+
+    #[test]
+    fn pausing_never_marks_the_audio_as_degraded() {
+        reset_pauses();
+        let (c, _) = controller(RecordingFiles::default());
+        c.start_manual().unwrap();
+        assert_eq!(c.pause().unwrap().degraded, None);
+        assert_eq!(c.resume().unwrap().degraded, None);
+    }
+
+    #[test]
+    fn a_paused_meeting_stops_cleanly_without_resuming_first() {
+        reset_pauses();
+        let files = RecordingFiles { system: Some(PathBuf::from(r"C:\rec\system-audio-S.wav")), ..Default::default() };
+        let (c, store) = controller(files);
+        let id = c.start_manual().unwrap().meeting_id.unwrap();
+        c.pause().unwrap();
+        let view = c.stop().unwrap();
+        assert_eq!((view.state, view.paused), (RecordingState::Idle, false), "nothing about the pause outlives the recording");
+        let row = store.call_blocking(move |s| s.get_meeting(id).unwrap().unwrap()).unwrap();
+        assert_eq!(row.status, MeetingStatus::Completed);
+        assert_eq!(pauses(), vec![true], "stop does not resume first");
+    }
+
+    #[test]
+    fn sleep_stops_a_paused_recording_like_any_other() {
+        reset_pauses();
+        let (c, _) = controller(RecordingFiles::default());
+        c.start_manual().unwrap();
+        c.pause().unwrap();
+        c.stop_for_sleep();
+        assert_eq!(c.status().state, RecordingState::Idle);
+    }
+
+    #[test]
+    fn a_new_recording_starts_unpaused_after_a_paused_one() {
+        reset_pauses();
+        let (c, _) = controller(RecordingFiles::default());
+        c.start_manual().unwrap();
+        c.pause().unwrap();
+        c.stop().unwrap();
+        let view = c.start_manual().unwrap();
+        assert_eq!((view.paused, view.paused_total_ms), (false, 0));
+    }
+
+    #[test]
+    fn a_paused_recording_starts_its_snapshots_paused_and_resume_lets_them_go_on() {
+        reset_pauses();
+        let (mut c, _) = controller(RecordingFiles::default());
+        let probes: Arc<Mutex<Vec<Box<dyn Fn() -> bool + Send>>>> = Arc::default();
+        c.start_snapshots = {
+            let probes = probes.clone();
+            Arc::new(move |_meeting| {
+                let (handle, probe) = SnapshotHandle::unwatched_paused();
+                probes.lock().unwrap().push(Box::new(probe));
+                Some(handle)
+            })
+        };
+        c.start_manual().unwrap();
+        assert!(!probes.lock().unwrap()[0](), "snapshots run while recording");
+        c.pause().unwrap();
+        assert!(probes.lock().unwrap()[0](), "snapshots stop for a pause");
+        c.resume().unwrap();
+        assert!(!probes.lock().unwrap()[0](), "and start again on resume");
+    }
+
+    #[test]
+    fn the_lifecycle_keeps_its_phase_through_a_pause() {
+        let mut l: Lifecycle<u8> = Lifecycle::default();
+        let g = l.begin_start().unwrap();
+        l.finish_start(g, 5, 1_000, 7).unwrap();
+        if let Phase::Recording { audio, .. } = l.phase_mut() {
+            *audio = 8;
+        }
+        assert!(matches!(l.phase(), Phase::Recording { meeting_id: 5, audio: 8, .. }));
+        assert!(l.begin_start().is_none(), "still one meeting at a time");
+    }
+
+    #[test]
+    fn the_level_is_read_while_recording_and_is_zero_otherwise_and_while_paused() {
+        reset_pauses();
+        let (c, _) = controller(RecordingFiles::default());
+        assert_eq!(c.audio_level(), AudioLevel::default(), "nothing recording");
+        c.start_manual().unwrap();
+        assert_eq!(c.audio_level(), AudioLevel { system: 0.5, mic: 0.25 });
+        c.pause().unwrap();
+        assert_eq!(c.audio_level(), AudioLevel::default(), "zero while paused");
+        c.resume().unwrap();
+        assert_eq!(c.audio_level().system, 0.5);
+        c.stop().unwrap();
+        assert_eq!(c.audio_level(), AudioLevel::default());
     }
 }

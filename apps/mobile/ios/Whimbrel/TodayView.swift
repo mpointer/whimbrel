@@ -147,6 +147,7 @@ struct TodayView: View {
             VStack(spacing: 4) {
                 Text(ReadLogic.syncLine(lastSyncedAt: sync.lastSyncedAt, now: context.date, isSyncing: sync.isSyncing, error: sync.lastError))
                 if sync.olderHistoryLoading { Text("Older history is still loading.") }
+                if sync.updateNeeded { Text("Update needed on another of your devices before it applies deletes.") }
             }
             .font(.footnote)
             .foregroundStyle(Color.theme(.textSecondary))

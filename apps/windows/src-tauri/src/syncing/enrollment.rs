@@ -31,6 +31,19 @@ pub trait WorkerApi: Send + Sync {
     fn ai_checkout(&self, id_token: &str, device_public_key: &str, pack: &str) -> Result<String, WorkerError>;
     /// Whimbrel AI: the models it offers, newest first (404 from a server that predates the route).
     fn ai_models(&self, id_token: &str, device_public_key: &str) -> Result<Vec<String>, WorkerError>;
+    /// Deletes the account and its sync database (`POST /v1/account/delete`), from an approved device.
+    fn delete_account(&self, id_token: &str, device_public_key: &str) -> Result<(), WorkerError>;
+    /// Registers Whimbrel Cloud, the cloud routine runner whose public key is `runner_public_key`, approved by
+    /// `sender` (this PC) with the account's `group_key` (`api::sync_ops::runner::register_runner`). Returns
+    /// the provision bundle, which carries the group key wrapped to the runner: never log or store it.
+    fn register_runner(
+        &self,
+        id_token: &str,
+        runner_public_key: &[u8],
+        name: &str,
+        sender: &sync::DeviceKeypair,
+        group_key: &sync::GroupKey,
+    ) -> Result<Vec<u8>, WorkerError>;
 }
 
 impl WorkerApi for en::WorkerClient {
@@ -68,11 +81,18 @@ impl WorkerApi for en::WorkerClient {
     fn ai_models(&self, id_token: &str, pk: &str) -> Result<Vec<String>, WorkerError> {
         en::WorkerClient::ai_models(self, id_token, pk)
     }
+    fn delete_account(&self, id_token: &str, pk: &str) -> Result<(), WorkerError> {
+        en::WorkerClient::delete_account(self, id_token, pk)
+    }
+    fn register_runner(&self, id_token: &str, runner_public_key: &[u8], name: &str, sender: &sync::DeviceKeypair, group_key: &sync::GroupKey) -> Result<Vec<u8>, WorkerError> {
+        api::sync_ops::runner::register_runner(self, id_token, runner_public_key, name, sender, group_key)
+    }
 }
 
-/// Another device on the account that could have handed us the key.
+/// Another device on the account that could have handed us the key. Whimbrel Cloud (platform `cloud`)
+/// never hands the key on, so a first computer must not wait for it.
 pub fn is_other_approved(device: &DeviceRecord, my_public_key: &str) -> bool {
-    device.public_key != my_public_key && device.status == "approved"
+    device.public_key != my_public_key && device.status == "approved" && device.platform.as_deref() != Some("cloud")
 }
 
 /// One `POST /v1/auth/google`; when approved, also obtains the group key. The result is
@@ -164,6 +184,18 @@ pub(crate) mod tests {
         pub ai_balance: Arc<Mutex<Result<AiBalance, WorkerError>>>,
         pub ai_packs: Arc<Mutex<Vec<String>>>,
         pub ai_models: Arc<Mutex<Result<Vec<String>, WorkerError>>>,
+        /// What `delete_account` answers, and how often it was asked.
+        pub delete: Arc<Mutex<Result<(), WorkerError>>>,
+        pub delete_calls: Arc<Mutex<u32>>,
+        /// When set, `list_devices` fails with it (an account that is gone answers 403).
+        pub devices_error: Arc<Mutex<Option<WorkerError>>>,
+        /// Answered once by the next `list_devices`, before `devices_error`.
+        pub devices_error_once: Arc<Mutex<Option<WorkerError>>>,
+        /// How often `authenticate_google` was asked.
+        pub auth_calls: Arc<Mutex<u32>>,
+        /// What registering Whimbrel Cloud answers, and the runner keys it was asked to register.
+        pub runner: Arc<Mutex<Result<Vec<u8>, WorkerError>>>,
+        pub runner_keys: Arc<Mutex<Vec<Vec<u8>>>>,
     }
 
     impl FakeWorker {
@@ -180,16 +212,30 @@ pub(crate) mod tests {
                 ai_balance: Arc::new(Mutex::new(Ok(AiBalance { balance_micros: 0, last_purchase_micros: None }))),
                 ai_packs: Arc::new(Mutex::new(Vec::new())),
                 ai_models: Arc::new(Mutex::new(Err(WorkerError::Http { status: 404, body: String::new() }))),
+                delete: Arc::new(Mutex::new(Ok(()))),
+                delete_calls: Arc::new(Mutex::new(0)),
+                devices_error: Arc::new(Mutex::new(None)),
+                devices_error_once: Arc::new(Mutex::new(None)),
+                auth_calls: Arc::new(Mutex::new(0)),
+                runner: Arc::new(Mutex::new(Ok(vec![1, 2, 3]))),
+                runner_keys: Arc::new(Mutex::new(Vec::new())),
             }
         }
     }
 
     impl WorkerApi for FakeWorker {
         fn authenticate_google(&self, _: &str, _: &str) -> Result<GoogleAuthResult, WorkerError> {
+            *self.auth_calls.lock().unwrap() += 1;
             self.auth.lock().unwrap().clone()
         }
         fn list_devices(&self, _: &str, _: &str) -> Result<Vec<DeviceRecord>, WorkerError> {
             *self.list_calls.lock().unwrap() += 1;
+            if let Some(e) = self.devices_error_once.lock().unwrap().take() {
+                return Err(e);
+            }
+            if let Some(e) = self.devices_error.lock().unwrap().clone() {
+                return Err(e);
+            }
             Ok(self.devices.lock().unwrap().clone())
         }
         fn approve_device(&self, _: &str, _: &str, target: &str, wrapped: &str) -> Result<(), WorkerError> {
@@ -222,6 +268,14 @@ pub(crate) mod tests {
         }
         fn ai_models(&self, _: &str, _: &str) -> Result<Vec<String>, WorkerError> {
             self.ai_models.lock().unwrap().clone()
+        }
+        fn delete_account(&self, _: &str, _: &str) -> Result<(), WorkerError> {
+            *self.delete_calls.lock().unwrap() += 1;
+            self.delete.lock().unwrap().clone()
+        }
+        fn register_runner(&self, _: &str, runner_public_key: &[u8], _: &str, _: &sync::DeviceKeypair, _: &sync::GroupKey) -> Result<Vec<u8>, WorkerError> {
+            self.runner_keys.lock().unwrap().push(runner_public_key.to_vec());
+            self.runner.lock().unwrap().clone()
         }
     }
 
@@ -308,6 +362,19 @@ pub(crate) mod tests {
         assert!(is_other_approved(&device("A", "approved"), "ME"));
         assert!(!is_other_approved(&device("A", "revoked"), "ME"));
         assert!(!is_other_approved(&device("ME", "approved"), "ME"));
+    }
+
+    #[test]
+    fn whimbrel_cloud_is_not_another_device_that_could_hand_over_the_key() {
+        let mut runner = device("RUNNER", "approved");
+        runner.platform = Some("cloud".into());
+        assert!(!is_other_approved(&runner, "ME"));
+        // A first computer on an account with only the runner generates the key instead of waiting.
+        let secrets = MemorySecrets::default();
+        let pc = me(&secrets);
+        let worker = FakeWorker::new(approved(None), vec![runner, device(&pc.device_id, "approved")]);
+        assert!(held(&authenticate(&worker, "id", &pc, &secrets).unwrap()));
+        assert!(keys::load_group_key(&secrets).unwrap().is_some());
     }
 
     #[test]

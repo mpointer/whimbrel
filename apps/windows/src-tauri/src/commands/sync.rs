@@ -9,7 +9,7 @@ use tauri::State;
 use crate::error::CommandError;
 use crate::state::AppState;
 use crate::syncing::billing::WhimbrelAiView;
-use crate::syncing::controller::{DeviceView, SyncController, SyncState, SyncView};
+use crate::syncing::controller::{DeviceView, RunnerRegistration, SyncController, SyncState, SyncView};
 use crate::l10n::tr;
 
 fn controller(state: &AppState) -> Result<Arc<SyncController>, CommandError> {
@@ -36,6 +36,7 @@ pub fn sync_status(state: State<'_, AppState>) -> SyncView {
             device_id: String::new(),
             content_last_synced_ms: None,
             content_error: None,
+            kind_backfill_percent: None,
             settings_last_synced_ms: None,
             settings_error: None,
             device_limit: false,
@@ -150,4 +151,12 @@ pub async fn sync_approve_device(state: State<'_, AppState>, id: String) -> Resu
 pub async fn sync_revoke_device(state: State<'_, AppState>, id: String) -> Result<Vec<DeviceView>, CommandError> {
     let c = controller(&state)?;
     blocking(move || c.revoke(&id)).await
+}
+
+/// "Add Whimbrel Cloud": registers the cloud runner from the public key its setup printed. The outcome,
+/// including the values for the runner's host on success, goes to the UI only; nothing here logs it.
+#[tauri::command]
+pub async fn sync_register_runner(state: State<'_, AppState>, public_key: String) -> Result<RunnerRegistration, CommandError> {
+    let c = controller(&state)?;
+    tokio::task::spawn_blocking(move || c.register_runner(&public_key)).await.map_err(|e| CommandError::network(e.to_string()))
 }

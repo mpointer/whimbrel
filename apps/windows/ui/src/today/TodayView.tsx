@@ -23,6 +23,9 @@ import { useL10n } from "../l10n";
 import { TodayLayout } from "./TodayLayout";
 import { useSchedule } from "./useSchedule";
 import { useSkin } from "../useSkin";
+import { useRedesign } from "../redesign";
+import { RedesignedHome, type HomeSection } from "./redesign/HomeView";
+import { LiveOrHome } from "../meetings/redesign/LiveGate";
 import { deviceLine, recapFor, shouldGenerate, threadLine } from "./todayModel";
 
 function message(e: unknown): string {
@@ -30,7 +33,16 @@ function message(e: unknown): string {
 }
 
 /** The Today tab (plan Task 9). Refreshes when shown and on window focus; no timer. */
-export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) => void; onOpenSettings: () => void }) {
+export function TodayView({
+  onAsk,
+  onOpenSettings,
+  onOpenSection,
+}: {
+  onAsk: (prompt: string) => void;
+  onOpenSettings: () => void;
+  /** The redesigned Home's links to other sections; nothing else uses them. */
+  onOpenSection?: (target: HomeSection) => void;
+}) {
   const [overview, setOverview] = useState<TodayOverview | null>(null);
   const [recap, setRecap] = useState<TodayRecap | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,7 +125,37 @@ export function TodayView({ onAsk, onOpenSettings }: { onAsk: (prompt: string) =
     }
   }, [overview, recap, generate]);
 
+  // The hidden redesign switch, asked after every hook above and before anything is drawn: with it off, the code
+  // below is exactly what it was.
+  const redesign = useRedesign();
+
   if (selected) return <Detail selection={selected} onBack={() => setSelected(null)} />;
+  if (redesign) {
+    return (
+      <LiveOrHome
+        onOpenSettings={onOpenSettings}
+        home={
+          <RedesignedHome
+            overview={overview}
+            error={error}
+            onRetry={loadOverview}
+            earlier={earlier}
+            sched={sched}
+            upcoming={upcoming}
+            relevantMeeting={relevantMeeting}
+            recap={recap}
+            writing={writing}
+            recapError={recapError}
+            onRefreshRecap={() => generate(true)}
+            onOpenMeeting={(id) => setSelected({ kind: "meeting", id })}
+            onOpenPrep={setPrepKey}
+            prep={prepKey ? <PrepBriefPanel prepKey={prepKey} onClose={() => setPrepKey(null)} onOpenMeeting={(id) => setSelected({ kind: "meeting", id })} /> : null}
+            onOpenSection={(target) => onOpenSection?.(target)}
+          />
+        }
+      />
+    );
+  }
   if (!overview) {
     return error ? (
       <div role="alert" className="card">

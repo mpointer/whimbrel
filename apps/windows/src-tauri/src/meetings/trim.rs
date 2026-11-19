@@ -34,6 +34,21 @@ pub fn cut(store: &memory::Store, recordings: &Path, meeting_id: i64, keep_ms: i
             }
         }
     }
+    // The paused stretches noted beside the recording must match the shortened audio, or Transcribe again would
+    // drop words by stale times: spans past the cut go, one across it ends there, and with the audio gone so does
+    // the marker. A trim only removes the end, so no span moves.
+    if let Some(stamp) = files.as_ref().and_then(|_| audio_stamp(store, meeting_id)) {
+        let marker = super::pipeline::paused_spans_marker_in(recordings, &stamp);
+        if result.removed_parts.contains(&1) {
+            let _ = std::fs::remove_file(&marker);
+        } else if let (Some((1, keep_within)), Ok(text)) = (result.spanning_part, std::fs::read_to_string(&marker)) {
+            let clipped = super::pause_clock::PausedSpans::from_text(&text).clipped_to(keep_within as i64 / 10);
+            let written = if clipped.is_empty() { std::fs::remove_file(&marker) } else { std::fs::write(&marker, clipped.to_text()) };
+            if let Err(e) = written {
+                tracing::warn!(meeting_id, error = %e, "could not update the paused stretches after the trim");
+            }
+        }
+    }
     if result.removed_parts.contains(&1) {
         for wav in files.iter().flat_map(|f| [&f.system, &f.mic]).flatten() {
             if let Err(e) = std::fs::remove_file(wav) {
@@ -50,6 +65,12 @@ pub fn cut(store: &memory::Store, recordings: &Path, meeting_id: i64, keep_ms: i
     }
     tracing::info!(meeting_id, keep_ms, removed_snapshots = result.removed_snapshot_paths.len(), "trimmed the meeting");
     Ok(Some(result))
+}
+
+/// The stamp of the meeting's recording files, if it has any.
+fn audio_stamp(store: &memory::Store, meeting_id: i64) -> Option<String> {
+    let audio = store.get_meeting(meeting_id).ok().flatten()?.audio_path?;
+    stamp_of(Path::new(&audio))
 }
 
 /// [`cut`] for a meeting already transcribed: its transcript file is rewritten from the segments

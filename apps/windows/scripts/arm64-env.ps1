@@ -48,4 +48,14 @@ $env:CMAKE_MSVC_RUNTIME_LIBRARY = 'MultiThreaded'
 $env:CMAKE_C_FLAGS_RELWITHDEBINFO = '/MT /Zi /O2 /Ob1 /DNDEBUG'
 $env:CMAKE_CXX_FLAGS_RELWITHDEBINFO = '/MT /Zi /O2 /Ob1 /DNDEBUG /utf-8'
 
+# SQLCipher (X4, issue #816) builds vendored OpenSSL, which needs Strawberry Perl and NASM. The
+# environment copy above keeps PERL and PATH, so this only checks they are there: without them
+# the Arm64 build fails deep inside openssl-src, long after this script said it was ready.
+$perl = if ($env:PERL -and (Test-Path $env:PERL)) { $env:PERL } else { (Get-Command perl -ErrorAction SilentlyContinue).Source }
+if (-not $perl) { throw "No Perl for OpenSSL (SQLCipher): install Strawberry Perl and set PERL to its perl.exe" }
+& $perl -e 'require Locale::Maketext::Simple' 2>$null
+if ($LASTEXITCODE -ne 0) { throw "$perl can't build OpenSSL (Git's Perl can't): set PERL to Strawberry Perl's perl.exe" }
+$env:PERL = $perl
+if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) { throw "nasm is not on PATH; OpenSSL (SQLCipher) needs it" }
+
 Write-Host "Arm64 cross build environment set from $vs"

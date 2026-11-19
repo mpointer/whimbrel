@@ -1,0 +1,105 @@
+/* The in-meeting window. Layout only; colors, fonts and shape come from the skin variables and the system tokens. */
+.mb-root {
+  min-height: 100vh;
+  background: var(--color-background-card);
+}
+.mb {
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+  padding: var(--w-space-md) var(--w-space-lg);
+  min-height: 100vh;
+}
+.mb-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--w-space-md);
+  cursor: grab;
+  padding-bottom: var(--w-space-xs);
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.mb-title {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mb-state {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--w-space-md);
+}
+.mb-word {
+  font-weight: 700;
+  font-size: var(--w-text-subtitle-size);
+  color: var(--color-text-primary);
+}
+.mb-word[data-state="recording"] {
+  color: var(--w-color-recording);
+}
+.mb-time {
+  font-family: var(--sx-font-numerals);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--w-text-page-title-size);
+  line-height: var(--w-text-page-title-line);
+  font-weight: 600;
+}
+.mb-meter {
+  color: var(--w-color-recording);
+}
+.mb[data-state="paused"] .mb-meter {
+  color: var(--color-text-secondary);
+}
+.mb-meter .w-meter {
+  width: 100%;
+}
+.mb-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--w-space-sm);
+}
+.mb-ask {
+  display: flex;
+  align-items: center;
+  gap: var(--w-space-sm);
+  padding: 0 var(--w-space-sm);
+  border: var(--sx-line);
+  border-radius: var(--sx-radius-control);
+  background: var(--color-background-page);
+}
+.mb-ask input {
+  flex: 1;
+  min-width: 0;
+  min-height: 2rem;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+}
+.mb-send {
+  border: 0;
+  background: transparent;
+  color: var(--color-accent-primary);
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+}
+.mb-foot {
+  margin: auto 0 0;
+  display: flex;
+  align-items: center;
+  gap: var(--w-space-xs);
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-caption-size);
+}
+
+.mb-kept {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-caption-size);
+}
+.mb[data-state="paused"] .mb-word {
+  color: var(--w-color-paused);
+}

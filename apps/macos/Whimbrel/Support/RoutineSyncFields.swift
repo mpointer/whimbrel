@@ -2,8 +2,15 @@ import Foundation
 
 /// Syncs on/off and schedule time for the routines that can fail over (Daily Brief and Reply
 /// Priorities) through settings sync, so a device standing in for the primary uses the same values
-/// the primary does (docs/superpowers/specs/2026-10-12-routines-safety-net-design.md). Write-capable
-/// routines never fail over, so their settings stay per-device.
+/// the primary does (docs/superpowers/specs/2026-10-12-routines-safety-net-design.md), and for the
+/// routines that may run in the cloud (EOD Recap, Weekly Digest, Meeting Prep too), whose runner reads
+/// them (docs/superpowers/specs/2026-11-15-cloud-routine-runner-design.md, Amendment 3). Focus Time
+/// writes to the calendar and stays per-device.
+///
+/// The cloud routines also sync `routine.<template>.cloud` ("true"/"false"), `.cloudGrant` (a JSON array
+/// of core's `routines::grant_for` entries while in the cloud, `[]` otherwise; informational: the runner
+/// enforces its own copy of the grant) and `.readyBy` ("HH:MM", only once chosen). These live in
+/// `CloudRoutineSettings`, not in the routine rows.
 enum RoutineSyncFields {
     /// `modelPref` joined on 2026-10-29: a device standing in for the primary should run the
     /// routine on the same model (`default`, `cheapest`, or `<provider>/<model>`).
@@ -15,8 +22,61 @@ enum RoutineSyncFields {
         case modelPref(id: Int64, String)
     }
 
-    static let templates = ["daily_brief", "reply_priorities"]
+    /// The routine-row fields above sync for these.
+    static let templates = ["daily_brief", "reply_priorities", "eod_recap", "weekly_digest", "meeting_prep"]
+    /// The templates core lets run in the cloud (`routines::cloud_eligible`); Reply Priorities is not one.
+    static let cloudTemplates = ["daily_brief", "eod_recap", "weekly_digest", "meeting_prep"]
     private static let prefix = "routine."
+
+    enum CloudField: String { case cloud, cloudGrant, readyBy }
+
+    enum CloudChange: Equatable {
+        case cloud(template: String, Bool)
+        case cloudGrant(template: String, [String])
+        case readyBy(template: String, String)
+    }
+
+    static func cloudKey(template: String, field: CloudField) -> String { "\(prefix)\(template).\(field.rawValue)" }
+
+    static func isCloudKey(_ key: String) -> Bool { parseCloud(key) != nil }
+
+    /// The cloud fields to push. `grants`: core's grant list per template, pushed only while it is in the cloud.
+    static func cloudValues(cloud: [String: Bool], readyBy: [String: String], grants: [String: [String]]) -> [String: String] {
+        var out: [String: String] = [:]
+        for template in cloudTemplates {
+            let on = cloud[template] ?? false
+            out[cloudKey(template: template, field: .cloud)] = on ? "true" : "false"
+            let grant = on ? (grants[template] ?? []) : []
+            let json = (try? JSONEncoder().encode(grant)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+            out[cloudKey(template: template, field: .cloudGrant)] = json
+            if let at = readyBy[template], isHhmm(at) {
+                out[cloudKey(template: template, field: .readyBy)] = at
+            }
+        }
+        return out
+    }
+
+    /// The local edit a pulled cloud field asks for, or nil when it is unknown or malformed.
+    static func cloudChange(key: String, value: String) -> CloudChange? {
+        guard let (template, field) = parseCloud(key) else { return nil }
+        switch field {
+        case .cloud:
+            guard value == "true" || value == "false" else { return nil }
+            return .cloud(template: template, value == "true")
+        case .cloudGrant:
+            guard let list = try? JSONDecoder().decode([String].self, from: Data(value.utf8)) else { return nil }
+            return .cloudGrant(template: template, list)
+        case .readyBy:
+            guard isHhmm(value) else { return nil }
+            return .readyBy(template: template, value)
+        }
+    }
+
+    private static func parseCloud(_ key: String) -> (String, CloudField)? {
+        let parts = key.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 3, parts[0] == "routine", cloudTemplates.contains(parts[1]), let field = CloudField(rawValue: parts[2]) else { return nil }
+        return (parts[1], field)
+    }
 
     static func key(template: String, field: Field) -> String { "\(prefix)\(template).\(field.rawValue)" }
 
@@ -73,7 +133,7 @@ enum RoutineSyncFields {
         return (parts[1], field)
     }
 
-    private static func isHhmm(_ s: String) -> Bool {
+    static func isHhmm(_ s: String) -> Bool {
         let p = s.split(separator: ":", omittingEmptySubsequences: false)
         guard p.count == 2, p[0].count == 2, p[1].count == 2, let h = Int(p[0]), let m = Int(p[1]) else { return false }
         return (0...23).contains(h) && (0...59).contains(m)

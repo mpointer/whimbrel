@@ -7,18 +7,29 @@
 
 pub(crate) mod update;
 
-use tauri::{AppHandle, Manager, RunEvent, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewWindowBuilder, WindowEvent};
 
-use std::sync::Arc;
+use std::sync::mpsc::RecvTimeoutError;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::commands;
+use crate::launch::app::{LaunchState, Opened};
+use crate::launch::presenter::{CloseAnswer, Stage, StageSink};
+use crate::launch::LaunchOutcome;
 use crate::logging;
 use crate::paths::Paths;
-use crate::secrets::CredentialManager;
-use crate::state::AppState;
+use crate::secrets::{CredentialManager, SecretStore};
+use crate::settings::SettingsFile;
+use crate::state::{AppState, Launched};
+use crate::store_actor::StoreHandle;
 
 /// The main window's label in `tauri.conf.json`.
 pub(crate) const MAIN_WINDOW: &str = "main";
+/// How long `.setup()` waits for a launch that needs no one (the Mac's `startAndWait(10)`).
+const FAST_PATH_WAIT: Duration = Duration::from_secs(10);
+/// A launch whose window never renders (autostart) counts as good after this long up.
+const FIRST_WINDOW_FALLBACK: Duration = Duration::from_secs(10);
 /// How often the store's queue-wait percentiles go to the log (Task 10's NFR-PRF-1 run
 /// reads them there, next to the sync and answer lines they coincide with).
 const QUEUE_LOG_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
@@ -35,6 +46,17 @@ pub fn run() {
     }
     // Before logging starts: a release launch hands over to a supervisor here (Task 10).
     crate::restart::supervise_or_continue(&paths.logs);
+    // A scheduled Delete everything empties the logs before this launch writes to them (it
+    // waits for the old instance first); the rest of it runs in `.setup()`, which reports both.
+    let logs_step = crate::delete_everything::clear_logs(&paths.root, &mut crate::delete_everything::old_instance_running, crate::delete_everything::WAIT);
+    if logs_step == crate::delete_everything::LogsStep::NotOwner {
+        // Another launch (the one restarted for Delete everything) owns the delete and stays
+        // the running instance: this one, say a double-click meanwhile, leaves without logging
+        // or opening anything. The owner's window comes up by itself.
+        // No log file yet, and stderr goes nowhere in a release launch: the supervisor's log.
+        crate::restart::note(&paths.logs, "another Whimbrel launch is running Delete everything; this launch exits");
+        std::process::exit(0);
+    }
     let _log_guard = logging::init(&paths.logs);
     crate::restart::install_panic_log(&paths.logs);
     tracing::info!(version = env!("CARGO_PKG_VERSION"), root = %paths.root.display(), "Whimbrel starting");
@@ -71,44 +93,105 @@ pub fn run() {
         // the launch. `hotkey_panel::setup` registers it and records a failure instead.
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(move |app| {
-            // Identity, then the store (which learns its own device id before anything
-            // else can touch it), then settings. Failures land in `startup_errors`.
-            let mut state = AppState::start(paths, Arc::new(CredentialManager));
-            // Before anything renders text or writes a summary: the tray, the jobs and every window read it.
-            let language = crate::l10n::apply_ui_language(&state.settings.lock().unwrap().app_language());
+            // X4 two-phase start (Task 11c, brief 2.7). Phase 1: THE settings file, the UI
+            // language, and the launch, which decides and opens the database (core's launch
+            // rules) on its own thread. `AppState` does not exist until it opened.
+            let settings = Arc::new(Mutex::new(SettingsFile::load(&paths.settings)));
+            // Before anything renders text: the launch screens, the tray, the jobs and every window read it.
+            let language = crate::l10n::apply_ui_language(&settings.lock().unwrap_or_else(|p| p.into_inner()).app_language());
             tracing::info!(language, "UI language");
-            state.start_capture();
-            state.start_jobs();
-            state.start_sync();
-            state.start_detection(app.handle().clone());
-            state.start_retention();
-            state.start_model_defaults();
-            state.start_routines();
-            state.start_mcp_server();
-            if let Some(store) = &state.store {
-                store.log_queue_wait_every("main", QUEUE_LOG_EVERY);
+            let secrets: Arc<dyn SecretStore> = Arc::new(CredentialManager);
+            // A Delete everything scheduled by the last instance runs here, before the launch
+            // decides (X4 Task 12): files first, keys only once no database file is left. What
+            // it could not remove is said now, before any encryption screen; never retried.
+            {
+                let keys = crate::db_key::DbKeyStore::new(secrets.clone());
+                let mut steps = crate::delete_everything::live_steps(&keys, &*settings);
+                if let Some(mut out) = crate::delete_everything::run_pending(&paths.root, &paths.db, &mut steps, logs_step.wait()) {
+                    logs_step.report_into(&mut out, &paths.logs);
+                    crate::delete_everything::leave_fresh_library_marker(&paths.root, &out);
+                    tracing::info!(
+                        did_not_run = out.did_not_run,
+                        not_removed = out.not_removed.len(),
+                        database_files_left = out.database_files_remaining.len(),
+                        keys_left = out.keys_not_removed.len(),
+                        keys_deleted = out.keys_deleted,
+                        logs = ?logs_step,
+                        "ran a scheduled Delete everything"
+                    );
+                    if let Some(alert) = out.alert() {
+                        crate::delete_everything::show_alert(&alert);
+                    }
+                }
             }
-            if let Some(slow) = &state.slow_store {
-                slow.log_queue_wait_every("slow", QUEUE_LOG_EVERY);
+            // The main window starts hidden (tauri.conf.json): Tauri creates it before `setup`,
+            // and it would sit there blank and unresponsive through the wait and the alert above.
+            show_main_window(app.handle());
+            app.manage(LaunchState::new(
+                paths.db.clone(),
+                paths.minilm.clone(),
+                secrets,
+                settings,
+                Box::new(TauriStageSink(app.handle().clone())),
+                crate::launch::live::physical_ram_bytes(),
+            ));
+            app.manage(LaunchPaths(paths));
+            let outcomes = app.state::<LaunchState>().start();
+            // Fast path: a launch that needs no one (a plain or keyed open) is waited for, so an
+            // existing install opens before the first paint, as before. The wait ends at once
+            // when the launch needs the window (a screen, the setup, the migration).
+            let deadline = Instant::now() + FAST_PATH_WAIT;
+            loop {
+                match outcomes.recv_timeout(Duration::from_millis(25)) {
+                    Ok(outcome) => {
+                        finish_launch(app.handle(), outcome);
+                        return Ok(());
+                    }
+                    Err(RecvTimeoutError::Timeout) if Instant::now() < deadline && !app.state::<LaunchState>().presenter.needs_window() => {}
+                    Err(RecvTimeoutError::Timeout) => break,
+                    Err(RecvTimeoutError::Disconnected) => {
+                        // Nothing will ever show a window or finish the launch: exit rather
+                        // than leave an invisible process (review of 83e2b079).
+                        tracing::error!("the launch thread ended without an outcome; exiting");
+                        app.handle().exit(1);
+                        return Ok(());
+                    }
+                }
             }
-            if let Some(bg) = &state.bg_store {
-                bg.log_queue_wait_every("background", QUEUE_LOG_EVERY);
-            }
-            app.manage(state);
-            crate::tray::build(app.handle())?;
-            crate::hotkey_panel::setup(app.handle());
-            commands::general::apply_autostart_at_launch(app.handle(), &app.state::<AppState>());
-            crate::restart::schedule_crash_test(app.handle());
-            update::start(app.handle());
+            // Phase 2 later: the launch waits for the user (or is slow). The window shows the
+            // launch screens meanwhile; the rest starts on the main thread once it decided.
+            show_main_window(app.handle());
+            let app = app.handle().clone();
+            std::thread::spawn(move || {
+                match outcomes.recv() {
+                    Ok(outcome) => {
+                        let handle = app.clone();
+                        if let Err(e) = app.run_on_main_thread(move || finish_launch(&handle, outcome)) {
+                            tracing::error!(error = %e, "could not finish the launch on the main thread; exiting");
+                            app.exit(1);
+                        }
+                    }
+                    Err(_) => {
+                        // The launch thread died: the window would show a spinner forever.
+                        tracing::error!("the launch thread ended without an outcome; exiting");
+                        app.exit(1);
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_status,
             commands::capture_status,
             commands::set_capture_enabled,
+            commands::capture_pause_until,
+            commands::capture_resume_now,
             commands::library::library_recent,
             commands::library::library_episodes,
             commands::library::library_search,
+            commands::library::library_search_filtered,
+            commands::library::library_capture_apps,
+            commands::library::library_day_blocks,
             commands::library::library_capture,
             commands::library::library_meeting,
             commands::library::library_episode,
@@ -129,6 +212,7 @@ pub fn run() {
             commands::sync::sync_set_device_name,
             commands::sync::sync_approve_device,
             commands::sync::sync_revoke_device,
+            commands::sync::sync_register_runner,
             commands::ai::ai_settings,
             commands::ai::set_api_key,
             commands::ai::set_api_key_sync,
@@ -161,6 +245,22 @@ pub fn run() {
             commands::topics::topic_suggestions,
             commands::topics::accept_topic_suggestion,
             commands::topics::dismiss_topic_suggestion,
+            commands::client_controls::client_inventory,
+            commands::client_controls::client_delete,
+            commands::client_controls::client_cancel_wait,
+            commands::client_controls::client_jobs_running,
+            commands::client_controls::client_pending_devices,
+            commands::client_controls::client_pending_device_ids,
+            commands::client_controls::client_retire_device,
+            commands::client_controls::client_control_get,
+            commands::client_controls::client_control_update,
+            commands::client_controls::client_resummary_offer,
+            commands::client_controls::client_due_items,
+            commands::client_controls::client_retention_decide,
+            commands::client_controls::client_review_flag,
+            commands::client_controls::client_review_flag_dismiss,
+            commands::client_controls::client_expire,
+            commands::client_controls::client_export,
             commands::ai::set_prompt,
             commands::ai::set_summary_instructions,
             commands::ai::provider_models,
@@ -187,6 +287,15 @@ pub fn run() {
             commands::models::transcription_benchmark,
             commands::meetings::meeting_record_start,
             commands::meetings::meeting_record_stop,
+            commands::meetings::meeting_record_pause,
+            commands::meetings::meeting_record_resume,
+            commands::meetings::meeting_audio_level,
+            commands::meetings::meeting_bar_ask,
+            commands::meetings::meeting_bar_take_ask,
+            commands::meetings::meeting_bar_cancel_ask,
+            commands::meetings::meeting_marker_add,
+            commands::meetings::meeting_marker_list,
+            commands::meetings::meeting_marker_delete,
             commands::meetings::meeting_recording_status,
             commands::workspace::meeting_list,
             commands::workspace::meeting_workspace,
@@ -292,6 +401,9 @@ pub fn run() {
             commands::routines::routine_model_options,
             commands::routines::routines_host,
             commands::routines::routines_set_host,
+            commands::routines::routines_cloud,
+            commands::routines::routine_set_cloud,
+            commands::routines::routine_set_ready_by,
             commands::status::status_overview,
             commands::storage::storage_overview,
             commands::storage::storage_compact,
@@ -325,6 +437,7 @@ pub fn run() {
             commands::schedule::today_upcoming,
             commands::schedule::meeting_record_start_event,
             commands::skins::skins_list,
+            commands::skins::redesign_enabled,
             commands::skins::skin_image,
             commands::skins::skin_sources,
             commands::skins::skin_turn,
@@ -356,6 +469,35 @@ pub fn run() {
             commands::language::set_write_in,
             commands::get_routing_settings,
             commands::set_routing_settings,
+            commands::launch::launch_state,
+            commands::launch::launch_respond,
+            commands::launch::launch_first_window_rendered,
+            commands::launch::launch_fresh_library_notice,
+            commands::launch::launch_library_missing,
+            commands::launch::launch_dismiss_library_missing,
+            commands::launch::launch_recovery_choose_file,
+            commands::launch::launch_recovery_unlock_file,
+            commands::launch::launch_recovery_unlock_words,
+            commands::launch::setup_begin,
+            commands::launch::setup_save_file,
+            commands::launch::setup_verify,
+            commands::launch::setup_start_over,
+            commands::launch::setup_continue,
+            commands::launch::setup_saved_to,
+            commands::launch::setup_reuses_key,
+            commands::launch::setup_has_fresh_material,
+            commands::encryption::encryption_card,
+            commands::encryption::encryption_precheck_for_setup,
+            commands::encryption::encryption_encrypt,
+            commands::delete_everything::delete_everything_preview,
+            commands::delete_everything::delete_everything_now,
+            commands::foreign_files::foreign_files_list,
+            commands::foreign_files::foreign_files_delete,
+            commands::encryption::encryption_note_action,
+            commands::encryption::set_fast_search,
+            commands::encryption::speed_check_run,
+            commands::encryption::speed_check_cancel,
+            commands::encryption::speed_check_save,
             commands::recap::recap_text,
             commands::recap::recap_draft,
             commands::recap::recap_send,
@@ -377,20 +519,41 @@ pub fn run() {
         // Closing the last window asks to exit with no code; staying in the tray is the
         // point. Tray → Quit calls `exit(0)`, which carries a code and goes through.
         RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
+        // Before the store opened there is no tray: closing the main window is the screen's
+        // Quit (the setup with fresh words asks first; the migration refuses), so no
+        // invisible process is left behind (brief 2.7).
+        RunEvent::WindowEvent { label, event: WindowEvent::CloseRequested { api, .. }, .. }
+            if label == MAIN_WINDOW && app.try_state::<AppState>().is_none() =>
+        {
+            let Some(launch) = app.try_state::<LaunchState>() else { return };
+            let fresh_words = launch.launch_setup.lock().unwrap_or_else(|p| p.into_inner()).has_fresh_material();
+            match launch.presenter.close_requested(fresh_words) {
+                CloseAnswer::Quit => {}
+                CloseAnswer::Refuse => api.prevent_close(),
+                CloseAnswer::AskFirst => {
+                    api.prevent_close();
+                    let _ = app.emit("launch://quit-requested", ());
+                }
+            }
+        }
         // Tauri ends the process with 0 whatever code was asked for, but the supervisor
         // needs `RESTART_REQUESTED` to relaunch. Tauri's own cleanup (the tray icon, …)
         // would run after this callback, so it runs here first.
         RunEvent::Exit => {
-            // A meeting recording at Quit is stopped properly: its WAVs finalize and its
-            // row completes, instead of waiting for the next launch's repair.
-            if let Some(meetings) = &app.state::<AppState>().meetings {
-                if meetings.is_recording() {
-                    let _ = meetings.stop();
+            // `AppState` exists only once the store opened: a Quit from a launch screen has
+            // none, and must still exit with 0 (the supervisor relaunches on anything else).
+            if let Some(state) = app.try_state::<AppState>() {
+                // A meeting recording at Quit is stopped properly: its WAVs finalize and its
+                // row completes, instead of waiting for the next launch's repair.
+                if let Some(meetings) = &state.meetings {
+                    if meetings.is_recording() {
+                        let _ = meetings.stop();
+                    }
                 }
+                // Quitting during the engine benchmark isn't the crash its marker stands for.
+                let _ = std::fs::remove_file(crate::meetings::benchmark::marker(&state.paths));
             }
             api::local_model::stop();
-            // Quitting during the engine benchmark isn't the crash its marker stands for.
-            let _ = std::fs::remove_file(crate::meetings::benchmark::marker(&app.state::<AppState>().paths));
             let code = crate::restart::requested_exit_code();
             if code != 0 {
                 tracing::info!(code, "exiting with a requested code");
@@ -401,6 +564,95 @@ pub fn run() {
         _ => {}
     });
     tracing::info!("Whimbrel exiting");
+}
+
+/// The data folder, for phase 2 of the start (`finish_launch`).
+pub(crate) struct LaunchPaths(pub(crate) Paths);
+
+/// The launch's stage changes as Tauri events; a screen also brings the window forward.
+struct TauriStageSink(AppHandle);
+
+impl StageSink for TauriStageSink {
+    fn stage_changed(&self, stage: &Stage, waiting: bool) {
+        let _ = self.0.emit("launch://stage", ());
+        if waiting || matches!(stage, Stage::Migrating { .. }) {
+            show_main_window(&self.0);
+        }
+    }
+    fn progress(&self, overall: f64) {
+        let _ = self.0.emit("launch://progress", serde_json::json!({ "overall": overall }));
+    }
+}
+
+/// Phase 2 (brief 2.7 step 3): the launch decided. Builds `AppState` from what it opened,
+/// starts everything as before (the MCP server last, and only through the launch's gate),
+/// then tells the webview. A Quit exits with 0.
+fn finish_launch(app: &AppHandle, outcome: LaunchOutcome<StoreHandle>) {
+    let launch = app.state::<LaunchState>();
+    let (store, opened) = match outcome {
+        LaunchOutcome::Quit => {
+            launch.presenter.finish(Stage::Quitting);
+            app.exit(0);
+            return;
+        }
+        LaunchOutcome::Opened(o) => {
+            let with_key = o.key.is_some();
+            (Some(o.store), Some(Opened { with_key, open_ms: o.open_ms }))
+        }
+        LaunchOutcome::OpenedWithoutStore => (None, None),
+    };
+    let paths = app.state::<LaunchPaths>().0.clone();
+    // Said on the onboarding after a Delete everything, or never: not at some later launch.
+    crate::delete_everything::take_fresh_library(&paths.root);
+    // The connected Google accounts a Delete everything kept are listed again before anything
+    // reads the list. Without the database their file waits for a launch that opens it.
+    let restored = crate::connectors::kept_accounts::restore_at_launch(&paths.root, store.as_ref(), launch.secrets.clone());
+    if restored > 0 {
+        tracing::info!(accounts = restored, "the Google accounts kept by Delete everything are connected again");
+    }
+    let mcp_gate = launch.mcp.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let mut state = AppState::start(paths, launch.secrets.clone(), launch.settings.clone(), Launched { store, mcp_gate });
+    state.start_capture();
+    state.start_jobs();
+    state.start_sync();
+    state.start_detection(app.clone());
+    state.start_retention();
+    state.start_model_defaults();
+    state.start_routines();
+    state.start_mcp_server();
+    if let Some(store) = &state.store {
+        store.log_queue_wait_every("main", QUEUE_LOG_EVERY);
+    }
+    if let Some(slow) = &state.slow_store {
+        slow.log_queue_wait_every("slow", QUEUE_LOG_EVERY);
+    }
+    if let Some(bg) = &state.bg_store {
+        bg.log_queue_wait_every("background", QUEUE_LOG_EVERY);
+    }
+    if let Some(io) = &state.io_store {
+        io.log_queue_wait_every("io", QUEUE_LOG_EVERY);
+    }
+    app.manage(state);
+    if let Err(e) = crate::tray::build(app) {
+        tracing::error!(error = %e, "could not build the tray");
+    }
+    crate::hotkey_panel::setup(app);
+    commands::general::apply_autostart_at_launch(app, &app.state::<AppState>());
+    crate::restart::schedule_crash_test(app);
+    update::start(app);
+    launch.opened(opened);
+    let _ = app.emit("launch://opened", ());
+    // The good-launch counter waits for the first window (`launch_first_window_rendered`). A
+    // launch at login may never show it: then 10 s up counts (question 6 in the brief).
+    if opened.is_some() {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(FIRST_WINDOW_FALLBACK);
+            if app.state::<LaunchState>().first_window_rendered() {
+                tracing::info!("good launch counted after 10 s up (no window rendered)");
+            }
+        });
+    }
 }
 
 /// Brings the main window to the front, recreating it if it was closed.
@@ -415,8 +667,11 @@ pub(crate) fn show_main_window(app: &AppHandle) {
         tracing::error!("tauri.conf.json has no `{MAIN_WINDOW}` window");
         return;
     };
-    match WebviewWindowBuilder::from_config(app, &config).and_then(|b| b.build()) {
+    // tauri.conf.json makes it hidden (the launch shows it once its first step is done): a window
+    // rebuilt from that config would stay hidden too, so this one is shown outright.
+    match WebviewWindowBuilder::from_config(app, &config).and_then(|b| b.visible(true).build()) {
         Ok(window) => {
+            let _ = window.show();
             let _ = window.set_focus();
         }
         Err(e) => tracing::error!("could not reopen the main window: {e}"),
@@ -437,5 +692,21 @@ mod tests {
         assert_eq!(ui["version"], repo, "ui/package.json");
         let cli: serde_json::Value = serde_json::from_str(include_str!("../../../package.json")).unwrap();
         assert_eq!(cli["version"], repo, "apps/windows/package.json");
+    }
+
+    /// The main window starts hidden (tauri.conf.json), so every way it is brought back shows it:
+    /// an existing window is shown, and one rebuilt from the config after it was closed is built
+    /// visible and shown (Tray > Open, an alert, a second launch). A source check: building a
+    /// window needs a running app.
+    #[test]
+    fn a_main_window_rebuilt_after_it_closed_is_shown_not_left_hidden() {
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+        assert_eq!(conf["app"]["windows"][0]["visible"], false, "the premise: it starts hidden");
+        let src = include_str!("mod.rs").replace("\r\n", "\n");
+        let body = src.split("pub(crate) fn show_main_window(").nth(1).unwrap();
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let (existing, rebuilt) = body.split_at(body.find("from_config").unwrap());
+        assert!(existing.contains("window.show()"), "an existing window is shown");
+        assert!(rebuilt.contains(".visible(true)") && rebuilt.contains("window.show()"), "a rebuilt one is built visible and shown");
     }
 }

@@ -215,6 +215,8 @@ pub fn reason_for_error(provider: llm::Provider, err: &llm::LlmError) -> (&'stat
         llm::LlmError::Http { status: 429, .. } => (r::RATE_LIMITED, Some(429)),
         llm::LlmError::Http { status, .. } => (r::UNAVAILABLE, Some(*status)),
         llm::LlmError::Provider(_) | llm::LlmError::NotImplemented(_) => (r::UNAVAILABLE, None),
+        // The exclusion gate refused the call: content-free, and no client is named.
+        llm::LlmError::Refused(_) => (r::UNAVAILABLE, None),
     }
 }
 
@@ -405,11 +407,164 @@ fn summarize_meeting_inner(
         return Err(ApiError::SpendCap(cap_err));
     }
 
-    let mut chain = build_chain_for(llm::TaskKind::MeetingSummary, ollama_model, routing);
+    // Classify first (spec 7.1): decided once for the whole meeting, before any hosted call. A
+    // meeting filed under an excluded client, or whose title, attendees, notes, transcript or
+    // slides name one or carry a client contact's address, is summarised on this computer or
+    // not at all. Deciding per chunk instead would send the earlier chunks to every hosted link
+    // in turn before a later chunk was refused. A forced re-summary ("Re-summarize with
+    // Whimbrel") is decided the same way first, then pinned to the preferred link.
+    summarize_meeting_routed_as(
+        store,
+        meeting_id,
+        notes,
+        transcript,
+        slides,
+        routing,
+        custom_instructions,
+        forced,
+        || build_chain_for(llm::TaskKind::MeetingSummary, ollama_model, routing, &crate::exclusion::current_gate(store)),
+        || crate::routing::build_local_chain(ollama_model, routing),
+    )
+}
+
+/// [`summarize_meeting`] with the chains injected: `local_chain` for an excluded client's
+/// meeting, `chain` for any other.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn summarize_meeting_routed(
+    store: &memory::Store,
+    meeting_id: i64,
+    notes: &str,
+    transcript: &str,
+    slides: &str,
+    routing: &RoutingConfig,
+    custom_instructions: &str,
+    chain: impl FnOnce() -> Vec<llm::ChainLink>,
+    local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
+) -> ApiResult<MeetingSummaryData> {
+    summarize_meeting_routed_as(store, meeting_id, notes, transcript, slides, routing, custom_instructions, false, chain, local_chain)
+}
+
+/// [`summarize_meeting_routed`]; `forced`: a "Re-summarize with Whimbrel" call, pinned to the
+/// preferred provider's link ([`forced_chain`]) after the exclusion decision. An excluded
+/// client's meeting is never forced onto a hosted link: when the preferred provider is not
+/// on this computer the call is refused as an exclusion refusal and nothing is sent.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn summarize_meeting_routed_as(
+    store: &memory::Store,
+    meeting_id: i64,
+    notes: &str,
+    transcript: &str,
+    slides: &str,
+    routing: &RoutingConfig,
+    custom_instructions: &str,
+    forced: bool,
+    chain: impl FnOnce() -> Vec<llm::ChainLink>,
+    local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
+) -> ApiResult<MeetingSummaryData> {
+    let local_only = meeting_is_excluded(store, meeting_id, &[notes, transcript, slides]);
+    let mut chain = if local_only { local_chain() } else { chain() };
     if forced {
-        chain = forced_chain(chain, routing)?;
+        chain = match forced_chain(chain, routing) {
+            Ok(chain) => chain,
+            Err(_) if local_only => {
+                // The reason is the exclusion, not a sign-in or set-up problem.
+                set_last_failure_reason(None);
+                return Err(crate::exclusion::refused());
+            }
+            Err(e) => return Err(e),
+        };
     }
-    // A forced call is pinned: its one link over budget fails the call instead of leaving no link.
+    summarize_meeting_pinned(store, meeting_id, notes, transcript, slides, routing, custom_instructions, chain, local_only, forced)
+}
+
+/// Whether meeting `meeting_id` with this material belongs to an excluded client (or the setting
+/// cannot be read): its membership, title and attendees, and every word of `material`.
+pub(crate) fn meeting_is_excluded(store: &memory::Store, meeting_id: i64, material: &[&str]) -> bool {
+    let filter = crate::exclusion::context_filter(store);
+    if !filter.is_active() {
+        return false;
+    }
+    let (attendees, carries) = match store.get_meeting(meeting_id) {
+        Ok(Some(m)) => {
+            let carries = filter.excludes_meeting(m.id, &m.title, &m.attendees);
+            // The addresses live in the attendee details (`attendees` holds display names).
+            let mut attendees = m.attendees;
+            attendees.extend(
+                store.meeting_attendee_details(meeting_id).unwrap_or_default().into_iter().filter_map(|a| a.email),
+            );
+            (attendees, carries)
+        }
+        Ok(None) => (Vec::new(), filter.material().is_none_or(|x| x.meetings.contains(&meeting_id))),
+        Err(_) => (Vec::new(), true),
+    };
+    // Every other text written about the meeting (fix round 4, S1); unreadable is the client's.
+    let draft = match store.meeting_authored_text(meeting_id) {
+        Ok(text) => text,
+        Err(_) => return true,
+    };
+    carries || crate::exclusion::classify_with(&filter, &format!("{}\n{draft}", material.join("\n")), &attendees)
+}
+
+/// Whether a summary of meeting `meeting_id` would be refused right now: it belongs to an
+/// excluded client (see [`meeting_is_excluded`]) and the on-device chain is empty, so
+/// [`summarize_meeting`] sends nothing. Recomputed on every call, so it clears itself once a
+/// local model is turned on or installed. Reads the stored notes and transcript; names no client.
+pub fn summary_refused_for_exclusion(
+    store: &memory::Store,
+    meeting_id: i64,
+    ollama_model: &str,
+    routing: &RoutingConfig,
+) -> bool {
+    summary_refused_with(store, meeting_id, || crate::routing::build_local_chain(ollama_model, routing).is_empty())
+}
+
+pub(crate) fn summary_refused_with(store: &memory::Store, meeting_id: i64, local_chain_is_empty: impl FnOnce() -> bool) -> bool {
+    let notes = store.get_meeting(meeting_id).ok().flatten().and_then(|m| m.notes).unwrap_or_default();
+    let transcript = store.meeting_transcript_text(meeting_id).unwrap_or_default();
+    meeting_is_excluded(store, meeting_id, &[&notes, &transcript]) && local_chain_is_empty()
+}
+
+/// [`summarize_meeting`] down `chain`. `local_only`: the meeting is an excluded client's, so
+/// `chain` holds on-device links only; empty, the meeting is not summarised and nothing is sent.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn summarize_meeting_with(
+    store: &memory::Store,
+    meeting_id: i64,
+    notes: &str,
+    transcript: &str,
+    slides: &str,
+    routing: &RoutingConfig,
+    custom_instructions: &str,
+    chain: Vec<llm::ChainLink>,
+    local_only: bool,
+) -> ApiResult<MeetingSummaryData> {
+    summarize_meeting_pinned(store, meeting_id, notes, transcript, slides, routing, custom_instructions, chain, local_only, false)
+}
+
+/// [`summarize_meeting_with`]; `forced`: the chain is the preferred link alone and is pinned,
+/// so that link over its budget fails the call (reason `budget`) instead of leaving no link.
+#[allow(clippy::too_many_arguments)]
+fn summarize_meeting_pinned(
+    store: &memory::Store,
+    meeting_id: i64,
+    notes: &str,
+    transcript: &str,
+    slides: &str,
+    routing: &RoutingConfig,
+    custom_instructions: &str,
+    chain: Vec<llm::ChainLink>,
+    local_only: bool,
+    forced: bool,
+) -> ApiResult<MeetingSummaryData> {
+    // A withheld note from an earlier call never describes this one.
+    crate::envelope::take_google_data_withheld();
+    set_last_failure_reason(None);
+    let cap_config = routing.spend_cap_config();
+    if local_only && chain.is_empty() {
+        return Err(crate::exclusion::refused());
+    }
     let chain = match crate::budget::apply_budgets(store, chain, forced, now_unix_ms()) {
         Ok(chain) => chain,
         Err(spent) => {
@@ -419,14 +574,11 @@ fn summarize_meeting_inner(
             return Err(spent.into());
         }
     };
-    summarize_over_chain(store, &chain, &cap_config, meeting_id, notes, transcript, slides, custom_instructions, routing)
+    summarize_over_chain(store, &chain, &cap_config, meeting_id, notes, transcript, slides, custom_instructions, routing, local_only)
 }
 
-/// The chain walk of [`summarize_meeting`]. Limited Use: a meeting that may have come from
-/// Google Calendar has its invitees' names and title in view when it is summarized, so a
-/// link that may not receive Google data is skipped (the next allowed link answers); when
-/// none does, the call fails as a provider failure and
-/// [`crate::envelope::take_google_data_withheld`] says why.
+/// The chain walk: per link first Limited Use (a link that may not receive the meeting's Google
+/// Calendar text is skipped), then the exclusion gate on the whole meeting for a hosted link.
 #[allow(clippy::too_many_arguments)]
 fn summarize_over_chain(
     store: &memory::Store,
@@ -438,8 +590,16 @@ fn summarize_over_chain(
     slides: &str,
     custom_instructions: &str,
     routing: &RoutingConfig,
+    local_only: bool,
 ) -> ApiResult<MeetingSummaryData> {
     crate::envelope::take_google_data_withheld();
+    // A hosted link gets the meeting whole or not at all: the gate sees every word first.
+    let gate = crate::exclusion::current_gate(store);
+    let whole = [notes, transcript, slides, custom_instructions].join("\n");
+    // Limited Use: a meeting that may have come from Google Calendar has its invitees' names
+    // and title in view when it is summarized, so a link that may not receive Google data is
+    // skipped (the next allowed link answers); when none does, the call fails as a provider
+    // failure and [`crate::envelope::take_google_data_withheld`] says why.
     let calendar_text_policy = store.meeting_may_hold_google_calendar_data(meeting_id).then(|| routing.google_data_policy());
     let mut withheld_any = false;
     let mut result: Option<(llm::MeetingSummary, llm::Provider, String)> = None;
@@ -449,11 +609,12 @@ fn summarize_over_chain(
         failures.push(llm::ProviderFailureKind::NoProviderConfigured);
     }
     // The fallback notice: only for a summary meant for Whimbrel AI (and never in local-only
-    // mode, where a local answer is what the user asked for). `preferred_reason` is why the
+    // mode, where a local answer is what the user asked for, nor for an excluded client's
+    // meeting, which is summarised on this computer by design). `preferred_reason` is why the
     // preferred provider did not answer: no link at all (not signed in, no device key, its
     // budget), a link skipped for Limited Use, or the first error its call returned.
     let preferred = llm::Provider::parse(&routing.preferred_provider);
-    let notice_applies = preferred == Some(llm::Provider::Whimbrel) && !routing.sensitive;
+    let notice_applies = preferred == Some(llm::Provider::Whimbrel) && !routing.sensitive && !local_only;
     let mut preferred_reason: Option<ReasonCode> =
         (notice_applies && !chain.iter().any(|l| l.provider == llm::Provider::Whimbrel)).then(|| (missing_link_reason(routing), None));
     for entry in chain {
@@ -464,6 +625,12 @@ fn summarize_over_chain(
                 preferred_reason.get_or_insert((fallback_reason::GOOGLE_DATA_WITHHELD, None));
             }
             continue;
+        }
+        if llm::is_hosted(entry.provider, &entry.model) {
+            if let Err(refusal) = gate.check(&whole) {
+                failures.push(refusal.failure_kind());
+                continue;
+            }
         }
         let outcome = summarize_meeting_governed(
             store,
@@ -560,7 +727,10 @@ fn summarize_over_chain(
     // already-renamed meeting — see set_meeting_title_if_placeholder's doc comment.
     let derived_title = llm::meeting_title(&summary);
     let _ = store.set_meeting_title_if_placeholder(meeting_id, &derived_title);
-    crate::title_check::check_calendar_title(store, meeting_id, routing, &summary, &derived_title);
+    // The title check sends the summary to TypeSafe (hosted): never for an excluded client's meeting.
+    if !local_only {
+        crate::title_check::check_calendar_title(store, meeting_id, routing, &summary, &derived_title);
+    }
     Ok(MeetingSummaryData {
         summary,
         provider,
@@ -808,9 +978,8 @@ mod tests {
             .unwrap()
     }
 
-    fn over(store: &memory::Store, id: i64, chain: &[llm::ChainLink]) -> ApiResult<MeetingSummaryData> {
-        let cap = llm::SpendCapConfig::default();
-        summarize_over_chain(store, chain, &cap, id, "notes", "transcript", "", "", &RoutingConfig::default())
+    fn over<const N: usize>(store: &memory::Store, id: i64, chain: [llm::ChainLink; N]) -> ApiResult<MeetingSummaryData> {
+        summarize_meeting_with(store, id, "notes", "transcript", "", &RoutingConfig::default(), "", chain.into(), false)
     }
 
     fn counted(provider: llm::Provider, n: &std::sync::Arc<std::sync::atomic::AtomicUsize>) -> llm::ChainLink {
@@ -825,21 +994,21 @@ mod tests {
         let (restricted, allowed) = (std::sync::Arc::new(AtomicUsize::new(0)), std::sync::Arc::new(AtomicUsize::new(0)));
 
         // Only a restricted link: no summary, and the shell is told why.
-        let r = over(&store, id, &[counted(llm::Provider::OpenRouter, &restricted)]);
+        let r = over(&store, id, [counted(llm::Provider::OpenRouter, &restricted)]);
         assert!(matches!(r, Err(ApiError::ProviderFailure)));
         assert_eq!(restricted.load(Ordering::SeqCst), 0, "OpenRouter was sent the meeting");
         assert!(crate::envelope::provider_failure_envelope().contains(r#""google_data_withheld":true"#));
         assert!(!crate::envelope::provider_failure_envelope().contains("google_data_withheld"), "reported once");
 
         // The chain falls through to an allowed link.
-        let r = over(&store, id, &[counted(llm::Provider::OpenRouter, &restricted), counted(llm::Provider::Anthropic, &allowed)]);
+        let r = over(&store, id, [counted(llm::Provider::OpenRouter, &restricted), counted(llm::Provider::Anthropic, &allowed)]);
         assert_eq!(r.unwrap().provider, llm::Provider::Anthropic);
         assert_eq!((restricted.load(Ordering::SeqCst), allowed.load(Ordering::SeqCst)), (0, 1));
         assert!(!crate::envelope::take_google_data_withheld(), "a summary that succeeds reports nothing");
 
         // A meeting recorded as another calendar's is summarized by any link.
         assert!(store.set_meeting_calendar_source(id, memory::limited_use::CALENDAR_SOURCE_OTHER).unwrap());
-        over(&store, id, &[counted(llm::Provider::OpenRouter, &restricted)]).unwrap();
+        over(&store, id, [counted(llm::Provider::OpenRouter, &restricted)]).unwrap();
         assert_eq!(restricted.load(Ordering::SeqCst), 1);
     }
 
@@ -924,7 +1093,7 @@ mod tests {
     }
 
     fn walk(store: &memory::Store, id: i64, chain: &[llm::ChainLink], routing: &RoutingConfig) -> ApiResult<MeetingSummaryData> {
-        summarize_over_chain(store, chain, &llm::SpendCapConfig::default(), id, "notes", "transcript", "", "", routing)
+        summarize_over_chain(store, chain, &llm::SpendCapConfig::default(), id, "notes", "transcript", "", "", routing, false)
     }
 
     fn failing_link(provider: llm::Provider, make: fn() -> llm::LlmError) -> llm::ChainLink {

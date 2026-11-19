@@ -28,6 +28,16 @@ pub mod accounts {
     pub const DEVICE_SECRET_KEY: &str = "device-secret-key";
     pub const GROUP_KEY: &str = "group-key";
     pub const GOOGLE_SYNC: &str = "google-sync";
+    /// The SQLCipher database key, 32 raw bytes (X4; `crate::db_key`). Mac: the same account.
+    pub const DB_KEY: &str = "db-key";
+    /// The key an encryption migration will use, until it has swapped the file.
+    pub const DB_KEY_PENDING: &str = "db-key-pending";
+    /// Where a key replaced after a recovery is kept: `db-key-previous`, then `-2` up to `-16`.
+    pub const DB_KEY_PREVIOUS: &str = "db-key-previous";
+    /// Set (under `SYNC_SERVICE`) just before a sync account delete is sent and cleared once its
+    /// outcome is known. While set nothing authenticates: a lost reply may mean the account is
+    /// gone, and authenticating would make a new account on the old key (Mac: `deletePending`).
+    pub const SYNC_DELETE_PENDING: &str = "account-delete-pending";
 }
 
 /// `CRED_MAX_CREDENTIAL_BLOB_SIZE` for a generic credential.
@@ -92,13 +102,20 @@ impl CredentialManager {
     }
 }
 
+/// A Credential Manager read: only `NoEntry` is "nothing stored". Every other keyring error
+/// (platform failure, no storage access, ambiguous, bad encoding, invalid, too long) is a
+/// failure, never absent; the database key's recovery-versus-fresh-install decision rests on it.
+pub fn credential_read(result: Result<Vec<u8>, keyring::Error>) -> Result<Option<Vec<u8>>, SecretError> {
+    match result {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(SecretError::Backend(e.to_string())),
+    }
+}
+
 impl SecretStore for CredentialManager {
     fn get(&self, service: &str, account: &str) -> Result<Option<Vec<u8>>, SecretError> {
-        match Self::entry(service, account)?.get_secret() {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(SecretError::Backend(e.to_string())),
-        }
+        credential_read(Self::entry(service, account)?.get_secret())
     }
 
     fn set(&self, service: &str, account: &str, value: &[u8]) -> Result<(), SecretError> {
@@ -138,6 +155,24 @@ impl SecretStore for MemorySecrets {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_no_entry_reads_as_absent() {
+        assert_eq!(credential_read(Err(keyring::Error::NoEntry)).unwrap(), None);
+        assert_eq!(credential_read(Ok(vec![1, 2])).unwrap(), Some(vec![1, 2]));
+        let failures: Vec<keyring::Error> = vec![
+            keyring::Error::PlatformFailure("denied".into()),
+            keyring::Error::NoStorageAccess("locked".into()),
+            keyring::Error::Ambiguous(Vec::new()),
+            keyring::Error::BadEncoding(vec![0xff]),
+            keyring::Error::Invalid("service".into(), "bad".into()),
+            keyring::Error::TooLong("secret".into(), 2560),
+        ];
+        for e in failures {
+            let shown = format!("{e:?}");
+            assert!(credential_read(Err(e)).is_err(), "{shown} must not read as absent");
+        }
+    }
+
     use super::*;
 
     #[test]

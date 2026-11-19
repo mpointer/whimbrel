@@ -14,7 +14,7 @@ use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::State;
 
-use super::chat::{blocking_started, fail, streams_past};
+use super::chat::{blocking_started, fail, prepare_falls_back};
 use crate::chat::{self, ChatEvent, StreamRoute, TerminalAction};
 use crate::error::CommandError;
 use crate::l10n::tr;
@@ -46,11 +46,6 @@ pub fn meeting_error(error: api::ask::MeetingAskError) -> CommandError {
         api::ask::MeetingAskError::NoTranscript => CommandError::invalid_input(tr("There is no transcript for this meeting to ask about.", &[])),
         api::ask::MeetingAskError::Api(e) => e.into(),
     }
-}
-
-/// Whether a failed prepare still leaves the blocking answer to try (Ask's rule).
-fn meeting_streams_past(error: &api::ask::MeetingAskError) -> bool {
-    matches!(error, api::ask::MeetingAskError::Api(e) if streams_past(e))
 }
 
 struct MeetingAsk {
@@ -94,9 +89,12 @@ pub fn meeting_ask(
         slow,
     };
     let sync = state.sync.clone();
+    // Background model requests hold back from now until the answer ends (PR 874).
+    let gate = crate::user_model_gate::enter();
     std::thread::Builder::new()
         .name("whimbrel-meeting-ask".into())
         .spawn(move || {
+            let _gate = gate;
             crate::chat::freshen_whimbrel(sync.as_deref(), &ask.settings, &mut ask.keys);
             // A page that went away drops the UI's end of the channel; the run still ends
             // cleanly (finalized or discarded), so a failed send is ignored.
@@ -122,16 +120,18 @@ fn run(store: &StoreHandle, ask: &MeetingAsk, send: &dyn Fn(ChatEvent)) {
     };
     let routing = effective.routing_config(&ask.keys, &ask.instructions);
     let (meeting_id, query, history) = (ask.meeting_id, ask.query.clone(), ask.history.clone());
-    let prepared = store.call_blocking(move |s| api::ask::prepare_meeting_ask(s, meeting_id, &query, &history, &routing));
+    // Converted on the store thread, where core left a refusal's reason (take-once).
+    let prepared = store.call_blocking(move |s| api::ask::prepare_meeting_ask(s, meeting_id, &query, &history, &routing).map_err(meeting_error));
     match prepared {
         Ok(Ok(prepared)) => stream(store, ask, &effective, route, prepared, send),
-        Ok(Err(error)) if meeting_streams_past(&error) => {
+        // Ask's rule: a spent budget, or an excluded client's meeting, which the blocking path answers on
+        // this PC or refuses (the Mac's MeetingAskBar retry).
+        Ok(Err(error)) if prepare_falls_back(&error) => {
             send(blocking_started(&effective, &[]));
             send(ChatEvent::FellBack);
             blocking(ask, &effective, send);
         }
-        Ok(Err(error)) => fail(send, meeting_error(error), false),
-        Err(error) => fail(send, error, false),
+        Ok(Err(error)) | Err(error) => fail(send, error, false),
     }
 }
 
@@ -154,11 +154,14 @@ fn stream(
     match chat::terminal_action_for(route.provider, &end.outcome, end.produced_output) {
         TerminalAction::Finalize => {
             let (prepare_id, text, model, usage) = (prepared.prepare_id, end.text.clone(), route.model.clone(), end.usage);
-            let citations = store
-                .call_blocking(move |s| api::ask::finalize_ask(s, &prepare_id, &text, &model, usage).citations)
+            let (citations, left_out) = store
+                .call_blocking(move |s| {
+                    let finalized = api::ask::finalize_ask(s, &prepare_id, &text, &model, usage);
+                    (finalized.citations, chat::left_out(&finalized.exclusion))
+                })
                 .unwrap_or_default();
             tracing::info!(chars = end.text.len(), citations = citations.len(), "meeting question answered");
-            send(ChatEvent::Completed { answer: end.text, citations, conversation_id: None, narrowed: prepared.narrowed });
+            send(ChatEvent::Completed { answer: end.text, citations, conversation_id: None, narrowed: prepared.narrowed, left_out });
         }
         TerminalAction::Restore => {
             api::ask::discard_ask(&prepared.prepare_id);
@@ -185,13 +188,13 @@ fn stream(
 fn blocking(ask: &MeetingAsk, effective: &RoutingSettings, send: &dyn Fn(ChatEvent)) {
     let routing = effective.routing_config(&ask.keys, &ask.instructions);
     let (meeting_id, query, history, ollama_model) = (ask.meeting_id, ask.query.clone(), ask.history.clone(), effective.ollama_model.clone());
-    match ask.slow.call_blocking(move |s| api::ask::answer_meeting(s, meeting_id, &query, &ollama_model, &history, &routing)) {
+    // Converted on the slow lane's thread, where core left a refusal's reason: "Not sent…", not the generic failure.
+    match ask.slow.call_blocking(move |s| api::ask::answer_meeting(s, meeting_id, &query, &ollama_model, &history, &routing).map_err(meeting_error)) {
         Ok(Ok(answer)) => {
             tracing::info!(chars = answer.text.len(), citations = answer.citations.len(), "meeting question answered");
-            send(ChatEvent::Completed { answer: answer.text, citations: answer.citations, conversation_id: None, narrowed: answer.narrowed });
+            send(ChatEvent::Completed { answer: answer.text, citations: answer.citations, conversation_id: None, narrowed: answer.narrowed, left_out: None });
         }
-        Ok(Err(error)) => fail(send, meeting_error(error), false),
-        Err(error) => fail(send, error, false),
+        Ok(Err(error)) | Err(error) => fail(send, error, false),
     }
 }
 
@@ -212,11 +215,13 @@ mod tests {
     }
 
     #[test]
-    fn a_spent_budget_falls_back_and_nothing_else_does() {
+    fn a_spent_budget_or_an_excluded_client_falls_back_and_nothing_else_does() {
         let spent = api::ApiError::BudgetSpent(api::budget::BudgetSpent { provider: llm::Provider::Anthropic, spent_cents: 2500, budget_cents: 2500 });
-        assert!(meeting_streams_past(&MeetingAskError::Api(spent)));
-        assert!(!meeting_streams_past(&MeetingAskError::NoTranscript));
-        assert!(!meeting_streams_past(&MeetingAskError::Api(api::ApiError::ProviderFailure)));
+        assert!(prepare_falls_back(&meeting_error(MeetingAskError::Api(spent))));
+        assert!(!prepare_falls_back(&meeting_error(MeetingAskError::NoTranscript)));
+        assert!(!prepare_falls_back(&meeting_error(MeetingAskError::Api(api::ApiError::ProviderFailure))));
+        let refused = meeting_error(MeetingAskError::Api(api::envelope::chain_failed(vec![llm::ProviderFailureKind::ExcludedClient])));
+        assert!(prepare_falls_back(&refused), "{refused:?}");
     }
 
     #[test]

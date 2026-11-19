@@ -1,7 +1,7 @@
 //! The living vault and the phone's topic pages (port of the Mac's PR 681; hand-off at the end of
 //! `docs/superpowers/plans/2026-11-09-living-vault-and-phone-topics.md`).
 //!
-//! Every `EVERY` on the slow lane, starting `FIRST` after launch:
+//! Every `EVERY` on a lane of its own, starting `FIRST` after launch:
 //! - **Publish** each topic page as a snapshot the phone reads
 //!   (`Store::publish_topic_page_snapshots`), built by this PC's name. Only after this launch's first
 //!   good content-sync round: a PC that was off for days has the newest build time, so a stale page
@@ -80,8 +80,12 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, sync: Optio
         std::thread::sleep(FIRST);
         let built_by = crate::syncing::controller::computer_name();
         loop {
-            let synced = sync.as_ref().and_then(|c| c.view().content_last_synced_ms);
-            tick(&store, &settings, synced, &built_by);
+            // Skipped while a client delete runs (`api::client_controls`): a page or note written part-way
+            // through would outlive the client.
+            if let Some(_ticket) = api::client_controls::job_ticket() {
+                let synced = sync.as_ref().and_then(|c| c.view().content_last_synced_ms);
+                tick(&store, &settings, synced, &built_by);
+            }
             std::thread::sleep(EVERY);
         }
     });

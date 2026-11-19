@@ -119,8 +119,14 @@ pub struct CaptureRecord {
 /// identical to the app's previous one stores nothing, otherwise every chunk is stored
 /// (`Store::insert_capture_record`). The returned stats count only `items_inserted` /
 /// `items_deduped`; `records_read` and `parse_errors` belong to the caller that did the
-/// reading.
-pub fn ingest_record(store: &Store, device_id: &str, record: &CaptureRecord) -> IngestStats {
+/// reading. A store failure (a busy or locked database, a full disk) is returned, not
+/// swallowed: the caller decides whether to retry, and an empty `IngestStats` never
+/// stands in for a record that was not stored.
+pub fn ingest_record(
+    store: &Store,
+    device_id: &str,
+    record: &CaptureRecord,
+) -> rusqlite::Result<IngestStats> {
     let mut stats = IngestStats::default();
     // Credentials never reach the store: redacted before hashing, chunking and storing.
     let normalized = normalize(&memory::redact::redact_secrets(&record.text));
@@ -139,18 +145,22 @@ pub fn ingest_record(store: &Store, device_id: &str, record: &CaptureRecord) -> 
             source: record.source.clone(),
         })
         .collect();
-    match store.insert_capture_record(&chunks) {
-        Ok(Some(ids)) => stats.items_inserted += ids.len(),
-        Ok(None) => stats.items_deduped += chunks.len(),
-        Err(_) => {}
+    match store.insert_capture_record(&chunks)? {
+        Some(ids) => stats.items_inserted += ids.len(),
+        None => stats.items_deduped += chunks.len(),
     }
-    stats
+    Ok(stats)
 }
 
 /// Reads the JSON Lines file the macOS capture spike produces and ingests each record:
 /// normalize -> chunk -> dedupe -> persist. Malformed lines are counted, not fatal — a
 /// partially-written last line (the app crashing mid-write) shouldn't lose everything
-/// before it (NFR-REL-1 in spirit).
+/// before it (NFR-REL-1 in spirit). A failed insert is different: it aborts at once and
+/// returns the store error, discarding the counts so far. The caller treats the file as
+/// not ingested and replays it. That is safe: each record stores all-or-nothing
+/// (`Store::insert_capture_record`), and a record already stored (same app, hash and
+/// timestamp, at the log's precision) is skipped on replay, so records before the failure are
+/// not duplicated and consecutive-dedupe decisions repeat.
 pub fn ingest_jsonl_file(
     path: &Path,
     store: &Store,
@@ -161,12 +171,16 @@ pub fn ingest_jsonl_file(
         return Ok(stats);
     };
 
+    // One write transaction per record, back to back: pause now and then so another
+    // connection's write (a recording start above all) is not starved (#850 review, I2).
+    let mut yielder = memory::WriteYield::new();
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
         stats.records_read += 1;
+        yielder.pause_if_due();
 
         let record: ScreenTextRecord = match serde_json::from_str(trimmed) {
             Ok(r) => r,
@@ -187,7 +201,8 @@ pub fn ingest_jsonl_file(
                 text: record.text,
                 source: record.source,
             },
-        );
+        )
+        .map_err(std::io::Error::other)?;
         stats.items_inserted += one.items_inserted;
         stats.items_deduped += one.items_deduped;
     }
@@ -213,7 +228,7 @@ mod ingest_record_tests {
     #[test]
     fn inserts_a_record_with_its_device_and_fields() {
         let store = Store::open_in_memory().unwrap();
-        let stats = ingest_record(&store, "device-a", &record("hello   from the\nwindows capture loop"));
+        let stats = ingest_record(&store, "device-a", &record("hello   from the\nwindows capture loop")).unwrap();
         assert_eq!((stats.items_inserted, stats.items_deduped, stats.records_read), (1, 0, 0));
         let items = store.recent(10).unwrap();
         assert_eq!(items.len(), 1);
@@ -226,8 +241,8 @@ mod ingest_record_tests {
     #[test]
     fn an_identical_record_is_deduped() {
         let store = Store::open_in_memory().unwrap();
-        ingest_record(&store, "device-a", &record("same text twice"));
-        let second = ingest_record(&store, "device-a", &record("same text twice"));
+        ingest_record(&store, "device-a", &record("same text twice")).unwrap();
+        let second = ingest_record(&store, "device-a", &record("same text twice")).unwrap();
         assert_eq!((second.items_inserted, second.items_deduped), (0, 1));
     }
 
@@ -241,7 +256,7 @@ mod ingest_record_tests {
         let chunks = chunk_text(&normalize(&long), 2000);
         // The Mac suite's CoreBridgeIngestTests uses the same text and expects 4.
         assert_eq!(chunks.len(), 4);
-        let stats = ingest_record(&store, "device-a", &record(&long));
+        let stats = ingest_record(&store, "device-a", &record(&long)).unwrap();
         assert_eq!((stats.items_inserted, stats.items_deduped), (chunks.len(), 0));
         let mut stored: Vec<String> = store.recent(100).unwrap().into_iter().map(|i| i.text).collect();
         stored.sort();
@@ -255,10 +270,68 @@ mod ingest_record_tests {
         let store = Store::open_in_memory().unwrap();
         let long: String = (0..1000).map(|i| format!("word{i} ")).collect();
         let chunks = chunk_text(&normalize(&long), 2000).len();
-        ingest_record(&store, "device-a", &record(&long));
-        let again = ingest_record(&store, "device-a", &record(&long));
+        ingest_record(&store, "device-a", &record(&long)).unwrap();
+        let again = ingest_record(&store, "device-a", &record(&long)).unwrap();
         assert_eq!((again.items_inserted, again.items_deduped), (0, chunks));
         assert_eq!(store.recent(100).unwrap().len(), chunks);
+    }
+
+    /// A file-backed store plus a second connection holding the write lock, with the
+    /// store's busy timeout at zero: every insert fails at once with "database is locked".
+    fn locked_store(dir: &Path) -> (Store, rusqlite::Connection) {
+        let db = dir.join("locked.db");
+        let store = Store::open(&db, dir).unwrap();
+        store.set_busy_timeout(std::time::Duration::ZERO).unwrap();
+        let blocker = rusqlite::Connection::open(&db).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+        (store, blocker)
+    }
+
+    #[test]
+    fn ingest_record_returns_the_store_error_when_the_insert_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let (store, _blocker) = locked_store(dir.path());
+        let result = ingest_record(&store, "device-a", &record("never stored"));
+        assert!(
+            matches!(
+                &result,
+                Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::DatabaseBusy
+            ),
+            "a failed insert must surface as the lock error, not an empty success: {result:?}"
+        );
+    }
+
+    #[test]
+    fn ingest_jsonl_file_aborts_on_a_failed_insert_and_replays_without_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("screen-text.jsonl");
+        let lines: Vec<String> = (1..=3)
+            .map(|i| {
+                let text = if i == 3 { "poison record three".to_string() } else { format!("replayable record number {i}") };
+                format!(
+                    r#"{{"timestamp":"2026-07-22T10:00:0{i}Z","bundle_id":"com.apple.Safari","window_title":"W{i}","url":null,"text":"{text}","source":"ax"}}"#
+                )
+            })
+            .collect();
+        fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+        let db = dir.path().join("replay.db");
+        let store = Store::open(&db, dir.path()).unwrap();
+        let other = rusqlite::Connection::open(&db).unwrap();
+        other
+            .execute_batch(
+                "CREATE TRIGGER poison BEFORE INSERT ON capture_item \
+                 WHEN NEW.text LIKE '%poison%' BEGIN SELECT RAISE(ABORT, 'poisoned'); END",
+            )
+            .unwrap();
+
+        assert!(ingest_jsonl_file(&path, &store, "dev").is_err(), "record 3 fails: the file aborts");
+        assert_eq!(store.recent(10).unwrap().len(), 2, "records 1 and 2 are stored");
+
+        other.execute_batch("DROP TRIGGER poison").unwrap();
+        let stats = ingest_jsonl_file(&path, &store, "dev").unwrap();
+        assert_eq!((stats.items_inserted, stats.items_deduped), (1, 2), "only record 3 is new");
+        assert_eq!(store.recent(10).unwrap().len(), 3, "records 1 and 2 are not duplicated");
     }
 }
 
@@ -318,7 +391,7 @@ mod tests {
             text: "Your key: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef0123".to_string(),
             source: "ax".to_string(),
         };
-        assert_eq!(ingest_record(&store, "d", &record).items_inserted, 1);
+        assert_eq!(ingest_record(&store, "d", &record).unwrap().items_inserted, 1);
         let item = &store.recent(1).unwrap()[0];
         assert!(!item.text.contains("ghp_") && item.text.contains("[REDACTED GitHub token]"), "{}", item.text);
         assert!(!item.url.as_deref().unwrap().contains("abcdef1234567890"));

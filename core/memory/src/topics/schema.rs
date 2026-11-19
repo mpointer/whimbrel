@@ -18,6 +18,13 @@ pub(crate) const CALENDAR_HW_KEY: &str = "topic_index_hw:calendar_event";
 
 /// Called at the end of `Store::init`, after every `ALTER TABLE` the triggers depend on
 /// (`meeting.summary_tldr`, `episodes.hidden`).
+
+/// The excluded clients' topics, for the digest-cache triggers: their seeds and the topics merged
+/// into those (one level; readers also check `ExcludedMaterial::version`).
+const EXCLUDED_TOPICS: &str = "SELECT s.topic_id FROM topic_seed s JOIN client_control c ON c.topic_key = s.key \
+     WHERE c.exclude_hosted != 0 UNION SELECT t.id FROM topic t WHERE t.merged_into IN \
+     (SELECT s.topic_id FROM topic_seed s JOIN client_control c ON c.topic_key = s.key WHERE c.exclude_hosted != 0)";
+
 pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
     // One write transaction: two connections opening at once (the app, its slow lane, the
     // MCP server) would otherwise interleave the DROP TRIGGER / CREATE TRIGGER pairs below,
@@ -80,6 +87,13 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
             deleted INTEGER NOT NULL DEFAULT 0,
             updated_at_unix_ms INTEGER NOT NULL
         );
+        -- Per-client controls (exclude from hosted AI, retention). Synced inside the seed record.
+        CREATE TABLE IF NOT EXISTS client_control (
+            topic_key TEXT PRIMARY KEY,
+            exclude_hosted INTEGER NOT NULL DEFAULT 0,
+            keep_months INTEGER,
+            updated_at_unix_ms INTEGER NOT NULL
+        );
         -- ponytail: ~2 KB per source; fine at 50k sources, drop to on-demand rebuild if size matters.
         CREATE TABLE IF NOT EXISTS topic_source_text (
             source_id INTEGER PRIMARY KEY,
@@ -111,6 +125,32 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
             PRIMARY KEY (topic_id, source_id)
         );
         CREATE INDEX IF NOT EXISTS idx_topic_member_source ON topic_member(source_id);
+        -- Any other change to what is excluded (exclusion turned off, an excluded client's
+        -- members, name or aliases) also drops the digest cache; readers also check a version.
+        CREATE TRIGGER IF NOT EXISTS client_control_changed AFTER UPDATE OF exclude_hosted ON client_control
+        WHEN NEW.exclude_hosted != OLD.exclude_hosted BEGIN
+            DELETE FROM mcp_daily_digest_cache;
+        END;
+        CREATE TRIGGER IF NOT EXISTS excluded_member_insert AFTER INSERT ON topic_member
+        WHEN NEW.topic_id IN ({EXCLUDED_TOPICS}) BEGIN
+            DELETE FROM mcp_daily_digest_cache;
+        END;
+        CREATE TRIGGER IF NOT EXISTS excluded_member_delete AFTER DELETE ON topic_member
+        WHEN OLD.topic_id IN ({EXCLUDED_TOPICS}) BEGIN
+            DELETE FROM mcp_daily_digest_cache;
+        END;
+        CREATE TRIGGER IF NOT EXISTS excluded_member_update AFTER UPDATE ON topic_member
+        WHEN NEW.topic_id IN ({EXCLUDED_TOPICS}) OR OLD.topic_id IN ({EXCLUDED_TOPICS}) BEGIN
+            DELETE FROM mcp_daily_digest_cache;
+        END;
+        CREATE TRIGGER IF NOT EXISTS excluded_seed_update AFTER UPDATE OF aliases, deleted, merged_into_key, key ON topic_seed
+        WHEN NEW.topic_id IN ({EXCLUDED_TOPICS}) OR OLD.key IN (SELECT topic_key FROM client_control WHERE exclude_hosted != 0) BEGIN
+            DELETE FROM mcp_daily_digest_cache;
+        END;
+        CREATE TRIGGER IF NOT EXISTS excluded_topic_update AFTER UPDATE OF name, merged_into ON topic
+        WHEN NEW.id IN ({EXCLUDED_TOPICS}) BEGIN
+            DELETE FROM mcp_daily_digest_cache;
+        END;
         CREATE INDEX IF NOT EXISTS idx_topic_source_unassigned
             ON topic_source(ts_unix_ms, id) WHERE assigned_at_unix_ms IS NULL;
         -- topic_cluster's cache: sum of non-removed member vectors (f32 LE blob, NULL when
@@ -319,7 +359,8 @@ pub(crate) fn ensure_topic_tables(conn: &Connection) -> rusqlite::Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_topic_step_unattached ON topic_step(source_key) WHERE source_id IS NULL",
         [],
     )?;
-    ensure_entity_name_key(conn)
+    ensure_entity_name_key(conn)?;
+    super::exclusion::ensure_exclusion_schema(conn)
 }
 
 /// Once per database: before AI naming, no model ever named a topic, so every automatic
@@ -344,7 +385,7 @@ fn mark_old_auto_names_provisional(conn: &Connection) -> rusqlite::Result<()> {
 
 /// Adds `table.column` to databases that predate it. No check first: another connection
 /// can add it between a check and the ALTER, so "duplicate column name" counts as done.
-fn ensure_column(conn: &Connection, table: &str, column: &str, decl: &str) -> rusqlite::Result<()> {
+pub(super) fn ensure_column(conn: &Connection, table: &str, column: &str, decl: &str) -> rusqlite::Result<()> {
     match conn.execute(
         &format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"),
         [],

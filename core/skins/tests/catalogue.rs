@@ -163,3 +163,20 @@ fn the_voice_limits_offered_are_the_ones_enforced() {
         }
     }
 }
+
+#[test]
+fn the_redesign_catalogue_adds_only_the_five_element_keys() {
+    use skins::catalogue_for;
+    assert_eq!(catalogue_for(false), catalogue());
+    let on = catalogue_for(true);
+    let mut without = on.clone();
+    let today = without.as_object_mut().unwrap().remove("today").expect("today is added");
+    assert_eq!(without, catalogue());
+    let options = today["options"].as_object().unwrap();
+    assert_eq!(options.len(), 5);
+    assert_eq!(options["nextMeeting"], serde_json::json!(["card", "scoreboard", "infobox"]));
+    assert_eq!(options["timeline"], serde_json::json!(["line", "ruled"]));
+    assert_eq!(options["labels"], serde_json::json!(["plain", "bracketed", "smallCaps"]));
+    assert_eq!(options["ask"], serde_json::json!(["field", "prompt"]));
+    assert_eq!(options["actions"], serde_json::json!(["buttons", "links"]));
+}

@@ -81,6 +81,12 @@ pub struct TrayStatus {
     pub capture_enabled: bool,
     /// When the recording meeting started, if one is recording.
     pub recording_started_unix_ms: Option<i64>,
+    /// When a timed capture pause ends, if one is running.
+    pub resume_at_unix_ms: Option<i64>,
+    /// The recording meeting is paused (recording pause, not capture pause).
+    pub recording_paused: bool,
+    /// When that recording pause began.
+    pub paused_since_unix_ms: Option<i64>,
 }
 
 pub fn sync_line(state: SyncState, last_synced_ms: Option<i64>, content_error: bool) -> SyncLine {
@@ -204,13 +210,23 @@ fn icon_bytes(icon: IconState, light_taskbar: bool) -> &'static [u8] {
 pub fn refresh(app: &AppHandle) -> TrayStatus {
     let state = app.state::<AppState>();
     let (capture, sync) = current(&state);
-    let recording_started_unix_ms = state.meetings.as_ref().and_then(|m| m.status().started_unix_ms);
+    let recording = state.meetings.as_ref().map(|m| m.status());
+    let recording_started_unix_ms = recording.as_ref().and_then(|r| r.started_unix_ms);
+    let recording_paused = recording.as_ref().is_some_and(|r| r.paused);
+    // The tooltip names a problem only with the redesign on; with it off the tooltip is what it was.
+    let recording_problem = state.settings.lock().unwrap().redesign_enabled() && recording.as_ref().is_some_and(|r| r.degraded.is_some());
+    let paused_since_unix_ms = recording.as_ref().and_then(|r| r.paused_since_unix_ms);
     let line = status_line(capture, sync, clock_time);
     let tooltip = match recording_started_unix_ms {
+        Some(_) if recording_paused => format!("Whimbrel · {} · {line}", tr("Recording paused", &[])),
+        Some(_) if recording_problem => format!("Whimbrel · {} · {line}", tr("Recording problem", &[])),
         Some(ms) => format!("Whimbrel · {} · {line}", tr("Recording since {time}", &[("time", &clock_time(ms))])),
         None => format!("Whimbrel · {line}"),
     };
-    let shown = (icon_state(capture, sync, recording_started_unix_ms.is_some()), taskbar_is_light(), tooltip.clone());
+    // A paused recording has no icon of its own yet: it shows the capture-paused icon, which no
+    // other state uses while a meeting records (recording otherwise wins every other state).
+    let icon = if recording_paused { IconState::Paused } else { icon_state(capture, sync, recording_started_unix_ms.is_some()) };
+    let shown = (icon, taskbar_is_light(), tooltip.clone());
     // Decide under the lock, but never call the tray setters holding it. Off the main
     // thread they dispatch to the main thread and wait; a command running `refresh` on the
     // main thread would then wait for this lock, and neither returns (M3.3 Task 3's hang).
@@ -233,7 +249,17 @@ pub fn refresh(app: &AppHandle) -> TrayStatus {
             let _ = tray.set_tooltip(Some(tooltip));
         }
     }
-    TrayStatus { line, capture_enabled: capture != CaptureLine::Off, recording_started_unix_ms }
+    let resume_at_unix_ms = state.capture.as_ref().and_then(|c| c.status().resume_at_unix_ms);
+    // The in-meeting window follows the recording (redesign only).
+    crate::meetings::meeting_bar::sync(app, recording_started_unix_ms);
+    TrayStatus {
+        line,
+        capture_enabled: capture != CaptureLine::Off,
+        recording_started_unix_ms,
+        resume_at_unix_ms,
+        recording_paused,
+        paused_since_unix_ms,
+    }
 }
 
 /// The right-click menu, in the current language.
@@ -243,6 +269,11 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let feedback = MenuItem::with_id(app, "feedback", tr("Send Feedback…", &[]), true, None::<&str>)?;
     let discord = MenuItem::with_id(app, "discord", tr("Join the Whimbrel Discord…", &[]), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", tr("Quit Whimbrel", &[]), true, None::<&str>)?;
+    // "Show in-meeting window" brings the floating window back after it was closed (redesign only).
+    if app.state::<AppState>().settings.lock().unwrap().redesign_enabled() {
+        let bar = MenuItem::with_id(app, "meeting-bar", tr("Show in-meeting window", &[]), true, None::<&str>)?;
+        return Menu::with_items(app, &[&open, &ask_window, &bar, &feedback, &discord, &quit]);
+    }
     Menu::with_items(app, &[&open, &ask_window, &feedback, &discord, &quit])
 }
 
@@ -271,6 +302,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             "open" => crate::app::show_main_window(app),
             // The window the user was in before the tray click (hotkey_panel::foreground_watch).
             "ask-window" => crate::hotkey_panel::open_from_tray(app),
+            "meeting-bar" => crate::meetings::meeting_bar::show_from_tray(app),
             "feedback" => {
                 // The bundle reads logs and the store: off the event loop.
                 let app = app.clone();

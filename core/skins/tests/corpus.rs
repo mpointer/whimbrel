@@ -113,7 +113,7 @@ fn shipped_files() -> Vec<PathBuf> {
 fn bundled_skins_load_without_repairs() {
     let base = whimbrel_default();
     let files = shipped_files();
-    assert_eq!(files.len(), 7);
+    assert_eq!(files.len(), 8);
     for file in files {
         let (_, repairs) = parse_skin(&std::fs::read(&file).unwrap(), &base)
             .unwrap_or_else(|| panic!("{file:?} skipped"));
@@ -149,7 +149,7 @@ fn whimbrel_json_mirrors_the_default() {
 fn load_bundled_puts_the_base_first_then_by_name() {
     let skins = load_bundled(&repo_skins());
     let names: Vec<&str> = skins.iter().map(|s| s.name.as_str()).collect();
-    assert_eq!(skins.len(), 7);
+    assert_eq!(skins.len(), 8);
     assert_eq!(skins[0].id, "whimbrel");
     let mut rest = names[1..].to_vec();
     rest.sort();

@@ -1,0 +1,152 @@
+# Windows on Arm smoke test. After a Windows release publishes (release-windows.yml), install
+# the published Arm64 installer on a GitHub-hosted Windows 11 Arm machine and check that it
+# installs, that every program it installed is Arm64, that core's libraries load (the app's
+# hidden --link-check), and that the app starts and keeps running. It can't test a call (no microphone, speakers or meeting app):
+# a person on an Arm laptop still does that.
+name: arm-smoke
+
+on:
+  workflow_run:
+    workflows: [release-windows]
+    types: [completed]
+  # A change to this workflow tests itself against the installer the manifest serves now.
+  pull_request:
+    paths: [".github/workflows/arm-smoke.yml"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Expected version (x.y.z); empty checks whatever the manifest serves
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arm-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    if: github.repository == 'mpointer/kestrel' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    env:
+      # The same host the apps poll, so a challenge or block that would stop their updates fails here.
+      UPDATES_URL: https://updates.whimbrelapp.com
+      EXPECTED: ${{ inputs.version }}
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: The published Arm installer
+        id: manifest
+        run: |
+          $m = Invoke-RestMethod "$env:UPDATES_URL/windows/latest.json" -Headers @{ "User-Agent" = "whimbrel-arm-smoke" }
+          if ($env:EXPECTED -and $m.version -ne $env:EXPECTED) { throw "manifest serves $($m.version), expected $env:EXPECTED" }
+          $arm = $m.platforms."windows-aarch64"
+          if (-not $arm) {
+            Write-Host "::warning::latest.json $($m.version) has no windows-aarch64 entry; nothing to test."
+            "skip=true" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+            exit 0
+          }
+          $path = ([Uri]$arm.url).AbsolutePath
+          if (-not $arm.url.StartsWith("$env:UPDATES_URL/") -or $path -notmatch '^/windows/Whimbrel_[\w.-]+_arm64-setup\.exe$') { throw "unexpected installer URL: $($arm.url)" }
+          "skip=false" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          "VERSION=$($m.version)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "INSTALLER_URL=$($arm.url)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Host "Testing $($arm.url) ($($m.version)) on $env:PROCESSOR_ARCHITECTURE"
+
+      - name: Download and install silently
+        if: steps.manifest.outputs.skip == 'false'
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP "whimbrel-arm64-setup.exe"
+          Invoke-WebRequest $env:INSTALLER_URL -OutFile $setup -UserAgent "whimbrel-arm-smoke"
+          $sha = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
+          Write-Host "installer $((Get-Item $setup).Length) bytes sha256=$sha"
+          $p = Start-Process -FilePath $setup -ArgumentList "/S" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exited with $($p.ExitCode)" }
+          $dir = Join-Path $env:LOCALAPPDATA "Whimbrel"
+          $app = Join-Path $dir "whimbrel-windows.exe"
+          if (-not (Test-Path $app)) { Get-ChildItem -Recurse $dir -ErrorAction SilentlyContinue | Select-Object -First 40 FullName; throw "whimbrel-windows.exe is not in $dir" }
+          "INSTALL_DIR=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      # PE machine type at e_lfanew + 4: 0xAA64 is Arm64. The NSIS uninstaller is x86 by design
+      # (NSIS has no Arm64 stub; Windows on Arm runs it emulated).
+      - name: Every installed program and library is Arm64
+        if: steps.manifest.outputs.skip == 'false'
+        run: |
+          $bad = @()
+          $files = Get-ChildItem -Recurse -File $env:INSTALL_DIR -Include *.exe, *.dll | Where-Object { $_.Name -notmatch '^uninstall' -and $_.FullName -notmatch '\\data\\' }
+          foreach ($f in $files) {
+            $bytes = [System.IO.File]::ReadAllBytes($f.FullName)
+            $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $pe + 4)
+            if ($machine -ne 0xAA64) { $bad += ("{0} (machine 0x{1:X4})" -f $f.FullName.Substring($env:INSTALL_DIR.Length + 1), $machine) }
+          }
+          Write-Host "checked $($files.Count) files"
+          if ($bad) { $bad | ForEach-Object { Write-Host "::error::not Arm64: $_" }; throw "$($bad.Count) installed files are not Arm64" }
+
+      # The app's hidden `--link-check <file>` opens core's store in memory (bundled SQLite and
+      # sqlite-vec), reads the model manifest and reaches whisper.cpp: it fails if a native
+      # library didn't link or load on Arm64. It runs before the app's single-instance hand-off,
+      # touches no profile and opens no window. The release app has no console, so the report
+      # goes to a file. Installers from before the developer tools left them (capture-spike.exe,
+      # gen-schema.exe) are checked the old way, through capture-spike, with a warning.
+      - name: Core libraries load
+        if: steps.manifest.outputs.skip == 'false'
+        run: |
+          $spike = Join-Path $env:INSTALL_DIR "capture-spike.exe"
+          $devTools = @("capture-spike.exe", "gen-schema.exe") | Where-Object { Test-Path (Join-Path $env:INSTALL_DIR $_) }
+          if ($devTools) {
+            Write-Host "::warning::this installer still carries developer tools: $($devTools -join ', ')"
+            if (Test-Path $spike) {
+              & $spike link-check
+              if ($LASTEXITCODE -ne 0) { throw "capture-spike link-check exited with $LASTEXITCODE" }
+              exit 0
+            }
+          }
+          $app = Join-Path $env:INSTALL_DIR "whimbrel-windows.exe"
+          $report = Join-Path $env:RUNNER_TEMP "link-check.txt"
+          Remove-Item $report -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath $app -ArgumentList "--link-check", "`"$report`"" -PassThru
+          $null = $p.Handle  # cache the handle, or ExitCode reads empty after WaitForExit
+          # An app without the flag would start normally and never exit: two minutes, then fail.
+          if (-not $p.WaitForExit(120000)) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Get-Process whimbrel-windows, whimbrel-mcp-server -ErrorAction SilentlyContinue | Stop-Process -Force
+            throw "whimbrel-windows --link-check did not exit within 2 minutes"
+          }
+          if (Test-Path $report) { Get-Content $report | ForEach-Object { Write-Host $_ } } else { throw "no link-check report (exit code $($p.ExitCode))" }
+          if ($p.ExitCode -ne 0) { throw "whimbrel-windows --link-check exited with $($p.ExitCode)" }
+
+      - name: The app starts and keeps running
+        if: steps.manifest.outputs.skip == 'false'
+        run: |
+          $app = Join-Path $env:INSTALL_DIR "whimbrel-windows.exe"
+          # The process started here can hand off to another whimbrel-windows process and exit 0,
+          # so the check is that some whimbrel-windows process is still running.
+          Start-Process -FilePath $app | Out-Null
+          Start-Sleep -Seconds 60
+          $running = Get-Process whimbrel-windows -ErrorAction SilentlyContinue
+          if (-not $running) { throw "no whimbrel-windows process is running 60 s after start" }
+          $running | ForEach-Object { Write-Host "running after 60 s: pid $($_.Id), working set $([math]::Round($_.WorkingSet64 / 1MB)) MB" }
+          $logs = Join-Path $env:LOCALAPPDATA "Whimbrel\data\logs"
+          $panics = Get-ChildItem $logs -Filter *.log -ErrorAction SilentlyContinue | Select-String -Pattern "panicked at" -SimpleMatch
+          $running | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process whimbrel-mcp-server, whimbrel-llama-server -ErrorAction SilentlyContinue | Stop-Process -Force
+          if ($panics) { $panics | ForEach-Object { Write-Host "::error::$($_.Line)" }; throw "the app's log has a panic" }
+
+      - name: Keep the app's logs
+        if: always() && steps.manifest.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm-smoke-logs
+          path: ~\AppData\Local\Whimbrel\data\logs
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Uninstall
+        if: always() && steps.manifest.outputs.skip == 'false'
+        run: |
+          $u = Get-ChildItem $env:INSTALL_DIR -Filter "uninstall*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($u) { Start-Process -FilePath $u.FullName -ArgumentList "/S" -Wait }

@@ -3,20 +3,24 @@ import { meetingRecordStart, meetingRecordStop, meetingRecordingStatus } from ".
 import { describeError, isCommandError } from "../errors";
 import type { MeetingRecordingView } from "../generated/types";
 import { useL10n } from "../l10n";
-import { elapsedLabel, recordAction } from "./recordingModel";
+import { elapsedLabel, recordAction, recordButtonDisabled } from "./recordingModel";
 import { RecordingNoticeCard } from "./RecordingNoticeCard";
+import { useNoStore } from "../launch/noStore";
+import { RecordingOffCaption } from "../launch/NoStoreBanner";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
 }
 
 /** "Record now" (M3.3 Task 3): a manual meeting of everything this PC plays, plus the mic. */
-export function RecordingCard({ onChanged }: { onChanged?: () => void } = {}) {
+export function RecordingCard({ onChanged, hideNotice }: { onChanged?: () => void; hideNotice?: boolean } = {}) {
   const [view, setView] = useState<MeetingRecordingView | null>(null);
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { t } = useL10n();
+  // Without the memory database recording is off (no-store mode); the shell refuses it too.
+  const noStore = useNoStore();
 
   useEffect(() => {
     const load = () =>
@@ -58,7 +62,7 @@ export function RecordingCard({ onChanged }: { onChanged?: () => void } = {}) {
             <span className="recording-dot" aria-hidden="true" />{" "}
             {t("Recording · {elapsed}", { elapsed: elapsedLabel(view.startedUnixMs!, now) })}
           </p>
-          <RecordingNoticeCard meetingId={view.meetingId} />
+          {!hideNotice && <RecordingNoticeCard meetingId={view.meetingId} />}
         </>
       ) : (
         <>
@@ -84,9 +88,10 @@ export function RecordingCard({ onChanged }: { onChanged?: () => void } = {}) {
         </p>
       )}
       <div className="toolbar">
-        <button className="mode mode--active" onClick={press} disabled={busy || action === "wait"}>
+        <button className="mode mode--active" onClick={press} disabled={recordButtonDisabled(action, busy, noStore)}>
           {action === "stop" ? t("Stop recording") : t("Record now")}
         </button>
+        {noStore && <RecordingOffCaption />}
       </div>
       {error && <p role="alert">{error}</p>}
     </section>

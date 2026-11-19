@@ -20,6 +20,14 @@ use crate::secrets::{accounts, SecretError, SecretStore, APP_SERVICE};
 
 /// The settings-sync field keys (Mac: `SettingsSyncCoordinator.swift`).
 pub mod keys {
+    /// X4 launch settings (brief 2.8), the Mac's names. Device-local and NEVER in settings sync:
+    /// core has no settings store before the database opens. Faster search (1 GiB page cache on
+    /// the main store, read at the next launch); core pins the name.
+    pub const FAST_SEARCH: &str = api::settings::FAST_SEARCH_KEY;
+    /// The Settings opt-in finished; the migration runs at the next launch.
+    pub const ENCRYPTION_MIGRATE_AT_NEXT_LAUNCH: &str = "encryption.migrateAtNextLaunch";
+    /// Good launches since the migration, for the plain backup's cleanup (u32).
+    pub const ENCRYPTION_GOOD_LAUNCHES: &str = "encryption.goodLaunches";
     pub const PREFERRED_PROVIDER: &str = "routing.preferredProvider";
     pub const OLLAMA_MODEL: &str = "routing.ollamaDefaultModel";
     pub const ANTHROPIC_MODEL: &str = "routing.anthropicDefaultModel";
@@ -49,6 +57,13 @@ pub mod keys {
     pub const EXCLUDED_BUNDLE_IDS: &str = "captureExclusions.excludedBundleIds";
     /// Device-local, not synced (the Mac keeps its capture toggle local too).
     pub const CAPTURE_ENABLED: &str = "capture.enabled";
+    /// Device-local, never synced: when a timed capture pause ends (unix ms). `capture.enabled` stays true
+    /// while a pause runs; this is a separate deadline, so ending it can never turn on capture the person
+    /// turned off. Absent means no timed pause.
+    pub const CAPTURE_RESUME_AT: &str = "capture.resumeAtUnixMs";
+    /// Device-local, never synced: where the in-meeting window sits, as "x,y" in screen pixels. Absent means
+    /// the default place, top right of the work area.
+    pub const MEETING_BAR_POSITION: &str = "meetingBar.position";
     /// Device-local. The Mac's equivalent (`showScreenCaptures`) defaults off; on
     /// Windows screen captures show in the Library by default (plan Task 4).
     pub const LIBRARY_SHOW_CAPTURES: &str = "library.showScreenCaptures";
@@ -148,6 +163,21 @@ pub mod keys {
     pub const TRANSCRIPTION_OFFER_DISMISSED: &str = "transcription.offerDismissed";
     /// Device-local: large-v3-turbo's estimated realtime speed on this PC, once the benchmark has run.
     pub const TRANSCRIPTION_TURBO_SPEED: &str = "transcription.turboSpeed";
+
+    /// First-run state, not preferences: what Delete everything resets so the next launch takes
+    /// the same first-run path as a new install (Mike's ruling, 2026-11-16, as the Mac's
+    /// permissions sheet returns). The first-run retention notice, the one-time offer of better
+    /// transcripts, the Start pressed on the TypeSafe estimates (made for the deleted library) and
+    /// the calendar events already prompted. Every other key in the file stays.
+    pub const FIRST_RUN_STATE: &[&str] = &[RETENTION_ACKNOWLEDGED, TRANSCRIPTION_OFFER_DISMISSED, TOPIC_SORT_STARTED, TOPIC_STEPS_STARTED, MEETINGS_PROMPTED];
+    /// Device-local, never synced, no UI: the hidden switch that shows "Run in the cloud" and "Add Whimbrel
+    /// Cloud" before a Whimbrel Cloud is on the account (author-only phase). Off unless set to `true` by hand
+    /// in settings.json, as the Mac's `com.mpointer.whimbrel.cloudRoutines.enabled` default.
+    pub const CLOUD_ROUTINES_ENABLED: &str = "cloudRoutines.enabled";
+    /// Device-local, never synced, no UI: the hidden switch that shows the redesign (the Thread skin, and the
+    /// new screens as each is migrated). Off unless set to `true` by hand in settings.json, as the Mac's
+    /// `com.mpointer.whimbrel.redesign.enabled` default. Nothing in the app changes while it is off.
+    pub const REDESIGN_ENABLED: &str = "redesign.enabled";
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -322,6 +352,8 @@ impl RoutingSettings {
             openrouter_model: self.openrouter_model.clone(),
             openrouter_prices: self.openrouter_prices.iter().map(|(k, v)| (k.clone(), *v)).collect(),
             output_language: self.output_language.clone(),
+            // Core treats an Ollama cloud model as hosted (exclusion, the destination line).
+            ollama_model: self.ollama_model.clone(),
         }
     }
 }
@@ -487,6 +519,20 @@ impl SettingsFile {
         SettingsFile { path: path.to_path_buf(), fields }
     }
 
+    /// Removes the first-run state ([`keys::FIRST_RUN_STATE`]) for Delete everything, with the
+    /// pre-#180 name of any of those keys: [`load`](Self::load) would copy a legacy value
+    /// forward again. Every other key stays.
+    pub fn clear_first_run_state(&mut self) {
+        for key in keys::FIRST_RUN_STATE {
+            self.fields.remove(*key);
+            for (old, new) in LEGACY_KEYS {
+                if new == *key {
+                    self.fields.remove(old);
+                }
+            }
+        }
+    }
+
     /// Writes atomically: a temp file next to the target, then a rename over it.
     pub fn save(&self) -> io::Result<()> {
         let tmp = self.path.with_extension("json.tmp");
@@ -616,6 +662,16 @@ impl SettingsFile {
         let map: BTreeMap<String, Value> =
             prices.iter().map(|(model, (input, output))| (model.clone(), serde_json::json!({"in": input, "out": output}))).collect();
         self.set(keys::OPENROUTER_PRICES, (!map.is_empty()).then_some(map));
+    }
+
+    /// The hidden cloud switch ([`keys::CLOUD_ROUTINES_ENABLED`]). Off unless set by hand.
+    pub fn cloud_routines_enabled(&self) -> bool {
+        self.get(keys::CLOUD_ROUTINES_ENABLED).unwrap_or(false)
+    }
+
+    /// The hidden redesign switch ([`keys::REDESIGN_ENABLED`]). Off unless set to `true` by hand.
+    pub fn redesign_enabled(&self) -> bool {
+        self.get(keys::REDESIGN_ENABLED).unwrap_or(false)
     }
 
     /// Whether the user has the MCP server switched on. Off by default: it opens memory to other programs.
@@ -791,6 +847,12 @@ impl SettingsFile {
         self.get(keys::RECORDING_NOTICE_ENABLED).unwrap_or(false)
     }
 
+    /// What the notice shows: a stored choice always wins; with none stored it is on with the redesign switch on and
+    /// off with it off, as before. It becomes on for everyone when the switch is removed.
+    pub fn recording_notice_on(&self) -> bool {
+        self.get(keys::RECORDING_NOTICE_ENABLED).unwrap_or_else(|| self.redesign_enabled())
+    }
+
     /// The custom wording, or "" for the default.
     pub fn recording_notice_text(&self) -> String {
         self.get(keys::RECORDING_NOTICE_TEXT).unwrap_or_default()
@@ -871,6 +933,26 @@ impl SettingsFile {
 
     pub fn set_capture_enabled(&mut self, enabled: bool) {
         self.set(keys::CAPTURE_ENABLED, Some(enabled));
+    }
+
+    /// When a timed capture pause ends, if one is set ([`keys::CAPTURE_RESUME_AT`]). A stored deadline that
+    /// has passed is still returned here; whoever reads it compares it with the clock.
+    pub fn capture_resume_at(&self) -> Option<i64> {
+        self.get(keys::CAPTURE_RESUME_AT)
+    }
+
+    /// `None` removes the key.
+    pub fn set_capture_resume_at(&mut self, resume_at_unix_ms: Option<i64>) {
+        self.set(keys::CAPTURE_RESUME_AT, resume_at_unix_ms);
+    }
+
+    /// Where the in-meeting window was last left ([`keys::MEETING_BAR_POSITION`]), as "x,y".
+    pub fn meeting_bar_position(&self) -> Option<String> {
+        self.get(keys::MEETING_BAR_POSITION)
+    }
+
+    pub fn set_meeting_bar_position(&mut self, position: &str) {
+        self.set(keys::MEETING_BAR_POSITION, Some(position.to_string()));
     }
 
     /// User-excluded app identities or exe names.
@@ -1208,6 +1290,26 @@ mod capture_settings_tests {
         assert_eq!(s.excluded_bundle_ids(), vec!["spotify.exe".to_string()]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    #[test]
+    fn the_timed_pause_deadline_round_trips_and_clears() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-settings-resume-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let mut s = SettingsFile::load(&path);
+        assert_eq!(keys::CAPTURE_RESUME_AT, "capture.resumeAtUnixMs");
+        assert_eq!(s.capture_resume_at(), None, "no pause by default");
+        s.set_capture_resume_at(Some(1_800_000_000_000));
+        s.save().unwrap();
+        let mut s = SettingsFile::load(&path);
+        assert_eq!(s.capture_resume_at(), Some(1_800_000_000_000));
+        assert!(s.capture_enabled(), "a pause leaves the on setting alone");
+        s.set_capture_resume_at(None);
+        s.save().unwrap();
+        assert_eq!(SettingsFile::load(&path).capture_resume_at(), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -1223,6 +1325,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("settings.json")
+    }
+
+    #[test]
+    fn the_hidden_redesign_switch_is_off_unless_set_to_true_by_hand_and_never_synced() {
+        let path = temp_path("redesign");
+        let mut s = SettingsFile::load(&path);
+        assert!(!s.redesign_enabled(), "off by default");
+        assert_eq!(keys::REDESIGN_ENABLED, "redesign.enabled");
+        s.set(keys::REDESIGN_ENABLED, Some(true));
+        assert!(s.redesign_enabled());
+        s.set(keys::REDESIGN_ENABLED, Some("yes"));
+        assert!(!s.redesign_enabled(), "only a JSON true turns it on");
+        s.set(keys::REDESIGN_ENABLED, Some(false));
+        assert!(!s.redesign_enabled());
+        assert!(!crate::syncing::settings::synced_keys().iter().any(|k| k == keys::REDESIGN_ENABLED));
     }
 
     #[test]

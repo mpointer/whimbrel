@@ -448,6 +448,40 @@ impl WorkerClient {
             .map(|_| ())
     }
 
+    /// `POST /v1/devices/runner`: an approved device registers a cloud runner. Only the
+    /// SHA-256 hex of the runner token travels; the token and group key never do.
+    /// Returns the new runner device id.
+    pub fn register_runner_device(
+        &self,
+        id_token: &str,
+        device_public_key: &str,
+        runner_public_key: &str,
+        name: &str,
+        runner_token_hash: &str,
+    ) -> Result<String, WorkerError> {
+        let body = self.post(
+            "v1/devices/runner",
+            serde_json::json!({
+                "idToken": id_token,
+                "devicePublicKey": device_public_key,
+                "runnerPublicKey": runner_public_key,
+                "name": name,
+                "runnerTokenHash": runner_token_hash,
+            }),
+        )?;
+        body["deviceId"].as_str().map(str::to_string).ok_or(WorkerError::MalformedResponse)
+    }
+
+    /// `POST /v1/runner/auth`: the runner proves itself with its token (no Google sign-in)
+    /// and gets a short-lived database token and URL: `(turso_token, turso_database_url)`.
+    pub fn runner_auth(&self, device_public_key: &str, runner_token: &str) -> Result<(String, String), WorkerError> {
+        let body = self.post("v1/runner/auth", serde_json::json!({ "devicePublicKey": device_public_key, "runnerToken": runner_token }))?;
+        match (body["tursoToken"].as_str(), body["tursoDatabaseUrl"].as_str()) {
+            (Some(token), Some(url)) => Ok((token.to_string(), url.to_string())),
+            _ => Err(WorkerError::MalformedResponse),
+        }
+    }
+
     /// Always sets the calling device's own name (the route is self-only).
     pub fn set_device_name(&self, id_token: &str, device_public_key: &str, name: &str) -> Result<(), WorkerError> {
         self.post("v1/devices/name", serde_json::json!({ "idToken": id_token, "devicePublicKey": device_public_key, "name": name }))

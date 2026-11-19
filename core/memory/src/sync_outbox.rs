@@ -242,7 +242,9 @@ pub fn claim_due_outbox_batch_except(
               AND (state = 'pending' OR lease_expires_at_unix_ms <= ?2)
               AND row_type NOT IN (SELECT value FROM json_each(?7))
             -- A forget goes first: behind a backlog it would wait hours while the meeting stays on other devices.
-            ORDER BY row_type = 'meeting_forgotten' DESC, created_at_unix_ms, local_seq
+            -- So do a client delete's tombstones and seed purge.
+            ORDER BY row_type IN ('meeting_forgotten', 'client_item_forgotten', 'topic_seed_purged') DESC,
+                     created_at_unix_ms, local_seq
             LIMIT ?3
          )
          UPDATE sync_outbox

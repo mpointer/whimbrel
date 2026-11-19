@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { stillHereKeep, stillHereStop } from "../api";
+import { useEffect, useState } from "react";
+import { meetingRecordResume, meetingRecordStop, meetingRecordingStatus, stillHereKeep, stillHereStop } from "../api";
 import { t } from "../l10n";
+import { useRedesign } from "../redesign";
 
 /**
  * The "Still in a meeting?" window: a recording started by hand has heard no words for 15
@@ -9,10 +10,34 @@ import { t } from "../l10n";
  */
 export function StillHereView() {
   const [busy, setBusy] = useState(false);
+  // A paused recording asks with its own words and never stops itself (redesign only; with it off nothing is read).
+  const redesign = useRedesign();
+  const [paused, setPaused] = useState(false);
+  useEffect(() => {
+    if (redesign) meetingRecordingStatus().then((v) => setPaused(v.paused), () => {});
+  }, [redesign]);
   const run = (action: () => Promise<void>) => {
     setBusy(true);
     action().catch(() => setBusy(false));
   };
+  if (paused) {
+    return (
+      <div className="alert">
+        <span className="popup-brand">{"Whimbrel"}</span>
+        <p role="status" className="alert-title">
+          {t("This recording is still paused.")}
+        </p>
+        <div className="popup-actions">
+          <button className="mode mode--active" disabled={busy} onClick={() => run(() => meetingRecordResume().then(() => undefined))}>
+            {t("Resume")}
+          </button>
+          <button className="mode" disabled={busy} onClick={() => run(() => meetingRecordStop().then(() => undefined))}>
+            {t("Stop")}
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="alert">
       <span className="popup-brand">{"Whimbrel"}</span>

@@ -11,8 +11,19 @@ publish.workspace = true
 # transcribe/diarize (native toolchains) and never on libsql's `core` feature (MSVC
 # LNK2005 against rusqlite's bundled SQLite — see the design doc §3).
 
+[features]
+sqlcipher = ["memory/sqlcipher"]
+# Crash-injection and fake copy hooks for `encrypt_migration` tests only. Enabled for this
+# crate's own tests by the self dev-dependency below and for core/ffi's tests by its
+# dev-dependency; never by a normal build (`cargo build -p ffi` does not have it).
+migration-test-hooks = []
+
 [dependencies]
 memory = { path = "../memory" }
+# api::encrypt_setup (X4): the recovery-key file and words. Pure Rust (aes-gcm, argon2, bip39),
+# so it builds on every target, phones included.
+sealed = { path = "../sealed" }
+zeroize = "1"
 llm = { path = "../llm" }
 routines = { path = "../routines" }
 # api::write_action (M3.0 Task 7) decodes the drafted payload routines persisted.
@@ -49,8 +60,16 @@ url = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 
+# api::client_export and the open registry: O_NOFOLLOW / inode identity.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
+api = { path = ".", features = ["migration-test-hooks"] }
 tempfile = "3"
-# tests/phone_meeting_count.rs: a local libsql file as the relay, as sync-engine's tests do.
-libsql = { version = "0.9", default-features = false, features = ["core"] }
-tokio = { version = "1", features = ["macros"] }
+# Never libsql's `core` feature here, not even as a dev-dependency: its bundled SQLite would
+# shadow SQLCipher in these test binaries and `cargo test -p api --features sqlcipher` could
+# not open an encrypted store. Tests that need a local libsql relay live in core/phone-tests.

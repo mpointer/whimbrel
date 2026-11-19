@@ -8,8 +8,15 @@ struct TopicsView: View {
     @State private var topics: [TopicListEntry] = []
     @State private var page: TopicPage?
     @State private var hasLoaded = false
+    /// The topic the last finished load was for (nil: the first topic), so a page that came back empty stops the spinner.
+    @State private var answeredFor: Int64??
     @State private var errorText: String?
     @State private var suggestionCount = 0
+    /// The delete or export review. Owned here, not by the page: a receipt stays when the deleted topic leaves the list.
+    @State private var clientReview: ClientReviewModel?
+    @State private var retentionReview: ClientRetentionReviewModel?
+    /// The weekly "items ready to review" flag (keep for N months); nil when it is not up.
+    @State private var reviewFlag: ClientReviewFlag?
     @Environment(\.openSettings) private var openSettings
 
     private static let groups: [(kind: String, title: String)] = [
@@ -36,10 +43,18 @@ struct TopicsView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                split
+                VStack(spacing: 0) {
+                    if let reviewFlag {
+                        ClientReviewBanner(flag: reviewFlag, review: openRetentionReview, later: dismissReviewFlag)
+                        Divider().overlay(Color.whimbrelBorder)
+                    }
+                    split
+                }
             }
         }
         .background(Color.whimbrelBackgroundPage)
+        .sheet(item: $clientReview, onDismiss: reload) { ClientDeleteReviewView(model: $0) }
+        .sheet(item: $retentionReview, onDismiss: reload) { ClientRetentionReviewView(model: $0) }
         .task(id: appState.selectedTopicId) {
             while !Task.isCancelled {
                 reload()
@@ -53,12 +68,27 @@ struct TopicsView: View {
             list.frame(width: 240)
             Divider().overlay(Color.whimbrelBorder)
             Group {
-                if let page {
-                    // A new identity per topic resets the page's expanded sections and drafts.
-                    TopicPageView(page: page, errorText: errorText, run: run)
-                        .id(page.topic.topicId)
-                } else {
-                    Text(hasLoaded ? String(localized: "Choose a topic.") : "")
+                switch Self.pane(selected: appState.selectedTopicId, shown: page?.topic.topicId, answered: answeredFor) {
+                case .page:
+                    if let page {
+                        // A new identity per topic resets the page's expanded sections and drafts.
+                        TopicPageView(page: page, errorText: errorText, run: run, clientBridge: appState.clientControlsBridge(),
+                                      openClientReview: { openClientReview(page.topic, $0) })
+                            .id(page.topic.topicId)
+                    }
+                case .loading:
+                    // The page waits its turn on the store queue (it can take seconds while sync runs): say so
+                    // instead of leaving the last topic, or nothing, on screen.
+                    HStack(spacing: Spacing.sm) {
+                        ProgressView().controlSize(.small)
+                        Text(loadingText)
+                            .font(.whimbrelBody(.callout))
+                            .foregroundStyle(Color.whimbrelTextSecondary)
+                    }
+                    .padding(Spacing.xl)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                case .choose:
+                    Text(String(localized: "Choose a topic."))
                         .font(.whimbrelBody(.callout))
                         .foregroundStyle(Color.whimbrelTextSecondary)
                         .padding(Spacing.xl)
@@ -96,6 +126,24 @@ struct TopicsView: View {
         .listStyle(.sidebar)
     }
 
+    enum Pane: Equatable { case page, loading, choose }
+
+    /// What the page column shows. `answered` is the selection the last finished load was for (`.none`: no
+    /// load has finished). A selected topic whose page hasn't arrived is `.loading`, never the previous
+    /// topic's page; once its load has answered without a page, `.choose`.
+    static func pane(selected: Int64?, shown: Int64?, answered: Int64??) -> Pane {
+        if let shown, selected == nil || selected == shown { return .page }
+        guard let answered else { return .loading }
+        return answered == selected ? .choose : .loading
+    }
+
+    private var loadingText: String {
+        if let id = appState.selectedTopicId, let name = topics.first(where: { $0.topic.topicId == id })?.topic.name {
+            return String(localized: "Loading \(name)…")
+        }
+        return String(localized: "Loading topics…")
+    }
+
     private func kindGroup(_ kind: String?) -> String {
         guard let kind, Self.groups.contains(where: { $0.kind == kind }) else { return "other" }
         return kind
@@ -124,7 +172,9 @@ struct TopicsView: View {
             let suggested = list?.isEmpty == true ? store.topicSuggestions(limit: 100)?.count : nil
             let id = wanted ?? list?.first?.topic.topicId
             let p = id.flatMap { store.topicPage(topicId: $0) }
+            let flag = try? store.clientReviewFlag().get()
             DispatchQueue.main.async {
+                reviewFlag = flag
                 if let list {
                     topics = list
                     // A merged or deleted topic leaves the list: drop it so the first one shows.
@@ -138,9 +188,28 @@ struct TopicsView: View {
                 // A reply for a topic no longer selected is dropped; the next reload covers it.
                 guard appState.selectedTopicId == wanted else { return }
                 page = p
+                answeredFor = .some(p == nil ? wanted : p?.topic.topicId)
                 if wanted == nil, let id { appState.selectedTopicId = id }
             }
         }
+    }
+
+    private func openClientReview(_ topic: TopicRef, _ mode: ClientReviewModel.Mode) {
+        guard let bridge = appState.clientControlsBridge() else { return }
+        clientReview = ClientReviewModel(key: topic.key, name: topic.name, mode: mode,
+                                         hasDeviceIdentity: appState.hasClientDeviceIdentity, bridge: bridge)
+    }
+
+    private func openRetentionReview() {
+        guard let bridge = appState.clientControlsBridge() else { return }
+        let names = Dictionary(topics.map { ($0.topic.key, $0.topic.name) }, uniquingKeysWith: { a, _ in a })
+        retentionReview = ClientRetentionReviewModel(names: names, bridge: bridge)
+    }
+
+    private func dismissReviewFlag() {
+        reviewFlag = nil
+        guard let store = appState.coreStore else { return }
+        CoreMemoryStore.accessQueue.async { _ = store.clientReviewFlagDismiss() }
     }
 
     /// Runs a store write off the main thread, then reloads; shows `failure` if it returns false.
@@ -211,6 +280,9 @@ private struct TopicPageView: View {
     let page: TopicPage
     let errorText: String?
     let run: (@escaping (CoreMemoryStore) -> Bool, LocalizedStringResource) -> Void
+    /// Nil until the store opens: the page then shows no Client section.
+    let clientBridge: ClientControlsBridge?
+    let openClientReview: (ClientReviewModel.Mode) -> Void
 
     @AppStorage("com.mpointer.kestrel.topicSummaryCollapsed") private var summaryCollapsed = false
     @State private var roleDraft = ""
@@ -254,6 +326,9 @@ private struct TopicPageView: View {
                     DisclosureGroup(isExpanded: $showOlder) { steps(page.older, empty: nil) } label: { heading("Older") }
                 }
                 section("Recent") { recent }
+                if let clientBridge {
+                    ClientControlsView(key: page.topic.key, bridge: clientBridge, openReview: openClientReview)
+                }
             }
             .frame(maxWidth: 720, alignment: .leading)
             .padding(Spacing.xl)

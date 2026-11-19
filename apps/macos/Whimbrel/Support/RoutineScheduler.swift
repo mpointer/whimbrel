@@ -56,17 +56,18 @@ final class RoutineScheduler: ObservableObject {
     static let gmailWriteScope = "https://www.googleapis.com/auth/gmail.send"
 
     func start(
-        store: CoreMemoryStore?, slowStore: CoreMemoryStore?, meetingsProvider: @escaping () -> [QualifyingMeeting], prepMeetingsProvider: (() -> [QualifyingMeeting])? = nil, routing: RoutingSettings,
+        store: CoreMemoryStore?, slowStore: CoreMemoryStore?, modelQueue: DispatchQueue = CoreMemoryStore.slowLaneQueue, meetingsProvider: @escaping () -> [QualifyingMeeting], prepMeetingsProvider: (() -> [QualifyingMeeting])? = nil, routing: RoutingSettings,
         promptLibrary: PromptLibrarySettings, meetingPrepLeadMinutes: @escaping () -> Double,
         calendarConnectorState: CalendarConnectorState, gmailConnectorState: GmailConnectorState,
         profile: ProfileSettings, profileSuggestions: ProfileSuggestionsModel,
-        gate: @escaping () -> RoutineGate
+        gate: @escaping () -> RoutineGate,
+        cloudPolicy: @escaping () -> RoutineCloudPolicy = { .none }
     ) {
         self.calendarConnectorState = calendarConnectorState
         self.gmailConnectorState = gmailConnectorState
         stop()
         timer = Timer.scheduledTimer(withTimeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick(store: store, slowStore: slowStore, meetingsProvider: meetingsProvider, prepMeetingsProvider: prepMeetingsProvider, routing: routing, promptLibrary: promptLibrary, leadMinutes: meetingPrepLeadMinutes(), profile: profile, profileSuggestions: profileSuggestions, gate: gate()) }
+            Task { @MainActor in self?.tick(store: store, slowStore: slowStore, modelQueue: modelQueue, meetingsProvider: meetingsProvider, prepMeetingsProvider: prepMeetingsProvider, routing: routing, promptLibrary: promptLibrary, leadMinutes: meetingPrepLeadMinutes(), profile: profile, profileSuggestions: profileSuggestions, gate: gate(), cloud: cloudPolicy()) }
         }
     }
 
@@ -75,14 +76,14 @@ final class RoutineScheduler: ObservableObject {
         timer = nil
     }
 
-    private func tick(store: CoreMemoryStore?, slowStore: CoreMemoryStore?, meetingsProvider: () -> [QualifyingMeeting], prepMeetingsProvider: (() -> [QualifyingMeeting])?, routing: RoutingSettings, promptLibrary: PromptLibrarySettings, leadMinutes: Double, profile: ProfileSettings, profileSuggestions: ProfileSuggestionsModel, gate: RoutineGate) {
+    private func tick(store: CoreMemoryStore?, slowStore: CoreMemoryStore?, modelQueue: DispatchQueue, meetingsProvider: () -> [QualifyingMeeting], prepMeetingsProvider: (() -> [QualifyingMeeting])?, routing: RoutingSettings, promptLibrary: PromptLibrarySettings, leadMinutes: Double, profile: ProfileSettings, profileSuggestions: ProfileSuggestionsModel, gate: RoutineGate, cloud: RoutineCloudPolicy) {
         guard let store, let slowStore else { return }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         let upcomingMeetings = meetingsProvider()
         // Meeting Prep also covers meetings that exist only on another device (this Mac's own list is the fallback).
         let prepMeetings = prepMeetingsProvider?() ?? upcomingMeetings
         let todayEvents = upcomingMeetings.map {
-            CoreCalendarEventSummary(title: $0.title, startUnixMs: Int64($0.startDate.timeIntervalSince1970 * 1000))
+            CoreCalendarEventSummary(title: $0.title, startUnixMs: Int64($0.startDate.timeIntervalSince1970 * 1000), id: $0.id)
         }
         // Same pattern TimelineView's askQuestion/dailyDigest call sites use
         // (TimelineView.swift:682/700): `defaultSelection()` gives the user's current
@@ -96,27 +97,42 @@ final class RoutineScheduler: ObservableObject {
             weeklyDigestInstructions: promptLibrary.instructions[.weeklyDigest] ?? ""
         )
         // Read on the main actor before hopping to the slow lane.
+        // The local model serves one request at a time, so routines and profile suggestions that would use it
+        // wait (the timer repeats) while the user has a request queued. Hosted routes, Meeting Prep (the user
+        // is about to need it), the approvals refresh and every non-model step run as before.
+        let localModelMayRun = defaults.provider == .ollama || routing.localOnlyMode
         let profileFacts = profile.factTexts
         let suggestEnabled = profile.suggestionsActive
         let gmailConnected = gmailConnectorState?.defaultEmail != nil
         let recipientEmail = resolvedRecipientEmail()
 
-        // The tick can call an LLM, so it runs on the slow lane; `store` stays for
-        // `handleTickResult`, which works on `accessQueue`.
-        CoreMemoryStore.slowLaneQueue.async { [weak self] in
-            let completed = slowStore.routinesTick(
-                nowUnixMs: nowMs, ollamaModel: defaults.ollamaModel, routing: routingConfig, todayEvents: todayEvents,
-                gmailConnected: gmailConnected, recipientEmail: recipientEmail,
-                gate: gate
-            )
+        // The tick can call an LLM, so it runs on the background model lane (not the lane the user's
+        // questions use); `store` stays for `handleTickResult`, which works on `accessQueue`.
+        modelQueue.async { [weak self] in
+            // With routines set to run in the cloud, core leaves them to the runner until its grace has passed
+            // (`tick_cloud`, device role); with none, the tick is the same call as before.
+            let localBlocked = { localModelMayRun && BackgroundModelLane.start(userBusy: UserModelGate.shared.isBusy()) != .run }
+            let completed = localBlocked() ? nil : cloud.templates.isEmpty
+                ? slowStore.routinesTick(
+                    nowUnixMs: nowMs, ollamaModel: defaults.ollamaModel, routing: routingConfig, todayEvents: todayEvents,
+                    gmailConnected: gmailConnected, recipientEmail: recipientEmail,
+                    gate: gate
+                )
+                : slowStore.routinesTickCloud(
+                    nowUnixMs: nowMs, ollamaModel: defaults.ollamaModel, routing: routingConfig, todayEvents: todayEvents,
+                    gmailConnected: gmailConnected, recipientEmail: recipientEmail,
+                    gate: gate, cloudTemplates: cloud.templates, runnerFresh: cloud.runnerFresh, readyBy: cloud.readyBy
+                )
             // Meeting Prep is event-driven (a brief shortly before each upcoming meeting), so it
-            // has its own core entry point; the runs it created are announced like any others.
+            // has its own core entry point; the runs it created are announced like any others. Flagged for the
+            // cloud, core leaves each meeting the runner can prepare (not from Google Calendar) to it until shortly
+            // before it starts.
             let prepRuns = slowStore.meetingPrepRun(
                 nowUnixMs: nowMs, leadMinutes: leadMinutes, ollamaModel: defaults.ollamaModel,
-                routing: routingConfig, meetings: prepMeetings, gate: gate
+                routing: routingConfig, meetings: prepMeetings, gate: gate, cloudTemplates: cloud.templates
             ) ?? []
             // Profile suggestions: core owns the once-a-day gate and the failure backoff, so asking every tick is cheap.
-            let suggested = slowStore.profileSuggestRun(
+            let suggested = localBlocked() ? 0 : slowStore.profileSuggestRun(
                 nowUnixMs: nowMs, ollamaModel: defaults.ollamaModel, routing: routingConfig, facts: profileFacts, gate: suggestEnabled ? gate : .off
             ) ?? 0
             let routines = slowStore.listRoutines() ?? []
@@ -421,4 +437,15 @@ final class RoutineScheduler: ObservableObject {
             return .success(resultJson: resultText)
         }.value
     }
+}
+
+/// The cloud runner's inputs to a routine tick: the templates flagged "Run in the cloud", whether the runner's
+/// heartbeat is fresh (`CloudRoutineSettings`, `CoreMemoryStore.cloudRunnerFresh`) and each template's synced
+/// ready-by "HH:MM" (core counts this Mac's grace from it).
+struct RoutineCloudPolicy: Equatable {
+    let templates: [String]
+    let runnerFresh: Bool
+    var readyBy: [String: String] = [:]
+
+    static let none = RoutineCloudPolicy(templates: [], runnerFresh: false)
 }

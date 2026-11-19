@@ -13,6 +13,8 @@ import { RecordingCard } from "./RecordingCard";
 import { meetingTitleLabel } from "./sentinels";
 import { useMeetingChips } from "./useMeetingChips";
 import { Workspace } from "./Workspace";
+import { MeetingPane } from "./redesign/LiveGate";
+import { useRedesign } from "../redesign";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -44,6 +46,8 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
   const { locale } = useL10n();
   // Rows show at once; their Prep and Topic chips arrive from one lookup that reruns only when the meetings change.
   const chips = useMeetingChips(rows);
+  // The hidden redesign switch: with it off nothing below differs from before.
+  const redesign = useRedesign();
 
   const load = useCallback(
     (search: string) =>
@@ -91,7 +95,7 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
 
   return (
     <div className="stack">
-      <RecordingCard onChanged={() => load(filter)} />
+      <RecordingCard onChanged={() => load(filter)} hideNotice={redesign} />
       {error && <p role="alert">{error}</p>}
       <div className="meetings">
         <section className="card meeting-list" aria-label={t("Meetings")}>
@@ -166,7 +170,17 @@ export function MeetingsView({ open, onOpenSettings }: { open?: { seq: number; m
           {selected == null ? (
             <section className="card empty-state">{t("Select a meeting to see its notes, summary and transcript.")}</section>
           ) : (
-            <Workspace meetingId={selected} onChanged={() => load(filter)} onOpenSettings={onOpenSettings} />
+            (() => {
+              const workspace = <Workspace meetingId={selected} onChanged={() => load(filter)} onOpenSettings={onOpenSettings} />;
+              // A meeting in progress is the live screen (redesign only).
+              return redesign ? (
+                <MeetingPane meetingId={selected} onOpenSettings={onOpenSettings}>
+                  {workspace}
+                </MeetingPane>
+              ) : (
+                workspace
+              );
+            })()
           )}
         </div>
       </div>

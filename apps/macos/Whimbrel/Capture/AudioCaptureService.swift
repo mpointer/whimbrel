@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import OSLog
 import ScreenCaptureKit
+import WhimbrelUI
 
 /// FR-MTG-3 / FR-MTG-10 spike: system audio via ScreenCaptureKit and microphone via
 /// AVAudioEngine, written as two separate timestamped files. If system audio can't be
@@ -33,6 +34,22 @@ final class AudioCaptureService: NSObject, ObservableObject {
     /// Loudest peak per track since the last `take()`, for the silence warning (`SilenceWatch`).
     let micPeak = PeakMeter()
     let systemPeak = PeakMeter()
+    /// A second reading of the same peaks for the level meter (redesign flag only). It has its own
+    /// state, so reading it never disturbs the silence meter above, and it records nothing until
+    /// `startLevelSampling()` runs.
+    private let micLevelPeak = LevelPeak()
+    private let systemLevelPeak = LevelPeak()
+    /// The latest level, 0 to 1, about 8 times a second. Zero while paused or stopped. Read, drawn and
+    /// thrown away: nothing stores it.
+    @Published private(set) var inputLevel: Float = 0
+    private var levelTimer: Timer?
+    /// A recording pause (flag on only; nothing calls `pauseRecording()` with the flag off). The streams
+    /// are closed and the files stay open. This is not work memory's capture pause.
+    @Published private(set) var isPaused = false
+    /// Between `resumeRecording()` starting and the streams being back.
+    @Published private(set) var isResuming = false
+    /// When `start()` began: the zero of the stored audio's clock, which paused spans are measured from.
+    private(set) var recordingStartedAt: Date?
     /// The 6 h cap or low disk ended this recording. Main actor, at most once per `start()`;
     /// the owner ends the meeting, which calls `stop()`.
     var onForcedStop: ((RecordingStop) -> Void)?
@@ -77,6 +94,9 @@ final class AudioCaptureService: NSObject, ObservableObject {
     func start() async {
         degradedReason = nil
         micDegradedReason = nil
+        if isPaused { isPaused = false }
+        if isResuming { isResuming = false }
+        recordingStartedAt = Date()
         recordingOnBuiltInSpeakers = AudioOutputRouteChecker.isUsingBuiltInSpeakers()
         // Reset per-session system-audio state up front: a previous session's URL
         // surviving into a session that degrades before creating its own file would make
@@ -94,14 +114,21 @@ final class AudioCaptureService: NSObject, ObservableObject {
         startMicrophone(timestamp: timestamp)
         healthTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.checkMicHealth()
-                self?.checkSystemHealth()
+                // While paused no buffer should arrive, so the stall restarts and the device check are held.
+                // The length cap and the disk check keep running: the cap counts the pause.
+                if RecordingPauseRules.checksRun(paused: self?.isPaused ?? false) {
+                    self?.checkMicHealth()
+                    self?.checkSystemHealth()
+                }
                 self?.checkRecordingLimits()
             }
         }
     }
 
     func stop() {
+        stopLevelSampling()
+        if isPaused { isPaused = false }
+        if isResuming { isResuming = false }
         systemAudioWatchdogTask?.cancel()
         systemAudioWatchdogTask = nil
         healthTimer?.invalidate()
@@ -133,6 +160,126 @@ final class AudioCaptureService: NSObject, ObservableObject {
         if let systemAudioFileURL {
             cleanUpEmptySystemAudioFile(at: systemAudioFileURL)
         }
+    }
+
+    // MARK: Recording pause (redesign flag only)
+
+    /// What a resume did. `failed` carries the existing degraded reasons, already set on this service.
+    enum ResumeOutcome: Equatable { case resumed, failed(reason: String), notPaused }
+
+    /// Pauses the recording: removes the microphone tap and stops the engine (so macOS turns its
+    /// microphone indicator off), stops the system stream, and keeps both files and the system stream's
+    /// configuration. `micActive` and `systemAudioActive` stay as they are: a paused recording is
+    /// still a recording for every reader, and a pause never marks the audio as degraded.
+    func pauseRecording() {
+        guard !isPaused, !isResuming, healthTimer != nil else { return }
+        isPaused = true
+        systemAudioWatchdogTask?.cancel()
+        systemAudioWatchdogTask = nil
+        if micTapInstalled {
+            engine.inputNode.removeTap(onBus: 0)
+            micTapInstalled = false
+        }
+        if engine.isRunning { engine.stop() }
+        if let old = stream {
+            stream = nil
+            Task { try? await old.stopCapture() }
+        }
+        micLevelPeak.reset()
+        systemLevelPeak.reset()
+        micPeak.reset()
+        systemPeak.reset()
+        inputLevel = 0
+        log.notice("[recording-pause] paused")
+    }
+
+    /// Resumes: pads both files to now with the existing padding so the recording keeps clock time,
+    /// installs the tap again and starts the engine, and opens the system stream again. A stream that
+    /// cannot start is reported with the existing degraded reasons.
+    func resumeRecording() async -> ResumeOutcome {
+        guard isPaused, !isResuming else { return .notPaused }
+        isResuming = true
+        defer { isResuming = false }
+        var failure: String?
+
+        if micActive, let writer = micWriter {
+            padMicFile(writer, upTo: Date())
+            lastMicBufferAt = Date()
+            do {
+                try installMicTap(writer: writer)
+            } catch {
+                log.error("Microphone could not start again after a pause: \(error.localizedDescription, privacy: .public)")
+                micActive = false
+                let reason = String(localized: "The microphone stopped (\(error.localizedDescription)). The recording keeps the audio captured before that.")
+                micDegradedReason = reason
+                failure = reason
+            }
+        }
+        if systemAudioActive, let writer = systemWriter, let filter = systemFilter, let config = systemConfig {
+            // Pad first, then open: buffers that arrive while the stream opens are dropped (isPaused is
+            // still set), so the file never gets audio ahead of its silence.
+            padSystemFile(writer, upTo: Date())
+            do {
+                let newStream = try await openSystemStream(filter: filter, config: config)
+                guard systemWriter === writer, isPaused else {  // stopped while resuming
+                    try? await newStream.stopCapture()
+                    return .notPaused
+                }
+                padSystemFile(writer, upTo: Date())
+                lastSystemBufferAt = Date()
+                stream = newStream
+            } catch {
+                log.error("System audio could not start again after a pause: \(error.localizedDescription, privacy: .public)")
+                let reason = describeSystemAudioFailure(error)
+                degradeSystemAudio(reason: reason)
+                failure = failure ?? reason
+            }
+        }
+        guard isPaused else { return .notPaused }
+        lastNonSilentAt = Date()
+        micPeak.reset()
+        systemPeak.reset()
+        isPaused = false
+        log.notice("[recording-pause] resumed failed=\(failure != nil, privacy: .public)")
+        if let failure { return .failed(reason: failure) }
+        return .resumed
+    }
+
+    /// The 6 h cap counts a pause: a recording paused past it ends, like one that recorded that long.
+    nonisolated static func pausedPastCap(paused: Bool, startedAt: Date, now: Date, cap: TimeInterval = RecordingLimits.capSeconds) -> Bool {
+        paused && now.timeIntervalSince(startedAt) >= cap
+    }
+
+    // MARK: Level (redesign flag only)
+
+    /// Starts reading the level about 8 times a second. Called only with the redesign flag on, so with
+    /// the flag off no level is sampled and no timer runs.
+    func startLevelSampling() {
+        guard levelTimer == nil else { return }
+        micLevelPeak.isEnabled = true
+        systemLevelPeak.isEnabled = true
+        levelTimer = Timer.scheduledTimer(withTimeInterval: Self.levelInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.sampleLevel() }
+        }
+    }
+
+    func stopLevelSampling() {
+        levelTimer?.invalidate()
+        levelTimer = nil
+        micLevelPeak.isEnabled = false
+        systemLevelPeak.isEnabled = false
+        micLevelPeak.reset()
+        systemLevelPeak.reset()
+        if inputLevel != 0 { inputLevel = 0 }
+    }
+
+    nonisolated static let levelInterval: TimeInterval = 0.125
+
+    private func sampleLevel() {
+        let peak = max(micLevelPeak.take(), systemLevelPeak.take())
+        let next: Float = (isPaused || isResuming) ? 0 : WLevelMath.level(fromPeak: peak)
+        // Publish only a visible change, so the views are not redrawn for noise.
+        if abs(next - inputLevel) >= 0.02 || (next == 0) != (inputLevel == 0) { inputLevel = next }
     }
 
     // MARK: System audio (ScreenCaptureKit)
@@ -271,7 +418,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
     #endif
 
     private func checkSystemHealth() {
-        guard systemAudioActive, stream != nil, systemAudioBytesWritten > 0 else { return }
+        guard systemAudioActive, !isPaused, !isResuming, stream != nil, systemAudioBytesWritten > 0 else { return }
         if Self.streamHealth(lastBufferAt: lastSystemBufferAt, restarts: 0, now: Date()) != .ok {
             Task {
                 await reopenSystemAudio(
@@ -393,6 +540,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
             self.micFramesWritten = writer.framesWritten
             let (isAudible, peak) = Self.audibilityCheck(buffer)
             self.micPeak.record(peak)
+            self.micLevelPeak.record(peak)
             if isAudible {
                 self.lastNonSilentAt = Date()
             }
@@ -424,7 +572,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
     /// the input's current format. On failure the recording keeps what it has and the
     /// mic is marked degraded.
     private func restartMicrophone(reason: String) {
-        guard micActive, let writer = micWriter else { return }
+        guard micActive, !isPaused, !isResuming, let writer = micWriter else { return }
         log.notice("[mic-restart] reason=\(reason, privacy: .public)")
         if micTapInstalled {
             engine.inputNode.removeTap(onBus: 0)
@@ -451,7 +599,7 @@ final class AudioCaptureService: NSObject, ObservableObject {
     }
 
     private func checkMicHealth() {
-        guard micActive else { return }
+        guard micActive, !isPaused, !isResuming else { return }
         // A device switch is expected and may happen many times a meeting, so it doesn't
         // spend the one stall restart below.
         if let current = AudioDeviceActivity.defaultInputDeviceID(), current != micInputDeviceID {
@@ -481,7 +629,8 @@ final class AudioCaptureService: NSObject, ObservableObject {
     /// read, like the frame counters always were.
     func checkRecordingLimits() {
         guard !forcedStopReported else { return }
-        let reason: RecordingStop? = (systemWriter?.capReached == true || micWriter?.capReached == true)
+        let reason: RecordingStop? = (systemWriter?.capReached == true || micWriter?.capReached == true
+                || Self.pausedPastCap(paused: isPaused, startedAt: micWriter != nil ? micStartedAt : systemStartedAt, now: Date()))
             ? .durationCap
             : RecordingLimits.checkDisk(freeBytes: RecordingLimits.freeBytes())
         guard let reason else { return }
@@ -606,7 +755,7 @@ extension AudioCaptureService: SCStreamOutput {
         guard type == .audio, sampleBuffer.isValid,
               let pcmBuffer = AudioSampleConverter.pcmBuffer(from: sampleBuffer) else { return }
         Task { @MainActor in
-            guard let writer = self.systemWriter, let converter = self.systemConverter else { return }
+            guard !self.isPaused, let writer = self.systemWriter, let converter = self.systemConverter else { return }
             // AVAudioConverter (like AVAudioFile.write(from:)) raises an Objective-C
             // exception — NOT a Swift error — on a buffer whose format differs from the one
             // it was built for, so `try?` would not catch it and the app would crash
@@ -643,6 +792,7 @@ extension AudioCaptureService: SCStreamOutput {
             // Pre-conversion Float32 buffer: the silence check must never see the file's Int16.
             let (isAudible, peak) = Self.audibilityCheck(pcmBuffer)
             self.systemPeak.record(peak)
+            self.systemLevelPeak.record(peak)
             if isAudible {
                 self.lastNonSilentAt = Date()
             }

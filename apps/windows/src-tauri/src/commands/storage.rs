@@ -66,11 +66,19 @@ pub async fn storage_overview(state: State<'_, AppState>) -> Result<StorageView,
     Ok(StorageView { footprint, db_free_bytes, low_disks, days: storage::FREE_UP_DAYS.to_vec(), default_days: storage::FREE_UP_DEFAULT_DAYS })
 }
 
-/// "Compact database": runs whenever the disk can hold the rewrite. Holds the store until done.
+/// Whether a recording is starting or running, which no compaction may overlap.
+fn recording_check(state: &AppState) -> impl Fn() -> bool + Send + 'static {
+    let meetings = state.meetings.clone();
+    move || meetings.as_ref().is_some_and(|m| m.is_starting_or_recording())
+}
+
+/// "Compact database": runs whenever the disk can hold the rewrite and nothing is recording.
+/// Runs on the I/O lane (issue 850 review, I5): sync rounds and capture ingest queue behind the
+/// VACUUM instead of failing on its lock after the busy timeout.
 #[tauri::command]
 pub async fn storage_compact(state: State<'_, AppState>) -> Result<CompactView, CommandError> {
-    let free = free_here(&state);
-    state.store()?.call(move |s| storage::compact(s, free, true)).await?.map_err(CommandError::store)
+    let (free, recording) = (free_here(&state), recording_check(&state));
+    state.io_store()?.call(move |s| storage::compact_unless_recording(s, free, true, &recording)).await?.map_err(CommandError::store)
 }
 
 /// What each Free up space row would free at `days`.
@@ -82,8 +90,8 @@ pub async fn storage_free_up_options(state: State<'_, AppState>, days: u32) -> R
 
 /// After a delete: compact when it now pays off. A refusal is fine; the delete stands.
 async fn compact_after(state: &AppState) -> Result<(), CommandError> {
-    let free = free_here(state);
-    state.store()?.call(move |s| storage::compact(s, free, false)).await?.map(|_| ()).map_err(CommandError::store)
+    let (free, recording) = (free_here(state), recording_check(state));
+    state.io_store()?.call(move |s| storage::compact_unless_recording(s, free, false, &recording)).await?.map(|_| ()).map_err(CommandError::store)
 }
 
 /// Deletes the audio of meetings older than `days`; transcripts, notes and summaries stay.

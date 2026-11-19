@@ -200,9 +200,13 @@ struct FreeUpSpaceSheet: View {
             runOneOff(CoreMediaPolicy(compressAfterDays: nil, deleteAudioAfterDays: d, shrinkImagesAfterDays: nil, deleteAudioPreviewAfterDays: d))
         case .deleteOldCaptures(let d):
             let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            // The background lane when there is one: the delete runs in short batches and never holds
+            // the screens' queue. `store` stays the handle for the compaction after it.
+            let lane = appState.backgroundStore.map { (store: $0, queue: CoreMemoryStore.backgroundQueue) }
+                ?? (store: store, queue: CoreMemoryStore.accessQueue)
             MediaMover.queue.async {
-                let deleted = CoreMemoryStore.accessQueue.sync {
-                    store.applyRetention(captureItemDays: d, meetingDays: nil, conversationDays: nil, nowUnixMs: nowMs,
+                let deleted = lane.queue.sync {
+                    lane.store.applyRetention(captureItemDays: d, meetingDays: nil, conversationDays: nil, nowUnixMs: nowMs,
                                          recordingsDir: SpikePaths.root)
                 }
                 // Captures live inside the database: only a compact gives their space back to the

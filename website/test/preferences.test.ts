@@ -264,6 +264,72 @@ describe("the Resend contact", () => {
   });
 });
 
+// An unsubscribe made through Resend (a broadcast's unsubscribe link or preference page)
+// comes back to D1 on the hourly cron, so D1 stays the source of truth.
+describe("an unsubscribe made in Resend", () => {
+  const now = Date.parse("2026-11-15T12:00:00.000Z");
+  const topicEnv = { ...mailEnv, RESEND_PRODUCT_TOPIC_ID: "topic-1" };
+  const optedIn = async (email: string, syncedAt: string | null) => {
+    await env.DB.prepare(
+      "UPDATE leads SET product_emails = 'opted_in', product_emails_set_at = '2026-11-10T00:00:00.000Z', resend_synced_at = ?2 WHERE email = ?1",
+    )
+      .bind(email, syncedAt)
+      .run();
+  };
+  // Resend as these leads see it: topic answer and global unsubscribe per address.
+  function resend(state: Record<string, { topic?: "opt_in" | "opt_out"; unsubscribed?: boolean; fail?: boolean }>) {
+    const calls: { method: string; url: string }[] = [];
+    const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ method, url });
+      const m = url.match(/^https:\/\/api\.resend\.com\/contacts\/([^/]+)(\/topics)?$/);
+      const who = m ? state[decodeURIComponent(m[1])] : undefined;
+      if (method !== "GET") return Response.json({});
+      if (!who) return new Response("not found", { status: 404 });
+      if (who.fail) return new Response("busy", { status: 429 });
+      if (m![2]) return Response.json({ object: "list", data: [{ id: "topic-1", name: "Product updates", subscription: who.topic ?? "opt_in" }] });
+      return Response.json({ object: "contact", email: decodeURIComponent(m![1]), unsubscribed: who.unsubscribed ?? false });
+    }) as typeof fetch;
+    return { fn, calls };
+  }
+
+  it("turns product mail off for a lead who opted out of the topic or unsubscribed from everything", async () => {
+    await register(ada);
+    await register(grace);
+    await register({ name: "Kept On", email: "kept@example.com", platform: "mac" });
+    for (const e of ["ada@example.com", "grace@example.com", "kept@example.com"]) await optedIn(e, "2026-11-11T00:00:00.000Z");
+    const r = resend({
+      "ada@example.com": { topic: "opt_out" },
+      "grace@example.com": { unsubscribed: true },
+      "kept@example.com": {},
+    });
+    expect(await runScheduled({ DB: env.DB, ...topicEnv }, now, r.fn)).toMatchObject({ unsubscribed: 2 });
+    for (const e of ["ada@example.com", "grace@example.com"]) {
+      const l = await lead(e);
+      expect(l.product_emails).toBe("opted_out");
+      expect(await events(l.id)).toContainEqual({ value: "opted_out", source: "resend_unsubscribe" });
+    }
+    expect((await lead("kept@example.com")).product_emails).toBe("opted_in");
+    // Already in step with Resend: nothing is pushed back.
+    expect(r.calls.filter((c) => c.method !== "GET")).toEqual([]);
+    // The next product mail is refused for them.
+    expect(await send({ DB: env.DB, ...topicEnv }, "product", mail("ada@example.com"), { origin: ORIGIN, nowMs: now }, recorder().fn)).toEqual({ sent: false, refused: "opted_out" });
+  });
+
+  it("leaves a lead alone while its own newer answer hasn't reached Resend, or when Resend can't answer", async () => {
+    await register(ada);
+    await register(grace);
+    await optedIn("ada@example.com", "2026-11-09T00:00:00.000Z"); // opted in after the last sync
+    await optedIn("grace@example.com", "2026-11-11T00:00:00.000Z");
+    const r = resend({ "ada@example.com": { topic: "opt_out" }, "grace@example.com": { fail: true } });
+    expect(await runScheduled({ DB: env.DB, ...topicEnv }, now, r.fn)).toMatchObject({ unsubscribed: 0 });
+    expect((await lead("ada@example.com")).product_emails).toBe("opted_in");
+    expect((await lead("grace@example.com")).product_emails).toBe("opted_in");
+    expect(r.calls.some((c) => c.method === "GET" && c.url.includes("ada%40example.com"))).toBe(false);
+  });
+});
+
 // The thank-you page's one-click ask: the same double opt-in confirmation as the form's box,
 // for a lead who didn't tick it. It changes no stored answer; only the confirm link does.
 describe("POST /api/email/request-updates and GET /api/email/updates-status", () => {

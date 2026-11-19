@@ -63,6 +63,24 @@ class PhoneSettingsSyncTest {
     private fun field(v: String, at: Long = 100, deleted: Boolean = false) = PulledSettingsField("", v, at, deleted)
 
     @Test
+    fun cloudRoutineKeysAreIgnoredWithoutStateChange() {
+        val delta = mutableMapOf(
+            "profile.timeZone" to field("America/New_York"),
+            "cloud.runner.lastRun" to field("1731700000000"),
+            "routing.preferredProvider" to field("openai"),
+        )
+        for (t in listOf("brief", "eod_recap", "weekly_digest", "meeting_prep")) {
+            for (f in listOf("enabled", "schedule", "model_pref", "cloud", "cloudGrant", "readyBy")) delta["routine.$t.$f"] = field("x")
+        }
+        puller.rounds = ArrayDeque(listOf(delta))
+        sync.pullOnce(creds)
+        assertTrue(logs.isEmpty())
+        // Only the routing value and its timestamp were written.
+        assertEquals(setOf(p + "routing.preferredProvider", p + "settingsTs.routing.preferredProvider"), prefs.m.keys)
+        AskProvider.entries.forEach { assertNull(keys.key(it)) }
+    }
+
+    @Test
     fun toggleThenKeyArrivesNextRound() {
         val delta = mapOf("apiKey.anthropic.syncEnabled" to field("true"), "apiKey.anthropic" to field("sk-x"))
         puller.rounds = ArrayDeque(listOf(delta, delta))

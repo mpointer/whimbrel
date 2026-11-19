@@ -14,7 +14,15 @@ on:
   # the Rust caches on main that PR runs restore from.
   schedule:
     - cron: "17 7 * * *"
+  # A manual run skips the billed GitHub-hosted Linux jobs (test-linux, android) unless asked
+  # (CI cost review 2026-11-17: 27 manual runs in 5 days billed about 628 Linux minutes, and the
+  # sessions dispatch for the Mac and Windows jobs). `gh workflow run rust-tests.yml -f linux=true`.
   workflow_dispatch:
+    inputs:
+      linux:
+        description: "Also run the GitHub-hosted Linux jobs (test-linux, android), which bill minutes"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -131,9 +139,12 @@ jobs:
     # Nightly and on demand only (#ci-minutes, 2026-11-12): pull requests already test core/
     # on the self-hosted Windows runner (and on the Mac after merge), so Linux only adds
     # lld's stricter linking and the retrieval eval, which a nightly run catches.
-    if: needs.changes.outputs.run_core == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    if: needs.changes.outputs.run_core == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.linux))
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 45: since the encrypted suites were added (X4 Task 13), runs that finished took 11-29 min,
+    # and 12 of 27 manual runs (2026-11-12..17) hit the old 30-min limit with no result. A timed-out
+    # run bills its 30 minutes and answers nothing (CI cost review, 2026-11-17).
+    timeout-minutes: 45
     steps:
       # The workspace's debug test binaries (memory, api, skins and ingest each link candle and SQLite)
       # outgrew the hosted runner's free disk on 2026-10-29 ("No space left on device" while linking).
@@ -175,10 +186,23 @@ jobs:
           fi
       - name: Run cargo test
         working-directory: core
-        run: cargo test --workspace --exclude sync-engine
-      - name: Build sync-engine (compile-only, see exclusion note above)
+        run: cargo test --workspace --exclude sync-engine --exclude cloud-runner
+      # The encrypted suites run per package (-p): a --workspace run unifies core/phone-tests'
+      # libsql `core` feature into every test binary, and its bundled SQLite shadows SQLCipher.
+      - name: Run memory suite with SQLCipher
         working-directory: core
-        run: cargo build -p sync-engine
+        run: cargo test --lib --tests -p memory --features sqlcipher
+      - name: Run api suite on the encrypted store
+        working-directory: core
+        run: cargo test --lib --tests -p api --features sqlcipher
+      - name: Run keyed open over the C ABI and the MCP server's stdin key with SQLCipher
+        working-directory: core
+        run: |
+          cargo test -p ffi --features sqlcipher --test store_key_ffi --test store_key_e2e --test encrypt_setup_ffi --test launch_ffi --test launch_e2e --test launch_actions_ffi
+          cargo test -p mcp-server --features sqlcipher --test stdin_key
+      - name: Build sync-engine and cloud-runner (compile-only, see exclusion note above; cloud-runner's tests use libsql's core feature, so they hit the same duplicate-symbol link error)
+        working-directory: core
+        run: cargo build -p sync-engine -p cloud-runner
       # The retrieval eval on the seeded corpus with the fake embedder: keyword
       # retrieval, fusion, decay and the context budget, against the committed baseline.
       # Non-blocking this round (no --strict): the step summary carries the table and any
@@ -201,7 +225,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_core == 'true' && github.event_name != 'pull_request' && github.event_name != 'schedule' && github.repository == 'mpointer/kestrel'
     runs-on: [self-hosted, macOS]
-    timeout-minutes: 30
+    # 45, not 30, since the SQLCipher step was added (X4 Task 13; not yet measured).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       # Self-hosted runners use their preinstalled, isolated toolchain (CARGO_HOME and
@@ -246,6 +271,15 @@ jobs:
       - name: Run cargo test
         working-directory: core
         run: cargo test --workspace
+      # X4 encryption at rest: SQLCipher on vendored OpenSSL (macOS needs no extra toolchain).
+      # Per package (-p), never --workspace: core/phone-tests' libsql `core` feature would be
+      # unified into every test binary and its bundled SQLite shadows SQLCipher.
+      - name: SQLCipher keyed open, ffi build and the api suite on the encrypted store
+        working-directory: core
+        run: |
+          cargo test -p memory --features sqlcipher --test keyed_open
+          cargo build -p ffi --features sqlcipher
+          cargo test --lib --tests -p api --features sqlcipher
       - name: Download pinned embedding model (real-model integration only)
         working-directory: core/memory
         # The folder and revision match memory::EMBEDDING_MODEL_ID / _REVISION; a versioned
@@ -324,17 +358,50 @@ jobs:
           }
       - name: Test pure-Rust crates
         working-directory: core
-        run: cargo test --workspace --exclude transcribe --exclude diarize --exclude ffi --exclude sync-engine
+        run: cargo test --workspace --exclude transcribe --exclude diarize --exclude ffi --exclude sync-engine --exclude cloud-runner
       - name: Build native-dependent crates (compile-only, no test)
         working-directory: core
         run: cargo build -p transcribe -p diarize -p ffi
       # sync-engine is build-only here (no test execution): rusqlite-bundled and
       # libsql's core-feature bundled sqlite3 both define the same sqlite3 C symbols,
       # which MSVC's link.exe rejects as duplicate symbols (LNK2005), so its test
-      # binary can't link on Windows.
-      - name: Build sync-engine (compile-only)
+      # binary can't link on Windows. cloud-runner's tests use libsql's core feature too, so it is
+      # build-only here as well; its tests run on the Mac.
+      - name: Build sync-engine and cloud-runner (compile-only)
         working-directory: core
-        run: cargo build -p sync-engine
+        run: cargo build -p sync-engine -p cloud-runner
+      # X4 encryption at rest (issue #816): SQLCipher on vendored OpenSSL. Building OpenSSL needs
+      # Strawberry Perl (PERL) and NASM on the runner; on FEYNMAN both are in the runner tasks'
+      # user environment (2026-11-14). Its own target directory beside the runner's _work, kept
+      # between runs (checkout cleans the workspace), so OpenSSL compiles once, not every run,
+      # and the feature switch doesn't rebuild core/target.
+      - name: SQLCipher toolchain and build directory
+        shell: powershell
+        run: |
+          if (-not $env:PERL -or -not (Test-Path $env:PERL)) { throw "PERL is not set to Strawberry Perl on this runner (issue #816)" }
+          & $env:PERL -e 'require Locale::Maketext::Simple; print qq(Strawberry Perl $^V)'
+          if ($LASTEXITCODE -ne 0) { throw "this Perl can't build OpenSSL" }
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) { throw "nasm is not on PATH on this runner (issue #816)" }
+          nasm -v
+          $root = Split-Path -Parent (Split-Path -Parent $env:RUNNER_TEMP)
+          "SQLCIPHER_TARGET=$(Join-Path $root 't-sqlc')" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Test memory with SQLCipher (keyed open, vendored OpenSSL)
+        working-directory: core
+        shell: powershell
+        run: |
+          $env:CARGO_TARGET_DIR = $env:SQLCIPHER_TARGET
+          cargo test -p memory --features sqlcipher --lib --tests
+          if ($LASTEXITCODE -ne 0) { throw "memory sqlcipher tests failed" }
+          cargo build -p ffi --features sqlcipher
+          if ($LASTEXITCODE -ne 0) { throw "ffi sqlcipher build failed" }
+      # The encrypted api suite (Delete everything, the encryption migration, keyed launch decisions).
+      - name: Test api with SQLCipher
+        working-directory: core
+        shell: powershell
+        run: |
+          $env:CARGO_TARGET_DIR = $env:SQLCIPHER_TARGET
+          cargo test -p api --features sqlcipher --lib --tests
+          if ($LASTEXITCODE -ne 0) { throw "api sqlcipher tests failed" }
 
   # The Tauri shell and its React UI (apps/windows). Nothing else in CI builds them.
   # Runs on the same self-hosted PC as `windows`. The UI builds first because the
@@ -424,7 +491,8 @@ jobs:
   android:
     needs: changes
     # Not on a push to main (the PR ran it on the same code; the nightly run covers main).
-    if: needs.changes.outputs.run_core == 'true' && github.event_name != 'push'
+    # A manual run only with `linux` set (see the workflow_dispatch input).
+    if: needs.changes.outputs.run_core == 'true' && github.event_name != 'push' && (github.event_name != 'workflow_dispatch' || inputs.linux)
     # Stays on Linux: whisper-rs-sys 0.15's build script tests cfg!(target_os = "macos") for the
     # HOST, so on a Mac it links ggml-blas into the Android build and fails ("could not find
     # native static library ggml-blas"). The app itself (android-app) builds ffi without it.

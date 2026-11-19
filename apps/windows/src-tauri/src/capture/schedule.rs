@@ -220,6 +220,14 @@ impl ChangeFilter {
         self.last = Some((window.clone(), simhash));
         true
     }
+
+    /// The read [`is_new`](Self::is_new) let through was not stored (the store refused it), so
+    /// the next read of the window is new again and the text is retried, not lost.
+    pub fn forget(&mut self, window: &WindowKey) {
+        if self.last.as_ref().is_some_and(|(w, _)| w == window) {
+            self.last = None;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -309,6 +317,17 @@ mod tests {
         assert!(!f.is_new(&key(1), 0b1011), "one bit apart");
         assert!(f.is_new(&key(1), 0xFFFF), "far apart");
         assert!(f.is_new(&key(2), 0xFFFF), "same text, different window");
+    }
+
+    /// Issue 850 review, I5: text the store refused is new again at the next read.
+    #[test]
+    fn a_read_the_store_refused_is_retried() {
+        let mut f = ChangeFilter::default();
+        assert!(f.is_new(&key(1), 0b1010));
+        f.forget(&key(2));
+        assert!(!f.is_new(&key(1), 0b1010), "forgetting another window changes nothing");
+        f.forget(&key(1));
+        assert!(f.is_new(&key(1), 0b1010), "same text, stored again");
     }
 
     #[test]

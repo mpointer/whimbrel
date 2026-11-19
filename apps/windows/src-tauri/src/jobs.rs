@@ -41,6 +41,12 @@ use crate::store_actor::StoreHandle;
 
 pub const BUSY_DELAY: Duration = Duration::from_millis(100);
 pub const IDLE_DELAY: Duration = Duration::from_secs(30);
+/// Whether a background model request could go to the local model, which serves one request at a time (the
+/// Mac's `localModelMayRun`): Ollama is the preferred provider, or local-only mode is on.
+pub fn local_model_may_run(routing: &crate::settings::RoutingSettings) -> bool {
+    routing.preferred_provider == crate::settings::Provider::Ollama || routing.local_only
+}
+
 /// The Mac's `PowerIdleGate` idle threshold for the heavy loop.
 pub const HEAVY_IDLE: Duration = Duration::from_secs(60);
 const OLLAMA_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
@@ -145,7 +151,11 @@ pub fn start(store: StoreHandle, episodes: StoreHandle, settings: Arc<Mutex<Sett
                     delay = IDLE_DELAY;
                     continue;
                 }
-                let summarize = probe.reachable().then(|| summarize_with(&settings)).flatten();
+                // Skipped while a client delete runs (`api::client_controls`); held for the whole turn.
+                let Some(_ticket) = api::client_controls::job_ticket() else { continue };
+                // A user's model call in flight: no new summary request (PR 874); the other jobs still run.
+                let user_first = crate::user_model_gate::busy();
+                let summarize = (!user_first && probe.reachable()).then(|| summarize_with(&settings)).flatten();
                 let model = summarize.as_ref().map_or_else(String::new, |(m, _)| m.clone());
                 let turn = store.call_blocking(move |s| {
                     let started = Instant::now();
@@ -162,7 +172,7 @@ pub fn start(store: StoreHandle, episodes: StoreHandle, settings: Arc<Mutex<Sett
                     jobs + threads
                 });
                 match turn {
-                    Ok(n) => delay = next_delay(n > 0),
+                    Ok(n) => delay = after_turn(next_delay(n > 0), user_first),
                     Err(_) => break,
                 }
             }
@@ -178,9 +188,14 @@ pub fn start(store: StoreHandle, episodes: StoreHandle, settings: Arc<Mutex<Sett
                 delay = IDLE_DELAY;
                 continue;
             }
+            // Skipped while a client delete runs (`api::client_controls`); held for the whole turn.
+            let Some(_ticket) = api::client_controls::job_ticket() else { continue };
             let on_ac = on_ac_power();
             let idle = idle_duration();
-            let summarize = (episode_summaries_allowed(on_ac, idle) && probe.reachable()).then(|| summarize_with(&settings)).flatten();
+            // A user's model call in flight: no new summary request (PR 874); segmenting still runs.
+            let user_first = crate::user_model_gate::busy();
+            let summarize =
+                (!user_first && episode_summaries_allowed(on_ac, idle) && probe.reachable()).then(|| summarize_with(&settings)).flatten();
             let model = summarize.as_ref().map_or_else(String::new, |(m, _)| m.clone());
             let turn = episodes.call_blocking(move |s| {
                 let started = Instant::now();
@@ -197,11 +212,21 @@ pub fn start(store: StoreHandle, episodes: StoreHandle, settings: Arc<Mutex<Sett
                 segmented + summarized
             });
             match turn {
-                Ok(n) => delay = next_delay(n > 0),
+                Ok(n) => delay = after_turn(next_delay(n > 0), user_first),
                 Err(_) => break,
             }
         }
     });
+}
+
+/// The next delay of a loop that held back its model request for the user: at most [`crate::user_model_gate::RETRY`],
+/// so it starts again soon after the user's call ends.
+pub fn after_turn(next: Duration, held_back: bool) -> Duration {
+    if held_back {
+        next.min(crate::user_model_gate::RETRY)
+    } else {
+        next
+    }
 }
 
 /// What one look at the profile loop's gate came to.
@@ -265,6 +290,13 @@ pub fn start_profile_suggestions(
             if crate::meeting_load::background_paused() {
                 continue;
             }
+            // The local model serves one request at a time: wait while the user has one in flight (PR 874).
+            if crate::user_model_gate::busy() && local_model_may_run(&settings.lock().unwrap().routing()) {
+                delay = crate::user_model_gate::RETRY;
+                continue;
+            }
+            // Skipped while a client delete runs (`api::client_controls`); held for the whole turn.
+            let Some(_ticket) = api::client_controls::job_ticket() else { continue };
             // One short lock for both; nothing below holds it.
             let (profile, routing) = {
                 let file = settings.lock().unwrap();

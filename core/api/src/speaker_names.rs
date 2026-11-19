@@ -163,8 +163,35 @@ pub fn assign_meeting_speakers(
     routing: &RoutingConfig,
     remember: bool,
 ) -> rusqlite::Result<Vec<MeetingSpeaker>> {
+    assign_meeting_speakers_with(
+        store,
+        meeting_id,
+        voices,
+        routing,
+        remember,
+        || crate::routing::build_chain_for(llm::TaskKind::MeetingSummary, model, routing, &crate::exclusion::current_gate(store)),
+        || crate::routing::build_local_chain(model, routing),
+    )
+}
+
+/// [`assign_meeting_speakers`] with the chains injected. Classify first: an excluded client's
+/// meeting is named by `local_chain` (on this computer) or not at all, decided once over the
+/// whole transcript and the invitees.
+pub(crate) fn assign_meeting_speakers_with(
+    store: &Store,
+    meeting_id: i64,
+    voices: &[(i32, Vec<f32>)],
+    routing: &RoutingConfig,
+    remember: bool,
+    chain: impl FnOnce() -> Vec<llm::ChainLink>,
+    local_chain: impl FnOnce() -> Vec<llm::ChainLink>,
+) -> rusqlite::Result<Vec<MeetingSpeaker>> {
     assign_speakers(store, meeting_id, voices, remember, |transcript, ids, invitees| {
-        let chain = crate::routing::build_chain_for(llm::TaskKind::MeetingSummary, model, routing);
+        let chain = if crate::summary::meeting_is_excluded(store, meeting_id, &[transcript, &invitees.join("\n")]) {
+            local_chain()
+        } else {
+            chain()
+        };
         let chain = crate::budget::apply_budgets(store, chain, false, crate::util::now_unix_ms()).ok()?;
         let calendar_text = store.meeting_may_hold_google_calendar_data(meeting_id).then(|| routing.google_data_policy());
         governed_names(store, &routing.spend_cap_config(), &chain, transcript, ids, invitees, calendar_text)

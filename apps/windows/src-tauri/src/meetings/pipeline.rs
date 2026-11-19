@@ -170,6 +170,63 @@ pub fn no_speech_marker(audio_path: &Path) -> Option<PathBuf> {
     Some(audio_path.parent()?.join(format!("no-speech-{stamp}.marker")))
 }
 
+/// The stretches of a recording that were paused (`pause_clock::PausedSpans`), written by the controller
+/// beside the recording as it pauses and resumes. Local only, like the other markers.
+pub fn paused_spans_marker_in(dir: &Path, stamp: &str) -> PathBuf {
+    dir.join(format!("paused-spans-{stamp}.marker"))
+}
+
+/// Removes the paused-spans markers of deleted meetings, named by their audio paths. Core deletes a meeting's audio and
+/// transcript only; this local marker would otherwise stay in the recordings folder.
+pub fn remove_paused_spans_for(audio_paths: &[String], recordings: &Path) {
+    for path in audio_paths {
+        let Some(stamp) = stamp_of(Path::new(path)) else { continue };
+        let marker = paused_spans_marker_in(recordings, &stamp);
+        if let Err(e) = std::fs::remove_file(&marker) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(marker = %marker.display(), error = %e, "could not remove a paused-spans marker");
+            }
+        }
+    }
+}
+
+/// Removes paused-spans markers whose recording is gone (a retention sweep deleted the meeting, or its files were freed): no
+/// WAV or compressed copy of either stream under the stamp. A marker newer than `min_age` stays, since a recording that just
+/// started may not have its files listed yet. Returns how many went.
+pub fn remove_stray_paused_spans(recordings: &Path, min_age: std::time::Duration) -> usize {
+    let Ok(entries) = std::fs::read_dir(recordings) else { return 0 };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(stamp) = path.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_prefix("paused-spans-")).and_then(|n| n.strip_suffix(".marker")) else {
+            continue;
+        };
+        let has_audio = ["system-audio", "mic-audio"].iter().any(|stem| ["wav", "m4a"].iter().any(|ext| recordings.join(format!("{stem}-{stamp}.{ext}")).is_file()));
+        let old_enough = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age >= min_age);
+        if !has_audio && old_enough && std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// The paused stretches noted beside `audio_path`; none when there is no marker.
+fn paused_spans(audio_path: &Path) -> super::pause_clock::PausedSpans {
+    let marker = stamp_of(audio_path).and_then(|stamp| Some(paused_spans_marker_in(audio_path.parent()?, &stamp)));
+    marker
+        .and_then(|m| std::fs::read_to_string(m).ok())
+        .map(|text| super::pause_clock::PausedSpans::from_text(&text))
+        .unwrap_or_default()
+}
+
+/// A transcript without what the model heard in the silence written for a pause.
+fn without_paused(segments: Vec<transcribe::TranscriptSegment>, spans: &super::pause_clock::PausedSpans) -> Vec<transcribe::TranscriptSegment> {
+    if spans.is_empty() {
+        return segments;
+    }
+    segments.into_iter().filter(|s| !spans.covers(s.start_cs, s.end_cs)).collect()
+}
+
 /// The marker the pipeline leaves next to a recording whose transcription failed, holding
 /// the message to show. Like [`no_speech_marker`] it is local only, and the launch repair
 /// leaves a marked meeting for the user's Transcribe again instead of retrying it every
@@ -558,6 +615,8 @@ impl Pipeline {
         let config = routing.routing_config(&keys, &instructions);
         let custom = instructions.custom.clone();
         let (transcript, notes) = (transcript.to_string(), notes.to_string());
+        // A summary the user asked for: background model requests hold back until it is made (PR 874).
+        let _gate = crate::user_model_gate::enter();
         self.slow_store
             .call_blocking(move |s| {
                 let transcript = with_names(s, meeting_id, &transcript);
@@ -697,6 +756,9 @@ impl Pipeline {
         )?;
         let _ = std::fs::remove_dir_all(&slices);
         drop(transcriber);
+        // The silence written for a recording pause is read like any other; whatever the model heard in it goes.
+        let paused = paused_spans(audio);
+        let (system_segments, mic_segments) = (without_paused(system_segments, &paused), without_paused(mic_segments, &paused));
         let transcribe_ms = transcribing.elapsed().as_millis() as u64;
         let audio_seconds = [&system_segments, &mic_segments]
             .iter()
@@ -763,6 +825,8 @@ impl Pipeline {
         let summary_notes = notes.unwrap_or_default();
         let named_notes = summary_notes.clone();
         let custom = instructions.custom.clone();
+        // The meeting just ended and its summary is awaited: background model requests hold back (PR 874).
+        let _gate = crate::user_model_gate::enter();
         let summary = self
             .slow_store
             .call_blocking(move |s| {
@@ -926,6 +990,8 @@ impl Pipeline {
         };
         let config = routing.routing_config(&keys, &instructions);
         let voices = voices.to_vec();
+        // Part of the post-meeting summary the user is waiting for (PR 874).
+        let _gate = crate::user_model_gate::enter();
         let named = self.slow_store.call_blocking(move |s| -> Result<Option<usize>, String> {
             if s.meeting_parts(meeting_id).map_err(|e| e.to_string())?.len() > 1 {
                 return Ok(None);
@@ -1442,6 +1508,65 @@ mod tests {
         assert_eq!(u32::from_le_bytes(patched[4..8].try_into().unwrap()), 136);
         assert_eq!(u32::from_le_bytes(patched[40..44].try_into().unwrap()), 100);
         assert!(!repair_wav_header(&path).unwrap(), "a finalized header is left alone");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod paused_tests {
+    use super::*;
+
+    fn seg(start_cs: i64, end_cs: i64, text: &str) -> transcribe::TranscriptSegment {
+        transcribe::TranscriptSegment { start_cs, end_cs, text: text.into() }
+    }
+
+    #[test]
+    fn what_the_model_hears_in_the_silence_of_a_pause_is_dropped() {
+        let mut spans = super::super::pause_clock::PausedSpans::default();
+        spans.open(6_000);
+        spans.close(12_000);
+        let kept = without_paused(vec![seg(100, 400, "hello"), seg(7_000, 7_200, "Thanks for watching."), seg(12_500, 12_800, "back")], &spans);
+        assert_eq!(kept.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), ["hello", "back"]);
+    }
+
+    #[test]
+    fn markers_of_deleted_recordings_are_removed_and_the_rest_kept() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-stray-spans-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (kept, gone, compressed) = ("2026-11-18T10-00-00.000Z", "2026-11-18T11-00-00.000Z", "2026-11-18T12-00-00.000Z");
+        std::fs::write(dir.join(format!("mic-audio-{kept}.wav")), b"x").unwrap();
+        std::fs::write(dir.join(format!("system-audio-{compressed}.m4a")), b"x").unwrap();
+        for stamp in [kept, gone, compressed] {
+            std::fs::write(paused_spans_marker_in(&dir, stamp), "1 2\n").unwrap();
+        }
+        assert_eq!(remove_stray_paused_spans(&dir, std::time::Duration::from_secs(3_600)), 0, "too new to judge");
+        assert_eq!(remove_stray_paused_spans(&dir, std::time::Duration::ZERO), 1);
+        assert!(paused_spans_marker_in(&dir, kept).is_file() && paused_spans_marker_in(&dir, compressed).is_file());
+        assert!(!paused_spans_marker_in(&dir, gone).exists());
+        // A forgotten meeting's marker goes by its audio path.
+        remove_paused_spans_for(&[dir.join(format!("mic-audio-{kept}.wav")).to_string_lossy().into_owned()], &dir);
+        assert!(!paused_spans_marker_in(&dir, kept).exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_recording_with_no_pauses_is_left_as_it_is() {
+        let spans = super::super::pause_clock::PausedSpans::default();
+        assert_eq!(without_paused(vec![seg(0, 100, "a")], &spans).len(), 1);
+    }
+
+    #[test]
+    fn the_marker_sits_beside_the_recording_under_its_stamp_and_is_read_back() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-paused-spans-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let audio = dir.join("system-audio-2026-11-18T10-00-00.000Z.wav");
+        assert!(paused_spans(&audio).is_empty(), "no marker: nothing paused");
+        std::fs::write(paused_spans_marker_in(&dir, "2026-11-18T10-00-00.000Z"), "100 500\n900 -\n").unwrap();
+        let spans = paused_spans(&audio);
+        assert!(spans.covers(200, 300) && spans.covers(950, 1_000) && !spans.covers(600, 700));
+        // The compressed copy (Free up space) shares the stamp, so it finds the same marker.
+        assert!(paused_spans(&dir.join("system-audio-2026-11-18T10-00-00.000Z.m4a")).covers(200, 300));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

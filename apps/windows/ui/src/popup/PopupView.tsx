@@ -1,29 +1,59 @@
 import { useEffect, useState } from "react";
-import { meetingRecordStop, nextMeetingPrep, popupOpenMain, popupOpenTopic, popupQuit, setCaptureEnabled, trayStatus } from "../api";
+import { emit } from "@tauri-apps/api/event";
+import {
+  launchState,
+  meetingRecordPause,
+  meetingRecordResume,
+  meetingRecordStop,
+  meetingRecordingStatus,
+  nextMeetingPrep,
+  popupOpenMain,
+  popupOpenTopic,
+  popupQuit,
+  setCaptureEnabled,
+  trayStatus,
+} from "../api";
+import { NoStoreBanner } from "../launch/NoStoreBanner";
 import { useTopicLookup } from "../topics/TopicChip";
 import { timeLabel } from "../library/rows";
 import { elapsedLabel } from "../meetings/recordingModel";
-import type { NextMeetingView, TrayStatus } from "../generated/types";
+import type { MeetingRecordingView, NextMeetingView, TrayStatus } from "../generated/types";
 import { useL10n } from "../l10n";
+import { useRedesign } from "../redesign";
+import { PausePicker } from "../shell/redesign/PausePicker";
+import { recordedSeconds } from "../meetings/redesign/liveModel";
 
 /** The tray's quick-glance popup (plan Task 10), with a running meeting recording (M3.3). */
 export function PopupView() {
   const { t, locale } = useL10n();
+  const redesign = useRedesign();
   // The next meeting and its topic (topics piece 2): the topic opens in the main window.
   const [next, setNext] = useState<NextMeetingView | null>(null);
   const [topic] = useTopicLookup(next ? [{ kind: "event", id: next.eventId, title: next.title }] : []);
   const [status, setStatus] = useState<TrayStatus | null>(null);
+  // The recording's own status, read only with the redesign on: recorded time leaves out paused time.
+  const [rec, setRec] = useState<{ view: MeetingRecordingView; readAt: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now());
+  // Running without the memory database (no-store mode): the popup says so too.
+  const [noStore, setNoStore] = useState(false);
 
-  const load = () =>
-    trayStatus()
+  const load = () => {
+    if (redesign) {
+      meetingRecordingStatus().then(
+        (view) => setRec({ view, readAt: Date.now() }),
+        () => {},
+      );
+    }
+    return trayStatus()
       .then(setStatus)
       .catch(() => {});
+  };
 
   useEffect(() => {
     load();
     nextMeetingPrep().then(setNext, () => setNext(null));
+    launchState().then((v) => setNoStore(v.stage.kind === "openedWithoutStore"), () => {});
     const clock = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(clock);
   }, []);
@@ -36,6 +66,15 @@ export function PopupView() {
       .finally(() => setBusy(false));
   };
   const recordingSince = status?.recordingStartedUnixMs;
+  // The word "paused" shows whenever the shell says so, whichever look is on.
+  const paused = status?.recordingPaused === true;
+  const pauseOrResume = () => {
+    setBusy(true);
+    (paused ? meetingRecordResume() : meetingRecordPause())
+      .then(load)
+      .catch(() => {})
+      .finally(() => setBusy(false));
+  };
 
   const toggle = () => {
     if (!status) return;
@@ -49,14 +88,40 @@ export function PopupView() {
   return (
     <div className="popup">
       <span className="popup-brand">{"Whimbrel"}</span>
+      {noStore && (
+        <NoStoreBanner onOpenSettings={() => void popupOpenMain().then(() => emit("open-settings", "capture"), () => {})} />
+      )}
       <p className="popup-status" role="status">
         {status?.line ?? t("Loading…")}
       </p>
       {recordingSince != null && (
         <div className="popup-recording">
           <span role="status" className="recording-line">
-            <span className="recording-dot" aria-hidden="true" /> {t("Recording · {time}", { time: elapsedLabel(recordingSince, now) })}
+            {paused ? (
+              // Paused is not recording: the paused glyph in the paused color, never the red dot.
+              <svg className="popup-paused-glyph" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <rect x="3.5" y="2.5" width="3" height="11" rx="1" fill="currentColor" />
+                <rect x="9.5" y="2.5" width="3" height="11" rx="1" fill="currentColor" />
+              </svg>
+            ) : (
+              <span className="recording-dot" aria-hidden="true" />
+            )}{" "}
+            {paused
+              ? t("Recording paused")
+              : redesign && rec
+                ? t("Recording · {time}", { time: elapsedLabel(0, recordedSeconds(rec.view, now, rec.readAt) * 1000) })
+                : t("Recording · {time}", { time: elapsedLabel(recordingSince, now) })}
           </span>
+          {redesign && rec?.view.degraded && !paused && (
+            <p role="status" className="muted small">
+              {rec.view.degraded}
+            </p>
+          )}
+          {redesign && (
+            <button className="mode" onClick={pauseOrResume} disabled={busy}>
+              {paused ? t("Resume") : t("Pause")}
+            </button>
+          )}
           <button className="mode" onClick={stopRecording} disabled={busy}>
             {t("Stop")}
           </button>
@@ -76,6 +141,7 @@ export function PopupView() {
         <input type="checkbox" checked={status?.captureEnabled ?? false} disabled={!status || busy} onChange={toggle} />
         {t("Capture screen text")}
       </label>
+      {redesign && status && <PausePicker status={status} now={now} onChanged={load} />}
       <div className="popup-actions">
         <button className="mode mode--active" onClick={() => void popupOpenMain()}>
           {t("Open Whimbrel")}

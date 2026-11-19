@@ -1,0 +1,77 @@
+import XCTest
+import WhimbrelUI
+@testable import Whimbrel
+
+/// The Home element contrast pairs and catalogue entry are opt-in: with the redesign flag off, repair and the
+/// skin maker's catalogue are what they were. Reads the bundled skins and palettes from the repository; nothing
+/// touches the app's defaults.
+final class HomeElementPairsTests: XCTestCase {
+    private let repo = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
+
+    private func palettes() -> [Theme] {
+        ThemeLoader.loadDirectory(repo.appendingPathComponent("themes")) + ThemeLoader.loadDirectory(repo.appendingPathComponent("skins/palettes")) + [ThemeDefaults.theme]
+    }
+
+    func testRepairWithTheRedesignOffEqualsToday() {
+        let all = palettes()
+        XCTAssertGreaterThan(all.count, 3)
+        for theme in all {
+            for palette in [theme.light, theme.dark] {
+                let a = PaletteRepair.repair(palette)
+                let b = PaletteRepair.repair(palette, redesign: nil)
+                XCTAssertEqual(a.palette, b.palette, theme.id)
+                XCTAssertEqual(a.changed, b.changed, theme.id)
+            }
+        }
+    }
+
+    func testTodaysPairTablesAreNotTouched() {
+        // Adding the opt-in entry point must not add to the tables every archetype test and repair read.
+        let names = Set(ArchetypeContrast.all.map { "\($0.text.rawValue) on \($0.name)" })
+        XCTAssertFalse(names.contains("textOnAccent on accentPrimary"))
+    }
+
+    func testElementPairsFollowTheChoices() {
+        func keys(_ e: WHomeElements) -> Set<String> { Set(ArchetypeContrast.elementPairs(e).map { "\($0.text.rawValue) on \($0.name)" }) }
+        XCTAssertEqual(keys(WHomeElements()), [])
+        XCTAssertEqual(keys(WHomeElements(nextMeeting: .scoreboard)), ["textOnAccent on accentPrimary"])
+        XCTAssertEqual(keys(WHomeElements(actions: .links)), ["link on backgroundPage"])
+        let boxed: Set<String> = ["textPrimary on backgroundCard", "textPrimary on backgroundPage", "textSecondary on backgroundCard", "textSecondary on backgroundPage"]
+        XCTAssertEqual(keys(WHomeElements(nextMeeting: .infobox)), boxed)
+        XCTAssertEqual(keys(WHomeElements(labels: .bracketed)), boxed)
+        XCTAssertEqual(keys(WHomeElements(labels: .smallCaps)), boxed)
+        XCTAssertEqual(keys(WHomeElements(ask: .prompt)), [])
+        XCTAssertEqual(keys(WHomeElements(timeline: .ruled)), [])
+    }
+
+    func testRepairWithTheRedesignOnCoversEveryElementPair() {
+        var palette = ThemeDefaults.theme.light
+        palette[.textOnAccent] = 0xCCCCCC
+        palette[.accentPrimary] = 0xDDDDDD
+        palette[.link] = 0xEEEEEE
+        palette[.backgroundPage] = 0xFFFFFF
+        let repaired = PaletteRepair.repair(palette, redesign: WHomeElements.everyVariant).palette
+        let pairs = ArchetypeContrast.withElementPairs(ArchetypeContrast.all, for: WHomeElements.everyVariant)
+        XCTAssertEqual(ArchetypeContrast.failures(repaired, pairs), [])
+    }
+
+    func testCatalogueGainsTheTodayKeyOnlyWithTheRedesignOn() throws {
+        let off = SkinCatalogue.object()
+        XCTAssertNil(off["today"])
+        XCTAssertEqual(NSDictionary(dictionary: off), NSDictionary(dictionary: SkinCatalogue.object(redesign: false)))
+        let on = SkinCatalogue.object(redesign: true)
+        let today = try XCTUnwrap(on["today"] as? [String: Any])
+        let options = try XCTUnwrap(today["options"] as? [String: [String]])
+        XCTAssertEqual(options["nextMeeting"], ["card", "scoreboard", "infobox"])
+        XCTAssertEqual(options["timeline"], ["line", "ruled"])
+        XCTAssertEqual(options["labels"], ["plain", "bracketed", "smallCaps"])
+        XCTAssertEqual(options["ask"], ["field", "prompt"])
+        XCTAssertEqual(options["actions"], ["buttons", "links"])
+        XCTAssertEqual(today["rule"] as? String, "set today.options to any of these keys; a key left out keeps the old archetype's choice, an unknown value is ignored")
+        var rest = on
+        rest["today"] = nil
+        XCTAssertEqual(NSDictionary(dictionary: rest), NSDictionary(dictionary: off))
+    }
+}

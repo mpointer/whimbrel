@@ -249,9 +249,12 @@ pub fn call_model(
 ) -> Result<SkinTurnReply, CommandError> {
     llm::check_spend_cap(store, caps, None, Some("skin"), now_ms()).map_err(|e| CommandError::from(api::ApiError::SpendCap(e)))?;
     api::budget::check_provider(store, provider, now_ms()).map_err(|e| CommandError::from(api::ApiError::BudgetSpent(e)))?;
-    let (reply, usage) = llm::skin_maker::run_skin_turn(client, input).map_err(|e| {
-        tracing::warn!(error = %e, "skin turn failed");
-        CommandError::provider_failure()
+    let (reply, usage) = llm::skin_maker::run_skin_turn(client, input).map_err(|e| match e {
+        llm::LlmError::Refused(r) => CommandError::refused(&r),
+        e => {
+            tracing::warn!(error = %e, "skin turn failed");
+            CommandError::provider_failure()
+        }
     })?;
     // Under the model that answered: a stand-in when the provider had no such model.
     api::util::log_usage_for(store, provider, &client.substituted_model().unwrap_or_else(|| model.to_string()), "skin", usage);
@@ -803,7 +806,7 @@ mod tests {
     }
 
     fn pool() -> Vec<Palette> {
-        crate::commands::skins::palette_pool(&crate::commands::skins::BundledDirs { skins: repo().join("skins"), themes: repo().join("themes") })
+        crate::commands::skins::palette_pool(&crate::commands::skins::BundledDirs { skins: repo().join("skins"), themes: repo().join("themes") }, false)
     }
 
     struct Scratch(PathBuf);

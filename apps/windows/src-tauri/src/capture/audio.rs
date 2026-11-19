@@ -26,7 +26,7 @@
 //! (docs/12 W4).
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
@@ -115,11 +115,70 @@ pub struct Live {
     /// Unix ms of the last packet with an audible sample on any stream; 0 before one.
     pub last_audible_unix_ms: AtomicI64,
     degraded: Mutex<Option<String>>,
+    /// A recording pause is on: each stream releases its audio client (so Windows stops showing the
+    /// microphone in use) and keeps its WAV open until resume or stop.
+    paused: AtomicBool,
+    /// When resume was asked for, until the microphone's first packet arrives; 0 otherwise.
+    resumed_at_unix_ms: AtomicI64,
+    /// Someone asked for the level meter (redesign only), so packets keep a decaying peak. Never set with the
+    /// switch off, so nothing is sampled then.
+    level_wanted: AtomicBool,
+    /// The decaying peak per source (`meetings::level`). Read, drawn and thrown away; never stored anywhere.
+    level_system: AtomicU64,
+    level_mic: AtomicU64,
 }
 
 impl Live {
     pub fn degraded(&self) -> Option<String> {
         self.degraded.lock().unwrap().clone()
+    }
+
+    /// Starts keeping the level meter's peaks (the first read asks for it). One relaxed load per packet when off.
+    pub fn want_level(&self) {
+        self.level_wanted.store(true, Ordering::Relaxed);
+    }
+
+    /// A packet's peak, for the meter; a no-op until the meter has been asked for.
+    fn note_level(&self, source: Source, packet_peak: i16) {
+        if !self.level_wanted.load(Ordering::Relaxed) {
+            return;
+        }
+        let slot = if source == Source::Microphone { &self.level_mic } else { &self.level_system };
+        let next = crate::meetings::level::after_packet(slot.load(Ordering::Relaxed), packet_peak, unix_ms());
+        slot.store(next, Ordering::Relaxed);
+    }
+
+    /// The meter's levels, 0 to 1: (system audio, microphone). Zero while paused, since no packet arrives.
+    pub fn levels(&self, now_unix_ms: i64) -> (f32, f32) {
+        let read = |slot: &AtomicU64| crate::meetings::level::level(slot.load(Ordering::Relaxed), now_unix_ms);
+        (read(&self.level_system), read(&self.level_mic))
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
+    /// Starts or ends a recording pause. Resuming stamps `now_unix_ms` first, so "resuming" is
+    /// already true when the streams see the pause end.
+    pub fn set_paused(&self, paused: bool, now_unix_ms: i64) {
+        if paused {
+            self.resumed_at_unix_ms.store(0, Ordering::Relaxed);
+        } else {
+            self.resumed_at_unix_ms.store(now_unix_ms.max(1), Ordering::Relaxed);
+        }
+        self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Resume was asked for and the microphone has still delivered nothing past the limit: the caller reports the
+    /// microphone's own degraded wording (`gave_up_reason`) until audio arrives or the stall logic gives up.
+    pub fn resume_stalled(&self, now_unix_ms: i64) -> bool {
+        crate::meetings::pause_clock::resume_stalled(self.resumed_at_unix_ms.load(Ordering::Relaxed), now_unix_ms)
+    }
+
+    /// Resume was asked for and the microphone has not delivered audio yet (see
+    /// `meetings::pause_clock::still_resuming`).
+    pub fn resuming(&self, now_unix_ms: i64) -> bool {
+        crate::meetings::pause_clock::still_resuming(self.resumed_at_unix_ms.load(Ordering::Relaxed), now_unix_ms)
     }
 
     /// Keeps the first reason: it's the one that explains the rest.
@@ -535,6 +594,8 @@ fn run_stream(source: Source, wav_path: PathBuf, t0: u64, stop: Arc<AtomicBool>,
 /// How one opened client's run ended.
 enum ClientEnd {
     Stopped,
+    /// A recording pause began: the client was stopped and is released by the caller.
+    Paused,
     Failed(String),
 }
 
@@ -586,6 +647,13 @@ fn capture_into(
     let mut written: i64 = 0;
 
     loop {
+        // A recording pause: hold with no client open, then pad to now and go on to reopen below.
+        if options.supervise && options.live.is_paused() && !stop.load(Ordering::Relaxed) {
+            hold_while_paused(source, t0, stop, options, &mut wav, &mut written, stats);
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+        }
         // Step logs while supervised: a WASAPI call that never returns has no other trace.
         if options.supervise {
             tracing::info!(?source, attempt = stats.reopens, "opening an audio stream");
@@ -604,6 +672,8 @@ fn capture_into(
         };
         match end {
             ClientEnd::Stopped => break,
+            // The client is released (it went out of scope above); the top of the loop holds.
+            ClientEnd::Paused => continue,
             ClientEnd::Failed(reason) if !options.supervise => {
                 stats.error = Some(reason);
                 break;
@@ -637,6 +707,32 @@ fn capture_into(
     }
     wav.finalize().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Holds a paused stream with no audio client open until resume or stop, then (on resume) writes
+/// the gap as silence up to now, so the file keeps clock time without trusting the first packet's
+/// timestamp. The caller reopens the client.
+fn hold_while_paused<W: std::io::Write + std::io::Seek>(
+    source: Source,
+    t0: u64,
+    stop: &AtomicBool,
+    options: &RecordOptions,
+    wav: &mut hound::WavWriter<W>,
+    written: &mut i64,
+    stats: &mut StreamStats,
+) {
+    tracing::info!(?source, "recording paused: audio stream closed");
+    while options.live.is_paused() && !stop.load(Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if stop.load(Ordering::Relaxed) {
+        return; // stopped while paused: the end-of-recording padding covers the pause
+    }
+    let now_frames = ((now_100ns() - t0) as i128 * SAMPLE_RATE as i128 / 10_000_000) as i64;
+    if now_frames > *written {
+        pad_silence(now_frames - *written, wav, written, stats);
+    }
+    tracing::info!(?source, padded_frames = now_frames, "recording resumed: reopening the audio stream");
 }
 
 fn pad_silence<W: std::io::Write + std::io::Seek>(n: i64, wav: &mut hound::WavWriter<W>, written: &mut i64, stats: &mut StreamStats) {
@@ -701,6 +797,11 @@ fn run_client<W: std::io::Write + std::io::Seek>(
 
         let end = loop {
             let stopping = stop.load(Ordering::Relaxed);
+            // A recording pause ends this run: the loop's exit below stops the client. Pending
+            // packets are discarded unread.
+            if !stopping && options.supervise && options.live.is_paused() {
+                break ClientEnd::Paused;
+            }
             let signalled = stopping || WaitForSingleObject(event, 100) == WAIT_OBJECT_0;
             if signalled {
                 let mut failed = None;
@@ -721,6 +822,10 @@ fn run_client<W: std::io::Write + std::io::Seek>(
                         break;
                     }
                     got_packet = true;
+                    if options.supervise && source == Source::Microphone {
+                        // Audio is arriving again: "resuming" is over (a store of 0 is harmless otherwise).
+                        options.live.resumed_at_unix_ms.store(0, Ordering::Relaxed);
+                    }
                     stats.packets += 1;
                     if stats.first_packet_ms.is_none() && qpc != 0 {
                         stats.first_packet_ms = Some((qpc as f64 - t0 as f64) / 10_000.0);
@@ -754,6 +859,7 @@ fn run_client<W: std::io::Write + std::io::Seek>(
                         let _ = wav.write_sample(s);
                     }
                     stats.peak = stats.peak.max(packet_peak);
+                    options.live.note_level(source, packet_peak);
                     if packet_peak > 1 {
                         last_signal = now_100ns();
                     }

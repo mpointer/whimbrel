@@ -146,7 +146,18 @@ enum CoreSelfTest {
         return reachedEndOfFile ? .waitForMoreData : .oversizedLine(bytesToSkip: data.count)
     }
 
+    /// One pass at a time: the background step (`AppState.scheduleScreenTextIngestStep`, on its own
+    /// connection) and the Diagnostics button (on the main one) both read and advance the same
+    /// offset, which `accessQueue` alone used to serialize.
+    private static let ingestLock = NSLock()
+
     static func ingestNewScreenTextLines(into store: CoreMemoryStore, deviceId: String) -> ScreenTextIngestOutcome {
+        ingestLock.lock()
+        defer { ingestLock.unlock() }
+        return ingestNewScreenTextLinesLocked(into: store, deviceId: deviceId)
+    }
+
+    private static func ingestNewScreenTextLinesLocked(into store: CoreMemoryStore, deviceId: String) -> ScreenTextIngestOutcome {
         let logPath = SpikePaths.screenTextLog.path
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: logPath),
               let currentSize = attrs[.size] as? UInt64 else {

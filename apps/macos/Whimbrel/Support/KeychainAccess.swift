@@ -71,7 +71,8 @@ enum KeychainAccess {
 
 /// A process-local stand-in for the generic-password items Whimbrel uses, keyed by
 /// (service, account). Supports exactly the query shapes the app issues: class + service +
-/// account, optionally returning the data.
+/// account, optionally returning the data; and class + service listing every account's
+/// attributes (never the data).
 final class InMemoryKeychain {
     private let lock = NSLock()
     private var items: [String: Data] = [:]
@@ -95,6 +96,21 @@ final class InMemoryKeychain {
     }
 
     func copyMatching(_ query: CFDictionary, _ result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus {
+        let d = query as NSDictionary
+        // Listing one service's items, attributes only (`KeptGoogleAccounts.googleOAuthAccountNames`).
+        if d[kSecAttrAccount as String] == nil, let service = d[kSecAttrService as String] as? String,
+           (d[kSecMatchLimit as String] as? String) == (kSecMatchLimitAll as String),
+           (d[kSecReturnAttributes as String] as? Bool) == true, d[kSecReturnData as String] == nil {
+            lock.lock()
+            let accounts = items.keys.compactMap { k -> String? in
+                let parts = k.split(separator: "\u{1}", maxSplits: 1, omittingEmptySubsequences: false)
+                return parts.count == 2 && parts[0] == service ? String(parts[1]) : nil
+            }
+            lock.unlock()
+            guard !accounts.isEmpty else { return errSecItemNotFound }
+            result?.pointee = accounts.sorted().map { [kSecAttrService as String: service, kSecAttrAccount as String: $0] } as NSArray
+            return errSecSuccess
+        }
         guard let k = key(query) else { return errSecParam }
         lock.lock()
         let data = items[k]

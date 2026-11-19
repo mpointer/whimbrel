@@ -48,3 +48,5 @@ apps/mobile/android/app/build/
 apps/mobile/android/app/.cxx/
 *.jks
 *.keystore
+
+.jevmem/

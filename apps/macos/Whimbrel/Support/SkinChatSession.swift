@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import WhimbrelUI
 import OSLog
 
 /// The skin maker's reply (core/llm `SkinTurnReply`, camelCase). `skin` and each palette are the
@@ -254,7 +255,7 @@ final class SkinChatSession: ObservableObject {
         if access.provider != .ollama { status.append("Sent to \(access.provider.displayName): your request, this skin's chat, its design and the list of allowed values") }
         let sent = manifestObject(for: origin)
         let input: [String: Any] = [
-            "request": request, "history": history, "catalogue": SkinCatalogue.object(),
+            "request": request, "history": history, "catalogue": SkinCatalogue.object(redesign: RedesignFlag.isOn()),
             "currentManifest": sent ?? NSNull(),
         ]
         let data = (try? JSONSerialization.data(withJSONObject: input)) ?? Data()
@@ -511,7 +512,7 @@ final class SkinChatSession: ObservableObject {
     }
 
     /// The palette repair the session uses; tests swap in one that gives up.
-    nonisolated(unsafe) static var repairPalette: (ThemePalette) -> (palette: ThemePalette, changed: [ThemeToken]) = { PaletteRepair.repair($0) }
+    nonisolated(unsafe) static var repairPalette: (ThemePalette) -> (palette: ThemePalette, changed: [ThemeToken]) = { PaletteRepair.repair($0, redesign: RedesignFlag.isOn() ? WHomeElements.everyVariant : nil) }
 
     /// The palette with id `id`, each variant (gaps filled from Default, as `ThemeLoader` does) repaired
     /// to pass every archetype's pairs (`ArchetypeContrast`, since any skin may take it); nil when a variant

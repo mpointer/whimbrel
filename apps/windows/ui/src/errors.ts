@@ -56,6 +56,15 @@ export function providerFailureReason(reason: ProviderFailureReason): string | n
         provider: name(reason.provider),
         model: reason.model,
       });
+    // The exclusion gate held the request back: nothing was sent (the Mac's sentences, X6 Task 10).
+    case "excluded_client":
+      return t(
+        "Not sent: only a local model on this PC may answer this (it involves a client excluded from hosted models, or Local-only mode is on), and none could. Set one up in Settings → AI.",
+      );
+    case "exclusion_unreadable":
+      return t(
+        "Not sent: Whimbrel couldn't read which clients are excluded from hosted models, so nothing goes to a hosted model until it can. Try again in a moment, or use a local model.",
+      );
     // Ollama answered and then didn't finish (stalled or timed out): too much for a slower computer.
     case "network":
       return reason.provider === "ollama" ? localModelDidNotFinish() : null;
@@ -72,4 +81,11 @@ const localModelDidNotFinish = (): string =>
 /** Whether a rejected `invoke` carried a `CommandError` (vs. a Tauri-level failure). */
 export function isCommandError(value: unknown): value is CommandError {
   return typeof value === "object" && value !== null && typeof (value as { kind?: unknown }).kind === "string";
+}
+
+/** Either exclusion refusal: the gate held the request back and nothing was sent. Only `excluded_client` is
+ *  retried with local-only routing; `exclusion_unreadable` holds every hosted request until the setting reads
+ *  again. */
+export function isExclusionRefusal(err: CommandError): boolean {
+  return err.kind === "provider_failure" && (err.reason?.kind === "excluded_client" || err.reason?.kind === "exclusion_unreadable");
 }

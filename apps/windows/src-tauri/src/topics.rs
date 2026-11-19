@@ -28,6 +28,8 @@ use crate::store_actor::StoreHandle;
 pub const USD_PER_MILLION: f64 = 0.042;
 /// Sources indexed and clustered per turn (the Mac's `whimbrel_topics_run_batch`).
 const BATCH: usize = 50;
+/// Suggested topics named per round (the Mac's PR 874: 10 -> 3, so a question waits behind fewer requests).
+const NAMING_BATCH: usize = 3;
 /// Sources sent to TypeSafe per turn (the Mac's `scheduleTopicsStep`).
 const JUDGE_MAX: usize = 8;
 /// The wait after a turn that did nothing (the Mac's 60 s).
@@ -145,7 +147,7 @@ pub fn next_naming_delay(model_named: usize) -> Duration {
 }
 
 /// Starts the topic-naming loop (PR 720): an AI model names suggested topics that still show a
-/// placeholder, at most 10 a round, through the user's routing and keys (synced keys and Whimbrel AI
+/// placeholder, at most `NAMING_BATCH` a round, through the user's routing and keys (synced keys and Whimbrel AI
 /// included). On `store` the slow lane: a model call holds the store. A local model waits for AC
 /// power and an idle minute, as the other local-model jobs do.
 pub fn start_naming(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, secrets: Arc<dyn SecretStore>) {
@@ -157,6 +159,13 @@ pub fn start_naming(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, secr
             if crate::meeting_load::background_paused() {
                 continue;
             }
+            // A user's model call in flight: no naming request now (PR 874).
+            if crate::user_model_gate::busy() {
+                delay = crate::user_model_gate::RETRY;
+                continue;
+            }
+            // Skipped while a client delete runs (`api::client_controls`); held for the whole turn.
+            let Some(_ticket) = api::client_controls::job_ticket() else { continue };
             let routing = settings.lock().unwrap().routing();
             if routing.preferred_provider == crate::settings::Provider::Ollama && !heavy_jobs_allowed(on_ac_power(), idle_duration()) {
                 continue;
@@ -166,7 +175,7 @@ pub fn start_naming(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, secr
             let ollama = routing.ollama_model.clone();
             let named = store.call_blocking(move |s| {
                 let model = (!ollama.is_empty()).then_some(ollama.as_str());
-                api::topics::run_naming_batch(s, &config, model, chrono::Utc::now().timestamp_millis(), 10).map_err(|e| format!("{e:?}"))
+                api::topics::run_naming_batch(s, &config, model, chrono::Utc::now().timestamp_millis(), NAMING_BATCH).map_err(|e| format!("{e:?}"))
             });
             match named {
                 Ok(Ok(report)) => {
@@ -197,6 +206,8 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, secrets: Ar
             if crate::meeting_load::background_paused() {
                 continue;
             }
+            // Skipped while a client delete runs (`api::client_controls`); held for the whole turn.
+            let Some(_ticket) = api::client_controls::job_ticket() else { continue };
             let mut progress = false;
             // Indexing embeds, so it waits for AC power and an idle minute like the other heavy job.
             if heavy_jobs_allowed(on_ac_power(), idle_duration()) {
@@ -206,8 +217,10 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, secrets: Ar
                     Err(_) => break,
                 }
             }
-            // Steps are read by a model (local or paid), so the batch waits for the heavy gate too.
-            if heavy_jobs_allowed(on_ac_power(), idle_duration()) {
+            // Steps are read by a model (local or paid), so the batch waits for the heavy gate too, and for a
+            // user's model call in flight (PR 874).
+            let user_first = crate::user_model_gate::busy();
+            if !user_first && heavy_jobs_allowed(on_ac_power(), idle_duration()) {
                 match steps_turn(&store, &settings, &*secrets, &status) {
                     Some(more) => progress |= more,
                     None => break,
@@ -215,7 +228,7 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, secrets: Ar
             }
             if let Some(key) = active_key(&settings, &*secrets) {
                 let judged = store.call_blocking(move |s| {
-                    let client = llm::typesafe::TypeSafeClient::new(key);
+                    let client = llm::typesafe::TypeSafeClient::new(key, api::exclusion::current_gate(s));
                     api::topic_judge::run_topic_judge_batch(s, &client, JUDGE_MAX, USD_PER_MILLION)
                 });
                 match judged {
@@ -236,7 +249,7 @@ pub fn start(store: StoreHandle, settings: Arc<Mutex<SettingsFile>>, secrets: Ar
                     Err(_) => break,
                 }
             }
-            delay = if progress { BUSY_DELAY } else { TOPICS_IDLE_DELAY };
+            delay = crate::jobs::after_turn(if progress { BUSY_DELAY } else { TOPICS_IDLE_DELAY }, user_first);
         }
     });
     if let Err(e) = spawned {
@@ -271,7 +284,7 @@ fn steps_turn(store: &StoreHandle, settings: &Mutex<SettingsFile>, secrets: &dyn
         }
         StepJudgeChoice::TypeSafe(key) => {
             let ran = store.call_blocking(move |s| {
-                let client = llm::typesafe::TypeSafeClient::new(key);
+                let client = llm::typesafe::TypeSafeClient::new(key, api::exclusion::current_gate(s));
                 api::topic_steps::run_topic_steps_batch(s, &client, true, STEPS_MAX, USD_PER_MILLION)
             });
             match ran {

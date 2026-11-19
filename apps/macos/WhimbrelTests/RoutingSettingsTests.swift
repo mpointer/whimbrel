@@ -63,6 +63,17 @@ final class RoutingSettingsTests: XCTestCase {
         XCTAssertTrue(defaultsJSON.contains("\"cheap_first\":true"), "the memberwise default matches core's")
         XCTAssertTrue(defaultsJSON.contains("\"use_local_model\":true"), defaultsJSON)
         XCTAssertTrue(defaultsJSON.contains("\"openrouter_model\":\"\""), defaultsJSON)
+        // X6: core needs the Ollama model to keep local-only mode off Ollama's cloud.
+        XCTAssertTrue(defaultsJSON.contains("\"ollama_model\":\"\""), defaultsJSON)
+        var withModel = defaults
+        withModel.ollamaModel = "gpt-oss:120b-cloud"
+        let modelJSON = try XCTUnwrap(String(data: JSONEncoder().encode(withModel), encoding: .utf8))
+        XCTAssertTrue(modelJSON.contains("\"ollama_model\":\"gpt-oss:120b-cloud\""), modelJSON)
+        XCTAssertEqual(settings.routingConfig(preferredProvider: .ollama, preferredModel: "").ollamaModel, settings.ollamaDefaultModel)
+        // A cloud model picked while Ollama is preferred is the model streamed, so the gate judges it as hosted.
+        let cloud = settings.routingConfig(preferredProvider: .ollama, preferredModel: "gpt-oss:120b-cloud")
+        XCTAssertEqual(cloud.ollamaModel, "gpt-oss:120b-cloud")
+        XCTAssertEqual(cloud.streamedOllamaModel, "gpt-oss:120b-cloud")
 
         var priced = defaults
         priced.openrouterPrices = ["v/m": .init(in: 0.1, out: 0.5)]

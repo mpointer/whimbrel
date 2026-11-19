@@ -2,6 +2,40 @@ import Foundation
 import OSLog
 
 /// JSON shape matching core/memory's `CaptureItem` (NFR-PRT-1 FFI boundary).
+/// One stretch of captures with no 10 minute gap, from `whimbrel_memory_day_blocks`: time, app and window title only.
+struct CoreDayBlock: Codable {
+    struct App: Codable {
+        let appBundleId: String
+        let items: [String]
+        let moreItems: Int
+        enum CodingKeys: String, CodingKey {
+            case appBundleId = "app_bundle_id"
+            case items
+            case moreItems = "more_items"
+        }
+    }
+    let startUnixMs: Int64
+    let endUnixMs: Int64
+    let apps: [App]
+    let moreApps: Int
+    enum CodingKeys: String, CodingKey {
+        case startUnixMs = "start_unix_ms"
+        case endUnixMs = "end_unix_ms"
+        case apps
+        case moreApps = "more_apps"
+    }
+}
+
+/// An app with captures in a range, from `whimbrel_memory_capture_apps`.
+struct CoreCaptureApp: Codable {
+    let appBundleId: String
+    let captures: Int
+    enum CodingKeys: String, CodingKey {
+        case appBundleId = "app_bundle_id"
+        case captures
+    }
+}
+
 struct CoreCaptureItem: Codable {
     let id: Int64
     let deviceId: String
@@ -155,14 +189,70 @@ struct CoreChatAnswer: Codable {
     let citations: [CoreContextItemRef]
 }
 
+/// The model that really answered (core's `ask::AnsweredBy`): never the client's name.
+struct CoreAnsweredBy: Decodable, Equatable {
+    let provider: String
+    let model: String
+    /// The answering link runs on this Mac.
+    let local: Bool
+}
+
+/// `whimbrel_llm_answer_detailed`'s success payload: the answer, what exclusion did, and which model answered.
+struct CoreDetailedAnswer: Decodable {
+    let text: String
+    let citations: [CoreContextItemRef]
+    let exclusion: CoreExclusionOutcome?
+    let answeredBy: CoreAnsweredBy?
+
+    enum CodingKeys: String, CodingKey {
+        case text, citations, exclusion
+        case answeredBy = "answered_by"
+    }
+
+    var chatAnswer: CoreChatAnswer { CoreChatAnswer(text: text, citations: citations) }
+}
+
+/// What client exclusion did to one answer (core's `exclusion::ExclusionOutcome`, tagged by `kind`). Shown
+/// locally under the answer; never part of a prompt.
+enum CoreExclusionOutcome: Decodable, Equatable {
+    case allowed
+    /// A hosted model answered without `leftOut` retrieved items (items, not clients).
+    case filteredHosted(leftOut: Int)
+    case localOnly
+    case refused
+    /// A kind a newer core added.
+    case other
+
+    private enum CodingKeys: String, CodingKey { case kind, leftOut = "left_out" }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(String.self, forKey: .kind) {
+        case "allowed": self = .allowed
+        case "filtered_hosted": self = .filteredHosted(leftOut: try c.decodeIfPresent(Int.self, forKey: .leftOut) ?? 0)
+        case "local_only": self = .localOnly
+        case "refused": self = .refused
+        default: self = .other
+        }
+    }
+
+    /// How many retrieved items the answer was made without; 0 unless a hosted model answered without some.
+    var leftOut: Int {
+        if case .filteredHosted(let n) = self { return n }
+        return 0
+    }
+}
+
 /// #74: `whimbrel_llm_prepare_ask`'s success payload.
 struct CorePrepareAskData: Decodable {
     let prepareId: String
     let prompt: String
+    /// Nil from a core that does not say (the answer then shows no left-out note).
+    let exclusion: CoreExclusionOutcome?
 
     enum CodingKeys: String, CodingKey {
         case prepareId = "prepare_id"
-        case prompt
+        case prompt, exclusion
     }
 }
 
@@ -764,10 +854,13 @@ struct CoreConnectorAccounts: Decodable, Equatable {
 struct CoreCalendarEventSummary: Encodable {
     let title: String
     let startUnixMs: Int64
+    /// The event's calendar id: core leaves a client's event out of the brief by it (X6).
+    var id: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case title
         case startUnixMs = "start_unix_ms"
+        case id
     }
 }
 
@@ -808,6 +901,9 @@ struct CoreRoutingConfig: Encodable {
     /// Whimbrel AI (`SyncState.whimbrelCredentials`); nil when sync isn't signed in.
     var whimbrelIdToken: String? = nil
     var whimbrelDeviceKey: String? = nil
+    /// The Ollama model every call streams with. Core treats an Ollama cloud model as hosted, and
+    /// in local-only mode refuses to stream when it is cloud or unknown (client exclusion, X6).
+    var ollamaModel: String = ""
     /// Google "Limited Use" (core/api routing::LimitedUseSettings). Always encoded:
     /// core keeps them process-wide, and a routing JSON without them turns them off.
     var googleAiBillingConfirmed: Bool = false
@@ -837,6 +933,7 @@ struct CoreRoutingConfig: Encodable {
             openrouterKey: openrouterKey, openrouterModel: openrouterModel, openrouterPrices: openrouterPrices,
             outputLanguage: outputLanguage,
             whimbrelIdToken: whimbrelIdToken, whimbrelDeviceKey: whimbrelDeviceKey,
+            ollamaModel: ollamaModel,
             googleAiBillingConfirmed: googleAiBillingConfirmed, remoteOllamaGoogleData: remoteOllamaGoogleData,
             streamedOllamaModel: streamedOllamaModel, streamedOllamaBaseUrl: streamedOllamaBaseUrl
         )
@@ -864,6 +961,7 @@ struct CoreRoutingConfig: Encodable {
         case openrouterPrices = "openrouter_prices"
         case whimbrelIdToken = "whimbrel_id_token"
         case whimbrelDeviceKey = "whimbrel_device_key"
+        case ollamaModel = "ollama_model"
         case googleAiBillingConfirmed = "google_ai_billing_confirmed"
         case remoteOllamaGoogleData = "remote_ollama_google_data"
         case streamedOllamaModel = "streamed_ollama_model"
@@ -1129,6 +1227,11 @@ enum CoreLLMError: Error, Equatable, Decodable {
         case creditExhausted
         /// The provider has no such model, and no default answered for it either.
         case modelUnavailable(provider: String, model: String)
+        /// Not sent: the request involves a client excluded from hosted models (core never names the client).
+        /// A refused stream is retried with local-only routing (Task 10).
+        case excludedClient
+        /// Not sent: the exclusion setting could not be read, so no hosted request goes until it can.
+        case exclusionUnreadable
 
         private enum CodingKeys: String, CodingKey { case kind, model, provider }
 
@@ -1145,6 +1248,8 @@ enum CoreLLMError: Error, Equatable, Decodable {
                 self = .modelUnavailable(
                     provider: try container.decode(String.self, forKey: .provider),
                     model: try container.decode(String.self, forKey: .model))
+            case "excluded_client": self = .excludedClient
+            case "exclusion_unreadable": self = .exclusionUnreadable
             default: throw DecodingError.dataCorruptedError(forKey: .kind, in: container, debugDescription: "no message of its own")
             }
         }
@@ -1214,6 +1319,10 @@ enum CoreLLMError: Error, Equatable, Decodable {
         case .providerFailureBecause(.modelUnavailable(let provider, let model)):
             let name = Self.providerNames[provider] ?? provider
             return String(localized: "\(name) doesn't offer the model \(model) to your key. Choose another in Settings → AI Providers.")
+        case .providerFailureBecause(.excludedClient):
+            return Self.excludedClientMessage
+        case .providerFailureBecause(.exclusionUnreadable):
+            return Self.exclusionUnreadableMessage
         case .noTranscript:
             return String(localized: "There is no transcript for this meeting to ask about.")
         case .noText:
@@ -1234,12 +1343,29 @@ enum CoreLLMError: Error, Equatable, Decodable {
         return false
     }
 
+    /// Nothing was sent: the request involves a client excluded from hosted models, and only a model on this Mac
+    /// may answer it. Shown once that local answer was tried (or there is no local model).
+    static let excludedClientMessage = String(localized: "Not sent: only a local model on this Mac may answer this (it involves a client excluded from hosted models, or Local-only mode is on), and none could. Set one up in Settings → AI Providers.")
+    /// Nothing was sent: which clients are excluded could not be read, so no hosted request goes until it can.
+    static let exclusionUnreadableMessage = String(localized: "Not sent: Whimbrel couldn't read which clients are excluded from hosted models, so nothing goes to a hosted model until it can. Try again in a moment, or use a local model.")
+
+    /// Either exclusion refusal: the gate held the request back and nothing was sent. Only `.excludedClient`
+    /// is retried with local-only routing; `.exclusionUnreadable` holds every hosted request until the setting
+    /// reads again.
+    var isExclusionRefusal: Bool {
+        switch self {
+        case .providerFailureBecause(.excludedClient), .providerFailureBecause(.exclusionUnreadable): return true
+        default: return false
+        }
+    }
+
     /// Whether the message's fix is in Settings → AI Providers, so the surface offers a way there.
     var opensAIProvidersSettings: Bool {
         switch self {
         case .budgetSpent, .localModelMissing, .providerFailureBecause(.ollamaModelMissing), .providerFailureBecause(.ollamaNotRunning),
              .providerFailureBecause(.noProviderConfigured), .providerFailureBecause(.unauthorized),
-             .providerFailureBecause(.creditExhausted), .providerFailureBecause(.modelUnavailable):
+             .providerFailureBecause(.creditExhausted), .providerFailureBecause(.modelUnavailable),
+             .providerFailureBecause(.excludedClient):
             return true
         default:
             return false
@@ -1922,6 +2048,8 @@ struct CoreRetentionResult: Codable {
     let meetingsDeleted: Int
     let deletedMeetingFiles: [CoreDeletedMeetingFiles]
     let conversationsDeleted: Int
+    /// Not run: a client delete was in progress. Nothing was deleted; the next run sweeps. Never from core.
+    var skippedForClientDelete = false
 
     enum CodingKeys: String, CodingKey {
         case captureItemsDeleted = "capture_items_deleted"
@@ -2085,8 +2213,24 @@ final class CoreMemoryStore {
     nonisolated(unsafe) static var afterGovernedCall: (() -> Void)?
 
     private let handle: OpaquePointer
+    /// The database key this store was opened with (`openKeyed`), nil for a plain store.
+    /// The slow lane opens with it too.
+    let dbKey: Data?
+
+    /// The key of the encrypted main store, for the per-call opens (skin calls) and the MCP
+    /// server's stdin. Nil while the store is plain. `nonisolated(unsafe)`: set once on the
+    /// main thread at launch by whoever opens the main store keyed (launch wiring), before
+    /// any call that reads it, and only read after that.
+    nonisolated(unsafe) static var databaseKey: Data?
+
+    /// Adopts a handle `whimbrel_memory_open_keyed` returned.
+    init(adopting handle: OpaquePointer, dbKey: Data?) {
+        self.handle = handle
+        self.dbKey = dbKey
+    }
 
     init?(path: URL, modelsDir: URL?) {
+        dbKey = nil
         let handle: OpaquePointer? = path.path.withCString { pathC in
             if let modelsDir {
                 return modelsDir.path.withCString { modelsDirC in
@@ -2107,6 +2251,32 @@ final class CoreMemoryStore {
     /// never wait behind a model.
     static let slowLaneQueue = DispatchQueue(label: "com.mpointer.kestrel.corestore-slow", qos: .utility)
 
+    /// The background lane: long maintenance (content sync rounds, screen-text ingest, the
+    /// episode and job batches, retention) runs here, on `AppState.backgroundStore`, so the
+    /// screens that use `accessQueue` never wait behind it. Never hold this connection across
+    /// an LLM request (that is the slow lane's job); a step here is bounded work or a sync round.
+    /// Lock order: slow lane, then background, then access queue (`StorageCompaction`).
+    static let backgroundQueue = DispatchQueue(label: "com.mpointer.kestrel.corestore-background", qos: .utility)
+
+    /// The background model lane: background jobs that call a model (thread and episode summaries,
+    /// topic steps and naming, routines, profile suggestions, titles) run here, on
+    /// `AppState.backgroundModelStore`, so a question the user types never queues behind them on
+    /// `slowLaneQueue`. A job here also waits for `UserModelGate` before it starts a request.
+    /// Lock order: slow lane, then this, then background, then access queue (`StorageCompaction`).
+    static let backgroundModelQueue = DispatchQueue(label: "com.mpointer.kestrel.corestore-background-model", qos: .utility)
+
+    /// How long a statement on a screen, slow-lane or background connection waits for another
+    /// connection's write lock. The default is 5 s; with four connections a user write (starting
+    /// a recording above all) must wait out a background write rather than fail.
+    static let busyTimeoutMs: UInt64 = 30_000
+
+    /// Raises this connection's busy timeout (`busyTimeoutMs`). Call on its own queue, or at launch
+    /// before anything else uses it.
+    @discardableResult
+    func setBusyTimeout(ms: UInt64 = CoreMemoryStore.busyTimeoutMs) -> Bool {
+        whimbrel_memory_set_busy_timeout(handle, ms)
+    }
+
     /// `text` with credentials replaced (core `memory::redact`); unchanged on failure.
     static func redactSecrets(_ text: String) -> String {
         guard let out = text.withCString({ whimbrel_redact_secrets($0) }) else { return text }
@@ -2114,17 +2284,49 @@ final class CoreMemoryStore {
         return String(cString: out)
     }
 
-    /// A second connection to `path` sharing `primary`'s embedder, for `slowLaneQueue`.
-    /// Must be called on `accessQueue`, since it reads `primary`.
+    /// A second connection to `path` sharing `primary`'s embedder (and its database key),
+    /// for `slowLaneQueue`. Must be called on `accessQueue`, since it reads `primary`.
     init?(secondaryTo primary: CoreMemoryStore, path: URL) {
-        guard let handle = path.path.withCString({ whimbrel_memory_open_secondary(primary.handle, $0) }) else {
+        let opened = path.path.withCString { p in
+            Self.withKeyBytes(primary.dbKey) { k, n in whimbrel_memory_open_secondary(primary.handle, p, k, n) }
+        }
+        guard let handle = opened else {
             return nil
         }
         self.handle = handle
+        dbKey = primary.dbKey
+    }
+
+    /// Runs `body` with `key`'s bytes as the C ABI's nullable `(const uint8_t *, size_t)`.
+    static func withKeyBytes<R>(_ key: Data?, _ body: (UnsafePointer<UInt8>?, Int) -> R) -> R {
+        guard let key else { return body(nil, 0) }
+        return key.withUnsafeBytes { raw in body(raw.bindMemory(to: UInt8.self).baseAddress, raw.count) }
     }
 
     deinit {
         whimbrel_memory_close(handle)
+    }
+
+    /// "Check encryption speed" (core `api::speed_check::run_with`), local only: the JSON
+    /// `{"ok":true,"report":{...}}` (timings and hardware class only) or
+    /// `{"ok":false,"error":"..."}`. `openMs`: the main store's open time at launch
+    /// (`LaunchOpened.openMs`). Blocking for seconds: call on `accessQueue`. `progress` (0...1)
+    /// runs on that thread.
+    func speedCheck(openMs: UInt64?, physicalMemory: UInt64?, progress: ((Float) -> Void)?) -> String? {
+        final class Box { let f: (Float) -> Void; init(_ f: @escaping (Float) -> Void) { self.f = f } }
+        let box = progress.map(Box.init)
+        let ctx = box.map { Unmanaged.passUnretained($0).toOpaque() }
+        let cb: whimbrel_speed_progress_fn = { ctx, fraction in
+            guard let ctx else { return }
+            Unmanaged<Box>.fromOpaque(ctx).takeUnretainedValue().f(fraction)
+        }
+        let out = withExtendedLifetime(box) {
+            whimbrel_speed_check_run(handle, openMs.map { Int64(clamping: $0) } ?? -1, physicalMemory ?? 0,
+                                     box == nil ? nil : cb, ctx)
+        }
+        guard let out else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return String(cString: out)
     }
 
     /// docs/adr/0001 slice 2: registers this device's own sync id so meeting and
@@ -2138,13 +2340,13 @@ final class CoreMemoryStore {
     /// Re-embeds up to `maxRows` pre-existing rows (Task 2's `Store::reindex_batch`).
     /// Returns the count actually processed (0 = fully caught up), or -1 on error.
     func reindexBatch(maxRows: Int) -> Int64 {
-        whimbrel_memory_reindex_batch(handle, UInt64(maxRows))
+        Self.jobTick(idle: 0) { whimbrel_memory_reindex_batch(handle, UInt64(maxRows)) }
     }
 
     /// Runs up to `maxJobs` pending jobs (see `Store::run_jobs_batch`). Returns the
     /// count actually processed (0 = nothing eligible), or -1 on error.
     func runJobsBatch(maxJobs: Int) -> Int64 {
-        whimbrel_memory_run_jobs_batch(handle, UInt64(maxJobs))
+        Self.jobTick(idle: 0) { whimbrel_memory_run_jobs_batch(handle, UInt64(maxJobs)) }
     }
 
     /// Runs up to `maxJobs` pending `episode_segment` jobs only, independent of
@@ -2152,44 +2354,45 @@ final class CoreMemoryStore {
     /// `Store::run_episode_segment_batch`). Returns the count actually processed
     /// (0 = nothing eligible), or -1 on error.
     func runEpisodeSegmentBatch(maxJobs: Int) -> Int64 {
-        whimbrel_memory_run_episode_segment_batch(handle, UInt64(maxJobs))
+        Self.jobTick(idle: 0) { whimbrel_memory_run_episode_segment_batch(handle, UInt64(maxJobs)) }
     }
 
     /// Runs up to `maxJobs` pending episode-summarize jobs against the given local
     /// Ollama `model` (see `Store::claim_episode_summarize_jobs`). Returns the count
     /// actually processed (0 = nothing eligible), or -1 on error.
     func runEpisodeSummarizeBatch(model: String, maxJobs: Int, customInstructions: String) -> Int64 {
-        model.withCString { modelPtr in
+        Self.jobTick(idle: 0) { model.withCString { modelPtr in
             customInstructions.withCString { instructionsPtr in
                 whimbrel_episodes_run_summarize_batch(handle, modelPtr, UInt64(maxJobs), instructionsPtr, AppLanguage.currentOutputTag())
             }
-        }
+        } }
     }
 
     /// Runs up to `maxJobs` pending thread-summarize jobs against the given local
     /// Ollama `model` (see `Store::claim_thread_summarize_jobs`). Returns the count
     /// actually processed (0 = nothing eligible), or -1 on error.
     func runThreadSummarizeBatch(model: String, maxJobs: Int, customInstructions: String) -> Int64 {
-        model.withCString { modelPtr in
+        Self.jobTick(idle: 0) { model.withCString { modelPtr in
             customInstructions.withCString { instructionsPtr in
                 whimbrel_threads_run_summarize_batch(handle, modelPtr, UInt64(maxJobs), instructionsPtr, AppLanguage.currentOutputTag())
             }
-        }
+        } }
     }
 
     /// Runs up to `maxJobs` pending thread-priority jobs against TypeSafe (Reply
     /// Priorities). Returns the count processed (0 = nothing eligible), -1 on a null
     /// handle or key, or -2 when TypeSafe rejected the key.
     func runThreadPriorityBatch(apiKey: String, maxJobs: Int) -> Int64 {
-        apiKey.withCString { keyPtr in
+        Self.jobTick(idle: 0) { apiKey.withCString { keyPtr in
             whimbrel_threads_run_priority_batch(handle, keyPtr, UInt64(maxJobs))
-        }
+        } }
     }
 
     /// Publishes this device's topic pages for the phone. Returns the count published; 0 is
     /// normal until the store has its own device id, and -1 is an error.
     func publishTopicSnapshots(builtBy: String) -> Int {
-        Int(builtBy.withCString { whimbrel_topics_publish_snapshots(handle, $0) })
+        // Not while a client delete runs: a page published part-way through would outlive the client.
+        Self.jobTick(idle: 0) { Int(builtBy.withCString { whimbrel_topics_publish_snapshots(handle, $0) }) }
     }
 
     /// Brings the Obsidian vault under `root` up to date. The failure is the raw message
@@ -2209,7 +2412,7 @@ final class CoreMemoryStore {
 
     /// Indexes and clusters one batch of topic sources. 1 = more work, 0 = idle, -1 = error.
     func runTopicsBatch() -> Int64 {
-        whimbrel_topics_run_batch(handle)
+        Self.jobTick(idle: 0) { whimbrel_topics_run_batch(handle) }
     }
 
     /// Judges up to `max` queued sources with TypeSafe. Returns the count processed, -2 when
@@ -2217,7 +2420,7 @@ final class CoreMemoryStore {
     /// allowance is spent (resumes tomorrow), -5 when core has no budget (Start again), -1 on
     /// error.
     func runTopicJudgeBatch(apiKey: String, max: Int, usdPerMillion: Double) -> Int64 {
-        apiKey.withCString { whimbrel_topics_run_judge_batch(handle, $0, UInt64(max), usdPerMillion) }
+        Self.jobTick(idle: 0) { apiKey.withCString { whimbrel_topics_run_judge_batch(handle, $0, UInt64(max), usdPerMillion) } }
     }
 
     /// Size and cost of judging the current queue, or nil on failure.
@@ -2239,11 +2442,11 @@ final class CoreMemoryStore {
     /// -3 over budget, -4 paused for today, -5 not started, -6 no local model, -1 on error.
     func runTopicStepsBatch(routing: CoreRoutingConfig, ollamaModel: String, apiKey: String?, max: Int, usdPerMillion: Double) -> Int64 {
         guard let data = try? JSONEncoder().encode(routing) else { return -1 }
-        return String(decoding: data, as: UTF8.self).withCString { r in
+        return Self.jobTick(idle: 0) { String(decoding: data, as: UTF8.self).withCString { r in
             ollamaModel.withCString { m in
                 (apiKey ?? "").withCString { whimbrel_topics_run_steps_batch(handle, r, m, $0, UInt64(max), usdPerMillion) }
             }
-        }
+        } }
     }
 
     /// Size and cost of reading the current queue for steps, or nil on failure.
@@ -2299,11 +2502,12 @@ final class CoreMemoryStore {
     /// Returns nil on failure.
     func runTopicNamingBatch(routing: CoreRoutingConfig, ollamaModel: String, limit: Int) -> TopicNamingReport? {
         guard let data = try? JSONEncoder().encode(routing) else { return nil }
-        return String(decoding: data, as: UTF8.self).withCString { r in
+        // Paused while a client delete runs: an empty batch, not a failure.
+        return Self.jobTick(idle: TopicNamingReport(named: 0, fallback: 0, modelNamed: 0)) { String(decoding: data, as: UTF8.self).withCString { r in
             ollamaModel.withCString { m in
                 topicJSON(whimbrel_topics_run_naming_batch(handle, r, m, UInt32(limit)))
             }
-        }
+        } }
     }
 
     /// How many topics still show a placeholder name, or nil on failure.
@@ -2389,7 +2593,7 @@ final class CoreMemoryStore {
     /// `Store::backfill_transcript_segments_batch`). Returns the count actually
     /// processed (0 = fully caught up), or -1 on a null handle.
     func backfillTranscriptSegments(maxMeetings: Int) -> Int64 {
-        whimbrel_memory_backfill_transcript_segments_batch(handle, UInt64(maxMeetings))
+        Self.jobTick(idle: 0) { whimbrel_memory_backfill_transcript_segments_batch(handle, UInt64(maxMeetings)) }
     }
 
     /// Whether the embedding model is currently loaded and usable.
@@ -2409,6 +2613,34 @@ final class CoreMemoryStore {
 
     func searchKeyword(_ query: String, limit: Int = 20) -> [CoreCaptureItem] {
         guard let json = query.withCString({ whimbrel_memory_search_keyword(handle, $0, limit) }) else { return [] }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json) ?? []
+    }
+
+    /// Memory blocks for [start, end), cut around `meetings` (start and end in ms). Time, app and title only.
+    func dayBlocks(startUnixMs: Int64, endUnixMs: Int64, meetings: [(start: Int64, end: Int64)]) -> [CoreDayBlock] {
+        let meetingsJson = (try? JSONSerialization.data(withJSONObject: meetings.map { [$0.start, $0.end] }))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        guard let json = meetingsJson.withCString({ whimbrel_memory_day_blocks(handle, startUnixMs, endUnixMs, $0) }) else { return [] }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json) ?? []
+    }
+
+    /// Capture search with the Home filters. `app` empty means any; a bound of 0 or less means none.
+    func searchCapturesFiltered(_ query: String, semantic: Bool, app: String?, startUnixMs: Int64, endUnixMs: Int64, limit: Int = 20) -> [CoreCaptureItem] {
+        let json = query.withCString { q in
+            (app ?? "").withCString { a in
+                whimbrel_memory_search_captures_filtered(handle, q, semantic, a, startUnixMs, endUnixMs, limit)
+            }
+        }
+        guard let json else { return [] }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json) ?? []
+    }
+
+    /// Apps with captures in [start, end), most captures first: the Apps filter's choices.
+    func captureApps(startUnixMs: Int64, endUnixMs: Int64, limit: Int = 20) -> [CoreCaptureApp] {
+        guard let json = whimbrel_memory_capture_apps(handle, startUnixMs, endUnixMs, limit) else { return [] }
         defer { whimbrel_core_free_string(json) }
         return decode(json) ?? []
     }
@@ -2484,6 +2716,44 @@ final class CoreMemoryStore {
         return decodeLLMResult(json)
     }
 
+    /// `askQuestion` that also reports which model answered and what client exclusion did
+    /// (`whimbrel_llm_answer_detailed`). Same arguments and routing.
+    func askQuestionDetailed(
+        _ query: String, model: String, contextLimit: Int = 5, history: [CoreChatTurn] = [], routing: CoreRoutingConfig
+    ) -> Result<CoreDetailedAnswer, CoreLLMError>? {
+        guard let historyJSON = try? JSONEncoder().encode(history),
+              let historyString = String(data: historyJSON, encoding: .utf8) else { return nil }
+        guard let routingJSON = try? JSONEncoder().encode(routing),
+              let routingString = String(data: routingJSON, encoding: .utf8) else { return nil }
+        guard let json = query.withCString({ q in
+            model.withCString { m in
+                historyString.withCString { h in
+                    routingString.withCString { r in
+                        whimbrel_llm_answer_detailed(handle, q, m, contextLimit, h, r)
+                    }
+                }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decodeLLMResult(json)
+    }
+
+    /// Whether this Ask bar question (with the conversation so far) names a client excluded from hosted
+    /// models, so core answers it on this Mac or refuses it. A cheap check, no model call. False when
+    /// core cannot say.
+    func askNamesExcludedClient(_ query: String, history: [CoreChatTurn] = []) -> Bool {
+        guard let historyJSON = try? JSONEncoder().encode(history),
+              let historyString = String(data: historyJSON, encoding: .utf8) else { return false }
+        guard let json = query.withCString({ q in
+            historyString.withCString { h in
+                whimbrel_ask_names_excluded_client(handle, q, h)
+            }
+        }) else { return false }
+        defer { whimbrel_core_free_string(json) }
+        if case .success(let names) = CoreLLMEnvelope<Bool>.result(json) { return names }
+        return false
+    }
+
     /// #74: the assembly half of `askQuestion`, for a caller that streams the actual
     /// model call via `InferenceStreamClient` instead of blocking on it — see
     /// `whimbrel_llm_prepare_ask`'s doc comment. Same retrieval/spend-cap/history/routing
@@ -2550,6 +2820,20 @@ final class CoreMemoryStore {
         }) else { return nil }
         defer { whimbrel_core_free_string(json) }
         return decodeLLMResult(json)
+    }
+
+    /// Core's destination line for one hotkey-panel request before Return (`window_ask::destination_for`):
+    /// `.localOnly` when the window or the question carries a client excluded from hosted models, and an
+    /// Ollama cloud model as `.hosted("ollama")`. Nil on invalid arguments. Reads the store: `accessQueue`.
+    func windowAskDestination(_ window: WindowContext, query: String, routing: CoreRoutingConfig) -> WindowAskDestination? {
+        guard let windowJSON = try? JSONEncoder().encode(window), let windowString = String(data: windowJSON, encoding: .utf8),
+              let routingJSON = try? JSONEncoder().encode(routing), let routingString = String(data: routingJSON, encoding: .utf8),
+              let out = windowString.withCString({ w in
+                  query.withCString { q in routingString.withCString { whimbrel_window_ask_destination(handle, w, q, $0) } }
+              })
+        else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        return try? JSONDecoder().decode(WindowAskDestination.self, from: Data(String(cString: out).utf8))
     }
 
     /// The blocking, governed counterpart of `prepareMeetingAsk` (not pinned to one
@@ -2634,6 +2918,9 @@ final class CoreMemoryStore {
               let routingString = String(data: routingJSON, encoding: .utf8) else { return nil }
         guard let eventsJSON = try? JSONEncoder().encode(todayEvents),
               let eventsString = String(data: eventsJSON, encoding: .utf8) else { return nil }
+        // Paused while a client delete runs: nothing ran this tick.
+        guard whimbrel_client_job_begin() else { return [] }
+        defer { whimbrel_client_job_end() }
         guard let json = ollamaModel.withCString({ m in
             routingString.withCString { r in
                 eventsString.withCString { e in
@@ -2652,20 +2939,96 @@ final class CoreMemoryStore {
         return envelope.data ?? []
     }
 
+    /// `routinesTick` for an account with the cloud runner (`whimbrel_routines_tick_cloud`, the device role): a routine
+    /// in `cloudTemplates` is left to the runner until the failover grace past its ready-by time in `readyBy` (its
+    /// scheduled time when it has none), then runs here if no run is dated today. `runnerFresh` is passed through;
+    /// core does not change this device's rule on it today.
+    func routinesTickCloud(
+        nowUnixMs: Int64, ollamaModel: String, routing: CoreRoutingConfig, todayEvents: [CoreCalendarEventSummary],
+        gmailConnected: Bool, recipientEmail: String?, gate: RoutineGate, cloudTemplates: [String], runnerFresh: Bool,
+        readyBy: [String: String] = [:]
+    ) -> [CoreRoutineRun]? {
+        guard let routingJSON = try? JSONEncoder().encode(routing),
+              let routingString = String(data: routingJSON, encoding: .utf8),
+              let eventsJSON = try? JSONEncoder().encode(todayEvents),
+              let eventsString = String(data: eventsJSON, encoding: .utf8),
+              let cloudString = Self.cloudPolicyJSON(templates: cloudTemplates, readyBy: readyBy) else { return nil }
+        // Paused while a client delete runs: nothing ran this tick.
+        guard whimbrel_client_job_begin() else { return [] }
+        defer { whimbrel_client_job_end() }
+        guard let json = ollamaModel.withCString({ m in
+            routingString.withCString { r in
+                eventsString.withCString { e in
+                    cloudString.withCString { c in
+                        if let recipientEmail {
+                            return recipientEmail.withCString { re in
+                                whimbrel_routines_tick_cloud(handle, nowUnixMs, m, r, e, gmailConnected, re, gate.rawValue, c, runnerFresh)
+                            }
+                        }
+                        return whimbrel_routines_tick_cloud(handle, nowUnixMs, m, r, e, gmailConnected, nil, gate.rawValue, c, runnerFresh)
+                    }
+                }
+            }
+        }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        Self.afterGovernedCall?()
+        guard let envelope: CoreLLMEnvelope<[CoreRoutineRun]> = decode(json), envelope.ok else { return nil }
+        return envelope.data ?? []
+    }
+
+    /// Whether `template` may run in the cloud and what its grant reads (`whimbrel_routines_cloud_info`).
+    static func routinesCloudInfo(template: String) -> CloudRoutineInfo? {
+        guard let json = template.withCString({ whimbrel_routines_cloud_info($0) }) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return try? JSONDecoder().decode(CloudRoutineInfo.self, from: Data(String(cString: json).utf8))
+    }
+
+    /// Whether the runner's heartbeat (unix ms) is under the failover grace old (`whimbrel_cloud_runner_fresh`).
+    static func cloudRunnerFresh(lastRunUnixMs: Int64?, nowUnixMs: Int64) -> Bool {
+        guard let lastRunUnixMs else { return false }
+        return String(lastRunUnixMs).withCString { whimbrel_cloud_runner_fresh($0, nowUnixMs) }
+    }
+
+    /// The cloud policy JSON core's cloud entry points take: `{"templates": [...], "ready_by": {...}}`.
+    static func cloudPolicyJSON(templates: [String], readyBy: [String: String]) -> String? {
+        struct Policy: Encodable {
+            let templates: [String]
+            let readyBy: [String: String]
+            enum CodingKeys: String, CodingKey {
+                case templates
+                case readyBy = "ready_by"
+            }
+        }
+        guard let data = try? JSONEncoder().encode(Policy(templates: templates, readyBy: readyBy)) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     /// Prepares briefs for upcoming meetings whose lead window has opened (Meeting Prep).
     /// Returns the routine runs it created (empty when the routine is off or nothing is
-    /// due), or nil on a malformed call.
+    /// due), or nil on a malformed call. With `meeting_prep` in `cloudTemplates` (Run in the cloud), core
+    /// leaves each meeting the runner can prepare (from a calendar that is not Google's) to it until five minutes
+    /// before it starts (`whimbrel_meeting_prep_run_cloud`); with none, the call is the same as before.
     func meetingPrepRun(
         nowUnixMs: Int64, leadMinutes: Double, ollamaModel: String, routing: CoreRoutingConfig, meetings: [QualifyingMeeting],
-        gate: RoutineGate
+        gate: RoutineGate, cloudTemplates: [String] = []
     ) -> [CoreRoutineRun]? {
         guard let routingJSON = try? JSONEncoder().encode(routing), let routingString = String(data: routingJSON, encoding: .utf8),
               let meetingsJSON = try? JSONEncoder().encode(meetings), let meetingsString = String(data: meetingsJSON, encoding: .utf8)
         else { return nil }
+        let cloudString = cloudTemplates.isEmpty ? nil : Self.cloudPolicyJSON(templates: cloudTemplates, readyBy: [:])
+        if !cloudTemplates.isEmpty && cloudString == nil { return nil }
+        // Paused while a client delete runs: no brief this tick.
+        guard whimbrel_client_job_begin() else { return [] }
+        defer { whimbrel_client_job_end() }
         guard let json = ollamaModel.withCString({ m in
             routingString.withCString { r in
                 meetingsString.withCString { u in
-                    whimbrel_meeting_prep_run(handle, nowUnixMs, leadMinutes, m, r, u, gate.rawValue)
+                    guard let cloudString else {
+                        return whimbrel_meeting_prep_run(handle, nowUnixMs, leadMinutes, m, r, u, gate.rawValue)
+                    }
+                    return cloudString.withCString { c in
+                        whimbrel_meeting_prep_run_cloud(handle, nowUnixMs, leadMinutes, m, r, u, gate.rawValue, c)
+                    }
                 }
             }
         }) else { return nil }
@@ -3618,6 +3981,19 @@ final class CoreMemoryStore {
         return Self.summaryFallback(inEnvelope: Data(String(cString: json).utf8))
     }
 
+    /// Whether a summary of this meeting would be refused now: it names a client excluded from
+    /// hosted models and no local model is available. Recomputed by core on each call, so it is
+    /// false again once a local model is on. Reads only; nothing is sent.
+    func summaryRefusedForExclusion(meetingId: Int64, model: String, routing: CoreRoutingConfig) -> Bool {
+        guard let routingJSON = try? JSONEncoder().encode(routing),
+              let routingString = String(data: routingJSON, encoding: .utf8) else { return false }
+        return model.withCString { m in
+            routingString.withCString { r in
+                whimbrel_meeting_summary_refused_for_exclusion(handle, meetingId, m, r) == 1
+            }
+        }
+    }
+
     static func summaryFallback(inEnvelope data: Data) -> CoreSummaryFallback? {
         struct Envelope: Decodable { let data: CoreSummaryFallback? }
         return (try? JSONDecoder().decode(Envelope.self, from: data))?.data
@@ -3858,6 +4234,11 @@ final class CoreMemoryStore {
     /// `mediaDir` (default: the media folder in Settings) holds audio media retention moved.
     func applyRetention(captureItemDays: Int?, meetingDays: Int?, conversationDays: Int?, nowUnixMs: Int64, recordingsDir: URL,
                         mediaDir: URL = MediaSettings.currentFolderURL()) -> CoreRetentionResult? {
+        // Skipped while a client delete runs (not a failure); the next run sweeps.
+        guard whimbrel_client_job_begin() else {
+            return CoreRetentionResult(captureItemsDeleted: 0, meetingsDeleted: 0, deletedMeetingFiles: [], conversationsDeleted: 0, skippedForClientDelete: true)
+        }
+        defer { whimbrel_client_job_end() }
         guard let json = recordingsDir.path.withCString({ dir in
             mediaDir.path.withCString { media in
                 whimbrel_retention_apply(
@@ -3893,6 +4274,7 @@ final class CoreMemoryStore {
     /// how many files were actually removed.
     static func deleteOrphanedRecordings(_ paths: [String]) -> Int {
         guard let data = try? JSONEncoder().encode(paths) else { return 0 }
+        for path in paths { RecordingPausedSpans.remove(forAudioPath: path) }
         return Int(String(decoding: data, as: UTF8.self).withCString { whimbrel_retention_delete_orphans($0) })
     }
 
@@ -3904,6 +4286,8 @@ final class CoreMemoryStore {
     /// mic-only degraded session, FR-MTG-10).
     static func deleteMeetingFiles(audioPath: String?, transcriptPath: String?, snapshotsDir: String?, recordingsDir: URL,
                                    mediaDir: URL = MediaSettings.currentFolderURL()) {
+        // The paused-stretches file goes with the audio it describes.
+        if let audioPath { RecordingPausedSpans.remove(forAudioPath: audioPath, root: recordingsDir) }
         recordingsDir.path.withCString { dir in
             withOptionalCString(audioPath) { audio in
                 withOptionalCString(transcriptPath) { transcript in
@@ -3921,6 +4305,7 @@ final class CoreMemoryStore {
     static func deleteAllMeetingFiles(_ files: CoreDeletedMeetingFiles, recordingsDir: URL,
                                       mediaDir: URL = MediaSettings.currentFolderURL()) {
         guard let data = try? JSONEncoder().encode(files) else { return }
+        for path in files.audioPaths + [files.audioPath].compactMap({ $0 }) { RecordingPausedSpans.remove(forAudioPath: path, root: recordingsDir) }
         String(decoding: data, as: UTF8.self).withCString { json in
             recordingsDir.path.withCString { rec in
                 mediaDir.path.withCString { whimbrel_retention_delete_all_meeting_files(json, rec, $0) }
@@ -4361,6 +4746,13 @@ final class CoreMemoryStore {
         guard let json = whimbrel_sync_outbox_backlog(handle) else { return nil }
         defer { whimbrel_core_free_string(json) }
         return try? JSONDecoder().decode(CoreOutboxBacklog.self, from: Data(String(cString: json).utf8))
+    }
+
+    /// How far the one-time history indexing (the `kind_tag` backfill) has got, 0 to 99, for "Indexing history: N%".
+    /// nil when nothing should show: it has not run, it finished, or there is nothing to count.
+    func kindBackfillPercent() -> Int? {
+        let percent = whimbrel_sync_kind_backfill_percent(handle)
+        return percent >= 0 ? Int(percent) : nil
     }
 
     static func lastSyncContentError() -> String? {
@@ -5370,11 +5762,12 @@ enum CoreLiveQuestion {
 extension CoreMemoryStore {
     /// Whether `lines[index]` is a question for the user (governed; holds the store across a
     /// model call, so call on the slow lane). Nil only on invalid arguments.
-    func detectLiveQuestion(lines: [CoreLiveLine], index: Int, names: [String], model: String, routing: CoreRoutingConfig)
+    /// `meetingId` is the live meeting, so core keeps the judgement local when it is an excluded client's.
+    func detectLiveQuestion(lines: [CoreLiveLine], index: Int, names: [String], model: String, routing: CoreRoutingConfig, meetingId: Int64)
         -> Result<CoreLiveQuestionVerdict?, CoreLLMError>? {
         guard let l = CoreLiveQuestion.json(lines), let n = CoreLiveQuestion.json(names), let r = CoreLiveQuestion.json(routing),
               let out = l.withCString({ lc in
-                  n.withCString { nc in model.withCString { mc in r.withCString { whimbrel_live_question_detect(handle, lc, index, nc, mc, $0) } } }
+                  n.withCString { nc in model.withCString { mc in r.withCString { whimbrel_live_question_detect(handle, lc, index, nc, mc, $0, meetingId) } } }
               })
         else { return nil }
         defer { whimbrel_core_free_string(out) }
@@ -5383,11 +5776,11 @@ extension CoreMemoryStore {
     }
 
     /// The user's drafted reply to `verdict`, grounded in memory (governed; slow lane).
-    func draftLiveAnswer(verdict: CoreLiveQuestionVerdict, recent: [CoreLiveLine], model: String, routing: CoreRoutingConfig)
+    func draftLiveAnswer(verdict: CoreLiveQuestionVerdict, recent: [CoreLiveLine], model: String, routing: CoreRoutingConfig, meetingId: Int64)
         -> Result<CoreChatAnswer, CoreLLMError>? {
         guard let v = CoreLiveQuestion.json(verdict), let l = CoreLiveQuestion.json(recent), let r = CoreLiveQuestion.json(routing),
               let out = v.withCString({ vc in
-                  l.withCString { lc in model.withCString { mc in r.withCString { whimbrel_live_question_draft(handle, vc, lc, mc, $0) } } }
+                  l.withCString { lc in model.withCString { mc in r.withCString { whimbrel_live_question_draft(handle, vc, lc, mc, $0, meetingId) } } }
               })
         else { return nil }
         defer { whimbrel_core_free_string(out) }
@@ -5462,6 +5855,9 @@ extension CoreMemoryStore {
         guard let routingJSON = try? JSONEncoder().encode(routing), let routingString = String(data: routingJSON, encoding: .utf8),
               let factsJSON = try? JSONEncoder().encode(facts), let factsString = String(data: factsJSON, encoding: .utf8)
         else { return nil }
+        // Paused while a client delete runs: nothing added this time.
+        guard whimbrel_client_job_begin() else { return 0 }
+        defer { whimbrel_client_job_end() }
         guard let out = ollamaModel.withCString({ m in
             routingString.withCString { r in
                 factsString.withCString { f in
@@ -5497,17 +5893,22 @@ enum CoreSkinMaker {
     }
 
     /// `deviceId` is this device's sync id, so the call's spend counts and syncs as its own.
-    static func turn(dbPath: String, deviceId: String, provider: String, model: String, apiKey: String?, input: Data,
+    /// `dbKey`: the database key when the store is encrypted (each skin call opens its own
+    /// connection to `dbPath`).
+    static func turn(dbPath: String, dbKey: Data? = CoreMemoryStore.databaseKey, deviceId: String, provider: String,
+                     model: String, apiKey: String?, input: Data,
                      routing: CoreRoutingConfig) -> Result<SkinTurnReplyDTO, CoreLLMError> {
         let inputString = String(decoding: input, as: UTF8.self)
         let out: UnsafeMutablePointer<CChar>? = dbPath.withCString { db in
-            deviceId.withCString { d in
-                provider.withCString { p in
-                    model.withCString { m in
-                        inputString.withCString { i in
-                            json(routing).withCString { r in
-                                if let apiKey { return apiKey.withCString { k in whimbrel_skin_turn(db, d, p, m, k, i, r) } }
-                                return whimbrel_skin_turn(db, d, p, m, nil, i, r)
+            CoreMemoryStore.withKeyBytes(dbKey) { dk, dn in
+                deviceId.withCString { d in
+                    provider.withCString { p in
+                        model.withCString { m in
+                            inputString.withCString { i in
+                                json(routing).withCString { r in
+                                    if let apiKey { return apiKey.withCString { k in whimbrel_skin_turn(db, dk, dn, d, p, m, k, i, r) } }
+                                    return whimbrel_skin_turn(db, dk, dn, d, p, m, nil, i, r)
+                                }
                             }
                         }
                     }
@@ -5517,18 +5918,24 @@ enum CoreSkinMaker {
         return call(out)
     }
 
-    static func searchImages(dbPath: String, apiKey: String, query: String, routing: CoreRoutingConfig) -> Result<[ImageCandidateDTO], CoreLLMError> {
+    static func searchImages(dbPath: String, dbKey: Data? = CoreMemoryStore.databaseKey, apiKey: String, query: String,
+                             routing: CoreRoutingConfig) -> Result<[ImageCandidateDTO], CoreLLMError> {
         call(dbPath.withCString { db in
-            apiKey.withCString { k in query.withCString { q in json(routing).withCString { r in whimbrel_skin_image_search(db, k, q, r) } } }
+            CoreMemoryStore.withKeyBytes(dbKey) { dk, dn in
+                apiKey.withCString { k in query.withCString { q in json(routing).withCString { r in whimbrel_skin_image_search(db, dk, dn, k, q, r) } } }
+            }
         })
     }
 
-    static func generateImage(dbPath: String, deviceId: String, provider: String, apiKey: String, prompt: String,
+    static func generateImage(dbPath: String, dbKey: Data? = CoreMemoryStore.databaseKey, deviceId: String, provider: String,
+                              apiKey: String, prompt: String,
                               routing: CoreRoutingConfig) -> Result<Data, CoreLLMError> {
         bytes(call(dbPath.withCString { db in
-            deviceId.withCString { d in
-                provider.withCString { p in
-                    apiKey.withCString { k in prompt.withCString { q in json(routing).withCString { r in whimbrel_skin_image_generate(db, d, p, k, q, r) } } }
+            CoreMemoryStore.withKeyBytes(dbKey) { dk, dn in
+                deviceId.withCString { d in
+                    provider.withCString { p in
+                        apiKey.withCString { k in prompt.withCString { q in json(routing).withCString { r in whimbrel_skin_image_generate(db, dk, dn, d, p, k, q, r) } } }
+                    }
                 }
             }
         }))
@@ -5769,5 +6176,629 @@ extension CoreMemoryStore {
     @discardableResult
     func clearModelUnavailable(provider: String) -> Bool {
         provider.withCString { whimbrel_model_unavailable_clear(handle, $0) }
+    }
+}
+
+// MARK: - Client controls (X6 Task 9; core/ffi/src/client_controls_ffi.rs)
+
+/// Why a client-control call did not run (core `ClientOpError`). Never names a client.
+enum ClientOpError: String, Error, Decodable, Equatable {
+    /// Not a live client (unknown, deleted, or merged into another).
+    case notFound = "not_found"
+    /// A delete was refused before it started: this device has no sync id (or only the legacy fallback). Not
+    /// retryable until it has one.
+    case noDeviceId = "no_device_id"
+    /// The request could not be read (a programming error on this side).
+    case invalidInput = "invalid_input"
+    /// A ticked item is no longer in the client's inventory. Nothing was touched: reload the review screen.
+    case selectionChanged = "selection_changed"
+    /// The user cancelled while the delete waited for background work. Nothing was touched.
+    case cancelled
+    /// Background work did not finish in time. Nothing was touched: try again in a moment.
+    case busy
+    /// An export may not go to a network share (`\\server\share`). Nothing was written.
+    case folderNotAllowed = "folder_not_allowed"
+    /// The database or a folder could not be read or written; running it again may help.
+    case failed
+
+    private enum CodingKeys: String, CodingKey { case kind }
+
+    init(from decoder: Decoder) throws {
+        let kind = try decoder.container(keyedBy: CodingKeys.self).decode(String.self, forKey: .kind)
+        self = ClientOpError(rawValue: kind) ?? .failed
+    }
+}
+
+enum ClientItemKind: String, Codable, Equatable, Hashable {
+    case meeting, email, thread, capture, episode, conversation, step
+    case calendarEvent = "calendar_event"
+    case vaultNote = "vault_note"
+    case exportFolder = "export_folder"
+}
+
+/// An item as the review screen sends it back: kind and id only (core matches it against a fresh inventory).
+struct ClientItemRef: Codable, Equatable, Hashable {
+    let kind: ClientItemKind
+    let id: String
+}
+
+/// One piece of a client's material. A capture's id may be `i:<n>`.
+struct ClientItem: Decodable, Equatable, Hashable {
+    let kind: ClientItemKind
+    let id: String
+    /// Another client that also holds this item (display only).
+    let alsoClient: String?
+    let dateUnixMs: Int64
+    /// A calendar event marked removed: still stored, still deleted ("removed events").
+    let removed: Bool
+    /// The row's short name (a title, a subject, a step's text) for this screen only. Client text: never in a
+    /// receipt, a saved receipt or a log line. Nil: the row shows its kind and date.
+    var label: String? = nil
+    /// Why it matched: the line of the item's text that names the client, trimmed around the name. Client text,
+    /// this screen only, like `label`. Nil: the item has no text naming the client (or core is older).
+    var excerpt: String? = nil
+    /// A screen capture's app (bundle id), so captures from one app can be grouped. Not client text.
+    var app: String? = nil
+
+    var ref: ClientItemRef { ClientItemRef(kind: kind, id: id) }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, id, removed, label, excerpt, app
+        case alsoClient = "also_client", dateUnixMs = "date_unix_ms"
+    }
+}
+
+/// One `[kind, n]` pair of a count list.
+struct ClientKindCount: Decodable, Equatable {
+    let kind: ClientItemKind
+    let count: Int
+
+    init(kind: ClientItemKind, count: Int) {
+        self.kind = kind
+        self.count = count
+    }
+
+    init(from decoder: Decoder) throws {
+        var c = try decoder.unkeyedContainer()
+        kind = try c.decode(ClientItemKind.self)
+        count = try c.decode(Int.self)
+    }
+}
+
+/// Places Whimbrel cannot clear for the user (core `LeftForYou`).
+enum ClientLeftForYou: Decodable, Equatable {
+    case mediaFolder(String)
+    case vaultFolder(String)
+    case exportFolders([String])
+    case mailboxOriginals
+    case backupsAndCloud
+    case relayCopiesBeforeThisRelease
+    case filesNotRemoved([String])
+    case copiesOnOtherDevices
+    /// This many items were removed earlier by keep-for-N-months on this computer only.
+    case expiredHereOnly(Int)
+    /// The Obsidian vault integration is off on this Mac: the vault was not touched.
+    case vaultSyncOff
+    /// A kind a newer core added.
+    case other
+
+    private enum Keys: String, CodingKey {
+        case mediaFolder = "media_folder", vaultFolder = "vault_folder", exportFolders = "export_folders"
+        case filesNotRemoved = "files_not_removed", expiredHereOnly = "expired_here_only"
+    }
+
+    init(from decoder: Decoder) throws {
+        if let unit = try? decoder.singleValueContainer().decode(String.self) {
+            switch unit {
+            case "mailbox_originals": self = .mailboxOriginals
+            case "backups_and_cloud": self = .backupsAndCloud
+            case "relay_copies_before_this_release": self = .relayCopiesBeforeThisRelease
+            case "copies_on_other_devices": self = .copiesOnOtherDevices
+            case "vault_sync_off": self = .vaultSyncOff
+            default: self = .other
+            }
+            return
+        }
+        let c = try decoder.container(keyedBy: Keys.self)
+        if let p = try c.decodeIfPresent(String.self, forKey: .mediaFolder) { self = .mediaFolder(p) }
+        else if let p = try c.decodeIfPresent(String.self, forKey: .vaultFolder) { self = .vaultFolder(p) }
+        else if let p = try c.decodeIfPresent([String].self, forKey: .exportFolders) { self = .exportFolders(p) }
+        else if let p = try c.decodeIfPresent([String].self, forKey: .filesNotRemoved) { self = .filesNotRemoved(p) }
+        else if let n = try c.decodeIfPresent(Int.self, forKey: .expiredHereOnly) { self = .expiredHereOnly(n) }
+        else { self = .other }
+    }
+}
+
+struct ClientInventory: Decodable, Equatable {
+    let linked: [ClientItem]
+    /// Name matches, offered unticked; never deleted unless ticked.
+    let possible: [ClientItem]
+    let possibleTruncated: Bool
+    let counts: [ClientKindCount]
+    let leftForYou: [ClientLeftForYou]
+
+    private enum CodingKeys: String, CodingKey {
+        case linked, possible, counts
+        case possibleTruncated = "possible_truncated"
+        case leftForYou = "left_for_you"
+    }
+}
+
+enum ClientRecordState: String, Decodable, Equatable {
+    case removed
+    case removedHereOnly = "removed_here_only"
+    case stillPresent = "still_present"
+}
+
+enum ClientDeleteStage: String, Decodable, Equatable {
+    case derivedText = "derived_text"
+    case clientRecord = "client_record"
+    case cleanup, files
+    /// Not retryable: the device needs its sync id first.
+    case noDeviceId = "no_device_id"
+}
+
+/// What a client delete did (no names, no text).
+struct ClientDeleteReceipt: Decodable, Equatable {
+    let dateUnixMs: Int64
+    let counts: [ClientKindCount]
+    /// Of `counts`: not sent to other devices.
+    let notSent: [ClientKindCount]
+    /// Of `counts`: only ever on this computer.
+    let localOnly: [ClientKindCount]
+    let client: ClientRecordState
+    let leftForYou: [ClientLeftForYou]
+    /// Devices that still need to update; nil = not known yet (never show it as 0).
+    let pendingDevices: Int?
+    let failed: [ClientItemKind]
+    let failedStages: [ClientDeleteStage]
+    let complete: Bool
+    /// "Try again" can finish it (false when only a missing device id is in the way).
+    let retryHelps: Bool
+    /// The encryption upgrade's unencrypted rollback copy was there and this delete removed it
+    /// (X4 design 3.5 step 8). nil from a core that does not send it.
+    var rollbackCopyRemoved: Bool? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case counts, client, failed, complete
+        case dateUnixMs = "date_unix_ms", notSent = "not_sent", localOnly = "local_only", leftForYou = "left_for_you"
+        case pendingDevices = "pending_devices", failedStages = "failed_stages", retryHelps = "retry_helps"
+        case rollbackCopyRemoved = "rollback_copy_removed"
+    }
+}
+
+struct ClientControl: Codable, Equatable {
+    var excludeHosted: Bool
+    /// nil (or 0): no keep period.
+    var keepMonths: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case excludeHosted = "exclude_hosted", keepMonths = "keep_months"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(excludeHosted, forKey: .excludeHosted)
+        try c.encode(keepMonths, forKey: .keepMonths)
+    }
+}
+
+/// What turning exclusion on offers: meetings a hosted model summarised (summarise again with
+/// `summarizeMeeting`, which keeps an excluded client's meeting on this Mac) and core's sentence.
+struct ClientResummaryOffer: Decodable, Equatable {
+    let meetings: [Int64]
+    let alreadyLeftNote: String
+
+    private enum CodingKeys: String, CodingKey { case meetings, alreadyLeftNote = "already_left_note" }
+}
+
+struct ClientDue: Decodable, Equatable {
+    let key: String
+    let items: [ClientItem]
+}
+
+enum ClientRetentionDecision: Encodable, Equatable {
+    case keep
+    case snooze(untilMs: Int64)
+
+    private enum CodingKeys: String, CodingKey { case decision, untilMs = "until_ms" }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .keep: try c.encode("keep", forKey: .decision)
+        case .snooze(let until):
+            try c.encode("snooze", forKey: .decision)
+            try c.encode(until, forKey: .untilMs)
+        }
+    }
+}
+
+struct ClientReviewFlag: Decodable, Equatable {
+    let clients: Int
+    let items: Int
+    let raisedAtUnixMs: Int64
+
+    private enum CodingKeys: String, CodingKey { case clients, items, raisedAtUnixMs = "raised_at_unix_ms" }
+}
+
+/// What a keep-for-N-months expiry did on this Mac.
+struct ClientExpiryReceipt: Decodable, Equatable {
+    let dateUnixMs: Int64
+    let counts: [ClientKindCount]
+    /// Confirmed but no longer due: left.
+    let notDue: [ClientKindCount]
+    /// Not sent to other devices yet: left, offered again later.
+    let waitingToSync: [ClientKindCount]
+    /// Stopped at its time budget: call again.
+    let more: Bool
+    let failed: [ClientItemKind]
+    let failedStages: [ClientDeleteStage]
+    let leftForYou: [ClientLeftForYou]
+    let complete: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case counts, more, failed, complete
+        case dateUnixMs = "date_unix_ms", notDue = "not_due", waitingToSync = "waiting_to_sync"
+        case failedStages = "failed_stages", leftForYou = "left_for_you"
+    }
+}
+
+struct ClientExportWritten: Decodable, Equatable {
+    let folder: String
+    /// Pass to `CoreMemoryStore.clientExportCopyMedia`; nil when there is no media to copy.
+    let mediaToken: UInt64?
+
+    private enum CodingKeys: String, CodingKey { case folder, mediaToken = "media_token" }
+}
+
+struct ClientExportDone: Decodable, Equatable {
+    struct Media: Decodable, Equatable { let files: Int; let skipped: Int; let failed: Int }
+    let folder: String
+    let media: Media
+    /// The text is complete, but some media was not copied.
+    let partial: Bool
+}
+
+/// Decodes a client-control envelope (`{"ok":true,"data":..}` / `{"ok":false,"error":{"kind":..}}`).
+enum ClientResult<T: Decodable> {
+    private struct Envelope: Decodable { let ok: Bool; let data: T?; let error: ClientOpError? }
+
+    static func decode(_ json: String) -> Result<T, ClientOpError> {
+        guard let e = try? JSONDecoder().decode(Envelope.self, from: Data(json.utf8)) else { return .failure(.failed) }
+        if e.ok, let data = e.data { return .success(data) }
+        return .failure(e.error ?? .failed)
+    }
+
+    static func take(_ out: UnsafeMutablePointer<CChar>?) -> Result<T, ClientOpError> {
+        guard let out else { return .failure(.invalidInput) }
+        defer { whimbrel_core_free_string(out) }
+        return decode(String(cString: out))
+    }
+}
+
+/// For client-control calls whose data is null: success when ok.
+private struct ClientOkOnly: Decodable { let ok: Bool; let error: ClientOpError? }
+
+private func clientTakeNothing(_ out: UnsafeMutablePointer<CChar>?) -> Result<Void, ClientOpError> {
+    guard let out else { return .failure(.invalidInput) }
+    defer { whimbrel_core_free_string(out) }
+    guard let e = try? JSONDecoder().decode(ClientOkOnly.self, from: Data(String(cString: out).utf8)) else { return .failure(.failed) }
+    return e.ok ? .success(()) : .failure(e.error ?? .failed)
+}
+
+extension CoreMemoryStore {
+    /// Runs one job-loop tick unless a client delete or expiry is running, when it returns `idle` and the loop
+    /// tries again on its next tick.
+    static func jobTick<T>(idle: T, _ body: () -> T) -> T {
+        guard whimbrel_client_job_begin() else { return idle }
+        defer { whimbrel_client_job_end() }
+        return body()
+    }
+
+    private static func json<E: Encodable>(_ value: E) -> String? {
+        guard let data = try? JSONEncoder().encode(value) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private struct FolderArgs: Encodable {
+        let mediaRoots: [String]
+        let vault: String?
+        let vaultSyncOff: Bool
+        enum CodingKeys: String, CodingKey { case mediaRoots = "media_roots", vault, vaultSyncOff = "vault_sync_off" }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(mediaRoots, forKey: .mediaRoots)
+            try c.encode(vault, forKey: .vault)
+            try c.encode(vaultSyncOff, forKey: .vaultSyncOff)
+        }
+    }
+
+    /// Everything about client `key`. `mediaRoots[0]` is the media folder named under "left for you".
+    /// `vaultSyncOff`: the vault integration is off here (pass no vault); "left for you" says so.
+    func clientInventory(key: String, mediaRoots: [URL], vault: URL?, vaultSyncOff: Bool = false) -> Result<ClientInventory, ClientOpError> {
+        guard let folders = Self.json(FolderArgs(mediaRoots: mediaRoots.map(\.path), vault: vault?.path, vaultSyncOff: vaultSyncOff)) else {
+            return .failure(.invalidInput)
+        }
+        return ClientResult.take(key.withCString { k in folders.withCString { whimbrel_client_inventory_json(handle, k, $0) } })
+    }
+
+    /// Deletes everything about client `key`: its linked material and the ticked possible matches a fresh
+    /// inventory still lists. Slow: call on `slowLaneQueue` (with the slow-lane store), never `accessQueue`.
+    /// `deviceId` is set on this store first; `groupKeyBase64` nil when sync is not set up. The job loops pause
+    /// while it runs.
+    func clientDeleteHeld(
+        key: String, includePossible: [ClientItemRef], reviewedLinked: [ClientItemRef], deleteExports: Bool, mediaRoots: [URL], vault: URL?,
+        vaultSyncOff: Bool = false, deviceId: String, groupKeyBase64: String?, token: UInt64
+    ) -> Result<ClientDeleteReceipt, ClientOpError> {
+        dispatchPrecondition(condition: .onQueue(Self.slowLaneQueue))
+        struct Request: Encodable {
+            let key: String; let include_possible: [ClientItemRef]; let reviewed_linked: [ClientItemRef]; let delete_exports: Bool
+            let media_roots: [String]; let vault: String?; let vault_sync_off: Bool
+        }
+        let request = Request(key: key, include_possible: includePossible, reviewed_linked: reviewedLinked, delete_exports: deleteExports,
+                              media_roots: mediaRoots.map(\.path), vault: vault?.path, vault_sync_off: vaultSyncOff)
+        guard let body = Self.json(request) else {
+            // Step 2 cannot run: give back the pause, or every background loop stays stopped until relaunch.
+            whimbrel_client_release_pause(token)
+            return .failure(.invalidInput)
+        }
+        return ClientResult.take(body.withCString { r in
+            deviceId.withCString { d in
+                Self.withOptionalCString(groupKeyBase64) { whimbrel_client_delete_held_json(handle, r, d, $0, token) }
+            }
+        })
+    }
+
+    /// Background ticks running now (what a waiting delete waits for). Cheap; any thread.
+    nonisolated static func clientJobsRunning() -> Int { Int(whimbrel_client_jobs_running()) }
+
+    /// Step 1 of a delete: pauses the job loops and blocks until the running ticks are gone, keeping the pause held
+    /// under `token`. Needs no store: call it on a plain queue, never the slow lane. False: cancelled.
+    nonisolated static func clientPauseWait(token: UInt64) -> Bool { whimbrel_client_pause_wait(token) == 0 }
+
+    /// Cancels the delete with `token` before it starts. False: too late, it has started. Any thread.
+    nonisolated static func clientCancelWait(token: UInt64) -> Bool { whimbrel_client_cancel_wait(token) }
+
+    /// Drops the pause held under `token` (the delete could not go on).
+    nonisolated static func clientReleasePause(token: UInt64) { whimbrel_client_release_pause(token) }
+
+    /// Devices that still need to update before they apply client deletes; nil when not known yet.
+    func clientPendingDevices() -> Int? {
+        guard let out = whimbrel_client_pending_devices_json(handle) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        struct Reply: Decodable { let pending_devices: Int? }
+        return (try? JSONDecoder().decode(Reply.self, from: Data(String(cString: out).utf8)))?.pending_devices
+    }
+
+    /// Devices on the relay without the topics marker: while any is there, every client's settings row (an
+    /// exclusion too) is held on this Mac and reaches no other device. Removed devices still count. Nil when not
+    /// measured yet or unreadable: never shown as 0.
+    func clientTopicRowsHeldDevices() -> Int? {
+        guard let out = whimbrel_client_pending_devices_json(handle) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        struct Reply: Decodable { let topic_rows_held_devices: Int? }
+        return (try? JSONDecoder().decode(Reply.self, from: Data(String(cString: out).utf8)))?.topic_rows_held_devices
+    }
+
+    /// The sync device ids (public keys) of the devices `clientPendingDevices` counts; nil when not known yet.
+    func clientPendingDeviceIds() -> [String]? {
+        guard let out = whimbrel_client_pending_device_ids_json(handle) else { return nil }
+        defer { whimbrel_core_free_string(out) }
+        struct Reply: Decodable { let devices: [String]? }
+        return (try? JSONDecoder().decode(Reply.self, from: Data(String(cString: out).utf8)))?.devices
+    }
+
+    /// "Remove this device": stops counting `deviceId` (one of `clientPendingDeviceIds`) in the devices still to
+    /// update, on every device after this Mac's next sync round. Releases nothing. The count after it.
+    func clientRetireDevice(_ deviceId: String) -> Result<Int?, ClientOpError> {
+        struct Reply: Decodable { let pending_devices: Int? }
+        let r: Result<Reply, ClientOpError> = ClientResult.take(deviceId.withCString { whimbrel_client_retire_device_json(handle, $0) })
+        return r.map(\.pending_devices)
+    }
+
+    func clientControl(key: String) -> Result<ClientControl, ClientOpError> {
+        ClientResult.take(key.withCString { whimbrel_client_control_get_json(handle, $0) })
+    }
+
+    /// Saves the client's settings (they sync) and republishes the hosted-model gate.
+    func setClientControl(key: String, _ control: ClientControl) -> Result<ClientControl, ClientOpError> {
+        guard let body = Self.json(control) else { return .failure(.invalidInput) }
+        return ClientResult.take(key.withCString { k in body.withCString { whimbrel_client_control_set_json(handle, k, $0) } })
+    }
+
+    func clientResummaryOffer(key: String) -> Result<ClientResummaryOffer, ClientOpError> {
+        ClientResult.take(key.withCString { whimbrel_client_resummary_offer_json(handle, $0) })
+    }
+
+    /// Every client's items past its keep period. Read only.
+    func clientDueItems() -> Result<[ClientDue], ClientOpError> {
+        ClientResult.take(whimbrel_client_due_items_json(handle))
+    }
+
+    func clientDueItems(key: String) -> Result<[ClientItem], ClientOpError> {
+        ClientResult.take(key.withCString { whimbrel_client_due_items_for_json(handle, $0) })
+    }
+
+    /// "Keep these" or "Snooze" for one item, on this Mac only.
+    func clientRetentionDecide(key: String, item: ClientItemRef, decision: ClientRetentionDecision) -> Result<Void, ClientOpError> {
+        guard let i = Self.json(item), let d = Self.json(decision) else { return .failure(.invalidInput) }
+        return clientTakeNothing(key.withCString { k in
+            i.withCString { ip in d.withCString { whimbrel_client_retention_decide_json(handle, k, ip, $0) } }
+        })
+    }
+
+    /// The weekly "items ready to review" flag; `.success(nil)` when it is not up.
+    func clientReviewFlag() -> Result<ClientReviewFlag?, ClientOpError> {
+        guard let out = whimbrel_client_review_flag_json(handle) else { return .failure(.invalidInput) }
+        defer { whimbrel_core_free_string(out) }
+        struct Envelope: Decodable { let ok: Bool; let data: ClientReviewFlag?; let error: ClientOpError? }
+        guard let e = try? JSONDecoder().decode(Envelope.self, from: Data(String(cString: out).utf8)) else { return .failure(.failed) }
+        return e.ok ? .success(e.data) : .failure(e.error ?? .failed)
+    }
+
+    /// "Later": puts the review prompt off for a week.
+    func clientReviewFlagDismiss() -> Result<Void, ClientOpError> {
+        clientTakeNothing(whimbrel_client_review_flag_dismiss_json(handle))
+    }
+
+    /// Deletes confirmed due items on this Mac only. Slow: `slowLaneQueue`. Call again while `more`.
+    func clientExpire(key: String, items: [ClientItemRef], mediaRoots: [URL], vault: URL?, vaultSyncOff: Bool = false,
+                      syncOn: Bool, budgetMs: UInt64) -> Result<ClientExpiryReceipt, ClientOpError> {
+        dispatchPrecondition(condition: .onQueue(Self.slowLaneQueue))
+        struct Request: Encodable {
+            let key: String; let items: [ClientItemRef]; let media_roots: [String]; let vault: String?; let vault_sync_off: Bool
+        }
+        let request = Request(key: key, items: items, media_roots: mediaRoots.map(\.path), vault: vault?.path, vault_sync_off: vaultSyncOff)
+        guard let body = Self.json(request) else {
+            return .failure(.invalidInput)
+        }
+        return ClientResult.take(body.withCString { whimbrel_client_expire_json(handle, $0, syncOn, budgetMs) })
+    }
+
+    /// Writes a client export's text into a new folder inside `destParent` (needs the store: slow lane). Copy
+    /// the media next with `clientExportCopyMedia(token:)` on a background queue, with the store released.
+    func clientExportWrite(key: String, destParent: URL, includePossible: [ClientItemRef], includeMedia: Bool, mediaRoots: [URL]) -> Result<ClientExportWritten, ClientOpError> {
+        dispatchPrecondition(condition: .onQueue(Self.slowLaneQueue))
+        struct Request: Encodable {
+            let key: String; let dest_parent: String; let include_possible: [ClientItemRef]
+            let include_media: Bool; let media_roots: [String]
+        }
+        let request = Request(key: key, dest_parent: destParent.path, include_possible: includePossible,
+                              include_media: includeMedia, media_roots: mediaRoots.map(\.path))
+        guard let body = Self.json(request) else { return .failure(.invalidInput) }
+        return ClientResult.take(body.withCString { whimbrel_client_export_write_json(handle, $0) })
+    }
+
+    /// Copies the media of an export `clientExportWrite` wrote. Needs no store.
+    static func clientExportCopyMedia(token: UInt64) -> Result<ClientExportDone, ClientOpError> {
+        ClientResult.take(whimbrel_client_export_copy_media_json(token))
+    }
+}
+
+/// Counts the model requests the user is waiting on (an Ask question, a digest, a re-summarize, a
+/// meeting question, a post-meeting summary). A background model job checks it before it starts a
+/// request and tries again later while it is busy, because the local model serves one request at a
+/// time: a question must not wait behind a prompt that started after it was typed. A request already
+/// running is never cancelled. An entry older than `maxHold` is ignored, so a view that went away
+/// mid-question cannot hold background work back for good.
+final class UserModelGate: @unchecked Sendable {
+    static let shared = UserModelGate()
+    static let maxHold: TimeInterval = 15 * 60
+    /// How long a background job waits before it asks again while the gate is busy.
+    static let retryDelay: TimeInterval = 15
+
+    private let lock = NSLock()
+    private var entries: [UUID: Date] = [:]
+
+    init() {}
+
+    /// Call when the user's request is queued or started; pass the token to `leave` when it ends.
+    @discardableResult
+    func enter(now: Date = Date()) -> UUID {
+        let token = UUID()
+        lock.lock(); defer { lock.unlock() }
+        entries[token] = now
+        return token
+    }
+
+    /// Safe to call twice, or with nil.
+    func leave(_ token: UUID?) {
+        guard let token else { return }
+        lock.lock(); defer { lock.unlock() }
+        entries[token] = nil
+    }
+
+    /// Whether a user request is queued or running (entries past `maxHold` do not count).
+    func isBusy(now: Date = Date()) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        entries = entries.filter { now.timeIntervalSince($0.value) < Self.maxHold }
+        return !entries.isEmpty
+    }
+
+    /// Runs `body` on the slow lane as a user-initiated model call: counted from now (queued) until it returns.
+    static func runOnSlowLane(_ body: @escaping () -> Void) {
+        let token = shared.enter()
+        CoreMemoryStore.slowLaneQueue.async {
+            defer { shared.leave(token) }
+            body()
+        }
+    }
+}
+
+/// Which connection and queue a background model job uses: its own lane when the extra connection
+/// opened, else the slow lane as before.
+enum BackgroundModelLane {
+    case dedicated
+    case slowFallback
+
+    static func choose(dedicatedOpened: Bool) -> BackgroundModelLane { dedicatedOpened ? .dedicated : .slowFallback }
+
+    var queue: DispatchQueue {
+        switch self {
+        case .dedicated: return CoreMemoryStore.backgroundModelQueue
+        case .slowFallback: return CoreMemoryStore.slowLaneQueue
+        }
+    }
+
+    /// What a background model job does at its start: run, or wait and ask again.
+    enum Start: Equatable { case run, retryLater(seconds: TimeInterval) }
+
+    /// Gated on either lane: the gate only defers (it never blocks), so a job on the slow fallback lane
+    /// cannot wait for itself.
+    static func start(userBusy: Bool) -> Start {
+        userBusy ? .retryLater(seconds: UserModelGate.retryDelay) : .run
+    }
+}
+
+/// Set once when a queued block starts running; read from another thread.
+final class LaneStartFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    init() {}
+    func set() { lock.lock(); started = true; lock.unlock() }
+    var isSet: Bool { lock.lock(); defer { lock.unlock() }; return started }
+}
+
+// MARK: Marked moments (live meeting, redesign flag only)
+
+/// A moment the person marked during a meeting. `atCs` is centiseconds from the start of the recording on the
+/// meeting-absolute clock (paused time included), the clock live alerts and transcript seek use. Local to this device.
+struct CoreMeetingMarker: Decodable, Identifiable, Equatable {
+    let id: Int64
+    let meetingId: Int64
+    let atCs: Int64
+    let label: String?
+    let createdUnixMs: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case id, label
+        case meetingId = "meeting_id"
+        case atCs = "at_cs"
+        case createdUnixMs = "created_unix_ms"
+    }
+}
+
+extension CoreMemoryStore {
+    /// Call on `CoreMemoryStore.accessQueue`.
+    func addMeetingMarker(meetingId: Int64, atCs: Int64, label: String?, createdUnixMs: Int64) -> CoreMeetingMarker? {
+        let json = Self.withOptionalCString(label) { whimbrel_meeting_marker_add(handle, meetingId, atCs, $0, createdUnixMs) }
+        guard let json else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
+    func meetingMarkers(meetingId: Int64) -> [CoreMeetingMarker]? {
+        guard let json = whimbrel_meeting_marker_list(handle, meetingId) else { return nil }
+        defer { whimbrel_core_free_string(json) }
+        return decode(json)
+    }
+
+    @discardableResult
+    func deleteMeetingMarker(id: Int64) -> Bool { whimbrel_meeting_marker_delete(handle, id) }
+
+    @discardableResult
+    func setMeetingMarkerLabel(id: Int64, label: String?) -> Bool {
+        Self.withOptionalCString(label) { whimbrel_meeting_marker_set_label(handle, id, $0) }
     }
 }

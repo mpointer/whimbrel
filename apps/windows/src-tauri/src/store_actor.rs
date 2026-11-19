@@ -28,6 +28,10 @@ use serde::Serialize;
 use crate::error::CommandError;
 use crate::l10n::tr;
 
+/// How long a statement on any lane waits for another connection's write lock before failing
+/// with "database is busy" (the Mac's value on all three of its connections).
+pub const BUSY_TIMEOUT: Duration = Duration::from_secs(30);
+
 type Job = Box<dyn FnOnce(&Store) + Send + 'static>;
 
 struct Envelope {
@@ -41,14 +45,81 @@ struct Envelope {
 pub struct StoreHandle {
     tx: mpsc::Sender<Envelope>,
     stats: Arc<Mutex<QueueStats>>,
+    /// The database key this connection was opened with (X4); the other lanes open with it.
+    key: Option<Arc<crate::db_key::KeyBytes>>,
 }
 
 impl StoreHandle {
     /// Opens the memory store the way a shell must (`api::store::open`, which runs the
     /// one-time startup sweep) on a new actor thread. `models_dir` is the MiniLM
     /// directory (plan Decision 12); the store opens fine before the model exists.
+    #[cfg(test)]
     pub fn open(db_path: PathBuf, models_dir: PathBuf) -> Result<Self, CommandError> {
         Self::spawn(move || api::store::open(&db_path, &models_dir).map_err(|e| e.to_string()))
+    }
+
+    /// The launch's plain open of the main store (`OpenPlain`), on a new actor thread.
+    /// `api::store::open` creates a missing file: core plans this only on a plain file, and
+    /// the window between the look and the open is the race the Mac accepted.
+    pub fn open_plain_main(db_path: PathBuf, models_dir: PathBuf) -> Option<Self> {
+        match Self::spawn(move || api::store::open(&db_path, &models_dir).map_err(|e| e.to_string())) {
+            Ok(handle) => Some(handle),
+            Err(e) => {
+                tracing::warn!(error = %e, "the plain open of the main store failed");
+                None
+            }
+        }
+    }
+
+    /// The launch's keyed open of the main store (`OpenKeyed`), inside the actor's open
+    /// closure. `cache_kib` reaches only this store (Faster search); `must_exist` only for the
+    /// proof open of a restored key, which never creates. The handle carries the key, so the
+    /// other lanes open with it.
+    pub fn open_keyed_main(
+        db_path: PathBuf,
+        models_dir: PathBuf,
+        key: crate::db_key::KeyBytes,
+        cache_kib: Option<i64>,
+        must_exist: bool,
+    ) -> (crate::launch::OpenKind, Option<Self>) {
+        let db_key = key.db_key();
+        Self::keyed_main_with(key, move || {
+            let opts = memory::KeyedOpenOptions { cache_kib, must_exist };
+            let outcome = api::store_key::open_store_with_options(&db_path, &models_dir, api::store_key::KeyLookup::Found(db_key), &opts);
+            crate::launch::live::open_kind(outcome)
+        })
+    }
+
+    /// `open_keyed_main` over any open, so a test can make the open panic.
+    fn keyed_main_with(
+        key: crate::db_key::KeyBytes,
+        open: impl FnOnce() -> (crate::launch::OpenKind, Option<Store>) + Send + 'static,
+    ) -> (crate::launch::OpenKind, Option<Self>) {
+        let (kind_tx, kind_rx) = mpsc::sync_channel(1);
+        let spawned = Self::spawn(move || {
+            let (kind, store) = open();
+            let _ = kind_tx.send(kind.clone());
+            store.ok_or_else(|| format!("{kind:?}"))
+        });
+        // `spawn` returns only after the open reported, so an empty channel means the open
+        // never ran or never finished (the thread did not start, or the open panicked). That
+        // proves nothing about the key, so it must not read as `StartupFailed`, which the
+        // launch treats as proof that a restored key opened the file.
+        let kind = kind_rx
+            .try_recv()
+            .unwrap_or_else(|_| crate::launch::OpenKind::NeverRan("the store thread did not start or the open did not finish".into()));
+        match spawned {
+            Ok(mut handle) => {
+                handle.key = Some(Arc::new(key));
+                (kind, Some(handle))
+            }
+            Err(_) => (kind, None),
+        }
+    }
+
+    /// The key the main store was opened with, for the MCP server.
+    pub fn db_key(&self) -> Option<Arc<crate::db_key::KeyBytes>> {
+        self.key.clone()
     }
 
     /// Opens a second connection to `db_path` on its own actor (the slow lane), sharing
@@ -69,9 +140,11 @@ impl StoreHandle {
     /// One more connection, opened the same way, on a thread called `thread_name`.
     pub fn open_lane(db_path: PathBuf, primary: &StoreHandle, thread_name: &str) -> Result<Self, CommandError> {
         let embedder = primary.call_blocking(|s| s.embedder())?;
-        Self::spawn_named(thread_name, move || {
-            Store::open_with_embedder(&db_path, embedder).map_err(|e| e.to_string())
-        })
+        let key = primary.key.clone();
+        let lane_key = key.clone();
+        let mut handle = Self::spawn_named(thread_name, move || crate::db_open::open_lane(&db_path, embedder, lane_key.as_deref()))?;
+        handle.key = key;
+        Ok(handle)
     }
 
     /// Starts an actor around whatever `open` returns (tests use an in-memory store).
@@ -93,6 +166,11 @@ impl StoreHandle {
             .spawn(move || {
                 let store = match open() {
                     Ok(store) => {
+                        // Several connections now write (issue 850): a write waits for another's
+                        // lock rather than failing after core's 5 s default, as on the Mac.
+                        if let Err(e) = store.set_busy_timeout(BUSY_TIMEOUT) {
+                            tracing::warn!(error = %e, "could not set the store's busy timeout");
+                        }
                         let _ = opened_tx.send(Ok(()));
                         store
                     }
@@ -111,7 +189,7 @@ impl StoreHandle {
             })
             .map_err(|e| CommandError::store(tr("Could not start the store thread: {error}", &[("error", &e.to_string())])))?;
         match opened_rx.recv() {
-            Ok(Ok(())) => Ok(StoreHandle { tx, stats }),
+            Ok(Ok(())) => Ok(StoreHandle { tx, stats, key: None }),
             Ok(Err(e)) => Err(CommandError::store(tr("Could not open the store: {error}", &[("error", &e.to_string())]))),
             Err(_) => Err(CommandError::store(tr("The store thread exited while opening", &[]))),
         }
@@ -245,10 +323,76 @@ pub struct QueueWaitStats {
 
 #[cfg(test)]
 mod tests {
+    /// Review of 83e2b079: an open that panics never reports a kind. That must read as
+    /// `NeverRan` (proves nothing), never `StartupFailed` (which proves a restored key).
+    #[test]
+    fn an_open_that_never_reports_is_never_ran_not_startup_failed() {
+        let key = crate::db_key::KeyBytes::new([13; 32]);
+        let (kind, handle) = StoreHandle::keyed_main_with(key, || panic!("the open panicked (test)"));
+        assert!(matches!(kind, crate::launch::OpenKind::NeverRan(_)), "{kind:?}");
+        assert!(handle.is_none());
+    }
+
+    #[test]
+    fn the_main_store_hands_its_key_to_the_other_lanes() {
+        let dir = std::env::temp_dir().join(format!("whimbrel-actor-key-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("kestrel.sqlite");
+        let key = crate::db_key::KeyBytes::new([11; 32]);
+        let (kind, main) = StoreHandle::open_keyed_main(db.clone(), dir.join("models"), key.clone(), None, false);
+        assert_eq!(kind, crate::launch::OpenKind::Opened);
+        let main = main.unwrap();
+        assert_eq!(main.db_key().as_deref(), Some(&key), "the MCP spawn spec reads this");
+        let lane = StoreHandle::open_lane(db.clone(), &main, "test-lane").unwrap();
+        assert_eq!(lane.db_key().as_deref(), Some(&key));
+        assert_eq!(lane.call_blocking(|s| s.own_device_id().is_none()).unwrap(), true, "the lane opened and answers");
+        drop(lane);
+        drop(main);
+        // A plain database: no key anywhere.
+        let plain = dir.join("plain.sqlite");
+        let main = StoreHandle::open_plain_main(plain, dir.join("models"));
+        assert!(main.unwrap().db_key().is_none());
+        // A wrong key: nothing opens, the kind says why, and the file is left as it was.
+        let before = std::fs::read(&db).unwrap();
+        let (kind, main) = StoreHandle::open_keyed_main(db.clone(), dir.join("models"), crate::db_key::KeyBytes::new([12; 32]), None, false);
+        assert!(matches!(kind, crate::launch::OpenKind::KeyRejected(_)) && main.is_none(), "{kind:?}");
+        assert_eq!(std::fs::read(&db).unwrap(), before);
+        // The proof open never creates a missing database.
+        let missing = dir.join("missing.sqlite");
+        let (kind, main) = StoreHandle::open_keyed_main(missing.clone(), dir.join("models"), key, None, true);
+        assert!(main.is_none() && !missing.exists(), "{kind:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
 
     fn in_memory() -> StoreHandle {
         StoreHandle::spawn(|| Store::open_in_memory().map_err(|e| e.to_string())).unwrap()
+    }
+
+    /// Issue 850: with sync, capture and retention on their own lane, a write on one lane waits
+    /// out another's lock for 30 s (the Mac's value) instead of core's 5 s default.
+    #[test]
+    fn every_lane_opens_with_the_long_busy_timeout() {
+        let handle = in_memory();
+        assert_eq!(handle.call_blocking(|s| s.busy_timeout_ms().unwrap()).unwrap(), 30_000);
+    }
+
+    /// Issue 850: sync rounds, capture ingest and retention run on the I/O lane, never the
+    /// connection every screen reads through.
+    #[test]
+    fn scheduled_background_writes_use_the_io_lane() {
+        let src = include_str!("state.rs");
+        for (start, call) in [
+            ("pub fn start_sync(", "crate::syncing::content::start("),
+            ("pub fn start_capture(", "crate::capture::service::start("),
+            ("pub fn start_retention(", "crate::retention::start("),
+        ] {
+            let body = &src[src.find(start).unwrap()..];
+            let body = &body[..body.find(call).unwrap()];
+            assert!(body.contains("self.io_lane()"), "{start} does not take the I/O lane");
+        }
     }
 
     #[test]

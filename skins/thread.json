@@ -1,0 +1,129 @@
+{
+  "author": "Whimbrel",
+  "decoration": {
+    "dividers": "none",
+    "headerBand": "none",
+    "imagery": [],
+    "texture": "none"
+  },
+  "icons": {
+    "ask": "arrow.up.circle.fill",
+    "meetings": "person.2",
+    "person": "person",
+    "prep": "doc.text",
+    "recap": "text.alignleft",
+    "routines": "bolt",
+    "settings": "gearshape",
+    "time": "clock",
+    "today": "sun.max"
+  },
+  "id": "thread",
+  "motion": "subtle",
+  "name": "Thread",
+  "palettes": [
+    "thread"
+  ],
+  "shape": {
+    "border": "solid",
+    "borderWidth": 1,
+    "density": "regular",
+    "radius": 8
+  },
+  "today": {
+    "archetype": "standard",
+    "options": {
+      "actions": "buttons",
+      "ask": "field",
+      "labels": "plain",
+      "nextMeeting": "card",
+      "timeline": "line"
+    }
+  },
+  "typography": {
+    "body": "SF Pro/regular",
+    "caps": "none",
+    "display": "SF Pro/semibold",
+    "label": "SF Pro/regular",
+    "numerals": "SF Pro/semibold"
+  },
+  "voice": {
+    "askPlaceholder": "Ask Whimbrel about your meetings",
+    "earlierHeader": "Earlier",
+    "emptyDay": "No meetings yet",
+    "emptyEarlier": "Nothing yet today",
+    "greetingAfternoon": "Good afternoon, {name}",
+    "greetingEvening": "Good evening, {name}",
+    "greetingMorning": "Good morning, {name}",
+    "recapHeader": "Daily recap",
+    "tagline": "Your meetings, remembered.",
+    "upNextHeader": "Up next",
+    "upcomingHeader": "Today"
+  },
+  "voiceLocalized": {
+    "de": {
+      "askPlaceholder": "Fragen Sie Whimbrel zu Ihren Meetings",
+      "earlierHeader": "Früher",
+      "emptyDay": "Noch keine Meetings",
+      "emptyEarlier": "Heute noch nichts",
+      "greetingAfternoon": "Guten Nachmittag, {name}",
+      "greetingEvening": "Guten Abend, {name}",
+      "greetingMorning": "Guten Morgen, {name}",
+      "recapHeader": "Tages-Recap",
+      "tagline": "Ihre Meetings, nicht vergessen.",
+      "upNextHeader": "Als Nächstes",
+      "upcomingHeader": "Today"
+    },
+    "es": {
+      "askPlaceholder": "Pregunta a Whimbrel sobre tus reuniones",
+      "earlierHeader": "Anteriores",
+      "emptyDay": "Aún no hay reuniones",
+      "emptyEarlier": "Aún no hay nada hoy",
+      "greetingAfternoon": "Buenas tardes, {name}",
+      "greetingEvening": "Buenas noches, {name}",
+      "greetingMorning": "Buenos días, {name}",
+      "recapHeader": "Recap diario",
+      "tagline": "Tus reuniones, recordadas.",
+      "upNextHeader": "Lo siguiente",
+      "upcomingHeader": "Today"
+    },
+    "fr": {
+      "askPlaceholder": "Interrogez Whimbrel sur vos réunions",
+      "earlierHeader": "Plus tôt",
+      "emptyDay": "Aucune réunion pour l'instant",
+      "emptyEarlier": "Rien encore aujourd'hui",
+      "greetingAfternoon": "Bon après-midi, {name}",
+      "greetingEvening": "Bonsoir, {name}",
+      "greetingMorning": "Bonjour, {name}",
+      "recapHeader": "Recap du jour",
+      "tagline": "Vos réunions, jamais oubliées.",
+      "upNextHeader": "À suivre",
+      "upcomingHeader": "Today"
+    },
+    "fr-CA": {
+      "askPlaceholder": "Interrogez Whimbrel sur vos réunions",
+      "earlierHeader": "Plus tôt",
+      "emptyDay": "Aucune réunion pour l'instant",
+      "emptyEarlier": "Rien pour l'instant aujourd'hui",
+      "greetingAfternoon": "Bon après-midi, {name}",
+      "greetingEvening": "Bonsoir, {name}",
+      "greetingMorning": "Bonjour, {name}",
+      "recapHeader": "Recap du jour",
+      "tagline": "Vos réunions, jamais oubliées.",
+      "upNextHeader": "À suivre",
+      "upcomingHeader": "Today"
+    },
+    "pt": {
+      "askPlaceholder": "Pergunte ao Whimbrel sobre reuniões",
+      "earlierHeader": "Mais cedo",
+      "emptyDay": "Nenhuma reunião ainda",
+      "emptyEarlier": "Nada ainda hoje",
+      "greetingAfternoon": "Boa tarde, {name}",
+      "greetingEvening": "Boa noite, {name}",
+      "greetingMorning": "Bom dia, {name}",
+      "recapHeader": "Recap diário",
+      "tagline": "Suas reuniões, lembradas.",
+      "upNextHeader": "A seguir",
+      "upcomingHeader": "Today"
+    }
+  }
+}

@@ -99,7 +99,7 @@ struct TodayTimeline: View {
                     if item.isNext { briefToggle(event, hasPrep: item.model.chips.contains { if case .prep = $0 { return true } else { return false } }) }
                     Spacer(minLength: Spacing.md)
                     if showsStart {
-                        Button("Start") { actions.startMeeting(event) }
+                        Button("Start") { actions.startMeeting(event) }.recordingControl()
                             .buttonStyle(.whimbrelPrimary)
                     }
                 }

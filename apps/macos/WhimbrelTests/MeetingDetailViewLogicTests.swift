@@ -248,4 +248,10 @@ final class MeetingDetailViewLogicTests: XCTestCase {
     func test_placeholder_title_renders_verbatim() {
         XCTAssertEqual(MeetingDetailLogic.displayTitle("Meeting"), "Meeting")
     }
+
+    func test_summary_placeholder_prefers_transcribing_then_the_exclusion_refusal() {
+        XCTAssertEqual(MeetingDetailLogic.summaryPlaceholder(processing: true, refusedForExclusion: true), .transcribing)
+        XCTAssertEqual(MeetingDetailLogic.summaryPlaceholder(processing: false, refusedForExclusion: true), .refusedForExclusion)
+        XCTAssertEqual(MeetingDetailLogic.summaryPlaceholder(processing: false, refusedForExclusion: false), .none)
+    }
 }

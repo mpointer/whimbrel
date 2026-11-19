@@ -11,6 +11,17 @@ final class InferenceEventDecodingTests: XCTestCase {
         try? JSONDecoder().decode(InferenceEvent.self, from: Data(json.utf8))
     }
 
+    func testExclusionRefusalsAreTypedOnTheTerminal() {
+        let refused = #"{"kind":"terminal","run_id":"r","outcome":{"kind":"failed","class":"excluded_client","message":"x"},"at_unix_ms":1,"final_text":"","usage":{"input_tokens":null,"output_tokens":null}}"#
+        guard case .terminal(_, let outcome, _, _, _)? = decode(refused) else { return XCTFail("no terminal") }
+        XCTAssertTrue(outcome.isExcludedClientRefusal)
+        XCTAssertFalse(outcome.isExclusionUnreadable)
+        let unreadable = InferenceEvent.TerminalOutcome.failed(classification: "exclusion_unreadable", message: "x")
+        XCTAssertTrue(unreadable.isExclusionUnreadable)
+        XCTAssertFalse(unreadable.isExcludedClientRefusal)
+        XCTAssertFalse(InferenceEvent.TerminalOutcome.failed(classification: "provider", message: "x").isExcludedClientRefusal)
+    }
+
     func testDecodesStateEvent() {
         let json = #"{"kind":"state","run_id":"run-1","state":"streaming","at_unix_ms":1000,"provider":"ollama","model":"gemma4","attempt":1}"#
         XCTAssertEqual(

@@ -90,7 +90,7 @@ final class SkinMatrixTests: XCTestCase {
 
     func test_matrix_covers_every_skin_and_palette() {
         let c = combos()
-        XCTAssertEqual(Set(c.map(\.skin.id)).count, 7, "every shipped skin")
+        XCTAssertEqual(Set(c.map(\.skin.id)).count, 8, "every shipped skin, Thread included")
         XCTAssertGreaterThan(c.count, 10)
     }
 

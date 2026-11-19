@@ -66,6 +66,8 @@ pub fn assemble_like_ask(
     text: &str,
     now_unix_ms: i64,
 ) -> Vec<llm::ContextItem> {
+    // As a hosted Ask would: an excluded client's material is left out.
+    let filter = api::exclusion::context_filter(store);
     match llm::detect_date_scope(text) {
         Some(scope) => {
             let (start, end) = llm::date_scope_bounds(scope, now_unix_ms);
@@ -77,9 +79,10 @@ pub fn assemble_like_ask(
                 end,
                 APP_CONTEXT_LIMIT,
                 true,
+                &filter,
             )
         }
-        None => llm::gather_and_assemble_context(store, text, now_unix_ms, APP_CONTEXT_LIMIT, true, true),
+        None => llm::gather_and_assemble_context(store, text, now_unix_ms, APP_CONTEXT_LIMIT, true, true, &filter),
     }
 }
 

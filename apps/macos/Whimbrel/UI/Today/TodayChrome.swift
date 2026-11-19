@@ -152,7 +152,7 @@ struct TodayLeftovers: View {
                         row(next.timeText, next.title)
                         if case let .ready(prep) = next.prep { TodayPrepChips(prep: prep, actions: actions) }
                         if next.showsStart {
-                            Button("Start") { actions.startMeeting(next.event) }.buttonStyle(.whimbrelPrimary)
+                            Button("Start") { actions.startMeeting(next.event) }.buttonStyle(.whimbrelPrimary).recordingControl()
                         }
                     }
                 }
@@ -167,7 +167,7 @@ struct TodayLeftovers: View {
                             row(event.timeText, event.title)
                             if case let .ready(prep) = event.prep { TodayPrepChips(prep: prep, actions: actions) }
                             if event.showsStart {
-                                Button("Start") { actions.startMeeting(event.event) }.buttonStyle(.whimbrelPrimary)
+                                Button("Start") { actions.startMeeting(event.event) }.buttonStyle(.whimbrelPrimary).recordingControl()
                             }
                         }
                     case .separator: WhimbrelSectionLabel(text: TodayRows.heldSeparator)

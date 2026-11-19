@@ -1,4 +1,4 @@
-// Turns src/generated/schema.json (written by `cargo run --bin gen-schema` in
+// Turns src/generated/schema.json (written by `cargo run --example gen-schema` in
 // src-tauri) into src/generated/types.ts. `--check` fails instead of writing when
 // types.ts is stale — the UI half of plan Decision 11's "a shape change breaks the
 // build". (The Rust half is src-tauri's `committed_schema_is_current` test.)
@@ -20,7 +20,7 @@ const body = await compile(schema, "WhimbrelDtos", {
 });
 const header =
   "// Generated from apps/windows/src-tauri's command DTOs by `npm run gen:types`.\n" +
-  "// Do not edit. Change the Rust type, run `cargo run --bin gen-schema`, then `npm run gen:types`.\n\n";
+  "// Do not edit. Change the Rust type, run `cargo run --example gen-schema`, then `npm run gen:types`.\n\n";
 const text = header + body;
 
 if (process.argv.includes("--check")) {

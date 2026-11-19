@@ -178,15 +178,19 @@ enum StorageCopy {
     }
 }
 
-/// Runs a database compaction. It holds both store lanes for the whole rewrite, so the slow
-/// lane's connection waits instead of failing with "database is locked" partway through.
-/// Lock order is slow lane, then access queue; nothing takes them the other way round.
-/// Never call it from the main thread or from either queue.
+/// Runs a database compaction. It holds all four store lanes for the whole rewrite, so the slow,
+/// background model and background connections wait instead of failing with "database is locked" partway through.
+/// Lock order is slow lane, then background model lane, then background, then access queue; nothing
+/// takes them the other way round. Never call it from the main thread or from any of the queues.
 enum StorageCompaction {
     static func run(_ store: CoreMemoryStore, forced: Bool) -> CoreCompactResult? {
         CoreMemoryStore.slowLaneQueue.sync {
-            CoreMemoryStore.accessQueue.sync {
-                store.compact(volumeFreeBytes: StorageVolume.writableFreeBytes(at: SpikePaths.root) ?? 0, forced: forced)
+            CoreMemoryStore.backgroundModelQueue.sync {
+                CoreMemoryStore.backgroundQueue.sync {
+                    CoreMemoryStore.accessQueue.sync {
+                        store.compact(volumeFreeBytes: StorageVolume.writableFreeBytes(at: SpikePaths.root) ?? 0, forced: forced)
+                    }
+                }
             }
         }
     }

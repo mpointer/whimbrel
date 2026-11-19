@@ -1,0 +1,287 @@
+/* The redesigned shell and Home. Layout only: colors, fonts and shape come from the selected skin through the
+   system variables (--color-*, --radius-*, --font-*, --density) with the --w-* tokens as the fallback. Nothing here
+   touches app.css, decoration.css or archetypes.css. */
+.popup-pause {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm, 8px);
+  font-size: var(--w-text-caption-size, 0.8125rem);
+}
+.popup-pause select {
+  flex: 1;
+  min-height: 2rem;
+  font: inherit;
+  color: var(--color-text-primary);
+  background: var(--color-background-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control, 6px);
+  padding: 0 var(--space-sm, 8px);
+}
+
+/* ---- The shell ---- */
+.w-shell {
+  min-height: 0;
+  background: var(--color-background-page);
+}
+.w-shell > .w-sidebar {
+  flex: none;
+  min-height: 100%;
+  overflow-y: auto;
+}
+.w-shell .stage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.w-shell .w-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--w-space-xl);
+}
+.w-sidebar-footer.sidebar-footer {
+  padding: var(--w-space-md) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+}
+.w-shell-recording {
+  flex: none;
+  padding: var(--w-space-sm) var(--w-space-xl) 0;
+}
+.w-shell-recording-note {
+  margin: var(--w-space-xs) 0 0;
+  color: var(--color-text-secondary);
+}
+.w-sidebar-footer p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+
+/* ---- Header row: title, search and ask, capture state ---- */
+.w-shell-header {
+  flex: none;
+  padding: var(--w-space-md) var(--w-space-xl) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--w-space-sm);
+}
+.w-shell-header-row {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--w-space-lg);
+}
+.w-shell-title h1 {
+  margin: 0;
+  font-family: var(--sx-font-title);
+  font-size: var(--w-text-subtitle-size);
+  line-height: var(--w-text-subtitle-line);
+  font-weight: var(--w-text-subtitle-weight);
+}
+.w-shell-title p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+.w-shell-search {
+  min-width: 0;
+}
+.w-shell-capture {
+  min-width: 0;
+}
+.w-shell-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-sm) var(--w-space-lg);
+}
+@container shell (max-width: 62rem) {
+  .w-shell-header-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .w-shell-search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+/* ---- Thread list in the sidebar (Home only) ---- */
+.w-thread {
+  margin-top: var(--w-space-lg);
+}
+.w-thread-label {
+  margin: 0 0 var(--w-space-xs);
+  padding: 0 var(--w-space-md);
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+  font-weight: 600;
+}
+.w-thread ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.w-thread-item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--w-space-sm);
+  width: 100%;
+  min-height: var(--w-target);
+  align-items: center;
+  padding: 0 var(--w-space-md);
+  border: 0;
+  border-radius: var(--sx-radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.w-thread-item:hover {
+  background: var(--color-selection);
+}
+.w-thread-note {
+  color: var(--color-text-secondary);
+  font-size: var(--w-text-secondary-size);
+}
+
+/* Room for a label, its badge and its shortcut hint on one line. */
+.w-shell > .w-sidebar {
+  width: max(var(--w-sidebar-width), 16rem);
+}
+.w-shell .w-sidebar-hint {
+  white-space: nowrap;
+}
+.w-shell .w-sidebar-label {
+  overflow-wrap: normal;
+}
+
+/* ---- Narrow content (a small window, or large text: rem follows the text size) ---- */
+.w-shell-box {
+  height: 100%;
+  container: shell / inline-size;
+}
+@container shell (max-width: 40rem) {
+  .w-shell {
+    flex-direction: column;
+    height: 100%;
+  }
+  .w-shell > .w-sidebar {
+    width: 100%;
+    min-height: 0;
+    max-height: 45%;
+    flex: none;
+    border-right: 0;
+    border-bottom: var(--sx-line);
+    overflow-y: auto;
+  }
+  .w-shell .w-sidebar-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .w-shell .w-sidebar-list > li {
+    flex: 1 1 auto;
+  }
+  .w-shell .w-sidebar-hint,
+  .w-shell .w-thread {
+    display: none;
+  }
+  .w-shell .w-sidebar-item {
+    padding: 0 var(--w-space-sm);
+  }
+  .w-shell-header,
+  .w-shell-recording {
+    padding-left: var(--w-space-md);
+    padding-right: var(--w-space-md);
+  }
+  .w-shell .w-content {
+    padding: var(--w-space-md);
+  }
+  .w-shell-header-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .w-shell-search {
+    grid-column: auto;
+    grid-row: auto;
+  }
+  .w-shell-capture {
+    justify-self: start;
+    max-width: 100%;
+  }
+  .w-shell-capture .w-capture-button {
+    max-width: 100%;
+  }
+  .w-shell-capture .w-capture-menu {
+    right: auto;
+    left: 0;
+    min-width: 0;
+    width: max-content;
+    max-width: 100%;
+  }
+  .w-ask-form {
+    flex-wrap: wrap;
+    padding-bottom: var(--w-space-xs);
+  }
+  .w-ask-form input {
+    flex: 1 1 8rem;
+  }
+  /* Time above its card, the rail narrow on the left. */
+  .w-spine-stop,
+  .w-spine-ruled .w-spine-stop {
+    grid-template-columns: 1.5rem minmax(0, 1fr);
+    grid-template-rows: auto auto;
+  }
+  .w-spine-time {
+    grid-column: 2;
+    grid-row: 1;
+    text-align: left;
+    padding-top: 0;
+  }
+  .w-spine-rail {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+  .w-spine-body {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .w-spine-ruled .w-spine-time {
+    padding-top: var(--w-space-sm);
+  }
+  /* Actions drop under the text. */
+  .w-meeting {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .w-meeting-spacer {
+    display: none;
+  }
+  .th-block > .w-memory {
+    flex: 1 1 100%;
+  }
+  .w-meeting-actions {
+    justify-content: flex-start;
+  }
+  .w-next-score {
+    padding: var(--w-space-md);
+  }
+  .w-next-main {
+    padding: var(--w-space-md);
+  }
+  .w-now {
+    flex-wrap: wrap;
+  }
+}
+.w-shell .stage {
+  min-height: 0;
+}
+
+/* The popup's paused mark: the paused glyph in the paused color, never the recording dot. */
+.popup-paused-glyph {
+  color: var(--w-color-paused);
+  vertical-align: -1px;
+}

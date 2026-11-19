@@ -6197,6 +6197,41 @@
         }
       }
     },
+    "Update needed on another of your devices before it applies deletes." : {
+      "comment" : "Sync line (X6, Task 11): another of the user's devices has not announced client deletes yet. English only: not translated yet; translation waits on Mike.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Auf einem anderen Ihrer Geräte ist ein Update nötig, bevor es Löschungen anwendet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Se necesita una actualización en otro de tus dispositivos antes de que aplique eliminaciones."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une mise à jour est nécessaire sur un autre de vos appareils avant qu'il applique les suppressions."
+          }
+        },
+        "fr-CA" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Une mise à jour est nécessaire sur un autre de vos appareils avant qu'il applique les suppressions."
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "É necessário atualizar outro dos seus dispositivos antes que ele aplique exclusões."
+          }
+        }
+      }
+    },
     "Upgrade in Whimbrel on your computer." : {
       "localizations" : {
         "de" : {

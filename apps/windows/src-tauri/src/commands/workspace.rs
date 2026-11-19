@@ -795,6 +795,8 @@ pub async fn meeting_forget(state: State<'_, AppState>, id: i64) -> Result<(), C
     // kept (core leaves `snapshots_dir` unset then, and only removes a folder it marked).
     if let Some(files) = deleted {
         api::retention::delete_all_meeting_files(&files, &recordings);
+        // The local paused-spans marker beside the recording goes with it.
+        crate::meetings::pipeline::remove_paused_spans_for(&files.audio_paths, &recordings);
     }
     Ok(())
 }

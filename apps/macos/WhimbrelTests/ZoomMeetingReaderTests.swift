@@ -48,3 +48,23 @@ final class ZoomMeetingReaderTests: XCTestCase {
     }
 
 }
+
+/// Screen text capture runs accessibility requests on the main thread. Each one is time-limited, so an app
+/// that stops answering can't freeze Whimbrel, and another copy of Whimbrel is never read (Nov 19 2026).
+@MainActor
+final class ScreenTextCaptureServiceTests: XCTestCase {
+    func testAnotherCopyOfWhimbrelIsNeverRead() {
+        XCTAssertFalse(ScreenTextCaptureService.capturesText(of: "com.example.app", ownBundleId: "com.example.app"))
+        XCTAssertTrue(ScreenTextCaptureService.capturesText(of: "com.apple.Safari", ownBundleId: "com.example.app"))
+    }
+
+    func testEveryRequestIsTimeLimited() throws {
+        XCTAssertEqual(ScreenTextCaptureService.messagingTimeout, 1.0)
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Whimbrel/Capture/ScreenTextCaptureService.swift")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        for element in ["AXUIElementCreateSystemWide()", "appElement", "windowElement"] {
+            XCTAssertTrue(text.contains("AXUIElementSetMessagingTimeout(\(element), Self.messagingTimeout)"), element)
+        }
+    }
+}

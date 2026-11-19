@@ -6,10 +6,14 @@ pub mod ai;
 pub mod approvals;
 pub mod capture;
 pub mod chat;
+pub mod client_controls;
 pub mod connectors;
+pub mod delete_everything;
+pub mod encryption;
 pub mod general;
 pub mod import;
 pub mod language;
+pub mod launch;
 pub mod library;
 pub mod mcp;
 pub mod meeting_ask;
@@ -21,6 +25,7 @@ pub mod profile;
 pub mod retention;
 pub mod routines;
 pub mod schedule;
+pub mod foreign_files;
 pub mod schema;
 pub mod skins;
 pub mod snapshots;
@@ -105,11 +110,50 @@ pub fn set_capture_enabled(state: State<'_, AppState>, enabled: bool) -> Result<
     {
         let mut settings = state.settings.lock().unwrap();
         settings.set_capture_enabled(enabled);
+        // Turning capture off ends any timed pause: off wins, and no deadline is left behind.
+        if !enabled {
+            settings.set_capture_resume_at(None);
+        }
         settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
     }
     if let Some(capture) = &state.capture {
         capture.set_enabled(enabled);
     }
+    Ok(capture_status(state))
+}
+
+/// Stores (or, for `None`, clears) the end of a timed pause and tells the running service. `capture.enabled` is
+/// never touched here, so a pause ending can only undo itself.
+fn apply_capture_pause(state: &AppState, resume_at_unix_ms: Option<i64>) -> Result<(), CommandError> {
+    {
+        let mut settings = state.settings.lock().unwrap();
+        settings.set_capture_resume_at(resume_at_unix_ms);
+        settings.save().map_err(|e| CommandError::invalid_input(tr("Could not save settings: {error}", &[("error", &e.to_string())])))?;
+    }
+    if let Some(capture) = &state.capture {
+        capture.set_resume_at(resume_at_unix_ms);
+    }
+    Ok(())
+}
+
+/// "Pause for 15 minutes" and the other timed pauses: capture reads nothing until `resume_at_unix_ms`, then goes
+/// back to what on meant. While capture is off this does nothing (the UI does not offer it). A time that is not
+/// ahead of the clock is no pause.
+#[tauri::command]
+pub fn capture_pause_until(state: State<'_, AppState>, resume_at_unix_ms: i64) -> Result<CaptureStatus, CommandError> {
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+    let is_on = state.settings.lock().unwrap().capture_enabled();
+    if is_on {
+        let deadline = Some(resume_at_unix_ms).filter(|at| *at > now_ms);
+        apply_capture_pause(&state, deadline)?;
+    }
+    Ok(capture_status(state))
+}
+
+/// "Resume now": ends a timed pause early.
+#[tauri::command]
+pub fn capture_resume_now(state: State<'_, AppState>) -> Result<CaptureStatus, CommandError> {
+    apply_capture_pause(&state, None)?;
     Ok(capture_status(state))
 }
 

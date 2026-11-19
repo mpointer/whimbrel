@@ -92,6 +92,8 @@ struct LiveMeetingSection: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var live: LiveTranscriptionService
     let meeting: CoreMeeting
+    /// False on the redesign live screen, which draws the transcript itself.
+    var showsTranscript = true
     @State private var highlightedId: Int64?
     @State private var alerts: [LiveAlertsSection.Row] = []
     /// Live rows count from this part's start; alerts and links from the meeting's. Nil until loaded.
@@ -99,7 +101,7 @@ struct LiveMeetingSection: View {
 
     var body: some View {
         VStack(spacing: Spacing.sm) {
-            LiveTranscriptPane(segments: live.segments, status: live.status, highlightedId: highlightedId)
+            if showsTranscript { LiveTranscriptPane(segments: live.segments, status: live.status, highlightedId: highlightedId) }
             LiveAlertsSection(
                 rows: alerts,
                 paused: LiveAlertsSection.pausedLabel(

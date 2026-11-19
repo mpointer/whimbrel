@@ -17,16 +17,24 @@ use api::routing::RoutingConfig;
 pub(crate) use api::util::now_unix_ms;
 use memory::Store;
 
+mod client_controls_ffi;
+mod cloud_routines_ffi;
 mod connectors_ffi;
 mod accounts_ffi;
 mod enrollment_ffi;
 mod inference_ffi;
 mod mcp_ffi;
+mod meeting_marker_ffi;
 mod meeting_parts_ffi;
 mod speaker_names_ffi;
 mod recap_ffi;
 mod model_defaults_ffi;
 mod storage_ffi;
+mod store_key_ffi;
+pub use store_key_ffi::*;
+mod launch_ffi;
+pub use launch_ffi::*;
+use store_key_ffi::{key_arg, open_per_call};
 mod models_ffi;
 mod prompts_ffi;
 mod oauth_ffi;
@@ -116,12 +124,17 @@ pub extern "C" fn whimbrel_memory_open(
 /// slow lane: calls that hold a store across an LLM request run there, so the primary
 /// never queues behind them (M3.3 Decision 2, `core/memory/tests/two_connections.rs`).
 /// Plain `Store::open` semantics: no startup sweep, which runs once, on the primary.
-/// `primary` must not be in use on another thread during this call. Returns null on a
-/// null `primary`, invalid `path`, or open failure. Release with `whimbrel_memory_close`.
+/// `key`/`key_len`: the database key (32 bytes) when the primary was opened keyed
+/// (`whimbrel_memory_open_keyed`), else null; with a key only an existing encrypted file
+/// opens (never created), default cache. `primary` must not be in use on another thread
+/// during this call. Returns null on a null `primary`, invalid `path`, a key that is not 32
+/// bytes, or open failure. Release with `whimbrel_memory_close`.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_memory_open_secondary(
     primary: *mut StoreHandle,
     path: *const c_char,
+    key: *const u8,
+    key_len: usize,
 ) -> *mut StoreHandle {
     if primary.is_null() {
         return ptr::null_mut();
@@ -129,10 +142,20 @@ pub extern "C" fn whimbrel_memory_open_secondary(
     let Some(path) = cstr_to_string(path) else {
         return ptr::null_mut();
     };
+    let Ok(key) = key_arg(key, key_len) else {
+        return ptr::null_mut();
+    };
     let embedder = unsafe { &(*primary).0 }.embedder();
-    match memory::Store::open_with_embedder(Path::new(&path), embedder) {
-        Ok(store) => Box::into_raw(Box::new(StoreHandle(store))),
-        Err(_) => ptr::null_mut(),
+    let path = Path::new(&path);
+    let opened = match key {
+        None => memory::Store::open_with_embedder(path, embedder).ok(),
+        Some(k) => (memory::db_file_state(path).ok() == Some(memory::DbFileState::NotPlain))
+            .then(|| memory::Store::open_with_embedder_keyed(path, embedder, &k, &memory::KeyedOpenOptions::default()).ok())
+            .flatten(),
+    };
+    match opened {
+        Some(store) => Box::into_raw(Box::new(StoreHandle(store))),
+        None => ptr::null_mut(),
     }
 }
 
@@ -295,7 +318,7 @@ pub extern "C" fn whimbrel_threads_run_priority_batch(
         return -1;
     };
     let store = unsafe { &(*handle).0 };
-    let client = llm::typesafe::TypeSafeClient::new(api_key);
+    let client = llm::typesafe::TypeSafeClient::new(api_key, api::exclusion::current_gate(store));
     match api::jobs::run_thread_priority_batch(store, &client, max_jobs as usize) {
         Ok(outcome) if outcome.auth_rejected => -2,
         Ok(outcome) => outcome.processed as i64,
@@ -450,7 +473,11 @@ pub extern "C" fn whimbrel_skin_downscale(image_base64: *const c_char) -> *mut c
 /// Ingests a `screen-text.jsonl` file (FR-CAP-3 schema, see
 /// `apps/macos/Whimbrel/Models/ScreenTextRecord.swift`) into the store. Returns a
 /// JSON-encoded `IngestStats` string (caller frees with `whimbrel_core_free_string`),
-/// or null on a null/invalid handle or arguments.
+/// or null on a null/invalid handle or arguments, or when a store insert fails. On a
+/// store failure the ingest stops at the first failed record and returns null; the caller
+/// keeps the file and can replay it. Replay is safe: each record stores all-or-nothing, and
+/// a record already stored (same app, hash and timestamp, at the log's whole-second precision on the Mac) is skipped, so records before the
+/// failure are not duplicated.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_memory_ingest_jsonl(
     handle: *mut StoreHandle,
@@ -700,6 +727,60 @@ pub extern "C" fn whimbrel_llm_answer(
     }
 }
 
+/// [`whimbrel_llm_answer`] whose envelope data also carries `"exclusion"` (what client
+/// exclusion did, tagged by `kind`) and `"answered_by"` (`{"provider","model","local"}`, the
+/// link that really answered). Same arguments, routing and exclusion behaviour; additive.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_llm_answer_detailed(
+    handle: *mut StoreHandle,
+    query: *const c_char,
+    model: *const c_char,
+    context_limit: usize,
+    history_json: *const c_char,
+    routing_config_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(query) = cstr_to_string(query) else {
+        return ptr::null_mut();
+    };
+    let Some(model) = cstr_to_string(model) else {
+        return ptr::null_mut();
+    };
+    let Some(history) = parse_history_json(history_json) else {
+        return ptr::null_mut();
+    };
+    let routing = parse_routing_config(routing_config_json);
+    let store = unsafe { &(*handle).0 };
+    let result = api::ask::answer_detailed(store, &query, &model, context_limit, &history, &routing);
+    envelope_json(&result).map_or(ptr::null_mut(), json_to_c_string)
+}
+
+/// Whether an Ask bar question (with `history_json`, as `whimbrel_llm_answer`) names a client
+/// excluded from hosted models, so core will answer it on this computer or refuse it. Envelope
+/// data is a bool. Cheap, no model call; never returns the client's name. Bare NULL on a null
+/// handle, a non-UTF-8 query or a malformed history.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_ask_names_excluded_client(
+    handle: *mut StoreHandle,
+    query: *const c_char,
+    history_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(query) = cstr_to_string(query) else {
+        return ptr::null_mut();
+    };
+    let Some(history) = parse_history_json(history_json) else {
+        return ptr::null_mut();
+    };
+    let store = unsafe { &(*handle).0 };
+    let names = api::ask::question_names_excluded_client(store, &query, &history);
+    envelope_json(&Ok::<bool, api::ApiError>(names)).map_or(ptr::null_mut(), json_to_c_string)
+}
+
 /// Live question: decide whether `lines[index]` is a question for the user. Envelope data
 /// is the verdict, or null when the model says no or is not highly confident. Bare NULL
 /// on a null handle, bad JSON, or an out-of-range index. Other arguments as
@@ -712,6 +793,7 @@ pub extern "C" fn whimbrel_live_question_detect(
     names_json: *const c_char,
     model: *const c_char,
     routing_config_json: *const c_char,
+    meeting_id: i64,
 ) -> *mut c_char {
     if handle.is_null() {
         return ptr::null_mut();
@@ -728,8 +810,15 @@ pub extern "C" fn whimbrel_live_question_detect(
     }
     let routing = parse_routing_config(routing_config_json);
     let store = unsafe { &(*handle).0 };
-    let result = api::live_question::detect(store, &lines, index, &names, &model, &routing);
+    // The live meeting (0 or less: none, and core fails closed: a recording meeting of an
+    // excluded client keeps the judgement on this computer).
+    let result = api::live_question::detect(store, live_meeting(meeting_id), &lines, index, &names, &model, &routing);
     envelope_json(&result).map_or(ptr::null_mut(), json_to_c_string)
+}
+
+/// The live meeting a live-question call passes: 0 or less means none.
+fn live_meeting(meeting_id: i64) -> Option<i64> {
+    (meeting_id > 0).then_some(meeting_id)
 }
 
 /// Live question: draft the user's reply to an alerted verdict, grounded in memory.
@@ -741,6 +830,7 @@ pub extern "C" fn whimbrel_live_question_draft(
     recent_json: *const c_char,
     model: *const c_char,
     routing_config_json: *const c_char,
+    meeting_id: i64,
 ) -> *mut c_char {
     if handle.is_null() {
         return ptr::null_mut();
@@ -754,7 +844,7 @@ pub extern "C" fn whimbrel_live_question_draft(
     };
     let routing = parse_routing_config(routing_config_json);
     let store = unsafe { &(*handle).0 };
-    let result = api::live_question::draft(store, &verdict, &recent, &model, &routing);
+    let result = api::live_question::draft(store, live_meeting(meeting_id), &verdict, &recent, &model, &routing);
     envelope_json(&result).map_or(ptr::null_mut(), json_to_c_string)
 }
 
@@ -804,11 +894,15 @@ pub extern "C" fn whimbrel_live_question_is_duplicate(
 /// `db_path` for the spend-cap check (route `"skin"`) before the call and the usage row
 /// after it, as `device_id` (this device's sync id; null before one is known, as
 /// `whimbrel_memory_set_device_id`). Returns the usual envelope with a `SkinTurnReply` as `data`; an
-/// unreadable reply after the retry is `provider_failure`. Bare NULL on malformed
+/// unreadable reply after the retry is `provider_failure`. `db_key`/`db_key_len`: the
+/// database key (32 bytes) when the store is encrypted, else null. Bare NULL on malformed
 /// arguments or a store that won't open.
 #[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
 pub extern "C" fn whimbrel_skin_turn(
     db_path: *const c_char,
+    db_key: *const u8,
+    db_key_len: usize,
     device_id: *const c_char,
     provider: *const c_char,
     model: *const c_char,
@@ -827,6 +921,9 @@ pub extern "C" fn whimbrel_skin_turn(
     let Ok(input) = serde_json::from_str::<llm::skin_maker::SkinTurnInput>(&input_json) else {
         return ptr::null_mut();
     };
+    let Ok(db_key) = key_arg(db_key, db_key_len) else {
+        return ptr::null_mut();
+    };
     let key = cstr_to_string(api_key).unwrap_or_default();
     let (provider, client): (llm::Provider, Box<dyn llm::LlmClient>) = match provider.as_str() {
         "ollama" => (llm::Provider::Ollama, Box::new(llm::OllamaClient::new(&model))),
@@ -843,8 +940,15 @@ pub extern "C" fn whimbrel_skin_turn(
         }
         _ => return ptr::null_mut(),
     };
-    let Some(store) = open_as_device(&db_path, device_id) else {
+    let Some(store) = open_as_device(&db_path, db_key.as_ref(), device_id) else {
         return ptr::null_mut();
+    };
+    // The one place a skin turn's client is used: a hosted one (an Ollama cloud model too) goes
+    // behind the gate.
+    let client: Box<dyn llm::LlmClient> = if !llm::is_hosted(provider, &model) {
+        client
+    } else {
+        Box::new(llm::GuardedClient::new(client, api::exclusion::current_gate(&store)))
     };
     let caps = parse_routing_config(routing_config_json).spend_cap_config();
     let result = skin_turn(&store, &caps, provider, &model, client.as_ref(), &input);
@@ -853,8 +957,9 @@ pub extern "C" fn whimbrel_skin_turn(
 
 /// Opens `db_path` for one skin call as this device (`device_id`; null before one is
 /// known), so the call's spend is counted and synced as the device's own, never as a peer's.
-fn open_as_device(db_path: &str, device_id: *const c_char) -> Option<Store> {
-    let store = Store::open(Path::new(db_path), Path::new("")).ok()?;
+/// `key`: the database key when the store is encrypted (`store_key_ffi::open_per_call`).
+fn open_as_device(db_path: &str, key: Option<&memory::DbKey>, device_id: *const c_char) -> Option<Store> {
+    let store = open_per_call(Path::new(db_path), key)?;
     if let Some(id) = cstr_to_string(device_id).filter(|id| !id.is_empty()) {
         store.set_own_device_id(&id);
     }
@@ -872,8 +977,10 @@ fn skin_turn(
     llm::check_spend_cap(store, caps, None, Some("skin"), now_unix_ms())?;
     // The user picked this one provider: a spent budget fails, never falls through.
     api::budget::check_provider(store, provider, now_unix_ms())?;
-    let (reply, usage) = llm::skin_maker::run_skin_turn(client, input)
-        .map_err(|_| api::ApiError::ProviderFailure)?;
+    let (reply, usage) = llm::skin_maker::run_skin_turn(client, input).map_err(|e| match e {
+        llm::LlmError::Refused(r) => api::envelope::chain_failed(vec![r.failure_kind()]),
+        _ => api::ApiError::ProviderFailure,
+    })?;
     // Under the model that answered: a stand-in when the provider had no such model.
     api::util::log_usage_for(store, provider, &client.substituted_model().unwrap_or_else(|| model.to_string()), "skin", usage);
     Ok(reply)
@@ -883,24 +990,32 @@ fn skin_turn(
 /// `IMAGE_SEARCH_CENTS` on route `"skin-image-search"` (cap checked first, against
 /// `routing_config_json`'s caps — see `whimbrel_skin_turn`) before any network. Envelope
 /// `data` is `[ImageCandidate]`; any search failure is `provider_failure` (still charged).
-/// Bare NULL on malformed arguments or a store that won't open.
+/// `db_key`/`db_key_len` as `whimbrel_skin_turn`. Bare NULL on malformed arguments or a
+/// store that won't open.
 #[unsafe(no_mangle)]
 pub extern "C" fn whimbrel_skin_image_search(
     db_path: *const c_char,
+    db_key: *const u8,
+    db_key_len: usize,
     api_key: *const c_char,
     query: *const c_char,
     routing_config_json: *const c_char,
 ) -> *mut c_char {
-    let (Some(db_path), Some(key), Some(query)) =
-        (cstr_to_string(db_path), cstr_to_string(api_key), cstr_to_string(query))
-    else {
+    let (Some(db_path), Some(key), Some(query), Ok(db_key)) = (
+        cstr_to_string(db_path),
+        cstr_to_string(api_key),
+        cstr_to_string(query),
+        key_arg(db_key, db_key_len),
+    ) else {
         return ptr::null_mut();
     };
-    let Ok(store) = Store::open(Path::new(&db_path), Path::new("")) else {
+    let Some(store) = open_per_call(Path::new(&db_path), db_key.as_ref()) else {
         return ptr::null_mut();
     };
     let caps = parse_routing_config(routing_config_json).spend_cap_config();
-    let result = charge_skin(&store, &caps, "image", "skin-image-search", llm::images::IMAGE_SEARCH_CENTS)
+    // A web search, not a model, but the query is the user's text going off the device.
+    let result = hosted_gate_check(&store, &query)
+        .and_then(|()| charge_skin(&store, &caps, "image", "skin-image-search", llm::images::IMAGE_SEARCH_CENTS))
         .and_then(|()| {
             llm::images::search_images(&key, &query).map_err(|_| api::ApiError::ProviderFailure)
         });
@@ -911,10 +1026,14 @@ pub extern "C" fn whimbrel_skin_image_search(
 /// `"google"` (Imagen); anything else is a bare NULL. Charges `IMAGE_GENERATE_CENTS` on
 /// route `"skin-image-generate"` like `whimbrel_skin_image_search`, logged under `provider` so it
 /// counts toward that provider's monthly budget (and refused with `budget_spent` once it is
-/// spent). `device_id` as `whimbrel_skin_turn`. Envelope `data` is the image as a base64 string.
+/// spent). `device_id`, `db_key`/`db_key_len` as `whimbrel_skin_turn`. Envelope `data` is
+/// the image as a base64 string.
 #[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
 pub extern "C" fn whimbrel_skin_image_generate(
     db_path: *const c_char,
+    db_key: *const u8,
+    db_key_len: usize,
     device_id: *const c_char,
     provider: *const c_char,
     api_key: *const c_char,
@@ -934,16 +1053,27 @@ pub extern "C" fn whimbrel_skin_image_generate(
         "google" => llm::Provider::Google,
         _ => return ptr::null_mut(),
     };
-    let Some(store) = open_as_device(&db_path, device_id) else {
+    let Ok(db_key) = key_arg(db_key, db_key_len) else {
+        return ptr::null_mut();
+    };
+    let Some(store) = open_as_device(&db_path, db_key.as_ref(), device_id) else {
         return ptr::null_mut();
     };
     let caps = parse_routing_config(routing_config_json).spend_cap_config();
     // `provider` bills the call: a spent budget refuses it, and the charge counts toward it.
-    let result = api::budget::check_provider(&store, provider, now_unix_ms())
-        .map_err(api::ApiError::from)
+    let result = hosted_gate_check(&store, &prompt)
+        .and_then(|()| api::budget::check_provider(&store, provider, now_unix_ms()).map_err(api::ApiError::from))
         .and_then(|()| charge_skin(&store, &caps, provider.as_str(), "skin-image-generate", llm::images::IMAGE_GENERATE_CENTS))
         .and_then(|()| base64_image(llm::images::generate_image(provider, &key, &prompt)));
     envelope_json(&result).map_or(ptr::null_mut(), json_to_c_string)
+}
+
+/// `text` may leave the device: `Err` (a provider failure, never naming the client) when it
+/// names a client excluded from hosted models.
+fn hosted_gate_check(store: &Store, text: &str) -> api::ApiResult<()> {
+    api::exclusion::current_gate(store)
+        .check(text)
+        .map_err(|r| api::envelope::chain_failed(vec![r.failure_kind()]))
 }
 
 /// Skins Release 2: downloads a user-approved image (`llm::images::fetch_image`: https
@@ -1137,6 +1267,47 @@ pub extern "C" fn whimbrel_llm_prepare_window_ask(
             None => ptr::null_mut(),
         },
     }
+}
+
+/// The hotkey panel's destination line for one request, before Return (spec 7.2): core's
+/// `window_ask::destination_for`, so the line says "local only" when the window, its title or
+/// the question carries a client excluded from hosted models, and names an Ollama cloud model
+/// as leaving this computer. `window_json` as for `whimbrel_llm_prepare_window_ask` (the
+/// panel keeps no history). Returns the bare destination JSON: `"local_only"`, `"local"` or
+/// `{"hosted":{"provider":".."}}`. NULL on a null handle or malformed arguments.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_window_ask_destination(
+    handle: *mut StoreHandle,
+    window_json: *const c_char,
+    query: *const c_char,
+    routing_config_json: *const c_char,
+) -> *mut c_char {
+    #[derive(serde::Deserialize)]
+    struct WindowJson {
+        app_name: String,
+        title: String,
+        text: String,
+        is_selection: bool,
+    }
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let (Some(window), Some(query)) = (
+        cstr_to_string(window_json).and_then(|j| serde_json::from_str::<WindowJson>(&j).ok()),
+        cstr_to_string(query),
+    ) else {
+        return ptr::null_mut();
+    };
+    let routing = parse_routing_config(routing_config_json);
+    let input = api::window_ask::WindowInput {
+        app_name: window.app_name,
+        title: window.title,
+        text: window.text,
+        is_selection: window.is_selection,
+    };
+    let store = unsafe { &(*handle).0 };
+    let destination = api::window_ask::destination_for(store, &routing, &query, &[], &input);
+    serde_json::to_string(&destination).map_or(ptr::null_mut(), json_to_c_string)
 }
 
 /// Blocking meeting Ask through the governed chain (not pinned), for when the streamed
@@ -1850,6 +2021,116 @@ pub extern "C" fn whimbrel_memory_recent_episodes(
     }
 }
 
+/// Memory blocks for Home (see `Store::day_blocks`): captures in `[start_unix_ms, end_unix_ms)` as
+/// time, app and window title only, grouped after a 10 minute gap, cut around meetings.
+/// `meetings_json` is a JSON array of `[start_unix_ms, end_unix_ms]` pairs, or NULL for none; JSON that
+/// is not that array returns NULL. Bare JSON array of `memory::day_blocks::DayBlock`. Returns NULL on a
+/// null/invalid handle or a DB error. Read-only.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_memory_day_blocks(
+    handle: *mut StoreHandle,
+    start_unix_ms: i64,
+    end_unix_ms: i64,
+    meetings_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let meetings: Vec<(i64, i64)> = if meetings_json.is_null() {
+        Vec::new()
+    } else {
+        let Some(text) = cstr_to_string(meetings_json) else {
+            return ptr::null_mut();
+        };
+        match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => return ptr::null_mut(),
+        }
+    };
+    let store = unsafe { &(*handle).0 };
+    let Ok(blocks) = store.day_blocks(start_unix_ms, end_unix_ms, &meetings) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&blocks) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Capture search with filters (see `Store::search_captures_filtered`). `semantic` picks the
+/// nearest-neighbour search over the keyword one. `app` is an app bundle id, or NULL for any app.
+/// `start_unix_ms` and `end_unix_ms` bound the capture time as `[start, end)`; a value of 0 or less
+/// means no bound. An app with no bounds searches the last 30 days. With no filter the result is
+/// exactly `whimbrel_memory_search_keyword` / `_semantic`. Semantic results can be fewer than `limit`.
+/// Bare JSON array of `CaptureItem`. Returns NULL on a null/invalid handle, a null query or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_memory_search_captures_filtered(
+    handle: *mut StoreHandle,
+    query: *const c_char,
+    semantic: bool,
+    app: *const c_char,
+    start_unix_ms: i64,
+    end_unix_ms: i64,
+    limit: usize,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let Some(query) = cstr_to_string(query) else {
+        return ptr::null_mut();
+    };
+    let app = if app.is_null() {
+        None
+    } else {
+        match cstr_to_string(app) {
+            Some(a) if !a.is_empty() => Some(a),
+            Some(_) => None,
+            None => return ptr::null_mut(),
+        }
+    };
+    let start = (start_unix_ms > 0).then_some(start_unix_ms);
+    let end = (end_unix_ms > 0).then_some(end_unix_ms);
+    let store = unsafe { &(*handle).0 };
+    let Ok(results) = store.search_captures_filtered(
+        &query,
+        semantic,
+        app.as_deref(),
+        start,
+        end,
+        limit,
+        now_unix_ms(),
+    ) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&results) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// The apps with captures in `[start_unix_ms, end_unix_ms)`, most captures first, at most `limit`
+/// (see `Store::capture_apps`): the choices for the search app filter. Bare JSON array of
+/// `{"app_bundle_id", "captures"}`. Returns NULL on a null/invalid handle or a DB error.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_memory_capture_apps(
+    handle: *mut StoreHandle,
+    start_unix_ms: i64,
+    end_unix_ms: i64,
+    limit: usize,
+) -> *mut c_char {
+    if handle.is_null() {
+        return ptr::null_mut();
+    }
+    let store = unsafe { &(*handle).0 };
+    let Ok(apps) = store.capture_apps(start_unix_ms, end_unix_ms, limit) else {
+        return ptr::null_mut();
+    };
+    match serde_json::to_string(&apps) {
+        Ok(json) => json_to_c_string(json),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 /// Fetches one episode by id, fresh from the store (see `Store::get_episode`).
 /// Returns NULL if it doesn't exist, or on a null/invalid handle or a DB error
 /// (indistinguishable, matching `whimbrel_memory_get_meeting`'s convention).
@@ -2243,6 +2524,29 @@ pub extern "C" fn whimbrel_llm_summarize_meeting_preferred(
         Some(json) => json_to_c_string(json),
         None => ptr::null_mut(),
     }
+}
+
+/// Whether a summary of the meeting would be refused right now: it names a client excluded
+/// from hosted models and no on-device model is available (Ollama off or a cloud model, and no
+/// bundled model installed), so [`whimbrel_llm_summarize_meeting`] sends nothing. Takes the
+/// summary call's `model` and `routing_config_json`. Returns 1 when refused, else 0 (also on a
+/// null handle or unreadable arguments). Reads only; nothing is sent.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_meeting_summary_refused_for_exclusion(
+    handle: *mut StoreHandle,
+    meeting_id: i64,
+    model: *const c_char,
+    routing_config_json: *const c_char,
+) -> i32 {
+    if handle.is_null() {
+        return 0;
+    }
+    let Some(model) = cstr_to_string(model) else {
+        return 0;
+    };
+    let routing = parse_routing_config(routing_config_json);
+    let store = unsafe { &(*handle).0 };
+    i32::from(api::summary::summary_refused_for_exclusion(store, meeting_id, &model, &routing))
 }
 
 /// Adds `fallback_reason` (and `http_status`) to an error envelope's `error` object; any
@@ -2668,7 +2972,19 @@ pub extern "C" fn whimbrel_memory_insert_meeting(
         return ptr::null_mut();
     };
     let store = unsafe { &(*handle).0 };
-    let Ok(id) = store.insert_meeting(&new_meeting) else {
+    // The insert that starts a recording: waits out another connection's lock rather than failing,
+    // for a bounded time. Each attempt waits at most 5 s for the lock (the connection's own longer
+    // timeout is put back after) and attempts repeat for 10 s, so the call returns within about 15 s.
+    // The Mac's quit wait (`PendingRecordingStarts.quitWaitSeconds`, 20 s) covers this insert only:
+    // the writes a start makes after it (calendar source, attendees, the part row) each wait up to the
+    // connection's own 30 s timeout, so under heavy contention quitting can end before they land.
+    let prior_timeout = store.busy_timeout_ms().ok().filter(|ms| *ms >= 0).map(|ms| ms as u64);
+    let _ = store.set_busy_timeout(std::time::Duration::from_secs(5));
+    let inserted = memory::retry_when_busy(std::time::Duration::from_secs(10), || store.insert_meeting(&new_meeting));
+    if let Some(ms) = prior_timeout {
+        let _ = store.set_busy_timeout(std::time::Duration::from_millis(ms));
+    }
+    let Ok(id) = inserted else {
         return ptr::null_mut();
     };
     json_to_c_string(format!("{{\"id\":{id}}}"))
@@ -3740,6 +4056,19 @@ pub extern "C" fn whimbrel_memory_set_device_id(
     true
 }
 
+/// Sets how long this connection waits for another connection's write lock before a statement
+/// fails with "database is locked" (`ms`, 0 to 600000). A connection starts with 5 s. The Mac
+/// app raises it on its screen, slow and background connections. Returns `false` on a null
+/// handle or an out-of-range value.
+#[unsafe(no_mangle)]
+pub extern "C" fn whimbrel_memory_set_busy_timeout(handle: *mut StoreHandle, ms: u64) -> bool {
+    if handle.is_null() || ms > 600_000 {
+        return false;
+    }
+    let store = unsafe { &(*handle).0 };
+    store.set_busy_timeout(std::time::Duration::from_millis(ms)).is_ok()
+}
+
 /// Marks a meeting `completed` with its actual end time and (if captured) the audio
 /// file path — called when the user toggles capture off for a triggered meeting.
 /// `audio_path` may be null. Returns `true` on success, `false` on a null/invalid
@@ -4622,6 +4951,8 @@ mod tests {
             let out = whimbrel_skin_turn(
                 db_path_c.as_ptr(),
                 ptr::null(),
+                0,
+                ptr::null(),
                 provider_c.as_ptr(),
                 model_c.as_ptr(),
                 ptr::null(),
@@ -4646,6 +4977,8 @@ mod tests {
         let bad_input_c = to_cstring("not json");
         assert!(whimbrel_skin_turn(
             db_path_c.as_ptr(),
+            ptr::null(),
+            0,
             ptr::null(),
             provider_c.as_ptr(),
             model_c.as_ptr(),
@@ -4722,7 +5055,7 @@ mod tests {
         .unwrap();
         let month = memory::provider_budget::month_label(now_unix_ms());
         let device_c = to_cstring("dev");
-        let skin = open_as_device(db_path.to_str().unwrap(), device_c.as_ptr()).unwrap();
+        let skin = open_as_device(db_path.to_str().unwrap(), None, device_c.as_ptr()).unwrap();
         assert_eq!(skin.month_spend_by_provider(&month).unwrap(), vec![("anthropic".into(), 600)]);
         assert_eq!(skin.provider_over_budget("anthropic", now_unix_ms()).unwrap(), None);
         let input: llm::skin_maker::SkinTurnInput =
@@ -4742,6 +5075,58 @@ mod tests {
             .map(|o| serde_json::from_str(&o.3).unwrap())
             .unwrap();
         assert_eq!(last.cents, total);
+    }
+
+    /// X6: with a client excluded from hosted models, a skin turn, image search or image
+    /// generation that names it returns the `excluded_client` envelope, charges nothing and
+    /// makes no request (a hosted request would fail with a network or auth error instead).
+    #[test]
+    fn skin_calls_naming_an_excluded_client_are_refused_and_charge_nothing() {
+        use memory::topics::client_controls::ClientControl;
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("skin-excluded.sqlite");
+        {
+            let store = memory::Store::open(&db_path, std::path::Path::new("")).unwrap();
+            let acme = store.create_seed_topic("Acme", &[], None).unwrap();
+            store.set_client_control(&acme.key, &ClientControl { exclude_hosted: true, keep_months: None }).unwrap();
+        }
+        let take = |out: *mut c_char| {
+            assert!(!out.is_null());
+            let s = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+            whimbrel_core_free_string(out);
+            s
+        };
+        let refused = |envelope: &str| {
+            assert!(envelope.contains("\"kind\":\"provider_failure\"") && envelope.contains("\"kind\":\"excluded_client\""), "{envelope}");
+            assert!(!envelope.to_lowercase().contains("acme"), "{envelope}");
+        };
+        let (db_c, key_c, text_c, openai_c) =
+            (to_cstring(db_path.to_str().unwrap()), to_cstring("k"), to_cstring("the ACME stadium"), to_cstring("openai"));
+        refused(&take(whimbrel_skin_image_search(db_c.as_ptr(), ptr::null(), 0, key_c.as_ptr(), text_c.as_ptr(), ptr::null())));
+        refused(&take(whimbrel_skin_image_generate(
+            db_c.as_ptr(),
+            ptr::null(),
+            0,
+            ptr::null(),
+            openai_c.as_ptr(),
+            key_c.as_ptr(),
+            text_c.as_ptr(),
+            ptr::null(),
+        )));
+        let (anthropic_c, model_c) = (to_cstring("anthropic"), to_cstring("claude-haiku-4-5"));
+        let input_c = to_cstring(r#"{"request":"a skin in Acme colours","catalogue":{}}"#);
+        refused(&take(whimbrel_skin_turn(
+            db_c.as_ptr(),
+            ptr::null(),
+            0,
+            ptr::null(),
+            anthropic_c.as_ptr(),
+            model_c.as_ptr(),
+            key_c.as_ptr(),
+            input_c.as_ptr(),
+            ptr::null(),
+        )));
+        assert!(usage_routes(&db_path).is_empty(), "nothing charged");
     }
 
     fn usage_routes(db_path: &std::path::Path) -> Vec<(String, i64)> {
@@ -4787,6 +5172,8 @@ mod tests {
         .unwrap();
         let search = take(whimbrel_skin_image_search(
             db_c.as_ptr(),
+            ptr::null(),
+            0,
             key_c.as_ptr(),
             text_c.as_ptr(),
             at_cap_c.as_ptr(),
@@ -4794,6 +5181,8 @@ mod tests {
         assert!(search.contains("\"kind\":\"spend_cap\""), "{search}");
         let generate = take(whimbrel_skin_image_generate(
             db_c.as_ptr(),
+            ptr::null(),
+            0,
             ptr::null(),
             openai_c.as_ptr(),
             key_c.as_ptr(),
@@ -4807,6 +5196,8 @@ mod tests {
         assert!(whimbrel_skin_image_generate(
             db_c.as_ptr(),
             ptr::null(),
+            0,
+            ptr::null(),
             ollama_c.as_ptr(),
             key_c.as_ptr(),
             text_c.as_ptr(),
@@ -4817,6 +5208,56 @@ mod tests {
         let http_c = to_cstring("http://127.0.0.1:9/x.png");
         let fetched = take(whimbrel_skin_image_fetch(http_c.as_ptr()));
         assert!(fetched.contains("\"kind\":\"provider_failure\""), "{fetched}");
+    }
+
+    /// X4: the per-call opens (skin turn, image search and generation) take the database
+    /// key. On an encrypted store they open with it (and answer spend_cap offline, so no
+    /// network), and never without it or with a wrong or short key; the file is left as is.
+    #[cfg(feature = "sqlcipher")]
+    #[test]
+    fn skin_per_call_opens_take_the_database_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("skin-keyed.sqlite");
+        let key = [0x4du8; 32];
+        let keyed = memory::Store::open_keyed(&db_path, Path::new(""), &memory::DbKey::new(key), &Default::default()).unwrap();
+        llm::charge_skin_call(&keyed, &llm::SpendCapConfig::default(), "test-seed", 1, now_unix_ms()).unwrap();
+        drop(keyed);
+        let db_c = to_cstring(db_path.to_str().unwrap());
+        let api_c = to_cstring("k");
+        let text_c = to_cstring("stadium at night");
+        let openai_c = to_cstring("openai");
+        let at_cap_c = to_cstring(r#"{"user_daily_cap_cents": 1}"#);
+        let take = |out: *mut c_char| {
+            assert!(!out.is_null(), "store did not open");
+            let s = unsafe { CStr::from_ptr(out) }.to_str().unwrap().to_string();
+            whimbrel_core_free_string(out);
+            s
+        };
+        let search = |k: *const u8, n: usize| {
+            whimbrel_skin_image_search(db_c.as_ptr(), k, n, api_c.as_ptr(), text_c.as_ptr(), at_cap_c.as_ptr())
+        };
+        let generate = |k: *const u8, n: usize| {
+            whimbrel_skin_image_generate(db_c.as_ptr(), k, n, ptr::null(), openai_c.as_ptr(), api_c.as_ptr(), text_c.as_ptr(), at_cap_c.as_ptr())
+        };
+        let before = std::fs::read(&db_path).unwrap();
+        let wrong = [0x11u8; 32];
+        for (k, n) in [(ptr::null(), 0), (wrong.as_ptr(), 32), (key.as_ptr(), 31)] {
+            assert!(search(k, n).is_null());
+            assert!(generate(k, n).is_null());
+        }
+        assert_eq!(std::fs::read(&db_path).unwrap(), before, "failed opens leave the file as it was");
+        assert!(take(search(key.as_ptr(), 32)).contains("\"kind\":\"spend_cap\""));
+        assert!(take(generate(key.as_ptr(), 32)).contains("\"kind\":\"spend_cap\""));
+        let device_c = to_cstring("dev");
+        assert!(open_as_device(db_path.to_str().unwrap(), Some(&memory::DbKey::new(key)), device_c.as_ptr()).is_some());
+        // A key never opens a missing or plain file (nothing is created).
+        let missing = dir.path().join("missing.sqlite");
+        assert!(open_per_call(&missing, Some(&memory::DbKey::new(key))).is_none());
+        assert!(!missing.exists());
+        let plain = dir.path().join("plain.sqlite");
+        drop(memory::Store::open(&plain, Path::new("")).unwrap());
+        assert!(open_per_call(&plain, Some(&memory::DbKey::new(key))).is_none());
+        assert!(open_per_call(&plain, None).is_some());
     }
 
     /// Succeeds for its first `fail_after` calls, then returns a retryable error for
@@ -5923,7 +6364,7 @@ mod tests {
             .to_string();
         whimbrel_core_free_string(second);
         assert_eq!(
-            s, "{\"citations\":[]}",
+            s, "{\"citations\":[],\"exclusion\":{\"kind\":\"allowed\"}}",
             "a reused prepare_id must not resurrect the already-consumed context"
         );
         whimbrel_memory_close(handle);
@@ -5968,7 +6409,7 @@ mod tests {
             .to_string();
         whimbrel_core_free_string(result);
         assert_eq!(
-            s, "{\"citations\":[]}",
+            s, "{\"citations\":[],\"exclusion\":{\"kind\":\"allowed\"}}",
             "a discarded prepare_id must not still resolve to its context"
         );
         whimbrel_memory_close(handle);
@@ -6009,7 +6450,7 @@ mod tests {
             .unwrap()
             .to_string();
         whimbrel_core_free_string(result);
-        assert_eq!(s, "{\"citations\":[]}");
+        assert_eq!(s, "{\"citations\":[],\"exclusion\":{\"kind\":\"allowed\"}}");
         whimbrel_memory_close(handle);
     }
 
@@ -8604,8 +9045,8 @@ mod tests {
         let path = CString::new(dir.path().join("two.sqlite").to_str().unwrap()).unwrap();
         let primary = whimbrel_memory_open(path.as_ptr(), ptr::null());
         assert!(!primary.is_null());
-        assert!(whimbrel_memory_open_secondary(ptr::null_mut(), path.as_ptr()).is_null());
-        let slow = whimbrel_memory_open_secondary(primary, path.as_ptr());
+        assert!(whimbrel_memory_open_secondary(ptr::null_mut(), path.as_ptr(), ptr::null(), 0).is_null());
+        let slow = whimbrel_memory_open_secondary(primary, path.as_ptr(), ptr::null(), 0);
         assert!(!slow.is_null());
         assert_ne!(primary, slow, "the slow lane must be its own connection");
         let id = unsafe { &(*slow).0 }
@@ -9308,6 +9749,58 @@ mod tests {
     }
 
     #[test]
+    fn home_reads_round_trip_through_the_ffi() {
+        assert!(whimbrel_memory_day_blocks(ptr::null_mut(), 0, 1, ptr::null()).is_null());
+        assert!(whimbrel_memory_capture_apps(ptr::null_mut(), 0, 1, 5).is_null());
+        let q = to_cstring("x");
+        assert!(whimbrel_memory_search_captures_filtered(ptr::null_mut(), q.as_ptr(), false, ptr::null(), 0, 0, 5).is_null());
+
+        let dir = tempfile::tempdir().unwrap();
+        let jsonl_path = dir.path().join("screen-text.jsonl");
+        std::fs::write(
+            &jsonl_path,
+            "{\"timestamp\":\"2026-07-22T10:00:00Z\",\"bundle_id\":\"com.example.App\",\"window_title\":\"Plans\",\"url\":null,\"text\":\"hello ffi world\",\"source\":\"ax\"}\n",
+        )
+        .unwrap();
+        let db_path_c = to_cstring(dir.path().join("t.sqlite").to_str().unwrap());
+        let handle = whimbrel_memory_open(db_path_c.as_ptr(), ptr::null());
+        assert!(!handle.is_null());
+        let jsonl_c = to_cstring(jsonl_path.to_str().unwrap());
+        let dev = to_cstring("d");
+        whimbrel_core_free_string(whimbrel_memory_ingest_jsonl(handle, jsonl_c.as_ptr(), dev.as_ptr()));
+
+        let read = |p: *mut c_char| -> String {
+            assert!(!p.is_null());
+            let s = unsafe { CStr::from_ptr(p) }.to_str().unwrap().to_string();
+            whimbrel_core_free_string(p);
+            s
+        };
+        let blocks = read(whimbrel_memory_day_blocks(handle, 0, i64::MAX, ptr::null()));
+        assert!(blocks.contains("com.example.App") && blocks.contains("Plans"), "{blocks}");
+        assert!(!blocks.contains("hello ffi world"), "{blocks}");
+        let bad = to_cstring("not json");
+        assert!(whimbrel_memory_day_blocks(handle, 0, i64::MAX, bad.as_ptr()).is_null());
+        let all_meeting = to_cstring("[[0, 9223372036854775807]]");
+        assert_eq!(read(whimbrel_memory_day_blocks(handle, 0, i64::MAX, all_meeting.as_ptr())), "[]");
+
+        let apps = read(whimbrel_memory_capture_apps(handle, 0, i64::MAX, 5));
+        assert_eq!(apps, r#"[{"app_bundle_id":"com.example.App","captures":1}]"#);
+
+        let query = to_cstring("ffi");
+        let unfiltered = read(whimbrel_memory_search_keyword(handle, query.as_ptr(), 10));
+        let none = read(whimbrel_memory_search_captures_filtered(handle, query.as_ptr(), false, ptr::null(), 0, 0, 10));
+        assert_eq!(none, unfiltered);
+        let app = to_cstring("com.example.App");
+        // The default 30 day window is relative to now, so the fixed 2026-07-22 row is inside only a range.
+        let ranged = read(whimbrel_memory_search_captures_filtered(handle, query.as_ptr(), false, app.as_ptr(), 1, i64::MAX, 10));
+        assert!(ranged.contains("hello ffi world"), "{ranged}");
+        let other = to_cstring("com.other");
+        let wrong = read(whimbrel_memory_search_captures_filtered(handle, query.as_ptr(), false, other.as_ptr(), 1, i64::MAX, 10));
+        assert_eq!(wrong, "[]");
+        whimbrel_memory_close(handle);
+    }
+
+    #[test]
     fn whimbrel_memory_recent_episodes_returns_null_on_null_handle() {
         let result = whimbrel_memory_recent_episodes(ptr::null_mut(), 10);
         assert!(result.is_null());
@@ -9364,8 +9857,8 @@ mod tests {
     fn live_question_ffi_null_and_bad_json_return_null() {
         let good = to_cstring("[]");
         let bad = to_cstring("{nope");
-        assert!(whimbrel_live_question_detect(ptr::null_mut(), good.as_ptr(), 0, good.as_ptr(), good.as_ptr(), ptr::null()).is_null());
-        assert!(whimbrel_live_question_draft(ptr::null_mut(), good.as_ptr(), good.as_ptr(), good.as_ptr(), ptr::null()).is_null());
+        assert!(whimbrel_live_question_detect(ptr::null_mut(), good.as_ptr(), 0, good.as_ptr(), good.as_ptr(), ptr::null(), 0).is_null());
+        assert!(whimbrel_live_question_draft(ptr::null_mut(), good.as_ptr(), good.as_ptr(), good.as_ptr(), ptr::null(), 0).is_null());
         assert!(whimbrel_live_question_candidates(ptr::null(), good.as_ptr(), false).is_null());
         assert!(whimbrel_live_question_candidates(bad.as_ptr(), good.as_ptr(), false).is_null());
         assert!(!whimbrel_live_question_is_duplicate(ptr::null(), good.as_ptr(), 0));
@@ -9376,11 +9869,11 @@ mod tests {
         let handle = whimbrel_memory_open(path.as_ptr(), ptr::null());
         assert!(!handle.is_null());
         let model = to_cstring("gemma4:12b");
-        assert!(whimbrel_live_question_detect(handle, bad.as_ptr(), 0, good.as_ptr(), model.as_ptr(), ptr::null()).is_null());
-        assert!(whimbrel_live_question_detect(handle, good.as_ptr(), 0, bad.as_ptr(), model.as_ptr(), ptr::null()).is_null());
+        assert!(whimbrel_live_question_detect(handle, bad.as_ptr(), 0, good.as_ptr(), model.as_ptr(), ptr::null(), 7).is_null());
+        assert!(whimbrel_live_question_detect(handle, good.as_ptr(), 0, bad.as_ptr(), model.as_ptr(), ptr::null(), 7).is_null());
         // index out of range for empty lines
-        assert!(whimbrel_live_question_detect(handle, good.as_ptr(), 3, good.as_ptr(), model.as_ptr(), ptr::null()).is_null());
-        assert!(whimbrel_live_question_draft(handle, bad.as_ptr(), good.as_ptr(), model.as_ptr(), ptr::null()).is_null());
+        assert!(whimbrel_live_question_detect(handle, good.as_ptr(), 3, good.as_ptr(), model.as_ptr(), ptr::null(), 7).is_null());
+        assert!(whimbrel_live_question_draft(handle, bad.as_ptr(), good.as_ptr(), model.as_ptr(), ptr::null(), 7).is_null());
         whimbrel_memory_close(handle);
     }
 

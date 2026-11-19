@@ -12,6 +12,8 @@ pub mod coordinators;
 
 pub mod enrollment;
 
+pub mod runner;
+
 /// The settings-sync field map: `{"<field_key>": {"value": "...", "updated_at_unix_ms":
 /// N, "is_deleted": bool}}` — the same shape `sync_engine::sync_settings` pushes and pulls.
 pub type SettingsFields = serde_json::Map<String, serde_json::Value>;

@@ -5,6 +5,9 @@ import { describeError, isCommandError } from "../errors";
 import type { LibraryTarget, StepActionInput, TopicListItemView, TopicPageView, TopicStepView } from "../generated/types";
 import { useL10n } from "../l10n";
 import { Detail, type Selection } from "../library/Detail";
+import type { ClientReviewFlag } from "../clientControls";
+import { ClientRetentionDialog, ClientReviewBanner, ClientReviewDialog, ClientSection } from "./ClientControls";
+import { ClientRetentionReviewModel, ClientReviewModel, tauriClientControls, type ReviewMode } from "./clientControlsModel";
 import {
   attendeeLine,
   chooseTopic,
@@ -26,6 +29,10 @@ function message(e: unknown): string {
 
 const SUMMARY_COLLAPSED = "whimbrel.topicSummaryCollapsed";
 
+/** The open client dialogs, kept across the Topics tab unmounting: a delete keeps running in the shell, and its
+ *  receipt (and Try again) must still be there when the user comes back. */
+const kept: { review: ClientReviewModel | null; retention: ClientRetentionReviewModel | null } = { review: null, retention: null };
+
 function readCollapsed(): boolean {
   try {
     return localStorage.getItem(SUMMARY_COLLAPSED) === "1";
@@ -45,6 +52,13 @@ export function TopicsView({ request }: { request?: { seq: number; topicId: numb
   const [page, setPage] = useState<TopicPageView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Selection | null>(null);
+  // The client review dialogs live here, not on the page, so a receipt stays when the deleted topic leaves the list;
+  // and outside the component, so leaving the tab mid-delete still finds the receipt on return.
+  const [review, setReviewState] = useState<ClientReviewModel | null>(() => kept.review);
+  const [retention, setRetentionState] = useState<ClientRetentionReviewModel | null>(() => kept.retention);
+  const setReview = (m: ClientReviewModel | null) => setReviewState((kept.review = m));
+  const setRetention = (m: ClientRetentionReviewModel | null) => setRetentionState((kept.retention = m));
+  const [reviewFlag, setReviewFlag] = useState<ClientReviewFlag | null>(null);
   const wanted = useRef<number | null>(selected);
   // Suggestions waiting in Settings → Topics, for the empty state; asked once there are no named topics.
   const [suggested, setSuggested] = useState(0);
@@ -63,6 +77,8 @@ export function TopicsView({ request }: { request?: { seq: number; topicId: numb
   }, [request]);
 
   const reload = useCallback(() => {
+    // The weekly keep-for-N-months prompt; a failed read just shows none.
+    tauriClientControls.reviewFlag().then((r) => setReviewFlag(r.ok ? r.data : null));
     topicsPageList()
       .then((l) => {
         setList(l);
@@ -96,11 +112,52 @@ export function TopicsView({ request }: { request?: { seq: number; topicId: numb
 
   if (open) return <Detail selection={open} onBack={() => setOpen(null)} />;
 
+  const openReview = (key: string, name: string, mode: ReviewMode) =>
+    setReview(new ClientReviewModel(key, name, mode, tauriClientControls));
+  const openRetention = () =>
+    setRetention(
+      new ClientRetentionReviewModel(Object.fromEntries((list ?? []).map((e) => [e.topic.key, e.topic.name])), tauriClientControls),
+    );
+  const dialogs = (
+    <>
+      {review && (
+        <ClientReviewDialog
+          model={review}
+          onClose={() => {
+            setReview(null);
+            reload();
+          }}
+        />
+      )}
+      {retention && (
+        <ClientRetentionDialog
+          model={retention}
+          onClose={() => {
+            setRetention(null);
+            reload();
+          }}
+        />
+      )}
+    </>
+  );
+  const banner = reviewFlag && (
+    <ClientReviewBanner
+      flag={reviewFlag}
+      review={openRetention}
+      later={() => {
+        setReviewFlag(null);
+        // Reloaded once the dismiss is stored, so a reload in between can't bring the banner back for good.
+        void tauriClientControls.dismissReviewFlag().then(reload);
+      }}
+    />
+  );
+
   // No named topics yet: the Mac's empty state, centred on its own, not pushed into the page column beside
   // an empty list. It counts the suggestions waiting in Settings → Topics.
   if (list && list.length === 0) {
     return (
       <section className="card empty-state topics-empty">
+        {dialogs}
         {error && <p role="alert">{error}</p>}
         <h2 className="section-label">{t("No topics yet")}</h2>
         <p className="muted">
@@ -117,6 +174,7 @@ export function TopicsView({ request }: { request?: { seq: number; topicId: numb
 
   return (
     <div className="topics">
+      {dialogs}
       <nav className="topics-list" aria-label={t("Topics")}>
         {TOPIC_GROUPS.map((group) => {
           const entries = (list ?? []).filter((e) => groupOf(e.kind) === group);
@@ -146,12 +204,14 @@ export function TopicsView({ request }: { request?: { seq: number; topicId: numb
         })}
       </nav>
       <section className="topics-page">
+        {banner}
         {error && <p role="alert">{error}</p>}
         {page ? (
           <TopicPage
             key={page.topic.topicId}
             page={page}
             onOpen={setOpen}
+            openReview={(mode) => openReview(page.topic.key, page.topic.name, mode)}
             act={(work) => {
               setError(null);
               work()
@@ -175,7 +235,17 @@ export function TopicsView({ request }: { request?: { seq: number; topicId: numb
 
 type Act = (work: () => Promise<unknown>) => void;
 
-function TopicPage({ page, onOpen, act }: { page: TopicPageView; onOpen: (s: Selection) => void; act: Act }) {
+function TopicPage({
+  page,
+  onOpen,
+  openReview,
+  act,
+}: {
+  page: TopicPageView;
+  onOpen: (s: Selection) => void;
+  openReview: (mode: ReviewMode) => void;
+  act: Act;
+}) {
   const { t, locale } = useL10n();
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [role, setRole] = useState(page.role);
@@ -219,7 +289,11 @@ function TopicPage({ page, onOpen, act }: { page: TopicPageView; onOpen: (s: Sel
           value={role}
           placeholder={t("Your role on this topic")}
           aria-label={t("Your role")}
-          title={page.roleEdited ? t("Your wording. Enter saves; empty it to let Whimbrel suggest one.") : t("Whimbrel's guess. Edit it and press Enter.")}
+          title={
+            page.roleEdited
+              ? t("Your wording. Enter saves; empty it to let Whimbrel suggest one.")
+              : t("Whimbrel's guess. Edit it and press Enter.")
+          }
           onFocus={() => (editingRole.current = true)}
           onBlur={() => (editingRole.current = false)}
           onChange={(e) => setRole(e.target.value)}
@@ -267,7 +341,8 @@ function TopicPage({ page, onOpen, act }: { page: TopicPageView; onOpen: (s: Sel
             <ul className="topic-recent">
               {recent.map((item, i) => (
                 <li key={i}>
-                  <span className="muted small">{monthDay(new Date(item.tsUnixMs), locale)}</span> <SourceLink item={item} onOpen={onOpen} />
+                  <span className="muted small">{monthDay(new Date(item.tsUnixMs), locale)}</span>{" "}
+                  <SourceLink item={item} onOpen={onOpen} />
                 </li>
               ))}
             </ul>
@@ -281,6 +356,9 @@ function TopicPage({ page, onOpen, act }: { page: TopicPageView; onOpen: (s: Sel
           </>
         )}
       </Section>
+
+      {/* Every topic on this tab is a live seed; core's not_found hides the section anyway. */}
+      <ClientSection key={page.topic.key} topicKey={page.topic.key} bridge={tauriClientControls} openReview={openReview} />
     </article>
   );
 }
@@ -299,7 +377,13 @@ function kindLabel(kind: string): string {
 }
 
 /** The source's title, as a link when it can be opened here (an email thread can't, on Windows). */
-function SourceLink({ item, onOpen }: { item: { kind: string; title: string; open?: LibraryTarget | null }; onOpen: (s: Selection) => void }) {
+function SourceLink({
+  item,
+  onOpen,
+}: {
+  item: { kind: string; title: string; open?: LibraryTarget | null };
+  onOpen: (s: Selection) => void;
+}) {
   const label = item.title || kindLabel(item.kind);
   const target = item.open;
   return target ? (
@@ -350,7 +434,12 @@ function StepRow({ step, onOpen, act }: { step: TopicStepView; onOpen: (s: Selec
         {step.fromScreen && <> · {t("from screen")}</>}
         {" · "}
         {t("asked {day}", { day: monthDay(new Date(step.askedAtUnixMs), locale) })}
-        {due_ && <> · <span className={due_ === t("overdue") ? "topic-overdue" : undefined}>{due_}</span></>}
+        {due_ && (
+          <>
+            {" "}
+            · <span className={due_ === t("overdue") ? "topic-overdue" : undefined}>{due_}</span>
+          </>
+        )}
       </p>
       {step.note && <p className="muted small">{t("Note: {note}", { note: step.note })}</p>}
       {done && step.closedBy && <p className="muted small">{t("Closed by {source}", { source: step.closedBy })}</p>}

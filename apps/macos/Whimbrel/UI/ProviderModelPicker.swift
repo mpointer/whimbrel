@@ -100,6 +100,9 @@ struct ProviderModelPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
+            // The segments size to their names (six providers no longer fit the old fixed 380 pt,
+            // and the overflow drew over the label and the model menu), and the model menu has
+            // its own row so a narrow window can't overlap the two.
             HStack {
                 Text("Provider:").font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
                 Picker("", selection: $selectedProvider) {
@@ -107,12 +110,13 @@ struct ProviderModelPicker: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 380)
+                .fixedSize()
                 .onChange(of: selectedProvider) { _, _ in
                     clampSelectedModelIfNeeded()
                     refreshHostedModelsIfNeeded()
                 }
-
+            }
+            HStack {
                 if isLoadingHostedModels {
                     ProgressView().controlSize(.small).frame(width: 160)
                 } else if selectedProvider == .ollama && hostedModelOptions.isEmpty {
@@ -127,7 +131,7 @@ struct ProviderModelPicker: View {
                         ForEach(hostedModelOptions, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 160)
+                    .frame(minWidth: 160, idealWidth: 260, maxWidth: 320)
                     .disabled(hostedModelOptions.isEmpty)
                 }
             }

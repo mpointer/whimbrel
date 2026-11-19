@@ -21,12 +21,15 @@ export function MeetingAskBar({
   live,
   disabledReason,
   onCite,
+  request,
 }: {
   meetingId: number;
   /** During the call: answers come from the transcript so far, and say so. */
   live: boolean;
   disabledReason: string | null;
   onCite: (segmentId: number) => void;
+  /** A question asked elsewhere (the in-meeting window): asked here once per `seq`, so the answer shows in this window. */
+  request?: { seq: number; text: string };
 }) {
   const { t } = useL10n();
   const [exchanges, setExchanges] = useState<MeetingExchange[]>([]);
@@ -87,6 +90,14 @@ export function MeetingAskBar({
   };
 
   const stoppable = busy ? (last?.turn.runId ?? null) : null;
+
+  const handled = useRef(0);
+  useEffect(() => {
+    if (request && request.seq !== handled.current) {
+      handled.current = request.seq;
+      submit(request.text);
+    }
+  });
 
   return (
     <section className="field meeting-ask" aria-label={t("Ask about this meeting")}>

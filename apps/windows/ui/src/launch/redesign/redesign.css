@@ -1,0 +1,18 @@
+/* The launch screens in the Thread look. Layout only: colors, fonts and shape come from the selected skin through
+   the system components. */
+.tl-qr-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--w-space-xl);
+}
+.tl-file-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--w-space-md);
+}
+.tl-file-name {
+  font-family: var(--w-font-mono);
+  overflow-wrap: anywhere;
+}

@@ -2,7 +2,7 @@ import { describeError } from "../errors";
 import { t } from "../l10n";
 import type { ChatEvent, ChatSpend, ContextEntry, ContextItemRef, ExchangeView } from "../generated/types";
 
-export type TurnStatus = "starting" | "streaming" | "blocking" | "done" | "failed" | "cancelled";
+export type TurnStatus = "starting" | "waiting" | "streaming" | "blocking" | "done" | "failed" | "cancelled";
 
 /** One question and its answer, as the Ask view draws it. */
 export interface Turn {
@@ -21,6 +21,13 @@ export interface Turn {
   error: string | null;
   /** The error was a spent monthly budget: the turn offers "Open AI settings". */
   budgetSpent?: boolean;
+  /** Retrieved items a hosted model answered without, because they involve an excluded client (core's
+   *  `filtered_hosted`; items, not clients). Shown under the answer only, never saved. */
+  leftOut?: number | null;
+  /** The question names a client excluded from hosted models: a model on this PC answers it (PR 874). */
+  routedLocally?: boolean;
+  /** The answer was made on this PC for that reason: a note under it says so, never naming the client. */
+  answeredLocally?: boolean;
 }
 
 export function newTurn(query: string): Turn {
@@ -44,7 +51,16 @@ export function applyEvent(turn: Turn, event: ChatEvent): Turn {
         provider: event.provider,
         model: event.model,
         context: event.context,
+        routedLocally: false,
       };
+    case "waiting":
+      // Only before the answer has started: a late one changes nothing.
+      return turn.status === "starting" ? { ...turn, status: "waiting" } : turn;
+    case "routed_locally":
+      return { ...turn, routedLocally: true };
+    case "answered_by":
+      // The model that really answered (the chain may have moved past the picked one).
+      return { ...turn, model: event.model || null, answeredLocally: event.excludedClient };
     case "delta":
       return { ...turn, status: "streaming", text: turn.text + event.text, progress: null };
     case "progress":
@@ -55,7 +71,7 @@ export function applyEvent(turn: Turn, event: ChatEvent): Turn {
       // model is named from here on.
       return { ...turn, status: "blocking", runId: null, provider: null, model: null, text: "", progress: null };
     case "completed":
-      return { ...turn, status: "done", runId: null, text: event.answer, citations: event.citations, progress: null };
+      return { ...turn, status: "done", runId: null, text: event.answer, citations: event.citations, progress: null, leftOut: event.leftOut ?? null };
     case "cancelled":
       return { ...turn, status: "cancelled", runId: null, progress: null };
     case "failed":
@@ -74,7 +90,7 @@ export function applyEvent(turn: Turn, event: ChatEvent): Turn {
 }
 
 export const isBusy = (turn: Turn | undefined): boolean =>
-  !!turn && (turn.status === "starting" || turn.status === "streaming" || turn.status === "blocking");
+  !!turn && (turn.status === "starting" || turn.status === "waiting" || turn.status === "streaming" || turn.status === "blocking");
 
 /**
  * The items an answer cites, in citation order, once each. A citation whose item isn't
@@ -95,13 +111,22 @@ export function spendLine(spend: ChatSpend): string {
     : t("{used}¢ / {cap}¢ today", { used: String(spend.userCents), cap: String(spend.capCents) });
 }
 
+/** The spinner while a model on this PC answers a question that names an excluded client (PR 874). */
+export const answeringLocallyLine = () => t("Answering on this PC: this question names a client excluded from hosted models…");
+
+/** Under an answer made on this PC for that reason. Never names the client. */
+export const answeredLocallyLine = () => t("Answered locally: a client named here is excluded from hosted models.");
+
 /** The small line under an answer that isn't finished yet. */
 export function statusLine(turn: Turn): string | null {
   const model = turn.model;
   switch (turn.status) {
     case "starting":
       return t("Finding context…");
+    case "waiting":
+      return t("Waiting for background work…");
     case "blocking":
+      if (turn.routedLocally) return answeringLocallyLine();
       return model ? t("Asking {model}…", { model }) : t("Asking the model…");
     case "streaming":
       if (turn.text || turn.progress) return turn.progress;

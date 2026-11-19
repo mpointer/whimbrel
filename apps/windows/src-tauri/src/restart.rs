@@ -147,7 +147,7 @@ fn supervise(exe: &Path, logs_dir: &Path) -> i32 {
 
 /// One line in `logs\supervisor.log`. The supervisor keeps its own file rather than
 /// sharing the app's rolling log with a second process.
-fn note(logs_dir: &Path, message: &str) {
+pub(crate) fn note(logs_dir: &Path, message: &str) {
     let line = format!("{} {message}\n", chrono::Local::now().to_rfc3339());
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(logs_dir.join("supervisor.log")) {
         let _ = std::io::Write::write_all(&mut file, line.as_bytes());
@@ -186,7 +186,7 @@ pub fn schedule_crash_test(app: &AppHandle) {
         std::thread::sleep(Duration::from_secs(5));
         match mode.as_str() {
             "actor" => {
-                if let Some(store) = &app.state::<AppState>().store {
+                if let Some(store) = app.try_state::<AppState>().and_then(|s| s.store.clone()) {
                     let _ = store.call_blocking(|_| -> () { panic!("crash test: a store job panicked") });
                 }
             }

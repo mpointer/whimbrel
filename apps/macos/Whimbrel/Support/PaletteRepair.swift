@@ -1,4 +1,5 @@
 import Foundation
+import WhimbrelUI
 
 /// Makes a palette pass `ArchetypeContrast` (every pair any archetype draws, by default) without dropping it
 /// (Skins Release 2: a generated palette is repaired, not replaced). Each text colour of a failing pair moves
@@ -208,4 +209,39 @@ enum ArchetypeContrast {
     }
 
     static func passes(_ palette: ThemePalette, _ pairs: [Pair] = all) -> Bool { failures(palette, pairs).isEmpty }
+}
+
+// MARK: Home element pairs (redesign flag only)
+
+/// The pairs the Home elements draw (docs/ui-redesign/skins.md). Opt-in: nothing in `ArchetypeContrast.pairs(for:)`
+/// or `all` changes, so with the redesign flag off every repair gives today's result.
+extension ArchetypeContrast {
+    /// Scoreboard digits are `textOnAccent` on `accentPrimary`; text links are `link` on the page; bracketed or small caps
+    /// labels and the infobox put `textPrimary` and `textSecondary` on the card and the page. Other choices add none.
+    static func elementPairs(_ choices: WHomeElements) -> [Pair] {
+        var pairs: [Pair] = []
+        if choices.nextMeeting == .scoreboard { pairs.append(plain(.textOnAccent, on: .accentPrimary)) }
+        if choices.actions == .links { pairs.append(plain(.link, on: .backgroundPage)) }
+        if choices.nextMeeting == .infobox || choices.labels == .bracketed || choices.labels == .smallCaps {
+            for text in [ThemeToken.textPrimary, .textSecondary] { for bg in [ThemeToken.backgroundCard, .backgroundPage] { pairs.append(plain(text, on: bg)) } }
+        }
+        return pairs
+    }
+
+    /// `pairs` plus the element pairs for `choices`, each pair once.
+    static func withElementPairs(_ pairs: [Pair], for choices: [WHomeElements]) -> [Pair] {
+        var seen = Set(pairs.map { "\($0.text.rawValue) on \($0.name)" })
+        return pairs + choices.flatMap(elementPairs).filter { seen.insert("\($0.text.rawValue) on \($0.name)").inserted }
+    }
+}
+
+extension PaletteRepair {
+    /// `repair(palette, pairs:)`, with the element pairs for `redesign` added when it is non-nil. With nil this is exactly
+    /// `repair(_:pairs:)`.
+    static func repair(
+        _ palette: ThemePalette, pairs: [ArchetypeContrast.Pair] = ArchetypeContrast.all, redesign: [WHomeElements]?
+    ) -> (palette: ThemePalette, changed: [ThemeToken]) {
+        guard let redesign else { return repair(palette, pairs: pairs) }
+        return repair(palette, pairs: ArchetypeContrast.withElementPairs(pairs, for: redesign))
+    }
 }

@@ -5,9 +5,29 @@ import Foundation
 /// permission: that is an existing install.
 enum FirstRun {
     static let doneKey = "onboarding.firstRunDone"
+    /// Set by Delete everything's flag cleanup (X4 Task 13c fix A): the sheet returns once even
+    /// though this Mac's permission grants stay (they are the OS's, never touched).
+    static let afterDeleteEverythingKey = "onboarding.firstRunAfterDeleteEverything"
 
-    static func shouldShow(done: Bool, microphoneGranted: Bool, screenGranted: Bool) -> Bool {
-        !done && !microphoneGranted && !screenGranted
+    static func shouldShow(done: Bool, microphoneGranted: Bool, screenGranted: Bool, afterDeleteEverything: Bool = false) -> Bool {
+        !done && (afterDeleteEverything || (!microphoneGranted && !screenGranted))
+    }
+
+    static func shouldShow(defaults: UserDefaults, microphoneGranted: Bool, screenGranted: Bool) -> Bool {
+        shouldShow(done: defaults.bool(forKey: doneKey), microphoneGranted: microphoneGranted, screenGranted: screenGranted,
+                   afterDeleteEverything: defaults.bool(forKey: afterDeleteEverythingKey))
+    }
+
+    /// "Get Started": done, and the Delete everything request is used up.
+    static func markDone(_ defaults: UserDefaults) {
+        defaults.set(true, forKey: doneKey)
+        defaults.removeObject(forKey: afterDeleteEverythingKey)
+    }
+
+    /// Delete everything: show the sheet again at the next main window.
+    static func resetAfterDeleteEverything(_ defaults: UserDefaults) {
+        defaults.removeObject(forKey: doneKey)
+        defaults.set(true, forKey: afterDeleteEverythingKey)
     }
 }
 

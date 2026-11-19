@@ -3,6 +3,10 @@
 //! change is that the C-string entry point became [`RoutingConfig::from_json`] over a
 //! plain `Option<&str>`, with `core/ffi` keeping a one-line pointer adapter.
 
+use std::sync::Arc;
+
+use llm::guard::HostedGate;
+
 /// Decoded from the shell's `routing_config_json` (sub-project 2's Settings UI — see
 /// docs/superpowers/specs/2026-07-27-settings-ui-routing-design.md). All fields but
 /// `preferred_provider`/`preferred_model` are optional — the shell always sends *some*
@@ -46,6 +50,11 @@ pub struct RoutingConfig {
     /// BCP 47 tag AI output is written in. "" (the default, and en-US with the English
     /// model) adds no language line, so prompts stay byte-identical. Device-local.
     pub output_language: String,
+    /// The Ollama model the shell streams with, when it says (`"ollama_model"` in the JSON;
+    /// Windows sets it). An Ollama cloud model here is hosted (`llm::is_ollama_cloud_model`):
+    /// local-only mode then refuses rather than stream to it, and the destination line says it
+    /// leaves the computer. Empty when the shell does not say.
+    pub ollama_model: String,
     /// The signed-in user's Google ID token and this device's public key, for Whimbrel AI.
     /// Both must be set for the Whimbrel link to exist; the shell refreshes the token.
     /// (Parsed field by field in [`RoutingConfig::from_json`], so a missing or wrong-typed
@@ -81,6 +90,7 @@ impl std::fmt::Debug for RoutingConfig {
             .field("openrouter_model", &self.openrouter_model)
             .field("openrouter_prices", &self.openrouter_prices)
             .field("output_language", &self.output_language)
+            .field("ollama_model", &self.ollama_model)
             .field("whimbrel_id_token", &redacted(&self.whimbrel_id_token))
             .field("whimbrel_device_key", &redacted(&self.whimbrel_device_key))
             .finish()
@@ -111,6 +121,7 @@ impl Default for RoutingConfig {
             openrouter_model: String::new(),
             openrouter_prices: std::collections::HashMap::new(),
             output_language: String::new(),
+            ollama_model: String::new(),
             whimbrel_id_token: None,
             whimbrel_device_key: None,
         }
@@ -244,6 +255,7 @@ impl RoutingConfig {
                 .map(str::trim)
                 .map(String::from)
                 .unwrap_or_default(),
+            ollama_model: v.get("ollama_model").and_then(|x| x.as_str()).map(str::trim).map(String::from).unwrap_or_default(),
             whimbrel_id_token: v
                 .get("whimbrel_id_token")
                 .and_then(|x| x.as_str())
@@ -402,11 +414,13 @@ pub fn limited_use_settings() -> LimitedUseSettings {
 /// preferred provider becomes link 0 only if it's actually buildable (Ollama is always
 /// buildable; a hosted provider needs its key present) — an unbuildable preference
 /// (e.g. Anthropic picked but no Anthropic key saved) falls through to the default
-/// Ollama-first order instead of silently dropping a link.
-pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
-    let ollama_link = || ollama_link(ollama_model);
+/// Ollama-first order instead of silently dropping a link. Every hosted link is behind
+/// `gate` (`crate::exclusion::current_gate`); the local links never are.
+pub fn build_chain(ollama_model: &str, routing: &RoutingConfig, gate: &Arc<dyn HostedGate>) -> Vec<llm::ChainLink> {
+    let ollama_link = || ollama_link(ollama_model, gate);
     if routing.sensitive {
-        let mut chain = vec![ollama_link()];
+        // Local-only mode: an Ollama cloud model is not local, so it is no link here.
+        let mut chain: Vec<llm::ChainLink> = on_device_ollama_link(ollama_model).into_iter().collect();
         push_local_link(&mut chain);
         return chain;
     }
@@ -436,17 +450,17 @@ pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Chai
     };
 
     let mut ollama_slot = routing.use_local_model.then(ollama_link);
-    let mut anthropic_slot = hosted_link(routing, llm::Provider::Anthropic, &anthropic_model);
-    let mut openai_slot = hosted_link(routing, llm::Provider::OpenAI, &openai_model);
-    let mut google_slot = hosted_link(routing, llm::Provider::Google, &google_model);
-    let mut openrouter_slot = hosted_link(routing, llm::Provider::OpenRouter, openrouter_model);
+    let mut anthropic_slot = hosted_link(routing, llm::Provider::Anthropic, &anthropic_model, gate);
+    let mut openai_slot = hosted_link(routing, llm::Provider::OpenAI, &openai_model, gate);
+    let mut google_slot = hosted_link(routing, llm::Provider::Google, &google_model, gate);
+    let mut openrouter_slot = hosted_link(routing, llm::Provider::OpenRouter, openrouter_model, gate);
 
     // Whimbrel AI is a link only when the user picked it: it spends their prepaid credit,
     // so it is never a silent fallback for another provider's failure. Its model is the
     // user's pick, or Whimbrel's default before one is made.
     let mut whimbrel_slot = if routing.preferred_provider == "whimbrel" {
         let model = if routing.preferred_model.is_empty() { FALLBACK_WHIMBREL_MODEL } else { routing.preferred_model.as_str() };
-        hosted_link(routing, llm::Provider::Whimbrel, model)
+        hosted_link(routing, llm::Provider::Whimbrel, model, gate)
     } else {
         None
     };
@@ -503,6 +517,29 @@ pub fn build_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Chai
     chain
 }
 
+/// Makes the client one chain link talks through, from the link's provider and model. A caller
+/// that substitutes it (the cloud runner's tests) changes only that client: the chain's links,
+/// their order, the budgets and the exclusion gate still come from routing ([`with_transport`]).
+pub type Transport = dyn Fn(llm::Provider, &str) -> Box<dyn llm::LlmClient>;
+
+/// `chain` with each link's client made by `transport`. A link that leaves this computer
+/// ([`llm::is_hosted`]) is put behind `store`'s exclusion gate again, as routing puts it.
+pub fn with_transport(store: &memory::Store, chain: Vec<llm::ChainLink>, transport: &Transport) -> Vec<llm::ChainLink> {
+    let gate = crate::exclusion::current_gate(store);
+    chain
+        .into_iter()
+        .map(|link| {
+            let hosted = llm::is_hosted(link.provider, &link.model);
+            let substituted = llm::ChainLink { client: transport(link.provider, &link.model), provider: link.provider, model: link.model };
+            if hosted {
+                llm::guard_hosted(substituted, gate.clone())
+            } else {
+                substituted
+            }
+        })
+        .collect()
+}
+
 /// Whimbrel AI's own models, apart from the Anthropic key's: the server prices the newer
 /// ids (server/src/aiProxy.ts `AI_PRICES`), and the Mac picks Sonnet 5.5 by default.
 const CHEAP_WHIMBREL_MODEL: &str = "claude-haiku-5-5";
@@ -536,12 +573,28 @@ fn light_model(routing: &RoutingConfig, provider: llm::Provider) -> String {
     }
 }
 
-fn ollama_link(ollama_model: &str) -> llm::ChainLink {
-    llm::ChainLink {
+/// The Ollama link. An Ollama cloud model runs on Ollama's servers, so its link is hosted and
+/// behind `gate` like any other ([`llm::is_ollama_cloud_model`]).
+fn ollama_link(ollama_model: &str, gate: &Arc<dyn HostedGate>) -> llm::ChainLink {
+    let link = llm::ChainLink {
         provider: llm::Provider::Ollama,
         model: ollama_model.to_string(),
         client: Box::new(llm::OllamaClient::new(ollama_model)),
+    };
+    if llm::is_ollama_cloud_model(ollama_model) {
+        llm::guard_hosted(link, gate.clone())
+    } else {
+        link
     }
+}
+
+/// The Ollama link when its model runs on this computer; `None` for an Ollama cloud model.
+fn on_device_ollama_link(ollama_model: &str) -> Option<llm::ChainLink> {
+    (!llm::is_ollama_cloud_model(ollama_model)).then(|| llm::ChainLink {
+        provider: llm::Provider::Ollama,
+        model: ollama_model.to_string(),
+        client: Box::new(llm::OllamaClient::new(ollama_model)),
+    })
 }
 
 /// The bundled model, once it's installed. Always last: anything the user set up comes first.
@@ -562,8 +615,14 @@ fn push_local_link_if(installed: bool, chain: &mut Vec<llm::ChainLink>) {
 /// A hosted link at `model`, or `None` when the user holds no key for `provider` or
 /// `model` is empty (OpenRouter before a pick). A link on the user's own Anthropic,
 /// OpenAI or Google key retries once with the provider's current default when the
-/// provider says `model` doesn't exist ([`crate::model_defaults::fallback_for`]).
-fn hosted_link(routing: &RoutingConfig, provider: llm::Provider, model: &str) -> Option<llm::ChainLink> {
+/// provider says `model` doesn't exist ([`crate::model_defaults::fallback_for`]). The one
+/// place a chain's hosted client is made, and it is always behind `gate`.
+fn hosted_link(
+    routing: &RoutingConfig,
+    provider: llm::Provider,
+    model: &str,
+    gate: &Arc<dyn HostedGate>,
+) -> Option<llm::ChainLink> {
     if model.is_empty() {
         return None;
     }
@@ -582,23 +641,23 @@ fn hosted_link(routing: &RoutingConfig, provider: llm::Provider, model: &str) ->
         )),
         llm::Provider::Ollama | llm::Provider::Local => return None,
     };
-    Some(llm::ChainLink { provider, model: model.to_string(), client })
+    Some(llm::guard_hosted(llm::ChainLink { provider, model: model.to_string(), client }, gate.clone()))
 }
 
 /// The light chain: the local model first (when enabled), then every hosted provider
 /// the user holds a key for at its cheap model, cheapest first by `llm::price_rank`.
-fn build_light_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
+fn build_light_chain(ollama_model: &str, routing: &RoutingConfig, gate: &Arc<dyn HostedGate>) -> Vec<llm::ChainLink> {
     let whimbrel = (routing.preferred_provider == "whimbrel").then_some(llm::Provider::Whimbrel);
     let mut hosted: Vec<llm::ChainLink> = HOSTED_PROVIDERS
         .iter()
         .copied()
         .chain(whimbrel)
-        .filter_map(|p| hosted_link(routing, p, &light_model(routing, p)))
+        .filter_map(|p| hosted_link(routing, p, &light_model(routing, p), gate))
         .collect();
     hosted.sort_by(|a, b| llm::price_rank(a.provider, &a.model).total_cmp(&llm::price_rank(b.provider, &b.model)));
     let mut chain = Vec::with_capacity(hosted.len() + 1);
     if routing.use_local_model {
-        chain.push(ollama_link(ollama_model));
+        chain.push(ollama_link(ollama_model, gate));
     }
     chain.extend(hosted);
     push_local_link(&mut chain);
@@ -607,20 +666,27 @@ fn build_light_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::Ch
 
 /// The chain for one call of `task`: the light chain for light tasks when cheap-first
 /// is on, otherwise [`build_chain`]. Sensitive mode is Ollama-only for every task.
-pub fn build_chain_for(task: llm::TaskKind, ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
+pub fn build_chain_for(
+    task: llm::TaskKind,
+    ollama_model: &str,
+    routing: &RoutingConfig,
+    gate: &Arc<dyn HostedGate>,
+) -> Vec<llm::ChainLink> {
     if routing.sensitive {
-        return build_chain(ollama_model, routing);
+        return build_chain(ollama_model, routing, gate);
     }
     match task.tier() {
-        llm::Tier::Light if routing.cheap_first => build_light_chain(ollama_model, routing),
-        _ => build_chain(ollama_model, routing),
+        llm::Tier::Light if routing.cheap_first => build_light_chain(ollama_model, routing, gate),
+        _ => build_chain(ollama_model, routing, gate),
     }
 }
 
-/// On-device links only: Ollama when enabled, then the bundled model when installed. Never a
-/// hosted link, whatever keys are set.
+/// On-device links only: Ollama when enabled (and its model is not an Ollama cloud model), then
+/// the bundled model when installed. Never a hosted link, whatever keys are set, so never behind
+/// the exclusion gate: where a request that carries an excluded client goes.
 pub fn build_local_chain(ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
-    let mut chain: Vec<llm::ChainLink> = routing.use_local_model.then(|| ollama_link(ollama_model)).into_iter().collect();
+    let mut chain: Vec<llm::ChainLink> =
+        routing.use_local_model.then(|| on_device_ollama_link(ollama_model)).flatten().into_iter().collect();
     push_local_link(&mut chain);
     chain
 }
@@ -673,24 +739,29 @@ impl RoutineModelPref {
 /// its key exists (a pinned Ollama uses the pinned model instead of `ollama_model`) and
 /// the standard chain after it, minus the duplicate; a pinned provider with no key falls
 /// through to the standard chain, the way an unbuildable preferred provider does.
-pub fn build_chain_for_routine(pref: &RoutineModelPref, ollama_model: &str, routing: &RoutingConfig) -> Vec<llm::ChainLink> {
+pub fn build_chain_for_routine(
+    pref: &RoutineModelPref,
+    ollama_model: &str,
+    routing: &RoutingConfig,
+    gate: &Arc<dyn HostedGate>,
+) -> Vec<llm::ChainLink> {
     if routing.sensitive {
-        return vec![ollama_link(ollama_model)];
+        return on_device_ollama_link(ollama_model).into_iter().collect();
     }
     match pref {
-        RoutineModelPref::Default => build_chain(ollama_model, routing),
-        RoutineModelPref::Cheapest if routing.cheap_first => build_light_chain(ollama_model, routing),
-        RoutineModelPref::Cheapest => build_chain(ollama_model, routing),
+        RoutineModelPref::Default => build_chain(ollama_model, routing, gate),
+        RoutineModelPref::Cheapest if routing.cheap_first => build_light_chain(ollama_model, routing, gate),
+        RoutineModelPref::Cheapest => build_chain(ollama_model, routing, gate),
         RoutineModelPref::Pinned { provider, model } => {
             let pinned = match provider {
-                llm::Provider::Ollama => Some(ollama_link(model)),
-                p => hosted_link(routing, *p, model),
+                llm::Provider::Ollama => Some(ollama_link(model, gate)),
+                p => hosted_link(routing, *p, model, gate),
             };
             let Some(pinned) = pinned else {
-                return build_chain(ollama_model, routing);
+                return build_chain(ollama_model, routing, gate);
             };
             let mut chain = vec![pinned];
-            chain.extend(build_chain(ollama_model, routing).into_iter().filter(|l| l.provider != *provider));
+            chain.extend(build_chain(ollama_model, routing, gate).into_iter().filter(|l| l.provider != *provider));
             chain
         }
     }
@@ -702,7 +773,7 @@ mod local_link_tests {
 
     #[test]
     fn the_local_model_goes_last_and_only_once_installed() {
-        let mut chain = vec![ollama_link("m")];
+        let mut chain = vec![ollama_link("m", &(Arc::new(llm::NoExclusions) as Arc<dyn HostedGate>))];
         push_local_link_if(false, &mut chain);
         assert_eq!(chain.len(), 1);
         push_local_link_if(true, &mut chain);
@@ -720,6 +791,11 @@ mod local_link_tests {
 mod tests {
     use super::*;
     use llm::{Provider, TaskKind};
+
+    /// No client excluded: the gate the chain tests run under.
+    fn open() -> Arc<dyn HostedGate> {
+        Arc::new(llm::guard::NoExclusions)
+    }
 
     fn providers(chain: &[llm::ChainLink]) -> Vec<llm::Provider> {
         chain.iter().map(|l| l.provider).collect()
@@ -779,16 +855,16 @@ mod tests {
     fn whimbrel_is_never_in_the_default_chain() {
         let routing = RoutingConfig { preferred_provider: "anthropic".into(), preferred_model: "claude-opus-5".into(), ..with_whimbrel() };
         for task in [TaskKind::Chat, TaskKind::ConversationTitle] {
-            let chain = build_chain_for(task, "gemma4:12b", &routing);
+            let chain = build_chain_for(task, "gemma4:12b", &routing, &open());
             assert!(!providers(&chain).contains(&Provider::Whimbrel), "{task:?}");
         }
-        assert!(!providers(&build_chain("gemma4:12b", &with_whimbrel())).contains(&Provider::Whimbrel));
+        assert!(!providers(&build_chain("gemma4:12b", &with_whimbrel(), &open())).contains(&Provider::Whimbrel));
     }
 
     #[test]
     fn preferred_whimbrel_comes_first_then_others() {
         let routing = RoutingConfig { preferred_provider: "whimbrel".into(), preferred_model: "claude-sonnet-5".into(), ..with_whimbrel() };
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(
             providers(&chain),
             vec![Provider::Whimbrel, Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google]
@@ -796,7 +872,7 @@ mod tests {
         assert_eq!(chain[0].model, "claude-sonnet-5");
         assert_eq!(chain[2].model, "claude-haiku-5-5", "Anthropic is only a fallback here, at its default");
         // A Whimbrel-only user still gets light tasks done, at the cheap model.
-        let light = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing);
+        let light = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing, &open());
         assert!(providers(&light).contains(&Provider::Whimbrel));
     }
 
@@ -807,9 +883,9 @@ mod tests {
             RoutingConfig { preferred_provider: "whimbrel".into(), whimbrel_id_token: Some("t".into()), ..all_keys() },
             RoutingConfig { preferred_provider: "whimbrel".into(), whimbrel_device_key: Some("d".into()), ..all_keys() },
         ] {
-            let chain = build_chain("gemma4:12b", &routing);
+            let chain = build_chain("gemma4:12b", &routing, &open());
             assert_eq!(providers(&chain), vec![Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google]);
-            assert!(!providers(&build_chain_for(TaskKind::TopicName, "gemma4:12b", &routing)).contains(&Provider::Whimbrel));
+            assert!(!providers(&build_chain_for(TaskKind::TopicName, "gemma4:12b", &routing, &open())).contains(&Provider::Whimbrel));
         }
     }
 
@@ -919,7 +995,7 @@ mod tests {
 
     #[test]
     fn light_chain_is_ollama_then_hosted_cheap_models_by_price() {
-        let chain = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &all_keys());
+        let chain = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &all_keys(), &open());
         assert_eq!(providers(&chain), vec![Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google]);
         assert_eq!(chain[1].model, "claude-haiku-5-5");
         assert_eq!(chain[2].model, "gpt-5.4-mini");
@@ -934,7 +1010,7 @@ mod tests {
             preferred_model: "claude-opus-5".into(),
             ..RoutingConfig::default()
         };
-        let chain = build_chain_for(TaskKind::TopicName, "gemma4:12b", &routing);
+        let chain = build_chain_for(TaskKind::TopicName, "gemma4:12b", &routing, &open());
         assert_eq!(providers(&chain), vec![Provider::Ollama, Provider::Anthropic]);
         assert_eq!(chain[1].model, "claude-haiku-5-5", "the cheap model, not the preferred one");
     }
@@ -942,12 +1018,12 @@ mod tests {
     #[test]
     fn standard_tasks_and_cheap_first_off_use_the_standard_chain() {
         let routing = RoutingConfig { preferred_provider: "anthropic".into(), preferred_model: "claude-opus-5".into(), ..all_keys() };
-        let standard = build_chain_for(TaskKind::Chat, "gemma4:12b", &routing);
+        let standard = build_chain_for(TaskKind::Chat, "gemma4:12b", &routing, &open());
         assert_eq!(providers(&standard), vec![Provider::Anthropic, Provider::Ollama, Provider::OpenAI, Provider::Google]);
         assert_eq!(standard[0].model, "claude-opus-5");
 
         let routing = RoutingConfig { cheap_first: false, ..routing };
-        let light_off = build_chain_for(TaskKind::ProfileSuggest, "gemma4:12b", &routing);
+        let light_off = build_chain_for(TaskKind::ProfileSuggest, "gemma4:12b", &routing, &open());
         assert_eq!(providers(&light_off), providers(&standard));
         assert_eq!(light_off[0].model, "claude-opus-5");
     }
@@ -956,10 +1032,10 @@ mod tests {
     fn sensitive_is_ollama_only_for_both_tiers_and_ignores_use_local_model() {
         let routing = RoutingConfig { sensitive: true, use_local_model: false, ..all_keys() };
         for task in [TaskKind::Chat, TaskKind::ConversationTitle] {
-            assert_eq!(providers(&build_chain_for(task, "gemma4:12b", &routing)), vec![Provider::Ollama]);
+            assert_eq!(providers(&build_chain_for(task, "gemma4:12b", &routing, &open())), vec![Provider::Ollama]);
         }
         assert_eq!(
-            providers(&build_chain_for_routine(&RoutineModelPref::Cheapest, "gemma4:12b", &routing)),
+            providers(&build_chain_for_routine(&RoutineModelPref::Cheapest, "gemma4:12b", &routing, &open())),
             vec![Provider::Ollama]
         );
     }
@@ -968,17 +1044,17 @@ mod tests {
     fn use_local_model_off_drops_ollama_from_standard_and_light_chains() {
         let routing = RoutingConfig { use_local_model: false, ..all_keys() };
         assert_eq!(
-            providers(&build_chain("gemma4:12b", &routing)),
+            providers(&build_chain("gemma4:12b", &routing, &open())),
             vec![Provider::Anthropic, Provider::OpenAI, Provider::Google]
         );
         assert_eq!(
-            providers(&build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing)),
+            providers(&build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing, &open())),
             vec![Provider::Anthropic, Provider::OpenAI, Provider::Google]
         );
         // No keys and no local model: an empty chain, which try_chain reports as a
         // provider failure, the same as every other "nothing to call" case.
         let routing = RoutingConfig { use_local_model: false, ..RoutingConfig::default() };
-        assert!(build_chain("gemma4:12b", &routing).is_empty());
+        assert!(build_chain("gemma4:12b", &routing, &open()).is_empty());
     }
 
     #[test]
@@ -1001,7 +1077,7 @@ mod tests {
             ("openai", "gpt-4.1", "gpt-4.1"),
         ] {
             let routing = RoutingConfig { preferred_provider: provider.into(), preferred_model: stored.into(), ..all_keys() };
-            let chain = build_chain("gemma4:12b", &routing);
+            let chain = build_chain("gemma4:12b", &routing, &open());
             assert_eq!((chain[0].provider.as_str(), chain[0].model.as_str()), (provider, runs), "{stored}");
         }
     }
@@ -1035,20 +1111,20 @@ mod tests {
     fn routine_chain_follows_the_routine_preference() {
         let routing = all_keys();
         assert_eq!(
-            providers(&build_chain_for_routine(&RoutineModelPref::Default, "gemma4:12b", &routing)),
-            providers(&build_chain("gemma4:12b", &routing))
+            providers(&build_chain_for_routine(&RoutineModelPref::Default, "gemma4:12b", &routing, &open())),
+            providers(&build_chain("gemma4:12b", &routing, &open()))
         );
-        let cheapest = build_chain_for_routine(&RoutineModelPref::Cheapest, "gemma4:12b", &routing);
+        let cheapest = build_chain_for_routine(&RoutineModelPref::Cheapest, "gemma4:12b", &routing, &open());
         assert_eq!(providers(&cheapest), vec![Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google]);
         assert_eq!(cheapest[1].model, "claude-haiku-5-5");
 
         let pinned = RoutineModelPref::Pinned { provider: Provider::OpenAI, model: "gpt-4.1".into() };
-        let chain = build_chain_for_routine(&pinned, "gemma4:12b", &routing);
+        let chain = build_chain_for_routine(&pinned, "gemma4:12b", &routing, &open());
         assert_eq!(providers(&chain), vec![Provider::OpenAI, Provider::Ollama, Provider::Anthropic, Provider::Google]);
         assert_eq!(chain[0].model, "gpt-4.1");
 
         let pinned_local = RoutineModelPref::Pinned { provider: Provider::Ollama, model: "llama3:8b".into() };
-        let chain = build_chain_for_routine(&pinned_local, "gemma4:12b", &routing);
+        let chain = build_chain_for_routine(&pinned_local, "gemma4:12b", &routing, &open());
         assert_eq!(chain[0].provider, Provider::Ollama);
         assert_eq!(chain[0].model, "llama3:8b");
         assert_eq!(chain.iter().filter(|l| l.provider == Provider::Ollama).count(), 1);
@@ -1059,7 +1135,7 @@ mod tests {
         let routing = RoutingConfig { openai_key: Some("o".into()), ..RoutingConfig::default() };
         let pinned = RoutineModelPref::Pinned { provider: Provider::Anthropic, model: "claude-sonnet-5".into() };
         assert_eq!(
-            providers(&build_chain_for_routine(&pinned, "gemma4:12b", &routing)),
+            providers(&build_chain_for_routine(&pinned, "gemma4:12b", &routing, &open())),
             vec![Provider::Ollama, Provider::OpenAI]
         );
     }
@@ -1121,7 +1197,7 @@ mod tests {
             ..RoutingConfig::default()
         };
         assert_eq!(
-            providers(&build_chain("gemma4:12b", &routing)),
+            providers(&build_chain("gemma4:12b", &routing, &open())),
             vec![llm::Provider::Ollama]
         );
     }
@@ -1135,7 +1211,7 @@ mod tests {
             ..RoutingConfig::default()
         };
         assert_eq!(
-            providers(&build_chain("gemma4:12b", &routing)),
+            providers(&build_chain("gemma4:12b", &routing, &open())),
             vec![
                 llm::Provider::Ollama,
                 llm::Provider::Anthropic,
@@ -1153,7 +1229,7 @@ mod tests {
             preferred_model: "gemini-2.5-pro".into(),
             ..RoutingConfig::default()
         };
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(
             providers(&chain),
             vec![llm::Provider::Google, llm::Provider::Ollama]
@@ -1170,7 +1246,7 @@ mod tests {
             openai_key: Some("o".into()),
             ..RoutingConfig::default()
         };
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(
             providers(&chain),
             vec![llm::Provider::Ollama, llm::Provider::OpenAI]
@@ -1227,6 +1303,7 @@ mod tests {
             openrouter_model: String::new(),
             openrouter_prices: Default::default(),
             output_language: String::new(),
+            ollama_model: String::new(),
             whimbrel_id_token: None,
             whimbrel_device_key: None,
         }
@@ -1249,7 +1326,7 @@ mod tests {
     #[test]
     fn openrouter_is_last_by_default_first_when_preferred_and_absent_without_a_model() {
         let routing = RoutingConfig { openrouter_key: Some("or".into()), openrouter_model: "vendor/model".into(), ..all_keys() };
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(
             providers(&chain),
             vec![Provider::Ollama, Provider::Anthropic, Provider::OpenAI, Provider::Google, Provider::OpenRouter]
@@ -1257,17 +1334,17 @@ mod tests {
         assert_eq!(chain[4].model, "vendor/model");
 
         let routing = RoutingConfig { preferred_provider: "openrouter".into(), preferred_model: "vendor/big".into(), ..routing };
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(chain[0].provider, Provider::OpenRouter);
         assert_eq!(chain[0].model, "vendor/big");
         assert_eq!(chain.len(), 5);
 
         // A key with no pick yet: no link anywhere, preferred or not.
         let routing = RoutingConfig { openrouter_key: Some("or".into()), openrouter_model: String::new(), ..all_keys() };
-        assert!(!providers(&build_chain("gemma4:12b", &routing)).contains(&Provider::OpenRouter));
-        assert!(!providers(&build_chain_for(TaskKind::TopicName, "gemma4:12b", &routing)).contains(&Provider::OpenRouter));
+        assert!(!providers(&build_chain("gemma4:12b", &routing, &open())).contains(&Provider::OpenRouter));
+        assert!(!providers(&build_chain_for(TaskKind::TopicName, "gemma4:12b", &routing, &open())).contains(&Provider::OpenRouter));
         let routing = RoutingConfig { preferred_provider: "openrouter".into(), ..routing };
-        assert_eq!(build_chain("gemma4:12b", &routing)[0].provider, Provider::Ollama);
+        assert_eq!(build_chain("gemma4:12b", &routing, &open())[0].provider, Provider::Ollama);
     }
 
     #[test]
@@ -1277,7 +1354,7 @@ mod tests {
             openrouter_model: "vendor/model:free".into(),
             ..all_keys()
         };
-        let chain = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing);
+        let chain = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing, &open());
         assert_eq!(providers(&chain)[..2], [Provider::Ollama, Provider::OpenRouter]);
 
         let routing = RoutingConfig {
@@ -1286,7 +1363,7 @@ mod tests {
             ..routing
         };
         llm::set_price_overrides(routing.openrouter_prices.clone());
-        let chain = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing);
+        let chain = build_chain_for(TaskKind::ConversationTitle, "gemma4:12b", &routing, &open());
         assert_eq!(chain.last().unwrap().provider, Provider::OpenRouter);
 
         let pinned = RoutineModelPref::try_parse("openrouter/vendor/model:free").unwrap();
@@ -1302,7 +1379,7 @@ mod tests {
     fn build_chain_honors_preferred_provider_and_falls_back_when_unbuildable() {
         // No keys at all: Ollama-only regardless of preference.
         let routing = test_routing_config("ollama", "", None, None, false);
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(chain.len(), 1);
         assert_eq!(chain[0].provider, llm::Provider::Ollama);
         assert_eq!(chain[0].model, "gemma4:12b");
@@ -1317,7 +1394,7 @@ mod tests {
             Some("sk-test-fake"),
             false,
         );
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(chain.len(), 3);
         assert_eq!(chain[0].provider, llm::Provider::Ollama);
         assert_eq!(chain[1].provider, llm::Provider::Anthropic);
@@ -1335,7 +1412,7 @@ mod tests {
             Some("sk-test-fake"),
             false,
         );
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(chain.len(), 3);
         assert_eq!(chain[0].provider, llm::Provider::Anthropic);
         assert_eq!(chain[0].model, "claude-sonnet-5");
@@ -1353,7 +1430,7 @@ mod tests {
             Some("sk-test-fake"),
             false,
         );
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(chain.len(), 2);
         assert_eq!(chain[0].provider, llm::Provider::Ollama);
         assert_eq!(chain[1].provider, llm::Provider::OpenAI);
@@ -1367,7 +1444,7 @@ mod tests {
             Some("sk-test-fake"),
             true,
         );
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(chain.len(), 1);
         assert_eq!(chain[0].provider, llm::Provider::Ollama);
     }
@@ -1385,7 +1462,7 @@ mod tests {
             Some("goog-test-fake"),
             false,
         );
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(chain.len(), 4);
         assert_eq!(chain[0].provider, llm::Provider::Ollama);
         assert_eq!(chain[1].provider, llm::Provider::Anthropic);
@@ -1403,7 +1480,7 @@ mod tests {
             Some("goog-test-fake"),
             false,
         );
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(chain.len(), 4);
         assert_eq!(chain[0].provider, llm::Provider::Google);
         assert_eq!(chain[0].model, "gemini-2.5-pro");
@@ -1415,7 +1492,7 @@ mod tests {
         // only the unbuildable Google link.
         let routing =
             test_routing_config_with_google("google", "gemini-2.5-pro", None, None, None, false);
-        let chain = build_chain("gemma4:12b", &routing);
+        let chain = build_chain("gemma4:12b", &routing, &open());
         assert_eq!(chain.len(), 1);
         assert_eq!(chain[0].provider, llm::Provider::Ollama);
     }
@@ -1494,5 +1571,193 @@ mod tests {
         assert_eq!(RoutingConfig::from_json(Some(r#"{"output_language":"es-US"}"#)).output_language, "es-US");
         assert_eq!(RoutingConfig::from_json(Some(r#"{"output_language":5}"#)).output_language, "");
         assert_eq!(RoutingConfig::from_json(Some(r#"{"profile":"Role: CFO"}"#)).output_language, "", "older settings without the key");
+    }
+
+    fn excluding_acme() -> Arc<dyn HostedGate> {
+        Arc::new(llm::ExclusionSet::new(vec!["Acme".into()]))
+    }
+
+    /// Keys for every hosted provider, Whimbrel AI included, and an OpenRouter pick.
+    fn every_key() -> RoutingConfig {
+        RoutingConfig {
+            openrouter_key: Some("r".into()),
+            openrouter_model: "vendor/model".into(),
+            ..with_whimbrel()
+        }
+    }
+
+    /// Spec 7.3: every chain function, under every preference that adds a hosted link,
+    /// hands back hosted links that refuse a prompt naming an excluded client. A
+    /// `GuardedClient` refuses before it touches its inner client, so a `Refused` answer
+    /// means no request was made; an unguarded link would try the real provider instead.
+    #[test]
+    fn every_hosted_constructor_is_guarded() {
+        let gate = excluding_acme();
+        let pinned = |provider: Provider| RoutineModelPref::Pinned { provider, model: "pinned-model".into() };
+        let mut chains: Vec<(String, Vec<llm::ChainLink>)> = Vec::new();
+        for preferred in ["ollama", "anthropic", "openai", "google", "openrouter", "whimbrel"] {
+            for cheap_first in [true, false] {
+                let routing = RoutingConfig { preferred_provider: preferred.into(), cheap_first, ..every_key() };
+                let label = |f: &str| format!("{f}, preferred {preferred}, cheap_first {cheap_first}");
+                chains.push((label("build_chain"), build_chain("gemma4:12b", &routing, &gate)));
+                for task in [TaskKind::Chat, TaskKind::ConversationTitle] {
+                    chains.push((label(&format!("build_chain_for {task:?}")), build_chain_for(task, "gemma4:12b", &routing, &gate)));
+                }
+                let prefs = [RoutineModelPref::Default, RoutineModelPref::Cheapest]
+                    .into_iter()
+                    .chain([Provider::Anthropic, Provider::OpenAI, Provider::Google, Provider::OpenRouter, Provider::Whimbrel].map(pinned));
+                for pref in prefs {
+                    chains.push((label(&format!("build_chain_for_routine {pref:?}")), build_chain_for_routine(&pref, "gemma4:12b", &routing, &gate)));
+                }
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for (label, chain) in &chains {
+            for link in chain.iter().filter(|l| !l.provider.is_local()) {
+                seen.insert(link.provider.as_str());
+                assert!(
+                    matches!(link.client.complete("Prep notes for the ACME renewal"), Err(llm::LlmError::Refused(_))),
+                    "{label}: the {} link is not behind the gate",
+                    link.provider.as_str()
+                );
+            }
+        }
+        assert_eq!(seen.into_iter().collect::<Vec<_>>(), ["anthropic", "google", "openai", "openrouter", "whimbrel"], "every hosted provider was built");
+    }
+
+    /// The raw hosted constructors, the no-op gate, and gate implementations, by name.
+    /// TypeSafeClient is not here: its constructors take a gate, so the compiler enforces it.
+    const RAW_HOSTED: [&str; 14] = [
+        "AnthropicClient::new(",
+        "AnthropicClient::whimbrel(",
+        "OpenAIClient::new(",
+        "OpenAIClient::openrouter(",
+        "GoogleClient::new(",
+        "AnthropicStreamingClient::new(",
+        "AnthropicStreamingClient::whimbrel(",
+        "OpenAIStreamingClient::new(",
+        "OpenAIStreamingClient::openrouter(",
+        "GoogleStreamingClient::new(",
+        "images::generate_image(",
+        "images::search_images(",
+        "NoExclusions)",
+        "HostedGate for ",
+    ];
+
+    /// Every place outside tests that may call one, how many times, and why it's safe.
+    /// A new call anywhere, an allowed file included, fails until it's guarded and listed.
+    const ALLOWED: [(&str, &str, usize); 28] = [
+        // hosted_link: the result goes through guard_hosted.
+        ("core/api/src/routing.rs", "AnthropicClient::new(", 1),
+        ("core/api/src/routing.rs", "AnthropicClient::whimbrel(", 1),
+        ("core/api/src/routing.rs", "OpenAIClient::new(", 1),
+        ("core/api/src/routing.rs", "OpenAIClient::openrouter(", 1),
+        ("core/api/src/routing.rs", "GoogleClient::new(", 1),
+        // start / start_whimbrel: hosted clients go through `guarded`; the `local` arm's
+        // OpenAIStreamingClient talks to the on-device model.
+        ("core/api/src/inference.rs", "AnthropicStreamingClient::new(", 1),
+        ("core/api/src/inference.rs", "AnthropicStreamingClient::whimbrel(", 1),
+        ("core/api/src/inference.rs", "OpenAIStreamingClient::new(", 2),
+        ("core/api/src/inference.rs", "OpenAIStreamingClient::openrouter(", 1),
+        ("core/api/src/inference.rs", "GoogleStreamingClient::new(", 1),
+        // The on-device model's OpenAI-compatible endpoint.
+        ("core/api/src/local_model.rs", "OpenAIClient::new(", 1),
+        // The gate when nothing is excluded.
+        ("core/api/src/exclusion.rs", "NoExclusions)", 1),
+        // StreamGate: the published gate plus the prompts a prepare marked local-only, for a
+        // stream to an Ollama cloud model. It only adds refusals.
+        ("core/api/src/exclusion.rs", "HostedGate for ", 1),
+        // The only gates: NoExclusions, RefuseAllHosted and ExclusionSet.
+        ("core/llm/src/guard.rs", "HostedGate for ", 3),
+        // whimbrel_skin_turn: wrapped in GuardedClient before use; the images calls follow
+        // hosted_gate_check.
+        ("core/ffi/src/lib.rs", "AnthropicClient::new(", 1),
+        ("core/ffi/src/lib.rs", "AnthropicClient::whimbrel(", 1),
+        ("core/ffi/src/lib.rs", "OpenAIClient::new(", 1),
+        ("core/ffi/src/lib.rs", "OpenAIClient::openrouter(", 1),
+        ("core/ffi/src/lib.rs", "GoogleClient::new(", 1),
+        ("core/ffi/src/lib.rs", "images::search_images(", 1),
+        ("core/ffi/src/lib.rs", "images::generate_image(", 1),
+        // The Windows skin chat: skin_turn wraps a hosted client in GuardedClient on the
+        // store's slow lane; the images commands run gate_check first.
+        ("apps/windows/src-tauri/src/commands/skins.rs", "AnthropicClient::new(", 1),
+        ("apps/windows/src-tauri/src/commands/skins.rs", "AnthropicClient::whimbrel(", 1),
+        ("apps/windows/src-tauri/src/commands/skins.rs", "OpenAIClient::new(", 1),
+        ("apps/windows/src-tauri/src/commands/skins.rs", "OpenAIClient::openrouter(", 1),
+        ("apps/windows/src-tauri/src/commands/skins.rs", "GoogleClient::new(", 1),
+        ("apps/windows/src-tauri/src/commands/skins.rs", "images::search_images(", 1),
+        ("apps/windows/src-tauri/src/commands/skins.rs", "images::generate_image(", 1),
+    ];
+
+    /// `path`'s source without its top-level test modules: from a `#[cfg(test)]` line
+    /// followed by `mod … {` to the next line that is just `}` (rustfmt's closing brace).
+    /// A `}` line inside a test's multi-line string would end the cut early, which can only
+    /// make the scan see more, never less.
+    fn non_test_source(path: &std::path::Path) -> String {
+        let text = std::fs::read_to_string(path).unwrap();
+        let mut kept = String::new();
+        let mut lines = text.lines().peekable();
+        while let Some(line) = lines.next() {
+            let test_mod = line == "#[cfg(test)]" && lines.peek().is_some_and(|next| next.starts_with("mod ") && next.ends_with('{'));
+            if test_mod {
+                lines.by_ref().find(|l| *l == "}");
+            } else {
+                kept.push_str(line);
+                kept.push('\n');
+            }
+        }
+        kept
+    }
+
+    fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                rust_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Spec 7.3: no hosted client is made, and no gate is written, outside the guarded
+    /// sites, in every `core` crate (`src` and `examples`; `tests/` and test modules are
+    /// test code) and the Windows shell.
+    #[test]
+    fn no_unguarded_hosted_clients() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap();
+        let mut files = Vec::new();
+        let mut dirs = vec![repo.join("apps/windows/src-tauri/src")];
+        for krate in std::fs::read_dir(repo.join("core")).unwrap() {
+            let krate = krate.unwrap().path();
+            dirs.extend(["src", "examples"].map(|d| krate.join(d)));
+        }
+        for dir in dirs.iter().filter(|d| d.is_dir()) {
+            rust_files(dir, &mut files);
+        }
+        assert!(files.len() > 100, "the scan found the sources ({} files)", files.len());
+        let mut found = std::collections::BTreeMap::new();
+        for path in &files {
+            let source = non_test_source(path);
+            let rel = path.strip_prefix(repo).unwrap().to_string_lossy().replace('\\', "/");
+            for name in RAW_HOSTED {
+                // An images call counts whether written `llm::images::generate_image(` or, after
+                // a `use`, bare `generate_image(`; its own `fn` line in images.rs does not.
+                let bare = name.rsplit("::").next().unwrap();
+                let hits = source.matches(name).count().max(if name.starts_with("images::") {
+                    source.matches(bare).count() - source.matches(&format!("fn {bare}")).count()
+                } else {
+                    0
+                });
+                if hits > 0 {
+                    found.insert((rel.clone(), name), hits);
+                }
+            }
+        }
+        let allowed: std::collections::BTreeMap<_, _> = ALLOWED.iter().map(|&(f, n, c)| ((f.to_string(), n), c)).collect();
+        for site in ["core/api/src/routing.rs", "apps/windows/src-tauri/src/commands/skins.rs"] {
+            assert!(found.contains_key(&(site.to_string(), "AnthropicClient::new(")), "the scan sees {site}");
+        }
+        assert_eq!(found, allowed, "a hosted client is made outside the guarded sites; guard it, then list it here");
     }
 }

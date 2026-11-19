@@ -1,0 +1,35 @@
+[package]
+name = "cloud-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The cloud routine runner (docs/superpowers/specs/2026-11-15-cloud-routine-runner-design.md): one
+# ephemeral job per account and run. Depends only on api, sync-engine, sync, memory and routines,
+# never on ffi, transcribe or diarize (no native audio toolchains in the container).
+
+[lib]
+path = "src/run.rs"
+
+[[bin]]
+name = "whimbrel-cloud-runner"
+path = "src/main.rs"
+
+[dependencies]
+api = { path = "../api" }
+sync-engine = { path = "../sync-engine" }
+sync = { path = "../sync" }
+memory = { path = "../memory" }
+routines = { path = "../routines" }
+base64 = "0.22"
+chrono = "0.4"
+serde_json = "1"
+
+[dev-dependencies]
+# Stub model transports for the tests (llm is already in the tree through api).
+llm = { path = "../llm" }
+# A local libsql file as the relay, as sync-engine's and api's tests do.
+libsql = { version = "0.9", default-features = false, features = ["core"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+tempfile = "3"

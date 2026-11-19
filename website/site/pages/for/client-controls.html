@@ -1,0 +1,81 @@
+<!--
+{
+  "title": "Client Controls: Delete, Keep, Export, Exclude",
+  "description": "Four controls on every client page in Whimbrel: delete a client in one step with a receipt, keep for a set time, export, and exclude from hosted AI models.",
+  "schema": ["software"],
+  "priority": 0.6,
+  "noindex": true,
+  "crumbs": [{ "name": "For confidential work", "path": "/for/confidential-work/" }, { "name": "Client controls", "path": "/for/client-controls/" }],
+  "faq": [
+    { "q": "What does Delete this client remove?", "a": "The client's page and the material Whimbrel filed under it: meetings with their transcripts and notes, email, calendar items, screen captures, conversations and steps, and, on the device you delete from, the summaries, suggestions, people and organisations Whimbrel made that name the client. You review the list first and type the client's name to confirm. A meeting shared with another client is deleted for both, and the screen tells you so. Notes in your Obsidian vault are removed only while vault sync is on." },
+    { "q": "What is in the receipt?", "a": "Counts and categories only: what was removed, and a list called Left for you, the places Whimbrel cannot clear on your behalf. The receipt never contains the client's name or any of their text. On a Mac you can save it as a file." },
+    { "q": "Does the delete reach my other devices?", "a": "It is sent to your other devices at once, and each current device applies it when it next syncs. A device that has not been updated yet applies it after it updates, and the receipt shows how many devices still need to. Routine results, profile suggestions, people's names and meeting briefs that named the client can stay on each of your other devices: the delete does not remove them there. Phones apply deletes but do not start them." },
+    { "q": "Can a deleted client come back?", "a": "Whimbrel keeps no list of deleted clients, not even their name. If new email or meetings later match, the client can reappear as a new topic. The delete screen says so." },
+    { "q": "What does excluding a client from hosted models do?", "a": "Material that names or involves the client is not put into a request to a hosted model. Whimbrel checks new material against the client's name, aliases and known attendee emails on your computer before any hosted request about it, so the exclusion applies from the moment Whimbrel files it under the client, and new material is checked locally first. A request about the client is answered by a local model, or not answered." },
+    { "q": "Can exclusion miss something?", "a": "Yes. Whimbrel recognises material by matching whole words of the client's name, aliases and known contact addresses, with no model. A name inside another word, or in text written without spaces (some inflected forms, some scripts), may not match. A recording that never names the client, and whose attendees Whimbrel does not know, cannot be recognised. That is why the claim is limited to material that names or involves the client." },
+    { "q": "Does exclusion reach my other devices?", "a": "Yes, once the devices on your sync have been updated. While a device that has not been updated is still on your sync, the setting stays on the device where you set it, and your other devices could still send the client's material to a hosted model. The toggle says so when this is the case. Set it on each device you use, or update the older device." },
+    { "q": "What if material already went to a hosted model?", "a": "Material that already left cannot be recalled. When you turn exclusion on, Whimbrel offers to summarise the client's existing meetings again with a local model." },
+    { "q": "Does it cost extra?", "a": "No. The controls are part of the free app." }
+  ]
+}
+-->
+<section class="page-hero">
+  <div class="narrow center">
+    <p class="eyebrow">For consultants, lawyers, advisers and recruiters</p>
+    <h1>When a client asks what you hold on them.</h1>
+    <p class="lede">Every client page in Whimbrel has four controls: delete the client, keep their material for a set time, export it, and exclude it from hosted AI models. They are on Mac and Windows.</p>
+    <div class="hero-actions" style="justify-content:center">
+      <a class="btn btn-primary btn-lg" href="/download/?platform=mac#register" data-platform-link="mac">Download for Mac</a>
+      <a class="btn btn-ghost btn-lg" href="/download/?platform=windows#register" data-platform-link="windows">Download for Windows</a>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="container">
+    <div class="section-head">
+      <h2>Four controls on a client's page.</h2>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature"><h3>Delete this client</h3><p>Delete the client and what Whimbrel holds on them in one step on current devices, with a receipt of what was removed and what you still need to check. Some derived copies stay on your other devices; see below. You see the list first and type the client's name to confirm.</p></article>
+      <article class="card feature"><h3>Keep for a set time</h3><p>Choose how long to keep a client's material: 3, 6, 12, 24 or 36 months, or until you delete it. When items reach that age, Whimbrel shows you the list and deletes only after you confirm.</p></article>
+      <article class="card feature"><h3>Export</h3><p>Write one client's meetings, email, calendar items, conversations, steps and page to a folder you choose, in plain files you can read without Whimbrel.</p></article>
+      <article class="card feature"><h3>Exclude from hosted models</h3><p>Material that names or involves the client is kept out of requests to hosted AI models. It applies from the moment Whimbrel files it under the client, and new material is checked locally first.</p></article>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <div class="section-head">
+      <h2>The receipt.</h2>
+      <p class="lede">After a delete, Whimbrel shows counts by category: meetings, emails, calendar events, steps and so on. It also lists what you still need to check yourself, under Left for you. The receipt holds no client name and no client text. On a Mac you can save it as a file.</p>
+    </div>
+    <div class="feature-grid">
+      <article class="card feature"><h3>Your other devices</h3><p>The delete goes to your other devices at once, and each current device applies it when it syncs. The receipt shows how many still need to update before they apply it. Phones apply deletes but do not start them.</p></article>
+      <article class="card feature"><h3>No list of deleted clients</h3><p>Whimbrel keeps no record of a deleted client, not even the name. If new email or a new meeting later matches, the client can reappear as a new topic.</p></article>
+      <article class="card feature"><h3>Derived material</h3><p>On the device you delete from, summaries, suggestions, people and organisations that Whimbrel made and that name the client are removed with it. On your other devices, routine results, profile suggestions, people's names and meeting briefs that named the client can stay: the delete does not remove them there.</p></article>
+    </div>
+  </div>
+</section>
+
+<section class="section-alt">
+  <div class="narrow">
+    <h2>What exclusion can and cannot do.</h2>
+    <p>Whimbrel recognises a client's material by matching their name, aliases and known attendee emails on your computer. No model is involved, and the check runs before any hosted request about new material. A call that never names the client, with attendees Whimbrel does not know, cannot be recognised, so the claim covers material that names or involves the client.</p>
+    <p>Matching is on whole words. A name inside another word, or in text written without spaces (some inflected forms, some scripts), may not match, and that material can still go to a hosted model.</p>
+    <p>The setting syncs to your other devices once they have been updated. While a device that has not been updated is still on your sync, the setting stays on the device where you set it, and the toggle says so.</p>
+    <p>A question that names the client, or is asked from the client's page, is answered by a local model or not at all. Material that already left cannot be recalled.</p>
+    <p><a href="/for/confidential-work/">More on confidential client work →</a></p>
+  </div>
+</section>
+
+<section>
+  <div class="narrow">
+    <h2 class="center">Questions about client controls</h2>
+    <div class="faq">
+{{{faq}}}
+    </div>
+  </div>
+</section>
+{{> cta}}

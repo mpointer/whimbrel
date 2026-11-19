@@ -112,6 +112,32 @@ final class PhoneSettingsSyncTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: p + "settingsTs.episode.hidden.1"))
     }
 
+    /// The Mac, Windows and cloud runner now sync these keys; the phone has no use for them and must
+    /// neither apply nor timestamp them, while still applying the routing field in the same round.
+    func test_cloud_routine_keys_are_ignored_without_state_change() {
+        var delta: [String: PulledSettingsField] = [
+            "profile.timeZone": field("America/New_York"),
+            "cloud.runner.lastRun": field("1731700000000"),
+            "routing.preferredProvider": field("openai"),
+        ]
+        for t in ["brief", "eod_recap", "weekly_digest", "meeting_prep"] {
+            for f in ["enabled", "schedule", "model_pref", "cloud", "cloudGrant", "readyBy"] {
+                delta["routine.\(t).\(f)"] = field("x")
+            }
+        }
+        let before = defaults.dictionaryRepresentation().filter { $0.key.hasPrefix(p) }.count
+        puller.rounds = [delta]
+        sync.pullOnce(credentials: creds)
+        for key in delta.keys where key != "routing.preferredProvider" {
+            XCTAssertNil(defaults.object(forKey: p + key), key)
+            XCTAssertNil(defaults.object(forKey: p + "settingsTs." + key), key)
+        }
+        XCTAssertEqual(PhoneRoutingPrefs(defaults: defaults).preferredProvider, "openai")
+        // Only the routing value and its timestamp were written.
+        XCTAssertEqual(defaults.dictionaryRepresentation().filter { $0.key.hasPrefix(p) }.count, before + 2)
+        AskProvider.allCases.forEach { XCTAssertNil(keys.key(for: $0)) }
+    }
+
     func test_toggle_off_deletes_key() {
         defaults.set(true, forKey: p + "apiKey.google.syncEnabled")
         keys.save("sk-g", for: .google)

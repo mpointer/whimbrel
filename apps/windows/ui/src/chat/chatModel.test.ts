@@ -9,6 +9,37 @@ const transcript: ContextEntry = { item: { kind: "transcript", id: 9 }, label: '
 const thread: ContextEntry = { item: { kind: "thread", id: 4 }, label: "Re: plan", open: null };
 
 describe("applyEvent", () => {
+  it("names no model before the exclusion check, then the local route and the model that answered (PR 874)", () => {
+    const waiting = run([{ kind: "waiting" }]);
+    expect(waiting.status).toBe("waiting");
+    expect(isBusy(waiting)).toBe(true);
+    expect(statusLine(waiting)).toBe("Waiting for background work…");
+    const local = applyEvent(applyEvent(waiting, { kind: "started", provider: "anthropic", model: "hosted-pick", context: [] }), {
+      kind: "routed_locally",
+    });
+    expect(statusLine(local)).toBe("Answering on this PC: this question names a client excluded from hosted models…");
+    expect(statusLine(local)).not.toContain("hosted-pick");
+    const answered = run(
+      [
+        { kind: "answered_by", model: "gemma4:12b", excludedClient: true },
+        { kind: "completed", answer: "a", citations: [], conversationId: 1, narrowed: false },
+      ],
+      local,
+    );
+    expect(answered.model).toBe("gemma4:12b");
+    expect(answered.answeredLocally).toBe(true);
+    // A late "waiting" never takes an answer back to waiting.
+    expect(applyEvent(answered, { kind: "waiting" }).status).toBe("done");
+  });
+
+  it("names the model once the question is known not to be local", () => {
+    const t = run([{ kind: "started", provider: "anthropic", model: "hosted-pick", context: [] }]);
+    expect(statusLine(t)).toBe("Asking hosted-pick…");
+    const next = applyEvent(t, { kind: "answered_by", model: "hosted-next", excludedClient: false });
+    expect(next.model).toBe("hosted-next");
+    expect(next.answeredLocally).toBe(false);
+  });
+
   it("streams text, then completes with citations", () => {
     const streaming = run([
       { kind: "started", runId: "run-1", provider: "ollama", model: "gemma4:12b", context: [capture] },
@@ -116,5 +147,15 @@ describe("promptToSend", () => {
     expect(promptToSend(null, null)).toBeNull();
     expect(promptToSend(undefined, null)).toBeNull();
     expect(promptToSend({ id: 1, prompt: "   " }, null)).toBeNull();
+  });
+});
+
+describe("the left-out note (core's filtered_hosted; final review, Major 8)", () => {
+  it("a completed answer keeps how many items were left out, and a saved one has none", () => {
+    const started = applyEvent(newTurn("q"), { kind: "started", runId: "r", provider: "anthropic", model: "m", context: [] });
+    const done = applyEvent(started, { kind: "completed", answer: "a", citations: [], conversationId: 1, narrowed: false, leftOut: 2 });
+    expect(done.leftOut).toBe(2);
+    const plain = applyEvent(started, { kind: "completed", answer: "a", citations: [], conversationId: 1, narrowed: false });
+    expect(plain.leftOut ?? null).toBeNull();
   });
 });

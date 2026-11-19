@@ -51,6 +51,15 @@ describe("describeError", () => {
 });
 
 describe("a provider failure says why, when core knows", () => {
+  it("says an exclusion refusal sent nothing, never that no provider could answer", () => {
+    expect(describeError({ kind: "provider_failure", reason: { kind: "excluded_client" } })).toBe(
+      "Not sent: only a local model on this PC may answer this (it involves a client excluded from hosted models, or Local-only mode is on), and none could. Set one up in Settings → AI.",
+    );
+    expect(describeError({ kind: "provider_failure", reason: { kind: "exclusion_unreadable" } })).toBe(
+      "Not sent: Whimbrel couldn't read which clients are excluded from hosted models, so nothing goes to a hosted model until it can. Try again in a moment, or use a local model.",
+    );
+  });
+
   it("names the missing Ollama model and how to get it", () => {
     expect(describeError({ kind: "provider_failure", reason: { kind: "ollama_model_missing", model: "gemma4:12b" } })).toBe(
       "Ollama doesn't have the model gemma4:12b. Pick one you have in Settings → AI, or run: ollama pull gemma4:12b",

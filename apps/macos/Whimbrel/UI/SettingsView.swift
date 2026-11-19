@@ -118,11 +118,22 @@ struct SettingsView: View {
         switch selection {
         case .general:
             card { GeneralSettingsPane(openAISettings: { selection = .ai }) }
-            card { OnboardingView().environmentObject(appState.permissions) }
+            card {
+                RedesignSwitch(enabled: appState.redesignEnabled) {
+                    PermissionChecklistRedesignView()
+                } old: {
+                    OnboardingView()
+                }
+                .environmentObject(appState.permissions)
+            }
         case .profile:
             card { ProfileSettingsPane() }
         case .capture:
             card { YourDataSettingsPane() }
+            // X4: shown once the launch opened the store (Task 11b-2 sets `live`).
+            if let live = EncryptionSettingsPane.live {
+                card { EncryptionSettingsCard(live: live) }
+            }
             card { CaptureSettingsPane() }
             card { RetentionSettingsPane() }
         case .meetings:
@@ -142,6 +153,9 @@ struct SettingsView: View {
             card { RoutinesSettingsPane() }
         case .diagnostics:
             card { DiagnosticsSettingsPane() }
+            #if DEBUG
+            card { DesignSystemGalleryLauncher() }
+            #endif
         case .none:
             Text("Select a section").foregroundStyle(Color.whimbrelTextSecondary)
         }

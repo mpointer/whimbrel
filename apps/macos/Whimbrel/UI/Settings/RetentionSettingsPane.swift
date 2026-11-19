@@ -270,10 +270,15 @@ struct RetentionSettingsPane: View {
     }
 
     private func applyRetentionNow() {
-        appState.retention.applyNow(store: appState.coreStore,
+        appState.retention.applyNow(store: appState.coreStore, backgroundStore: appState.backgroundStore,
                                     compactAllowed: !appState.audio.micActive && !appState.audio.systemAudioActive) { result in
             guard let result else {
                 retentionStatus = String(localized: "Retention run failed (store unavailable or DB error).")
+                return
+            }
+            // A client delete was running: nothing was deleted, and saying "Deleted 0" would read as done.
+            if result.skippedForClientDelete {
+                retentionStatus = String(localized: "Put off while a client delete runs. Try again shortly.")
                 return
             }
             retentionStatus = String(localized: "Deleted \(result.captureItemsDeleted) capture item(s), \(result.meetingsDeleted) meeting(s), \(result.conversationsDeleted) conversation(s).")

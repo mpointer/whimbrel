@@ -65,4 +65,36 @@ except SystemExit:
 m.apply(m.parse(base_args + ["--apply"]))
 left = sorted(r[0] for r in relay.execute("SELECT local_seq FROM sync_row WHERE device_id = 'dev'"))
 assert left == [3, 5, 7, 9, 12], left  # only seqs 1 and 2 go
+
+# An encrypted local DB (X4) is never read as plain: refused without --key-stdin, and with it only
+# through sqlcipher3 and a well-formed key from stdin. Nothing is planned either way.
+enc = os.path.join(tmp, "encrypted.sqlite")
+with open(enc, "wb") as f:
+    f.write(os.urandom(4096))
+enc_args = ["--db", "kestrel-sync-0cec58bf", "--device", "dev", "--local-db", enc]
+os.remove(m.plan_path("kestrel-sync-0cec58bf"))
+try:
+    m.dry_run(m.parse(enc_args))
+    raise AssertionError("encrypted local DB not refused")
+except SystemExit as e:
+    assert "not a plain SQLite file" in str(e) and "--key-stdin" in str(e), e
+import io, sys
+a = m.parse(enc_args + ["--key-stdin"])
+sys.stdin = io.StringIO("not-a-key\n")
+try:
+    m.open_local(a)
+    raise AssertionError("encrypted local DB opened without sqlcipher3 or a valid key")
+except SystemExit as e:
+    assert "sqlcipher3" in str(e) or "64 hex digits" in str(e), e
+assert not os.path.exists(m.plan_path("kestrel-sync-0cec58bf"))
+# A malformed key on stdin is refused before any open (the module is faked so this runs anywhere).
+import types
+sys.modules["sqlcipher3"] = types.SimpleNamespace(connect=lambda *x, **k: (_ for _ in ()).throw(AssertionError("opened")))
+a = m.parse(enc_args + ["--key-stdin"])
+sys.stdin = io.StringIO("abc\n")
+try:
+    m.open_local(a)
+    raise AssertionError("malformed key accepted")
+except SystemExit as e:
+    assert "64 hex digits" in str(e), e
 print("ok")

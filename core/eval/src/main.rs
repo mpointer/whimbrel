@@ -199,6 +199,7 @@ fn run(cmd: &str, flags: &HashMap<String, String>, positional: &[String]) -> Res
                     llm::TaskKind::Chat,
                     &ollama_model,
                     &grader_routing,
+                    &api::exclusion::current_gate(&store),
                 );
                 let link = chain
                     .first()

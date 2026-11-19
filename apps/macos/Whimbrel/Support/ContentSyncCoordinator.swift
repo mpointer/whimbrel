@@ -17,8 +17,13 @@ final class ContentSyncCoordinator: ObservableObject {
     @Published private(set) var lastSyncedAt: Date?
     /// The outbox after the last round, for "changes waiting to send" in Settings (#590).
     @Published private(set) var outboxBacklog: CoreOutboxBacklog?
+    /// How far the one-time history indexing has got after the last round (0 to 99), nil when it is not running.
+    @Published private(set) var kindBackfillPercent: Int?
 
     private let coreStore: CoreMemoryStore?
+    /// The background connection a round runs on (`CoreMemoryStore.backgroundQueue`); nil falls back
+    /// to `coreStore` on `accessQueue`.
+    private let backgroundStore: CoreMemoryStore?
     private let syncState: SyncState
     private let deviceId: String
 
@@ -28,8 +33,9 @@ final class ContentSyncCoordinator: ObservableObject {
     var afterPull: (() async -> Void)?
     private var statusSubscription: AnyCancellable?
 
-    /// Rounds that have failed in a row. A failed round holds `CoreMemoryStore.accessQueue`
-    /// for up to 30 s, so retrying a broken sync every minute froze every other read.
+    /// Rounds that have failed in a row. A failed round can hold its lane (the background
+    /// connection on `backgroundQueue`, or `accessQueue` without one) for up to 30 s, so retries
+    /// back off rather than tying the lane up every minute.
     @Published private(set) var consecutiveFailures = 0
     /// Set while a round runs, so a stuck round reads as stale.
     private(set) var roundStartedAt: Date?
@@ -68,6 +74,7 @@ final class ContentSyncCoordinator: ObservableObject {
         lastWakeAt = nil
         loopStartedAt = nil
         outboxBacklog = nil
+        kindBackfillPercent = nil
         for key in [Self.lastSuccessKey, Self.lastRoundFinishedKey, Self.everSyncedKey] {
             UserDefaults.standard.removeObject(forKey: key)
         }
@@ -114,8 +121,9 @@ final class ContentSyncCoordinator: ObservableObject {
         recordRoundFinished(Date())
     }
 
-    init(coreStore: CoreMemoryStore?, syncState: SyncState, deviceId: String) {
+    init(coreStore: CoreMemoryStore?, backgroundStore: CoreMemoryStore? = nil, syncState: SyncState, deviceId: String) {
         self.coreStore = coreStore
+        self.backgroundStore = backgroundStore
         self.syncState = syncState
         self.deviceId = deviceId
     }
@@ -245,10 +253,12 @@ final class ContentSyncCoordinator: ObservableObject {
         backlogRefreshInFlight = true
         CoreMemoryStore.accessQueue.async { [weak self] in
             let backlog = coreStore.outboxBacklog()
+            let percent = coreStore.kindBackfillPercent()
             Task { @MainActor in
                 guard let self else { return }
                 self.backlogRefreshInFlight = false
                 if let backlog, backlog != self.outboxBacklog { self.outboxBacklog = backlog }
+                if percent != self.kindBackfillPercent { self.kindBackfillPercent = percent }
             }
         }
     }
@@ -296,25 +306,30 @@ final class ContentSyncCoordinator: ObservableObject {
                 roundStartedAt = nil
             }
         }
-        // `CoreMemoryStore.accessQueue` serializes every background call against the
-        // shared store handle (per its own doc comment, CoreBridge.swift:317-324) — a
+        // The lane's serial queue serializes every call against its store handle (per its own doc comment, CoreBridge.swift:317-324) — a
         // bare `Task.detached` here would NOT provide that, since two concurrent
         // detached closures could race against the same handle. `withCheckedContinuation`
         // bridges this async function to that serial DispatchQueue.
-        let (success, backlog) = await withCheckedContinuation { (continuation: CheckedContinuation<(Bool, CoreOutboxBacklog?), Never>) in
-            CoreMemoryStore.accessQueue.async {
-                let result = coreStore.syncContent(
+        // The round runs on the background lane, so the screens on `accessQueue` never wait behind it
+        // (its pull applies rows and calls the relay for up to the sync timeout). Without a background
+        // connection it runs on the main one, as it always did.
+        let roundStore = backgroundStore ?? coreStore
+        let roundQueue = backgroundStore == nil ? CoreMemoryStore.accessQueue : CoreMemoryStore.backgroundQueue
+        let (success, backlog, indexingPercent) = await withCheckedContinuation { (continuation: CheckedContinuation<(Bool, CoreOutboxBacklog?, Int?), Never>) in
+            roundQueue.async {
+                let result = roundStore.syncContent(
                     tursoURL: tursoDatabaseUrl,
                     tursoToken: tursoToken,
                     groupKeyBase64: groupKeyBase64,
                     deviceId: deviceId
                 )
                 MeetingLifecycle.deleteFilesOfMeetingsForgottenElsewhere(CoreMemoryStore.takeForgottenMeetingFiles())
-                continuation.resume(returning: (result, coreStore.outboxBacklog()))
+                continuation.resume(returning: (result, roundStore.outboxBacklog(), roundStore.kindBackfillPercent()))
             }
         }
 
         outboxBacklog = backlog
+        kindBackfillPercent = indexingPercent
         log.log("syncNow: whimbrel_sync_content returned success=\(success, privacy: .public), outbox pending=\(backlog?.pending ?? -1, privacy: .public)")
         moreToPull = success && CoreMemoryStore.syncContentHasMoreToPull
         if success {

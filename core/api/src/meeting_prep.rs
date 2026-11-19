@@ -51,14 +51,36 @@ pub fn run_gated(
     gate: impl Into<RunGate>,
     complete: &mut dyn FnMut(&str) -> Option<Completed>,
 ) -> rusqlite::Result<Vec<memory::RoutineRun>> {
-    run_gated_prompts(store, meetings, now_unix_ms, lead_minutes, profile, lang, gate, &mut |p: &PrepPrompts| complete(&p.full))
+    run_gated_with(store, meetings, now_unix_ms, lead_minutes, profile, lang, gate, &mut |prompt, _local_only| complete(prompt))
+}
+
+/// [`run_gated`] with a model call told whether the brief must be written on this computer
+/// (`local_only`): the meeting is an excluded client's (classify first, spec 7.1: its title or
+/// attendees name the client or carry a client contact's address). Any other brief is written
+/// from earlier meetings and threads without an excluded client's material. The call gets the
+/// full prompt ([`PrepPrompts::full`]); [`run_gated_prompts_with`] gives it both forms.
+#[allow(clippy::too_many_arguments)]
+pub fn run_gated_with(
+    store: &memory::Store,
+    meetings: &[QualifyingMeeting],
+    now_unix_ms: i64,
+    lead_minutes: f64,
+    profile: &str,
+    lang: &str,
+    gate: impl Into<RunGate>,
+    complete: &mut dyn FnMut(&str, bool) -> Option<Completed>,
+) -> rusqlite::Result<Vec<memory::RoutineRun>> {
+    run_gated_prompts_with(store, meetings, now_unix_ms, lead_minutes, profile, lang, gate, &mut |p: &PrepPrompts, local_only| {
+        complete(&p.full, local_only)
+    })
 }
 
 /// One meeting's brief prompt in its two Limited Use forms: `full`, and `without_google`
 /// for a link that may not receive Gmail or Google Calendar text (`llm::limited_use`):
 /// the email sources and the earlier meetings that may have come from Google Calendar
 /// left out, or `None` when the meeting itself came from Google
-/// Calendar (its title and attendees are then Google user data).
+/// Calendar (its title and attendees are then Google user data). Both are built from the
+/// context after an excluded client's material was left out (unless the brief is local-only).
 pub struct PrepPrompts {
     pub full: String,
     pub without_google: Option<String>,
@@ -66,6 +88,7 @@ pub struct PrepPrompts {
 
 /// [`run_gated`] with the model call choosing between [`PrepPrompts`] per link.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub fn run_gated_prompts(
     store: &memory::Store,
     meetings: &[QualifyingMeeting],
@@ -76,7 +99,58 @@ pub fn run_gated_prompts(
     gate: impl Into<RunGate>,
     complete: &mut dyn FnMut(&PrepPrompts) -> Option<Completed>,
 ) -> rusqlite::Result<Vec<memory::RoutineRun>> {
+    run_gated_prompts_with(store, meetings, now_unix_ms, lead_minutes, profile, lang, gate, &mut |p: &PrepPrompts, _local_only| complete(p))
+}
+
+/// Both gates in one walk: the model call gets both Limited Use forms of the prompt
+/// ([`PrepPrompts`]) and whether the brief must be written on this computer (see
+/// [`run_gated_with`]).
+#[allow(clippy::too_many_arguments)]
+pub fn run_gated_prompts_with(
+    store: &memory::Store,
+    meetings: &[QualifyingMeeting],
+    now_unix_ms: i64,
+    lead_minutes: f64,
+    profile: &str,
+    lang: &str,
+    gate: impl Into<RunGate>,
+    complete: &mut dyn FnMut(&PrepPrompts, bool) -> Option<Completed>,
+) -> rusqlite::Result<Vec<memory::RoutineRun>> {
+    run_gated_prompts_cloud(store, meetings, now_unix_ms, lead_minutes, profile, lang, gate, None, complete)
+}
+
+/// How close to its start a device prepares a meeting itself when Meeting Prep runs in the cloud and
+/// no brief has synced in for it.
+pub const PREP_CLOUD_DEVICE_BEFORE_START_MS: i64 = 5 * 60 * 1000;
+
+/// Whether the cloud runner can prepare `meeting`: only a meeting from a calendar that is not
+/// Google's. The runner pulls only calendar events with a known, non-Google source
+/// (`PullOptions::non_google_calendar_only`); a Google Calendar meeting, and one with no calendar
+/// source (detected from a meeting app), never reach it. A synced event with an unknown source never
+/// becomes a meeting here (`connectors::calendar::synced_event_meeting`).
+fn runner_can_prepare(meeting: &QualifyingMeeting) -> bool {
+    meeting.source == crate::connectors::calendar::MeetingSource::Calendar
+}
+
+/// [`run_gated_prompts_with`] on a device of an account with the cloud runner: with Meeting Prep
+/// flagged in `cloud`, a meeting the runner can prepare ([`runner_can_prepare`]) is left to it until
+/// [`PREP_CLOUD_DEVICE_BEFORE_START_MS`] before it starts; a brief that synced in meanwhile counts as
+/// prepared (as for failover). Any other meeting is prepared here at lead time as before. `None`, or
+/// a policy that does not flag Meeting Prep, changes nothing.
+#[allow(clippy::too_many_arguments)]
+fn run_gated_prompts_cloud(
+    store: &memory::Store,
+    meetings: &[QualifyingMeeting],
+    now_unix_ms: i64,
+    lead_minutes: f64,
+    profile: &str,
+    lang: &str,
+    gate: impl Into<RunGate>,
+    cloud: Option<&crate::routine_runs::CloudPolicy>,
+    complete: &mut dyn FnMut(&PrepPrompts, bool) -> Option<Completed>,
+) -> rusqlite::Result<Vec<memory::RoutineRun>> {
     let gate = gate.into();
+    let left_to_runner = cloud.is_some_and(|c| c.flags(&memory::RoutineTemplate::MeetingPrep));
     // Show a peer's brief under our own calendar id even when this device will not generate.
     for m in meetings {
         store.alias_synced_meeting_prep(&memory::prep::prep_key(&m.id, m.start_unix_ms), m.start_unix_ms, &m.title)?;
@@ -98,14 +172,39 @@ pub fn run_gated_prompts(
     let lead_ms = (lead_minutes * 60_000.0).round() as i64;
     let due = crate::meetings::prep::due(meetings, &prepared, now_unix_ms, lead_minutes)
         .into_iter()
-        .filter(|m| gate != RunGate::Failover || now_unix_ms >= m.start_unix_ms - lead_ms.min(PREP_FAILOVER_BEFORE_START_MS));
+        .filter(|m| gate != RunGate::Failover || now_unix_ms >= m.start_unix_ms - lead_ms.min(PREP_FAILOVER_BEFORE_START_MS))
+        .filter(|m| {
+            !(left_to_runner && runner_can_prepare(m)) || now_unix_ms >= m.start_unix_ms - lead_ms.min(PREP_CLOUD_DEVICE_BEFORE_START_MS)
+        });
     for meeting in due {
-        let context = store.gather_prep_context(&meeting.attendees)?;
+        // Read again for each meeting (cached until anything changes): a client excluded during
+        // the batch is prepared locally for the rest of it (fix round 3).
+        let filter = crate::exclusion::context_filter(store);
+        // Classify first, by the shared predicate: the title or attendees name the client, an
+        // attendee address (from the attendee details) is a client contact's, or the calendar
+        // event is filed under the client.
+        let mut attendees = meeting.attendees.clone();
+        attendees.extend(meeting.attendee_details.iter().filter_map(|a| a.email.clone()));
+        let local_only = crate::exclusion::classify_with(&filter, &meeting.title, &attendees)
+            || filter.excludes_event(&meeting.id, &meeting.title, meeting.start_unix_ms);
+        let mut context = store.gather_prep_context(&meeting.attendees)?;
+        if !local_only {
+            leave_out_excluded(&filter, &mut context);
+        }
+        // What the brief is built from (fix round 4, S2): the event and each earlier meeting or
+        // thread. A source with neither records an input that is never clean.
+        let inputs: Vec<String> = std::iter::once(memory::topics::exclusion::input_ref("event", &meeting.id))
+            .chain(context.sources.iter().map(|s| match (s.meeting_id, s.thread_id) {
+                (Some(id), _) => memory::topics::exclusion::input_ref("meeting", id),
+                (None, Some(id)) => memory::topics::exclusion::input_ref("thread", id),
+                (None, None) => memory::topics::exclusion::input_ref("event", ""),
+            }))
+            .collect();
         let (brief, provider, model) = if context.sources.is_empty() {
             (llm::meeting_prep::deterministic_brief(&meeting.attendees, &context), "none".to_string(), String::new())
         } else {
             let prompts = prep_prompts(store, &meeting, &context, profile, lang);
-            let Some(answer) = complete(&prompts) else {
+            let Some(answer) = complete(&prompts, local_only) else {
                 let reason = "no model was available to write the brief";
                 store.record_summarize_error("meeting_prep", reason, now_unix_ms);
                 // Only a record: a write that fails here must not stop prep for the other meetings.
@@ -147,6 +246,13 @@ pub fn run_gated_prompts(
             .to_string(),
         };
         let run_id = store.insert_routine_run(&new_run)?;
+        // The run names the meeting: clean only when the brief was built from filtered material.
+        let provenance = if local_only {
+            memory::topics::exclusion::UNFILTERED_PROVENANCE.to_string()
+        } else {
+            crate::exclusion::provenance_for(store, &filter, inputs)
+        };
+        store.set_routine_run_provenance(run_id, &provenance)?;
         runs.push(memory::RoutineRun {
             id: run_id,
             routine_id: routine.id,
@@ -157,6 +263,23 @@ pub fn run_gated_prompts(
         });
     }
     Ok(runs)
+}
+
+/// Removes the earlier meetings and threads of an excluded client from a brief's context.
+fn leave_out_excluded(filter: &llm::ContextFilter, context: &mut memory::prep::PrepContext) {
+    if !filter.is_active() {
+        return;
+    }
+    let material = filter.material();
+    context.sources.retain(|s| {
+        let filed = match material {
+            None => true,
+            Some(m) => {
+                s.meeting_id.is_some_and(|id| m.meetings.contains(&id)) || s.thread_id.is_some_and(|id| m.threads.contains(&id))
+            }
+        };
+        !(filed || filter.names_client(&format!("{}\n{}\n{}", s.title, s.attendee, s.text)))
+    });
 }
 
 /// Both forms of one meeting's prompt (see [`PrepPrompts`]).
@@ -248,14 +371,74 @@ pub fn run_with_chain(
     routing: &crate::routing::RoutingConfig,
     gate: impl Into<RunGate>,
 ) -> rusqlite::Result<Vec<memory::RoutineRun>> {
+    prep_on_chain(store, meetings, now_unix_ms, lead_minutes, ollama_model, routing, gate.into(), None, None)
+}
+
+/// [`run_with_chain`] on a device of an account with the cloud runner: with Meeting Prep flagged in
+/// `cloud`, this device prepares a meeting the runner can prepare (one from a calendar that is not
+/// Google's) only from [`PREP_CLOUD_DEVICE_BEFORE_START_MS`] before it starts and only when no brief
+/// has synced in for it; a Google Calendar or detected meeting is prepared at lead time as before.
+/// `None` is [`run_with_chain`].
+#[allow(clippy::too_many_arguments)]
+pub fn run_with_chain_cloud(
+    store: &memory::Store,
+    meetings: &[QualifyingMeeting],
+    now_unix_ms: i64,
+    lead_minutes: f64,
+    ollama_model: &str,
+    routing: &crate::routing::RoutingConfig,
+    gate: impl Into<RunGate>,
+    cloud: Option<&crate::routine_runs::CloudPolicy>,
+) -> rusqlite::Result<Vec<memory::RoutineRun>> {
+    prep_on_chain(store, meetings, now_unix_ms, lead_minutes, ollama_model, routing, gate.into(), None, cloud)
+}
+
+/// The cloud runner's entry: [`run_with_chain`] with each chain link's client made by `transport`
+/// when it is set ([`crate::routing::with_transport`]); the chain, the spend cap, the budgets and the
+/// exclusion gate are the same. `None` is [`run_with_chain`].
+#[allow(clippy::too_many_arguments)]
+pub fn run_with_chain_transport(
+    store: &memory::Store,
+    meetings: &[QualifyingMeeting],
+    now_unix_ms: i64,
+    lead_minutes: f64,
+    ollama_model: &str,
+    routing: &crate::routing::RoutingConfig,
+    gate: impl Into<RunGate>,
+    transport: Option<&crate::routing::Transport>,
+) -> rusqlite::Result<Vec<memory::RoutineRun>> {
+    prep_on_chain(store, meetings, now_unix_ms, lead_minutes, ollama_model, routing, gate.into(), transport, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prep_on_chain(
+    store: &memory::Store,
+    meetings: &[QualifyingMeeting],
+    now_unix_ms: i64,
+    lead_minutes: f64,
+    ollama_model: &str,
+    routing: &crate::routing::RoutingConfig,
+    gate: RunGate,
+    transport: Option<&crate::routing::Transport>,
+    cloud: Option<&crate::routine_runs::CloudPolicy>,
+) -> rusqlite::Result<Vec<memory::RoutineRun>> {
     let cap_config = routing.spend_cap_config();
     let policy = routing.google_data_policy();
-    let mut complete = |prompts: &PrepPrompts| -> Option<Completed> {
+    let mut complete = |prompts: &PrepPrompts, local_only: bool| -> Option<Completed> {
         if llm::check_spend_cap(store, &cap_config, None, Some("routine"), now_unix_ms).is_err() {
             return None;
         }
-        // Built per meeting: spend from the previous one can put a provider over budget.
-        let chain = crate::routing::build_chain_for(llm::TaskKind::MeetingPrep, ollama_model, routing);
+        // Built per meeting: spend from the previous one can put a provider over budget. An
+        // excluded client's meeting gets on-device links only (none: no brief is written).
+        let chain = if local_only {
+            crate::routing::build_local_chain(ollama_model, routing)
+        } else {
+            crate::routing::build_chain_for(llm::TaskKind::MeetingPrep, ollama_model, routing, &crate::exclusion::current_gate(store))
+        };
+        let chain = match transport {
+            Some(t) => crate::routing::with_transport(store, chain, t),
+            None => chain,
+        };
         let chain = crate::budget::apply_budgets(store, chain, false, now_unix_ms).ok()?;
         let (completion, link) = llm::try_chain(&chain, |link| {
             // Limited Use: each link gets the prompt it may receive.
@@ -271,7 +454,7 @@ pub fn run_with_chain(
         crate::util::log_link_usage(store, link, "routine", completion.token_usage);
         Some(Completed { text: completion.text, provider: link.provider.as_str().to_string(), model: link.model.clone() })
     };
-    run_gated_prompts(store, meetings, now_unix_ms, lead_minutes, &routing.profile, &routing.output_language, gate, &mut complete)
+    run_gated_prompts_cloud(store, meetings, now_unix_ms, lead_minutes, &routing.profile, &routing.output_language, gate, cloud, &mut complete)
 }
 
 #[cfg(test)]
@@ -672,5 +855,130 @@ mod tests {
             })
             .unwrap();
         assert!(run_gated(&store, &meetings, 95 * MIN, 30.0, "", "", RunGate::Failover, &mut never).unwrap().is_empty());
+    }
+
+    fn cloud(templates: &[&str]) -> crate::routine_runs::CloudPolicy {
+        crate::routine_runs::CloudPolicy { cloud_templates: templates.iter().map(|t| t.to_string()).collect(), ..Default::default() }
+    }
+
+    /// [`run_gated`] on a device with `policy`.
+    fn run_on_device(
+        store: &memory::Store,
+        meetings: &[QualifyingMeeting],
+        now: i64,
+        policy: Option<&crate::routine_runs::CloudPolicy>,
+        complete: &mut dyn FnMut(&str) -> Option<Completed>,
+    ) -> Vec<memory::RoutineRun> {
+        run_gated_prompts_cloud(store, meetings, now, 30.0, "", "", RunGate::Full, policy, &mut |p: &PrepPrompts, _| complete(&p.full)).unwrap()
+    }
+
+    /// An upcoming meeting from `source` (the shared fixture's is Google Calendar).
+    fn from(source: MeetingSource, id: &str, start: i64) -> QualifyingMeeting {
+        QualifyingMeeting { source, ..upcoming(id, start, &["Ben Lawrick"]) }
+    }
+
+    /// A meeting the runner can prepare: from a calendar that is not Google's (it syncs as an
+    /// `apple_calendar` event, which the runner pulls).
+    fn non_google(id: &str, start: i64) -> QualifyingMeeting {
+        from(MeetingSource::Calendar, id, start)
+    }
+
+    #[test]
+    fn a_cloud_flagged_meeting_prep_is_skipped_on_the_device_when_the_runner_is_working() {
+        let store = store(true);
+        store.set_own_device_id("dev-a");
+        earlier_meeting_with(&store, "Ben Lawrick");
+        let meetings = [non_google("evt-c", 100 * MIN)];
+        let flagged = cloud(&["meeting_prep"]);
+        // The lead window is open from minute 70, but the runner prepares it.
+        assert!(run_on_device(&store, &meetings, 71 * MIN, Some(&flagged), &mut never).is_empty());
+        assert!(run_on_device(&store, &meetings, 94 * MIN, Some(&flagged), &mut never).is_empty());
+        // The runner's brief syncs in under its own calendar id: the device never makes a second one.
+        store
+            .apply_synced_meeting_prep(&memory::prep::MeetingPrepRow {
+                event_id: "runner-id".into(), title: "evt-c sync".into(), start_unix_ms: 100 * MIN, generated_at_unix_ms: 72 * MIN,
+                brief_json: "{}".into(), provider: "p".into(), model: "m".into(),
+            })
+            .unwrap();
+        assert!(run_on_device(&store, &meetings, 96 * MIN, Some(&flagged), &mut never).is_empty());
+        assert!(store.get_meeting_prep(&memory::prep::prep_key("evt-c", 100 * MIN)).unwrap().is_some(), "the runner's brief shows here");
+    }
+
+    #[test]
+    fn the_device_prepares_a_flagged_meeting_that_starts_in_five_minutes_with_no_synced_prep() {
+        let store = store(true);
+        earlier_meeting_with(&store, "Ben Lawrick");
+        let meetings = [non_google("evt-d", 100 * MIN)];
+        let flagged = cloud(&["meeting_prep"]);
+        let mut model = |_: &str| Some(good_answer());
+        assert!(run_on_device(&store, &meetings, 94 * MIN, Some(&flagged), &mut model).is_empty());
+        assert_eq!(run_on_device(&store, &meetings, 95 * MIN, Some(&flagged), &mut model).len(), 1);
+        assert!(run_on_device(&store, &meetings, 96 * MIN, Some(&flagged), &mut model).is_empty(), "once");
+        // The device entry the apps call: with no history no model is needed.
+        let store = self::store(true);
+        let meetings = [non_google("evt-e", 100 * MIN)];
+        let routing = crate::routing::RoutingConfig::default();
+        assert!(run_with_chain_cloud(&store, &meetings, 71 * MIN, 30.0, "", &routing, RunGate::Full, Some(&flagged)).unwrap().is_empty());
+        assert_eq!(run_with_chain_cloud(&store, &meetings, 95 * MIN, 30.0, "", &routing, RunGate::Full, Some(&flagged)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_non_flagged_prep_is_unchanged() {
+        let mut model = |_: &str| Some(good_answer());
+        for meetings in [[non_google("evt-n", 100 * MIN)], [upcoming("evt-n", 100 * MIN, &["Ben Lawrick"])]] {
+            for policy in [None, Some(cloud(&[])), Some(cloud(&["daily_brief", "eod_recap"]))] {
+                let store = store(true);
+                earlier_meeting_with(&store, "Ben Lawrick");
+                assert_eq!(run_on_device(&store, &meetings, 71 * MIN, policy.as_ref(), &mut model).len(), 1, "{policy:?}");
+            }
+            // The device entry with no policy is `run_with_chain`.
+            let routing = crate::routing::RoutingConfig::default();
+            for policy in [None, Some(cloud(&["daily_brief"]))] {
+                let store = store(true);
+                assert_eq!(run_with_chain_cloud(&store, &meetings, 71 * MIN, 30.0, "", &routing, RunGate::Full, policy.as_ref()).unwrap().len(), 1);
+            }
+        }
+    }
+
+    /// The runner never pulls a Google Calendar event, so it can never prepare this meeting.
+    #[test]
+    fn a_google_calendar_meeting_is_prepared_on_the_device_at_lead_time_even_when_meeting_prep_is_cloud_flagged() {
+        let store = store(true);
+        earlier_meeting_with(&store, "Ben Lawrick");
+        let meetings = [from(MeetingSource::GoogleCalendar, "evt-g", 100 * MIN)];
+        let flagged = cloud(&["meeting_prep"]);
+        let mut model = |_: &str| Some(good_answer());
+        assert!(run_on_device(&store, &meetings, 69 * MIN, Some(&flagged), &mut model).is_empty(), "lead not open yet");
+        assert_eq!(run_on_device(&store, &meetings, 71 * MIN, Some(&flagged), &mut model).len(), 1);
+        // Through the device entry too.
+        let store = self::store(true);
+        let routing = crate::routing::RoutingConfig::default();
+        assert_eq!(run_with_chain_cloud(&store, &meetings, 71 * MIN, 30.0, "", &routing, RunGate::Full, Some(&flagged)).unwrap().len(), 1);
+    }
+
+    /// A meeting with no calendar source (one detected from a meeting app) never syncs as a calendar
+    /// event, so the runner cannot prepare it either.
+    #[test]
+    fn a_sourceless_meeting_is_prepared_on_the_device_as_before() {
+        let store = store(true);
+        earlier_meeting_with(&store, "Ben Lawrick");
+        let meetings = [from(MeetingSource::Detected, "evt-s", 100 * MIN)];
+        let mut model = |_: &str| Some(good_answer());
+        assert_eq!(run_on_device(&store, &meetings, 71 * MIN, Some(&cloud(&["meeting_prep"])), &mut model).len(), 1);
+    }
+
+    #[test]
+    fn a_non_google_meeting_is_skipped_on_the_device_while_the_runner_can_do_it() {
+        let store = store(true);
+        earlier_meeting_with(&store, "Ben Lawrick");
+        // In one batch: the Google meeting is prepared at lead time, the non-Google one is left to the runner.
+        let meetings = [from(MeetingSource::GoogleCalendar, "evt-g2", 100 * MIN), non_google("evt-a2", 100 * MIN + 1_000)];
+        let flagged = cloud(&["meeting_prep"]);
+        let mut model = |_: &str| Some(good_answer());
+        let ran = run_on_device(&store, &meetings, 71 * MIN, Some(&flagged), &mut model);
+        assert_eq!(ran.len(), 1);
+        assert!(ran[0].output_json.contains("evt-g2"), "{ran:?}");
+        assert!(store.get_meeting_prep(&memory::prep::prep_key("evt-a2", 100 * MIN + 1_000)).unwrap().is_none());
+        assert!(run_on_device(&store, &meetings, 94 * MIN, Some(&flagged), &mut model).is_empty());
     }
 }

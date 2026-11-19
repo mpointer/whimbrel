@@ -100,8 +100,16 @@ pub mod typesafe;
 pub mod profile;
 pub mod skin_maker;
 pub mod images;
+pub mod guard;
+pub mod request_log;
+pub mod exclusion;
 
 pub use backoff::is_retryable;
+pub use exclusion::{is_hosted, is_ollama_cloud_model, ContextFilter};
+pub use guard::{
+    guard_hosted, ExclusionSet, GateRefusal, GuardedClient, GuardedStreamingClient, HostedGate, NoExclusions,
+    RefuseAllHosted,
+};
 pub use ledger::{
     charge_skin_call, charge_skin_call_for, check_spend_cap, ChargeError, SpendCapConfig, SpendCapError, SpendCapScope, DEFAULT_GLOBAL_DAILY_CAP_CENTS,
     DEFAULT_USER_DAILY_CAP_CENTS,
@@ -123,6 +131,8 @@ pub enum LlmError {
         body: String,
     },
     NotImplemented(&'static str),
+    /// A hosted request the exclusion gate held back (`guard`): it was never sent.
+    Refused(GateRefusal),
 }
 
 impl std::fmt::Display for LlmError {
@@ -132,6 +142,7 @@ impl std::fmt::Display for LlmError {
             LlmError::Provider(msg) => write!(f, "provider error: {msg}"),
             LlmError::Http { status, body, .. } => write!(f, "HTTP {status}: {body}"),
             LlmError::NotImplemented(msg) => write!(f, "not implemented: {msg}"),
+            LlmError::Refused(r) => f.write_str(r.user_message()),
         }
     }
 }
@@ -430,8 +441,10 @@ impl LlmClient for OllamaClient {
             .timeout_connect(OLLAMA_CONNECT_TIMEOUT)
             .timeout_read(OLLAMA_FIRST_LINE_TIMEOUT)
             .build();
+        let url = format!("{}/api/generate", self.base_url);
+        request_log::record("ollama", &url, &request);
         let response = agent
-            .post(&format!("{}/api/generate", self.base_url))
+            .post(&url)
             .send_json(&request)
             .map_err(|e| match e {
                 // Ollama accepted the request and then stalled or dropped it: count it
@@ -626,7 +639,13 @@ impl LlmClient for AnthropicClient {
                     content: prompt,
                 }],
             };
-            let http = ureq::post(&format!("{}/v1/messages", self.base_url));
+            let url = format!("{}/v1/messages", self.base_url);
+            let label = match &self.auth {
+                AnthropicAuth::ApiKey(_) => "anthropic",
+                AnthropicAuth::Whimbrel { .. } => "whimbrel",
+            };
+            request_log::record(label, &url, &request);
+            let http = ureq::post(&url);
             let http = match &self.auth {
                 AnthropicAuth::ApiKey(key) => http.set("x-api-key", key),
                 AnthropicAuth::Whimbrel { id_token, device_key } => http
@@ -788,8 +807,9 @@ impl LlmClient for OpenAIClient {
                 }],
                 provider: self.openrouter.then(openrouter_provider_preferences),
             };
-            let mut call = ureq::post(&format!("{}/v1/chat/completions", self.base_url))
-                .set("Authorization", &format!("Bearer {}", self.api_key));
+            let url = format!("{}/v1/chat/completions", self.base_url);
+            request_log::record(if self.openrouter { "openrouter" } else { "openai" }, &url, &request);
+            let mut call = ureq::post(&url).set("Authorization", &format!("Bearer {}", self.api_key));
             for (name, value) in &self.extra_headers {
                 call = call.set(name, value);
             }
@@ -907,7 +927,10 @@ impl GoogleClient {
 
 impl GoogleClient {
     fn post(&self, model: &str, request: &GoogleRequest) -> Result<ureq::Response, LlmError> {
-        ureq::post(&format!("{}/v1beta/models/{}:generateContent", self.base_url, model))
+        let url = format!("{}/v1beta/models/{}:generateContent", self.base_url, model);
+        // Logged before the key is added: the key goes in the query string.
+        request_log::record("google", &url, request);
+        ureq::post(&url)
             .query("key", &self.api_key)
             .send_json(request)
             .map_err(ureq_error_to_llm)
@@ -1114,6 +1137,28 @@ pub fn assemble_context(
     out
 }
 
+/// `assemble_context` over the candidates `filter` keeps: an excluded client's material is
+/// removed before packing, so it never takes budget or reaches the prompt (spec 7.2).
+#[allow(clippy::too_many_arguments)]
+fn assemble_filtered(
+    query: &str,
+    now_unix_ms: i64,
+    keyword_hits: Vec<(ContextItem, i64)>,
+    semantic_hits: Vec<(ContextItem, i64)>,
+    routine_runs: Vec<(ContextItem, i64)>,
+    episodes: Vec<memory::Episode>,
+    threads: Vec<memory::Thread>,
+    filter: &ContextFilter,
+) -> Vec<ContextItem> {
+    let keep = |v: Vec<(ContextItem, i64)>| -> Vec<(ContextItem, i64)> { v.into_iter().filter(|(i, _)| filter.keeps(i)).collect() };
+    let (keyword_hits, semantic_hits, routine_runs) = (keep(keyword_hits), keep(semantic_hits), keep(routine_runs));
+    let episodes: Vec<memory::Episode> =
+        episodes.into_iter().filter(|e| filter.keeps(&ContextItem::Episode(e.clone()))).collect();
+    let threads: Vec<memory::Thread> =
+        threads.into_iter().filter(|t| filter.keeps(&ContextItem::Thread(t.clone()))).collect();
+    assemble_context(query, now_unix_ms, &keyword_hits, &semantic_hits, &routine_runs, &episodes, &threads)
+}
+
 /// Fetches every input `assemble_context` needs directly from `store`, then calls it.
 /// Shared by `whimbrel_llm_answer` (core/ffi) and the `assemble_context` MCP tool
 /// (core/mcp-server) so this fetch sequence exists in exactly one place.
@@ -1129,6 +1174,7 @@ pub fn gather_and_assemble_context(
     context_limit: usize,
     include_transcripts: bool,
     include_email: bool,
+    filter: &ContextFilter,
 ) -> Vec<ContextItem> {
     let mut keyword_hits: Vec<(ContextItem, i64)> = Vec::new();
     keyword_hits.extend(
@@ -1215,15 +1261,7 @@ pub fn gather_and_assemble_context(
     let episodes = store.recent_episodes(10).unwrap_or_default();
     let threads = store.threads_needing_attention(10).unwrap_or_default();
 
-    assemble_context(
-        query,
-        now_unix_ms,
-        &keyword_hits,
-        &semantic_hits,
-        &routine_runs,
-        &episodes,
-        &threads,
-    )
+    assemble_filtered(query, now_unix_ms, keyword_hits, semantic_hits, routine_runs, episodes, threads, filter)
 }
 
 /// Time-boxed counterpart to `gather_and_assemble_context` -- every leg bounded to
@@ -1251,6 +1289,7 @@ pub fn gather_and_assemble_context_for_window(
     end_unix_ms: i64,
     context_limit: usize,
     include_transcripts: bool,
+    filter: &ContextFilter,
 ) -> Vec<ContextItem> {
     let mut keyword_hits: Vec<(ContextItem, i64)> = Vec::new();
     let mut semantic_hits: Vec<(ContextItem, i64)> = Vec::new();
@@ -1347,15 +1386,7 @@ pub fn gather_and_assemble_context_for_window(
         .threads_needing_attention_in_window(start_unix_ms, end_unix_ms, 10)
         .unwrap_or_default();
 
-    assemble_context(
-        query,
-        now_unix_ms,
-        &keyword_hits,
-        &semantic_hits,
-        &routine_runs,
-        &episodes,
-        &threads,
-    )
+    assemble_filtered(query, now_unix_ms, keyword_hits, semantic_hits, routine_runs, episodes, threads, filter)
 }
 
 /// Chat queries like "what did I do today" name a day, but `gather_and_assemble_context`
@@ -2971,6 +3002,22 @@ mod tests {
         assert!(body.get("provider").is_none(), "{raw}");
     }
 
+    /// The debug request log holds exactly the body that went on the wire, and never the key.
+    #[test]
+    fn request_log_records_the_body_sent_and_not_the_key() {
+        let path = crate::request_log::tests::log_to_temp("openai-blocking");
+        let (url, rx) = serve_openai_once();
+        OpenAIClient::new("sk-secret-1", "gpt-x").with_base_url(url.clone()).complete("About O’Brien Partners").unwrap();
+        let raw = rx.recv().unwrap();
+        let sent: serde_json::Value = serde_json::from_str(&raw[raw.find("\r\n\r\n").unwrap() + 4..]).unwrap();
+        let lines = crate::request_log::tests::read_lines(&path);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["provider"], "openai");
+        assert_eq!(lines[0]["url"], format!("{url}/v1/chat/completions"));
+        assert_eq!(lines[0]["body"], sent);
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("sk-secret-1"));
+    }
+
     /// The Whimbrel client is the Anthropic client pointed at Whimbrel's server, with
     /// the Google ID token and device key in place of `x-api-key`.
     #[test]
@@ -3986,7 +4033,7 @@ mod tests {
             })
             .unwrap();
 
-        let items = gather_and_assemble_context_for_window(&store, "", 10_000, 0, 2_000, 20, true);
+        let items = gather_and_assemble_context_for_window(&store, "", 10_000, 0, 2_000, 20, true, &ContextFilter::none());
 
         let texts: Vec<&str> = items.iter().map(|i| i.text()).collect();
         assert!(
@@ -4061,7 +4108,7 @@ mod tests {
             .unwrap();
 
         let items =
-            gather_and_assemble_context_for_window(&store, "fox", 10_000, 0, 2_000, 20, true);
+            gather_and_assemble_context_for_window(&store, "fox", 10_000, 0, 2_000, 20, true, &ContextFilter::none());
 
         let texts: Vec<&str> = items.iter().map(|i| i.text()).collect();
         assert!(
@@ -4108,9 +4155,9 @@ mod tests {
             .unwrap();
 
         let with_transcripts =
-            gather_and_assemble_context_for_window(&store, "", 10_000, 0, 2_000, 20, true);
+            gather_and_assemble_context_for_window(&store, "", 10_000, 0, 2_000, 20, true, &ContextFilter::none());
         let without_transcripts =
-            gather_and_assemble_context_for_window(&store, "", 10_000, 0, 2_000, 20, false);
+            gather_and_assemble_context_for_window(&store, "", 10_000, 0, 2_000, 20, false, &ContextFilter::none());
 
         assert!(
             with_transcripts
@@ -4155,7 +4202,7 @@ mod tests {
         }
 
         let items = gather_and_assemble_context_for_window(
-            &store, "", window_end, 0, window_end, 200, true,
+            &store, "", window_end, 0, window_end, 200, true, &ContextFilter::none(),
         );
 
         let texts: Vec<&str> = items.iter().map(|i| i.text()).collect();
@@ -4216,7 +4263,7 @@ mod tests {
             .unwrap();
 
         let items = gather_and_assemble_context_for_window(
-            &store, "", window_end, 0, window_end, 200, true,
+            &store, "", window_end, 0, window_end, 200, true, &ContextFilter::none(),
         );
 
         let texts: Vec<&str> = items.iter().map(|i| i.text()).collect();
@@ -5279,7 +5326,7 @@ mod tests {
             )
             .unwrap();
 
-        let items = gather_and_assemble_context(&store, "fox", 10_000, 10, true, true);
+        let items = gather_and_assemble_context(&store, "fox", 10_000, 10, true, true, &ContextFilter::none());
 
         assert!(
             items.iter().any(|i| matches!(i, ContextItem::Capture(_))),
@@ -5336,7 +5383,7 @@ mod tests {
             }])
             .unwrap();
 
-        let items = gather_and_assemble_context(&store, "fox", 10_000, 10, false, true);
+        let items = gather_and_assemble_context(&store, "fox", 10_000, 10, false, true, &ContextFilter::none());
 
         assert!(
             items.iter().any(|i| matches!(i, ContextItem::Capture(_))),
@@ -5376,7 +5423,7 @@ mod tests {
             })
             .unwrap();
 
-        let with = gather_and_assemble_context(&store, "hiring", 10_000, 10, true, true);
+        let with = gather_and_assemble_context(&store, "hiring", 10_000, 10, true, true, &ContextFilter::none());
         let snap = with
             .iter()
             .find_map(|i| match i {
@@ -5389,7 +5436,7 @@ mod tests {
         assert_eq!(item.display_label(), "slide in meeting \"Board review\"");
         assert_eq!(item.citation_ref(), ContextItemRef::Snapshot { id: snap.id });
 
-        let without = gather_and_assemble_context(&store, "hiring", 10_000, 10, false, true);
+        let without = gather_and_assemble_context(&store, "hiring", 10_000, 10, false, true, &ContextFilter::none());
         assert!(!without.iter().any(|i| matches!(i, ContextItem::Snapshot(_))));
     }
 
@@ -5404,7 +5451,7 @@ mod tests {
     #[test]
     fn gather_and_assemble_context_on_a_fresh_store_returns_empty_without_panicking() {
         let store = memory::Store::open_in_memory().unwrap();
-        let items = gather_and_assemble_context(&store, "anything", 10_000, 10, true, true);
+        let items = gather_and_assemble_context(&store, "anything", 10_000, 10, true, true, &ContextFilter::none());
         assert!(items.is_empty());
     }
 

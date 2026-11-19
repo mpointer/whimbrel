@@ -4,6 +4,7 @@ import { hasDeviceLimit, isSignInAllowed } from "./allowlist";
 import { allowedAudiences, googleJwks, verifyGoogleIdToken } from "./googleAuth";
 import { mintDeviceToken, createAccountDatabase, deleteAccountDatabase, rotateAllTokens } from "./turso";
 import { isCloud, kindOf, limitCheck } from "./limits";
+import { handleRunnerAuth, registerRunner } from "./runner";
 import { storeWrappedKeyForHandoff, fetchAndConsumeWrappedKey } from "./handoff";
 import { ipBucket, rateLimit, rateLimited } from "./rateLimit";
 import { deleteAccount, runInactivity } from "./inactivity";
@@ -67,6 +68,8 @@ export interface Env {
   OPEN_SIGN_IN?: string;
   /** Comma-separated emails exempt from the free device limit. */
   UNLIMITED_EMAILS?: string;
+  /** Comma-separated emails allowed to register a cloud routine runner (author-only phase). */
+  RUNNER_EMAILS?: string;
   RESEND_API_KEY?: string;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
@@ -563,6 +566,30 @@ export async function handleRevokeDevice(
     return Response.json({ status: "revoked" });
   } catch (err) {
     return backendError("handleRevokeDevice", err);
+  }
+}
+
+/** Registers the headless cloud runner as a device. Same auth as approve:
+ * the caller is a Google-authed, approved device. The body carries only the
+ * runner's public key, name and the SHA-256 of its token; the token and the
+ * group key reach the runner out of band and never pass through here. */
+export async function handleRegisterRunner(
+  request: Request,
+  env: Env,
+  db: SqlExecutor = tursoSqlExecutor(env),
+): Promise<Response> {
+  let body: AuthenticatedApprovedDeviceRequestBody & { runnerPublicKey?: unknown; name?: unknown; runnerTokenHash?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+  try {
+    const authResult = await authenticateApprovedDevice(body, env, db);
+    if (authResult instanceof Response) return authResult;
+    return await registerRunner(db, env, authResult.account, body, Date.now());
+  } catch (err) {
+    return backendError("handleRegisterRunner", err);
   }
 }
 
@@ -1459,6 +1486,12 @@ export default {
       }
       if (url.pathname === "/v1/account/delete" && request.method === "POST") {
         return await handleDeleteAccount(request, env);
+      }
+      if (url.pathname === "/v1/devices/runner" && request.method === "POST") {
+        return await handleRegisterRunner(request, env);
+      }
+      if (url.pathname === "/v1/runner/auth" && request.method === "POST") {
+        return await handleRunnerAuth(request, env, tursoSqlExecutor(env));
       }
       const approveMatch = url.pathname.match(/^\/v1\/devices\/([^/]+)\/approve$/);
       if (approveMatch && request.method === "POST") {

@@ -272,6 +272,7 @@ impl Store {
                 ..s.clone()
             })
             .collect();
+        let embeddings = self.embed_segments(&shifted);
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "DELETE FROM items WHERE source_table = 'transcript_segment' AND source_id IN \
@@ -282,7 +283,7 @@ impl Store {
             "DELETE FROM transcript_segment WHERE meeting_id = ?1 AND start_cs >= ?2 AND start_cs < ?3",
             params![meeting_id, offset, end],
         )?;
-        self.insert_transcript_segments_tx(&tx, &shifted)?;
+        self.insert_transcript_segments_tx(&tx, &shifted, &embeddings)?;
         tx.commit()?;
         Ok(shifted.len())
     }
@@ -470,6 +471,8 @@ impl Store {
             params![new_id, meeting_id, split_ms],
         )?;
 
+        Self::split_markers_tx(&tx, meeting_id, new_id, offset)?;
+
         for id in [meeting_id, new_id] {
             let seq = Self::next_local_seq_tx(&tx)?;
             tx.execute(
@@ -535,6 +538,7 @@ impl Store {
             "UPDATE meeting_snapshot SET meeting_id = ?1 WHERE meeting_id = ?2",
             params![into, from],
         )?;
+        Self::carry_markers_tx(&tx, from, into)?;
         tx.execute(
             "UPDATE meeting SET continue_key = (SELECT continue_key FROM meeting WHERE id = ?2) \
              WHERE id = ?1 AND (SELECT continue_key FROM meeting WHERE id = ?2) IS NOT NULL",
@@ -625,6 +629,8 @@ impl Store {
              WHERE id = ?1",
             params![into, from, seq],
         )?;
+        // `from`'s marks follow its recording into `into`; the delete below would drop them.
+        Self::carry_markers_tx(&tx, from, into)?;
         Self::delete_meeting_rows_tx(&tx, from)?;
         crate::forget::prune_pushed_rows(&tx, from)?;
         self.enqueue_meeting_outbox(&tx, into, seq)?;

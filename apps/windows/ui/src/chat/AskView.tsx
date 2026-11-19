@@ -19,6 +19,7 @@ import { useL10n } from "../l10n";
 import { Detail, type Selection } from "../library/Detail";
 import { LocalModelCard } from "./LocalModelCard";
 import { TopicPageOffer } from "../topics/TopicChip";
+import { leftOutLine } from "../topics/clientControlsModel";
 import {
   applyEvent,
   citedEntries,
@@ -27,6 +28,7 @@ import {
   promptToSend,
   savedTurn,
   spendLine,
+  answeredLocallyLine,
   statusLine,
   type AskRequest,
   type Turn,
@@ -305,7 +307,9 @@ function TurnView({ turn, onOpen }: { turn: Turn; onOpen: (s: Selection) => void
             })}
           </div>
         )}
+        {turn.status === "done" && turn.leftOut != null && leftOutLine(turn.leftOut) && <p className="muted small">{leftOutLine(turn.leftOut)}</p>}
         {turn.status === "done" && turn.model && <p className="muted small">{turn.model}</p>}
+        {turn.status === "done" && turn.answeredLocally && <p className="muted small">{answeredLocallyLine()}</p>}
       </div>
     </li>
   );

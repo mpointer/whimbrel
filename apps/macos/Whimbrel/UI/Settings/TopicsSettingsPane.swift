@@ -123,15 +123,15 @@ struct TopicsSettingsPane: View {
                         }
                         Button("Delete") { deletingKey = seed.key; mergingKey = nil }.buttonStyle(.whimbrelSecondary)
                     }
+                    // A topic you named is a client: deleting it here would keep its name and aliases (a soft delete
+                    // that then blocks Delete this client), so this only points to the client's page (final review,
+                    // Major 2).
                     if deletingKey == seed.key {
                         HStack(spacing: Spacing.sm) {
-                            Text("Delete \(seed.name)? Items stay in your timeline.")
-                                .font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelError)
-                            Button("Delete") {
-                                deletingKey = nil
-                                run({ $0.topicSeedDelete(key: seed.key) }, failure: "Could not delete that topic.")
-                            }.buttonStyle(.whimbrelPrimary)
-                            Button("Cancel") { deletingKey = nil }.buttonStyle(.whimbrelSecondary)
+                            Text("To delete a client and what Whimbrel holds on them, open the client's page and choose Delete this client.")
+                                .font(.whimbrelBody(.caption)).foregroundStyle(Color.whimbrelTextSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("Close") { deletingKey = nil }.buttonStyle(.whimbrelSecondary)
                         }
                     }
                     if mergingKey == seed.key {

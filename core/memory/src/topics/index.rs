@@ -441,7 +441,13 @@ fn kv_set(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
 
 /// Indexes up to `batch` new sources of each kind. Returns true while work remains.
 pub fn run_topic_index_job(store: &Store, batch: usize) -> rusqlite::Result<bool> {
-    let tx = store.conn.unchecked_transaction()?;
+    // Take the write lock up front (BEGIN IMMEDIATE): a deferred transaction that reads and
+    // then writes fails at once with "database is locked" when another connection (the
+    // app's other lanes, the MCP server) committed in between; busy_timeout can't retry it.
+    let tx = rusqlite::Transaction::new_unchecked(
+        &store.conn,
+        rusqlite::TransactionBehavior::Immediate,
+    )?;
     chrome::rebuild_chrome_if_stale(&tx, now_ms())?;
     // A meeting marked removed after it was indexed (the mark can arrive from another
     // device once the meeting has started) stops counting: dropping the source takes its
@@ -834,6 +840,23 @@ mod tests {
         let s =
             Store::open_with_embedder(&dir.path().join("t.db"), Arc::new(FakeEmbedder)).unwrap();
         (dir, s)
+    }
+
+    /// Another connection (the app's slow lane, the MCP server) holding the write lock while
+    /// the job starts: the job waits for it instead of failing with "database is locked".
+    #[test]
+    fn index_job_waits_for_another_writer_instead_of_failing() {
+        let (d, s) = store();
+        s.conn.execute("INSERT INTO items (device_id, kind, source, ts_unix_ms, body_text, title) VALUES ('d','email','gmail',1,'Falcon launch plan review','Falcon')", []).unwrap();
+        let other = rusqlite::Connection::open(d.path().join("t.db")).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS lock_probe (x); INSERT INTO lock_probe VALUES (1);").unwrap();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            other.execute_batch("COMMIT").unwrap();
+        });
+        let ran = run_topic_index_job(&s, 50);
+        writer.join().unwrap();
+        ran.unwrap();
     }
 
     #[test]

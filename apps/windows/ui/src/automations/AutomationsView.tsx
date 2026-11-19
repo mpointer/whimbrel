@@ -12,6 +12,9 @@ import {
   routineSetModelPref,
   routineSetSchedule,
   routinesList,
+  routinesCloud,
+  routineSetCloud,
+  routineSetReadyBy,
 } from "../api";
 import { describeError, isCommandError } from "../errors";
 import type { ApprovalView, HostView, ModelOptionView, RoutineView, RunView } from "../generated/types";
@@ -44,6 +47,25 @@ import {
   scheduleChanged,
   unavailableNote,
 } from "./automationsModel";
+import {
+  blockedReason,
+  disclosure,
+  infoFor,
+  readyByLabel,
+  readyByNote,
+  routineFreshnessLabel,
+  runnerMissing,
+  showsCloudSection,
+  showsToggle,
+  shownReadyBy,
+  statusNote,
+  toggleCopy,
+  toggleDisabled,
+  toggleLabel,
+  canBeLate,
+  type CloudRoutineInfo,
+  type CloudRoutinesView,
+} from "./cloudRoutineModel";
 
 function message(e: unknown): string {
   return isCommandError(e) ? describeError(e) : String(e);
@@ -61,6 +83,11 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
   const [approvals, setApprovals] = useState<ApprovalView[]>([]);
   const [host, setHost] = useState<HostView | null>(null);
   const [modelOptions, setModelOptions] = useState<ModelOptionView[]>([]);
+  // "Run in the cloud": null until read, and while it can't be (the toggles then stay hidden).
+  const [cloud, setCloud] = useState<CloudRoutinesView | null>(null);
+  // The runs the Updated/Late lines read: more than the history shows, as the Mac reads 200, so a busy day
+  // does not push today's result out and show a false "Late".
+  const [cloudRuns, setCloudRuns] = useState<RunView[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [working, setWorking] = useState<number | null>(null);
   const [open, setOpen] = useState<number | null>(null);
@@ -85,6 +112,8 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
       },
       (e: unknown) => setError(message(e)),
     );
+    routinesCloud().then(setCloud, () => {});
+    routineRuns(200).then(setCloudRuns, () => {});
   }, [showApprovals]);
 
   useEffect(() => {
@@ -109,6 +138,16 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
     request.then(
       (list) => {
         setRoutines(list);
+        setError(null);
+      },
+      (e: unknown) => setError(message(e)),
+    );
+
+  /** A cloud change that returns the refreshed cloud view; a refusal is shown and nothing changes. */
+  const changeCloud = (request: Promise<CloudRoutinesView>) =>
+    request.then(
+      (view) => {
+        setCloud(view);
         setError(null);
       },
       (e: unknown) => setError(message(e)),
@@ -204,6 +243,10 @@ export function AutomationsView(props: { onWaiting?: (count: number) => void }) 
                 key={r.id}
                 routine={r}
                 modelOptions={modelOptions}
+                cloud={cloud}
+                runs={cloudRuns}
+                onCloud={(template, on) => void changeCloud(routineSetCloud(template, on))}
+                onReadyBy={(template, readyBy) => void changeCloud(routineSetReadyBy(template, readyBy))}
                 onToggle={(enabled) => void change(routineSetEnabled(r.id, enabled))}
                 onSchedule={(schedule) => void change(routineSetSchedule(r.id, schedule))}
                 onAutoApprove={(enabled) => void change(routineSetAutoApprove(r.id, enabled))}
@@ -291,6 +334,10 @@ function ApprovalRow(props: { approval: ApprovalView; busy: boolean; onApprove: 
 function RoutineRow(props: {
   routine: RoutineView;
   modelOptions: ModelOptionView[];
+  cloud: CloudRoutinesView | null;
+  runs: RunView[];
+  onCloud: (template: string, on: boolean) => void;
+  onReadyBy: (template: string, readyBy: string) => void;
   onToggle: (enabled: boolean) => void;
   onSchedule: (schedule: string) => void;
   onAutoApprove: (enabled: boolean) => void;
@@ -301,6 +348,7 @@ function RoutineRow(props: {
   const [time, setTime] = useState(routine.schedule);
   useEffect(() => setTime(routine.schedule), [routine.schedule]);
   const note = unavailableNote(routine);
+  const info = infoFor(props.cloud, routine.kind);
 
   return (
     <li className="routine-row">
@@ -339,6 +387,9 @@ function RoutineRow(props: {
             <span className="muted small">{modelPickerNote()}</span>
           </label>
         )}
+        {props.cloud && info && showsToggle(info) && showsCloudSection(props.cloud, info.cloud) && (
+          <CloudSection routine={routine} info={info} view={props.cloud} runs={props.runs} onCloud={props.onCloud} onReadyBy={props.onReadyBy} />
+        )}
       </div>
       {hasSchedule(routine) && (
         <label className="field routine-time">
@@ -353,5 +404,54 @@ function RoutineRow(props: {
         </label>
       )}
     </li>
+  );
+}
+
+/** "Run in the cloud" for one routine core lets run there: the toggle with its grant and limits, the ready-by time,
+ *  and how fresh the last result is. */
+function CloudSection(props: {
+  routine: RoutineView;
+  info: CloudRoutineInfo;
+  view: CloudRoutinesView;
+  runs: RunView[];
+  onCloud: (template: string, on: boolean) => void;
+  onReadyBy: (template: string, readyBy: string) => void;
+}) {
+  const { routine, info, view } = props;
+  const { t, locale } = useL10n();
+  const on = info.cloud;
+  const blocked = blockedReason(view.sync_ready, routine.enabled, view.local_only, view.has_synced_key);
+  const note = statusNote(on, blocked, runnerMissing(view.devices), info.template);
+  const readyBy = shownReadyBy(routine.schedule, info.ready_by);
+  const [time, setTime] = useState(readyBy);
+  useEffect(() => setTime(readyBy), [readyBy]);
+  const now = new Date();
+  const fresh = on ? routineFreshnessLabel(routine, info, props.runs, now, locale) : null;
+
+  return (
+    <div className="stack-sm">
+      <label className="toggle">
+        <input type="checkbox" checked={on} disabled={toggleDisabled(on, blocked)} onChange={(e) => props.onCloud(info.template, e.target.checked)} />
+        {toggleLabel()}
+      </label>
+      <p className="muted small">{toggleCopy(info)}</p>
+      <p className="muted small">{disclosure()}</p>
+      {note && <p className="small routine-unavailable">{note}</p>}
+      {on && canBeLate(info.template, true) && (
+        <label className="field routine-time">
+          <span>{readyByLabel()}</span>
+          <input
+            className="input"
+            type="time"
+            aria-label={t("{name} ready by", { name: routine.name })}
+            value={time}
+            onChange={(e) => setTime(e.target.value)}
+            onBlur={() => scheduleChanged(readyBy, time) && props.onReadyBy(info.template, time)}
+          />
+          <span className="muted small">{readyByNote()}</span>
+        </label>
+      )}
+      {fresh && <p className="muted small">{fresh}</p>}
+    </div>
   );
 }

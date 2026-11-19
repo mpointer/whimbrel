@@ -46,6 +46,40 @@ pub struct TopicSeedPayload {
     pub merged_into_key: Option<String>,
     pub deleted: bool,
     pub updated_at_unix_ms: i64,
+    /// Per-client controls (`client_control`); absent from records sent by older devices,
+    /// which leaves the local setting alone.
+    #[serde(default)]
+    pub exclude_hosted: Option<bool>,
+    #[serde(default)]
+    pub keep_months: Option<u32>,
+    /// When the control fields last changed; a seed edit leaves it alone. Absent from older
+    /// devices, whose control fields are then ignored.
+    #[serde(default)]
+    pub control_updated_at_unix_ms: Option<i64>,
+    /// A client delete (`topic_seed_purged` rows only): every device hard-deletes the seed and its topic
+    /// content, keeping no name. Such a record carries no name or aliases. Left out when false, so ordinary
+    /// records (and the tie-break hash over their JSON) are unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub purged: bool,
+}
+
+impl TopicSeedPayload {
+    /// The record that purges seed `key`: no name, no aliases, no controls.
+    pub fn purged(key: &str, at_unix_ms: i64) -> Self {
+        TopicSeedPayload {
+            key: key.to_string(),
+            name: String::new(),
+            aliases: Vec::new(),
+            kind: None,
+            merged_into_key: None,
+            deleted: true,
+            updated_at_unix_ms: at_unix_ms,
+            exclude_hosted: None,
+            keep_months: None,
+            control_updated_at_unix_ms: None,
+            purged: true,
+        }
+    }
 }
 
 const SYNC_BACKFILLED_KEY: &str = "topics_sync_backfilled";
@@ -145,7 +179,7 @@ pub(crate) fn mark_seeds_rematch(conn: &Connection, topic_id: i64) -> rusqlite::
     Ok(())
 }
 
-fn invalid(msg: impl Into<String>) -> rusqlite::Error {
+pub(crate) fn invalid(msg: impl Into<String>) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(msg.into().into())
 }
 
@@ -177,7 +211,7 @@ pub(crate) fn normalize_aliases(name: &str, aliases: &[String]) -> Vec<String> {
     out
 }
 
-fn bump(conn: &Connection, topic_id: i64) -> rusqlite::Result<i64> {
+pub(crate) fn bump(conn: &Connection, topic_id: i64) -> rusqlite::Result<i64> {
     let ms: i64 = conn.query_row(
         "UPDATE topic_seed SET updated_at_unix_ms = MAX(?2, updated_at_unix_ms + 1) \
          WHERE topic_id = ?1 RETURNING updated_at_unix_ms",
@@ -259,11 +293,25 @@ fn seed_payload(
                     merged_into_key: r.get(4)?,
                     deleted: r.get(5)?,
                     updated_at_unix_ms: r.get(6)?,
+                    exclude_hosted: None,
+                    keep_months: None,
+                    control_updated_at_unix_ms: None,
+                    purged: false,
                 };
                 Ok((p, r.get::<_, String>(2)?))
             },
         )
-        .optional()
+        .optional()?
+        .map(|(mut p, aliases)| {
+            // Unreadable control rows are left out (None) so they never overwrite a peer's.
+            if let Ok(Some((c, ts))) = super::client_controls::read_row_ts(conn, &p.key) {
+                p.exclude_hosted = Some(c.exclude_hosted);
+                p.keep_months = c.keep_months;
+                p.control_updated_at_unix_ms = Some(ts);
+            }
+            Ok((p, aliases))
+        })
+        .transpose()
 }
 
 /// Breaks merge cycles (opposite merges made on two devices, each pulled by the other):
@@ -552,6 +600,29 @@ impl Store {
     /// Otherwise never enqueued, except the live end of a merge cycle this creates
     /// (`break_merge_cycles`).
     pub fn apply_synced_topic_seed(&self, p: &TopicSeedPayload) -> rusqlite::Result<()> {
+        // A client delete is not an edit: it wins over any version, before last-write-wins. Once purged here,
+        // an older copy of the record (an old device's, a relay row from before) never brings the name back.
+        if p.purged {
+            return self.apply_seed_purged(&p.key, p.updated_at_unix_ms);
+        }
+        if crate::client_forget::is_forgotten(
+            &self.conn,
+            crate::client_forget::FORGOTTEN_SEED_KIND,
+            &p.key,
+        )? {
+            return Ok(());
+        }
+        // A seed merged into a purged one is the deleted client's too (its name is an alias of it): purged on
+        // arrival, with any seed merged into it.
+        if let Some(target) = &p.merged_into_key {
+            if crate::client_forget::is_forgotten(
+                &self.conn,
+                crate::client_forget::FORGOTTEN_SEED_KIND,
+                target,
+            )? {
+                return self.apply_seed_purged(&p.key, p.updated_at_unix_ms);
+            }
+        }
         let tx = self.conn.unchecked_transaction()?;
         let existing: Option<i64> = tx
             .query_row(
@@ -592,6 +663,8 @@ impl Store {
                         params![id, p.merged_into_key],
                     )?;
                 } else {
+                    super::client_controls::apply_synced(&tx, p)?;
+                    tx.commit()?;
                     return Ok(());
                 }
                 id
@@ -611,6 +684,7 @@ impl Store {
                 id
             }
         };
+        super::client_controls::apply_synced(&tx, p)?;
         if wins && p.deleted {
             tx.execute(
                 "DELETE FROM topic_member WHERE topic_id = ?1 AND origin IN ('seed', 'jev')",
@@ -703,7 +777,7 @@ impl Store {
     }
 }
 
-fn seed_id(conn: &Connection, key: &str) -> rusqlite::Result<i64> {
+pub(crate) fn seed_id(conn: &Connection, key: &str) -> rusqlite::Result<i64> {
     conn.query_row(
         "SELECT topic_id FROM topic_seed WHERE key = ?1",
         [key],
@@ -770,7 +844,9 @@ pub(crate) fn on_merge(conn: &Connection, keep: i64, absorb: i64) -> rusqlite::R
                 "UPDATE topic_seed SET merged_into_key = ?2 WHERE merged_into_key = ?1",
                 params![akey, kkey],
             )?;
-            bump(conn, keep)?;
+            let ts = bump(conn, keep)?;
+            // Merging an excluded client into another keeps the survivor excluded.
+            super::client_controls::carry_exclusion(conn, &akey, &kkey, ts)?;
             mark_seeds_rematch(conn, keep)?;
             Ok(true)
         }
@@ -996,6 +1072,10 @@ mod tests {
             merged_into_key: Some(y.key.clone()),
             deleted: false,
             updated_at_unix_ms: i64::MAX / 2,
+            exclude_hosted: None,
+            keep_months: None,
+            control_updated_at_unix_ms: None,
+            purged: false,
         })
         .unwrap();
         let (low, low_name) = if x.key < y.key {
@@ -1053,6 +1133,10 @@ mod tests {
             merged_into_key: merged.map(Into::into),
             deleted: false,
             updated_at_unix_ms: ts,
+            exclude_hosted: None,
+            keep_months: None,
+            control_updated_at_unix_ms: None,
+            purged: false,
         };
         s.apply_synced_topic_seed(&p("y", "Acme Inc", Some("x"), 5))
             .unwrap();
@@ -1083,6 +1167,10 @@ mod tests {
             merged_into_key: None,
             deleted,
             updated_at_unix_ms: ts,
+            exclude_hosted: None,
+            keep_months: None,
+            control_updated_at_unix_ms: None,
+            purged: false,
         }
     }
 

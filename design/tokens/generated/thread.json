@@ -1,0 +1,39 @@
+{
+  "id": "thread",
+  "name": "Thread",
+  "author": "Whimbrel",
+  "light": {
+    "backgroundPage": "#F3F5F8",
+    "backgroundCard": "#FFFFFF",
+    "border": "#D5DBE3",
+    "textPrimary": "#0F1B2D",
+    "textSecondary": "#4A5A6E",
+    "accentPrimary": "#0B6F78",
+    "accentSecondary": "#51607A",
+    "accentHighlight": "#B26A00",
+    "error": "#B3261E",
+    "warning": "#8A5300",
+    "success": "#2A7A45",
+    "link": "#0B63B8",
+    "selection": "#D9ECEE",
+    "highlight": "#E2F1EE",
+    "textOnAccent": "#FFFFFF"
+  },
+  "dark": {
+    "backgroundPage": "#0E141B",
+    "backgroundCard": "#17202A",
+    "border": "#2B3745",
+    "textPrimary": "#E8EDF3",
+    "textSecondary": "#A3B1C2",
+    "accentPrimary": "#4FC3CC",
+    "accentSecondary": "#8B9BB3",
+    "accentHighlight": "#E8B968",
+    "error": "#F2877E",
+    "warning": "#E0A04A",
+    "success": "#7CC47C",
+    "link": "#8FB4DC",
+    "selection": "#1E3438",
+    "highlight": "#21403F",
+    "textOnAccent": "#06252A"
+  }
+}

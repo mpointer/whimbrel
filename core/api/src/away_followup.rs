@@ -6,7 +6,7 @@
 use agent::WriteActionPayload;
 use chrono::{NaiveDate, TimeZone};
 use memory::l10n::{keys, text, text_static};
-use memory::{NewPendingRoutineRun, RoutineTemplate, Store};
+use memory::{NewPendingRoutineRun, Store};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]

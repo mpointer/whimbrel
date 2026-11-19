@@ -69,6 +69,11 @@ struct SettingsSheet: View {
                             .foregroundStyle(Color.theme(.textSecondary))
                             .listRowBackground(Color.theme(.backgroundCard))
                     }
+                    if sync.updateNeeded {
+                        Text("Update needed on another of your devices before it applies deletes.")
+                            .foregroundStyle(Color.theme(.textSecondary))
+                            .listRowBackground(Color.theme(.backgroundCard))
+                    }
                     Button("Sync now") { Task { await sync.syncNow(manual: true) } }
                         .disabled(sync.isSyncing)
                         .listRowBackground(Color.theme(.backgroundCard))

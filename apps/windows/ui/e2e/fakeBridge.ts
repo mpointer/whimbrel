@@ -165,6 +165,9 @@ function fixtures(skins: SkinDto[], now: number, lang: string) {
     hotkey_panel_close: null,
     window_ask: { kind: "started", requestId: 1, destination: { kind: "local" }, truncated: false },
     language_settings: languageSettings(lang),
+    // The launch opened the memory database (X4): the main window draws the app, not a launch screen.
+    launch_state: { stage: { kind: "opened" }, busy: false, waitingForUser: false, generation: 1 },
+    launch_first_window_rendered: true,
     // A first launch: the meeting models are downloading, so the sidebar footer's status line is drawn
     // (and checked for overruns) in every language.
     meeting_models_status: { installed: false, missing: ["Transcription model"], dir: "C:/m", multilingual: false },

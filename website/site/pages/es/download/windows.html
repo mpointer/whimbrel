@@ -46,6 +46,7 @@
         <span class="version" data-version="windows"></span>
       </div>
       <p class="fine muted">¿Es tu primera vez? Te pediremos que te registres antes de iniciar la descarga.</p>
+      <p class="fine" data-arm-download hidden>¿Tu PC tiene un procesador Arm (como Snapdragon)? <a href="/api/download/windows-arm">Descarga para Windows en Arm</a>. Se ejecuta de forma nativa, así que transcribe más rápido que la versión normal emulada.</p>
     </div>
     {{> app-mock}}
   </div>
@@ -56,7 +57,7 @@
     <div>
       <h2>Requisitos del sistema</h2>
       <ul class="checklist">
-        <li><strong>Windows 11, 64 bits (x64)</strong>Windows en ARM aún no es compatible.</li>
+        <li><strong>Windows 11, 64 bits (x64 o Arm)</strong>En un PC con Arm, usa la descarga para Windows en Arm. Todavía no distingue a los demás participantes de una llamada.</li>
         <li><strong>Microsoft Edge WebView2</strong>Ya viene incluido con Windows 11.</li>
         <li><strong>Espacio en disco</strong>Lo necesario para la app, el modelo de voz en el dispositivo y tu historial, que irá creciendo.</li>
         <li><strong>Opcional: Ollama</strong>Para ejecutar modelos de lenguaje por completo en tu PC.</li>
@@ -65,7 +66,7 @@
     <div>
       <h2>Instala en dos minutos</h2>
       <ol class="install-steps">
-        <li>Ejecuta el archivo descargado <code>Whimbrel_x.y.z_x64-setup.exe</code>.</li>
+        <li>Ejecuta el archivo descargado <code>Whimbrel_x.y.z_x64-setup.exe</code> (<code>_arm64-setup.exe</code> en Windows en Arm).</li>
         <li>Si aparece SmartScreen, elige <strong>Más información</strong> → <strong>Ejecutar de todas formas</strong> (abajo te explicamos por qué).</li>
         <li>El instalador termina sin necesitar derechos de administrador.</li>
         <li>Whimbrel se inicia en la bandeja del sistema. Ábrelo para terminar la configuración.</li>

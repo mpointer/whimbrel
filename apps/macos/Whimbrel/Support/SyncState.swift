@@ -407,7 +407,8 @@ final class SyncState: ObservableObject {
             guard let syncClient, let signIn else { return }
             let idToken = try await signIn.validIdToken()
             let otherDevices = try await syncClient.listDevices(idToken: idToken, devicePublicKey: devicePublicKeyBase64)
-            let anotherApprovedDeviceExists = otherDevices.contains { $0.publicKey != devicePublicKeyBase64 && $0.status == "approved" }
+            // Whimbrel Cloud never hands the group key on: a first computer must not wait for it.
+            let anotherApprovedDeviceExists = otherDevices.contains { $0.publicKey != devicePublicKeyBase64 && $0.status == "approved" && $0.platform != "cloud" }
             guard CoreMemoryStore.syncGroupKeyDecision(wrappedKeyPresent: false, localKeyHeld: false, anotherApprovedDeviceExists: anotherApprovedDeviceExists) == .generate else {
                 return
             }
@@ -486,6 +487,39 @@ final class SyncState: ObservableObject {
             actionError = userMessage(for: error)
         }
     }
+
+    /// Settings → Devices → "Add Whimbrel Cloud": registers the cloud runner whose public key `whimbrel-cloud-runner
+    /// init` printed, approved by this Mac with its own key and the group key. On success the provision values for the
+    /// runner's host (shown once: the bundle carries the group key wrapped to the runner; never logged or stored).
+    func registerRunner(publicKey: String) async -> Result<RunnerProvision, RunnerRegistrationError> {
+        guard let signIn, let syncClient else { return .failure(.message(String(localized: "Turn on sync on this Mac first."))) }
+        let key = publicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return .failure(.notAKey) }
+        do {
+            let secret = try loadOrThrowDeviceSecretKey()
+            let groupKey = try loadOrThrowGroupKey()
+            let idToken = try await signIn.validIdToken()
+            let provision = try await syncClient.registerRunner(
+                idToken: idToken, deviceSecretKey: secret, runnerPublicKey: key, name: CloudRoutineCopy.runnerName, groupKey: groupKey
+            )
+            await refreshDevices()
+            return .success(provision)
+        } catch SyncAPIError.malformedResponse {
+            return .failure(.notAKey)
+        } catch let SyncAPIError.httpError(status, _) where status == 400 {
+            return .failure(.notAKey)
+        } catch let SyncAPIError.httpError(status, body) where status == 403 && body.contains("not available") {
+            // The route's own 403 ("cloud routines are not available for this account"): this Mac stays signed in.
+            return .failure(.message(String(localized: "Whimbrel Cloud is not available for this account yet.")))
+        } catch let SyncAPIError.httpError(status, _) where status == 409 {
+            return .failure(.message(String(localized: "This Whimbrel Cloud is already on your account. To add it again, remove it from the list, run its setup again and paste the new key.")))
+        } catch {
+            return .failure(.message(userMessage(for: error)))
+        }
+    }
+
+    /// The Worker URL the runner's host needs (`RUNNER_WORKER_URL`).
+    var workerURL: String { syncClient?.workerURL ?? "" }
 
     /// The Devices panel's "Save" action for this device's own name.
     /// Pushes `deviceName`'s current value via `POST /v1/devices/name`,
@@ -1223,4 +1257,18 @@ enum SyncStateError: Error {
     case noDeviceKeypair
     case noGroupKey
     case localResetFailed
+}
+
+/// Why "Add Whimbrel Cloud" did not register the runner.
+enum RunnerRegistrationError: Error, Equatable {
+    /// What was pasted is not a runner public key (nothing was sent, or the Worker refused it).
+    case notAKey
+    case message(String)
+
+    var text: String {
+        switch self {
+        case .notAKey: String(localized: "That is not a Whimbrel Cloud key. Paste the one line that whimbrel-cloud-runner init printed.")
+        case .message(let m): m
+        }
+    }
 }

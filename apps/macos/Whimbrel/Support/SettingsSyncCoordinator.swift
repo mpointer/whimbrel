@@ -28,6 +28,8 @@ final class SettingsSyncCoordinator: ObservableObject {
     private let promptLibrary: PromptLibrarySettings
     private let profile: ProfileSettings
     private let routineHost: RoutineHostSettings
+    /// The cloud runner's per-routine flags, ready-by times, heartbeat and the pushed time zone.
+    let cloudRoutines: CloudRoutineSettings
     private let syncState: SyncState
     /// Source of the `episode.hidden.*` fields (cross-device hidden-episode marks).
     /// The core owns their timestamps and last-writer-wins, so they bypass
@@ -39,12 +41,13 @@ final class SettingsSyncCoordinator: ObservableObject {
 
     static let syncIntervalSeconds: UInt64 = 60
 
-    init(routing: RoutingSettings, retention: RetentionSettings, promptLibrary: PromptLibrarySettings, profile: ProfileSettings, routineHost: RoutineHostSettings, syncState: SyncState, coreStore: CoreMemoryStore? = nil) {
+    init(routing: RoutingSettings, retention: RetentionSettings, promptLibrary: PromptLibrarySettings, profile: ProfileSettings, routineHost: RoutineHostSettings, syncState: SyncState, coreStore: CoreMemoryStore? = nil, cloudRoutines: CloudRoutineSettings? = nil) {
         self.routing = routing
         self.retention = retention
         self.promptLibrary = promptLibrary
         self.profile = profile
         self.routineHost = routineHost
+        self.cloudRoutines = cloudRoutines ?? CloudRoutineSettings()
         self.syncState = syncState
         self.coreStore = coreStore
     }
@@ -155,6 +158,10 @@ final class SettingsSyncCoordinator: ObservableObject {
         }
         add(&fields, RoutineHostSettings.fieldKey, routineHost.primaryDeviceId)
         add(&fields, RoutineHostSettings.setByFieldKey, routineHost.setBy)
+        // Never `cloud.runner.lastRun`: only the runner writes its heartbeat.
+        for (key, value) in cloudRoutines.syncValues() {
+            add(&fields, key, value)
+        }
 
         add(&fields, "retention.captureItemDays", String(retention.captureItemDays))
         add(&fields, "retention.captureItemKeepForever", retention.captureItemKeepForever ? "true" : "false")
@@ -370,6 +377,11 @@ final class SettingsSyncCoordinator: ObservableObject {
         case "apiKey.openrouter":
             return applyApiKey(field, provider: .openrouter)
         default:
+            // `cloud.*` (the runner's heartbeat, and keys a later version may add), the routines' cloud fields and
+            // the account's time zone. An unknown `cloud.*` key is not applied and is never an error.
+            if CloudRoutineSettings.owns(fieldKey) {
+                return cloudRoutines.apply(fieldKey: fieldKey, value: field.value, isDeleted: field.isDeleted)
+            }
             if fieldKey == RoutineHostSettings.fieldKey || fieldKey == RoutineHostSettings.setByFieldKey {
                 return routineHost.apply(fieldKey: fieldKey, value: field.value)
             }

@@ -6,7 +6,32 @@ struct RecordingCheckInView: View {
     @ObservedObject var controller: RecordingCheckInPanelController
 
     var body: some View {
-        if let seconds = controller.secondsRemaining {
+        if controller.isPausedPrompt {
+            AccentBarRow(color: Color.whimbrelAccentPrimary) {
+                HStack(alignment: .top, spacing: Spacing.md) {
+                    Image(systemName: "pause.circle")
+                        .resizable()
+                        .scaledToFit()
+                        .foregroundStyle(Color.whimbrelAccentPrimary)
+                        .frame(width: 32, height: 32)
+                    Text("This recording is still paused.")
+                        .font(.whimbrelBody(.callout).bold())
+                        .foregroundStyle(Color.whimbrelTextPrimary)
+                    Spacer(minLength: Spacing.sm)
+                    VStack(alignment: .trailing, spacing: Spacing.xs) {
+                        Button("Resume") { controller.resumeTapped() }
+                            .buttonStyle(.whimbrelPrimary)
+                            .font(.whimbrelBody(.callout).weight(.medium))
+                        Button("Stop") { controller.stopTapped() }
+                            .buttonStyle(.whimbrelSecondary)
+                            .font(.whimbrelBody(.caption2))
+                    }
+                }
+            }
+            .whimbrelCard()
+            .frame(width: 360)
+            .fixedSize(horizontal: false, vertical: true)
+        } else if let seconds = controller.secondsRemaining {
             AccentBarRow(color: Color.whimbrelAccentPrimary) {
                 HStack(alignment: .top, spacing: Spacing.md) {
                     Image(systemName: "record.circle")

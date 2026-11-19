@@ -10,6 +10,7 @@ use crate::contrast::{
     composite, glass_glow, ratio, Rgb, FIELD_LINE_OPACITY, FIELD_STRIPE_OPACITY, GLASS_COMPOSITE,
     GLASS_GLOW_STEPS, MIN_RATIO, REQUIRED_PAIRS,
 };
+use crate::elements::{ElementChoices, Labels, NextMeeting, Actions};
 use crate::format::Archetype;
 use crate::palette::{Palette, Token, Variant};
 use std::sync::Arc;
@@ -185,6 +186,65 @@ pub fn archetype_pairs(archetype: Archetype) -> Vec<Pair> {
         Archetype::Field => pairs.extend(field()),
     }
     pairs
+}
+
+/// The pairs the Home elements draw, for `choices` (docs/ui-redesign/skins.md). Opt-in: nothing calls
+/// this unless the redesign flag is on, so `archetype_pairs` and `all_pairs` keep today's results.
+///
+/// - scoreboard: its digits are `textOnAccent` on `accentPrimary`.
+/// - text links: `link` on the page.
+/// - labels (bracketed, small caps) and the infobox: `textPrimary` and `textSecondary` on the card
+///   and the page.
+pub fn element_pairs(choices: &ElementChoices) -> Vec<Pair> {
+    let mut pairs = Vec::new();
+    if choices.next_meeting == NextMeeting::Scoreboard {
+        pairs.push(Pair::plain(Token::TextOnAccent, Token::AccentPrimary));
+    }
+    if choices.actions == Actions::Links {
+        pairs.push(Pair::plain(Token::Link, Token::BackgroundPage));
+    }
+    if choices.next_meeting == NextMeeting::Infobox
+        || matches!(choices.labels, Labels::Bracketed | Labels::SmallCaps)
+    {
+        pairs.extend(on(
+            &[Token::TextPrimary, Token::TextSecondary],
+            &[Token::BackgroundCard, Token::BackgroundPage],
+        ));
+    }
+    pairs
+}
+
+/// What a repair covers with the redesign on: the Standard pairs (every element sits on the page and
+/// cards) plus the element pairs for `choices`, each pair once.
+pub fn redesign_pairs(choices: &[ElementChoices]) -> Vec<Pair> {
+    let mut seen = std::collections::BTreeSet::new();
+    archetype_pairs(Archetype::Standard)
+        .into_iter()
+        .chain(choices.iter().flat_map(element_pairs))
+        .filter(|p| seen.insert(format!("{} on {}", p.text.name(), p.name)))
+        .collect()
+}
+
+/// `repair`, with the redesign's element pairs added when `redesign` is `Some(choices)`. With `None`
+/// this is `repair(palette, pairs)` exactly.
+pub fn repair_for(
+    palette: &Palette,
+    pairs: &[Pair],
+    redesign: Option<&[ElementChoices]>,
+) -> (Palette, Vec<Token>) {
+    let Some(choices) = redesign else {
+        return repair(palette, pairs);
+    };
+    let mut seen: std::collections::BTreeSet<String> =
+        pairs.iter().map(|p| format!("{} on {}", p.text.name(), p.name)).collect();
+    let mut all: Vec<Pair> = pairs.to_vec();
+    all.extend(
+        choices
+            .iter()
+            .flat_map(element_pairs)
+            .filter(|p| seen.insert(format!("{} on {}", p.text.name(), p.name))),
+    );
+    repair(palette, &all)
 }
 
 /// Every archetype's pairs, once each (a user skin can take any archetype, so a repair covers all).

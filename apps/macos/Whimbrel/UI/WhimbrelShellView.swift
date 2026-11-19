@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import OSLog
+import WhimbrelUI
 
 /// The six-tab meeting-first shell replacing TimelineView's mode-strip-first entry
 /// point. TimelineView's own 5 search modes are NOT removed — they relocate into
@@ -58,6 +59,8 @@ struct WhimbrelShellView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
     @State private var showFirstRun = false
+    @StateObject private var homeBridge = HomeRedesignBridge()
+    @State private var homeApps: [CoreCaptureApp] = []
     @State private var showActiveRecordingWarning = false
     // "Later" just hides this banner instance for the version currently staged.
     // updateReadyBanner's `update.version != dismissedUpdateVersion` check below
@@ -82,35 +85,35 @@ struct WhimbrelShellView: View {
             // landing on the now-default Today tab instead of Library.
             updateReadyBanner
 
-            NavigationSplitView {
-                List(WhimbrelTab.allCases, selection: $appState.selectedTab) { tab in
-                    Label {
-                        Text(tab.title)
-                            .foregroundStyle(Color.whimbrelTextPrimary)
-                    } icon: {
-                        tab.icon
-                            .symbolRenderingMode(.monochrome)
-                            .foregroundStyle(appState.selectedTab == tab ? Color.whimbrelTextPrimary : Color.whimbrelTextSecondary)
+            RedesignSwitch(enabled: appState.redesignEnabled) {
+                redesignShell
+            } old: {
+                NavigationSplitView {
+                    // The footer sits below the list. (Its text must stay height-bounded: see `StaleSyncLine`.)
+                    VStack(spacing: 0) {
+                        List(WhimbrelTab.allCases, selection: $appState.selectedTab) { tab in
+                            Label {
+                                Text(tab.title)
+                                    .foregroundStyle(Color.whimbrelTextPrimary)
+                            } icon: {
+                                tab.icon
+                                    .symbolRenderingMode(.monochrome)
+                                    .foregroundStyle(appState.selectedTab == tab ? Color.whimbrelTextPrimary : Color.whimbrelTextSecondary)
+                            }
+                            .tag(tab)
+                            .listRowBackground(
+                                RoundedRectangle(cornerRadius: Radius.control)
+                                    .fill(appState.selectedTab == tab ? Color.whimbrelSelection : Color.clear)
+                                    .padding(.horizontal, Spacing.xs)
+                            )
+                        }
+                        .listStyle(.sidebar)
+                        .tint(Color.whimbrelAccentPrimary)
+                        sidebarFooter
                     }
-                    .tag(tab)
-                    .listRowBackground(
-                        RoundedRectangle(cornerRadius: Radius.control)
-                            .fill(appState.selectedTab == tab ? Color.whimbrelSelection : Color.clear)
-                            .padding(.horizontal, Spacing.xs)
-                    )
-                }
-                .listStyle(.sidebar)
-                .tint(Color.whimbrelAccentPrimary)
-                .safeAreaInset(edge: .bottom, spacing: 0) { sidebarFooter }
-                .navigationSplitViewColumnWidth(min: 160, ideal: 180)
-            } detail: {
-                switch appState.selectedTab {
-                case .today: TodayView()
-                case .meetings: banded { MeetingsListView() }
-                case .library: banded { TimelineView() }
-                case .topics: banded { TopicsView() }
-                case .automations: banded { AutomationsView() }
-                case .settings: StatusOverviewView(openSettings: openSettings)
+                    .navigationSplitViewColumnWidth(min: 160, ideal: 180)
+                } detail: {
+                    detailView
                 }
             }
         }
@@ -127,7 +130,7 @@ struct WhimbrelShellView: View {
             appState.openTimeline = { openWindow(id: "timeline") }
             appState.openSettingsWindow = { openSettings() }
             showFirstRun = FirstRun.shouldShow(
-                done: UserDefaults.standard.bool(forKey: FirstRun.doneKey),
+                defaults: .standard,
                 microphoneGranted: appState.permissions.microphoneGranted,
                 screenGranted: appState.permissions.screenRecordingGranted)
             if !KeychainAccess.isTestHost {
@@ -143,12 +146,130 @@ struct WhimbrelShellView: View {
                 .environmentObject(appState)
         }
         .sheet(isPresented: $showFirstRun) {
-            FirstRunView {
-                UserDefaults.standard.set(true, forKey: FirstRun.doneKey)
-                showFirstRun = false
+            RedesignSwitch {
+                FirstRunRedesignView {
+                    FirstRun.markDone(.standard)
+                    showFirstRun = false
+                }
+            } old: {
+                FirstRunView {
+                    FirstRun.markDone(.standard)
+                    showFirstRun = false
+                }
             }
             .environmentObject(appState.permissions)
         }
+    }
+
+    /// The selected section's screen, shared by the old and the redesign shell.
+    @ViewBuilder
+    private var detailView: some View {
+                switch appState.selectedTab {
+                case .today: TodayView()
+                case .meetings: banded { MeetingsListView() }
+                case .library: banded { TimelineView() }
+                case .topics: banded { TopicsView() }
+                case .automations: banded { AutomationsView() }
+                case .settings: StatusOverviewView(openSettings: openSettings)
+                }
+    }
+
+    // MARK: Redesign shell (flag on)
+
+    /// The sidebar icon for a section: the selected skin's icon where the skin has a role for it, else the Thread symbol.
+    private func glyph(_ tab: WhimbrelTab) -> String {
+        let icons = SkinStore.shared.selected.icons
+        switch tab {
+        case .today: return icons[.today]
+        case .meetings: return icons[.meetings]
+        case .library: return "books.vertical"
+        case .topics: return "tag"
+        case .automations: return icons[.routines]
+        case .settings: return icons[.settings]
+        }
+    }
+
+    private var redesignShell: some View {
+        SwiftUI.TimelineView(.periodic(from: .now, by: appState.activeMeetingId == nil ? 30 : 1)) { context in
+            let onHome = appState.selectedTab == .today
+            WShell(
+                items: WhimbrelTab.allCases.map {
+                    WShellItem(id: $0.rawValue, glyph: glyph($0), title: $0.title, shortcut: "\u{2318}" + String($0.goKey))
+                },
+                selection: appState.selectedTab.rawValue,
+                onSelect: { appState.selectedTab = WhimbrelTab(rawValue: $0) ?? .today },
+                header: WShellHeader(
+                    title: appState.selectedTab.title, subtitle: onHome ? HomeRedesignAdapter.dateLine(context.date) : nil,
+                    ask: HomeRedesignAdapter.ask(appState)),
+                elements: WHomeElements.resolve(options: SkinStore.shared.selected.archetypeOptions, archetype: SkinStore.shared.selected.archetype.rawValue),
+                people: homeBridge.people, appChoices: homeApps.map { WHomeAppChoice(id: $0.appBundleId, name: HomeRedesignAdapter.appName($0.appBundleId)) },
+                showsFilters: onHome,
+                onSubmit: { query, filter in
+                    if filter.isEmpty {
+                        appState.requestNewConversation(prompt: query)
+                    } else {
+                        let apps = homeApps.map { WHomeAppChoice(id: $0.appBundleId, name: HomeRedesignAdapter.appName($0.appBundleId)) }
+                        appState.requestLibrarySearch(query: query, filter: HomeRedesignAdapter.libraryFilter(filter, apps: apps, strings: WhimbrelUIStrings.make().home))
+                    }
+                },
+                onSetUpAsk: { openSettings() },
+                thread: onHome ? homeBridge.thread : [], onThread: { homeBridge.scrollTo($0) },
+                memory: HomeRedesignAdapter.memoryState(enabled: appState.activityCaptureEnabled, resumeAt: appState.captureResumeAt, now: context.date),
+                onWhatIsCaptured: {
+                    appState.pendingSettingsSection = .capture
+                    openSettings()
+                },
+                recording: recording(at: context.date),
+                level: appState.audio.inputLevel,
+                onPause: appState.canPauseRecording ? { appState.pauseRecording() } : nil,
+                onResume: appState.recordingPaused ? { appState.resumeRecording() } : nil,
+                onStop: appState.activeMeetingId == nil ? nil : { appState.endActiveMeetingIfNeeded() },
+                pauseChoices: {
+                    let state = CapturePauseModel.state(captureOn: appState.activityCaptureEnabled, resumeAt: appState.captureResumeAt)
+                    if state != .off {
+                        WPauseChoices(isPaused: state == .paused, onPause: { appState.pauseCapture($0) }, onResume: { appState.resumeCaptureNow() })
+                        Divider()
+                    }
+                    Button(state == .off ? String(localized: "Turn on memory") : String(localized: "Turn off memory")) {
+                        appState.toggleActivityCapture()
+                    }
+                },
+                footer: { sidebarFooter },
+                banner: { EmptyView() },
+                content: {
+                    detailView
+                        .environment(\.homeBridge, homeBridge)
+                        .environment(\.homeScroll, homeBridge.scroll)
+                }
+            )
+            .redesignThemed()
+            .onAppear { loadHomeApps() }
+        }
+    }
+
+    /// The apps seen in the last 30 days, for the Apps chip. Read on the store's queue, only with the flag on.
+    private func loadHomeApps() {
+        guard appState.redesignEnabled, let store = appState.coreStore else { return }
+        let end = Int64(Date().timeIntervalSince1970 * 1000), start = end - 30 * 24 * 3600 * 1000
+        CoreMemoryStore.accessQueue.async {
+            let apps = store.captureApps(startUnixMs: start, endUnixMs: end)
+            DispatchQueue.main.async { if apps.map(\.appBundleId) != homeApps.map(\.appBundleId) { homeApps = apps } }
+        }
+    }
+
+    /// The bar shows while a meeting is recording or being processed, on every section. It offers Pause or Resume and Stop, with the level, and says Paused while the recording is paused (redesign flag only).
+    private func recording(at now: Date) -> WShellRecording? {
+        // The live meeting screen draws the bar itself, at the top of its column: never a second time.
+        if appState.activeMeetingId != nil, appState.selectedTab == .today, appState.liveScreenShowing { return nil }
+        if appState.activeMeetingId != nil {
+            let state = LiveMeetingAdapter.state(
+                isProcessing: false, stage: nil, isStarting: false, pause: appState.recordingPause,
+                resuming: appState.isResumingRecording, problem: appState.recordingProblem).barState ?? .recording
+            return WShellRecording(
+                state: state, elapsedSeconds: LiveMeetingAdapter.recordedSeconds(now: now, startedAt: appState.activeMeetingStartedAt, pause: appState.recordingPause))
+        }
+        if appState.processingMeetingId != nil { return WShellRecording(state: .processing) }
+        return nil
     }
 
     /// This Mac's name and whether sync is running, under a hairline.
@@ -392,7 +513,10 @@ struct StaleSyncLine: View {
                      : String(localized: "Sync hasn't worked since \(last.formatted(date: .abbreviated, time: .shortened))."))
                     .font(.whimbrelBody(.caption2))
                     .foregroundStyle(Color.whimbrelError)
-                    .fixedSize(horizontal: false, vertical: true)
+                    // A line limit, never `fixedSize(vertical:)`: while the sidebar collapses its width nears zero,
+                    // and unbounded wrapping then asked for ~800 pt. The window could not fit that and AppKit looped
+                    // on Update Constraints until it aborted (Nov 18 2026, every sidebar toggle while sync was stale).
+                    .lineLimit(4)
                     .padding(.horizontal, inset)
             }
         }
@@ -412,7 +536,8 @@ private struct ModelStatusLine: View {
                 Text("Downloading models. Keyword search works now; search by meaning starts when this finishes.")
                     .font(.whimbrelBody(.caption2))
                     .foregroundStyle(Color.whimbrelTextSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    // Bounded for the same reason as `StaleSyncLine`: the sidebar's width nears zero as it collapses.
+                    .lineLimit(5)
             }
             .padding(.horizontal, Spacing.md)
         case .failed:

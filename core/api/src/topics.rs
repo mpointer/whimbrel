@@ -232,14 +232,15 @@ pub fn run_model_naming_batch_with_complete(
     limit: usize,
     lang: &str,
     now_ms: i64,
-    complete: impl Fn(&str) -> Result<String, String>,
+    complete: impl Fn(&str, bool) -> Result<String, String>,
 ) -> ApiResult<NamingReport> {
-    run_model_naming_batch_with_prompt(store, limit, lang, now_ms, |prompt, _| complete(prompt))
+    run_model_naming_batch_gated(store, limit, lang, now_ms, |prompt, local_only, _| complete(prompt, local_only))
 }
 
-/// [`run_model_naming_batch_with_complete`], also telling `complete` whether the prompt
+/// [`run_model_naming_batch_with_complete`], telling `complete` only whether the prompt
 /// holds Google user data (a member is a Gmail email or a Google Calendar event), so it
 /// sends it only to a link that may receive it (Limited Use).
+#[cfg(test)]
 pub fn run_model_naming_batch_with_prompt(
     store: &memory::Store,
     limit: usize,
@@ -247,15 +248,55 @@ pub fn run_model_naming_batch_with_prompt(
     now_ms: i64,
     complete: impl Fn(&str, bool) -> Result<String, String>,
 ) -> ApiResult<NamingReport> {
+    run_model_naming_batch_gated(store, limit, lang, now_ms, |prompt, _, has_google| complete(prompt, has_google))
+}
+
+/// Both gates: `complete(prompt, local_only, has_google)` is told whether the topic holds an
+/// excluded client's material (named on this computer or not at all) and whether the prompt
+/// holds Google user data (Limited Use: only a link that may receive it).
+pub fn run_model_naming_batch_gated(
+    store: &memory::Store,
+    limit: usize,
+    lang: &str,
+    now_ms: i64,
+    complete: impl Fn(&str, bool, bool) -> Result<String, String>,
+) -> ApiResult<NamingReport> {
     let mut report = NamingReport::default();
     if memory::background_gate::recording_pauses_background_work() {
         return Ok(report);
     }
+    // The excluded sources and the exclusion generation they were worked out under: worked out
+    // again whenever the generation moves (any write the predicate reads, a topic source's text
+    // included), not once per topic (fix round 4, M2).
+    let mut excluded: Option<(String, Option<std::collections::HashSet<i64>>)> = None;
+    // A topic holding an excluded client's material is named on this computer (`complete`'s
+    // `local_only`), or gets the placeholder: its titles may not go to a hosted model.
     for t in store
         .topics_needing_names_due(limit, now_ms - RETRY_WAIT_MS)
         .map_err(db)?
     {
-        let reply = complete(&build_prompt(&t, lang), t.has_google_sources);
+        // Decided for each topic at its turn, so a client excluded during the batch is never
+        // sent for the rest of it (fix round 3). An unreadable setting (which moves no
+        // generation) or generation is never served from the cache: the topic goes local.
+        // The generation moves with a setting, a term, membership or a source's text; the
+        // material's own version moves when new meetings, emails and captures are found to name
+        // a client (those no longer move the generation).
+        let filter = crate::exclusion::context_filter(store);
+        let generation = store.exclusion_generation().ok().zip(store.topic_source_signal().ok()).map(|(g, n)| {
+            format!("{g}|{n}|{}", filter.state_version().unwrap_or_default())
+        });
+        let closed = filter.is_closed();
+        if closed || generation.is_none() {
+            excluded = None;
+        } else if excluded.as_ref().is_none_or(|(at, _)| Some(at) != generation.as_ref()) {
+            excluded = generation.map(|g| (g, crate::exclusion::excluded_source_ids(store).ok()));
+        }
+        // The topic's membership is read at its turn: a source filed into it during the batch counts.
+        let local_only = match excluded.as_ref().and_then(|(_, sources)| sources.as_ref()) {
+            Some(sources) => store.topics_holding_sources(sources).map_err(db)?.contains(&t.id),
+            None => true,
+        };
+        let reply = complete(&build_prompt(&t, lang), local_only, t.has_google_sources);
         let called = !matches!(&reply, Err(e) if e.starts_with(NO_MODEL));
         if let Some((name, status)) = reply.ok().and_then(|r| parse_reply(&r)) {
             store
@@ -295,13 +336,13 @@ pub fn naming_status(store: &memory::Store) -> ApiResult<NamingStatus> {
     })
 }
 
-fn chain_for(routing: &RoutingConfig, ollama_model: Option<&str>) -> Vec<llm::ChainLink> {
+fn chain_for(routing: &RoutingConfig, ollama_model: Option<&str>, gate: &std::sync::Arc<dyn llm::HostedGate>) -> Vec<llm::ChainLink> {
     let model = ollama_model.unwrap_or("");
     // Local-only with no local model: nothing may be called, so every topic uses the fallback.
     if routing.sensitive && model.is_empty() {
         return vec![];
     }
-    build_chain_for(llm::TaskKind::TopicName, model, routing)
+    build_chain_for(llm::TaskKind::TopicName, model, routing, gate)
 }
 
 pub fn run_naming_batch(
@@ -314,11 +355,17 @@ pub fn run_naming_batch(
     let cap = routing.spend_cap_config();
     let no_model = |e: String| format!("{NO_MODEL}: {e}");
     let policy = routing.google_data_policy();
-    run_model_naming_batch_with_prompt(store, limit, &routing.output_language, now_ms, |prompt, has_google| {
+    run_model_naming_batch_gated(store, limit, &routing.output_language, now_ms, |prompt, local_only, has_google| {
         llm::check_spend_cap(store, &cap, None, Some("topic_name"), now_ms)
             .map_err(|e| no_model(format!("{e:?}")))?;
-        // Built per topic: spend from the previous one can put a provider over budget.
-        let chain = crate::budget::apply_budgets(store, chain_for(routing, ollama_model), false, now_ms)
+        // Built per topic: spend from the previous one can put a provider over budget. A topic
+        // holding an excluded client's material gets on-device links only.
+        let chain = if local_only || crate::exclusion::request_carries_client(store, prompt, crate::exclusion::RequestOrigin::Other) {
+            crate::routing::build_local_chain(ollama_model.unwrap_or(""), routing)
+        } else {
+            chain_for(routing, ollama_model, &crate::exclusion::current_gate(store))
+        };
+        let chain = crate::budget::apply_budgets(store, chain, false, now_ms)
             .map_err(|e| no_model(format!("{e:?}")))?;
         if chain.is_empty() {
             return Err(no_model("no provider".into()));
@@ -489,9 +536,10 @@ mod tests {
             sensitive: true,
             ..Default::default()
         };
-        assert!(chain_for(&routing, None).is_empty());
-        assert!(chain_for(&routing, Some("")).is_empty());
-        assert_eq!(chain_for(&routing, Some("llama3")).len(), 1);
+        let open: std::sync::Arc<dyn llm::HostedGate> = std::sync::Arc::new(llm::NoExclusions);
+        assert!(chain_for(&routing, None, &open).is_empty());
+        assert!(chain_for(&routing, Some(""), &open).is_empty());
+        assert_eq!(chain_for(&routing, Some("llama3"), &open).len(), 1);
         // And the batch still names via the fallback.
         let (_d, s, c, t) = seeded(&["a", "b"]);
         make_suggestible(&c, t);
@@ -611,12 +659,109 @@ mod tests {
         assert_eq!(naming_status(&s).unwrap().provisional_count, 1);
     }
 
+    /// Spec 7.2: a topic holding an excluded client's material is named on this computer only.
+    #[test]
+    fn topic_naming_never_sends_excluded_text() {
+        let (_d, s, c, t) = seeded(&["a", "b"]);
+        make_suggestible(&c, t);
+        suggestions_pass(&s);
+        let seed = s.create_seed_topic("Zed Holdings", &[], None).unwrap();
+        let first: i64 = c.query_row("SELECT source_id FROM topic_member WHERE topic_id = ?1 LIMIT 1", [t], |r| r.get(0)).unwrap();
+        c.execute("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'seed')", [seed.topic_id, first]).unwrap();
+        let seen: RefCell<Vec<bool>> = RefCell::default();
+        run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, local_only| {
+            seen.borrow_mut().push(local_only);
+            Ok(OK.into())
+        })
+        .unwrap();
+        assert_eq!(*seen.borrow(), vec![false], "nothing excluded yet: any model");
+        s.set_client_control(&seed.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+        c.execute("UPDATE topic SET name_dirty = 1 WHERE id = ?1", [t]).unwrap();
+        seen.borrow_mut().clear();
+        run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, local_only| {
+            seen.borrow_mut().push(local_only);
+            Ok(OK.into())
+        })
+        .unwrap();
+        assert_eq!(*seen.borrow(), vec![true], "a topic sharing a source with an excluded client is named locally");
+    }
+
+    /// Fix round 4, M2 (amended): the excluded sources are worked out again whenever anything the
+    /// predicate reads changes, not only when the excluded material's fingerprint does. A
+    /// source's indexed text comes to name the client between two topics of one batch: the later
+    /// topic is named locally. Control: the first went to any model.
+    #[test]
+    fn a_source_found_to_be_the_clients_mid_batch_is_not_sent() {
+        let (_d, s, c, t) = seeded(&["a", "b"]);
+        make_suggestible(&c, t);
+        let _t2 = add_topic(&c, 5);
+        let seed = s.create_seed_topic("Zed Holdings", &[], None).unwrap();
+        s.set_client_control(&seed.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None }).unwrap();
+        let seen: RefCell<Vec<bool>> = RefCell::default();
+        run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, local_only| {
+            if seen.borrow().is_empty() {
+                // Every source of both topics is re-indexed with text naming the client.
+                c.execute(
+                    "INSERT OR REPLACE INTO topic_source_text (source_id, text) SELECT id, 'Notes from Zed Holdings' FROM topic_source",
+                    [],
+                )
+                .unwrap();
+            }
+            seen.borrow_mut().push(local_only);
+            Ok(OK.into())
+        })
+        .unwrap();
+        assert_eq!(*seen.borrow(), vec![false, true]);
+    }
+
+    /// Fix round 2, N1: naming reads the one shared predicate. An auto topic holding a meeting
+    /// excluded only because its transcript names the client (no topic text names it) is
+    /// named locally. Control: before exclusion it may go hosted.
+    #[test]
+    fn topic_naming_uses_the_shared_predicate() {
+        let (_d, s, c, t) = seeded(&["a", "b"]);
+        make_suggestible(&c, t);
+        suggestions_pass(&s);
+        let acme = s.create_seed_topic("Zorblax", &[], None).unwrap();
+        let m = s
+            .insert_meeting(&memory::NewMeeting {
+                device_id: "d".into(),
+                start_unix_ms: 5,
+                end_unix_ms: Some(6),
+                title: "Sync".into(),
+                attendees: vec![],
+                trigger: memory::MeetingTrigger::Manual,
+                audio_path: None,
+                status: memory::MeetingStatus::Completed,
+            })
+            .unwrap();
+        s.insert_transcript_segments(&[memory::NewTranscriptSegment { meeting_id: m, start_cs: 0, speaker_label: "S".into(), text: "Zorblax called about it.".into() }])
+            .unwrap();
+        c.execute("INSERT INTO topic_source (kind, ref_id, ts_unix_ms, title, indexed_at_unix_ms) VALUES ('meeting', ?1, 9, 'Sync', 0)", [m]).unwrap();
+        c.execute("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'auto')", [t, c.last_insert_rowid()]).unwrap();
+        let seen: RefCell<Vec<bool>> = RefCell::default();
+        let run = || {
+            c.execute("UPDATE topic SET name_dirty = 1 WHERE id = ?1", [t]).unwrap();
+            seen.borrow_mut().clear();
+            run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, local_only| {
+                seen.borrow_mut().push(local_only);
+                Ok(OK.into())
+            })
+            .unwrap();
+            seen.borrow().clone()
+        };
+        assert_eq!(run(), vec![false], "control: nothing excluded");
+        s.set_client_control(&acme.key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None }).unwrap();
+        assert_eq!(run(), vec![true], "a member excluded by a transcript name hit");
+    }
+
     #[test]
     fn model_names_replace_provisional_names() {
         let (_d, s, c, t) = seeded(&["a", "b"]);
         make_suggestible(&c, t);
         suggestions_pass(&s);
-        let r = run_model_naming_batch_with_complete(&s, 5, "", 1000, |_| Ok(OK.into())).unwrap();
+        let r = run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, _| Ok(OK.into())).unwrap();
         assert_eq!(r, NamingReport { named: 1, fallback: 0, model_named: 1 });
         assert_eq!(row(&c, t).0, "Acme pricing");
         assert_eq!(marks(&c, t), (None, None));
@@ -630,7 +775,7 @@ mod tests {
         suggestions_pass(&s);
         let calls = RefCell::new(0);
         let run = |now: i64| {
-            run_model_naming_batch_with_complete(&s, 5, "", now, |_| {
+            run_model_naming_batch_with_complete(&s, 5, "", now, |_, _| {
                 *calls.borrow_mut() += 1;
                 Err("provider failure".into())
             })
@@ -655,7 +800,7 @@ mod tests {
         assert_eq!(marks(&c, t).1, None);
         // A batch that could not call a model (none set up, spend cap) does not stamp either.
         let calls = RefCell::new(0);
-        run_model_naming_batch_with_complete(&s, 5, "", 7, |_| {
+        run_model_naming_batch_with_complete(&s, 5, "", 7, |_, _| {
             *calls.borrow_mut() += 1;
             Err(format!("{NO_MODEL}: spend cap"))
         })
@@ -670,7 +815,7 @@ mod tests {
         suggestions_pass(&s);
         s.rename_topic(t, "Mine").unwrap();
         let calls = RefCell::new(0);
-        let r = run_model_naming_batch_with_complete(&s, 5, "", 1000, |_| {
+        let r = run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, _| {
             *calls.borrow_mut() += 1;
             Ok(OK.into())
         })
@@ -685,7 +830,7 @@ mod tests {
         make_suggestible(&c, t1);
         let t2 = add_topic(&c, 5);
         let calls = RefCell::new(0);
-        let r = run_model_naming_batch_with_complete(&s, 5, "", 1000, |_| {
+        let r = run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, _| {
             *calls.borrow_mut() += 1;
             Err("provider failure".into())
         })
@@ -704,7 +849,7 @@ mod tests {
         add_topic(&c, 5);
         add_topic(&c, 6);
         let calls = RefCell::new(0);
-        let r = run_model_naming_batch_with_complete(&s, 2, "", 1000, |_| {
+        let r = run_model_naming_batch_with_complete(&s, 2, "", 1000, |_, _| {
             *calls.borrow_mut() += 1;
             Ok(OK.into())
         })
@@ -721,7 +866,7 @@ mod tests {
             NamingStatus { provisional_count: 0, last_naming_failure_unix_ms: None }
         );
         suggestions_pass(&s);
-        run_model_naming_batch_with_complete(&s, 5, "", 5000, |_| Err("provider failure".into())).unwrap();
+        run_model_naming_batch_with_complete(&s, 5, "", 5000, |_, _| Err("provider failure".into())).unwrap();
         assert_eq!(
             naming_status(&s).unwrap(),
             NamingStatus { provisional_count: 1, last_naming_failure_unix_ms: Some(5000) }
@@ -783,7 +928,7 @@ mod tests {
         make_suggestible(&c, t);
         s.dismiss_suggestion(t).unwrap();
         let calls = RefCell::new(0);
-        run_model_naming_batch_with_complete(&s, 5, "", 1000, |_| {
+        run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, _| {
             *calls.borrow_mut() += 1;
             Ok(OK.into())
         })
@@ -796,7 +941,7 @@ mod tests {
         // Two members of one kind: named by the suggestions path's fallback, never by a model.
         let (_d, s, c, t) = seeded(&["a", "b"]);
         let calls = RefCell::new(0);
-        run_model_naming_batch_with_complete(&s, 5, "", 1000, |_| {
+        run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, _| {
             *calls.borrow_mut() += 1;
             Ok(OK.into())
         })
@@ -808,7 +953,7 @@ mod tests {
             let sid = c.last_insert_rowid();
             c.execute("INSERT INTO topic_member (topic_id, source_id, origin) VALUES (?1, ?2, 'auto')", [t, sid]).unwrap();
         }
-        run_model_naming_batch_with_complete(&s, 5, "", 1000, |_| {
+        run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, _| {
             *calls.borrow_mut() += 1;
             Ok(OK.into())
         })
@@ -848,7 +993,7 @@ mod tests {
         make_suggestible(&c, t);
         let t2 = add_topic(&c, 5);
         let calls = RefCell::new(0);
-        let r = run_model_naming_batch_with_complete(&s, 5, "", 1000, |_| {
+        let r = run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, _| {
             *calls.borrow_mut() += 1;
             Ok("not json".into())
         })
@@ -864,7 +1009,7 @@ mod tests {
         make_suggestible(&c, t);
         let t2 = add_topic(&c, 5);
         let calls = RefCell::new(0);
-        run_model_naming_batch_with_complete(&s, 5, "", 1000, |_| {
+        run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, _| {
             *calls.borrow_mut() += 1;
             Err(format!("{NO_MODEL}: none"))
         })
@@ -878,12 +1023,12 @@ mod tests {
         let (_d, s, c, t) = seeded(&["a", "b"]);
         make_suggestible(&c, t);
         c.execute("UPDATE topic SET name = 'Old name', name_dirty = 1 WHERE id = ?1", [t]).unwrap();
-        let r = run_model_naming_batch_with_complete(&s, 5, "", 1000, |_| Err("provider failure".into())).unwrap();
+        let r = run_model_naming_batch_with_complete(&s, 5, "", 1000, |_, _| Err("provider failure".into())).unwrap();
         assert_eq!(r, NamingReport::default());
         assert_eq!(row(&c, t).0, "Old name");
         assert_eq!(marks(&c, t).1, Some(1000));
         let calls = RefCell::new(0);
-        run_model_naming_batch_with_complete(&s, 5, "", 2000, |_| {
+        run_model_naming_batch_with_complete(&s, 5, "", 2000, |_, _| {
             *calls.borrow_mut() += 1;
             Ok(OK.into())
         })

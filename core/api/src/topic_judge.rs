@@ -79,8 +79,31 @@ pub fn run_topic_judge_batch(
         out.not_started = true;
         return Ok(out);
     }
+    // TypeSafe is hosted. A queued source of an excluded client is filed here, by its names,
+    // never sent; excluded clients are never offered as labels (spec 7.2). This runs before
+    // the batch takes its `max`, so excluded sources at the head of the queue cannot stall it.
+    let filter = crate::exclusion::context_filter(store);
+    if filter.is_closed() {
+        return Ok(out);
+    }
+    settle_excluded_candidates(store, &filter, max)?;
     let mut failures = 0;
     for c in store.next_judge_candidates(max)? {
+        // Read again for each source (cached until anything changes): a client excluded during
+        // the batch is never sent for the rest of it (fix round 3).
+        let filter = crate::exclusion::context_filter(store);
+        if filter.is_closed() {
+            break;
+        }
+        if candidate_is_excluded(store, &filter, &c) {
+            settle_candidate(store, &filter, &c)?;
+            continue;
+        }
+        let c = without_excluded_labels(&filter, c);
+        if c.topics.is_empty() {
+            store.record_topic_verdict(c.source_id, None, None, LOCAL_MODEL, now_unix_ms())?;
+            continue;
+        }
         match store.topic_judge_gate()? {
             JudgeGate::Open => {}
             JudgeGate::OverBudget => {
@@ -162,6 +185,11 @@ pub fn run_topic_judge_batch(
                     }
                     llm::LlmError::Http { status, .. } if status == 429 || status >= 500 => break,
                     llm::LlmError::Network(_) => break,
+                    // Held back by the exclusion gate: never sent, so not charged and not
+                    // counted against the source. An unreadable setting holds back every
+                    // call, so the batch stops; a source naming an excluded client is skipped.
+                    llm::LlmError::Refused(r) if r.reason == llm::guard::REASON_UNREADABLE => break,
+                    llm::LlmError::Refused(_) => continue,
                     // Says something about this source: the third such failure drops it.
                     // The call may still have been billed, so it counts at the estimate.
                     _ => {
@@ -181,6 +209,88 @@ pub fn run_topic_judge_batch(
     }
     store.end_topic_judge_first_pass_if_drained()?;
     Ok(out)
+}
+
+/// The `model` recorded for a verdict made here, without a call.
+const LOCAL_MODEL: &str = "local";
+
+/// Whether queued source `c` is an excluded client's, by the one shared predicate: filed under
+/// one, named anywhere in its meeting or thread, carrying a client contact's address, or its own
+/// text naming one.
+fn candidate_is_excluded(store: &memory::Store, filter: &llm::ContextFilter, c: &memory::topics::judge::JudgeCandidate) -> bool {
+    if !filter.is_active() {
+        return false;
+    }
+    let by_ref = match store.source_ref(c.source_id) {
+        Ok(Some((kind, r))) => filter.excludes_source(&kind, r),
+        Ok(None) => false,
+        Err(_) => true,
+    };
+    by_ref || filter.material().is_none_or(|m| m.source_ids.contains(&c.source_id)) || filter.names_client(&c.text)
+}
+
+/// Settles excluded source `c` without a call. A source already filed under an excluded client
+/// keeps that filing: it only leaves the queue (fix round 1, B1; a verdict of "none" would unfile
+/// it, and sync that). A source newly matched is filed under the first excluded client its words
+/// name, as alias filing does; otherwise it only leaves the queue, and stays excluded through the
+/// shared predicate.
+fn settle_candidate(
+    store: &memory::Store,
+    filter: &llm::ContextFilter,
+    c: &memory::topics::judge::JudgeCandidate,
+) -> rusqlite::Result<()> {
+    let Some(m) = filter.material() else { return store.drop_judge_queue_rows(c.source_id) };
+    if m.source_ids.contains(&c.source_id) {
+        return store.drop_judge_queue_rows(c.source_id);
+    }
+    let named = c
+        .topics
+        .iter()
+        .filter(|(id, _, _)| m.topic_ids.contains(id))
+        .find(|(_, name, also)| {
+            let mut terms = vec![name.clone()];
+            terms.extend(also.split(", ").filter(|a| !a.is_empty()).map(str::to_string));
+            llm::ExclusionSet::new(terms).find_in(&c.text)
+        })
+        .map(|(id, _, _)| *id);
+    match named {
+        Some(topic) => store.record_topic_verdict(c.source_id, Some(topic), None, LOCAL_MODEL, now_unix_ms()),
+        None => store.drop_judge_queue_rows(c.source_id),
+    }
+}
+
+/// Settles excluded sources at the head of the queue, `max` at a time, until a page holds none.
+fn settle_excluded_candidates(store: &memory::Store, filter: &llm::ContextFilter, max: usize) -> rusqlite::Result<()> {
+    if !filter.is_active() || max == 0 {
+        return Ok(());
+    }
+    // Each pass must settle a source it has not settled before, so this always ends.
+    let mut done = std::collections::HashSet::new();
+    loop {
+        let page = store.next_judge_candidates(max)?;
+        let mut settled = 0;
+        for c in page.iter().filter(|c| candidate_is_excluded(store, filter, c)) {
+            if done.insert(c.source_id) {
+                settle_candidate(store, filter, c)?;
+                settled += 1;
+            }
+        }
+        if settled == 0 {
+            return Ok(());
+        }
+    }
+}
+
+/// `c` without the excluded clients among its labels (the others keep their order).
+fn without_excluded_labels(
+    filter: &llm::ContextFilter,
+    mut c: memory::topics::judge::JudgeCandidate,
+) -> memory::topics::judge::JudgeCandidate {
+    if let Some(m) = filter.material() {
+        c.topics.retain(|(id, name, also)| !m.topic_ids.contains(id) && !filter.names_client(&format!("{name}\n{also}")));
+        c.subjects.retain(|id| c.topics.iter().any(|t| t.0 == *id));
+    }
+    c
 }
 
 #[cfg(test)]
@@ -276,8 +386,10 @@ mod tests {
         for (i, subject) in subjects.iter().enumerate() {
             c.execute(
                 "INSERT INTO items (device_id, kind, source, ts_unix_ms, actors, title, body_text, refs, external_id) \
-                 VALUES ('d','email',?5,?1,json_array('a@x.com'),?2,?3,'{}',?4)",
-                rusqlite::params![1000 + i as i64, subject, format!("{subject} body"), format!("gm-{i}"), source],
+                 VALUES ('d','email',?5,?1,json_array(?6),?2,?3,'{}',?4)",
+                // One sender per email: a sender shared with an excluded client's mail would be
+                // that client's contact (fix round 3, R5).
+                rusqlite::params![1000 + i as i64, subject, format!("{subject} body"), format!("gm-{i}"), source, format!("p{i}@x.com")],
             )
             .unwrap();
         }
@@ -288,6 +400,98 @@ mod tests {
 
     fn n(c: &rusqlite::Connection, sql: &str) -> i64 {
         c.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    /// Spec 7.2 / carried requirement (a): an excluded client is never offered as a label, a
+    /// queued source naming it is filed here without a call, and `max` excluded sources at the
+    /// head of the queue do not stall a clean source behind them.
+    #[test]
+    fn topics_judge_never_sends_excluded_text_and_excluded_sources_do_not_stall_the_queue() {
+        let (_d, s, c, ids) =
+            setup(&["Acme", "Globex", "Initech"], &["Lunch plans", "Acme and Globex budget", "Acme and Initech budget"]);
+        let acme_key: String = c.query_row("SELECT key FROM topic_seed WHERE topic_id = ?1", [ids[0]], |r| r.get(0)).unwrap();
+        s.set_client_control(&acme_key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None })
+            .unwrap();
+        assert_eq!(n(&c, "SELECT COUNT(*) FROM topic_judge_todo"), 3, "two several-hit sources and one no-hit");
+        s.start_topic_judging(10_000).unwrap();
+        let j = fake(&[("t1", 0.2), ("none", 0.8)], None, 90);
+        let out = run_topic_judge_batch(&s, &j, 2, 1.0).unwrap();
+        let seen = j.seen.borrow();
+        assert_eq!(seen.len(), 1, "only the clean source is sent");
+        assert_eq!(out.processed, 1);
+        // The control call went through the real batch, which logged it (fix round 2, M3).
+        assert_eq!(n(&c, "SELECT COUNT(*) FROM usage_log WHERE route = 'topic_judge' AND provider = 'typesafe'"), 1);
+        for input in seen.iter() {
+            let all = format!("{} {:?}", input.text, input.labels);
+            assert!(!all.to_lowercase().contains("acme"), "{all}");
+        }
+        assert_eq!(n(&c, "SELECT COUNT(*) FROM topic_judge_todo"), 0, "nothing left queued");
+        assert_eq!(
+            n(&c, &format!("SELECT COUNT(*) FROM topic_member WHERE topic_id = {} AND origin = 'jev'", ids[0])),
+            2,
+            "both sources naming the client are filed under it, locally"
+        );
+    }
+
+    /// Fix round 1, B1: a source the judge filed under a client before that client was excluded
+    /// keeps that membership when a seed edit queues it again. Settling it never unfiles it, so
+    /// it stays out of hosted prompts; nothing about it is sent.
+    #[test]
+    fn a_judge_filed_source_of_an_excluded_client_keeps_its_membership_when_requeued() {
+        let (_d, s, c, ids) = setup(&["Acme", "Globex", "Initech"], &["Globex and Initech budget"]);
+        let acme_key: String = c.query_row("SELECT key FROM topic_seed WHERE topic_id = ?1", [ids[0]], |r| r.get(0)).unwrap();
+        let sid: i64 = c.query_row("SELECT source_id FROM topic_judge_todo", [], |r| r.get(0)).unwrap();
+        // Filed under Acme by an earlier verdict; its words never name Acme.
+        s.start_topic_judging(10_000).unwrap();
+        s.record_topic_verdict(sid, Some(ids[0]), None, "jev-test", 1).unwrap();
+        assert_eq!(n(&c, &format!("SELECT COUNT(*) FROM topic_member WHERE topic_id = {} AND source_id = {sid} AND origin = 'jev'", ids[0])), 1);
+        s.set_client_control(&acme_key, &memory::topics::client_controls::ClientControl { exclude_hosted: true, keep_months: None }).unwrap();
+        // Editing Globex queues the source again (it mentions Globex).
+        let globex_key: String = c.query_row("SELECT key FROM topic_seed WHERE topic_id = ?1", [ids[1]], |r| r.get(0)).unwrap();
+        s.update_seed_topic(&globex_key, "Globex", &["Globex Co".to_string()], None).unwrap();
+        while memory::topics::index::run_topic_index_job(&s, 200).unwrap() {}
+        while memory::topics::cluster::run_topic_cluster_job(&s, 200).unwrap() {}
+        let j = fake(&[("t1", 0.9), ("none", 0.1)], None, 90);
+        run_topic_judge_batch(&s, &j, 10, 1.0).unwrap();
+        for input in j.seen.borrow().iter() {
+            assert!(!input.text.contains("Initech budget"), "the client's source was sent: {}", input.text);
+        }
+        assert_eq!(
+            n(&c, &format!("SELECT COUNT(*) FROM topic_member WHERE topic_id = {} AND source_id = {sid} AND origin = 'jev'", ids[0])),
+            1,
+            "still filed under the excluded client"
+        );
+        assert!(crate::exclusion::excluded_source_ids(&s).unwrap().contains(&sid));
+    }
+
+    /// Fix round 3: a client excluded during a judge batch is not sent for the rest of the batch.
+    #[test]
+    fn a_client_excluded_mid_batch_is_not_sent() {
+        let (d, s, c, ids) = setup(&["Globex", "Initech"], &["Globex and Initech budget", "Lunch plans"]);
+        let key: String = c.query_row("SELECT key FROM topic_seed WHERE topic_id = ?1", [ids[0]], |r| r.get(0)).unwrap();
+        s.start_topic_judging(10_000).unwrap();
+        let path = d.path().join("m.db");
+        let fired = std::cell::Cell::new(false);
+        let j = Fake {
+            seen: RefCell::new(Vec::new()),
+            reply: Box::new(move |_| {
+                if !fired.replace(true) {
+                    rusqlite::Connection::open(&path)
+                        .unwrap()
+                        .execute(
+                            "INSERT INTO client_control (topic_key, exclude_hosted, keep_months, updated_at_unix_ms) VALUES (?1, 1, NULL, 9) \
+                             ON CONFLICT(topic_key) DO UPDATE SET exclude_hosted = 1",
+                            [&key],
+                        )
+                        .unwrap();
+                }
+                Ok(TopicJudgment { probabilities: vec![("none".into(), 1.0)], work: None, model: "m".into(), usage: None })
+            }),
+        };
+        run_topic_judge_batch(&s, &j, 10, 1.0).unwrap();
+        let seen = j.seen.borrow();
+        assert_eq!(seen.len(), 1, "only the first (clean) source");
+        assert!(seen[0].text.contains("Lunch"), "control: the first went");
     }
 
     /// Limited Use: Gmail is not sent to TypeSafe until it confirms its terms. A Gmail
@@ -476,6 +680,36 @@ mod tests {
     }
 
     /// I5: failed calls are charged, and five failures in a row end the batch.
+    fn refused(reason: &'static str) -> Fake {
+        Fake {
+            seen: RefCell::new(Vec::new()),
+            reply: Box::new(move |_| Err(llm::LlmError::Refused(llm::GateRefusal { reason }))),
+        }
+    }
+
+    /// A call the exclusion gate held back was never sent: no charge, no failure on the
+    /// source, no stop after five, and the source is still queued after three batches.
+    #[test]
+    fn a_refused_source_is_not_charged_counted_or_dropped() {
+        let subjects: Vec<String> = (0..7).map(|i| format!("Plans {i}")).collect();
+        let subjects: Vec<&str> = subjects.iter().map(String::as_str).collect();
+        let (_d, s, c, _) = setup(&["Maximus"], &subjects);
+        s.start_topic_judging(10_000_000).unwrap();
+        let j = refused(llm::guard::REASON_EXCLUDED);
+        for _ in 0..4 {
+            assert_eq!(run_topic_judge_batch(&s, &j, 10, 1.0).unwrap().processed, 0);
+        }
+        assert_eq!(j.seen.borrow().len(), 4 * 7, "every source tried each batch, none counted toward five in a row");
+        assert_eq!(s.topic_judge_budget().unwrap().unwrap().1, 0, "nothing charged");
+        assert_eq!(n(&c, "SELECT COUNT(*) FROM topic_judge_todo"), 7, "none dropped");
+        assert_eq!(n(&c, "SELECT COALESCE(MAX(attempts), 0) FROM topic_judge_todo"), 0, "no failure recorded");
+
+        let j = refused(llm::guard::REASON_UNREADABLE);
+        run_topic_judge_batch(&s, &j, 10, 1.0).unwrap();
+        assert_eq!(j.seen.borrow().len(), 1, "an unreadable setting stops the batch");
+        assert_eq!(n(&c, "SELECT COUNT(*) FROM topic_judge_todo"), 7);
+    }
+
     #[test]
     fn failed_calls_are_charged_and_five_in_a_row_stop_the_batch() {
         let subjects: Vec<String> = (0..7).map(|i| format!("Plans {i}")).collect();

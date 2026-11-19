@@ -3,7 +3,7 @@
 Serves the auto-update manifests and release files straight out of an R2 bucket — no
 database, no KV. Mac: `/version.json` and `/Whimbrel-<version>.zip`, written by
 `apps/macos/scripts/release-publish.sh`. Windows: `/windows/latest.json` (Tauri updater
-format) and `/windows/Whimbrel_<version>_x64-setup.exe`, written by
+format) and `/windows/Whimbrel_<version>_x64-setup.exe` (and `_arm64-setup.exe` for Windows on Arm), written by
 `.github/workflows/release-windows.yml`. Writers use `wrangler r2 object put`; this
 Worker only ever reads.
 

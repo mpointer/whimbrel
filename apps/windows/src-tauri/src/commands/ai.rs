@@ -408,6 +408,7 @@ pub const DISCORD_URL: &str = "https://discord.gg/fetZZA8Ax";
 /// an arbitrary URL.
 pub fn external_url_allowed(url: &str) -> bool {
     url == "https://ollama.com/download"
+        || url == super::launch::RESTORE_HELP_URL
         || url == MOBILE_BETA_URL
         || url == DISCORD_URL
         || api::providers::PROVIDERS.iter().any(|p| p.key_page_url == Some(url) || p.policy_url == Some(url))

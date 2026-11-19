@@ -1,5 +1,9 @@
 import type { Platform } from "./leads";
 
+/** What a download link asks for: a platform's default build, or the Windows on Arm (arm64)
+ * installer, which lives in the same Windows manifest under `windows-aarch64`. */
+export type DownloadTarget = Platform | "windows-arm";
+
 export interface Release {
   version: string | null;
   url: string;
@@ -8,18 +12,24 @@ export interface Release {
 /** Where each platform's current release is described. These are the same manifests the
  * apps' own auto-updaters read, so the website can never offer a build the updater
  * doesn't know about. */
-const MANIFEST_PATH: Record<Platform, string> = {
+const MANIFEST_PATH: Record<DownloadTarget, string> = {
   mac: "/version.json", // { version, url, sha256, ... } written by apps/macos/scripts/release-publish.sh
   windows: "/windows/latest.json", // tauri-plugin-updater format, written by release-windows.yml
+  "windows-arm": "/windows/latest.json", // the same manifest's windows-aarch64 entry
 };
 
-function urlFromManifest(platform: Platform, manifest: unknown): { version: string | null; url: unknown } {
+/** The platform a download is recorded under (the leads tables know only mac and windows). */
+export function platformOf(target: DownloadTarget): Platform {
+  return target === "windows-arm" ? "windows" : target;
+}
+
+function urlFromManifest(platform: DownloadTarget, manifest: unknown): { version: string | null; url: unknown } {
   const m = manifest as Record<string, unknown> | null;
   if (!m || typeof m !== "object") return { version: null, url: null };
   const version = typeof m.version === "string" ? m.version : null;
   if (platform === "mac") return { version, url: m.url };
   const platforms = m.platforms as Record<string, { url?: unknown }> | undefined;
-  return { version, url: platforms?.["windows-x86_64"]?.url };
+  return { version, url: platforms?.[platform === "windows-arm" ? "windows-aarch64" : "windows-x86_64"]?.url };
 }
 
 /** Reads the platform's manifest from the updates Worker and returns the installer URL.
@@ -28,7 +38,7 @@ function urlFromManifest(platform: Platform, manifest: unknown): { version: stri
  * host is treated as broken rather than redirected to, so this route can never become
  * an open redirect. Returns null when nothing is published or the manifest is malformed. */
 export async function resolveRelease(
-  platform: Platform,
+  platform: DownloadTarget,
   updatesUrl: string,
   fetcher: typeof fetch = fetch,
   otherHosts: readonly string[] = [],

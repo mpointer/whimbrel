@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Default landing surface: a greeting, then the live call or an Ask composer (and an empty
@@ -12,6 +13,9 @@ import SwiftUI
 /// synchronously from the view body. `hero` and `agenda` are pure computed properties
 /// over `TodayLogic`.
 struct TodayView: View {
+    /// Ticks once a minute so memory blocks grow while Home stays open. Made on first use, which only the redesign does.
+    private static let homeTick = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
@@ -39,6 +43,8 @@ struct TodayView: View {
     @State private var topicsByEvent: [String: TopicRef] = [:]
     @State private var topicsByMeeting: [Int64: TopicRef] = [:]
     @State private var prepKeyByMeetingId: [Int64: String] = [:]
+    /// Today's memory blocks. Read only when the redesign flag is on.
+    @State private var homeData = HomeRedesignData()
 
     /// Everything Today shows, read from this view's state and `AppState` at render time.
     private var content: TodayContent {
@@ -91,6 +97,15 @@ struct TodayView: View {
                   draft: liveDraft, actionItems: []
               )
         else { return nil }
+        if appState.redesignEnabled {
+            let next = content.events.filter { $0.startDate > content.now }.min { $0.startDate < $1.startDate }.map { (time: $0.startDate, title: $0.title) }
+            return AnyView(
+                LiveMeetingRedesignScreen(
+                    appState: appState, model: model, meeting: meeting, initialNotes: liveDraft?.personalNotes ?? "", nextMeeting: next,
+                    onSaveNotes: { text, now in saveLiveNotes(meetingId: meetingId, text: text, nowUnixMs: now) })
+                .id(meetingId)
+            )
+        }
         return AnyView(
             ActiveMeetingView(
                 model: model, initialNotes: liveDraft?.personalNotes ?? "",
@@ -117,15 +132,31 @@ struct TodayView: View {
         VStack(spacing: Spacing.md) {
             BetterTranscriptsCard(download: appState.turboDownload)
                 .padding(.horizontal, Spacing.lg)
-            TodayChrome(
-                content: content, actions: actions,
-                slots: TodaySlots(
-                    live: liveView(content), decisionCount: content.pendingApprovalCount, actions: actions,
-                    composer: AnyView(TodayComposer(placeholder: SkinStore.shared.selected.voice.text(.askPlaceholder, name: "")) { actions.ask($0) })
+            RedesignSwitch(enabled: appState.redesignEnabled) {
+                TodayHomeRedesignView(
+                    content: content, actions: actions, live: liveView(content), data: homeData,
+                    openBlock: { block in
+                        appState.requestLibrarySearch(query: "", filter: LibraryCaptureFilter(
+                            startUnixMs: block.startUnixMs, endUnixMs: block.endUnixMs,
+                            dateLabel: MeetingCardModel.timeRange(
+                                start: Date(timeIntervalSince1970: Double(block.startUnixMs) / 1000),
+                                end: Date(timeIntervalSince1970: Double(block.endUnixMs) / 1000))))
+                    })
+            } old: {
+                TodayChrome(
+                    content: content, actions: actions,
+                    slots: TodaySlots(
+                        live: liveView(content), decisionCount: content.pendingApprovalCount, actions: actions,
+                        composer: AnyView(TodayComposer(placeholder: SkinStore.shared.selected.voice.text(.askPlaceholder, name: "")) { actions.ask($0) })
+                    )
                 )
-            )
+            }
         }
         .onAppear { refresh() }
+        // Memory blocks grow while Today stays open (redesign flag only; nothing is read with it off).
+        .onReceive(appState.redesignEnabled ? Self.homeTick.eraseToAnyPublisher() : Empty<Date, Never>().eraseToAnyPublisher()) { _ in
+            refreshHomeData()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             guard let window = notification.object as? NSWindow, window.title == "Whimbrel" else { return }
             // Forgetting a meeting from the standalone meeting window hands focus back here.
@@ -184,6 +215,24 @@ struct TodayView: View {
         }
     }
 
+    /// Redesign flag only: today's memory blocks (cut around today's meetings).
+    /// Runs on the store's queue, never the main thread.
+    private func refreshHomeData() {
+        guard appState.redesignEnabled, let store = appState.coreStore else { return }
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: Date())
+        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
+        let meetings = HomeRedesignAdapter.meetingIntervals(content: content, startOfDay: startOfDay, endOfDay: endOfDay)
+        let startMs = Int64(startOfDay.timeIntervalSince1970 * 1000), endMs = Int64(endOfDay.timeIntervalSince1970 * 1000)
+        CoreMemoryStore.accessQueue.async {
+            let blocks = store.dayBlocks(startUnixMs: startMs, endUnixMs: endMs, meetings: meetings)
+            DispatchQueue.main.async {
+                let next = HomeRedesignData(blocks: blocks)
+                if next != homeData { homeData = next }
+            }
+        }
+    }
+
     private func refresh() {
         guard let store = appState.coreStore else { recentLoaded = true; loadDigestIfNeeded(); return }
         let nextPrepKey = content.upcoming.first.map { TodayLogic.prepKey(eventId: $0.id, start: $0.start) }
@@ -239,6 +288,7 @@ struct TodayView: View {
                 followups = open
                 pendingApprovalCount = pending.count
                 deviceActivity = activity
+                refreshHomeData()
             }
         }
     }
@@ -291,7 +341,7 @@ struct TodayView: View {
             preferredProvider: appState.routing.preferredProvider, preferredModel: appState.routing.preferredModel,
             dailyDigestInstructions: appState.promptLibrary.instructions[.dailyDigest] ?? ""
         )
-        CoreMemoryStore.slowLaneQueue.async {
+        UserModelGate.runOnSlowLane {
             let outcome = store.dailyDigest(model: ollamaModel, startUnixMs: startMs, endUnixMs: endMs, routing: routing)
             DispatchQueue.main.async {
                 isGeneratingDigest = false
